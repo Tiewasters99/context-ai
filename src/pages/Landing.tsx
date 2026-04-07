@@ -1,30 +1,12 @@
 import { Link } from 'react-router-dom';
-import { Layers, Users, Bot, Check, ArrowRight } from 'lucide-react';
-
-const features = [
-  {
-    icon: Layers,
-    title: 'Clientspaces',
-    description: 'Your personal workspace. Organize pages, lists, and databases — all in one place.',
-  },
-  {
-    icon: Users,
-    title: 'Serverspaces',
-    description: 'Collaborate with your team. Invite members, manage permissions, and work together in real-time.',
-  },
-  {
-    icon: Bot,
-    title: 'AI Assistant',
-    description: 'A built-in assistant that understands your workspace. Navigate, create, and organize with natural language.',
-  },
-];
+import { ArrowRight, Check } from 'lucide-react';
 
 const tiers = [
   {
     name: 'Free',
     price: '$0',
     description: 'For individuals getting started',
-    features: ['1 Clientspace', '3 Serverspaces', 'Basic AI (Blind mode)', 'Unlimited pages & lists', 'Community support'],
+    features: ['1 Contextspace', '3 Serverspaces', 'Basic AI (Blind mode)', 'Unlimited pages & lists', 'Community support'],
     cta: 'Get Started',
     highlighted: false,
   },
@@ -48,132 +30,167 @@ const tiers = [
 
 export default function Landing() {
   return (
-    <div className="min-h-screen bg-white">
-      {/* Nav */}
-      <nav className="flex items-center justify-between max-w-6xl mx-auto px-6 h-16">
-        <span className="text-xl font-bold text-slate-900 tracking-tight">
-          Context<span className="text-indigo-500">.ai</span>
-        </span>
-        <div className="flex items-center gap-6">
-          <a href="#features" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">Features</a>
-          <a href="#pricing" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">Pricing</a>
-          <Link
-            to="/auth"
-            className="text-sm font-medium text-indigo-500 hover:text-indigo-600 transition-colors"
-          >
-            Sign In
-          </Link>
-        </div>
-      </nav>
+    <div className="min-h-screen">
+      {/* Full-bleed GPU cluster hero */}
+      <div
+        className="relative min-h-screen bg-cover bg-center bg-fixed bg-no-repeat flex flex-col"
+        style={{ backgroundImage: "url('/gpu-cluster.png')" }}
+      >
+        {/* Gradient overlay — darker at edges for text readability */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,rgba(10,10,16,0.2)_100%)]" />
 
-      {/* Hero */}
-      <section className="max-w-4xl mx-auto px-6 pt-24 pb-20 text-center">
-        <h1 className="text-5xl sm:text-6xl font-bold text-slate-900 tracking-tight leading-tight">
-          Your workspace,<br />
-          <span className="text-indigo-500">simplified.</span>
-        </h1>
-        <p className="mt-6 text-lg text-slate-500 max-w-2xl mx-auto">
-          The productivity platform that gets out of your way. Organize your work, collaborate with your team, and let AI handle the rest.
-        </p>
-        <div className="mt-10 flex items-center justify-center gap-4">
-          <Link
-            to="/auth"
-            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors"
-          >
-            Get Started Free <ArrowRight size={16} />
-          </Link>
-        </div>
-      </section>
+        {/* Nav */}
+        <nav className="relative z-10 flex items-center justify-between w-full pl-[8.9%] pr-[10%] h-20">
+          <span className="text-white" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>
+            <span className="text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span><span className="text-[20px] font-semibold text-[#d4a054]">.ai</span>
+          </span>
+          <div className="relative" style={{ width: '500px' }}>
+            <a href="#pricing" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '380px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Pricing</a>
+            <a href="#features" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '195px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Features</a>
+            <Link
+              to="/auth"
+              className="absolute text-[20px] font-semibold text-[#e8b84a] hover:text-[#f0c860] transition-colors" style={{ right: '50px', textShadow: '0 0 12px rgba(212,160,84,0.5), 0 1px 6px rgba(0,0,0,0.9)' }}
+            >
+              Sign In
+            </Link>
+          </div>
+        </nav>
 
-      {/* Features */}
-      <section id="features" className="max-w-6xl mx-auto px-6 py-20">
-        <h2 className="text-3xl font-bold text-slate-900 text-center mb-4">Everything you need</h2>
-        <p className="text-slate-500 text-center mb-12 max-w-xl mx-auto">
-          A clean, powerful workspace without the bloat. Built for teams that want to get things done.
-        </p>
-        <div className="grid md:grid-cols-3 gap-8">
-          {features.map((f) => (
-            <div key={f.title} className="p-6 rounded-2xl border border-slate-200 hover:border-slate-300 transition-colors">
-              <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center mb-4">
-                <f.icon size={20} className="text-indigo-500" />
-              </div>
-              <h3 className="text-lg font-semibold text-slate-900 mb-2">{f.title}</h3>
-              <p className="text-sm text-slate-500 leading-relaxed">{f.description}</p>
+        {/* Hero — just words, no boxes */}
+        <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-20">
+          <h1 className="text-[52px] sm:text-[64px] font-bold text-white leading-[1.05] tracking-tight text-center" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.6)' }}>
+            Your workspace,<br />
+            <span className="text-[#d4a054]" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 30px rgba(212,160,84,0.3)' }}>simplified.</span>
+          </h1>
+          <p className="mt-6 text-[18px] text-white max-w-lg mx-auto leading-relaxed text-center font-medium" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9), 0 0 20px rgba(0,0,0,0.5)' }}>
+            The productivity platform that gets out of your way. Organize your work, collaborate with your team, and let Context.ai do the rest.
+          </p>
+          <div className="mt-10">
+            <Link
+              to="/auth"
+              className="inline-flex items-center gap-2 text-[26px] font-semibold text-[#e8b84a] hover:text-[#f0c860] transition-colors"
+              style={{ textShadow: '0 0 12px rgba(212,160,84,0.4), 0 1px 6px rgba(0,0,0,0.9)' }}
+            >
+              Get Started Free <ArrowRight size={18} strokeWidth={2} />
+            </Link>
+          </div>
+        </div>
+
+        {/* Scroll indicator */}
+        <div className="relative z-10 flex justify-center pb-8">
+          <div className="w-5 h-8 rounded-full border-2 border-white/30 flex items-start justify-center pt-1.5">
+            <div className="w-1 h-2 rounded-full bg-white/50 animate-bounce" />
+          </div>
+        </div>
+      </div>
+
+      {/* Features — just text, no cards */}
+      <section id="features" className="bg-[#0a0a10] py-24 px-6">
+        <div className="max-w-3xl mx-auto text-center">
+          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] mb-8">What we do</h2>
+
+          <div className="space-y-16">
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Contextspaces</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                Your home base. A clean, organized view of all your Serverspaces — always one click away, never buried.
+              </p>
             </div>
-          ))}
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Serverspaces</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                Your matters and projects live here. Pages, lists, databases, members — everything configured in one place.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">AI Assistant</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                A native AI assistant built into Context.ai from the start — not an add-on or afterthought that guesses at what you need.
+              </p>
+            </div>
+          </div>
         </div>
       </section>
+
+      {/* Divider — thin gold line */}
+      <div className="bg-[#0a0a10] flex justify-center">
+        <div className="w-16 h-px bg-[#d4a054]/40" />
+      </div>
 
       {/* Pricing */}
-      <section id="pricing" className="max-w-6xl mx-auto px-6 py-20">
-        <h2 className="text-3xl font-bold text-slate-900 text-center mb-4">Simple pricing</h2>
-        <p className="text-slate-500 text-center mb-12">Start free. Upgrade when you're ready.</p>
-        <div className="grid md:grid-cols-3 gap-8">
-          {tiers.map((tier) => (
-            <div
-              key={tier.name}
-              className={`p-8 rounded-2xl border ${
-                tier.highlighted
-                  ? 'border-indigo-500 ring-1 ring-indigo-500'
-                  : 'border-slate-200'
-              }`}
-            >
-              <h3 className="text-lg font-semibold text-slate-900">{tier.name}</h3>
-              <p className="text-sm text-slate-500 mt-1">{tier.description}</p>
-              <p className="text-3xl font-bold text-slate-900 mt-4">{tier.price}</p>
-              <ul className="mt-6 space-y-3">
-                {tier.features.map((feature) => (
-                  <li key={feature} className="flex items-center gap-2 text-sm text-slate-600">
-                    <Check size={16} className="text-emerald-500 shrink-0" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-              <Link
-                to="/auth"
-                className={`block text-center mt-8 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+      <section id="pricing" className="bg-[#0a0a10] py-24 px-6">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] text-center mb-4">Pricing</h2>
+          <h3 className="text-[24px] font-semibold text-[#f5f2ed] text-center mb-14">Start free. Upgrade when you're ready.</h3>
+          <div className="grid md:grid-cols-3 gap-5">
+            {tiers.map((tier) => (
+              <div
+                key={tier.name}
+                className={`p-7 rounded-lg border ${
                   tier.highlighted
-                    ? 'bg-indigo-500 hover:bg-indigo-600 text-white'
-                    : 'border border-slate-200 text-slate-700 hover:bg-slate-50'
+                    ? 'border-[#d4a054]/50 bg-[#d4a054]/[0.04]'
+                    : 'border-[rgba(255,255,255,0.06)] bg-transparent'
                 }`}
               >
-                {tier.cta}
-              </Link>
-            </div>
-          ))}
+                <h3 className="text-[15px] font-semibold text-[#f5f2ed]">{tier.name}</h3>
+                <p className="text-[12px] text-[#8a8693] mt-1">{tier.description}</p>
+                <p className="text-[28px] font-semibold text-[#f5f2ed] mt-4">{tier.price}</p>
+                <ul className="mt-6 space-y-2.5">
+                  {tier.features.map((feature) => (
+                    <li key={feature} className="flex items-center gap-2.5 text-[13px] text-[#8a8693]">
+                      <Check size={14} className="text-[#d4a054] shrink-0" strokeWidth={2} />
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/auth"
+                  className={`block text-center mt-7 py-2.5 rounded-md text-[13px] font-medium transition-colors ${
+                    tier.highlighted
+                      ? 'bg-[#d4a054] hover:bg-[#c4903a] text-[#0e0e12] font-semibold'
+                      : 'border border-[rgba(255,255,255,0.1)] text-[#e8e4de] hover:bg-[rgba(255,255,255,0.04)]'
+                  }`}
+                >
+                  {tier.cta}
+                </Link>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-slate-200 mt-20">
-        <div className="max-w-6xl mx-auto px-6 py-12">
+      <footer className="border-t border-[rgba(255,255,255,0.06)] bg-[#0a0a10]">
+        <div className="max-w-5xl mx-auto px-6 py-12">
           <div className="flex flex-col md:flex-row justify-between gap-8">
             <div>
-              <span className="text-lg font-bold text-slate-900">
-                Context<span className="text-indigo-500">.ai</span>
+              <span className="text-[15px] font-semibold text-[#f5f2ed]">
+                Context<span className="text-[#d4a054]">.ai</span>
               </span>
-              <p className="text-sm text-slate-500 mt-2">Your workspace, simplified.</p>
+              <p className="text-[12px] text-[#5a5665] mt-2">Your workspace, simplified.</p>
             </div>
-            <div className="flex gap-12">
+            <div className="flex gap-14">
               <div>
-                <h4 className="text-sm font-semibold text-slate-900 mb-3">Product</h4>
-                <ul className="space-y-2 text-sm text-slate-500">
-                  <li><a href="#features" className="hover:text-slate-900">Features</a></li>
-                  <li><a href="#pricing" className="hover:text-slate-900">Pricing</a></li>
+                <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Product</h4>
+                <ul className="space-y-2 text-[12px] text-[#5a5665]">
+                  <li><a href="#features" className="hover:text-[#e8e4de] transition-colors">Features</a></li>
+                  <li><a href="#pricing" className="hover:text-[#e8e4de] transition-colors">Pricing</a></li>
                 </ul>
               </div>
               <div>
-                <h4 className="text-sm font-semibold text-slate-900 mb-3">Company</h4>
-                <ul className="space-y-2 text-sm text-slate-500">
-                  <li><a href="#" className="hover:text-slate-900">About</a></li>
-                  <li><a href="#" className="hover:text-slate-900">Contact</a></li>
+                <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Company</h4>
+                <ul className="space-y-2 text-[12px] text-[#5a5665]">
+                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">About</a></li>
+                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Contact</a></li>
                 </ul>
               </div>
               <div>
-                <h4 className="text-sm font-semibold text-slate-900 mb-3">Legal</h4>
-                <ul className="space-y-2 text-sm text-slate-500">
-                  <li><a href="#" className="hover:text-slate-900">Privacy</a></li>
-                  <li><a href="#" className="hover:text-slate-900">Terms</a></li>
+                <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Legal</h4>
+                <ul className="space-y-2 text-[12px] text-[#5a5665]">
+                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Privacy</a></li>
+                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Terms</a></li>
                 </ul>
               </div>
             </div>

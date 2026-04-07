@@ -14,13 +14,13 @@ const typeIcons = {
 } as const;
 
 const tagColors: Record<string, string> = {
-  blue: 'bg-blue-100 text-blue-700',
-  green: 'bg-emerald-100 text-emerald-700',
-  red: 'bg-red-100 text-red-700',
-  yellow: 'bg-amber-100 text-amber-700',
-  purple: 'bg-violet-100 text-violet-700',
-  pink: 'bg-pink-100 text-pink-700',
-  gray: 'bg-gray-100 text-gray-600',
+  blue: 'bg-blue-500/15 text-blue-400',
+  green: 'bg-emerald-500/15 text-emerald-400',
+  red: 'bg-red-500/15 text-red-400',
+  yellow: 'bg-amber-500/15 text-amber-400',
+  purple: 'bg-violet-500/15 text-violet-400',
+  pink: 'bg-pink-500/15 text-pink-400',
+  gray: 'bg-white/5 text-[#8a8693]',
 };
 
 function formatDate(dateStr: string): string {
@@ -44,22 +44,22 @@ export default function ContentCard({ item, onClick }: ContentCardProps) {
   return (
     <button
       onClick={() => onClick?.(item)}
-      className="flex w-full items-center gap-4 rounded-xl border border-gray-200 bg-white p-4 text-left transition-all hover:shadow-md hover:border-gray-300"
+      className="flex w-full items-center gap-4 rounded-xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] p-4 text-left transition-all hover:shadow-md hover:border-[rgba(255,255,255,0.1)]"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#1c1c26] text-[#8a8693]">
         <Icon size={20} />
       </div>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <h3 className="truncate text-sm font-medium text-gray-900">
+          <h3 className="truncate text-sm font-medium text-[#f5f2ed]">
             {item.title}
           </h3>
           {item.is_locked && (
-            <Lock size={14} className="shrink-0 text-amber-500" />
+            <Lock size={14} className="shrink-0 text-[#d4a054]" />
           )}
         </div>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-[#5a5665]">
           Modified {formatDate(item.updated_at)}
         </p>
       </div>

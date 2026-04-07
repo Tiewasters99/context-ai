@@ -38,18 +38,23 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [serverspaces] = useState<MockServerspace[]>([
     {
       id: '1',
-      name: 'Marketing Team',
+      name: 'Labib',
       matterspaces: [
-        { id: 'm1', name: 'Q2 Campaign' },
-        { id: 'm2', name: 'Brand Assets' },
+        { id: 'm1', name: 'Case Alpha' },
+        { id: 'm2', name: 'Case Beta' },
+        { id: 'm3', name: 'Compliance Review' },
       ],
     },
     {
       id: '2',
-      name: 'Product Dev',
+      name: 'Context.ai',
       matterspaces: [
-        { id: 'm3', name: 'Sprint Planning' },
-        { id: 'm4', name: 'Bug Triage' },
+        { id: 'm4', name: 'Marketing' },
+        { id: 'm5', name: 'Brand Assets' },
+        { id: 'm6', name: 'Product Dev' },
+        { id: 'm7', name: 'Architecture' },
+        { id: 'm8', name: 'Board of Directors' },
+        { id: 'm9', name: 'Real Estate Portfolio' },
       ],
     },
   ]);
@@ -74,97 +79,97 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
 
   return (
     <aside
-      className={`${sidebarWidth} h-screen flex flex-col shrink-0 transition-all duration-200 ease-in-out`}
-      style={{ backgroundColor: '#f1f5f9' }}
+      className={`${sidebarWidth} h-screen flex flex-col shrink-0 transition-all duration-200 ease-in-out border-r border-[rgba(255,255,255,0.08)] backdrop-blur-[30px]`}
+      style={{ backgroundColor: 'rgba(8, 8, 14, 0.82)' }}
     >
       {/* Brand + Collapse Toggle */}
-      <div className="flex items-center justify-between px-4 h-14 border-b border-slate-200">
+      <div className="flex items-center justify-between px-4 h-13 border-b border-[rgba(255,255,255,0.06)]">
         {!collapsed && (
-          <span className="text-base font-semibold text-slate-800 tracking-tight">
-            Context.ai
+          <span className="text-[15px] font-semibold text-[#f5f2ed] tracking-tight">
+            Context<span className="text-[#d4a054]">.ai</span>
           </span>
         )}
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-md hover:bg-slate-200/70 text-slate-500 transition-colors"
+          className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-[#5a5665] transition-colors"
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          <PanelLeft size={18} />
+          <PanelLeft size={16} strokeWidth={1.75} />
         </button>
       </div>
 
       {/* User Section */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-200">
-        <div className="w-8 h-8 rounded-full bg-slate-300 flex items-center justify-center text-sm font-medium text-slate-600 shrink-0">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[rgba(255,255,255,0.06)]">
+        <div className="w-7 h-7 rounded-full bg-[#d4a054] flex items-center justify-center text-[11px] font-semibold text-[#0e0e12] shrink-0">
           {displayName[0]?.toUpperCase() ?? 'U'}
         </div>
         {!collapsed && (
           <div className="flex items-center justify-between flex-1 min-w-0">
-            <span className="text-sm font-medium text-slate-700 truncate">
+            <span className="text-[13px] font-medium text-[#e8e4de] truncate">
               {displayName}
             </span>
             <Link
               to="/app/settings"
-              className="p-1 rounded-md hover:bg-slate-200/70 text-slate-400 transition-colors"
+              className="p-1 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-[#5a5665] transition-colors"
             >
-              <Settings size={15} />
+              <Settings size={14} strokeWidth={1.75} />
             </Link>
           </div>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-2 px-2">
-        {/* My Clientspace */}
+      <nav className="flex-1 overflow-y-auto py-3 px-2.5">
+        {/* My Contextspace */}
         <Link
           to="/app"
-          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
             isActive('/app')
-              ? 'bg-slate-200/80 text-slate-900 font-medium'
-              : 'text-slate-600 hover:bg-slate-200/50'
+              ? 'bg-[#16161d] text-[#f5f2ed] font-medium'
+              : 'text-[#8a8693] hover:bg-[rgba(255,255,255,0.04)]'
           }`}
         >
-          <Home size={18} className="shrink-0" />
-          {!collapsed && <span>My Clientspace</span>}
+          <Home size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>My Contextspace</span>}
         </Link>
 
         {/* Serverspaces Header */}
-        <div className="flex items-center justify-between mt-5 mb-1 px-3">
+        <div className="flex items-center justify-between mt-6 mb-1.5 px-3">
           {!collapsed && (
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+            <span className="text-[11px] font-semibold text-[#5a5665] uppercase tracking-wider">
               Serverspaces
             </span>
           )}
           <button
-            className="p-1 rounded-md hover:bg-slate-200/70 text-slate-400 transition-colors"
+            className="p-0.5 rounded hover:bg-[rgba(255,255,255,0.04)] text-[#5a5665] transition-colors"
             aria-label="Create new serverspace"
           >
-            <Plus size={15} />
+            <Plus size={14} strokeWidth={1.75} />
           </button>
         </div>
 
         {/* Serverspace List */}
-        <div className="space-y-0.5">
+        <div className="space-y-px">
           {serverspaces.map((space) => {
             const isExpanded = expandedSpaces.has(space.id);
             return (
               <div key={space.id}>
                 <button
                   onClick={() => toggleExpanded(space.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors text-left ${
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors text-left ${
                     isActive(`/app/server/${space.id}`)
-                      ? 'bg-slate-200/80 text-slate-900 font-medium'
-                      : 'text-slate-600 hover:bg-slate-200/50'
+                      ? 'bg-[#16161d] text-[#f5f2ed] font-medium'
+                      : 'text-[#8a8693] hover:bg-[rgba(255,255,255,0.04)]'
                   }`}
                 >
-                  <Users size={18} className="shrink-0" />
+                  <Users size={15} className="shrink-0" strokeWidth={1.75} />
                   {!collapsed && (
                     <>
                       <span className="flex-1 truncate">{space.name}</span>
                       {isExpanded ? (
-                        <ChevronDown size={14} className="text-slate-400 shrink-0" />
+                        <ChevronDown size={13} className="text-[#5a5665] shrink-0" />
                       ) : (
-                        <ChevronRight size={14} className="text-slate-400 shrink-0" />
+                        <ChevronRight size={13} className="text-[#5a5665] shrink-0" />
                       )}
                     </>
                   )}
@@ -172,15 +177,15 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
 
                 {/* Matterspaces */}
                 {isExpanded && !collapsed && (
-                  <div className="ml-5 pl-4 border-l border-slate-200 mt-0.5 space-y-0.5">
+                  <div className="ml-5 pl-3.5 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px">
                     {space.matterspaces.map((ms) => (
                       <Link
                         key={ms.id}
                         to={`/app/server/${space.id}/matter/${ms.id}`}
-                        className={`block px-3 py-1.5 rounded-md text-sm transition-colors ${
+                        className={`block px-2.5 py-1.5 rounded-md text-[12px] transition-colors ${
                           isActive(`/app/server/${space.id}/matter/${ms.id}`)
-                            ? 'bg-slate-200/80 text-slate-900 font-medium'
-                            : 'text-slate-500 hover:bg-slate-200/50 hover:text-slate-700'
+                            ? 'bg-[#16161d] text-[#f5f2ed] font-medium'
+                            : 'text-[#5a5665] hover:bg-[rgba(255,255,255,0.04)] hover:text-[#8a8693]'
                         }`}
                       >
                         {ms.name}
@@ -195,32 +200,32 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
       </nav>
 
       {/* Bottom Actions */}
-      <div className="border-t border-slate-200 p-2 space-y-0.5">
+      <div className="border-t border-[rgba(255,255,255,0.06)] p-2.5 space-y-px">
         <button
           onClick={() => { setAiAssistantEnabled(!aiAssistantEnabled); onToggleAssistant?.(); }}
-          className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
             aiAssistantEnabled
-              ? 'bg-indigo-50 text-indigo-700'
-              : 'text-slate-600 hover:bg-slate-200/50'
+              ? 'bg-[rgba(212,160,84,0.08)] text-[#d4a054]'
+              : 'text-[#8a8693] hover:bg-[rgba(255,255,255,0.04)]'
           }`}
         >
-          <Bot size={18} className="shrink-0" />
+          <Bot size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>AI Assistant</span>}
         </button>
 
         <Link
           to="/app/settings"
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-200/50 transition-colors"
+          className="flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] text-[#8a8693] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
         >
-          <Settings size={18} className="shrink-0" />
+          <Settings size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Settings</span>}
         </Link>
 
         <button
           onClick={() => signOut()}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-200/50 transition-colors"
+          className="w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] text-[#8a8693] hover:bg-[rgba(255,255,255,0.04)] transition-colors"
         >
-          <LogOut size={18} className="shrink-0" />
+          <LogOut size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Sign Out</span>}
         </button>
       </div>

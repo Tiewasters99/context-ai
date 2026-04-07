@@ -9,8 +9,8 @@ export default function PageView() {
   const [isLocked, setIsLocked] = useState(false);
 
   const tags = [
-    { id: 't1', name: 'Planning', color: 'bg-blue-100 text-blue-700' },
-    { id: 't2', name: 'Q2', color: 'bg-emerald-100 text-emerald-700' },
+    { id: 't1', name: 'Planning', color: 'bg-blue-500/15 text-blue-400' },
+    { id: 't2', name: 'Q2', color: 'bg-emerald-500/15 text-emerald-400' },
   ];
 
   return (
@@ -26,7 +26,7 @@ export default function PageView() {
               contentEditable
               suppressContentEditableWarning
               onBlur={(e) => setTitle(e.currentTarget.textContent ?? '')}
-              className="text-3xl font-bold text-slate-900 outline-none mb-1 empty:before:content-['Untitled'] empty:before:text-slate-300"
+              className="text-3xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled'] empty:before:text-[#5a5665]"
               data-placeholder="Untitled"
             >
               {title}
@@ -36,7 +36,7 @@ export default function PageView() {
             <div
               contentEditable
               suppressContentEditableWarning
-              className="mt-6 min-h-[400px] text-slate-700 leading-relaxed outline-none text-[15px] empty:before:content-['Start_writing,_or_press_/_for_commands...'] empty:before:text-slate-300"
+              className="mt-6 min-h-[400px] text-[#e8e4de] leading-relaxed outline-none text-[15px] empty:before:content-['Start_writing,_or_press_/_for_commands...'] empty:before:text-[#5a5665]"
             >
             </div>
           </div>
@@ -50,8 +50,8 @@ export default function PageView() {
                   onClick={() => setIsLocked(!isLocked)}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full ${
                     isLocked
-                      ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                      ? 'bg-[#d4a054]/10 text-[#d4a054] hover:bg-[#d4a054]/15'
+                      : 'bg-[#1c1c26] text-[#8a8693] hover:bg-[#22222e]'
                   }`}
                 >
                   {isLocked ? <Lock size={14} /> : <Unlock size={14} />}
@@ -61,7 +61,7 @@ export default function PageView() {
 
               {/* Tags */}
               <div>
-                <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 mb-2">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-[#8a8693] mb-2">
                   <Tag size={12} />
                   Tags
                 </div>
@@ -74,25 +74,25 @@ export default function PageView() {
                       {tag.name}
                     </span>
                   ))}
-                  <button className="px-2 py-0.5 rounded-full text-xs text-slate-400 border border-dashed border-slate-300 hover:border-slate-400 hover:text-slate-500 transition-colors">
+                  <button className="px-2 py-0.5 rounded-full text-xs text-[#5a5665] border border-dashed border-[rgba(255,255,255,0.1)] hover:border-[rgba(255,255,255,0.2)] hover:text-[#8a8693] transition-colors">
                     + Add
                   </button>
                 </div>
               </div>
 
               {/* Metadata */}
-              <div className="space-y-2 text-xs text-slate-500">
+              <div className="space-y-2 text-xs text-[#8a8693]">
                 <div className="flex justify-between">
                   <span>Created</span>
-                  <span className="text-slate-700">Apr 1, 2026</span>
+                  <span className="text-[#e8e4de]">Apr 1, 2026</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Modified</span>
-                  <span className="text-slate-700">Apr 4, 2026</span>
+                  <span className="text-[#e8e4de]">Apr 4, 2026</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Status</span>
-                  <span className={isLocked ? 'text-amber-600' : 'text-emerald-600'}>
+                  <span className={isLocked ? 'text-[#d4a054]' : 'text-[#4ade80]'}>
                     {isLocked ? 'Locked' : 'Editable'}
                   </span>
                 </div>

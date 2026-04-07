@@ -37,10 +37,10 @@ const serverspaceNames: Record<string, string> = {
 };
 
 const roleColors: Record<string, string> = {
-  owner: 'bg-amber-100 text-amber-700',
-  admin: 'bg-indigo-100 text-indigo-700',
-  member: 'bg-slate-100 text-slate-600',
-  viewer: 'bg-slate-50 text-slate-500',
+  owner: 'bg-amber-500/15 text-amber-400',
+  admin: 'bg-[#d4a054]/15 text-[#d4a054]',
+  member: 'bg-white/5 text-[#8a8693]',
+  viewer: 'bg-white/5 text-[#5a5665]',
 };
 
 export default function ServerspaceView() {
@@ -58,29 +58,29 @@ export default function ServerspaceView() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center">
-              <Users size={20} className="text-indigo-500" />
+            <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center">
+              <Users size={20} className="text-[#d4a054]" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">{name}</h1>
-              <p className="text-sm text-slate-500">{mockMembers.length} members</p>
+              <h1 className="text-2xl font-bold text-[#f5f2ed]">{name}</h1>
+              <p className="text-sm text-[#8a8693]">{mockMembers.length} members</p>
             </div>
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors">
+          <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#d4a054] hover:bg-[#c4903a] text-white text-sm font-medium transition-colors">
             <UserPlus size={16} /> Invite
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-slate-200 mb-6">
+        <div className="flex gap-1 border-b border-[rgba(255,255,255,0.06)] mb-6">
           {tabs.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
-                  ? 'border-indigo-500 text-indigo-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
+                  ? 'border-[#d4a054] text-[#d4a054]'
+                  : 'border-transparent text-[#8a8693] hover:text-[#e8e4de]'
               }`}
             >
               {tab}
@@ -92,7 +92,7 @@ export default function ServerspaceView() {
         {activeTab !== 'Members' ? (
           <div>
             <div className="flex justify-end mb-4">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors">
+              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-[#8a8693] hover:bg-[#1c1c26] transition-colors">
                 <Plus size={14} /> New {activeTab.slice(0, -1)}
               </button>
             </div>
@@ -105,14 +105,14 @@ export default function ServerspaceView() {
                 />
               ))}
               {(mockContent[activeTab] ?? []).length === 0 && (
-                <p className="text-center text-slate-400 py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
+                <p className="text-center text-[#5a5665] py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
               )}
             </div>
           </div>
         ) : (
           <div>
             <div className="flex justify-end mb-4">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors">
+              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#d4a054] hover:bg-[#c4903a] text-white text-sm font-medium transition-colors">
                 <UserPlus size={14} /> Invite Members
               </button>
             </div>
@@ -120,14 +120,14 @@ export default function ServerspaceView() {
               {mockMembers.map((member) => (
                 <div
                   key={member.id}
-                  className="flex items-center gap-4 p-4 rounded-xl border border-slate-200"
+                  className="flex items-center gap-4 p-4 rounded-xl border border-[rgba(255,255,255,0.06)]"
                 >
-                  <div className="w-9 h-9 rounded-full bg-slate-200 flex items-center justify-center text-sm font-medium text-slate-600">
+                  <div className="w-9 h-9 rounded-full bg-[#1c1c26] flex items-center justify-center text-sm font-medium text-[#8a8693]">
                     {member.display_name?.[0] ?? '?'}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900">{member.display_name}</p>
-                    <p className="text-xs text-slate-500">Joined {new Date(member.joined_at).toLocaleDateString()}</p>
+                    <p className="text-sm font-medium text-[#f5f2ed]">{member.display_name}</p>
+                    <p className="text-xs text-[#5a5665]">Joined {new Date(member.joined_at).toLocaleDateString()}</p>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${roleColors[member.role]}`}>
                     {member.role}

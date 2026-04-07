@@ -17,15 +17,18 @@ const queryClient = new QueryClient();
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
 
-  if (loading) {
+  // TODO: Remove this bypass before production
+  const DEV_BYPASS_AUTH = true;
+
+  if (loading && !DEV_BYPASS_AUTH) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Spinner size="lg" />
       </div>
     );
   }
 
-  if (!user) {
+  if (!user && !DEV_BYPASS_AUTH) {
     return <Navigate to="/auth" replace />;
   }
 

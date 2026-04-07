@@ -72,12 +72,12 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       )}
 
       <div
-        className={`fixed top-0 right-0 h-full w-80 bg-zinc-900 border-l border-zinc-800 z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out ${
+        className={`fixed top-0 right-0 h-full w-80 border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out backdrop-blur-[30px] ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)]">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-white">Context Assistant</h2>
             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400">
@@ -86,25 +86,25 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
+            className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Mode Selector */}
-        <div className="px-4 py-2 border-b border-zinc-800 relative">
+        <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.08)] relative">
           <button
             onClick={() => setModeDropdownOpen(!modeDropdownOpen)}
-            className="flex items-center gap-2 w-full px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm text-zinc-300 transition-colors"
+            className="flex items-center gap-2 w-full px-3 py-2 rounded-lg bg-[rgba(20,20,30,0.8)] hover:bg-[rgba(40,40,55,0.8)] text-sm text-[#e8e4de] transition-colors"
           >
             <ActiveIcon className="h-3.5 w-3.5 text-indigo-400" />
             <span className="flex-1 text-left">{modeConfig[mode].label}</span>
-            <ChevronDown className={`h-3.5 w-3.5 text-zinc-500 transition-transform ${modeDropdownOpen ? 'rotate-180' : ''}`} />
+            <ChevronDown className={`h-3.5 w-3.5 text-[#5a5665] transition-transform ${modeDropdownOpen ? 'rotate-180' : ''}`} />
           </button>
 
           {modeDropdownOpen && (
-            <div className="absolute left-4 right-4 top-full mt-1 bg-zinc-800 border border-zinc-700 rounded-lg overflow-hidden shadow-xl z-10">
+            <div className="absolute left-4 right-4 top-full mt-1 bg-[rgba(20,20,30,0.8)] border border-[rgba(255,255,255,0.08)] rounded-lg overflow-hidden shadow-xl z-10">
               {(Object.keys(modeConfig) as AssistantMode[]).map((key) => {
                 const { icon: Icon, label, description } = modeConfig[key];
                 return (
@@ -114,14 +114,14 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                       setMode(key);
                       setModeDropdownOpen(false);
                     }}
-                    className={`flex items-start gap-3 w-full px-3 py-2.5 text-left hover:bg-zinc-700 transition-colors ${
-                      mode === key ? 'bg-zinc-700/50' : ''
+                    className={`flex items-start gap-3 w-full px-3 py-2.5 text-left hover:bg-[rgba(40,40,55,0.8)] transition-colors ${
+                      mode === key ? 'bg-[rgba(40,40,55,0.8)]/50' : ''
                     }`}
                   >
                     <Icon className="h-4 w-4 mt-0.5 text-indigo-400 shrink-0" />
                     <div>
                       <div className="text-sm font-medium text-white">{label}</div>
-                      <div className="text-xs text-zinc-400">{description}</div>
+                      <div className="text-xs text-[#8a8693]">{description}</div>
                     </div>
                   </button>
                 );
@@ -141,7 +141,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                 className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-indigo-600 text-white rounded-br-sm'
-                    : 'bg-zinc-800 text-zinc-200 rounded-bl-sm'
+                    : 'bg-[rgba(20,20,30,0.8)] text-[#e8e4de] rounded-bl-sm'
                 }`}
               >
                 {msg.content}
@@ -152,8 +152,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         </div>
 
         {/* Input */}
-        <div className="px-4 py-3 border-t border-zinc-800">
-          <div className="flex items-center gap-2 bg-zinc-800 rounded-lg px-3 py-2">
+        <div className="px-4 py-3 border-t border-[rgba(255,255,255,0.08)]">
+          <div className="flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2">
             <input
               type="text"
               value={input}
@@ -165,7 +165,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             <button
               onClick={handleSend}
               disabled={!input.trim()}
-              className="p-1 rounded text-zinc-400 hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-zinc-400 transition-colors"
+              className="p-1 rounded text-[#8a8693] hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-[#8a8693] transition-colors"
             >
               <Send className="h-4 w-4" />
             </button>

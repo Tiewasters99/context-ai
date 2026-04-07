@@ -1,18 +1,97 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/playfair-display";
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #6366f1;
-  --color-primary-hover: #4f46e5;
-  --color-primary-light: #e0e7ff;
-  --color-secondary: #1e293b;
-  --color-surface: #ffffff;
-  --color-surface-hover: #f8fafc;
-  --color-border: #e2e8f0;
-  --color-text: #0f172a;
-  --color-text-secondary: #64748b;
-  --color-sidebar: #f1f5f9;
-  --color-sidebar-active: #e2e8f0;
-  --color-success: #10b981;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
+  --font-sans: "Inter Variable", system-ui, -apple-system, sans-serif;
+
+  /* Warm palette over GPU cluster background */
+  --color-primary: #d4a054;
+  --color-primary-hover: #c4903a;
+  --color-primary-light: rgba(212, 160, 84, 0.12);
+  --color-accent: #d4a054;
+
+  /* Glass surfaces */
+  --color-bg: transparent;
+  --color-surface: rgba(10, 10, 16, 0.72);
+  --color-surface-raised: rgba(18, 18, 28, 0.78);
+  --color-surface-hover: rgba(30, 30, 44, 0.7);
+  --color-surface-active: rgba(40, 40, 58, 0.7);
+
+  /* Borders — glass edges */
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --color-text: #e8e4de;
+  --color-text-secondary: #9a96a3;
+  --color-text-muted: #6a6675;
+  --color-text-bright: #f5f2ed;
+
+  /* Sidebar */
+  --color-sidebar: rgba(8, 8, 14, 0.82);
+  --color-sidebar-active: rgba(212, 160, 84, 0.1);
+  --color-sidebar-hover: rgba(255, 255, 255, 0.05);
+
+  /* Status */
+  --color-success: #4ade80;
+  --color-warning: #fbbf24;
+  --color-danger: #f87171;
+}
+
+/* Global typography */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: "Inter Variable", system-ui, -apple-system, sans-serif;
+  color: #e8e4de;
+  letter-spacing: -0.011em;
+  font-feature-settings: "cv11", "ss01", "ss03";
+  background: #0a0a10 url('/gpu-cluster.png') center center / cover fixed no-repeat;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.025em;
+  font-weight: 600;
+  color: #f5f2ed;
+}
+
+/* Refined scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Selection */
+::selection {
+  background: rgba(212, 160, 84, 0.35);
+  color: #f5f2ed;
+}
+
+/* Glass panel utility */
+.glass {
+  background: rgba(10, 10, 16, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-strong {
+  background: rgba(8, 8, 14, 0.85);
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }

@@ -1,5 +1,5 @@
 // Core enums
-export type SpaceType = 'clientspace' | 'serverspace' | 'matterspace';
+export type SpaceType = 'contextspace' | 'serverspace' | 'matterspace';
 export type ContentType = 'page' | 'list' | 'database' | 'document';
 export type AssistantMode = 'blind' | 'observer' | 'collaborative';
 export type PricingTier = 'free' | 'pro' | 'max';
@@ -17,7 +17,7 @@ export interface Profile {
   updated_at: string;
 }
 
-export interface Clientspace {
+export interface Contextspace {
   id: string;
   user_id: string;
   name: string;
@@ -28,7 +28,7 @@ export interface Clientspace {
 
 export interface Serverspace {
   id: string;
-  clientspace_id: string;
+  contextspace_id: string;
   name: string;
   description?: string;
   cover_url?: string;

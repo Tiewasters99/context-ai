@@ -13,9 +13,9 @@ interface ListItemData {
 }
 
 const statusConfig: Record<ItemStatus, { icon: typeof Circle; label: string; color: string }> = {
-  todo: { icon: Circle, label: 'To Do', color: 'text-slate-400' },
-  in_progress: { icon: Clock, label: 'In Progress', color: 'text-amber-500' },
-  done: { icon: CheckCircle2, label: 'Done', color: 'text-emerald-500' },
+  todo: { icon: Circle, label: 'To Do', color: 'text-[#5a5665]' },
+  in_progress: { icon: Clock, label: 'In Progress', color: 'text-[#d4a054]' },
+  done: { icon: CheckCircle2, label: 'Done', color: 'text-[#4ade80]' },
 };
 
 const nextStatus: Record<ItemStatus, ItemStatus> = {
@@ -62,17 +62,17 @@ export default function ListView() {
 
   return (
     <div className="max-w-4xl mx-auto px-8 py-8">
-      <h1 className="text-2xl font-bold text-slate-900">{listTitle}</h1>
+      <h1 className="text-2xl font-bold text-[#f5f2ed]">{listTitle}</h1>
 
       {/* Progress bar */}
       <div className="mt-4 mb-6">
-        <div className="flex items-center justify-between text-xs text-slate-500 mb-1.5">
+        <div className="flex items-center justify-between text-xs text-[#8a8693] mb-1.5">
           <span>{doneCount} of {items.length} complete</span>
           <span>{progress}%</span>
         </div>
-        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+        <div className="h-2 bg-[#1c1c26] rounded-full overflow-hidden">
           <div
-            className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+            className="h-full bg-[#4ade80] rounded-full transition-all duration-300"
             style={{ width: `${progress}%` }}
           />
         </div>
@@ -86,8 +86,8 @@ export default function ListView() {
           const StatusIcon = config.icon;
 
           return (
-            <div key={item.id} className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors">
+            <div key={item.id} className="border border-[rgba(255,255,255,0.06)] rounded-xl overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3 hover:bg-[#16161d] transition-colors">
                 {/* Status toggle */}
                 <button
                   onClick={() => cycleStatus(item.id)}
@@ -98,14 +98,14 @@ export default function ListView() {
                 </button>
 
                 {/* Title */}
-                <span className={`flex-1 text-sm ${item.status === 'done' ? 'line-through text-slate-400' : 'text-slate-900'}`}>
+                <span className={`flex-1 text-sm ${item.status === 'done' ? 'line-through text-[#5a5665]' : 'text-[#f5f2ed]'}`}>
                   {item.title}
                 </span>
 
                 {/* Tags */}
                 <div className="hidden sm:flex gap-1.5">
                   {item.tags.map((tag) => (
-                    <span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-slate-100 text-slate-600">
+                    <span key={tag} className="px-2 py-0.5 rounded-full text-xs bg-white/5 text-[#8a8693]">
                       {tag}
                     </span>
                   ))}
@@ -114,14 +114,14 @@ export default function ListView() {
                 {/* Expand */}
                 <button
                   onClick={() => toggleExpand(item.id)}
-                  className="p-1 rounded hover:bg-slate-100 text-slate-400 transition-colors"
+                  className="p-1 rounded hover:bg-[#1c1c26] text-[#5a5665] transition-colors"
                 >
                   {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </button>
               </div>
 
               {isExpanded && (
-                <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 text-sm text-slate-600">
+                <div className="px-4 py-3 bg-[#16161d] border-t border-[rgba(255,255,255,0.06)] text-sm text-[#8a8693]">
                   {item.description}
                 </div>
               )}
@@ -131,7 +131,7 @@ export default function ListView() {
       </div>
 
       {/* Add item */}
-      <button className="flex items-center gap-2 mt-4 px-4 py-2.5 rounded-xl border border-dashed border-slate-300 text-sm text-slate-500 hover:border-slate-400 hover:text-slate-600 transition-colors w-full">
+      <button className="flex items-center gap-2 mt-4 px-4 py-2.5 rounded-xl border border-dashed border-[rgba(255,255,255,0.1)] text-sm text-[#5a5665] hover:border-[rgba(255,255,255,0.2)] hover:text-[#8a8693] transition-colors w-full">
         <Plus size={16} /> Add item
       </button>
     </div>

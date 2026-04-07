@@ -42,25 +42,25 @@ export default function MatterspaceView() {
       <div className="max-w-5xl mx-auto px-8 py-8">
         {/* Header */}
         <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center">
-            <Folder size={20} className="text-amber-500" />
+          <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center">
+            <Folder size={20} className="text-[#d4a054]" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">{info.name}</h1>
-            {info.description && <p className="text-sm text-slate-500">{info.description}</p>}
+            <h1 className="text-2xl font-bold text-[#f5f2ed]">{info.name}</h1>
+            {info.description && <p className="text-sm text-[#8a8693]">{info.description}</p>}
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-slate-200 mb-6 mt-6">
+        <div className="flex gap-1 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">
           {tabs.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
-                  ? 'border-amber-500 text-amber-600'
-                  : 'border-transparent text-slate-500 hover:text-slate-700'
+                  ? 'border-[#d4a054] text-[#d4a054]'
+                  : 'border-transparent text-[#8a8693] hover:text-[#e8e4de]'
               }`}
             >
               {tab}
@@ -70,7 +70,7 @@ export default function MatterspaceView() {
 
         {/* Content */}
         <div className="flex justify-end mb-4">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors">
+          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-[#8a8693] hover:bg-[#1c1c26] transition-colors">
             <Plus size={14} /> New {activeTab.slice(0, -1)}
           </button>
         </div>
@@ -83,7 +83,7 @@ export default function MatterspaceView() {
             />
           ))}
           {(mockContent[activeTab] ?? []).length === 0 && (
-            <p className="text-center text-slate-400 py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
+            <p className="text-center text-[#5a5665] py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
           )}
         </div>
       </div>
