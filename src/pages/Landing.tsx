@@ -58,11 +58,11 @@ export default function Landing() {
 
         {/* Hero — just words, no boxes */}
         <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-20">
-          <h1 className="text-[52px] sm:text-[64px] font-bold text-white leading-[1.05] tracking-tight text-center" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 40px rgba(0,0,0,0.6)' }}>
+          <h1 className="text-[72px] sm:text-[90px] font-black text-white leading-[1.02] tracking-tight text-center" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 100px rgba(0,0,0,0.8)' }}>
             Your workspace,<br />
-            <span className="text-[#d4a054]" style={{ textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 30px rgba(212,160,84,0.3)' }}>simplified.</span>
+            <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>simplified.</span>
           </h1>
-          <p className="mt-6 text-[18px] text-white max-w-lg mx-auto leading-relaxed text-center font-medium" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9), 0 0 20px rgba(0,0,0,0.5)' }}>
+          <p className="mt-8 text-[26px] text-white max-w-xl mx-auto leading-relaxed text-center font-bold" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,0.7)' }}>
             The productivity platform that gets out of your way. Organize your work, collaborate with your team, and let Context.ai do the rest.
           </p>
           <div className="mt-10">
