@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, Cloud, HardDrive, FileText, X, Check, Loader2 } from 'lucide-react';
+import { Upload, Cloud, HardDrive, FileText, X } from 'lucide-react';
 
 interface ImportedFile {
   id: string;
@@ -55,23 +55,6 @@ export default function ImportPanel() {
     setFiles((prev) => prev.filter((f) => f.id !== id));
   };
 
-  const statusIcon = (status: ImportedFile['status']) => {
-    switch (status) {
-      case 'uploading': return <Loader2 size={14} className="animate-spin text-white/50" />;
-      case 'indexing': return <Loader2 size={14} className="animate-spin text-[#e8b84a]" />;
-      case 'indexed': return <Check size={14} className="text-emerald-400" />;
-      default: return <Check size={14} className="text-emerald-400" />;
-    }
-  };
-
-  const statusLabel = (status: ImportedFile['status']) => {
-    switch (status) {
-      case 'uploading': return 'Uploading...';
-      case 'indexing': return 'Indexing for AI...';
-      case 'indexed': return 'Ready';
-      default: return 'Ready';
-    }
-  };
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -103,8 +86,8 @@ export default function ImportPanel() {
               >
                 <c.icon size={16} className="text-white/40" strokeWidth={1.75} />
                 <span className="text-[12px] text-white/70">{c.name}</span>
-                {c.connected && <span className="text-[10px] text-emerald-400 ml-auto">Connected</span>}
-                {!c.connected && <span className="text-[10px] text-white/20 ml-auto">Connect</span>}
+                {c.connected && <span className="text-[12px] text-emerald-400 font-medium ml-auto">Connected</span>}
+                {!c.connected && <span className="text-[12px] text-white font-medium ml-auto">Connect</span>}
               </button>
             ))}
           </div>
@@ -125,10 +108,6 @@ export default function ImportPanel() {
                 <div className="flex-1 min-w-0">
                   <p className="text-[13px] text-white truncate">{file.name}</p>
                   <p className="text-[10px] text-white/30">{file.size} · {file.type.toUpperCase()}</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-white/40">{statusLabel(file.status)}</span>
-                  {statusIcon(file.status)}
                 </div>
                 <button
                   onClick={() => removeFile(file.id)}

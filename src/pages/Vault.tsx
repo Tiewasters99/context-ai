@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
@@ -20,6 +20,40 @@ export default function Vault() {
   const [illuminated, setIlluminated] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<VaultView>('home');
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  const musicRef = useRef<HTMLAudioElement | null>(null);
+  const musicInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const [vaultBg, setVaultBg] = useState('black');
+
+  const handleMusicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
+    const url = URL.createObjectURL(file);
+    const audio = new Audio(url);
+    audio.loop = true;
+    audio.volume = 0.5;
+    audio.play().catch(() => {
+      // Browser blocked autoplay — will play on next toggle click
+    });
+    musicRef.current = audio;
+    setMusicPlaying(true);
+  };
+
+  const toggleMusic = () => {
+    if (!musicRef.current) { musicInputRef.current?.click(); return; }
+    if (musicPlaying) { musicRef.current.pause(); }
+    else { musicRef.current.play(); }
+    setMusicPlaying(!musicPlaying);
+  };
+
+  const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setVaultBg(`url(${url}) center/cover no-repeat`);
+  };
   const navigate = useNavigate();
 
   const handleMenuClick = (view: VaultView) => {
@@ -53,7 +87,7 @@ export default function Vault() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black flex">
+    <div className="fixed inset-0 z-50 flex" style={{ background: vaultBg }}>
       {/* Menu panel */}
       <div
         className={`h-full flex flex-col border-r border-[rgba(255,255,255,0.08)] transition-all duration-700 ease-in-out overflow-hidden shrink-0 ${
@@ -171,6 +205,38 @@ export default function Vault() {
           renderContent()
         )}
       </div>
+      {/* Bottom right — music & cover */}
+      {illuminated && (
+        <div className="fixed bottom-5 right-5 flex items-center gap-2 z-50">
+          {vaultBg !== 'black' && (
+            <button
+              onClick={() => setVaultBg('black')}
+              className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/50 hover:text-white transition-all hover:scale-110"
+              title="Remove cover"
+            >
+              <X size={22} strokeWidth={1.75} />
+            </button>
+          )}
+          <button
+            onClick={() => coverInputRef.current?.click()}
+            className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/50 hover:text-white transition-all hover:scale-110"
+            title="Set Vault cover"
+          >
+            <Image size={22} strokeWidth={1.75} />
+          </button>
+          <button
+            onClick={toggleMusic}
+            className={`p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] transition-all hover:scale-110 ${
+              musicPlaying ? 'text-[#e8b84a] shadow-[0_0_15px_rgba(232,184,74,0.3)]' : 'text-white/50 hover:text-white'
+            }`}
+            title={musicPlaying ? 'Pause music' : 'Play background music'}
+          >
+            <Music size={22} strokeWidth={1.75} />
+          </button>
+          <input ref={musicInputRef} type="file" accept="audio/*" onChange={handleMusicUpload} className="hidden" />
+          <input ref={coverInputRef} type="file" accept="image/*" onChange={handleCoverUpload} className="hidden" />
+        </div>
+      )}
     </div>
   );
 }
