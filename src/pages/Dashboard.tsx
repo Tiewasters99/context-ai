@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder } from 'lucide-react';
+import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import CoverImage from '@/components/layout/CoverImage';
+import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import type { ContentType } from '@/lib/types';
 
 interface ContentSummary {
@@ -145,6 +147,55 @@ export default function Dashboard() {
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [expandedContent, setExpandedContent] = useState<Set<string>>(new Set());
 
+  const { cardRef, toggleFullscreen } = useDraggableResizable();
+  const [showCard, setShowCard] = useState(true);
+  const [enteringVault, setEnteringVault] = useState(false);
+  const doorRef = useRef<HTMLDivElement>(null);
+  const doorDragged = useRef(false);
+
+  useEffect(() => {
+    const door = doorRef.current;
+    if (!door) return;
+
+    let isDragging = false;
+    let startX = 0, startY = 0, origX = 0, origY = 0;
+
+    const onDown = (e: PointerEvent) => {
+      isDragging = true;
+      doorDragged.current = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      origX = door.offsetLeft;
+      origY = door.offsetTop;
+      door.style.transform = 'none';
+      door.style.cursor = 'grabbing';
+      e.preventDefault();
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) doorDragged.current = true;
+      door.style.left = (origX + dx) + 'px';
+      door.style.top = (origY + dy) + 'px';
+    };
+
+    const onUp = () => {
+      isDragging = false;
+      door.style.cursor = 'grab';
+    };
+
+    door.addEventListener('pointerdown', onDown);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      door.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, []);
+
   const toggle = (_set: Set<string>, setFn: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) => {
     setFn((prev) => {
       const next = new Set(prev);
@@ -155,33 +206,33 @@ export default function Dashboard() {
   };
 
   return (
-    <div>
+    <div className="min-h-screen relative">
       <CoverImage editable />
 
-      <div className="max-w-4xl mx-auto px-8 py-10">
+      {showCard && <div
+        ref={cardRef}
+        className="max-w-2xl mx-auto px-6 py-8 mt-[55vh] mb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] cursor-grab select-none"
+        style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}
+      >
+        {/* Drag handle + fullscreen + close */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <button
+            onClick={() => setShowCard(false)}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+            title="Close"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <FullscreenToggle onToggle={toggleFullscreen} />
+        </div>
         <h1 className="text-[22px] font-semibold text-[#f5f2ed]">
           Welcome back, {displayName}
         </h1>
-        <p className="text-[13px] text-[#8a8693] mt-1.5 tracking-wide">Here's what's happening in your workspace.</p>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-3 mt-8">
-          {quickActions.map((a) => (
-            <button
-              key={a.label}
-              onClick={() => navigate(a.path)}
-              className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.06)] hover:border-[rgba(255,255,255,0.1)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
-            >
-              <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
-                <a.icon size={15} className="text-[#d4a054]" strokeWidth={1.75} />
-              </div>
-              <span className="text-[13px] font-medium text-[#e8e4de]">{a.label}</span>
-            </button>
-          ))}
-        </div>
+        <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium">Here's what's happening in your Contextspace.</p>
 
         {/* Serverspaces Explorer */}
-        <section className="mt-12">
+        <section className="mt-8">
           <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Serverspaces</h2>
           <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] overflow-hidden">
             {mockServerspaces.map((server, serverIdx) => {
@@ -200,7 +251,7 @@ export default function Dashboard() {
                       </span>
                       <Users size={15} className="text-[#d4a054]" strokeWidth={1.75} />
                       <span className="text-[13px] font-medium text-[#f5f2ed]">{server.name}</span>
-                      <span className="text-[11px] text-[#5a5665] ml-auto font-normal">
+                      <span className="text-[11px] text-white ml-auto font-normal">
                         {server.members} members · {server.matterspaces.length} matters
                       </span>
                     </button>
@@ -308,7 +359,61 @@ export default function Dashboard() {
             })}
           </div>
         </section>
+
+        {/* Quick Actions */}
+        <div className="grid grid-cols-3 gap-3 mt-10">
+          {quickActions.map((a) => (
+            <button
+              key={a.label}
+              onClick={() => navigate(a.path)}
+              className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.06)] hover:border-[rgba(255,255,255,0.1)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
+            >
+              <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
+                <a.icon size={15} className="text-[#d4a054]" strokeWidth={1.75} />
+              </div>
+              <span className="text-[13px] font-medium text-[#e8e4de]">{a.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>}
+
+      {/* The Door — entrance to the Vault (draggable) */}
+      <div
+        ref={doorRef}
+        className="absolute cursor-grab active:cursor-grabbing select-none"
+        style={{ left: '50%', top: '40%', transform: 'translateX(-50%)' }}
+      >
+        <button
+          onClick={(e) => {
+            if (doorDragged.current) { doorDragged.current = false; return; }
+            setEnteringVault(true);
+            setTimeout(() => navigate('/app/vault'), 1200);
+            e.stopPropagation();
+          }}
+          className="group relative flex flex-col items-center gap-4"
+        >
+          {/* Glowing arch */}
+          <div className="relative w-24 h-36 rounded-t-full border-2 border-[#e8b84a]/30 group-hover:border-[#e8b84a]/70 transition-all duration-700 overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-t from-[#e8b84a]/5 to-[#e8b84a]/20 group-hover:from-[#e8b84a]/10 group-hover:to-[#e8b84a]/40 transition-all duration-700" />
+            <div className="absolute inset-[3px] rounded-t-full bg-gradient-to-t from-black via-black/80 to-[#e8b84a]/10 group-hover:to-[#e8b84a]/30 transition-all duration-700" />
+            {/* Light at the end */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-white/40 group-hover:bg-white group-hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] group-hover:scale-150 transition-all duration-700" />
+            <DoorOpen size={20} className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[#e8b84a]/30 group-hover:text-[#e8b84a] transition-all duration-500" />
+          </div>
+          <span className="text-[12px] text-white/20 group-hover:text-[#e8b84a] tracking-[0.25em] uppercase font-medium transition-all duration-500">
+            Enter the Vault
+          </span>
+        </button>
       </div>
+
+      {/* Vault entrance animation — full screen fade to black */}
+      {enteringVault && (
+        <div className="fixed inset-0 z-50 bg-black animate-[fadeIn_1.2s_ease-in-out_forwards] flex items-center justify-center">
+          <p className="text-[14px] text-white/0 animate-[fadeInText_1.2s_ease-in-out_0.4s_forwards] tracking-[0.4em] uppercase font-medium">
+            The Vault
+          </p>
+        </div>
+      )}
     </div>
   );
 }

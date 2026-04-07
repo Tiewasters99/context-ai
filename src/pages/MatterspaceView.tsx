@@ -4,6 +4,8 @@ import { Folder, Plus } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import ContentCard from '@/components/content/ContentCard';
 import type { ContentItem } from '@/lib/types';
+import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 
 const tabs = ['Pages', 'Lists', 'Databases', 'Documents'] as const;
 
@@ -32,6 +34,7 @@ export default function MatterspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<typeof tabs[number]>('Pages');
+  const { cardRef, toggleFullscreen } = useDraggableResizable();
 
   const info = matterspaceNames[id ?? ''] ?? { name: 'Matterspace', description: '' };
 
@@ -39,7 +42,13 @@ export default function MatterspaceView() {
     <div>
       <CoverImage editable />
 
-      <div className="max-w-5xl mx-auto px-8 py-8">
+      <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Drag handle + fullscreen */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <div className="w-6" />
+          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <FullscreenToggle onToggle={toggleFullscreen} />
+        </div>
         {/* Header */}
         <div className="flex items-center gap-3 mb-2">
           <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center">
@@ -47,7 +56,7 @@ export default function MatterspaceView() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-[#f5f2ed]">{info.name}</h1>
-            {info.description && <p className="text-sm text-[#8a8693]">{info.description}</p>}
+            {info.description && <p className="text-sm text-white/80">{info.description}</p>}
           </div>
         </div>
 
@@ -60,7 +69,7 @@ export default function MatterspaceView() {
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
                   ? 'border-[#d4a054] text-[#d4a054]'
-                  : 'border-transparent text-[#8a8693] hover:text-[#e8e4de]'
+                  : 'border-transparent text-white/80 hover:text-[#e8e4de]'
               }`}
             >
               {tab}
@@ -70,7 +79,7 @@ export default function MatterspaceView() {
 
         {/* Content */}
         <div className="flex justify-end mb-4">
-          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-[#8a8693] hover:bg-[#1c1c26] transition-colors">
+          <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-white/80 hover:bg-[#1c1c26] transition-colors">
             <Plus size={14} /> New {activeTab.slice(0, -1)}
           </button>
         </div>
@@ -83,7 +92,7 @@ export default function MatterspaceView() {
             />
           ))}
           {(mockContent[activeTab] ?? []).length === 0 && (
-            <p className="text-center text-[#5a5665] py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
+            <p className="text-center text-white/70 py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
           )}
         </div>
       </div>

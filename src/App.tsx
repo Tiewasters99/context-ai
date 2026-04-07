@@ -11,6 +11,7 @@ import MatterspaceView from '@/pages/MatterspaceView';
 import PageView from '@/pages/PageView';
 import ListView from '@/pages/ListView';
 import NotFound from '@/pages/NotFound';
+import Vault from '@/pages/Vault';
 
 const queryClient = new QueryClient();
 
@@ -56,6 +57,7 @@ export default function App() {
               <Route path="matterspace/:id" element={<MatterspaceView />} />
               <Route path="page/:id" element={<PageView />} />
               <Route path="list/:id" element={<ListView />} />
+              <Route path="vault" element={<Vault />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

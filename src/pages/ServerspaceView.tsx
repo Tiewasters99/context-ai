@@ -4,6 +4,8 @@ import { Users, UserPlus, Plus } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import ContentCard from '@/components/content/ContentCard';
 import type { ContentItem, ServerspaceMember } from '@/lib/types';
+import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 
 const tabs = ['Pages', 'Lists', 'Databases', 'Documents', 'Members'] as const;
 
@@ -39,14 +41,15 @@ const serverspaceNames: Record<string, string> = {
 const roleColors: Record<string, string> = {
   owner: 'bg-amber-500/15 text-amber-400',
   admin: 'bg-[#d4a054]/15 text-[#d4a054]',
-  member: 'bg-white/5 text-[#8a8693]',
-  viewer: 'bg-white/5 text-[#5a5665]',
+  member: 'bg-white/5 text-white/80',
+  viewer: 'bg-white/5 text-white/70',
 };
 
 export default function ServerspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<typeof tabs[number]>('Pages');
+  const { cardRef, toggleFullscreen } = useDraggableResizable();
 
   const name = serverspaceNames[id ?? ''] ?? 'Serverspace';
 
@@ -54,7 +57,13 @@ export default function ServerspaceView() {
     <div>
       <CoverImage editable />
 
-      <div className="max-w-5xl mx-auto px-8 py-8">
+      <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Drag handle + fullscreen */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <div className="w-6" />
+          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <FullscreenToggle onToggle={toggleFullscreen} />
+        </div>
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -63,7 +72,7 @@ export default function ServerspaceView() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-[#f5f2ed]">{name}</h1>
-              <p className="text-sm text-[#8a8693]">{mockMembers.length} members</p>
+              <p className="text-sm text-white/80">{mockMembers.length} members</p>
             </div>
           </div>
           <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#d4a054] hover:bg-[#c4903a] text-white text-sm font-medium transition-colors">
@@ -80,7 +89,7 @@ export default function ServerspaceView() {
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
                   ? 'border-[#d4a054] text-[#d4a054]'
-                  : 'border-transparent text-[#8a8693] hover:text-[#e8e4de]'
+                  : 'border-transparent text-white/80 hover:text-[#e8e4de]'
               }`}
             >
               {tab}
@@ -92,7 +101,7 @@ export default function ServerspaceView() {
         {activeTab !== 'Members' ? (
           <div>
             <div className="flex justify-end mb-4">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-[#8a8693] hover:bg-[#1c1c26] transition-colors">
+              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-white/80 hover:bg-[#1c1c26] transition-colors">
                 <Plus size={14} /> New {activeTab.slice(0, -1)}
               </button>
             </div>
@@ -105,7 +114,7 @@ export default function ServerspaceView() {
                 />
               ))}
               {(mockContent[activeTab] ?? []).length === 0 && (
-                <p className="text-center text-[#5a5665] py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
+                <p className="text-center text-white/70 py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
               )}
             </div>
           </div>
@@ -122,12 +131,12 @@ export default function ServerspaceView() {
                   key={member.id}
                   className="flex items-center gap-4 p-4 rounded-xl border border-[rgba(255,255,255,0.06)]"
                 >
-                  <div className="w-9 h-9 rounded-full bg-[#1c1c26] flex items-center justify-center text-sm font-medium text-[#8a8693]">
+                  <div className="w-9 h-9 rounded-full bg-[#1c1c26] flex items-center justify-center text-sm font-medium text-white/80">
                     {member.display_name?.[0] ?? '?'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-[#f5f2ed]">{member.display_name}</p>
-                    <p className="text-xs text-[#5a5665]">Joined {new Date(member.joined_at).toLocaleDateString()}</p>
+                    <p className="text-xs text-white/70">Joined {new Date(member.joined_at).toLocaleDateString()}</p>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${roleColors[member.role]}`}>
                     {member.role}
