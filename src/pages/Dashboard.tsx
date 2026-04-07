@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -150,51 +150,6 @@ export default function Dashboard() {
   const { cardRef, toggleFullscreen } = useDraggableResizable();
   const [showCard, setShowCard] = useState(true);
   const [enteringVault, setEnteringVault] = useState(false);
-  const doorRef = useRef<HTMLDivElement>(null);
-  const doorDragged = useRef(false);
-
-  useEffect(() => {
-    const door = doorRef.current;
-    if (!door) return;
-
-    let isDragging = false;
-    let startX = 0, startY = 0, origX = 0, origY = 0;
-
-    const onDown = (e: PointerEvent) => {
-      isDragging = true;
-      doorDragged.current = false;
-      startX = e.clientX;
-      startY = e.clientY;
-      origX = door.offsetLeft;
-      origY = door.offsetTop;
-      door.style.transform = 'none';
-      door.style.cursor = 'grabbing';
-      e.preventDefault();
-    };
-
-    const onMove = (e: PointerEvent) => {
-      if (!isDragging) return;
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) doorDragged.current = true;
-      door.style.left = (origX + dx) + 'px';
-      door.style.top = (origY + dy) + 'px';
-    };
-
-    const onUp = () => {
-      isDragging = false;
-      door.style.cursor = 'grab';
-    };
-
-    door.addEventListener('pointerdown', onDown);
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp);
-    return () => {
-      door.removeEventListener('pointerdown', onDown);
-      document.removeEventListener('pointermove', onMove);
-      document.removeEventListener('pointerup', onUp);
-    };
-  }, []);
 
   const toggle = (_set: Set<string>, setFn: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) => {
     setFn((prev) => {
@@ -377,18 +332,15 @@ export default function Dashboard() {
         </div>
       </div>}
 
-      {/* The Door — entrance to the Vault (draggable) */}
+      {/* The Door — entrance to the Vault */}
       <div
-        ref={doorRef}
-        className="absolute cursor-grab active:cursor-grabbing select-none"
-        style={{ left: '50%', top: '40%', transform: 'translateX(-50%)' }}
+        className="absolute"
+        style={{ left: '50%', top: '30%', transform: 'translateX(-50%)' }}
       >
         <button
-          onClick={(e) => {
-            if (doorDragged.current) { doorDragged.current = false; return; }
+          onClick={() => {
             setEnteringVault(true);
             setTimeout(() => navigate('/app/vault'), 1200);
-            e.stopPropagation();
           }}
           className="group relative flex flex-col items-center gap-4"
         >

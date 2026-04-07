@@ -1,91 +1,174 @@
 import { useState } from 'react';
-import { Menu, X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings } from 'lucide-react';
+import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import ImportPanel from '@/components/vault/ImportPanel';
+import AIWorkbench from '@/components/vault/AIWorkbench';
 
-const menuItems = [
-  { icon: Upload, label: 'Import Documents', description: 'OneDrive, Google Drive, Dropbox, or local files' },
-  { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents' },
-  { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent' },
-  { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output' },
-  { icon: Key, label: 'Bring Your Own Key', description: 'Use your own API keys for AI models' },
-  { icon: HardDrive, label: 'Storage', description: 'Manage your Vault storage (up to 100GB)' },
-  { icon: Settings, label: 'Vault Settings', description: 'Configure models, permissions, and preferences' },
+type VaultView = 'home' | 'import' | 'workbench' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
+
+const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
+  { icon: Upload, label: 'Import Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
+  { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
+  { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
+  { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
+  { icon: Key, label: 'Bring Your Own Key', description: 'Use your own API keys for AI models', view: 'byok' },
+  { icon: HardDrive, label: 'Storage', description: 'Manage your Vault storage (up to 100GB)', view: 'storage' },
+  { icon: Settings, label: 'Vault Settings', description: 'Configure models, permissions, and preferences', view: 'settings' },
 ];
 
 export default function Vault() {
+  const [illuminated, setIlluminated] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [activeView, setActiveView] = useState<VaultView>('home');
+  const navigate = useNavigate();
+
+  const handleMenuClick = (view: VaultView) => {
+    setActiveView(view);
+  };
+
+  const renderContent = () => {
+    switch (activeView) {
+      case 'import':
+        return <ImportPanel />;
+      case 'workbench':
+        return <AIWorkbench />;
+      case 'home':
+      default:
+        return (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center animate-[fadeIn_0.8s_ease-in-out]">
+              <p className="text-[22px] text-white tracking-[0.4em] uppercase font-medium mb-4" style={{ textShadow: '0 0 30px rgba(232,184,74,0.2)' }}>
+                The Vault<span className="text-[10px] align-super tracking-normal">TM</span>
+              </p>
+              <p className="text-[14px] text-white mb-8">
+                Your secure AI workspace. Import documents, run agents, generate output.
+              </p>
+              <p className="text-[12px] text-white">
+                Select an option from the menu to get started
+              </p>
+            </div>
+          </div>
+        );
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-black flex">
-      {/* Menu panel — slides from left */}
+      {/* Menu panel */}
       <div
-        className={`h-full flex flex-col border-r border-[rgba(255,255,255,0.06)] transition-all duration-500 ease-in-out overflow-hidden ${
-          menuOpen ? 'w-80' : 'w-0'
+        className={`h-full flex flex-col border-r border-[rgba(255,255,255,0.08)] transition-all duration-700 ease-in-out overflow-hidden shrink-0 ${
+          !illuminated ? 'w-0 border-r-0' : menuOpen ? 'w-80' : 'w-14'
         }`}
         style={{ backgroundColor: 'rgba(8,8,14,0.95)' }}
       >
-        <div className="flex items-center justify-between px-5 h-16 shrink-0 border-b border-[rgba(255,255,255,0.06)]">
-          <span className="text-[15px] font-semibold text-white tracking-tight">
-            The Vault
-          </span>
-          <button
-            onClick={() => setMenuOpen(false)}
-            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors"
-          >
-            <X size={16} strokeWidth={2} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto py-3 px-3">
-          {menuItems.map((item) => (
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 h-14 shrink-0 border-b border-[rgba(255,255,255,0.08)]">
+          {menuOpen ? (
+            <>
+              <span className="text-[15px] font-semibold text-white tracking-tight">
+                The Vault
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => navigate('/app')}
+                  className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/50 hover:text-white transition-colors"
+                  title="Back to Contextspace"
+                >
+                  <ArrowLeft size={15} strokeWidth={2} />
+                </button>
+                <button
+                  onClick={() => setMenuOpen(false)}
+                  className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/50 hover:text-white transition-colors"
+                  title="Collapse menu"
+                >
+                  <X size={15} strokeWidth={2} />
+                </button>
+              </div>
+            </>
+          ) : (
             <button
-              key={item.label}
-              className="flex items-start gap-3 w-full px-3 py-3 rounded-lg text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
+              onClick={() => setMenuOpen(true)}
+              className="mx-auto p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/40 hover:text-white transition-colors"
+              title="Open menu"
             >
-              <div className="w-8 h-8 rounded-md bg-[rgba(232,184,74,0.08)] group-hover:bg-[rgba(232,184,74,0.14)] flex items-center justify-center shrink-0 mt-0.5 transition-colors">
-                <item.icon size={15} className="text-[#e8b84a]" strokeWidth={1.75} />
-              </div>
-              <div>
-                <span className="text-[13px] font-medium text-white block">{item.label}</span>
-                <span className="text-[11px] text-white/40 leading-tight">{item.description}</span>
-              </div>
+              <Menu size={18} strokeWidth={1.75} />
             </button>
-          ))}
+          )}
         </div>
 
-        <div className="px-5 py-4 border-t border-[rgba(255,255,255,0.06)]">
-          <div className="flex items-center justify-between text-[11px] text-white/30">
-            <span>Storage used</span>
-            <span>0 / 5 GB (Free)</span>
+        {/* Menu items — expanded */}
+        {menuOpen && (
+          <div className="flex-1 overflow-y-auto py-3 px-3">
+            {menuItems.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => handleMenuClick(item.view)}
+                className={`flex items-start gap-3 w-full px-3 py-3 rounded-lg text-left transition-colors group ${
+                  activeView === item.view ? 'bg-[rgba(232,184,74,0.08)]' : 'hover:bg-[rgba(255,255,255,0.05)]'
+                }`}
+              >
+                <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
+                  activeView === item.view ? 'bg-[rgba(232,184,74,0.15)]' : 'bg-[rgba(232,184,74,0.08)] group-hover:bg-[rgba(232,184,74,0.15)]'
+                }`}>
+                  <item.icon size={15} className="text-[#e8b84a]" strokeWidth={1.75} />
+                </div>
+                <div>
+                  <span className="text-[13px] font-medium text-white block">{item.label}</span>
+                  <span className="text-[11px] text-white/40 leading-tight">{item.description}</span>
+                </div>
+              </button>
+            ))}
           </div>
-          <div className="mt-2 h-1 bg-[rgba(255,255,255,0.06)] rounded-full overflow-hidden">
-            <div className="h-full w-0 bg-[#e8b84a] rounded-full" />
-          </div>
-        </div>
-      </div>
-
-      {/* Main void */}
-      <div className="flex-1 flex items-center justify-center relative">
-        {/* Menu toggle — small white dot/button, far left */}
-        {!menuOpen && (
-          <button
-            onClick={() => setMenuOpen(true)}
-            className="absolute left-6 top-1/2 -translate-y-1/2 group"
-          >
-            <div className="w-3 h-3 rounded-full bg-white/20 group-hover:bg-white/60 transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] group-hover:scale-150" />
-            <span className="absolute left-6 top-1/2 -translate-y-1/2 text-[11px] text-white/0 group-hover:text-white/50 transition-all duration-300 whitespace-nowrap ml-2">
-              <Menu size={14} className="inline mr-1" />
-              Open Menu
-            </span>
-          </button>
         )}
 
-        {/* Center message — subtle, appears when nothing is open */}
-        {!menuOpen && (
-          <div className="text-center animate-pulse">
-            <p className="text-[13px] text-white/10 tracking-[0.3em] uppercase font-medium">
-              The Vault
-            </p>
+        {/* Menu items — collapsed icons */}
+        {!menuOpen && illuminated && (
+          <div className="flex-1 overflow-y-auto py-3 px-1.5">
+            {menuItems.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => { setMenuOpen(true); handleMenuClick(item.view); }}
+                className={`flex items-center justify-center w-full h-10 rounded-md transition-colors group ${
+                  activeView === item.view ? 'bg-[rgba(232,184,74,0.08)]' : 'hover:bg-[rgba(255,255,255,0.05)]'
+                }`}
+                title={item.label}
+              >
+                <item.icon size={16} className={`transition-colors ${
+                  activeView === item.view ? 'text-[#e8b84a]' : 'text-white/40 group-hover:text-[#e8b84a]'
+                }`} strokeWidth={1.75} />
+              </button>
+            ))}
           </div>
+        )}
+
+        {/* Storage footer */}
+        {menuOpen && (
+          <div className="px-4 py-4 border-t border-[rgba(255,255,255,0.08)]">
+            <div className="flex items-center justify-between text-[11px] text-white/70">
+              <span>Storage used</span>
+              <span>0 / 5 GB (Free)</span>
+            </div>
+            <div className="mt-2 h-1 bg-[rgba(255,255,255,0.06)] rounded-full overflow-hidden">
+              <div className="h-full w-0 bg-[#e8b84a] rounded-full" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Main area */}
+      <div className="flex-1 flex relative">
+        {!illuminated ? (
+          /* Dark state — just the white dot */
+          <div className="flex-1 flex items-center justify-center">
+            <button
+              onClick={() => { setIlluminated(true); setMenuOpen(true); }}
+              className="absolute left-8 top-1/2 -translate-y-1/2 group cursor-pointer"
+            >
+              <div className="w-3 h-3 rounded-full bg-white/50 group-hover:bg-white group-hover:shadow-[0_0_30px_rgba(255,255,255,0.6)] group-hover:scale-[2] transition-all duration-500" />
+            </button>
+          </div>
+        ) : (
+          renderContent()
         )}
       </div>
     </div>
