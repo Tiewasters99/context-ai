@@ -55,7 +55,7 @@ export default function Auth() {
       <div className="absolute top-[36%] left-[6%]">
         <Link to="/" className="block">
           <span className="text-white" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 50px rgba(0,0,0,0.8)' }}>
-            <span className="text-[52px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span><span className="text-[28px] font-semibold text-[#d4a054]">.ai</span>
+            <span className="text-[52px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span><span className="text-[34px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span></span>
           </span>
         </Link>
         <p className="text-[22px] text-white font-semibold mt-3 max-w-sm" style={{ textShadow: '0 2px 10px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,0.8)' }}>

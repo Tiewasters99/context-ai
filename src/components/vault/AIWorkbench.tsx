@@ -1,106 +1,139 @@
-import { useState } from 'react';
-import { Send, FileText, Check, ChevronDown, Loader2, Copy, Download } from 'lucide-react';
+import { useState, useRef, useCallback, useMemo } from 'react';
+import { Send, FileText, Check, ChevronDown, Loader2, Copy, Download, Square, AlertCircle, Info, Search, Zap } from 'lucide-react';
+import { generate, allModels, estimateTokens } from '@/lib/llm';
+import { searchVaultFiles, autoSelectFiles } from '@/lib/search';
+import type { VaultFile } from '@/lib/vault-types';
+import type { SearchResult } from '@/lib/search';
 
-interface ContextFile {
-  id: string;
-  name: string;
-  selected: boolean;
+interface AIWorkbenchProps {
+  vaultFiles: VaultFile[];
 }
 
-const availableFiles: ContextFile[] = [
-  { id: 'f1', name: 'Smith_v_Jones_Opinion.pdf', selected: false },
-  { id: 'f2', name: 'Labib_Letterhead.docx', selected: true },
-  { id: 'f3', name: 'Case_Alpha_Discovery.pdf', selected: false },
-  { id: 'f4', name: 'Opposing_Counsel_Correspondence.pdf', selected: true },
-  { id: 'f5', name: 'Settlement_Demand_Template.docx', selected: true },
-  { id: 'f6', name: 'Expert_Report_Williams.pdf', selected: false },
-];
+type Mode = 'manual' | 'auto';
 
-const models = [
-  { id: 'opus', name: 'Claude Opus 4.6', description: 'Most capable — complex reasoning, long documents', tier: 'Pro' },
-  { id: 'sonnet', name: 'Claude Sonnet 4.6', description: 'Fast and capable — great for most tasks', tier: 'Free' },
-  { id: 'byok', name: 'Bring Your Own Key', description: 'Use your own API key for any model', tier: 'Pro' },
-];
-
-const mockOutput = `**LABIB LAW OFFICES**
-123 Main Street, Suite 400
-New York, NY 10001
-Tel: (212) 555-0100
-
-April 7, 2026
-
-VIA EMAIL AND CERTIFIED MAIL
-
-Robert J. Hartfield, Esq.
-Hartfield & Associates
-456 Park Avenue, 12th Floor
-New York, NY 10022
-
-Re: *Smith v. Jones* — Case No. 2025-CV-04821
-     Settlement Demand
-
-Dear Mr. Hartfield:
-
-We represent the Plaintiff in the above-referenced matter. As you are aware, this case involves claims of breach of fiduciary duty and fraudulent misrepresentation arising from your client's management of our client's investment portfolio.
-
-**FACTUAL BACKGROUND**
-
-Based on our review of the discovery materials produced to date, including the Expert Report of Dr. Williams (attached as Exhibit A), the evidence overwhelmingly supports our client's position. Specifically:
-
-1. Your client failed to disclose material conflicts of interest in violation of SEC Rule 10b-5, as established in *Smith v. Jones*, 487 F.3d 892 (2d Cir. 2024);
-
-2. The forensic accounting analysis demonstrates damages in excess of $2,400,000, representing the difference between the portfolio's projected performance under prudent management and its actual performance under your client's stewardship;
-
-3. Contemporaneous communications produced in discovery confirm your client's awareness of the risks that were concealed from our client.
-
-**DEMAND**
-
-In light of the foregoing, and to avoid the significant expense and uncertainty of continued litigation, we hereby demand settlement in the amount of **$2,400,000.00**, inclusive of attorneys' fees and costs.
-
-This demand will remain open for thirty (30) calendar days from the date of this letter. Should we not reach a resolution within that period, we intend to proceed with a motion for summary judgment on the fraud claims.
-
-We look forward to your prompt response.
-
-Very truly yours,
-
-**LABIB LAW OFFICES**
-
-___________________________
-Senior Partner`;
-
-export default function AIWorkbench() {
-  const [contextFiles, setContextFiles] = useState(availableFiles);
-  const [selectedModel, setSelectedModel] = useState('opus');
+export default function AIWorkbench({ vaultFiles }: AIWorkbenchProps) {
+  const models = useMemo(() => allModels(), []);
+  const [selectedModelId, setSelectedModelId] = useState('claude-opus');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [output, setOutput] = useState('');
   const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
   const [showFileSelector, setShowFileSelector] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [routingInfo, setRoutingInfo] = useState('');
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<Mode>('auto');
+  const [searchResults, setSearchResults] = useState<SearchResult[] | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  const selectedCount = contextFiles.filter((f) => f.selected).length;
-  const currentModel = models.find((m) => m.id === selectedModel)!;
+  const currentModel = models.find((m) => m.id === selectedModelId) ?? models[0];
+  const indexedFiles = vaultFiles.filter((f) => f.status === 'indexed' && f.textContent);
 
-  const toggleFile = (id: string) => {
-    setContextFiles((prev) => prev.map((f) => f.id === id ? { ...f, selected: !f.selected } : f));
+  const toggleFileSelection = (id: string) => {
+    setSelectedFileIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  const handleGenerate = () => {
-    if (!instruction.trim()) return;
+  const selectAll = () => setSelectedFileIds(new Set(indexedFiles.map((f) => f.id)));
+  const deselectAll = () => setSelectedFileIds(new Set());
+
+  const manualSelected = indexedFiles.filter((f) => selectedFileIds.has(f.id));
+  const selectedTokens = manualSelected.reduce((sum, f) => sum + estimateTokens(f.textContent ?? ''), 0);
+  const fitsInContext = selectedTokens < currentModel.contextWindow * 0.8;
+
+  // Run local search when instruction changes (debounced feel with auto mode)
+  const runSearch = useCallback(() => {
+    if (!instruction.trim() || indexedFiles.length === 0) {
+      setSearchResults(null);
+      return;
+    }
+    const results = searchVaultFiles(indexedFiles, instruction);
+    setSearchResults(results.length > 0 ? results : null);
+  }, [instruction, indexedFiles]);
+
+  const handleGenerate = useCallback(async () => {
+    if (!instruction.trim() || generating) return;
     setGenerating(true);
     setOutput('');
+    setError('');
+    setRoutingInfo('');
 
-    // Simulate streaming output
-    let i = 0;
-    const interval = setInterval(() => {
-      i += Math.floor(Math.random() * 8) + 3;
-      if (i >= mockOutput.length) {
-        setOutput(mockOutput);
-        setGenerating(false);
-        clearInterval(interval);
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    let contextFiles: { name: string; content: string }[];
+
+    if (mode === 'auto') {
+      // Auto-select relevant files based on the instruction
+      const reservedTokens = estimateTokens(instruction) + 2000;
+      const available = currentModel.contextWindow - reservedTokens - 4096;
+      const { selected, totalTokens } = autoSelectFiles(indexedFiles, instruction, available);
+
+      if (selected.length === 0 && indexedFiles.length > 0) {
+        // No keyword matches — send first few files that fit
+        contextFiles = [];
+        let budget = available;
+        for (const f of indexedFiles) {
+          const t = estimateTokens(f.textContent ?? '');
+          if (budget - t < 0) break;
+          contextFiles.push({ name: f.name, content: f.textContent ?? '' });
+          budget -= t;
+        }
+        setRoutingInfo(`No strong keyword matches — sending ${contextFiles.length} files (~${Math.round((available - budget) / 1000)}K tokens)`);
       } else {
-        setOutput(mockOutput.slice(0, i));
+        contextFiles = selected.map((f) => ({ name: f.name, content: f.textContent ?? '' }));
+        setRoutingInfo(`Auto-selected ${selected.length} relevant file${selected.length !== 1 ? 's' : ''} (~${Math.round(totalTokens / 1000)}K tokens)`);
       }
-    }, 20);
+    } else {
+      // Manual mode — use explicitly selected files
+      contextFiles = manualSelected.map((f) => ({ name: f.name, content: f.textContent ?? '' }));
+    }
+
+    const result = await generate({
+      modelId: selectedModelId,
+      instruction,
+      contextFiles,
+      signal: controller.signal,
+      callbacks: {
+        onChunk: (text) => setOutput((prev) => prev + text),
+        onDone: () => { setGenerating(false); abortRef.current = null; },
+        onError: (err) => { setError(err); setGenerating(false); abortRef.current = null; },
+      },
+    });
+
+    if (result?.message) {
+      setRoutingInfo((prev) => prev + (prev ? ' · ' : '') + result.message);
+    }
+  }, [instruction, generating, manualSelected, indexedFiles, selectedModelId, currentModel, mode]);
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    setGenerating(false);
+    abortRef.current = null;
+  };
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSave = () => {
+    const blob = new Blob([output], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vault-output-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   return (
@@ -109,46 +142,145 @@ export default function AIWorkbench() {
       <div className="w-[400px] shrink-0 flex flex-col border-r border-[rgba(255,255,255,0.08)]">
         <div className="px-5 py-4 border-b border-[rgba(255,255,255,0.08)]">
           <h2 className="text-[16px] font-semibold text-white mb-1">AI Workbench</h2>
-          <p className="text-[12px] text-white/50">Select context, choose a model, give instructions.</p>
+          <p className="text-[12px] text-white/80">Describe what you need — we'll find the right files and get to work.</p>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-          {/* Context files */}
+          {/* Instruction — moved to top for auto mode */}
           <div>
-            <button
-              onClick={() => setShowFileSelector(!showFileSelector)}
-              className="flex items-center justify-between w-full text-left"
-            >
-              <h3 className="text-[11px] font-semibold text-white/50 uppercase tracking-wider">
-                Context ({selectedCount} files)
-              </h3>
-              <ChevronDown size={14} className={`text-white/30 transition-transform ${showFileSelector ? 'rotate-180' : ''}`} />
-            </button>
+            <h3 className="text-[11px] font-semibold text-white/80 uppercase tracking-wider mb-2">Instruction</h3>
+            <textarea
+              value={instruction}
+              onChange={(e) => { setInstruction(e.target.value); if (mode === 'auto') runSearch(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleGenerate(); }}
+              placeholder="e.g., Search for recent correspondence with Judge Willis, then draft a letter dated today on my letterhead explaining the status of depositions ordered by the court."
+              rows={5}
+              className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] text-[13px] text-white placeholder-white/25 resize-none focus:outline-none focus:ring-1 focus:ring-[#e8b84a] focus:border-transparent"
+            />
+            <p className="text-[10px] text-white/70 mt-1">Ctrl+Enter to generate</p>
+          </div>
 
-            {showFileSelector && (
-              <div className="mt-2 space-y-0.5">
-                {contextFiles.map((file) => (
-                  <button
-                    key={file.id}
-                    onClick={() => toggleFile(file.id)}
-                    className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md hover:bg-[rgba(255,255,255,0.04)] transition-colors text-left"
-                  >
-                    <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                      file.selected ? 'bg-[#e8b84a] border-[#e8b84a]' : 'border-white/20'
-                    }`}>
-                      {file.selected && <Check size={10} className="text-black" strokeWidth={3} />}
+          {/* Mode toggle */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => { setMode('auto'); runSearch(); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors ${
+                mode === 'auto' ? 'bg-[#e8b84a] text-black' : 'bg-[rgba(255,255,255,0.06)] text-white/70 hover:bg-[rgba(255,255,255,0.1)]'
+              }`}
+            >
+              <Zap size={11} /> Auto-select files
+            </button>
+            <button
+              onClick={() => setMode('manual')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors ${
+                mode === 'manual' ? 'bg-[#e8b84a] text-black' : 'bg-[rgba(255,255,255,0.06)] text-white/70 hover:bg-[rgba(255,255,255,0.1)]'
+              }`}
+            >
+              <FileText size={11} /> Manual
+            </button>
+          </div>
+
+          {/* Auto mode: search preview */}
+          {mode === 'auto' && searchResults && (
+            <div>
+              <h3 className="text-[11px] font-semibold text-white/80 uppercase tracking-wider mb-2">
+                <Search size={10} className="inline mr-1" />
+                Matching Files ({searchResults.length})
+              </h3>
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {searchResults.slice(0, 8).map((r) => (
+                  <div key={r.file.id} className="px-2.5 py-2 rounded-md bg-[rgba(255,255,255,0.03)]">
+                    <div className="flex items-center gap-2">
+                      <FileText size={12} className="text-[#e8b84a] shrink-0" />
+                      <span className="text-[11px] text-white/80 truncate">{r.file.name}</span>
+                      <span className="text-[9px] text-white/30 shrink-0 ml-auto">{r.score} hits</span>
                     </div>
-                    <FileText size={13} className="text-white/30 shrink-0" />
-                    <span className="text-[12px] text-white/70 truncate">{file.name}</span>
-                  </button>
+                    {r.excerpt && (
+                      <p className="text-[10px] text-white/40 mt-1 line-clamp-2">{r.excerpt}</p>
+                    )}
+                  </div>
                 ))}
               </div>
-            )}
-          </div>
+              <p className="text-[10px] text-emerald-400/80 mt-2">
+                These files will be sent to {currentModel.name} automatically.
+              </p>
+            </div>
+          )}
+
+          {mode === 'auto' && !searchResults && indexedFiles.length > 0 && instruction.trim() && (
+            <p className="text-[10px] text-white/50">
+              <Search size={10} className="inline mr-1" />
+              No keyword matches — all files that fit will be sent.
+            </p>
+          )}
+
+          {mode === 'auto' && indexedFiles.length === 0 && (
+            <p className="text-[10px] text-white/50">No files imported yet. Go to Import Documents first.</p>
+          )}
+
+          {/* Manual mode: file selector */}
+          {mode === 'manual' && (
+            <div>
+              <button
+                onClick={() => setShowFileSelector(!showFileSelector)}
+                className="flex items-center justify-between w-full text-left"
+              >
+                <h3 className="text-[11px] font-semibold text-white/80 uppercase tracking-wider">
+                  Context ({selectedFileIds.size} of {indexedFiles.length} files)
+                </h3>
+                <ChevronDown size={14} className={`text-white/70 transition-transform ${showFileSelector ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showFileSelector && (
+                <div className="mt-2 space-y-0.5">
+                  {indexedFiles.length === 0 ? (
+                    <p className="text-[11px] text-white/70 px-2.5 py-2">No files imported yet.</p>
+                  ) : (
+                    <>
+                      <div className="flex gap-2 px-2.5 py-1">
+                        <button onClick={selectAll} className="text-[10px] text-[#e8b84a]/80 hover:text-[#e8b84a] transition-colors">Select all</button>
+                        <button onClick={deselectAll} className="text-[10px] text-white/40 hover:text-white/60 transition-colors">Clear</button>
+                      </div>
+                      {indexedFiles.map((file) => (
+                        <button
+                          key={file.id}
+                          onClick={() => toggleFileSelection(file.id)}
+                          className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md hover:bg-[rgba(255,255,255,0.04)] transition-colors text-left"
+                        >
+                          <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                            selectedFileIds.has(file.id) ? 'bg-[#e8b84a] border-[#e8b84a]' : 'border-white/20'
+                          }`}>
+                            {selectedFileIds.has(file.id) && <Check size={10} className="text-black" strokeWidth={3} />}
+                          </div>
+                          <FileText size={13} className="text-white/70 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[12px] text-white/80 truncate block">{file.name}</span>
+                            <span className="text-[9px] text-white/40">{file.size} · ~{Math.round(estimateTokens(file.textContent ?? '') / 1000)}K tokens</span>
+                          </div>
+                        </button>
+                      ))}
+                    </>
+                  )}
+
+                  {selectedFileIds.size > 0 && (
+                    <div className={`flex items-center gap-1.5 px-2.5 py-1.5 mt-1 rounded text-[10px] ${
+                      fitsInContext ? 'text-emerald-400/80' : 'text-amber-400/80'
+                    }`}>
+                      <Info size={10} />
+                      {fitsInContext
+                        ? `~${Math.round(selectedTokens / 1000)}K tokens — fits in ${currentModel.name}`
+                        : `~${Math.round(selectedTokens / 1000)}K tokens — exceeds ${currentModel.name}'s ${Math.round(currentModel.contextWindow / 1000)}K window. Relevant sections will be auto-selected.`
+                      }
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Model selector */}
           <div>
-            <h3 className="text-[11px] font-semibold text-white/50 uppercase tracking-wider mb-2">Model</h3>
+            <h3 className="text-[11px] font-semibold text-white/80 uppercase tracking-wider mb-2">Model</h3>
             <div className="relative">
               <button
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
@@ -156,80 +288,98 @@ export default function AIWorkbench() {
               >
                 <div>
                   <span className="text-[13px] text-white block">{currentModel.name}</span>
-                  <span className="text-[10px] text-white/30">{currentModel.description}</span>
+                  <span className="text-[10px] text-white/70">{currentModel.description}</span>
                 </div>
-                <ChevronDown size={14} className={`text-white/30 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
+                <ChevronDown size={14} className={`text-white/70 transition-transform ${showModelDropdown ? 'rotate-180' : ''}`} />
               </button>
 
               {showModelDropdown && (
-                <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0a0a10] z-10 overflow-hidden">
+                <div className="absolute top-full left-0 right-0 mt-1 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#0a0a10] z-10 overflow-hidden max-h-72 overflow-y-auto">
                   {models.map((model) => (
                     <button
                       key={model.id}
-                      onClick={() => { setSelectedModel(model.id); setShowModelDropdown(false); }}
+                      onClick={() => { setSelectedModelId(model.id); setShowModelDropdown(false); }}
                       className={`flex items-center justify-between w-full px-3 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors ${
-                        selectedModel === model.id ? 'bg-[rgba(255,255,255,0.03)]' : ''
+                        selectedModelId === model.id ? 'bg-[rgba(255,255,255,0.03)]' : ''
                       }`}
                     >
                       <div>
                         <span className="text-[12px] text-white block">{model.name}</span>
-                        <span className="text-[10px] text-white/30">{model.description}</span>
+                        <span className="text-[10px] text-white/70">{model.description}</span>
                       </div>
-                      <span className="text-[9px] text-[#e8b84a]/60 uppercase">{model.tier}</span>
+                      <div className="text-right shrink-0 ml-3">
+                        <span className="text-[9px] text-[#e8b84a]/60 uppercase block">{model.tier}</span>
+                        <span className="text-[8px] text-white/30">{Math.round(model.contextWindow / 1000)}K ctx</span>
+                      </div>
                     </button>
                   ))}
                 </div>
               )}
             </div>
           </div>
-
-          {/* Instruction */}
-          <div>
-            <h3 className="text-[11px] font-semibold text-white/50 uppercase tracking-wider mb-2">Instruction</h3>
-            <textarea
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              placeholder="e.g., Using my Labib letterhead, draft a demand letter to opposing counsel Robert Hartfield citing the Smith v. Jones precedent. Demand $2.4M based on the expert report findings."
-              rows={6}
-              className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] text-[13px] text-white placeholder-white/25 resize-none focus:outline-none focus:ring-1 focus:ring-[#e8b84a] focus:border-transparent"
-            />
-          </div>
         </div>
 
-        {/* Generate button */}
+        {/* Generate / Stop */}
         <div className="px-5 py-4 border-t border-[rgba(255,255,255,0.08)]">
-          <button
-            onClick={handleGenerate}
-            disabled={!instruction.trim() || generating}
-            className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-[#e8b84a] hover:bg-[#d4a054] text-black text-[13px] font-bold transition-colors disabled:opacity-40 shadow-[0_0_20px_rgba(232,184,74,0.15)]"
-          >
-            {generating ? (
-              <><Loader2 size={15} className="animate-spin" /> Generating...</>
-            ) : (
-              <><Send size={15} /> Generate</>
-            )}
-          </button>
+          {generating ? (
+            <button
+              onClick={handleStop}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-red-500/80 hover:bg-red-500 text-white text-[13px] font-bold transition-colors"
+            >
+              <Square size={13} fill="currentColor" /> Stop
+            </button>
+          ) : (
+            <button
+              onClick={handleGenerate}
+              disabled={!instruction.trim()}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40 shadow-[0_0_20px_rgba(240,200,80,0.25)]"
+            >
+              <Send size={15} /> Generate
+            </button>
+          )}
         </div>
       </div>
 
       {/* Right: Output */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <div className="px-6 py-4 border-b border-[rgba(255,255,255,0.08)] flex items-center justify-between">
-          <h3 className="text-[14px] font-semibold text-white">Output</h3>
-          {output && (
+          <div>
+            <h3 className="text-[14px] font-semibold text-white">Output</h3>
+            {routingInfo && (
+              <p className="text-[10px] text-white/50 mt-0.5">{routingInfo}</p>
+            )}
+          </div>
+          {output && !generating && (
             <div className="flex items-center gap-2">
-              <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white text-[11px] transition-colors">
-                <Copy size={12} /> Copy
+              <button
+                onClick={handleCopy}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/80 hover:text-white text-[11px] transition-colors"
+              >
+                {copied ? <><Check size={12} className="text-emerald-400" /> Copied</> : <><Copy size={12} /> Copy</>}
               </button>
-              <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white text-[11px] transition-colors">
-                <Download size={12} /> Save to Vault
+              <button
+                onClick={handleSave}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/80 hover:text-white text-[11px] transition-colors"
+              >
+                {saved ? <><Check size={12} className="text-emerald-400" /> Saved</> : <><Download size={12} /> Save</>}
               </button>
             </div>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-8 py-6">
-          {output ? (
+          {error ? (
+            <div className="flex items-start gap-3 max-w-2xl">
+              <AlertCircle size={18} className="text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[13px] text-red-400 font-medium mb-1">Generation failed</p>
+                <p className="text-[12px] text-white/80">{error}</p>
+                {error.includes('API key') && (
+                  <p className="text-[11px] text-white/70 mt-2">Add the provider's API key to <code className="text-[#e8b84a]/60">.env</code> and restart the dev server, or use BYOK in Vault Settings.</p>
+                )}
+              </div>
+            </div>
+          ) : output ? (
             <div className="max-w-2xl">
               <pre className="text-[13px] text-white/90 whitespace-pre-wrap font-[inherit] leading-relaxed">
                 {output}
@@ -238,7 +388,14 @@ export default function AIWorkbench() {
             </div>
           ) : (
             <div className="flex items-center justify-center h-full">
-              <p className="text-[13px] text-white/15">Output will appear here</p>
+              <div className="text-center">
+                <p className="text-[13px] text-white/60 mb-2">Output will appear here</p>
+                <p className="text-[10px] text-white/50">
+                  {mode === 'auto'
+                    ? 'Just type your instruction — relevant files will be found automatically'
+                    : 'Select files, write an instruction, hit Generate'}
+                </p>
+              </div>
             </div>
           )}
         </div>

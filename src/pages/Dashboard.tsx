@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -63,7 +63,7 @@ const mockServerspaces: MockServerspace[] = [
   },
   {
     id: '2',
-    name: 'Context.ai',
+    name: 'Contextspaces.ai',
     members: 12,
     matterspaces: [
       {
@@ -150,6 +150,34 @@ export default function Dashboard() {
   const { cardRef, toggleFullscreen } = useDraggableResizable();
   const [showCard, setShowCard] = useState(true);
   const [enteringVault, setEnteringVault] = useState(false);
+  const [doorPos, setDoorPos] = useState({ x: 0, y: 0 });
+  const doorDrag = useRef({ active: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
+
+  const onDoorMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    doorDrag.current = { active: true, moved: false, startX: e.clientX, startY: e.clientY, origX: doorPos.x, origY: doorPos.y };
+  }, [doorPos]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const d = doorDrag.current;
+      if (!d.active) return;
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
+      setDoorPos({ x: d.origX + dx, y: d.origY + dy });
+    };
+    const onUp = () => { doorDrag.current.active = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, []);
+
+  const onDoorClick = useCallback(() => {
+    if (doorDrag.current.moved) return;
+    setEnteringVault(true);
+    setTimeout(() => navigate('/app/vault'), 1200);
+  }, [navigate]);
 
   const toggle = (_set: Set<string>, setFn: React.Dispatch<React.SetStateAction<Set<string>>>, id: string) => {
     setFn((prev) => {
@@ -185,6 +213,7 @@ export default function Dashboard() {
           Welcome back, {displayName}
         </h1>
         <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium">Here's what's happening in your Contextspace.</p>
+        <p className="text-[11px] text-white/30 mt-1">Drag cards to reposition them.</p>
 
         {/* Serverspaces Explorer */}
         <section className="mt-8">
@@ -332,18 +361,14 @@ export default function Dashboard() {
         </div>
       </div>}
 
-      {/* The Door — entrance to the Vault */}
+      {/* The Door — entrance to the Vault (draggable) */}
       <div
-        className="absolute"
-        style={{ left: '50%', top: '30%', transform: 'translateX(-50%)' }}
+        onMouseDown={onDoorMouseDown}
+        onClick={onDoorClick}
+        className="absolute group cursor-grab active:cursor-grabbing select-none"
+        style={{ left: `calc(50% + ${doorPos.x}px)`, top: `calc(30% + ${doorPos.y}px)`, transform: 'translateX(-50%)' }}
       >
-        <button
-          onClick={() => {
-            setEnteringVault(true);
-            setTimeout(() => navigate('/app/vault'), 1200);
-          }}
-          className="group relative flex flex-col items-center gap-4"
-        >
+        <div className="flex flex-col items-center gap-4">
           {/* Glowing arch */}
           <div className="relative w-24 h-36 rounded-t-full border-2 border-[#e8b84a]/30 group-hover:border-[#e8b84a]/70 transition-all duration-700 overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-t from-[#e8b84a]/5 to-[#e8b84a]/20 group-hover:from-[#e8b84a]/10 group-hover:to-[#e8b84a]/40 transition-all duration-700" />
@@ -355,7 +380,7 @@ export default function Dashboard() {
           <span className="text-[12px] text-white/20 group-hover:text-[#e8b84a] tracking-[0.25em] uppercase font-medium transition-all duration-500">
             Enter the Vault
           </span>
-        </button>
+        </div>
       </div>
 
       {/* Vault entrance animation — full screen fade to black */}

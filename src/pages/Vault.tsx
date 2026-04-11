@@ -1,8 +1,11 @@
-import { useState, useRef } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
+import TemplateLibrary from '@/components/vault/TemplateLibrary';
+import type { VaultFile } from '@/lib/vault-types';
+import { extractText } from '@/lib/extract';
 
 type VaultView = 'home' | 'import' | 'workbench' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
 
@@ -24,36 +27,114 @@ export default function Vault() {
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const musicInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
-  const [vaultBg, setVaultBg] = useState('black');
+  const [coverUrl, setCoverUrl] = useState<string | null>(null);
+  const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
+
+  const addVaultFiles = useCallback(async (fileList: FileList | File[]) => {
+    const arr = Array.from(fileList);
+    const newFiles: VaultFile[] = arr.map((f) => ({
+      id: crypto.randomUUID(),
+      name: f.name,
+      path: ((f as any).webkitRelativePath as string) || f.name,
+      size: f.size > 1073741824 ? `${(f.size / 1073741824).toFixed(1)} GB` : f.size > 1048576 ? `${(f.size / 1048576).toFixed(1)} MB` : `${(f.size / 1024).toFixed(0)} KB`,
+      sizeBytes: f.size,
+      type: f.name.split('.').pop()?.toLowerCase() ?? 'file',
+      file: f,
+      status: 'uploading' as const,
+    }));
+
+    setVaultFiles((prev) => [...newFiles, ...prev]);
+
+    // Extract text from each file
+    for (const nf of newFiles) {
+      setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'indexing' } : f));
+      try {
+        const textContent = await extractText(nf.file);
+        setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'indexed', textContent } : f));
+      } catch {
+        setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'error', textContent: `[Failed to extract text from ${nf.name}]` } : f));
+      }
+    }
+  }, []);
+
+  const removeVaultFile = useCallback((id: string) => {
+    setVaultFiles((prev) => prev.filter((f) => f.id !== id));
+  }, []);
+
+  const [bannerY, setBannerY] = useState(50); // vertical position %, 0=top, 100=bottom
+  const bannerDragging = useRef(false);
+  const bannerStartY = useRef(0);
+  const bannerStartPos = useRef(50);
+
+  const musicUrlRef = useRef<string | null>(null);
+
+  // Clean up audio and blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
+      if (musicUrlRef.current) { URL.revokeObjectURL(musicUrlRef.current); musicUrlRef.current = null; }
+    };
+  }, []);
 
   const handleMusicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Tear down previous audio
     if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
+    if (musicUrlRef.current) { URL.revokeObjectURL(musicUrlRef.current); }
+    // Reset the input so re-selecting the same file fires onChange
+    e.target.value = '';
+
     const url = URL.createObjectURL(file);
+    musicUrlRef.current = url;
     const audio = new Audio(url);
     audio.loop = true;
     audio.volume = 0.5;
-    audio.play().catch(() => {
-      // Browser blocked autoplay — will play on next toggle click
-    });
+
+    // Keep state in sync if playback ends or errors
+    audio.addEventListener('pause', () => setMusicPlaying(false));
+    audio.addEventListener('play', () => setMusicPlaying(true));
+
     musicRef.current = audio;
-    setMusicPlaying(true);
+    audio.play().then(() => {
+      setMusicPlaying(true);
+    }).catch(() => {
+      // Autoplay blocked — audio is ready, user must click toggle to start
+      setMusicPlaying(false);
+    });
   };
 
   const toggleMusic = () => {
     if (!musicRef.current) { musicInputRef.current?.click(); return; }
-    if (musicPlaying) { musicRef.current.pause(); }
-    else { musicRef.current.play(); }
-    setMusicPlaying(!musicPlaying);
+    if (musicPlaying) {
+      musicRef.current.pause();
+    } else {
+      musicRef.current.play().catch(() => {
+        // Still blocked — no state change
+      });
+    }
   };
 
   const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    setVaultBg(`url(${url}) center/cover no-repeat`);
+    setCoverUrl(url);
+    setCoverMode('full');
+    setBannerY(50);
   };
+
+  const cycleCoverMode = () => {
+    if (coverMode === 'full') setCoverMode('banner');
+    else if (coverMode === 'banner') setCoverMode('off');
+    else setCoverMode('full');
+  };
+
+  const coverModeIcon = coverMode === 'full' ? Maximize : coverMode === 'banner' ? Minus : EyeOff;
+  const coverModeLabel = coverMode === 'full' ? 'Fullscreen cover' : coverMode === 'banner' ? 'Banner cover' : 'Cover hidden';
+  const CoverIcon = coverModeIcon;
   const navigate = useNavigate();
 
   const handleMenuClick = (view: VaultView) => {
@@ -63,9 +144,9 @@ export default function Vault() {
   const renderContent = () => {
     switch (activeView) {
       case 'import':
-        return <ImportPanel />;
+        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} />;
       case 'workbench':
-        return <AIWorkbench />;
+        return <AIWorkbench vaultFiles={vaultFiles} />;
       case 'home':
       default:
         return (
@@ -87,7 +168,38 @@ export default function Vault() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex" style={{ background: vaultBg }}>
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: coverUrl && coverMode === 'full' ? `url(${coverUrl}) center/cover no-repeat` : 'black' }}>
+      {/* Banner mode — cover ribbon at top, drag to reposition */}
+      {coverUrl && coverMode === 'banner' && (
+        <div
+          className="w-full h-48 shrink-0 overflow-hidden cursor-grab active:cursor-grabbing relative group"
+          onPointerDown={(e) => {
+            bannerDragging.current = true;
+            bannerStartY.current = e.clientY;
+            bannerStartPos.current = bannerY;
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            if (!bannerDragging.current) return;
+            const delta = e.clientY - bannerStartY.current;
+            const newY = Math.min(100, Math.max(0, bannerStartPos.current - (delta / 1.5)));
+            setBannerY(newY);
+          }}
+          onPointerUp={() => { bannerDragging.current = false; }}
+        >
+          <img
+            src={coverUrl}
+            alt=""
+            className="w-full h-auto min-h-full object-cover absolute left-0 pointer-events-none select-none"
+            draggable={false}
+            style={{ top: '0', transform: `translateY(-${bannerY}%)`, maxWidth: '100%', minWidth: '100%' }}
+          />
+          <div className="absolute inset-x-0 bottom-0 flex justify-center pb-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            <span className="text-[10px] text-white/50 bg-black/40 px-2 py-0.5 rounded-full">Drag to reposition</span>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 flex min-h-0">
       {/* Menu panel */}
       <div
         className={`h-full flex flex-col border-r border-[rgba(255,255,255,0.08)] transition-all duration-700 ease-in-out overflow-hidden shrink-0 ${
@@ -105,14 +217,14 @@ export default function Vault() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => navigate('/app')}
-                  className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/50 hover:text-white transition-colors"
+                  className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/80 hover:text-white transition-colors"
                   title="Back to Contextspace"
                 >
                   <ArrowLeft size={15} strokeWidth={2} />
                 </button>
                 <button
                   onClick={() => setMenuOpen(false)}
-                  className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/50 hover:text-white transition-colors"
+                  className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/80 hover:text-white transition-colors"
                   title="Collapse menu"
                 >
                   <X size={15} strokeWidth={2} />
@@ -122,7 +234,7 @@ export default function Vault() {
           ) : (
             <button
               onClick={() => setMenuOpen(true)}
-              className="mx-auto p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/40 hover:text-white transition-colors"
+              className="mx-auto p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/80 hover:text-white transition-colors"
               title="Open menu"
             >
               <Menu size={18} strokeWidth={1.75} />
@@ -148,7 +260,7 @@ export default function Vault() {
                 </div>
                 <div>
                   <span className="text-[13px] font-medium text-white block">{item.label}</span>
-                  <span className="text-[11px] text-white/40 leading-tight">{item.description}</span>
+                  <span className="text-[11px] text-white/80 leading-tight">{item.description}</span>
                 </div>
               </button>
             ))}
@@ -168,7 +280,7 @@ export default function Vault() {
                 title={item.label}
               >
                 <item.icon size={16} className={`transition-colors ${
-                  activeView === item.view ? 'text-[#e8b84a]' : 'text-white/40 group-hover:text-[#e8b84a]'
+                  activeView === item.view ? 'text-[#e8b84a]' : 'text-white/80 group-hover:text-[#e8b84a]'
                 }`} strokeWidth={1.75} />
               </button>
             ))}
@@ -192,42 +304,62 @@ export default function Vault() {
       {/* Main area */}
       <div className="flex-1 flex relative">
         {!illuminated ? (
-          /* Dark state — just the white dot */
+          /* Dark state — dot with subtle hint */
           <div className="flex-1 flex items-center justify-center">
             <button
               onClick={() => { setIlluminated(true); setMenuOpen(true); }}
-              className="absolute left-8 top-1/2 -translate-y-1/2 group cursor-pointer"
+              className="absolute left-8 top-1/2 -translate-y-1/2 group cursor-pointer flex items-center gap-3"
             >
-              <div className="w-3 h-3 rounded-full bg-white/50 group-hover:bg-white group-hover:shadow-[0_0_30px_rgba(255,255,255,0.6)] group-hover:scale-[2] transition-all duration-500" />
+              <div className="w-5 h-5 rounded-full bg-white/70 group-hover:bg-white group-hover:shadow-[0_0_40px_rgba(255,255,255,0.8)] group-hover:scale-[1.8] transition-all duration-500" />
+              <span className="text-[14px] text-white/70 group-hover:text-white tracking-wide transition-all duration-500 animate-pulse font-medium">
+                ← click to enter
+              </span>
             </button>
           </div>
         ) : (
           renderContent()
         )}
       </div>
+      </div>{/* end inner flex */}
       {/* Bottom right — music & cover */}
       {illuminated && (
         <div className="fixed bottom-5 right-5 flex items-center gap-2 z-50">
-          {vaultBg !== 'black' && (
-            <button
-              onClick={() => setVaultBg('black')}
-              className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/50 hover:text-white transition-all hover:scale-110"
-              title="Remove cover"
-            >
-              <X size={22} strokeWidth={1.75} />
-            </button>
+          {coverUrl && (
+            <>
+              <button
+                onClick={cycleCoverMode}
+                className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/80 hover:text-white transition-all hover:scale-110"
+                title={coverModeLabel}
+              >
+                <CoverIcon size={22} strokeWidth={1.75} />
+              </button>
+              <button
+                onClick={() => { setCoverUrl(null); setCoverMode('full'); }}
+                className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/80 hover:text-white transition-all hover:scale-110"
+                title="Remove cover"
+              >
+                <X size={22} strokeWidth={1.75} />
+              </button>
+            </>
           )}
           <button
+            onClick={() => setShowTemplates(true)}
+            className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/80 hover:text-white transition-all hover:scale-110"
+            title="Template library"
+          >
+            <LayoutGrid size={22} strokeWidth={1.75} />
+          </button>
+          <button
             onClick={() => coverInputRef.current?.click()}
-            className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/50 hover:text-white transition-all hover:scale-110"
-            title="Set Vault cover"
+            className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/80 hover:text-white transition-all hover:scale-110"
+            title="Upload custom cover"
           >
             <Image size={22} strokeWidth={1.75} />
           </button>
           <button
             onClick={toggleMusic}
             className={`p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] transition-all hover:scale-110 ${
-              musicPlaying ? 'text-[#e8b84a] shadow-[0_0_15px_rgba(232,184,74,0.3)]' : 'text-white/50 hover:text-white'
+              musicPlaying ? 'text-[#e8b84a] shadow-[0_0_15px_rgba(232,184,74,0.3)]' : 'text-white/80 hover:text-white'
             }`}
             title={musicPlaying ? 'Pause music' : 'Play background music'}
           >
@@ -236,6 +368,12 @@ export default function Vault() {
           <input ref={musicInputRef} type="file" accept="audio/*" onChange={handleMusicUpload} className="hidden" />
           <input ref={coverInputRef} type="file" accept="image/*" onChange={handleCoverUpload} className="hidden" />
         </div>
+      )}
+      {showTemplates && (
+        <TemplateLibrary
+          onSelect={(url) => { setCoverUrl(url); setCoverMode('full'); setBannerY(50); }}
+          onClose={() => setShowTemplates(false)}
+        />
       )}
     </div>
   );

@@ -68,7 +68,10 @@ export default function Landing() {
         {/* Nav */}
         <nav className="relative z-10 flex items-center justify-between w-full pl-[8.9%] pr-[10%] h-20">
           <span className="text-white" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>
-            <span className="text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span><span className="text-[20px] font-semibold text-[#d4a054]">.ai</span>
+            <span className="flex flex-col leading-none">
+              <span className="text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span>
+              <span className="text-[25px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">Spaces</span><span className="text-white">.ai</span></span>
+            </span>
           </span>
           <div className="relative" style={{ width: '500px' }}>
             <a href="#pricing" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '380px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Pricing</a>
@@ -89,7 +92,7 @@ export default function Landing() {
             <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>simplified.</span>
           </h1>
           <p className="mt-8 text-[26px] text-white max-w-xl mx-auto leading-relaxed text-center font-bold" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,0.7)' }}>
-            The productivity platform that gets out of your way. Organize your work, collaborate with your team, and let Context.ai do the rest.
+            The productivity platform that gets out of your way. Organize your work, collaborate with your team, and let us do the rest.
           </p>
           <div className="mt-10">
             <Link
@@ -133,7 +136,7 @@ export default function Landing() {
             <div>
               <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">AI Assistant</h3>
               <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
-                A native AI assistant built into Context.ai from the start — not an add-on or afterthought that guesses at what you need.
+                A native AI assistant built into Contextspaces.ai from the start — not an add-on or afterthought that guesses at what you need.
               </p>
             </div>
           </div>
@@ -193,7 +196,10 @@ export default function Landing() {
           <div className="flex flex-col md:flex-row justify-between gap-8">
             <div>
               <span className="text-[15px] font-semibold text-[#f5f2ed]">
-                Context<span className="text-[#d4a054]">.ai</span>
+                <span className="inline-flex flex-col leading-none">
+                  <span>Context</span>
+                  <span className="text-[#d4a054]">Spaces.ai</span>
+                </span>
               </span>
               <p className="text-[12px] text-[#5a5665] mt-2">Your workspace, simplified.</p>
             </div>

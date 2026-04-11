@@ -54,7 +54,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     },
     {
       id: '2',
-      name: 'Context.ai',
+      name: 'Contextspaces.ai',
       matterspaces: [
         { id: 'm4', name: 'Marketing' },
         { id: 'm5', name: 'Brand Assets' },
