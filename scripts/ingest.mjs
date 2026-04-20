@@ -103,8 +103,14 @@ async function ingestFile(filePath, matterspace, createdBy, flags) {
   log(`  document_id=${docRow.id}  doc_type=${doc.doc_type}`);
 
   try {
-    // Upload original to storage
-    const storagePath = `${matterspace.id}/${docRow.id}/${filename}`;
+    // Upload original to storage.
+    // Supabase Storage object keys reject a narrower character set than
+    // the local filesystem allows — brackets and braces in particular
+    // break uploads ("Invalid key"). Sanitize the final path segment
+    // while preserving the raw filename in documents.source_filename for
+    // display.
+    const safeName = sanitizeStorageName(filename);
+    const storagePath = `${matterspace.id}/${docRow.id}/${safeName}`;
     const fileBuf = await fs.readFile(filePath);
     const { error: upErr } = await supabase.storage
       .from('vault-documents')
@@ -626,6 +632,19 @@ function mimeFor(ext) {
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   };
   return m[ext] || 'application/octet-stream';
+}
+
+// Sanitize a filename for use as a Supabase Storage object key.
+// Supabase rejects keys containing [ ] { } and a few other chars that are
+// legal on local filesystems but break storage uploads. Strip those entirely
+// rather than replacing with underscores, so files stay human-readable
+// ("Option_Agreement_Execution.pdf" beats "Option_Agreement__Execution_.pdf").
+// Collapse any remaining underscore runs produced by sanitization.
+function sanitizeStorageName(name) {
+  return name
+    .replace(/[\[\]{}]/g, '')
+    .replace(/[^\w/!\-.*'() ]/g, '_')
+    .replace(/_+/g, '_');
 }
 
 function numOrNull(v) {
