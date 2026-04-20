@@ -603,12 +603,14 @@ async function expandPaths(inputs) {
       continue;
     }
     if (stat.isDirectory()) {
-      const entries = await fs.readdir(abs);
-      for (const e of entries.sort()) {
-        const sub = path.join(abs, e);
-        const st = await fs.stat(sub);
-        if (st.isFile() && /\.(pdf|txt|md)$/i.test(e)) out.push(sub);
+      const entries = await fs.readdir(abs, { recursive: true, withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        if (!/\.(pdf|txt|md)$/i.test(e.name)) continue;
+        const parent = e.parentPath || e.path || abs;
+        out.push(path.join(parent, e.name));
       }
+      out.sort();
     } else if (/\.(pdf|txt|md)$/i.test(abs)) {
       out.push(abs);
     }
