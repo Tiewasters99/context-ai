@@ -148,36 +148,50 @@ async function search(args) {
     p_witness_names:     splitList(args.witnesses),
     p_document_ids:      splitList(args['document-ids']),
     p_summary_level:     numOrDefault(args['summary-level'], 0),
-    p_limit:             numOrDefault(args.limit, 20),
+    p_limit:             numOrDefault(args.limit, 5),
   });
   if (error) die(`search: ${error.message}`);
+
+  const fullText = args['full-text'] === true || args['full-text'] === 'true';
+  const PREVIEW_CHARS = 800;
 
   print({
     query: args.q,
     matter: { id: matter.id, short_code: matter.short_code, name: matter.name },
     result_count: data.length,
-    results: data.map(r => ({
-      passage_id: r.passage_id,
-      document_id: r.document_id,
-      document_title: r.document_title,
-      doc_type: r.doc_type,
-      citation: formatCitation(r),
-      coordinates: {
-        page_start: r.page_start,
-        page_end: r.page_end,
-        line_start: r.line_start,
-        line_end: r.line_end,
-      },
-      witness: r.witness_name,
-      examination: r.examination_type,
-      passage_type: r.passage_type,
-      text: r.text,
-      scores: {
-        hybrid: round3(r.hybrid_score),
-        text_rank: round3(r.text_rank),
-        vector: round3(r.vector_score),
-      },
-    })),
+    preview_mode: !fullText,
+    results: data.map(r => {
+      const out = {
+        passage_id: r.passage_id,
+        document_id: r.document_id,
+        document_title: r.document_title,
+        doc_type: r.doc_type,
+        citation: formatCitation(r),
+        coordinates: {
+          page_start: r.page_start,
+          page_end: r.page_end,
+          line_start: r.line_start,
+          line_end: r.line_end,
+        },
+        witness: r.witness_name,
+        examination: r.examination_type,
+        passage_type: r.passage_type,
+        text_full_length: r.text.length,
+        scores: {
+          hybrid: round3(r.hybrid_score),
+          text_rank: round3(r.text_rank),
+          vector: round3(r.vector_score),
+        },
+      };
+      if (fullText || r.text.length <= PREVIEW_CHARS) {
+        out.text = r.text;
+      } else {
+        out.text_preview = r.text.slice(0, PREVIEW_CHARS);
+        out.text_truncated = true;
+        out.hint = `Call get-passage --id ${r.passage_id} for the full ${r.text.length}-char passage.`;
+      }
+      return out;
+    }),
   });
 }
 

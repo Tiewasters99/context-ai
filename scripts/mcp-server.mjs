@@ -78,14 +78,19 @@ const TOOLS = [
     name: 'search',
     description:
       'Hybrid search across all passages in a matter, fusing semantic ' +
-      '(vector) similarity with keyword (tsvector) rank in one SQL call. ' +
-      'Returns up to `limit` passages with formatted citations such as ' +
-      '"Peloso Trial Tr. Day 3, p. 42:11-24" and raw coordinates ' +
-      '(page_start, page_end, line_start, line_end, witness). Use this as ' +
-      'the primary tool when drafting: every result carries a verifiable ' +
-      'citation. Supply filters to narrow by doc_types, witnesses, or ' +
-      'specific document_ids. The query text supports websearch_to_tsquery ' +
-      'syntax — quoted phrases, -exclusions, OR.',
+      '(vector) similarity with keyword (tsvector) rank. Returns up to ' +
+      '`limit` passages (default 5) with formatted citations such as ' +
+      '"Peloso Trial Tr. Day 3, p. 42:11-24", raw coordinates, and a ' +
+      'text_preview (first ~800 chars of each passage). To see the full ' +
+      'text of a specific passage, call get_passage with its passage_id. ' +
+      'Supply filters to narrow by doc_types, witnesses, or document_ids. ' +
+      'Query text supports websearch_to_tsquery syntax (quoted phrases, ' +
+      '-exclusions, OR).\n\n' +
+      'Budget discipline: retrieve only what you need for the immediate ' +
+      'sentence or paragraph. The corpus persists across turns — you can ' +
+      'always search again. Prefer narrow queries with limit: 5 over broad ' +
+      'queries with large limits; large result sets flood the context ' +
+      'window and leave no room for drafting output.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -120,7 +125,18 @@ const TOOLS = [
         },
         limit: {
           type: 'number',
-          description: 'Max results to return. Default 20.',
+          description:
+            'Max results to return. Default 5. Only raise above 10 when ' +
+            'casting a deliberate wide net — wide searches consume context ' +
+            'that you will need for drafting output.',
+        },
+        full_text: {
+          type: 'boolean',
+          description:
+            'Optional. If true, return the full passage text instead of ' +
+            'an 800-char preview. Default false. Prefer the default ' +
+            'preview; if you need the full text of a specific result, ' +
+            'call get_passage with that passage_id instead.',
         },
       },
       required: ['matter', 'q'],
@@ -130,11 +146,15 @@ const TOOLS = [
   {
     name: 'get_passage',
     description:
-      'Fetch a single passage by its UUID, optionally with surrounding ' +
-      'pages of context from the same document. Use this after search when ' +
-      'you need to confirm a quote in situ or see what precedes / follows a ' +
-      'specific exchange — critical for verifying that a citation is not ' +
-      'out of context before you put it in a brief.',
+      'Fetch a single passage by its UUID at full text, optionally with ' +
+      'surrounding pages of context from the same document. This is the ' +
+      'drill-down tool: after search surfaces a promising passage, call ' +
+      'get_passage to read the full text before quoting it. Only request ' +
+      'context_pages when you specifically need to see what precedes or ' +
+      'follows the passage (for out-of-context risk mitigation); otherwise ' +
+      'leave context_pages at 0, because context pages pull in every ' +
+      'surrounding passage at full text and can easily add 10–30k tokens ' +
+      'to the conversation.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -145,8 +165,10 @@ const TOOLS = [
         context_pages: {
           type: 'number',
           description:
-            'Optional. Number of surrounding pages of the same document to ' +
-            'include. Default 0.',
+            'Optional. Pages of surrounding context to include (same ' +
+            'document). Default 0. Each page of context typically adds ' +
+            '2–5 passages at full text. Use sparingly; prefer 0 unless ' +
+            'verifying a quote is not out of context.',
         },
       },
       required: ['id'],
@@ -296,36 +318,50 @@ async function handleSearch(args) {
     p_witness_names: args.witnesses ?? null,
     p_document_ids: args.document_ids ?? null,
     p_summary_level: 0,
-    p_limit: args.limit ?? 20,
+    p_limit: args.limit ?? 5,
   });
   if (error) throw new Error(`search: ${error.message}`);
+
+  const fullText = args.full_text === true;
+  const PREVIEW_CHARS = 800;
 
   return {
     query: args.q,
     matter: { id: matter.id, short_code: matter.short_code, name: matter.name },
     result_count: data.length,
-    results: data.map((r) => ({
-      passage_id: r.passage_id,
-      document_id: r.document_id,
-      document_title: r.document_title,
-      doc_type: r.doc_type,
-      citation: formatCitation(r),
-      coordinates: {
-        page_start: r.page_start,
-        page_end: r.page_end,
-        line_start: r.line_start,
-        line_end: r.line_end,
-      },
-      witness: r.witness_name,
-      examination: r.examination_type,
-      passage_type: r.passage_type,
-      text: r.text,
-      scores: {
-        hybrid: round3(r.hybrid_score),
-        text_rank: round3(r.text_rank),
-        vector: round3(r.vector_score),
-      },
-    })),
+    preview_mode: !fullText,
+    results: data.map((r) => {
+      const out = {
+        passage_id: r.passage_id,
+        document_id: r.document_id,
+        document_title: r.document_title,
+        doc_type: r.doc_type,
+        citation: formatCitation(r),
+        coordinates: {
+          page_start: r.page_start,
+          page_end: r.page_end,
+          line_start: r.line_start,
+          line_end: r.line_end,
+        },
+        witness: r.witness_name,
+        examination: r.examination_type,
+        passage_type: r.passage_type,
+        text_full_length: r.text.length,
+        scores: {
+          hybrid: round3(r.hybrid_score),
+          text_rank: round3(r.text_rank),
+          vector: round3(r.vector_score),
+        },
+      };
+      if (fullText || r.text.length <= PREVIEW_CHARS) {
+        out.text = r.text;
+      } else {
+        out.text_preview = r.text.slice(0, PREVIEW_CHARS);
+        out.text_truncated = true;
+        out.hint = `Call get_passage with id="${r.passage_id}" for the full ${r.text.length}-char passage.`;
+      }
+      return out;
+    }),
   };
 }
 
