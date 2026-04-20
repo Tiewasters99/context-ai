@@ -445,15 +445,30 @@ function inferFromFilename(filename) {
   const base = filename.replace(/\.[^.]+$/, '');
   const lower = base.toLowerCase();
 
+  // Volume-anchored transcript: has "Vol"/"Volume"/"Day" + number. Highest confidence.
   const volMatch =
     /(?:vol(?:ume)?|day)[ _-]+((?:[ivxlcdm]+)|\d+)/i.exec(base);
-  if (volMatch || /hearing|trial|transcript/i.test(lower)) {
+  if (volMatch) {
     return {
       doc_type: 'transcript',
       title: prettify(base),
-      volume_number: volMatch ? romanOrInt(volMatch[1]) : null,
+      volume_number: romanOrInt(volMatch[1]),
       witness_name: null,
       deposition_date: null,
+    };
+  }
+
+  // Exhibit: "Ex. A", "Ex_47", "Exhibit B". Check BEFORE brief/hearing keywords
+  // because exhibit titles often reference the brief they were filed with.
+  if (/^(?:ex\.|ex[ _-]|exhibit\b)/i.test(base)) {
+    const exMatch = /^(?:ex\.|ex|exhibit)[\s._ -]*([A-Za-z0-9]+)/i.exec(base);
+    return {
+      doc_type: 'exhibit',
+      title: prettify(base),
+      exhibit_number: exMatch ? exMatch[1] : null,
+      witness_name: null,
+      deposition_date: null,
+      volume_number: null,
     };
   }
 
@@ -470,18 +485,6 @@ function inferFromFilename(filename) {
     };
   }
 
-  if (/^ex[_ -]|^exhibit[_ -]/i.test(base)) {
-    const exMatch = /^(?:ex|exhibit)[_ -]?([\w\-]+)/i.exec(base);
-    return {
-      doc_type: 'exhibit',
-      title: prettify(base),
-      exhibit_number: exMatch ? exMatch[1] : null,
-      witness_name: null,
-      deposition_date: null,
-      volume_number: null,
-    };
-  }
-
   if (/brief|memorandum|motion|reply|opposition|memo/i.test(lower)) {
     return {
       doc_type: 'brief',
@@ -489,6 +492,17 @@ function inferFromFilename(filename) {
       witness_name: null,
       deposition_date: null,
       volume_number: null,
+    };
+  }
+
+  // Generic transcript fallback: has the keyword but no volume marker.
+  if (/hearing|trial|transcript/i.test(lower)) {
+    return {
+      doc_type: 'transcript',
+      title: prettify(base),
+      volume_number: null,
+      witness_name: null,
+      deposition_date: null,
     };
   }
 
