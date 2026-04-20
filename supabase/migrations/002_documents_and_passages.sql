@@ -356,7 +356,7 @@ create policy "Members can read vault-documents files in their matterspaces"
       from public.matterspaces m
       join public.serverspaces s on s.id = m.serverspace_id
       join public.serverspace_members sm on sm.serverspace_id = s.id
-      where m.id::text = (storage.foldername(name))[1]
+      where m.id::text = (storage.foldername(storage.objects.name))[1]
         and sm.user_id = auth.uid()
     )
   );
@@ -370,7 +370,7 @@ create policy "Members can upload vault-documents files to their matterspaces"
       from public.matterspaces m
       join public.serverspaces s on s.id = m.serverspace_id
       join public.serverspace_members sm on sm.serverspace_id = s.id
-      where m.id::text = (storage.foldername(name))[1]
+      where m.id::text = (storage.foldername(storage.objects.name))[1]
         and sm.user_id = auth.uid()
         and sm.role in ('owner','admin','member')
     )
@@ -385,7 +385,7 @@ create policy "Admins can delete vault-documents files"
       from public.matterspaces m
       join public.serverspaces s on s.id = m.serverspace_id
       join public.serverspace_members sm on sm.serverspace_id = s.id
-      where m.id::text = (storage.foldername(name))[1]
+      where m.id::text = (storage.foldername(storage.objects.name))[1]
         and sm.user_id = auth.uid()
         and sm.role in ('owner','admin')
     )
