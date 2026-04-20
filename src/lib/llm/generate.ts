@@ -1,4 +1,4 @@
-import type { LLMStreamCallbacks, ProviderId } from './types';
+import type { LLMStreamCallbacks } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { routeRequest, selectRelevantChunks, estimateTokens } from './router';

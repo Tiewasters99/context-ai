@@ -60,8 +60,7 @@ const openaiAdapter: ProviderAdapter = {
 /** Google Gemini API (generateContent with streaming) */
 const googleAdapter: ProviderAdapter = {
   providerId: 'google',
-  buildRequestBody(request: LLMRequest, model: ModelConfig): string {
-    const parts: { text: string }[] = [];
+  buildRequestBody(request: LLMRequest, _model: ModelConfig): string {
     const systemParts: { text: string }[] = [];
 
     if (request.system) {

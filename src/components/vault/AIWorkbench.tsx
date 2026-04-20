@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Send, FileText, Check, ChevronDown, Loader2, Copy, Download, Square, AlertCircle, Info, Search, Zap } from 'lucide-react';
+import { Send, FileText, Check, ChevronDown, Copy, Download, Square, AlertCircle, Info, Search, Zap } from 'lucide-react';
 import { generate, allModels, estimateTokens } from '@/lib/llm';
 import { searchVaultFiles, autoSelectFiles } from '@/lib/search';
 import type { VaultFile } from '@/lib/vault-types';
