@@ -150,7 +150,16 @@ export default function Dashboard() {
   const { cardRef, toggleFullscreen } = useDraggableResizable();
   const [showCard, setShowCard] = useState(true);
   const [enteringVault, setEnteringVault] = useState(false);
-  const [doorPos, setDoorPos] = useState({ x: 0, y: 0 });
+  // Door position persists across reloads so the vault icon stays lined up
+  // over the archway in the cover image once the user drags it into place.
+  const DOOR_POS_KEY = 'cs.dashboard.doorPos';
+  const [doorPos, setDoorPos] = useState<{ x: number; y: number }>(() => {
+    try {
+      const raw = localStorage.getItem(DOOR_POS_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { x: 0, y: 0 };
+  });
   const doorDrag = useRef({ active: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
 
   const onDoorMouseDown = useCallback((e: React.MouseEvent) => {
@@ -167,7 +176,17 @@ export default function Dashboard() {
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
       setDoorPos({ x: d.origX + dx, y: d.origY + dy });
     };
-    const onUp = () => { doorDrag.current.active = false; };
+    const onUp = () => {
+      if (doorDrag.current.active && doorDrag.current.moved) {
+        // Capture the latest position via the setter's current value;
+        // closure-captured doorPos here would always be stale.
+        setDoorPos((pos) => {
+          try { localStorage.setItem(DOOR_POS_KEY, JSON.stringify(pos)); } catch {}
+          return pos;
+        });
+      }
+      doorDrag.current.active = false;
+    };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
