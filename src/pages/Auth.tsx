@@ -207,8 +207,7 @@ export default function Auth() {
       {/* Mouse attribution — bottom right */}
       <div className="absolute bottom-6 right-8">
         <p className="text-[16px] text-white font-medium tracking-wide" style={{ textShadow: '0 2px 8px rgba(0,0,0,1), 0 0 30px rgba(0,0,0,0.6)' }}>
-          Concept design for the Tremendamouse<span className="text-[12px] align-super">TM</span> — world's first multi-modal smart mouse.
-          <br />Developed by our parent company, <span className="text-[#d4a054]">Grapheon.ai</span>
+          Concept design for the <span className="text-[#d4a054]">Grapheon</span> Tremenda<span className="text-[12px] align-super">TM</span> — the world's first fully multi-modal computer mouse.
         </p>
       </div>
     </div>
