@@ -12,16 +12,17 @@ import { X,
   Users,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 
-interface MockMatterspace {
+interface Matterspace {
   id: string;
   name: string;
 }
 
-interface MockServerspace {
+interface Serverspace {
   id: string;
   name: string;
-  matterspaces: MockMatterspace[];
+  matterspaces: Matterspace[];
 }
 
 interface SidebarProps {
@@ -42,29 +43,29 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     if (showNewServerspace) newServerspaceRef.current?.focus();
   }, [showNewServerspace]);
 
-  const [serverspaces] = useState<MockServerspace[]>([
-    {
-      id: '1',
-      name: 'Labib',
-      matterspaces: [
-        { id: 'm1', name: 'Case Alpha' },
-        { id: 'm2', name: 'Case Beta' },
-        { id: 'm3', name: 'Compliance Review' },
-      ],
-    },
-    {
-      id: '2',
-      name: 'Contextspaces.ai',
-      matterspaces: [
-        { id: 'm4', name: 'Marketing' },
-        { id: 'm5', name: 'Brand Assets' },
-        { id: 'm6', name: 'Product Dev' },
-        { id: 'm7', name: 'Architecture' },
-        { id: 'm8', name: 'Board of Directors' },
-        { id: 'm9', name: 'Real Estate Portfolio' },
-      ],
-    },
-  ]);
+  const [serverspaces, setServerspaces] = useState<Serverspace[]>([]);
+
+  // Fetch real serverspaces + matterspaces via Supabase (RLS-scoped to user).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from('serverspaces')
+        .select('id, name, matterspaces (id, name)')
+        .order('created_at', { ascending: true });
+      if (cancelled || error || !data) return;
+      setServerspaces(
+        data.map((s) => ({
+          id: s.id,
+          name: s.name,
+          matterspaces: (s.matterspaces ?? []) as Matterspace[],
+        })),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const displayName = user?.user_metadata?.display_name ?? user?.email ?? 'User';
 
@@ -166,7 +167,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                 <button
                   onClick={() => toggleExpanded(space.id)}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors text-left ${
-                    isActive(`/app/server/${space.id}`)
+                    isActive(`/app/serverspace/${space.id}`)
                       ? 'bg-[#16161d] text-white font-medium'
                       : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
                   }`}
@@ -190,9 +191,9 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                     {space.matterspaces.map((ms) => (
                       <Link
                         key={ms.id}
-                        to={`/app/server/${space.id}/matter/${ms.id}`}
+                        to={`/app/matterspace/${ms.id}`}
                         className={`block px-2.5 py-1.5 rounded-md text-[12px] transition-colors ${
-                          isActive(`/app/server/${space.id}/matter/${ms.id}`)
+                          isActive(`/app/matterspace/${ms.id}`)
                             ? 'bg-[#16161d] text-white font-medium'
                             : 'text-white/70 hover:bg-[rgba(255,255,255,0.04)] hover:text-white'
                         }`}
@@ -200,6 +201,11 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                         {ms.name}
                       </Link>
                     ))}
+                    {space.matterspaces.length === 0 && (
+                      <div className="px-2.5 py-1.5 text-[12px] text-white/40">
+                        No matters yet
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
