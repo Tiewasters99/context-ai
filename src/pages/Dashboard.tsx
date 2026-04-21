@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
@@ -25,98 +26,6 @@ interface MockServerspace {
   members: number;
   matterspaces: MockMatterspace[];
 }
-
-const mockServerspaces: MockServerspace[] = [
-  {
-    id: '1',
-    name: 'Labib',
-    members: 5,
-    matterspaces: [
-      {
-        id: 'm1',
-        name: 'Case Alpha',
-        content: [
-          { type: 'page', count: 3, items: [{ id: 'p1', title: 'Case Overview' }, { id: 'p2', title: 'Timeline' }, { id: 'p3', title: 'Strategy Notes' }] },
-          { type: 'list', count: 2, items: [{ id: 'l1', title: 'Action Items' }, { id: 'l2', title: 'Discovery Checklist' }] },
-          { type: 'database', count: 1, items: [{ id: 'd1', title: 'Contacts' }] },
-          { type: 'document', count: 5, items: [{ id: 'doc1', title: 'Complaint.docx' }, { id: 'doc2', title: 'Settlement Draft.pdf' }] },
-        ],
-      },
-      {
-        id: 'm2',
-        name: 'Case Beta',
-        content: [
-          { type: 'page', count: 2, items: [{ id: 'p4', title: 'Intake Notes' }, { id: 'p5', title: 'Research' }] },
-          { type: 'list', count: 1, items: [{ id: 'l3', title: 'Deadlines' }] },
-          { type: 'document', count: 3, items: [{ id: 'doc3', title: 'Retainer Agreement.pdf' }] },
-        ],
-      },
-      {
-        id: 'm3',
-        name: 'Compliance Review',
-        content: [
-          { type: 'page', count: 1, items: [{ id: 'p6', title: 'Audit Findings' }] },
-          { type: 'database', count: 1, items: [{ id: 'd2', title: 'Regulatory Tracker' }] },
-        ],
-      },
-    ],
-  },
-  {
-    id: '2',
-    name: 'Contextspaces.ai',
-    members: 12,
-    matterspaces: [
-      {
-        id: 'm4',
-        name: 'Marketing',
-        content: [
-          { type: 'page', count: 4, items: [{ id: 'p7', title: 'Campaign Brief' }, { id: 'p8', title: 'Creative Direction' }] },
-          { type: 'list', count: 2, items: [{ id: 'l4', title: 'Task Board' }, { id: 'l5', title: 'Vendor List' }] },
-        ],
-      },
-      {
-        id: 'm5',
-        name: 'Brand Assets',
-        content: [
-          { type: 'document', count: 12, items: [{ id: 'doc4', title: 'Logo Pack.zip' }, { id: 'doc5', title: 'Style Guide.pdf' }] },
-        ],
-      },
-      {
-        id: 'm6',
-        name: 'Product Dev',
-        content: [
-          { type: 'page', count: 6, items: [{ id: 'p9', title: 'Sprint 14 Retro' }, { id: 'p10', title: 'Sprint 15 Goals' }] },
-          { type: 'list', count: 3, items: [{ id: 'l6', title: 'Backlog' }, { id: 'l7', title: 'Bug Queue' }] },
-          { type: 'database', count: 2, items: [{ id: 'd3', title: 'Feature Tracker' }, { id: 'd4', title: 'Release Log' }] },
-        ],
-      },
-      {
-        id: 'm7',
-        name: 'Architecture',
-        content: [
-          { type: 'page', count: 3, items: [{ id: 'p11', title: 'System Design' }, { id: 'p12', title: 'API Spec' }] },
-          { type: 'document', count: 2, items: [{ id: 'doc6', title: 'ERD.png' }] },
-        ],
-      },
-      {
-        id: 'm8',
-        name: 'Board of Directors',
-        content: [
-          { type: 'page', count: 2, items: [{ id: 'p13', title: 'Meeting Minutes' }, { id: 'p14', title: 'Governance' }] },
-          { type: 'document', count: 4, items: [{ id: 'doc7', title: 'Bylaws.pdf' }, { id: 'doc8', title: 'Board Deck Q1.pdf' }] },
-        ],
-      },
-      {
-        id: 'm9',
-        name: 'Real Estate Portfolio',
-        content: [
-          { type: 'database', count: 1, items: [{ id: 'd5', title: 'Properties' }] },
-          { type: 'document', count: 3, items: [{ id: 'doc9', title: 'Lease Agreement.pdf' }] },
-        ],
-      },
-    ],
-  },
-];
 
 const contentTypeIcon = {
   page: FileText,
@@ -143,9 +52,58 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const displayName = user?.user_metadata?.display_name ?? 'there';
 
+  const [serverspaces, setServerspaces] = useState<MockServerspace[]>([]);
+  const [loadingServerspaces, setLoadingServerspaces] = useState(true);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [expandedContent, setExpandedContent] = useState<Set<string>>(new Set());
+
+  // Fetch the authenticated user's real serverspaces + matterspaces via RLS.
+  // content is deliberately empty for each matter until we wire content_items
+  // into the sidebar — expanding a matter shows 'no pages yet' rather than
+  // mock items that would 404 when clicked.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingServerspaces(true);
+      const { data: rawServers, error } = await supabase
+        .from('serverspaces')
+        .select('id, name, matterspaces (id, name)')
+        .order('created_at', { ascending: true });
+      if (cancelled) return;
+      if (error || !rawServers) {
+        setServerspaces([]);
+        setLoadingServerspaces(false);
+        return;
+      }
+      // Best-effort member count per serverspace (ignore errors; display 0 if RLS hides it)
+      const enriched = await Promise.all(
+        rawServers.map(async (s) => {
+          const { count } = await supabase
+            .from('serverspace_members')
+            .select('user_id', { count: 'exact', head: true })
+            .eq('serverspace_id', s.id);
+          return {
+            id: s.id,
+            name: s.name,
+            members: count ?? 0,
+            matterspaces: (s.matterspaces ?? []).map((m: { id: string; name: string }) => ({
+              id: m.id,
+              name: m.name,
+              content: [],
+            })),
+          } as MockServerspace;
+        }),
+      );
+      if (!cancelled) {
+        setServerspaces(enriched);
+        setLoadingServerspaces(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const { cardRef, toggleFullscreen } = useDraggableResizable();
   const [showCard, setShowCard] = useState(true);
@@ -238,7 +196,16 @@ export default function Dashboard() {
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Serverspaces</h2>
           <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] overflow-hidden">
-            {mockServerspaces.map((server, serverIdx) => {
+            {loadingServerspaces && (
+              <div className="px-4 py-3 text-[12px] text-[#8a8693]">Loading serverspaces…</div>
+            )}
+            {!loadingServerspaces && serverspaces.length === 0 && (
+              <div className="px-4 py-3 text-[12px] text-[#8a8693]">
+                No serverspaces yet.{' '}
+                <span className="text-[#d4a054]">Create one to get started.</span>
+              </div>
+            )}
+            {serverspaces.map((server, serverIdx) => {
               const isServerExpanded = expandedServers.has(server.id);
 
               return (
