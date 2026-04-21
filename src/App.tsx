@@ -13,6 +13,8 @@ import ListView from '@/pages/ListView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import ClaudeConnect from '@/pages/ClaudeConnect';
+import AuthCallback from '@/pages/AuthCallback';
+import ResetPassword from '@/pages/ResetPassword';
 
 const queryClient = new QueryClient();
 
@@ -45,6 +47,8 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<Auth />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/reset" element={<ResetPassword />} />
             <Route
               path="/app"
               element={
