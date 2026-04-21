@@ -111,7 +111,13 @@ async function authenticate(req) {
     .select('id, user_id, expires_at, revoked_at')
     .eq('token_hash', tokenHash)
     .maybeSingle();
-  if (error) throw new AuthError(500, `auth_db_error`);
+  if (error) {
+    // Debug breadcrumb — safe to expose because the caller already
+    // supplied a valid-format bearer token, and the underlying cause
+    // (bad env var, misconfigured table) is the operator's problem, not
+    // a secret. Remove once the hosted flow is stable.
+    throw new AuthError(500, `auth_db_error: ${error.message || JSON.stringify(error)}`);
+  }
   if (!data) throw new AuthError(401, 'invalid_token');
   if (data.revoked_at) throw new AuthError(401, 'revoked');
   if (data.expires_at && new Date(data.expires_at) < new Date()) {
