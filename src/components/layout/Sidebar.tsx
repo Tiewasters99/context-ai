@@ -44,28 +44,72 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   }, [showNewServerspace]);
 
   const [serverspaces, setServerspaces] = useState<Serverspace[]>([]);
+  const [clientspaceId, setClientspaceId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  // Fetch real serverspaces + matterspaces via Supabase (RLS-scoped to user).
+  // Pull the list of serverspaces (with their matterspaces) for the
+  // authenticated user. Exposed as a function so the create-serverspace
+  // handler can refresh without reloading the page.
+  const refreshServerspaces = async () => {
+    const { data, error } = await supabase
+      .from('serverspaces')
+      .select('id, name, matterspaces (id, name)')
+      .order('created_at', { ascending: true });
+    if (error || !data) return;
+    setServerspaces(
+      data.map((s) => ({
+        id: s.id,
+        name: s.name,
+        matterspaces: (s.matterspaces ?? []) as Matterspace[],
+      })),
+    );
+  };
+
+  // Initial fetch — user's clientspace id (so we know the parent for
+  // new serverspaces) and their current serverspace list.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
-        .from('serverspaces')
-        .select('id, name, matterspaces (id, name)')
-        .order('created_at', { ascending: true });
-      if (cancelled || error || !data) return;
-      setServerspaces(
-        data.map((s) => ({
-          id: s.id,
-          name: s.name,
-          matterspaces: (s.matterspaces ?? []) as Matterspace[],
-        })),
-      );
+      if (!user) return;
+      const { data: cs } = await supabase
+        .from('clientspaces')
+        .select('id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (cs) setClientspaceId(cs.id);
+      await refreshServerspaces();
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user]);
+
+  const handleCreateServerspace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newServerspaceName.trim();
+    if (!name || creating) return;
+    if (!clientspaceId) {
+      setCreateError(
+        'No clientspace found for your account. Refresh the page and try again.',
+      );
+      return;
+    }
+    setCreating(true);
+    setCreateError(null);
+    const { error } = await supabase
+      .from('serverspaces')
+      .insert({ clientspace_id: clientspaceId, name });
+    setCreating(false);
+    if (error) {
+      setCreateError(error.message);
+      return;
+    }
+    setShowNewServerspace(false);
+    setNewServerspaceName('');
+    await refreshServerspaces();
+  };
 
   const displayName = user?.user_metadata?.display_name ?? user?.email ?? 'User';
 
@@ -247,29 +291,36 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
       {/* New Serverspace Modal */}
       {showNewServerspace && (
         <>
-          <div className="fixed inset-0 z-50" onClick={() => setShowNewServerspace(false)} />
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setShowNewServerspace(false)} />
           <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
             <div className="flex items-center justify-between mb-5">
               <h3 className="text-[15px] font-semibold text-white">New Serverspace</h3>
-              <button onClick={() => setShowNewServerspace(false)} className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors">
+              <button
+                onClick={() => { setShowNewServerspace(false); setCreateError(null); }}
+                className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors"
+              >
                 <X size={16} />
               </button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); if (newServerspaceName.trim()) { setShowNewServerspace(false); setNewServerspaceName(''); } }}>
+            <form onSubmit={handleCreateServerspace}>
               <input
                 ref={newServerspaceRef}
                 type="text"
                 value={newServerspaceName}
                 onChange={(e) => setNewServerspaceName(e.target.value)}
                 placeholder="Serverspace name"
+                disabled={creating}
                 className="w-full px-4 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[14px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#e8b84a] focus:border-transparent"
               />
+              {createError && (
+                <p className="mt-3 text-[12px] text-red-300 leading-relaxed">{createError}</p>
+              )}
               <button
                 type="submit"
-                disabled={!newServerspaceName.trim()}
+                disabled={!newServerspaceName.trim() || creating}
                 className="w-full mt-4 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#f5d565] text-[#0e0e12] text-[13px] font-bold transition-colors disabled:opacity-40 shadow-[0_0_20px_rgba(240,200,80,0.3)]"
               >
-                Create Serverspace
+                {creating ? 'Creating…' : 'Create Serverspace'}
               </button>
             </form>
           </div>
