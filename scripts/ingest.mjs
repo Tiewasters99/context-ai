@@ -24,10 +24,11 @@
 //   (anything else)                     other
 
 import { createClient } from '@supabase/supabase-js';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { processDocument } from '../lib/ingest-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -35,11 +36,6 @@ await loadEnv(path.resolve(__dirname, '..', '.env'));
 const SUPABASE_URL = requireEnv('VITE_SUPABASE_URL');
 const SERVICE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const OPENAI_API_KEY = requireEnv('OPENAI_API_KEY');
-
-const EMBEDDING_MODEL = 'text-embedding-3-small';
-const EMBEDDING_DIM = 1024;
-const EMBEDDING_BATCH = 96;
-const MAX_PASSAGE_WORDS = 500;
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -121,86 +117,27 @@ async function ingestFile(filePath, matterspace, createdBy, flags) {
     if (upErr) throw new Error(`storage upload: ${upErr.message}`);
     await supabase
       .from('documents')
-      .update({ storage_path: storagePath, processing_status: 'extracting' })
+      .update({ storage_path: storagePath })
       .eq('id', docRow.id);
 
-    // Extract per-page text
-    let pages;
-    if (ext === '.pdf') {
-      pages = await extractPdfPages(fileBuf);
-    } else {
-      const text = fileBuf.toString('utf8');
-      pages = [{ pageNumber: 1, text }];
-    }
-    await supabase
-      .from('documents')
-      .update({ page_count: pages.length, processing_status: 'chunking' })
-      .eq('id', docRow.id);
-    log(`  pages=${pages.length}`);
-
-    // Chunk into passages
-    const passages = chunkPages(pages, {
-      witness_name: doc.witness_name,
+    // Run the shared pipeline: extract → chunk → embed → insert.
+    const { passageCount } = await processDocument(supabase, {
+      documentId: docRow.id,
+      fileBuf,
+      ext,
+      witnessName: doc.witness_name,
+      openaiApiKey: OPENAI_API_KEY,
+      onProgress: ({ stage, message }) => {
+        if (stage === 'embedding' && message.startsWith('Embedded')) {
+          process.stdout.write(`  ${message}\r`);
+        } else {
+          log(`  ${message}`);
+        }
+      },
     });
-    log(`  passages=${passages.length}`);
-
-    if (passages.length === 0) {
-      await supabase
-        .from('documents')
-        .update({
-          processing_status: 'error',
-          processing_error: 'no passages extracted',
-        })
-        .eq('id', docRow.id);
-      return 0;
-    }
-
-    // Embed in batches
-    await supabase
-      .from('documents')
-      .update({ processing_status: 'embedding' })
-      .eq('id', docRow.id);
-
-    for (let i = 0; i < passages.length; i += EMBEDDING_BATCH) {
-      const batch = passages.slice(i, i + EMBEDDING_BATCH);
-      const embeddings = await embedBatch(batch.map(p => p.text));
-      batch.forEach((p, idx) => (p.embedding = embeddings[idx]));
-      process.stdout.write(`  embedded ${i + batch.length}/${passages.length}\r`);
-    }
     process.stdout.write('\n');
-
-    // Insert passages (chunked to stay under PostgREST row limit)
-    const INSERT_CHUNK = 200;
-    for (let i = 0; i < passages.length; i += INSERT_CHUNK) {
-      const batch = passages.slice(i, i + INSERT_CHUNK).map(p => ({
-        document_id: docRow.id,
-        matterspace_id: matterspace.id,
-        sequence_number: p.sequence_number,
-        page_start: p.page_start,
-        page_end: p.page_end,
-        line_start: p.line_start,
-        line_end: p.line_end,
-        witness_name: p.witness_name,
-        examination_type: p.examination_type,
-        speaker: p.speaker,
-        text: p.text,
-        passage_type: p.passage_type,
-        embedding: p.embedding,
-        summary_level: 0,
-      }));
-      const { error: insErr } = await supabase.from('passages').insert(batch);
-      if (insErr) throw new Error(`insert passages: ${insErr.message}`);
-    }
-
-    await supabase
-      .from('documents')
-      .update({
-        processing_status: 'ready',
-        ingested_at: new Date().toISOString(),
-      })
-      .eq('id', docRow.id);
     log(`  ready.`);
-    return passages.length;
+    return passageCount;
   } catch (err) {
     await supabase
       .from('documents')
@@ -211,236 +148,6 @@ async function ingestFile(filePath, matterspace, createdBy, flags) {
       .eq('id', docRow.id);
     throw err;
   }
-}
-
-
-// -----------------------------------------------------------------------------
-// PDF extraction — per-page text
-// -----------------------------------------------------------------------------
-async function extractPdfPages(buf) {
-  // pdfjs expects a plain Uint8Array and will detach the buffer; feed a fresh copy
-  const data = new Uint8Array(buf);
-  const pdf = await pdfjsLib.getDocument({
-    data,
-    useSystemFonts: true,
-    isEvalSupported: false,
-  }).promise;
-
-  const pages = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    // items don't carry newlines; reconstruct using y-position grouping
-    const lines = groupItemsIntoLines(content.items);
-    const text = lines.join('\n');
-    pages.push({ pageNumber: i, text });
-  }
-  return pages;
-}
-
-function groupItemsIntoLines(items) {
-  const rows = new Map();
-  for (const it of items) {
-    if (!it.str || !it.transform) continue;
-    const y = Math.round(it.transform[5]);
-    if (!rows.has(y)) rows.set(y, []);
-    rows.get(y).push({ x: it.transform[4], s: it.str });
-  }
-  return [...rows.entries()]
-    .sort((a, b) => b[0] - a[0]) // top-to-bottom
-    .map(([_, items]) =>
-      items.sort((a, b) => a.x - b.x).map(i => i.s).join(' ').replace(/\s+/g, ' ').trim()
-    )
-    .filter(Boolean);
-}
-
-
-// -----------------------------------------------------------------------------
-// Chunking
-// - If a page looks like a transcript (numbered lines 1–25), split into Q/A
-//   exchanges and capture line_start / line_end per passage.
-// - Otherwise paragraph-group into ~500-word passages with page boundaries preserved.
-// -----------------------------------------------------------------------------
-function chunkPages(pages, opts) {
-  const passages = [];
-  let seq = 0;
-  let activeWitness = opts.witness_name || null;
-  let activeExamType = null;
-
-  for (const { pageNumber, text } of pages) {
-    const transcript = parseTranscriptPage(text);
-    if (transcript) {
-      // Carry witness / exam type across pages until a new header appears
-      for (const c of transcript.chunks) {
-        if (c.witness_name) activeWitness = c.witness_name;
-        if (c.examination_type) activeExamType = c.examination_type;
-        passages.push({
-          sequence_number: seq++,
-          page_start: pageNumber,
-          page_end: pageNumber,
-          line_start: c.line_start,
-          line_end: c.line_end,
-          witness_name: activeWitness,
-          examination_type: activeExamType,
-          speaker: c.speaker || null,
-          text: c.text,
-          passage_type: c.passage_type,
-        });
-      }
-    } else {
-      for (const block of paragraphChunks(text, MAX_PASSAGE_WORDS)) {
-        passages.push({
-          sequence_number: seq++,
-          page_start: pageNumber,
-          page_end: pageNumber,
-          line_start: null,
-          line_end: null,
-          witness_name: activeWitness,
-          examination_type: null,
-          speaker: null,
-          text: block,
-          passage_type: 'monologue',
-        });
-      }
-    }
-  }
-  return passages;
-}
-
-// Detect + parse a transcript page. Returns { chunks } or null if not transcript-shaped.
-function parseTranscriptPage(pageText) {
-  // Expect numbered lines like "  1  Q. ..." or "11  A. ..."
-  const lineRE = /^(?:\s{0,6})(\d{1,2})\s{1,6}(.*)$/gm;
-  const lines = [];
-  let m;
-  while ((m = lineRE.exec(pageText)) !== null) {
-    const n = parseInt(m[1], 10);
-    if (n < 1 || n > 40) continue;
-    lines.push({ lineNum: n, text: m[2].trim() });
-  }
-  if (lines.length < 8) return null; // not transcript-shaped enough
-
-  // Detect section headers inside the page (exam type / witness changes)
-  const headerRE = /\b(DIRECT|CROSS|REDIRECT|RECROSS|VOIR DIRE)\s+EXAMINATION\b/i;
-  const byRE = /\bBY\s+(MR\.|MRS\.|MS\.|DR\.)\s+([A-Z][A-Z'\- ]+)\b/;
-  const witnessCallRE = /\b([A-Z][A-Z'\- ]+),\s+(?:having been|was)\b/;
-
-  const chunks = [];
-  let cur = null;
-
-  function flush() {
-    if (cur && cur.text.trim()) chunks.push(cur);
-    cur = null;
-  }
-
-  for (const { lineNum, text } of lines) {
-    const header = headerRE.exec(text);
-    const witnessCall = witnessCallRE.exec(text);
-    const isQ = /^Q\.\s/.test(text);
-    const isA = /^A\.\s/.test(text);
-    const isExamBy = /^BY\s+(MR\.|MRS\.|MS\.|DR\.)/.test(text);
-
-    if (header || witnessCall || isExamBy) {
-      flush();
-      const sectionChunk = {
-        line_start: lineNum,
-        line_end: lineNum,
-        text,
-        passage_type: 'section_heading',
-        witness_name: witnessCall ? witnessCall[1].trim() : null,
-        examination_type: header ? normalizeExamType(header[1]) : null,
-        speaker: null,
-      };
-      chunks.push(sectionChunk);
-      continue;
-    }
-
-    // Q/A pair boundary: new Q starts a new passage (unless cur is a Q waiting for A)
-    if (isQ && cur && cur.hasAnswer) flush();
-    if (isA && cur) cur.hasAnswer = true;
-
-    if (!cur) {
-      cur = {
-        line_start: lineNum,
-        line_end: lineNum,
-        text,
-        passage_type: 'qa_pair',
-        speaker: isQ ? 'Q' : isA ? 'A' : null,
-        hasAnswer: isA,
-      };
-    } else {
-      cur.line_end = lineNum;
-      cur.text += '\n' + text;
-    }
-  }
-  flush();
-
-  // Collapse tiny chunks into neighbors so we don't emit 2-line passages
-  const merged = [];
-  for (const c of chunks) {
-    const last = merged[merged.length - 1];
-    if (last && last.passage_type === c.passage_type && last.text.length < 300) {
-      last.line_end = c.line_end;
-      last.text += '\n' + c.text;
-    } else {
-      merged.push(c);
-    }
-  }
-  return { chunks: merged };
-}
-
-function normalizeExamType(s) {
-  const u = s.toUpperCase();
-  if (u.startsWith('DIRECT')) return 'direct';
-  if (u.startsWith('CROSS')) return 'cross';
-  if (u.startsWith('REDIRECT')) return 'redirect';
-  if (u.startsWith('RECROSS')) return 'recross';
-  if (u.startsWith('VOIR')) return 'voir_dire';
-  return null;
-}
-
-function paragraphChunks(text, maxWords) {
-  const paras = text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-  const out = [];
-  let buf = '';
-  let bufWords = 0;
-  for (const p of paras) {
-    const w = p.split(/\s+/).length;
-    if (buf && bufWords + w > maxWords) {
-      out.push(buf);
-      buf = '';
-      bufWords = 0;
-    }
-    buf = buf ? buf + '\n\n' + p : p;
-    bufWords += w;
-  }
-  if (buf.trim()) out.push(buf.trim());
-  return out;
-}
-
-
-// -----------------------------------------------------------------------------
-// Embeddings
-// -----------------------------------------------------------------------------
-async function embedBatch(texts) {
-  const res = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${OPENAI_API_KEY}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      dimensions: EMBEDDING_DIM,
-      input: texts,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`embed ${res.status}: ${body.slice(0, 400)}`);
-  }
-  const data = await res.json();
-  return data.data.map(d => d.embedding);
 }
 
 

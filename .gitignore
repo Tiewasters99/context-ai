@@ -27,3 +27,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local working copies of source documents (the canonical copies live in
+# Supabase Storage and the documents/passages tables). Keeps the user's
+# unpublished IP — screenplays, drafts, books being ingested — out of a
+# public repo.
+screenplays/
+drafts/
+books/

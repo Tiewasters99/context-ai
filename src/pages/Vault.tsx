@@ -1,11 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
+import {
+  resolveMatter,
+  listMatterDocuments,
+  persistVaultFile,
+  watchDocumentStatus,
+  deleteVaultDocument,
+  type MatterRef,
+} from '@/lib/vault-persist';
 
 type VaultView = 'home' | 'import' | 'workbench' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
 
@@ -32,13 +40,113 @@ export default function Vault() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
 
+  // Matter context: when /app/vault?matter=<short_code|uuid>, the Vault
+  // operates in persistent mode — files go through Supabase Storage +
+  // documents/passages, and the file list reflects the matter's vault
+  // across sessions. Without ?matter=, the Vault is the original ephemeral
+  // single-session workspace.
+  const [searchParams] = useSearchParams();
+  const matterKey = searchParams.get('matter');
+  const [matter, setMatter] = useState<MatterRef | null>(null);
+  const [matterError, setMatterError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!matterKey) { setMatter(null); setMatterError(null); return; }
+    let cancelled = false;
+    resolveMatter(matterKey).then((m) => {
+      if (cancelled) return;
+      if (!m) {
+        setMatter(null);
+        setMatterError(`No matter found for "${matterKey}"`);
+      } else {
+        setMatter(m);
+        setMatterError(null);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [matterKey]);
+
+  // Hydrate the vault file list from the documents table when a matter loads.
+  useEffect(() => {
+    if (!matter) return;
+    let cancelled = false;
+    listMatterDocuments(matter.id).then((files) => {
+      if (!cancelled) setVaultFiles(files);
+    });
+    // Resume polling for any docs that are still mid-pipeline (uploading / indexing).
+    const cleanups: (() => void)[] = [];
+    listMatterDocuments(matter.id).then((files) => {
+      if (cancelled) return;
+      for (const f of files) {
+        if (f.status === 'uploading' || f.status === 'indexing') {
+          cleanups.push(
+            watchDocumentStatus(f.id, (status) => {
+              setVaultFiles((prev) => prev.map((x) => x.id === f.id ? { ...x, status } : x));
+            })
+          );
+        }
+      }
+    });
+    return () => {
+      cancelled = true;
+      cleanups.forEach((c) => c());
+    };
+  }, [matter]);
+
+  const formatSize = (bytes: number) =>
+    bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
+    bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` :
+    `${(bytes / 1024).toFixed(0)} KB`;
+
   const addVaultFiles = useCallback(async (fileList: FileList | File[]) => {
     const arr = Array.from(fileList);
+
+    // Persistent mode — upload + ingest via Supabase, poll for status.
+    if (matter) {
+      for (const file of arr) {
+        try {
+          const { documentId } = await persistVaultFile(matter, file);
+          const stub: VaultFile = {
+            id: documentId,
+            name: file.name,
+            path: file.name,
+            size: formatSize(file.size),
+            sizeBytes: file.size,
+            type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
+            file,
+            status: 'uploading',
+          };
+          setVaultFiles((prev) => [stub, ...prev]);
+          // Poll until terminal — self-stops on ready/error.
+          watchDocumentStatus(documentId, (status) => {
+            setVaultFiles((prev) =>
+              prev.map((f) => f.id === documentId ? { ...f, status } : f)
+            );
+          });
+        } catch (err: any) {
+          console.error('persistVaultFile:', err.message);
+          setVaultFiles((prev) => [{
+            id: crypto.randomUUID(),
+            name: file.name,
+            path: file.name,
+            size: formatSize(file.size),
+            sizeBytes: file.size,
+            type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
+            file,
+            status: 'error',
+            textContent: `[Upload failed: ${err.message}]`,
+          }, ...prev]);
+        }
+      }
+      return;
+    }
+
+    // Ephemeral mode — original behavior, in-memory only.
     const newFiles: VaultFile[] = arr.map((f) => ({
       id: crypto.randomUUID(),
       name: f.name,
       path: ((f as any).webkitRelativePath as string) || f.name,
-      size: f.size > 1073741824 ? `${(f.size / 1073741824).toFixed(1)} GB` : f.size > 1048576 ? `${(f.size / 1048576).toFixed(1)} MB` : `${(f.size / 1024).toFixed(0)} KB`,
+      size: formatSize(f.size),
       sizeBytes: f.size,
       type: f.name.split('.').pop()?.toLowerCase() ?? 'file',
       file: f,
@@ -47,7 +155,6 @@ export default function Vault() {
 
     setVaultFiles((prev) => [...newFiles, ...prev]);
 
-    // Extract text from each file
     for (const nf of newFiles) {
       setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'indexing' } : f));
       try {
@@ -57,11 +164,22 @@ export default function Vault() {
         setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'error', textContent: `[Failed to extract text from ${nf.name}]` } : f));
       }
     }
-  }, []);
+  }, [matter]);
 
   const removeVaultFile = useCallback((id: string) => {
+    if (matter) {
+      // Persistent mode — delete from DB + storage. Optimistic UI removal;
+      // on error we leave a console message but do not re-add the row.
+      deleteVaultDocument(id)
+        .then(() => setVaultFiles((prev) => prev.filter((f) => f.id !== id)))
+        .catch((err) => {
+          console.error('deleteVaultDocument:', err.message);
+          setVaultFiles((prev) => prev.filter((f) => f.id !== id));
+        });
+      return;
+    }
     setVaultFiles((prev) => prev.filter((f) => f.id !== id));
-  }, []);
+  }, [matter]);
 
   const [bannerY, setBannerY] = useState(50); // vertical position %, 0=top, 100=bottom
   const bannerDragging = useRef(false);
@@ -155,9 +273,20 @@ export default function Vault() {
               <p className="text-[22px] text-white tracking-[0.4em] uppercase font-medium mb-4" style={{ textShadow: '0 0 30px rgba(232,184,74,0.2)' }}>
                 The Vault<span className="text-[10px] align-super tracking-normal">TM</span>
               </p>
-              <p className="text-[14px] text-white mb-8">
-                Your secure AI workspace. Import documents, run agents, generate output.
-              </p>
+              {matter ? (
+                <>
+                  <p className="text-[14px] text-[#e8b84a] mb-2">{matter.name}</p>
+                  <p className="text-[12px] text-white/80 mb-8">
+                    Persistent matter vault. Files are stored, indexed, and available to AI through MCP.
+                  </p>
+                </>
+              ) : matterError ? (
+                <p className="text-[13px] text-red-400/80 mb-8">{matterError}</p>
+              ) : (
+                <p className="text-[14px] text-white mb-8">
+                  Your secure AI workspace. Import documents, run agents, generate output.
+                </p>
+              )}
               <p className="text-[12px] text-white">
                 Select an option from the menu to get started
               </p>
@@ -211,9 +340,16 @@ export default function Vault() {
         <div className="flex items-center justify-between px-4 h-14 shrink-0 border-b border-[rgba(255,255,255,0.08)]">
           {menuOpen ? (
             <>
-              <span className="text-[15px] font-semibold text-white tracking-tight">
-                The Vault
-              </span>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[15px] font-semibold text-white tracking-tight">
+                  The Vault
+                </span>
+                {matter && (
+                  <span className="text-[11px] text-[#e8b84a]/80 truncate">
+                    {matter.name}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => navigate('/app')}
