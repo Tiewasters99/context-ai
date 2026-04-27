@@ -273,14 +273,7 @@ export default function Vault() {
               <p className="text-[22px] text-white tracking-[0.4em] uppercase font-medium mb-4" style={{ textShadow: '0 0 30px rgba(232,184,74,0.2)' }}>
                 The Vault<span className="text-[10px] align-super tracking-normal">TM</span>
               </p>
-              {matter ? (
-                <>
-                  <p className="text-[14px] text-[#e8b84a] mb-2">{matter.name}</p>
-                  <p className="text-[12px] text-white/80 mb-8">
-                    Persistent matter vault. Files are stored, indexed, and available to AI through MCP.
-                  </p>
-                </>
-              ) : matterError ? (
+              {matterError ? (
                 <p className="text-[13px] text-red-400/80 mb-8">{matterError}</p>
               ) : (
                 <p className="text-[14px] text-white mb-8">
@@ -344,11 +337,6 @@ export default function Vault() {
                 <span className="text-[15px] font-semibold text-white tracking-tight">
                   The Vault
                 </span>
-                {matter && (
-                  <span className="text-[11px] text-[#e8b84a]/80 truncate">
-                    {matter.name}
-                  </span>
-                )}
               </div>
               <div className="flex items-center gap-1">
                 <button
