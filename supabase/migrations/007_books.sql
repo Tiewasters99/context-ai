@@ -72,7 +72,14 @@ create index if not exists idx_passages_embedding_version
 -- production values so existing callers (mcp-core.mjs) keep working without
 -- code changes. When we migrate providers, the application bumps the version
 -- and updates the default args here.
+--
+-- Drop the previous 8-arg signature first. PostgreSQL treats functions with
+-- different parameter lists as separate overloads, so a bare `create or
+-- replace` would leave the old version alive — and existing callers passing
+-- 8 named args would silently bind to it, bypassing the version filter.
 -- =============================================================================
+drop function if exists public.search_passages(uuid, text, vector, text[], text[], uuid[], int, int);
+
 create or replace function public.search_passages(
   p_matterspace_id uuid,
   p_query_text text,
