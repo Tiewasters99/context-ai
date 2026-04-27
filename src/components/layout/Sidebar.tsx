@@ -13,17 +13,7 @@ import { X,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-
-interface Matterspace {
-  id: string;
-  name: string;
-}
-
-interface Serverspace {
-  id: string;
-  name: string;
-  matterspaces: Matterspace[];
-}
+import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -43,31 +33,14 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     if (showNewServerspace) newServerspaceRef.current?.focus();
   }, [showNewServerspace]);
 
-  const [serverspaces, setServerspaces] = useState<Serverspace[]>([]);
+  const { data: serverspaces = [] } = useServerspaces();
+  const refreshServerspaces = useServerspacesRefresh();
   const [clientspaceId, setClientspaceId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Pull the list of serverspaces (with their matterspaces) for the
-  // authenticated user. Exposed as a function so the create-serverspace
-  // handler can refresh without reloading the page.
-  const refreshServerspaces = async () => {
-    const { data, error } = await supabase
-      .from('serverspaces')
-      .select('id, name, matterspaces (id, name)')
-      .order('created_at', { ascending: true });
-    if (error || !data) return;
-    setServerspaces(
-      data.map((s) => ({
-        id: s.id,
-        name: s.name,
-        matterspaces: (s.matterspaces ?? []) as Matterspace[],
-      })),
-    );
-  };
-
-  // Initial fetch — user's clientspace id (so we know the parent for
-  // new serverspaces) and their current serverspace list.
+  // Fetch the user's clientspace id once so we know the parent FK for
+  // any new serverspace they create.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -79,7 +52,6 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
         .maybeSingle();
       if (cancelled) return;
       if (cs) setClientspaceId(cs.id);
-      await refreshServerspaces();
     })();
     return () => {
       cancelled = true;
@@ -108,6 +80,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     }
     setShowNewServerspace(false);
     setNewServerspaceName('');
+    // Invalidate the shared cache — sidebar and dashboard both refetch.
     await refreshServerspaces();
   };
 

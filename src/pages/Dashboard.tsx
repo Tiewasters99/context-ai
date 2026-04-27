@@ -2,10 +2,10 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import { useServerspaces } from '@/hooks/useServerspaces';
 import type { ContentType } from '@/lib/types';
 
 interface ContentSummary {
@@ -52,58 +52,18 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const displayName = user?.user_metadata?.display_name ?? 'there';
 
-  const [serverspaces, setServerspaces] = useState<MockServerspace[]>([]);
-  const [loadingServerspaces, setLoadingServerspaces] = useState(true);
+  // Shared query — same cache as the sidebar. Mutations from either view
+  // invalidate and both refetch.
+  const { data: sharedServerspaces = [], isLoading: loadingServerspaces } = useServerspaces();
+  const serverspaces: MockServerspace[] = sharedServerspaces.map((s) => ({
+    id: s.id,
+    name: s.name,
+    members: s.member_count,
+    matterspaces: s.matterspaces.map((m) => ({ id: m.id, name: m.name, content: [] })),
+  }));
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [expandedContent, setExpandedContent] = useState<Set<string>>(new Set());
-
-  // Fetch the authenticated user's real serverspaces + matterspaces via RLS.
-  // content is deliberately empty for each matter until we wire content_items
-  // into the sidebar — expanding a matter shows 'no pages yet' rather than
-  // mock items that would 404 when clicked.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoadingServerspaces(true);
-      const { data: rawServers, error } = await supabase
-        .from('serverspaces')
-        .select('id, name, matterspaces (id, name)')
-        .order('created_at', { ascending: true });
-      if (cancelled) return;
-      if (error || !rawServers) {
-        setServerspaces([]);
-        setLoadingServerspaces(false);
-        return;
-      }
-      // Best-effort member count per serverspace (ignore errors; display 0 if RLS hides it)
-      const enriched = await Promise.all(
-        rawServers.map(async (s) => {
-          const { count } = await supabase
-            .from('serverspace_members')
-            .select('user_id', { count: 'exact', head: true })
-            .eq('serverspace_id', s.id);
-          return {
-            id: s.id,
-            name: s.name,
-            members: count ?? 0,
-            matterspaces: (s.matterspaces ?? []).map((m: { id: string; name: string }) => ({
-              id: m.id,
-              name: m.name,
-              content: [],
-            })),
-          } as MockServerspace;
-        }),
-      );
-      if (!cancelled) {
-        setServerspaces(enriched);
-        setLoadingServerspaces(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const { cardRef, toggleFullscreen } = useDraggableResizable();
   const [showCard, setShowCard] = useState(true);
