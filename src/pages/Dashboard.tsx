@@ -1,49 +1,14 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, List, Database, File, Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen } from 'lucide-react';
+import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { useServerspaces } from '@/hooks/useServerspaces';
-import type { ContentType } from '@/lib/types';
-
-interface ContentSummary {
-  type: ContentType;
-  count: number;
-  items: { id: string; title: string }[];
-}
-
-interface MockMatterspace {
-  id: string;
-  name: string;
-  content: ContentSummary[];
-}
-
-interface MockServerspace {
-  id: string;
-  name: string;
-  members: number;
-  matterspaces: MockMatterspace[];
-}
-
-const contentTypeIcon = {
-  page: FileText,
-  list: List,
-  database: Database,
-  document: File,
-} as const;
-
-const contentTypeLabel = {
-  page: 'Pages',
-  list: 'Lists',
-  database: 'Databases',
-  document: 'Documents',
-} as const;
+import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
 const quickActions = [
-  { label: 'New Page', icon: FileText, path: '/app/page/new' },
-  { label: 'New List', icon: List, path: '/app/list/new' },
   { label: 'Create Serverspace', icon: Plus, path: '#' },
 ];
 
@@ -54,16 +19,9 @@ export default function Dashboard() {
 
   // Shared query — same cache as the sidebar. Mutations from either view
   // invalidate and both refetch.
-  const { data: sharedServerspaces = [], isLoading: loadingServerspaces } = useServerspaces();
-  const serverspaces: MockServerspace[] = sharedServerspaces.map((s) => ({
-    id: s.id,
-    name: s.name,
-    members: s.member_count,
-    matterspaces: s.matterspaces.map((m) => ({ id: m.id, name: m.name, content: [] })),
-  }));
+  const { data: serverspaces = [], isLoading: loadingServerspaces } = useServerspaces();
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
-  const [expandedContent, setExpandedContent] = useState<Set<string>>(new Set());
 
   const { cardRef, toggleFullscreen } = useDraggableResizable();
   const [showCard, setShowCard] = useState(true);
@@ -129,6 +87,17 @@ export default function Dashboard() {
     <div className="min-h-screen relative">
       <CoverImage editable />
 
+      {!showCard && (
+        <button
+          onClick={() => setShowCard(true)}
+          className="absolute top-6 left-6 z-20 flex items-center gap-2 px-3 py-1.5 rounded-md border border-[rgba(255,255,255,0.1)] bg-[rgba(8,8,14,0.7)] backdrop-blur-[20px] text-[12px] text-white/70 hover:text-[#e8b84a] hover:border-[rgba(232,184,74,0.3)] transition-colors"
+          title="Show welcome panel"
+        >
+          <LayoutTemplate size={13} strokeWidth={1.75} />
+          <span>Show welcome</span>
+        </button>
+      )}
+
       {showCard && <div
         ref={cardRef}
         className="max-w-2xl mx-auto px-6 py-8 mt-[55vh] mb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] cursor-grab select-none"
@@ -167,6 +136,7 @@ export default function Dashboard() {
             )}
             {serverspaces.map((server, serverIdx) => {
               const isServerExpanded = expandedServers.has(server.id);
+              const tree = buildMatterTree(server.matterspaces);
 
               return (
                 <div key={server.id} className={serverIdx > 0 ? 'border-t border-[rgba(255,255,255,0.06)]' : ''}>
@@ -176,13 +146,13 @@ export default function Dashboard() {
                       onClick={() => toggle(expandedServers, setExpandedServers, server.id)}
                       className="flex items-center gap-2.5 flex-1 px-4 py-3 text-left"
                     >
-                      <span className="text-[#5a5665] w-4 shrink-0">
-                        {isServerExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <span className="text-[#e8b84a]/80 w-4 shrink-0">
+                        {isServerExpanded ? <ChevronDown size={15} strokeWidth={2.5} /> : <ChevronRight size={15} strokeWidth={2.5} />}
                       </span>
                       <Users size={15} className="text-[#d4a054]" strokeWidth={1.75} />
                       <span className="text-[13px] font-medium text-[#f5f2ed]">{server.name}</span>
                       <span className="text-[11px] text-white ml-auto font-normal">
-                        {server.members} members · {server.matterspaces.length} matters
+                        {server.member_count} members · {server.matterspaces.length} matters
                       </span>
                     </button>
                     <button
@@ -193,93 +163,23 @@ export default function Dashboard() {
                     </button>
                   </div>
 
-                  {/* Matterspaces */}
-                  {isServerExpanded && server.matterspaces.length > 0 && (
-                    <div className="border-t border-[rgba(255,255,255,0.06)]">
-                      {server.matterspaces.map((matter) => {
-                        const isMatterExpanded = expandedMatters.has(matter.id);
-
-                        return (
-                          <div key={matter.id}>
-                            <div className="flex items-center hover:bg-[rgba(255,255,255,0.04)] transition-colors">
-                              <button
-                                onClick={() => toggle(expandedMatters, setExpandedMatters, matter.id)}
-                                className="flex items-center gap-2.5 flex-1 pl-11 pr-4 py-2 text-left"
-                              >
-                                <span className="text-[#5a5665] w-4 shrink-0">
-                                  {matter.content.length > 0 ? (
-                                    isMatterExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />
-                                  ) : <span className="w-3.5" />}
-                                </span>
-                                <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
-                                <span className="text-[13px] text-[#e8e4de]">{matter.name}</span>
-                              </button>
-                              <button
-                                onClick={() => navigate(`/app/matterspace/${matter.id}`)}
-                                className="px-2.5 py-1 mr-3 text-[11px] font-medium text-[#d4a054] hover:bg-[rgba(212,160,84,0.1)] rounded transition-colors"
-                              >
-                                Open
-                              </button>
-                            </div>
-
-                            {/* Content type summaries */}
-                            {isMatterExpanded && (
-                              <div>
-                                {matter.content.map((group) => {
-                                  const contentKey = `${matter.id}-${group.type}`;
-                                  const isContentExpanded = expandedContent.has(contentKey);
-                                  const Icon = contentTypeIcon[group.type];
-
-                                  return (
-                                    <div key={contentKey}>
-                                      <button
-                                        onClick={() => toggle(expandedContent, setExpandedContent, contentKey)}
-                                        className="flex items-center gap-2.5 w-full pl-[76px] pr-4 py-1.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors"
-                                      >
-                                        <span className="text-[#5a5665] w-3 shrink-0">
-                                          {isContentExpanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                                        </span>
-                                        <Icon size={13} className="text-[#5a5665]" strokeWidth={1.75} />
-                                        <span className="text-[12px] text-[#8a8693]">
-                                          {contentTypeLabel[group.type]} ({group.count})
-                                        </span>
-                                      </button>
-
-                                      {isContentExpanded && (
-                                        <div className="py-0.5">
-                                          {group.items.map((item) => (
-                                            <button
-                                              key={item.id}
-                                              onClick={() => navigate(`/app/${group.type}/${item.id}`)}
-                                              className="flex items-center gap-2.5 w-full pl-[104px] pr-4 py-1 text-left hover:bg-[rgba(212,160,84,0.1)] transition-colors group"
-                                            >
-                                              <span className="w-1 h-1 rounded-full bg-[#5a5665] group-hover:bg-[#d4a054] shrink-0" />
-                                              <span className="text-[12px] text-[#8a8693] group-hover:text-[#d4a054] truncate">
-                                                {item.title}
-                                              </span>
-                                            </button>
-                                          ))}
-                                          {group.count > group.items.length && (
-                                            <div className="pl-[104px] pr-4 py-1">
-                                              <span className="text-[11px] text-[#5a5665]">
-                                                +{group.count - group.items.length} more
-                                              </span>
-                                            </div>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                  {/* Matter tree */}
+                  {isServerExpanded && tree.length > 0 && (
+                    <div className="border-t border-[rgba(255,255,255,0.06)] py-1">
+                      {tree.map((node) => (
+                        <DashboardMatterNode
+                          key={node.matter.id}
+                          node={node}
+                          depth={0}
+                          expandedMatters={expandedMatters}
+                          toggleMatter={(id) => toggle(expandedMatters, setExpandedMatters, id)}
+                          onOpen={(matterId) => navigate(`/app/matterspace/${matterId}`)}
+                        />
+                      ))}
                     </div>
                   )}
 
-                  {isServerExpanded && server.matterspaces.length === 0 && (
+                  {isServerExpanded && tree.length === 0 && (
                     <div className="pl-11 pr-4 py-2.5 border-t border-[rgba(255,255,255,0.06)]">
                       <p className="text-[12px] text-[#5a5665]">No matterspaces yet</p>
                     </div>
@@ -291,7 +191,7 @@ export default function Dashboard() {
         </section>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-3 gap-3 mt-10">
+        <div className="grid grid-cols-1 gap-3 mt-10">
           {quickActions.map((a) => (
             <button
               key={a.label}
@@ -335,6 +235,79 @@ export default function Dashboard() {
           <p className="text-[14px] text-white/0 animate-[fadeInText_1.2s_ease-in-out_0.4s_forwards] tracking-[0.4em] uppercase font-medium">
             The Vault
           </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+interface DashboardMatterNodeProps {
+  node: MatterTreeNode;
+  depth: number;
+  expandedMatters: Set<string>;
+  toggleMatter: (id: string) => void;
+  onOpen: (matterId: string) => void;
+}
+
+function DashboardMatterNode({
+  node,
+  depth,
+  expandedMatters,
+  toggleMatter,
+  onOpen,
+}: DashboardMatterNodeProps) {
+  const { matter, children } = node;
+  const hasChildren = children.length > 0;
+  const isExpanded = expandedMatters.has(matter.id);
+  // Indent each level by ~16px past the serverspace baseline (44px).
+  const indent = 44 + depth * 16;
+
+  return (
+    <div>
+      <div className="flex items-center hover:bg-[rgba(255,255,255,0.04)] transition-colors group">
+        <button
+          onClick={() => onOpen(matter.id)}
+          className="flex items-center gap-2.5 flex-1 pr-4 py-1.5 text-left"
+          style={{ paddingLeft: `${indent}px` }}
+        >
+          {hasChildren ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleMatter(matter.id);
+              }}
+              className="text-[#e8b84a]/80 hover:text-[#e8b84a] w-4 shrink-0 cursor-pointer transition-colors"
+            >
+              {isExpanded ? <ChevronDown size={14} strokeWidth={2.5} /> : <ChevronRight size={14} strokeWidth={2.5} />}
+            </span>
+          ) : (
+            <span className="w-4 shrink-0" />
+          )}
+          <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
+          <span className="text-[13px] text-[#e8e4de] truncate">{matter.name}</span>
+          {hasChildren && (
+            <span className="text-[10px] text-white/30 ml-auto">
+              {children.length} sub-matter{children.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </button>
+      </div>
+      {isExpanded && hasChildren && (
+        <div>
+          {children.map((child) => (
+            <DashboardMatterNode
+              key={child.matter.id}
+              node={child}
+              depth={depth + 1}
+              expandedMatters={expandedMatters}
+              toggleMatter={toggleMatter}
+              onOpen={onOpen}
+            />
+          ))}
         </div>
       )}
     </div>

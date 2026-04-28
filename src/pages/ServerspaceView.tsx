@@ -1,152 +1,206 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Users, UserPlus, Plus } from 'lucide-react';
+import { Users, X, ChevronRight, ChevronDown, Folder } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
-import ContentCard from '@/components/content/ContentCard';
-import type { ContentItem, ServerspaceMember } from '@/lib/types';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import { supabase } from '@/lib/supabase';
+import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import type { ServerspaceMatter } from '@/hooks/useServerspaces';
 
-const tabs = ['Pages', 'Lists', 'Databases', 'Documents', 'Members'] as const;
-
-const mockContent: Record<string, ContentItem[]> = {
-  Pages: [
-    { id: 'p1', title: 'Welcome & Onboarding', content_type: 'page', space_id: 's1', space_type: 'serverspace', is_locked: false, tags: [{ id: 't1', name: 'Onboarding', color: 'blue' }], position: 0, created_by: 'u1', created_at: '2026-04-01T10:00:00Z', updated_at: '2026-04-04T09:00:00Z' },
-    { id: 'p2', title: 'Team Guidelines', content_type: 'page', space_id: 's1', space_type: 'serverspace', is_locked: true, locked_by: 'u1', tags: [{ id: 't2', name: 'Policy', color: 'red' }], position: 1, created_by: 'u1', created_at: '2026-03-28T10:00:00Z', updated_at: '2026-04-02T14:00:00Z' },
-  ],
-  Lists: [
-    { id: 'l1', title: 'Q2 Campaign Tasks', content_type: 'list', space_id: 's1', space_type: 'serverspace', is_locked: false, tags: [{ id: 't3', name: 'Active', color: 'green' }], position: 0, created_by: 'u1', created_at: '2026-04-02T08:00:00Z', updated_at: '2026-04-04T11:00:00Z' },
-  ],
-  Databases: [
-    { id: 'd1', title: 'Contact Directory', content_type: 'database', space_id: 's1', space_type: 'serverspace', is_locked: false, tags: [], position: 0, created_by: 'u1', created_at: '2026-03-15T10:00:00Z', updated_at: '2026-04-03T16:00:00Z' },
-  ],
-  Documents: [
-    { id: 'doc1', title: 'Brand Guidelines.pdf', content_type: 'document', space_id: 's1', space_type: 'serverspace', is_locked: false, tags: [{ id: 't4', name: 'Brand', color: 'purple' }], position: 0, created_by: 'u1', created_at: '2026-03-10T10:00:00Z', updated_at: '2026-03-10T10:00:00Z' },
-  ],
-};
-
-const mockMembers: ServerspaceMember[] = [
-  { id: 'm1', serverspace_id: '1', user_id: 'u1', role: 'owner', display_name: 'You', joined_at: '2026-03-01T00:00:00Z' },
-  { id: 'm2', serverspace_id: '1', user_id: 'u2', role: 'admin', display_name: 'Sarah Chen', joined_at: '2026-03-05T00:00:00Z' },
-  { id: 'm3', serverspace_id: '1', user_id: 'u3', role: 'member', display_name: 'James Wilson', joined_at: '2026-03-10T00:00:00Z' },
-  { id: 'm4', serverspace_id: '1', user_id: 'u4', role: 'member', display_name: 'Maria Garcia', joined_at: '2026-03-12T00:00:00Z' },
-  { id: 'm5', serverspace_id: '1', user_id: 'u5', role: 'viewer', display_name: 'Alex Kim', joined_at: '2026-03-20T00:00:00Z' },
-];
-
-const serverspaceNames: Record<string, string> = {
-  '1': 'Marketing Team',
-  '2': 'Product Dev',
-};
-
-const roleColors: Record<string, string> = {
-  owner: 'bg-amber-500/15 text-amber-400',
-  admin: 'bg-[#d4a054]/15 text-[#d4a054]',
-  member: 'bg-white/5 text-white/80',
-  viewer: 'bg-white/5 text-white/70',
-};
+interface ServerspaceRow {
+  id: string;
+  name: string;
+  description: string | null;
+}
 
 export default function ServerspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<typeof tabs[number]>('Pages');
   const { cardRef, toggleFullscreen } = useDraggableResizable();
 
-  const name = serverspaceNames[id ?? ''] ?? 'Serverspace';
+  const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
+  const [matters, setMatters] = useState<ServerspaceMatter[]>([]);
+  const [memberCount, setMemberCount] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setLoadError(null);
+    setServerspace(null);
+    setMatters([]);
+    (async () => {
+      const { data: s, error } = await supabase
+        .from('serverspaces')
+        .select('id, name, description')
+        .eq('id', id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) { setLoadError(error.message); return; }
+      if (!s) { setLoadError('Serverspace not found'); return; }
+      setServerspace(s as ServerspaceRow);
+
+      const { data: ms } = await supabase
+        .from('matterspaces')
+        .select('id, name, short_code, parent_matterspace_id')
+        .eq('serverspace_id', s.id);
+      if (cancelled) return;
+      setMatters((ms ?? []) as ServerspaceMatter[]);
+
+      const { count } = await supabase
+        .from('serverspace_members')
+        .select('user_id', { count: 'exact', head: true })
+        .eq('serverspace_id', s.id);
+      if (cancelled) return;
+      setMemberCount(count ?? 0);
+    })();
+    return () => { cancelled = true; };
+  }, [id]);
+
+  const tree = buildMatterTree(matters);
+
+  const toggleMatter = (mId: string) => {
+    setExpandedMatters((prev) => {
+      const next = new Set(prev);
+      if (next.has(mId)) next.delete(mId);
+      else next.add(mId);
+      return next;
+    });
+  };
 
   return (
     <div>
       <CoverImage editable />
 
       <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Drag handle + fullscreen */}
+        {/* Close + drag handle + fullscreen */}
         <div className="flex items-center justify-between mb-4 -mt-1">
-          <div className="w-6" />
+          <button
+            onClick={() => navigate('/app')}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+            title="Back to dashboard"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <FullscreenToggle onToggle={toggleFullscreen} />
         </div>
+
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center">
-              <Users size={20} className="text-[#d4a054]" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-[#f5f2ed]">{name}</h1>
-              <p className="text-sm text-white/80">{mockMembers.length} members</p>
-            </div>
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center">
+            <Users size={20} className="text-[#d4a054]" />
           </div>
-          <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#d4a054] hover:bg-[#c4903a] text-white text-sm font-medium transition-colors">
-            <UserPlus size={16} /> Invite
-          </button>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-2xl font-bold text-[#f5f2ed] truncate">
+              {loadError ? 'Serverspace' : serverspace?.name ?? 'Loading…'}
+            </h1>
+            <p className="text-sm text-white/60">
+              {memberCount} {memberCount === 1 ? 'member' : 'members'} · {matters.length} {matters.length === 1 ? 'matter' : 'matters'}
+            </p>
+            {serverspace?.description && <p className="text-sm text-white/80 mt-1">{serverspace.description}</p>}
+            {loadError && <p className="text-sm text-red-300 mt-1">{loadError}</p>}
+          </div>
         </div>
 
-        {/* Tabs */}
-        <div className="flex gap-1 border-b border-[rgba(255,255,255,0.06)] mb-6">
-          {tabs.map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab
-                  ? 'border-[#d4a054] text-[#d4a054]'
-                  : 'border-transparent text-white/80 hover:text-[#e8e4de]'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        {activeTab !== 'Members' ? (
-          <div>
-            <div className="flex justify-end mb-4">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-sm text-white/80 hover:bg-[#1c1c26] transition-colors">
-                <Plus size={14} /> New {activeTab.slice(0, -1)}
-              </button>
-            </div>
-            <div className="space-y-2">
-              {(mockContent[activeTab] ?? []).map((item) => (
-                <ContentCard
-                  key={item.id}
-                  item={item}
-                  onClick={(i) => navigate(`/app/${i.content_type}/${i.id}`)}
+        {/* Matter tree */}
+        <section>
+          <h2 className="text-[12px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Matters</h2>
+          {!loadError && tree.length === 0 && matters.length === 0 && serverspace && (
+            <p className="text-[13px] text-white/50 py-6 text-center">
+              No matters yet. Use the sidebar's <span className="text-[#e8b84a]">+</span> button on this serverspace to create one.
+            </p>
+          )}
+          {tree.length > 0 && (
+            <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.5)] py-1 overflow-hidden">
+              {tree.map((node) => (
+                <ServerMatterNode
+                  key={node.matter.id}
+                  node={node}
+                  depth={0}
+                  expandedMatters={expandedMatters}
+                  toggleMatter={toggleMatter}
+                  onOpen={(mId) => navigate(`/app/matterspace/${mId}`)}
                 />
               ))}
-              {(mockContent[activeTab] ?? []).length === 0 && (
-                <p className="text-center text-white/70 py-12">No {activeTab.toLowerCase()} yet. Create your first one.</p>
-              )}
             </div>
-          </div>
-        ) : (
-          <div>
-            <div className="flex justify-end mb-4">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#d4a054] hover:bg-[#c4903a] text-white text-sm font-medium transition-colors">
-                <UserPlus size={14} /> Invite Members
-              </button>
-            </div>
-            <div className="space-y-2">
-              {mockMembers.map((member) => (
-                <div
-                  key={member.id}
-                  className="flex items-center gap-4 p-4 rounded-xl border border-[rgba(255,255,255,0.06)]"
-                >
-                  <div className="w-9 h-9 rounded-full bg-[#1c1c26] flex items-center justify-center text-sm font-medium text-white/80">
-                    {member.display_name?.[0] ?? '?'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[#f5f2ed]">{member.display_name}</p>
-                    <p className="text-xs text-white/70">Joined {new Date(member.joined_at).toLocaleDateString()}</p>
-                  </div>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${roleColors[member.role]}`}>
-                    {member.role}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+          )}
+        </section>
       </div>
+    </div>
+  );
+}
+
+
+interface ServerMatterNodeProps {
+  node: MatterTreeNode;
+  depth: number;
+  expandedMatters: Set<string>;
+  toggleMatter: (id: string) => void;
+  onOpen: (matterId: string) => void;
+}
+
+function ServerMatterNode({
+  node,
+  depth,
+  expandedMatters,
+  toggleMatter,
+  onOpen,
+}: ServerMatterNodeProps) {
+  const { matter, children } = node;
+  const hasChildren = children.length > 0;
+  const isExpanded = expandedMatters.has(matter.id);
+  const indent = 12 + depth * 16;
+
+  return (
+    <div>
+      <div className="flex items-center hover:bg-[rgba(255,255,255,0.04)] transition-colors group">
+        <button
+          onClick={() => onOpen(matter.id)}
+          className="flex items-center gap-2.5 flex-1 pr-4 py-1.5 text-left"
+          style={{ paddingLeft: `${indent}px` }}
+        >
+          {hasChildren ? (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleMatter(matter.id);
+              }}
+              className="text-[#e8b84a]/80 hover:text-[#e8b84a] w-4 shrink-0 cursor-pointer transition-colors"
+            >
+              {isExpanded ? <ChevronDown size={14} strokeWidth={2.5} /> : <ChevronRight size={14} strokeWidth={2.5} />}
+            </span>
+          ) : (
+            <span className="w-4 shrink-0" />
+          )}
+          <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
+          <span className="text-[13px] text-[#e8e4de] truncate">{matter.name}</span>
+          {hasChildren && (
+            <span className="text-[10px] text-white/30 ml-auto">
+              {children.length} sub-matter{children.length === 1 ? '' : 's'}
+            </span>
+          )}
+        </button>
+      </div>
+      {isExpanded && hasChildren && (
+        <div>
+          {children.map((child) => (
+            <ServerMatterNode
+              key={child.matter.id}
+              node={child}
+              depth={depth + 1}
+              expandedMatters={expandedMatters}
+              toggleMatter={toggleMatter}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -14,6 +14,7 @@ import { X,
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
+import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -29,21 +30,30 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [newServerspaceName, setNewServerspaceName] = useState('');
   const newServerspaceRef = useRef<HTMLInputElement>(null);
 
-  // New matterspace modal — opened from the + button on an expanded serverspace.
-  const [newMatterParent, setNewMatterParent] = useState<{ id: string; name: string } | null>(null);
+  // New matterspace modal — opened from the + button on a serverspace
+  // (creates a top-level matter) or on a matter row (creates a sub-matter
+  // under that parent). serverspaceId is the anchor in either case;
+  // parentMatterId is null for top-level creation. contextLabel is what
+  // we render under the modal title (e.g. "Creative" or "Creative / TikTok").
+  const [newMatterContext, setNewMatterContext] = useState<{
+    serverspaceId: string;
+    parentMatterId: string | null;
+    contextLabel: string;
+  } | null>(null);
   const [newMatterName, setNewMatterName] = useState('');
   const [newMatterShortCode, setNewMatterShortCode] = useState('');
   const [newMatterShortCodeEdited, setNewMatterShortCodeEdited] = useState(false);
   const [newMatterDescription, setNewMatterDescription] = useState('');
   const newMatterNameRef = useRef<HTMLInputElement>(null);
+  const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (showNewServerspace) newServerspaceRef.current?.focus();
   }, [showNewServerspace]);
 
   useEffect(() => {
-    if (newMatterParent) newMatterNameRef.current?.focus();
-  }, [newMatterParent]);
+    if (newMatterContext) newMatterNameRef.current?.focus();
+  }, [newMatterContext]);
 
   const { data: serverspaces = [] } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
@@ -80,8 +90,12 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     return out.slice(0, 64);
   };
 
-  const openNewMatter = (serverspaceId: string, serverspaceName: string) => {
-    setNewMatterParent({ id: serverspaceId, name: serverspaceName });
+  const openNewMatter = (
+    serverspaceId: string,
+    parentMatterId: string | null,
+    contextLabel: string,
+  ) => {
+    setNewMatterContext({ serverspaceId, parentMatterId, contextLabel });
     setNewMatterName('');
     setNewMatterShortCode('');
     setNewMatterShortCodeEdited(false);
@@ -90,13 +104,22 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   };
 
   const closeNewMatter = () => {
-    setNewMatterParent(null);
+    setNewMatterContext(null);
     setMatterError(null);
+  };
+
+  const toggleMatter = (id: string) => {
+    setExpandedMatters((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const handleCreateMatterspace = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMatterParent || creatingMatter) return;
+    if (!newMatterContext || creatingMatter) return;
     const name = newMatterName.trim();
     const shortCode = (newMatterShortCodeEdited ? newMatterShortCode : slugify(name)).trim();
     if (!name) { setMatterError('Name required'); return; }
@@ -107,7 +130,8 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     setCreatingMatter(true);
     setMatterError(null);
     const { error } = await supabase.from('matterspaces').insert({
-      serverspace_id: newMatterParent.id,
+      serverspace_id: newMatterContext.serverspaceId,
+      parent_matterspace_id: newMatterContext.parentMatterId,
       name,
       short_code: shortCode,
       description: newMatterDescription.trim() || null,
@@ -120,6 +144,10 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
           : error.message
       );
       return;
+    }
+    // Auto-expand the parent so the new sub-matter is visible.
+    if (newMatterContext.parentMatterId) {
+      setExpandedMatters((prev) => new Set(prev).add(newMatterContext.parentMatterId!));
     }
     closeNewMatter();
     await refreshServerspaces();
@@ -269,24 +297,23 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                   )}
                 </button>
 
-                {/* Matterspaces */}
+                {/* Matterspaces — recursive tree */}
                 {isExpanded && !collapsed && (
                   <div className="ml-5 pl-3.5 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px">
-                    {space.matterspaces.map((ms) => (
-                      <Link
-                        key={ms.id}
-                        to={`/app/matterspace/${ms.id}`}
-                        className={`block px-2.5 py-1.5 rounded-md text-[12px] transition-colors ${
-                          isActive(`/app/matterspace/${ms.id}`)
-                            ? 'bg-[#16161d] text-white font-medium'
-                            : 'text-white/70 hover:bg-[rgba(255,255,255,0.04)] hover:text-white'
-                        }`}
-                      >
-                        {ms.name}
-                      </Link>
+                    {buildMatterTree(space.matterspaces).map((node) => (
+                      <MatterNode
+                        key={node.matter.id}
+                        node={node}
+                        ancestorLabel={space.name}
+                        serverspaceId={space.id}
+                        expandedMatters={expandedMatters}
+                        toggleMatter={toggleMatter}
+                        onAddChild={openNewMatter}
+                        isActive={isActive}
+                      />
                     ))}
                     <button
-                      onClick={() => openNewMatter(space.id, space.name)}
+                      onClick={() => openNewMatter(space.id, null, space.name)}
                       className="flex items-center gap-1.5 w-full px-2.5 py-1.5 rounded-md text-[12px] text-white/50 hover:bg-[rgba(255,255,255,0.04)] hover:text-[#e8b84a] transition-colors text-left"
                     >
                       <Plus size={11} strokeWidth={2} />
@@ -331,12 +358,14 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
         </button>
       </div>
       {/* New Matterspace Modal */}
-      {newMatterParent && (
+      {newMatterContext && (
         <>
           <div className="fixed inset-0 z-50 bg-black/40" onClick={closeNewMatter} />
           <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
             <div className="flex items-center justify-between mb-1">
-              <h3 className="text-[15px] font-semibold text-white">New Matter</h3>
+              <h3 className="text-[15px] font-semibold text-white">
+                {newMatterContext.parentMatterId ? 'New Sub-Matter' : 'New Matter'}
+              </h3>
               <button
                 onClick={closeNewMatter}
                 className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors"
@@ -345,7 +374,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
               </button>
             </div>
             <p className="text-[11px] text-white/50 mb-5">
-              in <span className="text-[#e8b84a]/80">{newMatterParent.name}</span>
+              in <span className="text-[#e8b84a]/80">{newMatterContext.contextLabel}</span>
             </p>
             <form onSubmit={handleCreateMatterspace} className="space-y-3">
               <input
@@ -438,5 +467,96 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
         </>
       )}
     </aside>
+  );
+}
+
+
+interface MatterNodeProps {
+  node: MatterTreeNode;
+  ancestorLabel: string;
+  serverspaceId: string;
+  expandedMatters: Set<string>;
+  toggleMatter: (id: string) => void;
+  onAddChild: (
+    serverspaceId: string,
+    parentMatterId: string | null,
+    contextLabel: string,
+  ) => void;
+  isActive: (path: string) => boolean;
+}
+
+function MatterNode({
+  node,
+  ancestorLabel,
+  serverspaceId,
+  expandedMatters,
+  toggleMatter,
+  onAddChild,
+  isActive,
+}: MatterNodeProps) {
+  const { matter, children } = node;
+  const hasChildren = children.length > 0;
+  const isExpanded = expandedMatters.has(matter.id);
+  const myLabel = `${ancestorLabel} / ${matter.name}`;
+  const path = `/app/matterspace/${matter.id}`;
+
+  return (
+    <div>
+      <div
+        className={`group flex items-center gap-1 rounded-md transition-colors ${
+          isActive(path)
+            ? 'bg-[#16161d] text-white'
+            : 'text-white/70 hover:bg-[rgba(255,255,255,0.04)]'
+        }`}
+      >
+        {hasChildren ? (
+          <button
+            onClick={() => toggleMatter(matter.id)}
+            className="p-1 text-[#e8b84a]/80 hover:text-[#e8b84a] transition-colors shrink-0"
+            aria-label={isExpanded ? 'Collapse' : 'Expand'}
+          >
+            {isExpanded ? <ChevronDown size={13} strokeWidth={2.5} /> : <ChevronRight size={13} strokeWidth={2.5} />}
+          </button>
+        ) : (
+          <span className="w-[21px] shrink-0" />
+        )}
+        <Link
+          to={path}
+          className={`flex-1 truncate py-1.5 text-[12px] ${
+            isActive(path) ? 'font-medium text-white' : 'hover:text-white'
+          }`}
+        >
+          {matter.name}
+        </Link>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onAddChild(serverspaceId, matter.id, myLabel);
+          }}
+          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          aria-label="Add sub-matter"
+          title="Add sub-matter"
+        >
+          <Plus size={11} strokeWidth={2} />
+        </button>
+      </div>
+      {isExpanded && hasChildren && (
+        <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px">
+          {children.map((child) => (
+            <MatterNode
+              key={child.matter.id}
+              node={child}
+              ancestorLabel={myLabel}
+              serverspaceId={serverspaceId}
+              expandedMatters={expandedMatters}
+              toggleMatter={toggleMatter}
+              onAddChild={onAddChild}
+              isActive={isActive}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

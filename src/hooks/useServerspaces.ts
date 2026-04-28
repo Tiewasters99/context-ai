@@ -9,6 +9,8 @@ import { supabase } from '@/lib/supabase';
 export interface ServerspaceMatter {
   id: string;
   name: string;
+  short_code: string | null;
+  parent_matterspace_id: string | null;
 }
 
 export interface Serverspace {
@@ -23,7 +25,7 @@ const SERVERSPACES_KEY = ['serverspaces'] as const;
 async function fetchServerspaces(): Promise<Serverspace[]> {
   const { data, error } = await supabase
     .from('serverspaces')
-    .select('id, name, matterspaces (id, name)')
+    .select('id, name, matterspaces (id, name, short_code, parent_matterspace_id)')
     .order('created_at', { ascending: true });
   if (error) throw new Error(`serverspaces: ${error.message}`);
   if (!data) return [];
