@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Plus, X } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
+import {
+  useContentItems,
+  createContentItem,
+  useContentInvalidate,
+  type ContentType,
+} from '@/hooks/useContentItems';
 
 const tabs = ['Pages', 'Lists', 'Tables', 'Vault'] as const;
 type Tab = typeof tabs[number];
@@ -140,40 +146,100 @@ export default function MatterspaceView() {
         </div>
 
         {/* Content */}
-        <SurfacePlaceholder tab={activeTab} matterName={matter?.name} />
+        {activeTab !== 'Vault' && matter && (
+          <ContentSurface tab={activeTab} matterId={matter.id} />
+        )}
       </div>
     </div>
   );
 }
 
 
-function SurfacePlaceholder({ tab, matterName }: { tab: Tab; matterName: string | undefined }) {
-  if (tab === 'Vault') {
-    // Tab click navigated; this branch is unreachable in practice but keeps
-    // the component total over the union.
-    return null;
-  }
-  const meta: Record<Exclude<Tab, 'Vault'>, { Icon: typeof FileText; label: string; verb: string }> = {
-    Pages: { Icon: FileText, label: 'pages', verb: 'page' },
-    Lists: { Icon: List, label: 'lists', verb: 'list' },
-    Tables: { Icon: Table, label: 'tables', verb: 'table' },
+const TAB_TO_CONTENT_TYPE: Record<Exclude<Tab, 'Vault'>, ContentType> = {
+  Pages: 'page',
+  Lists: 'list',
+  Tables: 'database',
+};
+
+const TAB_META: Record<Exclude<Tab, 'Vault'>, { Icon: typeof FileText; label: string; verb: string; route: string }> = {
+  Pages:  { Icon: FileText, label: 'pages',  verb: 'page',  route: 'page' },
+  Lists:  { Icon: List,     label: 'lists',  verb: 'list',  route: 'list' },
+  Tables: { Icon: Table,    label: 'tables', verb: 'table', route: 'table' },
+};
+
+function ContentSurface({ tab, matterId }: { tab: Exclude<Tab, 'Vault'>; matterId: string }) {
+  const navigate = useNavigate();
+  const contentType = TAB_TO_CONTENT_TYPE[tab];
+  const { Icon, label, verb, route } = TAB_META[tab];
+  const space = { spaceId: matterId, spaceType: 'matterspace' as const };
+  const { data: items = [], isLoading, error } = useContentItems(space, contentType);
+  const invalidate = useContentInvalidate();
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const row = await createContentItem({ space, contentType });
+      invalidate.invalidateList(space, contentType);
+      navigate(`/app/${route}/${row.id}`);
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'Failed to create');
+      setCreating(false);
+    }
   };
-  const { Icon, label, verb } = meta[tab];
+
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <Icon size={32} className="text-white/20 mb-3" strokeWidth={1.5} />
-      <p className="text-[14px] text-white/60 mb-1">
-        No {label} in {matterName ? `"${matterName}"` : 'this matter'} yet.
-      </p>
-      <p className="text-[12px] text-white/30 mb-5">
-        {tab} aren't wired to storage yet. Coming soon.
-      </p>
-      <button
-        disabled
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.06)] text-[12px] text-white/30 cursor-not-allowed"
-      >
-        <Plus size={12} /> New {verb}
-      </button>
+    <div>
+      <div className="flex justify-end mb-4">
+        <button
+          onClick={handleCreate}
+          disabled={creating}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+        >
+          <Plus size={12} strokeWidth={2} />
+          {creating ? 'Creating…' : `New ${verb}`}
+        </button>
+      </div>
+      {createError && (
+        <p className="text-[12px] text-red-300 mb-3">{createError}</p>
+      )}
+      {isLoading && (
+        <p className="text-center text-[12px] text-white/40 py-8">Loading…</p>
+      )}
+      {error && (
+        <p className="text-center text-[12px] text-red-300 py-8">
+          {error instanceof Error ? error.message : 'Failed to load'}
+        </p>
+      )}
+      {!isLoading && !error && items.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-12 text-center">
+          <Icon size={28} className="text-white/20 mb-3" strokeWidth={1.5} />
+          <p className="text-[13px] text-white/50">
+            No {label} yet. Click <span className="text-[#e8b84a]">New {verb}</span> to create one.
+          </p>
+        </div>
+      )}
+      {!isLoading && items.length > 0 && (
+        <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+          {items.map((item) => (
+            <Link
+              key={item.id}
+              to={`/app/${route}/${item.id}`}
+              className="flex items-center gap-3 px-4 py-2.5 hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
+            >
+              <Icon size={14} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
+              <span className="text-[13px] text-[#e8e4de] truncate flex-1">{item.title}</span>
+              {item.is_locked && <Lock size={11} className="text-white/40 shrink-0" />}
+              <span className="text-[10px] text-white/30 shrink-0">
+                {new Date(item.updated_at).toLocaleDateString()}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

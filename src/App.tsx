@@ -10,6 +10,7 @@ import ServerspaceView from '@/pages/ServerspaceView';
 import MatterspaceView from '@/pages/MatterspaceView';
 import PageView from '@/pages/PageView';
 import ListView from '@/pages/ListView';
+import TableView from '@/pages/TableView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import ClaudeConnect from '@/pages/ClaudeConnect';
@@ -62,6 +63,7 @@ export default function App() {
               <Route path="matterspace/:id" element={<MatterspaceView />} />
               <Route path="page/:id" element={<PageView />} />
               <Route path="list/:id" element={<ListView />} />
+              <Route path="table/:id" element={<TableView />} />
               <Route path="vault" element={<Vault />} />
               <Route path="claude-connect" element={<ClaudeConnect />} />
             </Route>
