@@ -22,6 +22,7 @@ interface MatterRow {
   short_code: string | null;
   parent_matterspace_id: string | null;
   serverspace_id: string;
+  cover_url: string | null;
 }
 
 interface ServerspaceRow {
@@ -48,7 +49,7 @@ export default function MatterspaceView() {
     (async () => {
       const { data: m, error } = await supabase
         .from('matterspaces')
-        .select('id, name, description, short_code, parent_matterspace_id, serverspace_id')
+        .select('id, name, description, short_code, parent_matterspace_id, serverspace_id, cover_url')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -72,9 +73,26 @@ export default function MatterspaceView() {
     navigate(`/app/vault?matter=${encodeURIComponent(matterArg)}`);
   };
 
+  const handleCoverChange = async (url: string | null) => {
+    if (!matter) return;
+    const { error } = await supabase
+      .from('matterspaces')
+      .update({ cover_url: url })
+      .eq('id', matter.id);
+    if (error) {
+      console.error('cover save failed', error);
+      return;
+    }
+    setMatter({ ...matter, cover_url: url });
+  };
+
   return (
     <div>
-      <CoverImage editable />
+      <CoverImage
+        coverUrl={matter?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={true}
+      />
 
       <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen */}
@@ -137,7 +155,7 @@ export default function MatterspaceView() {
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab
                   ? 'border-[#d4a054] text-[#d4a054]'
-                  : 'border-transparent text-white/80 hover:text-[#e8e4de]'
+                  : 'border-transparent text-white/80 hover:text-[#f5f1e8]'
               }`}
             >
               {tab}
@@ -231,7 +249,7 @@ function ContentSurface({ tab, matterId }: { tab: Exclude<Tab, 'Vault'>; matterI
               className="flex items-center gap-3 px-4 py-2.5 hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
             >
               <Icon size={14} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
-              <span className="text-[13px] text-[#e8e4de] truncate flex-1">{item.title}</span>
+              <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{item.title}</span>
               {item.is_locked && <Lock size={11} className="text-white/40 shrink-0" />}
               <span className="text-[10px] text-white/30 shrink-0">
                 {new Date(item.updated_at).toLocaleDateString()}

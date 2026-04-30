@@ -10,6 +10,7 @@ import {
   useContentInvalidate,
   type ContentItemFull,
 } from '@/hooks/useContentItems';
+import { RichTextEditor, normalizeBody } from '@/components/content/Editor';
 
 export default function PageView() {
   const { id } = useParams();
@@ -18,32 +19,22 @@ export default function PageView() {
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
 
-  // Local editor state — kept independent of the cached row so the
-  // contentEditable surfaces don't get reset on every refetch.
   const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
+  const [initialBody, setInitialBody] = useState<object | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
   const hydrated = useRef(false);
 
-  // Hydrate the editor exactly once per loaded id. Subsequent refetches
-  // don't clobber the user's in-flight edits.
+  useEffect(() => { hydrated.current = false; setInitialBody(null); }, [id]);
+
   useEffect(() => {
     if (!item || hydrated.current) return;
     setTitle(item.title);
-    const initialBody = typeof item.content?.body === 'string' ? item.content.body : '';
-    setBody(initialBody);
+    setInitialBody(normalizeBody(item.content?.body));
     if (titleRef.current) titleRef.current.textContent = item.title;
-    if (bodyRef.current) bodyRef.current.textContent = initialBody;
     hydrated.current = true;
   }, [item]);
-
-  // Reset hydration when navigating to a different page id.
-  useEffect(() => {
-    hydrated.current = false;
-  }, [id]);
 
   const persist = async (patch: Partial<Pick<ContentItemFull, 'title' | 'content' | 'is_locked'>>) => {
     if (!id) return;
@@ -66,24 +57,28 @@ export default function PageView() {
     persist({ title: next || 'Untitled Page' });
   };
 
-  const handleBodyBlur = () => {
-    const next = bodyRef.current?.textContent ?? '';
-    if (next === body) return;
-    setBody(next);
-    persist({ content: { body: next } });
+  const handleEditorSave = (json: object) => {
+    persist({ content: { body: json } });
+  };
+
+  const handleCoverChange = (url: string | null) => {
+    persist({ cover_url: url });
   };
 
   const toggleLock = () => {
     if (!item) return;
-    const next = !item.is_locked;
-    persist({ is_locked: next });
+    persist({ is_locked: !item.is_locked });
   };
 
   const isLocked = item?.is_locked ?? false;
 
   return (
     <div>
-      <CoverImage editable />
+      <CoverImage
+        coverUrl={item?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={!isLocked}
+      />
 
       <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen */}
@@ -113,7 +108,7 @@ export default function PageView() {
           <p className="text-[13px] text-white/40 py-12 text-center">Page not found.</p>
         )}
 
-        {item && (
+        {item && initialBody && (
           <div className="flex gap-8">
             <div className="flex-1 min-w-0">
               <div
@@ -121,15 +116,13 @@ export default function PageView() {
                 contentEditable={!isLocked}
                 suppressContentEditableWarning
                 onBlur={handleTitleBlur}
-                className="text-3xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled'] empty:before:text-white/30"
+                className="text-3xl font-bold text-[#f5f2ed] outline-none mb-6 empty:before:content-['Untitled'] empty:before:text-white/30"
                 data-placeholder="Untitled"
               />
-              <div
-                ref={bodyRef}
-                contentEditable={!isLocked}
-                suppressContentEditableWarning
-                onBlur={handleBodyBlur}
-                className="mt-6 min-h-[400px] text-[#e8e4de] leading-relaxed outline-none text-[15px] whitespace-pre-wrap empty:before:content-['Start_writing…'] empty:before:text-white/30"
+              <RichTextEditor
+                initialContent={initialBody}
+                editable={!isLocked}
+                onSave={handleEditorSave}
               />
             </div>
 
@@ -150,13 +143,13 @@ export default function PageView() {
                 <div className="space-y-2 text-xs text-white/60">
                   <div className="flex justify-between">
                     <span>Created</span>
-                    <span className="text-[#e8e4de]">
+                    <span className="text-[#f5f1e8]">
                       {new Date(item.created_at).toLocaleDateString()}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Modified</span>
-                    <span className="text-[#e8e4de]">
+                    <span className="text-[#f5f1e8]">
                       {new Date(item.updated_at).toLocaleDateString()}
                     </span>
                   </div>

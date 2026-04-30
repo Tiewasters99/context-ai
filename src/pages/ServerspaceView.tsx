@@ -12,6 +12,7 @@ interface ServerspaceRow {
   id: string;
   name: string;
   description: string | null;
+  cover_url: string | null;
 }
 
 export default function ServerspaceView() {
@@ -34,7 +35,7 @@ export default function ServerspaceView() {
     (async () => {
       const { data: s, error } = await supabase
         .from('serverspaces')
-        .select('id, name, description')
+        .select('id, name, description, cover_url')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -70,9 +71,26 @@ export default function ServerspaceView() {
     });
   };
 
+  const handleCoverChange = async (url: string | null) => {
+    if (!serverspace) return;
+    const { error } = await supabase
+      .from('serverspaces')
+      .update({ cover_url: url })
+      .eq('id', serverspace.id);
+    if (error) {
+      console.error('cover save failed', error);
+      return;
+    }
+    setServerspace({ ...serverspace, cover_url: url });
+  };
+
   return (
     <div>
-      <CoverImage editable />
+      <CoverImage
+        coverUrl={serverspace?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={true}
+      />
 
       <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen */}
@@ -179,7 +197,7 @@ function ServerMatterNode({
             <span className="w-4 shrink-0" />
           )}
           <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
-          <span className="text-[13px] text-[#e8e4de] truncate">{matter.name}</span>
+          <span className="text-[13px] text-[#f5f1e8] truncate">{matter.name}</span>
           {hasChildren && (
             <span className="text-[10px] text-white/30 ml-auto">
               {children.length} sub-matter{children.length === 1 ? '' : 's'}

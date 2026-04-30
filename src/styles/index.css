@@ -23,10 +23,10 @@
   --color-border-strong: rgba(255, 255, 255, 0.14);
 
   /* Text */
-  --color-text: #e8e4de;
-  --color-text-secondary: #9a96a3;
-  --color-text-muted: #6a6675;
-  --color-text-bright: #f5f2ed;
+  --color-text: #f0ebe3;
+  --color-text-secondary: #b6b1a8;
+  --color-text-muted: #7e7a72;
+  --color-text-bright: #f8f5ef;
 
   /* Sidebar */
   --color-sidebar: rgba(8, 8, 14, 0.82);
@@ -47,7 +47,7 @@
 
 body {
   font-family: "Inter Variable", system-ui, -apple-system, sans-serif;
-  color: #e8e4de;
+  color: #f0ebe3;
   letter-spacing: -0.011em;
   font-feature-settings: "cv11", "ss01", "ss03";
   background: #0a0a10 url('/gpu-cluster.png') center center / cover fixed no-repeat;
@@ -57,7 +57,7 @@ body {
 h1, h2, h3, h4, h5, h6 {
   letter-spacing: -0.025em;
   font-weight: 600;
-  color: #f5f2ed;
+  color: #f8f5ef;
 }
 
 /* Refined scrollbar */
@@ -94,6 +94,103 @@ h1, h2, h3, h4, h5, h6 {
   backdrop-filter: blur(30px);
   -webkit-backdrop-filter: blur(30px);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* TipTap rich-text editor styling — applied to the contenteditable
+   div so we don't depend on @tailwindcss/typography (v4 plugin
+   compatibility is in flux). */
+.rich-text {
+  color: #f5f1e8;
+  line-height: 1.65;
+  font-size: 15px;
+  outline: none;
+  min-height: 400px;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* Cards apply select-none to disable selection during drag, but any
+   contenteditable / input / textarea inside still needs selectable
+   text. The :where() keeps specificity flat so component classes
+   override cleanly. */
+[contenteditable="true"],
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.rich-text > *:first-child { margin-top: 0; }
+.rich-text > *:last-child { margin-bottom: 0; }
+
+.rich-text h1 { font-size: 1.875rem; font-weight: 700; color: #f5f2ed; margin: 1.6em 0 0.5em; }
+.rich-text h2 { font-size: 1.5rem;   font-weight: 700; color: #f5f2ed; margin: 1.4em 0 0.4em; }
+.rich-text h3 { font-size: 1.25rem;  font-weight: 600; color: #f5f2ed; margin: 1.2em 0 0.4em; }
+.rich-text p  { margin: 0.6em 0; }
+
+.rich-text strong { color: #ffffff; font-weight: 600; }
+.rich-text em     { color: #e8e4de; }
+.rich-text s      { color: #8a8693; }
+
+.rich-text a {
+  color: #e8b84a;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.rich-text a:hover { color: #f5d565; }
+
+.rich-text code {
+  color: #e8b84a;
+  background: rgba(232, 184, 74, 0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.rich-text pre {
+  background: rgba(8, 8, 14, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0.9em 1em;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+.rich-text pre code {
+  background: transparent;
+  padding: 0;
+  color: #e8e4de;
+}
+
+.rich-text blockquote {
+  border-left: 3px solid rgba(232, 184, 74, 0.4);
+  padding-left: 1em;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0.8em 0;
+  font-style: italic;
+}
+
+.rich-text ul, .rich-text ol { margin: 0.6em 0; padding-left: 1.6em; }
+.rich-text ul { list-style: disc; }
+.rich-text ol { list-style: decimal; }
+.rich-text li { margin: 0.25em 0; }
+.rich-text li > p { margin: 0; }
+
+.rich-text hr {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 1.5em 0;
+}
+
+/* TipTap placeholder for empty editors — shows our prompt text. */
+.rich-text p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: rgba(255, 255, 255, 0.3);
+  float: left;
+  height: 0;
+  pointer-events: none;
 }
 
 /* Vault entrance animations */

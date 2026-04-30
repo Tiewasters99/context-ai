@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Trash2, X } from 'lucide-react';
+import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
@@ -10,20 +10,30 @@ import {
   useContentInvalidate,
 } from '@/hooks/useContentItems';
 
+type ColumnType = 'text' | 'number' | 'date' | 'checkbox';
+
 interface TableColumn {
   id: string;
   name: string;
+  type: ColumnType;
 }
 
 interface TableRow {
   id: string;
-  cells: Record<string, string>;
+  cells: Record<string, string | number | boolean | null>;
 }
 
 interface TableContent {
   columns: TableColumn[];
   rows: TableRow[];
 }
+
+const COLUMN_TYPES: { value: ColumnType; label: string; Icon: typeof Type }[] = [
+  { value: 'text',     label: 'Text',     Icon: Type },
+  { value: 'number',   label: 'Number',   Icon: Hash },
+  { value: 'date',     label: 'Date',     Icon: Calendar },
+  { value: 'checkbox', label: 'Checkbox', Icon: CheckSquare },
+];
 
 function readTableContent(content: Record<string, unknown> | undefined): TableContent {
   const rawCols = content?.columns;
@@ -34,7 +44,10 @@ function readTableContent(content: Record<string, unknown> | undefined): TableCo
           if (!c || typeof c !== 'object') return null;
           const o = c as Record<string, unknown>;
           if (typeof o.id !== 'string' || typeof o.name !== 'string') return null;
-          return { id: o.id, name: o.name };
+          // Backward compat: existing tables before this commit have no
+          // type field — default to text.
+          const type: ColumnType = isColumnType(o.type) ? o.type : 'text';
+          return { id: o.id, name: o.name, type };
         })
         .filter((x): x is TableColumn => x !== null)
     : [];
@@ -44,29 +57,39 @@ function readTableContent(content: Record<string, unknown> | undefined): TableCo
           if (!r || typeof r !== 'object') return null;
           const o = r as Record<string, unknown>;
           if (typeof o.id !== 'string') return null;
-          const cells: Record<string, string> = {};
+          const cells: Record<string, string | number | boolean | null> = {};
           if (o.cells && typeof o.cells === 'object') {
             for (const [k, v] of Object.entries(o.cells)) {
-              if (typeof v === 'string') cells[k] = v;
-              else if (v != null) cells[k] = String(v);
+              if (v === null || typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+                cells[k] = v;
+              } else {
+                cells[k] = String(v);
+              }
             }
           }
           return { id: o.id, cells };
         })
         .filter((x): x is TableRow => x !== null)
     : [];
-  // First-table seed: a sensible default schema if the user has just
-  // created an empty table. They can edit/delete columns immediately.
   if (columns.length === 0 && rows.length === 0) {
     return {
       columns: [
-        { id: crypto.randomUUID(), name: 'Name' },
-        { id: crypto.randomUUID(), name: 'Notes' },
+        { id: crypto.randomUUID(), name: 'Name', type: 'text' },
+        { id: crypto.randomUUID(), name: 'Notes', type: 'text' },
       ],
       rows: [],
     };
   }
   return { columns, rows };
+}
+
+function isColumnType(v: unknown): v is ColumnType {
+  return v === 'text' || v === 'number' || v === 'date' || v === 'checkbox';
+}
+
+interface SortState {
+  columnId: string;
+  direction: 'asc' | 'desc';
 }
 
 export default function TableView() {
@@ -80,6 +103,7 @@ export default function TableView() {
   const [columns, setColumns] = useState<TableColumn[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
   const [saving, setSaving] = useState(false);
+  const [sort, setSort] = useState<SortState | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const hydrated = useRef(false);
 
@@ -143,13 +167,13 @@ export default function TableView() {
   const addColumn = () => {
     const colName = prompt('Column name?');
     if (!colName?.trim()) return;
-    const next = [...columns, { id: crypto.randomUUID(), name: colName.trim() }];
+    const next = [...columns, { id: crypto.randomUUID(), name: colName.trim(), type: 'text' as ColumnType }];
     setColumns(next);
     persist(next, rows);
   };
 
-  const renameColumn = (colId: string, name: string) => {
-    const next = columns.map((c) => c.id === colId ? { ...c, name } : c);
+  const updateColumn = (colId: string, patch: Partial<TableColumn>) => {
+    const next = columns.map((c) => c.id === colId ? { ...c, ...patch } : c);
     setColumns(next);
     persist(next, rows);
   };
@@ -164,21 +188,64 @@ export default function TableView() {
     setColumns(nextCols);
     setRows(nextRows);
     persist(nextCols, nextRows);
+    if (sort?.columnId === colId) setSort(null);
   };
 
-  const setCell = (rowId: string, colId: string, value: string) => {
+  const setCellLocal = (rowId: string, colId: string, value: string | number | boolean | null) => {
     setRows(rows.map((r) => r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r));
   };
 
-  const persistCell = (rowId: string, colId: string, value: string) => {
+  const persistCell = (rowId: string, colId: string, value: string | number | boolean | null) => {
     const next = rows.map((r) => r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r);
     setRows(next);
     persist(columns, next);
   };
 
+  const toggleSort = (colId: string) => {
+    setSort((prev) => {
+      if (prev?.columnId !== colId) return { columnId: colId, direction: 'asc' };
+      if (prev.direction === 'asc') return { columnId: colId, direction: 'desc' };
+      return null;
+    });
+  };
+
+  // Sort is display-only; the underlying rows array stays in insertion order.
+  const displayRows = useMemo(() => {
+    if (!sort) return rows;
+    const col = columns.find((c) => c.id === sort.columnId);
+    if (!col) return rows;
+    const sign = sort.direction === 'asc' ? 1 : -1;
+    const cmp = (a: TableRow, b: TableRow) => {
+      const av = a.cells[col.id];
+      const bv = b.cells[col.id];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (col.type === 'number') {
+        return sign * ((Number(av) || 0) - (Number(bv) || 0));
+      }
+      if (col.type === 'checkbox') {
+        return sign * ((av ? 1 : 0) - (bv ? 1 : 0));
+      }
+      // text + date: lexicographic on string form (date is YYYY-MM-DD so it sorts correctly).
+      return sign * String(av).localeCompare(String(bv));
+    };
+    return [...rows].sort(cmp);
+  }, [rows, columns, sort]);
+
+  const handleCoverChange = async (url: string | null) => {
+    if (!id) return;
+    await updateContentItem(id, { cover_url: url });
+    invalidate.invalidateItem(id);
+  };
+
   return (
     <div>
-      <CoverImage editable />
+      <CoverImage
+        coverUrl={item?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={true}
+      />
 
       <div ref={cardRef} className="max-w-6xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen */}
@@ -220,28 +287,19 @@ export default function TableView() {
             </p>
 
             <div className="overflow-x-auto rounded-lg border border-[rgba(255,255,255,0.06)]">
-              <table className="w-full text-[13px] text-[#e8e4de] border-collapse">
+              <table className="w-full text-[13px] text-[#f5f1e8] border-collapse">
                 <thead>
                   <tr className="bg-[rgba(255,255,255,0.03)]">
                     {columns.map((col) => (
-                      <th key={col.id} className="text-left font-medium border-b border-[rgba(255,255,255,0.06)]">
-                        <div className="flex items-center gap-1 px-3 py-2 group">
-                          <input
-                            type="text"
-                            value={col.name}
-                            onChange={(e) => setColumns(columns.map((c) => c.id === col.id ? { ...c, name: e.target.value } : c))}
-                            onBlur={(e) => renameColumn(col.id, e.target.value.trim() || 'Column')}
-                            className="bg-transparent outline-none text-[#f5f2ed] font-medium flex-1 min-w-0"
-                          />
-                          <button
-                            onClick={() => deleteColumn(col.id)}
-                            className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
-                            title="Delete column"
-                          >
-                            <Trash2 size={11} />
-                          </button>
-                        </div>
-                      </th>
+                      <ColumnHeader
+                        key={col.id}
+                        col={col}
+                        sort={sort?.columnId === col.id ? sort.direction : null}
+                        onToggleSort={() => toggleSort(col.id)}
+                        onRename={(name) => updateColumn(col.id, { name })}
+                        onChangeType={(type) => updateColumn(col.id, { type })}
+                        onDelete={() => deleteColumn(col.id)}
+                      />
                     ))}
                     <th className="border-b border-[rgba(255,255,255,0.06)] w-12">
                       <button
@@ -255,22 +313,21 @@ export default function TableView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.length === 0 ? (
+                  {displayRows.length === 0 ? (
                     <tr>
                       <td colSpan={columns.length + 1} className="px-3 py-8 text-center text-[12px] text-white/40">
                         No rows yet. Click <span className="text-[#e8b84a]">Add row</span> below to start.
                       </td>
                     </tr>
-                  ) : rows.map((row) => (
+                  ) : displayRows.map((row) => (
                     <tr key={row.id} className="border-b border-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.02)] group">
                       {columns.map((col) => (
                         <td key={col.id} className="border-r border-[rgba(255,255,255,0.04)] last:border-r-0 align-top">
-                          <input
-                            type="text"
-                            value={row.cells[col.id] ?? ''}
-                            onChange={(e) => setCell(row.id, col.id, e.target.value)}
-                            onBlur={(e) => persistCell(row.id, col.id, e.target.value)}
-                            className="w-full px-3 py-2 bg-transparent outline-none text-[#e8e4de] focus:bg-[rgba(232,184,74,0.04)]"
+                          <Cell
+                            type={col.type}
+                            value={row.cells[col.id] ?? null}
+                            onChangeLocal={(v) => setCellLocal(row.id, col.id, v)}
+                            onPersist={(v) => persistCell(row.id, col.id, v)}
                           />
                         </td>
                       ))}
@@ -299,5 +356,130 @@ export default function TableView() {
         )}
       </div>
     </div>
+  );
+}
+
+
+interface ColumnHeaderProps {
+  col: TableColumn;
+  sort: 'asc' | 'desc' | null;
+  onToggleSort: () => void;
+  onRename: (name: string) => void;
+  onChangeType: (type: ColumnType) => void;
+  onDelete: () => void;
+}
+
+function ColumnHeader({ col, sort, onToggleSort, onRename, onChangeType, onDelete }: ColumnHeaderProps) {
+  const [name, setName] = useState(col.name);
+  useEffect(() => { setName(col.name); }, [col.name]);
+  const TypeIcon = COLUMN_TYPES.find((t) => t.value === col.type)?.Icon ?? Type;
+
+  return (
+    <th className="text-left font-medium border-b border-[rgba(255,255,255,0.06)]">
+      <div className="flex items-center gap-1 px-2 py-2 group">
+        <select
+          value={col.type}
+          onChange={(e) => onChangeType(e.target.value as ColumnType)}
+          className="bg-transparent outline-none text-white/40 hover:text-white/70 text-[11px] cursor-pointer appearance-none pr-0.5 shrink-0"
+          title="Column type"
+        >
+          {COLUMN_TYPES.map((t) => (
+            <option key={t.value} value={t.value} className="bg-[#12121a] text-white">
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <TypeIcon size={11} className="text-white/30 shrink-0" />
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={() => { if (name !== col.name) onRename(name.trim() || 'Column'); }}
+          className="bg-transparent outline-none text-[#f5f2ed] font-medium flex-1 min-w-0"
+        />
+        <button
+          onClick={onToggleSort}
+          className={`p-0.5 rounded transition-colors shrink-0 ${
+            sort
+              ? 'text-[#e8b84a] bg-[#e8b84a]/10'
+              : 'text-white/30 hover:text-white/60 opacity-0 group-hover:opacity-100'
+          }`}
+          title={sort === 'asc' ? 'Sorted ascending' : sort === 'desc' ? 'Sorted descending' : 'Sort'}
+        >
+          {sort === 'desc' ? <ArrowDown size={11} /> : <ArrowUp size={11} />}
+        </button>
+        <button
+          onClick={onDelete}
+          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
+          title="Delete column"
+        >
+          <Trash2 size={11} />
+        </button>
+      </div>
+    </th>
+  );
+}
+
+
+interface CellProps {
+  type: ColumnType;
+  value: string | number | boolean | null;
+  onChangeLocal: (v: string | number | boolean | null) => void;
+  onPersist: (v: string | number | boolean | null) => void;
+}
+
+function Cell({ type, value, onChangeLocal, onPersist }: CellProps) {
+  if (type === 'checkbox') {
+    return (
+      <div className="px-3 py-2 flex items-center">
+        <input
+          type="checkbox"
+          checked={!!value}
+          onChange={(e) => onPersist(e.target.checked)}
+          className="w-4 h-4 rounded accent-[#e8b84a] cursor-pointer"
+        />
+      </div>
+    );
+  }
+
+  if (type === 'number') {
+    const display = value === null || value === undefined || value === '' ? '' : String(value);
+    return (
+      <input
+        type="number"
+        value={display}
+        onChange={(e) => onChangeLocal(e.target.value)}
+        onBlur={(e) => {
+          const v = e.target.value;
+          onPersist(v === '' ? null : Number(v));
+        }}
+        className="w-full px-3 py-2 bg-transparent outline-none text-[#f5f1e8] focus:bg-[rgba(232,184,74,0.04)] tabular-nums"
+      />
+    );
+  }
+
+  if (type === 'date') {
+    const display = typeof value === 'string' ? value : '';
+    return (
+      <input
+        type="date"
+        value={display}
+        onChange={(e) => onChangeLocal(e.target.value)}
+        onBlur={(e) => onPersist(e.target.value || null)}
+        className="w-full px-3 py-2 bg-transparent outline-none text-[#f5f1e8] focus:bg-[rgba(232,184,74,0.04)]"
+      />
+    );
+  }
+
+  // text
+  const display = value == null ? '' : String(value);
+  return (
+    <input
+      type="text"
+      value={display}
+      onChange={(e) => onChangeLocal(e.target.value)}
+      onBlur={(e) => onPersist(e.target.value)}
+      className="w-full px-3 py-2 bg-transparent outline-none text-[#f5f1e8] focus:bg-[rgba(232,184,74,0.04)]"
+    />
   );
 }

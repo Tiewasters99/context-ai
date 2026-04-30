@@ -201,7 +201,7 @@ export default function Dashboard() {
               <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
                 <a.icon size={15} className="text-[#d4a054]" strokeWidth={1.75} />
               </div>
-              <span className="text-[13px] font-medium text-[#e8e4de]">{a.label}</span>
+              <span className="text-[13px] font-medium text-[#f5f1e8]">{a.label}</span>
             </button>
           ))}
         </div>
@@ -288,7 +288,7 @@ function DashboardMatterNode({
             <span className="w-4 shrink-0" />
           )}
           <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
-          <span className="text-[13px] text-[#e8e4de] truncate">{matter.name}</span>
+          <span className="text-[13px] text-[#f5f1e8] truncate">{matter.name}</span>
           {hasChildren && (
             <span className="text-[10px] text-white/30 ml-auto">
               {children.length} sub-matter{children.length === 1 ? '' : 's'}

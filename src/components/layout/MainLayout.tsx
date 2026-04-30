@@ -12,7 +12,7 @@ export default function MainLayout() {
     <div className="flex h-screen">
       <Sidebar onToggleAssistant={() => setAssistantOpen(!assistantOpen)} />
 
-      <div className="flex-1 flex flex-col min-w-0 bg-cover bg-center bg-fixed bg-no-repeat" style={{ backgroundImage: "url('/gpu-cluster-2.png')" }}>
+      <div className="flex-1 flex flex-col min-w-0 bg-cover bg-center bg-fixed bg-no-repeat" style={{ backgroundImage: "var(--page-cover, url('/gpu-cluster-2.png'))" }}>
         {/* Top bar */}
         <header className="flex items-center justify-between h-13 px-4 border-b border-[rgba(255,255,255,0.08)] shrink-0 backdrop-blur-[30px]" style={{ backgroundColor: 'rgba(10, 10, 16, 0.65)' }}>
           <div className="flex items-center gap-2">

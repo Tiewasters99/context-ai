@@ -75,6 +75,10 @@ async function ingestFile(filePath, matterspace, createdBy, flags) {
   log(`\n[${filename}] ${(stat.size / 1048576).toFixed(1)} MB`);
 
   const inferred = inferFromFilename(filename);
+  // EPUB files default to doc_type='book' unless the user passes --doc-type.
+  // Title/author/publisher get overwritten by extracted EPUB metadata
+  // inside processDocument, so the inferred title is just a placeholder.
+  if (ext === '.epub' && !flags['doc-type']) inferred.doc_type = 'book';
   const doc = {
     matterspace_id: matterspace.id,
     title: flags.title || inferred.title,
@@ -319,12 +323,12 @@ async function expandPaths(inputs) {
       const entries = await fs.readdir(abs, { recursive: true, withFileTypes: true });
       for (const e of entries) {
         if (!e.isFile()) continue;
-        if (!/\.(pdf|txt|md)$/i.test(e.name)) continue;
+        if (!/\.(pdf|txt|md|docx|epub)$/i.test(e.name)) continue;
         const parent = e.parentPath || e.path || abs;
         out.push(path.join(parent, e.name));
       }
       out.sort();
-    } else if (/\.(pdf|txt|md)$/i.test(abs)) {
+    } else if (/\.(pdf|txt|md|docx|epub)$/i.test(abs)) {
       out.push(abs);
     }
   }
@@ -336,6 +340,7 @@ function mimeFor(ext) {
     '.pdf': 'application/pdf',
     '.txt': 'text/plain',
     '.md': 'text/markdown',
+    '.epub': 'application/epub+zip',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   };
   return m[ext] || 'application/octet-stream';

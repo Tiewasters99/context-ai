@@ -54,6 +54,11 @@ export function useDraggableResizable() {
       const t = e.target as HTMLElement;
       if (t.tagName === 'BUTTON' || t.tagName === 'A' || t.tagName === 'INPUT' || t.tagName === 'SPAN' ||
           t.closest('button') || t.closest('a') || t.closest('input')) return;
+      // Don't hijack pointerdown inside any editable surface (TipTap
+      // editor, contenteditable titles, textareas, selects). The user
+      // is trying to select text or interact with a control there.
+      if (t.isContentEditable || t.closest('[contenteditable="true"]')) return;
+      if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return;
 
       const edge = getEdge(e);
       startX = e.clientX;

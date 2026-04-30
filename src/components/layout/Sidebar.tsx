@@ -10,6 +10,7 @@ import { X,
   Bot,
   PanelLeft,
   Users,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -46,6 +47,17 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [newMatterDescription, setNewMatterDescription] = useState('');
   const newMatterNameRef = useRef<HTMLInputElement>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+
+  // Delete-matter confirmation. Tracks the target matter and the
+  // descendant ids gathered from the local tree, so the modal can
+  // show what will cascade.
+  const [deleteTarget, setDeleteTarget] = useState<{
+    matterId: string;
+    matterName: string;
+    descendantIds: string[];  // includes the target itself
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (showNewServerspace) newServerspaceRef.current?.focus();
@@ -115,6 +127,78 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
       else next.add(id);
       return next;
     });
+  };
+
+  // Walk the loaded tree to collect the matter and every descendant id.
+  // Used when previewing a delete and when fanning out the content_items
+  // cleanup before we issue the cascading matter delete.
+  const collectDescendantIds = (rootMatterId: string): string[] => {
+    for (const s of serverspaces) {
+      const matchById = (n: MatterTreeNode): MatterTreeNode | null => {
+        if (n.matter.id === rootMatterId) return n;
+        for (const c of n.children) {
+          const hit = matchById(c);
+          if (hit) return hit;
+        }
+        return null;
+      };
+      const tree = buildMatterTree(s.matterspaces);
+      for (const root of tree) {
+        const node = matchById(root);
+        if (node) {
+          const out: string[] = [];
+          const walk = (x: MatterTreeNode) => {
+            out.push(x.matter.id);
+            for (const c of x.children) walk(c);
+          };
+          walk(node);
+          return out;
+        }
+      }
+    }
+    return [rootMatterId];
+  };
+
+  const openDeleteMatter = (matterId: string, matterName: string) => {
+    const descendantIds = collectDescendantIds(matterId);
+    setDeleteTarget({ matterId, matterName, descendantIds });
+    setDeleteError(null);
+  };
+
+  const closeDeleteMatter = () => {
+    setDeleteTarget(null);
+    setDeleteError(null);
+  };
+
+  const confirmDeleteMatter = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      // 1) Clean up content_items for the target + descendants
+      //    (no FK cascade on space_id since it's a polymorphic ref).
+      const { error: ciErr } = await supabase
+        .from('content_items')
+        .delete()
+        .eq('space_type', 'matterspace')
+        .in('space_id', deleteTarget.descendantIds);
+      if (ciErr) throw new Error(`content cleanup: ${ciErr.message}`);
+
+      // 2) Delete the matter — DB cascade handles sub-matters
+      //    (parent_matterspace_id), documents, and passages.
+      const { error: mErr } = await supabase
+        .from('matterspaces')
+        .delete()
+        .eq('id', deleteTarget.matterId);
+      if (mErr) throw new Error(mErr.message);
+
+      closeDeleteMatter();
+      await refreshServerspaces();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleCreateMatterspace = async (e: React.FormEvent) => {
@@ -309,6 +393,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                         expandedMatters={expandedMatters}
                         toggleMatter={toggleMatter}
                         onAddChild={openNewMatter}
+                        onDelete={openDeleteMatter}
                         isActive={isActive}
                       />
                     ))}
@@ -357,6 +442,58 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
           {!collapsed && <span>Sign Out</span>}
         </button>
       </div>
+      {/* Delete Matter Confirmation */}
+      {deleteTarget && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/40" onClick={closeDeleteMatter} />
+          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+                <Trash2 size={15} className="text-red-300" />
+                Delete matter
+              </h3>
+              <button
+                onClick={closeDeleteMatter}
+                disabled={deleting}
+                className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors disabled:opacity-40"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-[13px] text-white/80 mb-2">
+              Delete <span className="text-[#e8b84a] font-semibold">{deleteTarget.matterName}</span>?
+            </p>
+            {deleteTarget.descendantIds.length > 1 && (
+              <p className="text-[12px] text-amber-300 mb-2">
+                This also deletes {deleteTarget.descendantIds.length - 1} sub-matter{deleteTarget.descendantIds.length - 1 === 1 ? '' : 's'} underneath.
+              </p>
+            )}
+            <p className="text-[11px] text-white/50 leading-relaxed mb-5">
+              All documents, passages, pages, lists, and tables in this matter (and its sub-matters) are permanently deleted. This cannot be undone.
+            </p>
+            {deleteError && (
+              <p className="text-[12px] text-red-300 mb-3">{deleteError}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={closeDeleteMatter}
+                disabled={deleting}
+                className="flex-1 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-[13px] text-white/80 hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteMatter}
+                disabled={deleting}
+                className="flex-1 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-200 text-[13px] font-medium transition-colors disabled:opacity-40"
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* New Matterspace Modal */}
       {newMatterContext && (
         <>
@@ -482,6 +619,7 @@ interface MatterNodeProps {
     parentMatterId: string | null,
     contextLabel: string,
   ) => void;
+  onDelete: (matterId: string, matterName: string) => void;
   isActive: (path: string) => boolean;
 }
 
@@ -492,6 +630,7 @@ function MatterNode({
   expandedMatters,
   toggleMatter,
   onAddChild,
+  onDelete,
   isActive,
 }: MatterNodeProps) {
   const { matter, children } = node;
@@ -534,11 +673,23 @@ function MatterNode({
             e.stopPropagation();
             onAddChild(serverspaceId, matter.id, myLabel);
           }}
-          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
           aria-label="Add sub-matter"
           title="Add sub-matter"
         >
           <Plus size={11} strokeWidth={2} />
+        </button>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onDelete(matter.id, matter.name);
+          }}
+          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
+          aria-label="Delete matter"
+          title="Delete matter"
+        >
+          <Trash2 size={11} strokeWidth={2} />
         </button>
       </div>
       {isExpanded && hasChildren && (
@@ -552,6 +703,7 @@ function MatterNode({
               expandedMatters={expandedMatters}
               toggleMatter={toggleMatter}
               onAddChild={onAddChild}
+              onDelete={onDelete}
               isActive={isActive}
             />
           ))}
