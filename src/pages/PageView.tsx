@@ -36,7 +36,7 @@ export default function PageView() {
     hydrated.current = true;
   }, [item]);
 
-  const persist = async (patch: Partial<Pick<ContentItemFull, 'title' | 'content' | 'is_locked'>>) => {
+  const persist = async (patch: Partial<Pick<ContentItemFull, 'title' | 'content' | 'is_locked' | 'cover_url'>>) => {
     if (!id) return;
     setSaving(true);
     try {
