@@ -15,6 +15,10 @@ export interface MatterRef {
   id: string;
   name: string;
   short_code: string | null;
+  cover_url: string | null;
+  serverspace_id: string;
+  serverspace_name: string;
+  parent_matterspace_id: string | null;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -24,20 +28,24 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Resolve the URL's matter param (short_code or UUID) to {id, name, short_code}
 // -----------------------------------------------------------------------------
 export async function resolveMatter(key: string): Promise<MatterRef | null> {
-  if (UUID_RE.test(key)) {
-    const { data } = await supabase
-      .from('matterspaces')
-      .select('id, name, short_code')
-      .eq('id', key)
-      .maybeSingle();
-    return data;
-  }
-  const { data } = await supabase
-    .from('matterspaces')
-    .select('id, name, short_code')
-    .eq('short_code', key)
-    .maybeSingle();
-  return data;
+  // Pull the serverspace name in the same round-trip so the Vault can
+  // render a breadcrumb without a second query.
+  const sel = 'id, name, short_code, cover_url, serverspace_id, parent_matterspace_id, serverspace:serverspaces(name)';
+  const { data } = UUID_RE.test(key)
+    ? await supabase.from('matterspaces').select(sel).eq('id', key).maybeSingle()
+    : await supabase.from('matterspaces').select(sel).eq('short_code', key).maybeSingle();
+  if (!data) return null;
+  // Supabase types the joined serverspace as an object | null on a non-array FK.
+  const serverspace = (data as unknown as { serverspace: { name: string } | null }).serverspace;
+  return {
+    id: data.id,
+    name: data.name,
+    short_code: data.short_code,
+    cover_url: data.cover_url,
+    serverspace_id: data.serverspace_id,
+    serverspace_name: serverspace?.name ?? '',
+    parent_matterspace_id: data.parent_matterspace_id,
+  };
 }
 
 

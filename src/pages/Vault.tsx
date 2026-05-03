@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff } from 'lucide-react';
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
@@ -14,6 +14,8 @@ import {
   deleteVaultDocument,
   type MatterRef,
 } from '@/lib/vault-persist';
+import { useServerspaces } from '@/hooks/useServerspaces';
+import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
 type VaultView = 'home' | 'import' | 'workbench' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
 
@@ -45,10 +47,57 @@ export default function Vault() {
   // documents/passages, and the file list reflects the matter's vault
   // across sessions. Without ?matter=, the Vault is the original ephemeral
   // single-session workspace.
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const matterKey = searchParams.get('matter');
   const [matter, setMatter] = useState<MatterRef | null>(null);
   const [matterError, setMatterError] = useState<string | null>(null);
+
+  // Matter tree state — same shape as the main sidebar so users can
+  // switch matters without leaving the Vault.
+  const { data: serverspaces = [] } = useServerspaces();
+  const [matterTreeOpen, setMatterTreeOpen] = useState(true);
+  const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
+  const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+
+  // Keep the active matter's ancestors expanded so the user can see
+  // where they are in the tree on first paint.
+  useEffect(() => {
+    if (!matter) return;
+    setExpandedServers((prev) => new Set(prev).add(matter.serverspace_id));
+    if (matter.parent_matterspace_id) {
+      // Walk up the tree to expand every ancestor matter.
+      const found = serverspaces.find((s) => s.id === matter.serverspace_id);
+      if (!found) return;
+      const byId = new Map(found.matterspaces.map((m) => [m.id, m] as const));
+      const ancestors = new Set<string>();
+      let cur: string | null = matter.parent_matterspace_id;
+      while (cur) {
+        ancestors.add(cur);
+        cur = byId.get(cur)?.parent_matterspace_id ?? null;
+      }
+      setExpandedMatters((prev) => {
+        const next = new Set(prev);
+        for (const id of ancestors) next.add(id);
+        return next;
+      });
+    }
+  }, [matter, serverspaces]);
+
+  const toggleSet = (
+    setFn: React.Dispatch<React.SetStateAction<Set<string>>>,
+    id: string,
+  ) => {
+    setFn((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const switchToMatter = (shortCodeOrId: string) => {
+    setSearchParams({ matter: shortCodeOrId });
+  };
 
   useEffect(() => {
     if (!matterKey) { setMatter(null); setMatterError(null); return; }
@@ -240,6 +289,7 @@ export default function Vault() {
     if (!file) return;
     const url = URL.createObjectURL(file);
     setCoverUrl(url);
+    setManualCoverOverride(true);
     setCoverMode('full');
     setBannerY(50);
   };
@@ -254,6 +304,15 @@ export default function Vault() {
   const coverModeLabel = coverMode === 'full' ? 'Fullscreen cover' : coverMode === 'banner' ? 'Banner cover' : 'Cover hidden';
   const CoverIcon = coverModeIcon;
   const navigate = useNavigate();
+
+  // Effective cover: when a matter is active and has its own cover_url,
+  // that overrides the per-session Vault cover. The user can still pick
+  // a different cover via the corner controls; manual picks win.
+  const [manualCoverOverride, setManualCoverOverride] = useState(false);
+  const effectiveCoverUrl = useMemo(() => {
+    if (manualCoverOverride && coverUrl) return coverUrl;
+    return matter?.cover_url || coverUrl;
+  }, [matter, coverUrl, manualCoverOverride]);
 
   const handleMenuClick = (view: VaultView) => {
     setActiveView(view);
@@ -290,9 +349,9 @@ export default function Vault() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: coverUrl && coverMode === 'full' ? `url(${coverUrl}) center/cover no-repeat` : 'black' }}>
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ background: effectiveCoverUrl && coverMode === 'full' ? `url(${effectiveCoverUrl}) center/cover no-repeat` : 'black' }}>
       {/* Banner mode — cover ribbon at top, drag to reposition */}
-      {coverUrl && coverMode === 'banner' && (
+      {effectiveCoverUrl && coverMode === 'banner' && (
         <div
           className="w-full h-48 shrink-0 overflow-hidden cursor-grab active:cursor-grabbing relative group"
           onPointerDown={(e) => {
@@ -310,7 +369,7 @@ export default function Vault() {
           onPointerUp={() => { bannerDragging.current = false; }}
         >
           <img
-            src={coverUrl}
+            src={effectiveCoverUrl ?? undefined}
             alt=""
             className="w-full h-auto min-h-full object-cover absolute left-0 pointer-events-none select-none"
             draggable={false}
@@ -337,6 +396,16 @@ export default function Vault() {
                 <span className="text-[15px] font-semibold text-white tracking-tight">
                   The Vault
                 </span>
+                {matter && (
+                  <span className="text-[11px] text-white/60 truncate">
+                    <span className="text-[#e8b84a]/80">{matter.serverspace_name}</span>
+                    <span className="mx-1 text-white/30">/</span>
+                    {matter.name}
+                  </span>
+                )}
+                {!matter && !matterError && (
+                  <span className="text-[11px] text-white/40">Ephemeral session — pick a matter to persist</span>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 <button
@@ -365,6 +434,70 @@ export default function Vault() {
             </button>
           )}
         </div>
+
+        {/* Matter tree — expanded */}
+        {menuOpen && (
+          <div className="border-b border-[rgba(255,255,255,0.06)]">
+            <button
+              onClick={() => setMatterTreeOpen((v) => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-white/60 hover:text-white hover:bg-[rgba(255,255,255,0.03)] transition-colors"
+            >
+              <span className="text-[#e8b84a]/80">
+                {matterTreeOpen ? <ChevronDown size={12} strokeWidth={2.5} /> : <ChevronRight size={12} strokeWidth={2.5} />}
+              </span>
+              Matters
+              {matter && <span className="ml-auto text-[10px] text-[#e8b84a]/80 normal-case font-normal">in {matter.name}</span>}
+            </button>
+            {matterTreeOpen && (
+              <div className="px-2 pb-2 max-h-[40vh] overflow-y-auto">
+                {serverspaces.length === 0 && (
+                  <p className="px-3 py-2 text-[11px] text-white/40">Loading…</p>
+                )}
+                {serverspaces.map((server) => {
+                  const isExpanded = expandedServers.has(server.id);
+                  const tree = buildMatterTree(server.matterspaces);
+                  return (
+                    <div key={server.id}>
+                      <button
+                        onClick={() => toggleSet(setExpandedServers, server.id)}
+                        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-[12px] text-white/80 hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+                      >
+                        <span className="text-[#e8b84a]/80 w-3 shrink-0">
+                          {isExpanded ? <ChevronDown size={11} strokeWidth={2.5} /> : <ChevronRight size={11} strokeWidth={2.5} />}
+                        </span>
+                        <Users size={12} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
+                        <span className="truncate">{server.name}</span>
+                      </button>
+                      {isExpanded && tree.length === 0 && (
+                        <p className="pl-9 py-1 text-[10px] text-white/30">No matters yet</p>
+                      )}
+                      {isExpanded && tree.map((node) => (
+                        <VaultMatterNode
+                          key={node.matter.id}
+                          node={node}
+                          depth={0}
+                          activeMatterId={matter?.id ?? null}
+                          expandedMatters={expandedMatters}
+                          toggleMatter={(id) => toggleSet(setExpandedMatters, id)}
+                          onSelect={(m) => switchToMatter(m.short_code ?? m.id)}
+                        />
+                      ))}
+                    </div>
+                  );
+                })}
+                {matter && (
+                  <button
+                    onClick={() => setSearchParams({})}
+                    className="w-full mt-2 px-2 py-1.5 rounded text-left text-[10px] text-white/40 hover:text-white/70 hover:bg-[rgba(255,255,255,0.03)] transition-colors"
+                    title="Exit matter and use the Vault in ephemeral mode"
+                  >
+                    Exit matter (ephemeral mode)
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Menu items — expanded */}
         {menuOpen && (
@@ -448,7 +581,7 @@ export default function Vault() {
       {/* Bottom right — music & cover */}
       {illuminated && (
         <div className="fixed bottom-5 right-5 flex items-center gap-2 z-50">
-          {coverUrl && (
+          {effectiveCoverUrl && (
             <>
               <button
                 onClick={cycleCoverMode}
@@ -458,7 +591,7 @@ export default function Vault() {
                 <CoverIcon size={22} strokeWidth={1.75} />
               </button>
               <button
-                onClick={() => { setCoverUrl(null); setCoverMode('full'); }}
+                onClick={() => { setCoverUrl(null); setManualCoverOverride(true); setCoverMode('full'); }}
                 className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/80 hover:text-white transition-all hover:scale-110"
                 title="Remove cover"
               >
@@ -495,9 +628,83 @@ export default function Vault() {
       )}
       {showTemplates && (
         <TemplateLibrary
-          onSelect={(url) => { setCoverUrl(url); setCoverMode('full'); setBannerY(50); }}
+          onSelect={(url) => { setCoverUrl(url); setManualCoverOverride(true); setCoverMode('full'); setBannerY(50); }}
           onClose={() => setShowTemplates(false)}
         />
+      )}
+    </div>
+  );
+}
+
+
+interface VaultMatterNodeProps {
+  node: MatterTreeNode;
+  depth: number;
+  activeMatterId: string | null;
+  expandedMatters: Set<string>;
+  toggleMatter: (id: string) => void;
+  onSelect: (matter: MatterTreeNode['matter']) => void;
+}
+
+function VaultMatterNode({
+  node,
+  depth,
+  activeMatterId,
+  expandedMatters,
+  toggleMatter,
+  onSelect,
+}: VaultMatterNodeProps) {
+  const { matter, children } = node;
+  const hasChildren = children.length > 0;
+  const isExpanded = expandedMatters.has(matter.id);
+  const isActive = activeMatterId === matter.id;
+  const indent = 14 + depth * 12;
+
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-1 rounded transition-colors ${
+          isActive
+            ? 'bg-[rgba(232,184,74,0.12)]'
+            : 'hover:bg-[rgba(255,255,255,0.04)]'
+        }`}
+      >
+        {hasChildren ? (
+          <button
+            onClick={() => toggleMatter(matter.id)}
+            className="p-1 text-[#e8b84a]/80 hover:text-[#e8b84a] shrink-0"
+          >
+            {isExpanded ? <ChevronDown size={11} strokeWidth={2.5} /> : <ChevronRight size={11} strokeWidth={2.5} />}
+          </button>
+        ) : (
+          <span className="w-[19px] shrink-0" />
+        )}
+        <button
+          onClick={() => onSelect(matter)}
+          className="flex-1 flex items-center gap-1.5 py-1.5 pr-2 text-left min-w-0"
+          style={{ paddingLeft: `${indent - 19}px` }}
+          title={matter.name}
+        >
+          <Folder size={11} className={`shrink-0 ${isActive ? 'text-[#e8b84a]' : 'text-[#d4a054]'}`} strokeWidth={1.75} />
+          <span className={`text-[12px] truncate ${isActive ? 'text-[#e8b84a] font-medium' : 'text-white/80'}`}>
+            {matter.name}
+          </span>
+        </button>
+      </div>
+      {isExpanded && hasChildren && (
+        <div>
+          {children.map((child) => (
+            <VaultMatterNode
+              key={child.matter.id}
+              node={child}
+              depth={depth + 1}
+              activeMatterId={activeMatterId}
+              expandedMatters={expandedMatters}
+              toggleMatter={toggleMatter}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
