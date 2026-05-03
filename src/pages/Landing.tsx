@@ -57,13 +57,12 @@ const tiers = [
 export default function Landing() {
   return (
     <div className="min-h-screen">
-      {/* Full-bleed GPU cluster hero */}
+      {/* Plain black hero — replaced the data-center photo for a more
+          serious, simplified feel. */}
       <div
-        className="relative min-h-screen bg-cover bg-center bg-fixed bg-no-repeat flex flex-col"
-        style={{ backgroundImage: "url('/gpu-cluster.png')" }}
+        className="relative min-h-screen flex flex-col"
+        style={{ backgroundColor: '#000000' }}
       >
-        {/* Gradient overlay — darker at edges for text readability */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_30%,rgba(10,10,16,0.2)_100%)]" />
 
         {/* Nav */}
         <nav className="relative z-10 flex items-center justify-between w-full pl-[8.9%] pr-[10%] h-20">
