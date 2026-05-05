@@ -21,7 +21,9 @@ import { CSS } from '@dnd-kit/utilities';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
+import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
   updateContentItem,
@@ -55,6 +57,7 @@ export default function ListView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.listview.card');
+  const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
 
@@ -194,6 +197,8 @@ export default function ListView() {
         coverUrl={item?.cover_url ?? null}
         onCoverChange={handleCoverChange}
         editable={true}
+        expanded={coverExpanded}
+        onExpandChange={setCoverExpanded}
       />
 
       <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
@@ -208,6 +213,7 @@ export default function ListView() {
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
+            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
             <PinToggle pinned={pinned} onToggle={togglePin} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>

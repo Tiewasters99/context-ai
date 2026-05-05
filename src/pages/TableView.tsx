@@ -4,7 +4,9 @@ import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare 
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
+import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
   updateContentItem,
@@ -97,6 +99,7 @@ export default function TableView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.tableview.card');
+  const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
 
@@ -246,6 +249,8 @@ export default function TableView() {
         coverUrl={item?.cover_url ?? null}
         onCoverChange={handleCoverChange}
         editable={true}
+        expanded={coverExpanded}
+        onExpandChange={setCoverExpanded}
       />
 
       <div ref={cardRef} className="max-w-6xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
@@ -260,6 +265,7 @@ export default function TableView() {
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
+            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
             <PinToggle pinned={pinned} onToggle={togglePin} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>
@@ -290,10 +296,10 @@ export default function TableView() {
               {saving ? 'Saving…' : `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`}
             </p>
 
-            <div className="overflow-x-auto rounded-lg border border-[rgba(255,255,255,0.06)]">
+            <div className="overflow-x-auto rounded-lg border border-[rgba(255,255,255,0.22)]">
               <table className="w-full text-[13px] text-[#f5f1e8] border-collapse">
                 <thead>
-                  <tr className="bg-[rgba(255,255,255,0.03)]">
+                  <tr className="bg-[rgba(255,255,255,0.06)]">
                     {columns.map((col) => (
                       <ColumnHeader
                         key={col.id}
@@ -305,7 +311,7 @@ export default function TableView() {
                         onDelete={() => deleteColumn(col.id)}
                       />
                     ))}
-                    <th className="border-b border-[rgba(255,255,255,0.06)] w-12">
+                    <th className="border-b border-[rgba(255,255,255,0.22)] w-12">
                       <button
                         onClick={addColumn}
                         className="px-2 py-2 text-white/40 hover:text-[#e8b84a] transition-colors"
@@ -324,9 +330,9 @@ export default function TableView() {
                       </td>
                     </tr>
                   ) : displayRows.map((row) => (
-                    <tr key={row.id} className="border-b border-[rgba(255,255,255,0.04)] hover:bg-[rgba(255,255,255,0.02)] group">
+                    <tr key={row.id} className="border-b border-[rgba(255,255,255,0.18)] hover:bg-[rgba(255,255,255,0.04)] group">
                       {columns.map((col) => (
-                        <td key={col.id} className="border-r border-[rgba(255,255,255,0.04)] last:border-r-0 align-top">
+                        <td key={col.id} className="border-r border-[rgba(255,255,255,0.18)] last:border-r-0 align-top">
                           <Cell
                             type={col.type}
                             value={row.cells[col.id] ?? null}
@@ -379,7 +385,7 @@ function ColumnHeader({ col, sort, onToggleSort, onRename, onChangeType, onDelet
   const TypeIcon = COLUMN_TYPES.find((t) => t.value === col.type)?.Icon ?? Type;
 
   return (
-    <th className="text-left font-medium border-b border-[rgba(255,255,255,0.06)]">
+    <th className="text-left font-medium border-b border-[rgba(255,255,255,0.22)]">
       <div className="flex items-center gap-1 px-2 py-2 group">
         <select
           value={col.type}

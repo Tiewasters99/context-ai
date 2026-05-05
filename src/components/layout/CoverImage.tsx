@@ -32,16 +32,29 @@ interface CoverImageProps {
   coverUrl?: string | null;
   onCoverChange?: (url: string | null) => void;
   editable?: boolean;
+  // Optional controlled expansion: when both are provided, the parent
+  // owns the expanded state (and can persist it). Otherwise CoverImage
+  // keeps its own session-only state and click-to-expand still works.
+  expanded?: boolean;
+  onExpandChange?: (next: boolean) => void;
 }
 
 export default function CoverImage({
   coverUrl,
   onCoverChange,
   editable = false,
+  expanded: expandedProp,
+  onExpandChange,
 }: CoverImageProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = expandedProp !== undefined;
+  const expanded = isControlled ? expandedProp : internalExpanded;
+  const setExpanded = (next: boolean) => {
+    if (isControlled) onExpandChange?.(next);
+    else setInternalExpanded(next);
+  };
   const cover = coverUrl ?? '';
 
   const isGradient = cover.startsWith('linear-gradient');
