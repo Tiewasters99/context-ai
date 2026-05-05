@@ -16,7 +16,7 @@ const modeConfig: Record<AssistantMode, { icon: typeof EyeOff; label: string; de
 const welcomeMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: "Hi! I'm your Context assistant. I can help you navigate, organize, and create content. What would you like to do?",
+  content: "Hi! I'm your Contextspaces assistant. I can help you navigate, organize, and create content. What would you like to do?",
   timestamp: new Date(),
 };
 
@@ -79,7 +79,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)]">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-white">Context Assistant</h2>
+            <h2 className="text-sm font-semibold text-white">Contextspaces Assistant</h2>
             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400">
               {modeConfig[mode].label}
             </span>

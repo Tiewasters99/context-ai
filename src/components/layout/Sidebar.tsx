@@ -290,7 +290,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
       <div className="flex items-center justify-between px-4 h-13 border-b border-[rgba(255,255,255,0.06)]">
         {!collapsed && (
           <span className="text-[15px] font-semibold text-white tracking-tight">
-            Context<span className="text-[#e8b84a]">.ai</span>
+            Context<span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>
           </span>
         )}
         <button
