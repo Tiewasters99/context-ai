@@ -9,4 +9,7 @@ export interface VaultFile {
   status: 'uploading' | 'indexing' | 'indexed' | 'error';
   /** Extracted text content, available after indexing */
   textContent?: string;
+  /** Set in persistent mode so the import panel can group by matter. */
+  matterspace_id?: string;
+  matterspace_name?: string;
 }

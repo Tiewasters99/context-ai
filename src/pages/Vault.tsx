@@ -8,7 +8,7 @@ import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
 import {
   resolveMatter,
-  listMatterDocuments,
+  listMatterDocumentsRecursive,
   persistVaultFile,
   watchDocumentStatus,
   deleteVaultDocument,
@@ -115,17 +115,38 @@ export default function Vault() {
     return () => { cancelled = true; };
   }, [matterKey]);
 
+  // Compute the matter + descendants set from the loaded serverspaces tree.
+  // Vault file list pulls docs from all of these so a parent matter shows
+  // its children's files grouped underneath it.
+  const matterScope = useMemo(() => {
+    if (!matter) return null;
+    const ss = serverspaces.find((s) => s.id === matter.serverspace_id);
+    const all = ss?.matterspaces ?? [];
+    const ids = [matter.id];
+    const queue = [matter.id];
+    while (queue.length) {
+      const head = queue.shift()!;
+      for (const m of all) {
+        if (m.parent_matterspace_id === head && !ids.includes(m.id)) {
+          ids.push(m.id);
+          queue.push(m.id);
+        }
+      }
+    }
+    const nameById = new Map<string, string>();
+    nameById.set(matter.id, matter.name);
+    for (const m of all) nameById.set(m.id, m.name);
+    return { ids, nameById };
+  }, [matter, serverspaces]);
+
   // Hydrate the vault file list from the documents table when a matter loads.
   useEffect(() => {
-    if (!matter) return;
+    if (!matter || !matterScope) return;
     let cancelled = false;
-    listMatterDocuments(matter.id).then((files) => {
-      if (!cancelled) setVaultFiles(files);
-    });
-    // Resume polling for any docs that are still mid-pipeline (uploading / indexing).
-    const cleanups: (() => void)[] = [];
-    listMatterDocuments(matter.id).then((files) => {
+    listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById).then((files) => {
       if (cancelled) return;
+      setVaultFiles(files);
+      // Resume polling for any docs that are still mid-pipeline.
       for (const f of files) {
         if (f.status === 'uploading' || f.status === 'indexing') {
           cleanups.push(
@@ -136,11 +157,12 @@ export default function Vault() {
         }
       }
     });
+    const cleanups: (() => void)[] = [];
     return () => {
       cancelled = true;
       cleanups.forEach((c) => c());
     };
-  }, [matter]);
+  }, [matter, matterScope]);
 
   const formatSize = (bytes: number) =>
     bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
@@ -164,6 +186,8 @@ export default function Vault() {
             type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
             file,
             status: 'uploading',
+            matterspace_id: matter.id,
+            matterspace_name: matter.name,
           };
           setVaultFiles((prev) => [stub, ...prev]);
           // Poll until terminal — self-stops on ready/error.

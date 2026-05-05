@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
@@ -39,6 +39,7 @@ export default function MatterspaceView() {
 
   const [matter, setMatter] = useState<MatterRow | null>(null);
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
+  const [subMatters, setSubMatters] = useState<{ id: string; name: string }[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -47,6 +48,7 @@ export default function MatterspaceView() {
     setLoadError(null);
     setMatter(null);
     setServerspace(null);
+    setSubMatters([]);
     (async () => {
       const { data: m, error } = await supabase
         .from('matterspaces')
@@ -57,13 +59,13 @@ export default function MatterspaceView() {
       if (error) { setLoadError(error.message); return; }
       if (!m) { setLoadError('Matter not found'); return; }
       setMatter(m as MatterRow);
-      const { data: s } = await supabase
-        .from('serverspaces')
-        .select('id, name')
-        .eq('id', m.serverspace_id)
-        .maybeSingle();
+      const [{ data: s }, { data: kids }] = await Promise.all([
+        supabase.from('serverspaces').select('id, name').eq('id', m.serverspace_id).maybeSingle(),
+        supabase.from('matterspaces').select('id, name').eq('parent_matterspace_id', m.id).order('name'),
+      ]);
       if (cancelled) return;
       if (s) setServerspace(s as ServerspaceRow);
+      setSubMatters(kids ?? []);
     })();
     return () => { cancelled = true; };
   }, [id]);
@@ -146,6 +148,26 @@ export default function MatterspaceView() {
             </button>
           )}
         </div>
+
+        {/* Sub-matters */}
+        {subMatters.length > 0 && (
+          <section className="mt-6">
+            <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Sub-matters</h2>
+            <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+              {subMatters.map((sub) => (
+                <button
+                  key={sub.id}
+                  onClick={() => navigate(`/app/matterspace/${sub.id}`)}
+                  className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
+                >
+                  <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
+                  <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{sub.name}</span>
+                  <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors" strokeWidth={2} />
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Tabs */}
         <div className="flex gap-1 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">

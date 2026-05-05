@@ -55,14 +55,33 @@ export async function resolveMatter(key: string): Promise<MatterRef | null> {
 export async function listMatterDocuments(matterspaceId: string): Promise<VaultFile[]> {
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error')
+    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id')
     .eq('matterspace_id', matterspaceId)
     .order('created_at', { ascending: false });
   if (error) {
     console.error('listMatterDocuments:', error.message);
     return [];
   }
-  return (data || []).map(documentToVaultFile);
+  return (data || []).map((d) => documentToVaultFile(d));
+}
+
+// Hydrate from a set of matter ids (parent + descendants). Each row carries
+// matterspace_id + matterspace_name so the Vault file list can group by matter.
+export async function listMatterDocumentsRecursive(
+  matterIds: string[],
+  nameById: Map<string, string>,
+): Promise<VaultFile[]> {
+  if (matterIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id')
+    .in('matterspace_id', matterIds)
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('listMatterDocumentsRecursive:', error.message);
+    return [];
+  }
+  return (data || []).map((d) => documentToVaultFile(d, nameById.get(d.matterspace_id)));
 }
 
 function documentToVaultFile(doc: {
@@ -72,7 +91,8 @@ function documentToVaultFile(doc: {
   file_size_bytes: number | null;
   processing_status: string;
   processing_error: string | null;
-}): VaultFile {
+  matterspace_id?: string;
+}, matterspace_name?: string): VaultFile {
   const name = doc.source_filename || doc.title || 'Untitled';
   const sizeBytes = doc.file_size_bytes || 0;
   return {
@@ -87,6 +107,8 @@ function documentToVaultFile(doc: {
     // server already has the bytes; the UI never reads .file in this mode.
     file: new File([], name),
     status: mapStatus(doc.processing_status),
+    matterspace_id: doc.matterspace_id,
+    matterspace_name,
   };
 }
 

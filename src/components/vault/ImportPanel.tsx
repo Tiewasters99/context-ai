@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback } from 'react';
-import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle } from 'lucide-react';
+import { useState, useRef, useCallback, useMemo } from 'react';
+import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 
 interface ImportPanelProps {
@@ -117,12 +117,65 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportP
     ? files.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()))
     : files;
 
+  // Group by matter when persistent-mode files are tagged with matterspace
+  // metadata. Multiple distinct matters → render collapsible groups; one
+  // matter (or none) → fall back to the flat list. Group order: insertion
+  // order of first-seen matter, which mirrors the recency sort from the
+  // documents query.
+  const groups = useMemo(() => {
+    const tagged = filtered.filter((f) => f.matterspace_id);
+    if (tagged.length === 0) return null;
+    const distinct = new Set(tagged.map((f) => f.matterspace_id));
+    if (distinct.size <= 1) return null;
+    const map = new Map<string, { name: string; files: VaultFile[] }>();
+    for (const f of filtered) {
+      const id = f.matterspace_id ?? '__untagged__';
+      const name = f.matterspace_name ?? '(unknown matter)';
+      if (!map.has(id)) map.set(id, { name, files: [] });
+      map.get(id)!.files.push(f);
+    }
+    return Array.from(map.entries()).map(([id, v]) => ({ id, ...v }));
+  }, [filtered]);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (id: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const totalSize = files.reduce((sum, f) => sum + f.sizeBytes, 0);
   const indexedCount = files.filter((f) => f.status === 'indexed').length;
   const formatSize = (bytes: number) =>
     bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
     bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` :
     `${(bytes / 1024).toFixed(0)} KB`;
+
+  const renderFileRow = (file: VaultFile) => (
+    <div
+      key={file.id}
+      className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors group"
+    >
+      {statusIcon[file.status]}
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] text-white truncate">{file.name}</p>
+        <p className="text-[10px] text-white/50">
+          {file.size} · {file.type.toUpperCase()} · {statusLabel[file.status]}
+          {file.textContent && file.status === 'indexed' && (
+            <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
+          )}
+        </p>
+      </div>
+      <button
+        onClick={() => onRemoveFile(file.id)}
+        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-all"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -185,31 +238,35 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportP
               </div>
             )}
 
-            <div className="space-y-0.5">
-              {filtered.map((file) => (
-                <div
-                  key={file.id}
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors group"
-                >
-                  {statusIcon[file.status]}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[13px] text-white truncate">{file.name}</p>
-                    <p className="text-[10px] text-white/50">
-                      {file.size} · {file.type.toUpperCase()} · {statusLabel[file.status]}
-                      {file.textContent && file.status === 'indexed' && (
-                        <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
+            {groups ? (
+              <div className="space-y-3">
+                {groups.map((g) => {
+                  const collapsed = collapsedGroups.has(g.id);
+                  return (
+                    <div key={g.id}>
+                      <button
+                        onClick={() => toggleGroup(g.id)}
+                        className="flex items-center gap-2 w-full text-left mb-1.5 group/header"
+                      >
+                        {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}
+                        <Folder size={13} className="text-[#d4a054]" strokeWidth={1.75} />
+                        <span className="text-[12px] font-medium text-[#f5f1e8] group-hover/header:text-[#e8b84a] transition-colors">{g.name}</span>
+                        <span className="text-[10px] text-white/30 ml-auto">{g.files.length}</span>
+                      </button>
+                      {!collapsed && (
+                        <div className="space-y-0.5 pl-5">
+                          {g.files.map(renderFileRow)}
+                        </div>
                       )}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => onRemoveFile(file.id)}
-                    className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-all"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="space-y-0.5">
+                {filtered.map(renderFileRow)}
+              </div>
+            )}
           </div>
         )}
       </div>
