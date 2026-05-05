@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import {
@@ -34,7 +35,7 @@ export default function MatterspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('Vault');
-  const { cardRef, toggleFullscreen } = useDraggableResizable();
+  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.matterspace.card');
 
   const [matter, setMatter] = useState<MatterRow | null>(null);
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
@@ -105,7 +106,10 @@ export default function MatterspaceView() {
             <X size={14} strokeWidth={2} />
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <FullscreenToggle onToggle={toggleFullscreen} />
+          <div className="flex items-center gap-1">
+            <PinToggle pinned={pinned} onToggle={togglePin} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
         </div>
 
         {/* Breadcrumb */}

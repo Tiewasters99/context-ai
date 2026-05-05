@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Users, X, ChevronRight, ChevronDown, Folder } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
@@ -18,7 +19,7 @@ interface ServerspaceRow {
 export default function ServerspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen } = useDraggableResizable();
+  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.serverspace.card');
 
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
   const [matters, setMatters] = useState<ServerspaceMatter[]>([]);
@@ -103,7 +104,10 @@ export default function ServerspaceView() {
             <X size={14} strokeWidth={2} />
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <FullscreenToggle onToggle={toggleFullscreen} />
+          <div className="flex items-center gap-1">
+            <PinToggle pinned={pinned} onToggle={togglePin} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
         </div>
 
         {/* Header */}

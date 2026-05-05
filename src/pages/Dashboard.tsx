@@ -1,9 +1,10 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
@@ -23,53 +24,11 @@ export default function Dashboard() {
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
 
-  const { cardRef, toggleFullscreen } = useDraggableResizable();
+  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.dashboard.mainCard');
   const [showCard, setShowCard] = useState(true);
   const [enteringVault, setEnteringVault] = useState(false);
-  // Door position persists across reloads so the vault icon stays lined up
-  // over the archway in the cover image once the user drags it into place.
-  const DOOR_POS_KEY = 'cs.dashboard.doorPos';
-  const [doorPos, setDoorPos] = useState<{ x: number; y: number }>(() => {
-    try {
-      const raw = localStorage.getItem(DOOR_POS_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    return { x: 0, y: 0 };
-  });
-  const doorDrag = useRef({ active: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
-
-  const onDoorMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    doorDrag.current = { active: true, moved: false, startX: e.clientX, startY: e.clientY, origX: doorPos.x, origY: doorPos.y };
-  }, [doorPos]);
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      const d = doorDrag.current;
-      if (!d.active) return;
-      const dx = e.clientX - d.startX;
-      const dy = e.clientY - d.startY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
-      setDoorPos({ x: d.origX + dx, y: d.origY + dy });
-    };
-    const onUp = () => {
-      if (doorDrag.current.active && doorDrag.current.moved) {
-        // Capture the latest position via the setter's current value;
-        // closure-captured doorPos here would always be stale.
-        setDoorPos((pos) => {
-          try { localStorage.setItem(DOOR_POS_KEY, JSON.stringify(pos)); } catch {}
-          return pos;
-        });
-      }
-      doorDrag.current.active = false;
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-  }, []);
 
   const onDoorClick = useCallback(() => {
-    if (doorDrag.current.moved) return;
     setEnteringVault(true);
     setTimeout(() => navigate('/app/vault'), 1200);
   }, [navigate]);
@@ -103,7 +62,7 @@ export default function Dashboard() {
         className="max-w-2xl mx-auto px-6 py-8 mt-[55vh] mb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] cursor-grab select-none"
         style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}
       >
-        {/* Drag handle + fullscreen + close */}
+        {/* Drag handle + pin + fullscreen + close */}
         <div className="flex items-center justify-between mb-4 -mt-1">
           <button
             onClick={() => setShowCard(false)}
@@ -113,13 +72,34 @@ export default function Dashboard() {
             <X size={14} strokeWidth={2} />
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <FullscreenToggle onToggle={toggleFullscreen} />
+          <div className="flex items-center gap-1">
+            <PinToggle pinned={pinned} onToggle={togglePin} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
         </div>
         <h1 className="text-[22px] font-semibold text-[#f5f2ed]">
           Welcome back, {displayName}
         </h1>
         <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium">Here's what's happening in your Contextspace.</p>
-        <p className="text-[11px] text-white/30 mt-1">Drag cards to reposition them.</p>
+        <p className="text-[11px] text-white/30 mt-1">Drag to move · right-click to pin · double-click to release.</p>
+
+        {/* The Door — entrance to the Vault, anchored at the heart of the card */}
+        <button
+          onClick={onDoorClick}
+          className="group mx-auto mt-8 mb-2 flex flex-col items-center gap-3 select-none focus:outline-none"
+          title="Enter the Vault"
+        >
+          <div className="relative w-24 h-36 rounded-t-full border-2 border-[#e8b84a]/30 group-hover:border-[#e8b84a]/70 transition-all duration-700 overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-t from-[#e8b84a]/5 to-[#e8b84a]/20 group-hover:from-[#e8b84a]/10 group-hover:to-[#e8b84a]/40 transition-all duration-700" />
+            <div className="absolute inset-[3px] rounded-t-full bg-gradient-to-t from-black via-black/80 to-[#e8b84a]/10 group-hover:to-[#e8b84a]/30 transition-all duration-700" />
+            {/* Light at the end */}
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-white/40 group-hover:bg-white group-hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] group-hover:scale-150 transition-all duration-700" />
+            <DoorOpen size={20} className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[#e8b84a]/30 group-hover:text-[#e8b84a] transition-all duration-500" />
+          </div>
+          <span className="text-[11px] text-white/30 group-hover:text-[#e8b84a] tracking-[0.25em] uppercase font-medium transition-all duration-500">
+            Enter the Vault
+          </span>
+        </button>
 
         {/* Serverspaces Explorer */}
         <section className="mt-8">
@@ -206,28 +186,6 @@ export default function Dashboard() {
           ))}
         </div>
       </div>}
-
-      {/* The Door — entrance to the Vault (draggable) */}
-      <div
-        onMouseDown={onDoorMouseDown}
-        onClick={onDoorClick}
-        className="absolute group cursor-grab active:cursor-grabbing select-none"
-        style={{ left: `calc(50% + ${doorPos.x}px)`, top: `calc(30% + ${doorPos.y}px)`, transform: 'translateX(-50%)' }}
-      >
-        <div className="flex flex-col items-center gap-4">
-          {/* Glowing arch */}
-          <div className="relative w-24 h-36 rounded-t-full border-2 border-[#e8b84a]/30 group-hover:border-[#e8b84a]/70 transition-all duration-700 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-t from-[#e8b84a]/5 to-[#e8b84a]/20 group-hover:from-[#e8b84a]/10 group-hover:to-[#e8b84a]/40 transition-all duration-700" />
-            <div className="absolute inset-[3px] rounded-t-full bg-gradient-to-t from-black via-black/80 to-[#e8b84a]/10 group-hover:to-[#e8b84a]/30 transition-all duration-700" />
-            {/* Light at the end */}
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-white/40 group-hover:bg-white group-hover:shadow-[0_0_20px_rgba(255,255,255,0.6)] group-hover:scale-150 transition-all duration-700" />
-            <DoorOpen size={20} className="absolute bottom-4 left-1/2 -translate-x-1/2 text-[#e8b84a]/30 group-hover:text-[#e8b84a] transition-all duration-500" />
-          </div>
-          <span className="text-[12px] text-white/20 group-hover:text-[#e8b84a] tracking-[0.25em] uppercase font-medium transition-all duration-500">
-            Enter the Vault
-          </span>
-        </div>
-      </div>
 
       {/* Vault entrance animation — full screen fade to black */}
       {enteringVault && (

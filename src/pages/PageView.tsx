@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Lock, Unlock, X } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import {
   useContentItem,
@@ -15,7 +16,7 @@ import { RichTextEditor, normalizeBody } from '@/components/content/Editor';
 export default function PageView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen } = useDraggableResizable();
+  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.pageview.card');
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
 
@@ -91,7 +92,10 @@ export default function PageView() {
             <X size={14} strokeWidth={2} />
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <FullscreenToggle onToggle={toggleFullscreen} />
+          <div className="flex items-center gap-1">
+            <PinToggle pinned={pinned} onToggle={togglePin} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
         </div>
 
         {error && (
