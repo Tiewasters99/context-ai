@@ -124,6 +124,21 @@ export default function ListView() {
     persistItems(next);
   };
 
+  // Enter on an inline item input: save the current text and insert a fresh
+  // item right below. Returns the new item's id so the caller can focus it.
+  const insertItemAfter = (afterItemId: string, currentText: string): string => {
+    const newId = crypto.randomUUID();
+    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null };
+    const next: ChecklistItem[] = [];
+    for (const i of items) {
+      next.push(i.id === afterItemId ? { ...i, text: currentText } : i);
+      if (i.id === afterItemId) next.push(newItem);
+    }
+    setItems(next);
+    persistItems(next);
+    return newId;
+  };
+
   const updateItem = (itemId: string, patch: Partial<ChecklistItem>) => {
     const next = items.map((i) => i.id === itemId ? { ...i, ...patch } : i);
     setItems(next);
@@ -253,6 +268,7 @@ export default function ListView() {
                       onChangeText={(text) => updateItem(it.id, { text })}
                       onChangeDue={(due) => updateItem(it.id, { due: due || null })}
                       onDelete={() => deleteItem(it.id)}
+                      onEnter={(currentText) => insertItemAfter(it.id, currentText)}
                     />
                   ))}
                 </div>
@@ -286,9 +302,10 @@ interface SortableItemProps {
   onChangeText: (text: string) => void;
   onChangeDue: (due: string) => void;
   onDelete: () => void;
+  onEnter: (currentText: string) => string;
 }
 
-function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete }: SortableItemProps) {
+function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -331,6 +348,18 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={() => { if (text !== item.text) onChangeText(text); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const newId = onEnter(text);
+            // Focus the freshly inserted item's input on the next paint.
+            requestAnimationFrame(() => {
+              const el = document.querySelector<HTMLInputElement>(`[data-item-id="${newId}"]`);
+              el?.focus();
+            });
+          }
+        }}
+        data-item-id={item.id}
         className={`flex-1 bg-transparent outline-none text-[14px] ${item.done ? 'line-through text-white/40' : 'text-[#f5f2ed]'}`}
       />
       <DueDateField
