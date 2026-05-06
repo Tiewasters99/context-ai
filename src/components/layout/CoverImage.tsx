@@ -14,7 +14,7 @@
 // (or press Esc) to collapse. Expansion is local state, not persisted.
 
 import { useEffect, useState, useRef } from 'react';
-import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload } from 'lucide-react';
+import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 const templateCovers = [
@@ -37,6 +37,9 @@ interface CoverImageProps {
   // keeps its own session-only state and click-to-expand still works.
   expanded?: boolean;
   onExpandChange?: (next: boolean) => void;
+  // Optional storage key for the vertical reposition value of the
+  // expanded cover (0–100). Without it, reposition is session-only.
+  persistKey?: string;
 }
 
 export default function CoverImage({
@@ -45,6 +48,7 @@ export default function CoverImage({
   editable = false,
   expanded: expandedProp,
   onExpandChange,
+  persistKey,
 }: CoverImageProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -55,6 +59,19 @@ export default function CoverImage({
     if (isControlled) onExpandChange?.(next);
     else setInternalExpanded(next);
   };
+  // Vertical position of the expanded cover (0 = top, 50 = center, 100 = bottom).
+  // Hydrate from localStorage when a persistKey is provided.
+  const [bgY, setBgY] = useState<number>(50);
+  useEffect(() => {
+    if (!persistKey) { setBgY(50); return; }
+    try {
+      const raw = localStorage.getItem(`${persistKey}.bgY`);
+      if (raw !== null) {
+        const n = parseFloat(raw);
+        if (!Number.isNaN(n)) setBgY(Math.max(0, Math.min(100, n)));
+      }
+    } catch {}
+  }, [persistKey]);
   const cover = coverUrl ?? '';
 
   const isGradient = cover.startsWith('linear-gradient');
@@ -65,15 +82,53 @@ export default function CoverImage({
   // MainLayout's <main> background-image picks it up and the cover
   // becomes the page background regardless of where the card sits.
   // Reverts on collapse, navigate-away (component unmount), or cover
-  // change.
+  // change. Vertical position flows through `--page-cover-position` so
+  // users can drag the bg up/down via the reposition pill.
   useEffect(() => {
     if (!expanded || !hasCover) return;
     const value = isGradient ? cover : `url("${cover.replace(/"/g, '\\"')}")`;
     document.documentElement.style.setProperty('--page-cover', value);
+    document.documentElement.style.setProperty('--page-cover-position', `center ${bgY}%`);
     return () => {
       document.documentElement.style.removeProperty('--page-cover');
+      document.documentElement.style.removeProperty('--page-cover-position');
     };
-  }, [expanded, cover, isGradient, hasCover]);
+  }, [expanded, cover, isGradient, hasCover, bgY]);
+
+  // Drag-to-reposition for the expanded cover. The pill button starts a
+  // pointer capture; document-level move/up handlers update bgY until
+  // release, then persist if a key was provided.
+  const dragRef = useRef({ active: false, startY: 0, startBg: 50 });
+  useEffect(() => {
+    if (!expanded) return;
+    const onMove = (e: PointerEvent) => {
+      if (!dragRef.current.active) return;
+      const dy = e.clientY - dragRef.current.startY;
+      // Map pixel delta to percent: full viewport = 100%. Inverted so
+      // dragging down moves the visible portion DOWN (image shifts up
+      // visually, exposing more of the bottom).
+      const pct = (dy / window.innerHeight) * 100;
+      const next = Math.max(0, Math.min(100, dragRef.current.startBg + pct));
+      setBgY(next);
+    };
+    const onUp = () => {
+      if (!dragRef.current.active) return;
+      dragRef.current.active = false;
+      if (persistKey) {
+        try { localStorage.setItem(`${persistKey}.bgY`, String(bgY)); } catch {}
+      }
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, [expanded, bgY, persistKey]);
+  const startReposition = (e: React.PointerEvent) => {
+    e.preventDefault();
+    dragRef.current = { active: true, startY: e.clientY, startBg: bgY };
+  };
 
   // Esc key collapses the expanded view.
   useEffect(() => {
@@ -191,9 +246,18 @@ export default function CoverImage({
       </div>}
 
       {/* Expanded mode: the cover became the page background via CSS
-          variable, so the 180px strip is hidden upstream. Render a
-          small floating Collapse pill so users can return to the
-          banner-strip view. */}
+          variable, so the 180px strip is hidden upstream. Render two
+          floating pills — Reposition (hold + drag up/down to shift
+          the visible portion of the image) and Collapse. */}
+      {expanded && hasImage && (
+        <button
+          onPointerDown={startReposition}
+          className="fixed top-[60px] right-44 z-30 p-2 rounded-md bg-black/50 backdrop-blur-sm text-white/80 hover:text-white hover:bg-black/70 transition-colors flex items-center gap-1.5 text-xs cursor-ns-resize select-none"
+          title="Hold and drag up/down to reposition cover"
+        >
+          <MoveVertical size={14} /> Reposition
+        </button>
+      )}
       {expanded && (
         <button
           onClick={() => setExpanded(false)}

@@ -57,9 +57,11 @@ export default function Dashboard() {
         </button>
       )}
 
-      {showCard && <div
+      {/* Always mounted so drag/pin listeners stay bound across show/hide
+          toggles. Visibility flips via display rather than unmount+remount. */}
+      <div
         ref={cardRef}
-        className="max-w-2xl mx-auto px-6 py-8 mt-[55vh] mb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] cursor-grab select-none"
+        className={`max-w-2xl mx-auto px-6 py-8 mt-[55vh] mb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] cursor-grab select-none ${showCard ? '' : 'hidden'}`}
         style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}
       >
         {/* Drag handle + pin + fullscreen + close */}
@@ -185,7 +187,7 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
-      </div>}
+      </div>
 
       {/* Vault entrance animation — full screen fade to black */}
       {enteringVault && (

@@ -84,6 +84,7 @@ export default function PageView() {
         editable={!isLocked}
         expanded={coverExpanded}
         onExpandChange={setCoverExpanded}
+        persistKey={id ? `cs.cover.${id}` : undefined}
       />
 
       <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
