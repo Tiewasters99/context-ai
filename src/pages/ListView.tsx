@@ -67,6 +67,7 @@ export default function ListView() {
   const [saving, setSaving] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
   const titleRef = useRef<HTMLDivElement>(null);
+  const draftInputRef = useRef<HTMLInputElement>(null);
   const hydrated = useRef(false);
 
   useEffect(() => { hydrated.current = false; }, [id]);
@@ -74,9 +75,15 @@ export default function ListView() {
   useEffect(() => {
     if (!item || hydrated.current) return;
     setTitle(item.title);
-    setItems(readListContent(item.content));
+    const hydratedItems = readListContent(item.content);
+    setItems(hydratedItems);
     if (titleRef.current) titleRef.current.textContent = item.title;
     hydrated.current = true;
+    // Empty list on first load → focus the bottom input so the user can
+    // start typing or press Enter to spawn a first empty bullet.
+    if (hydratedItems.length === 0) {
+      setTimeout(() => draftInputRef.current?.focus(), 0);
+    }
   }, [item]);
 
   const persistItems = async (next: ChecklistItem[]) => {
@@ -112,19 +119,17 @@ export default function ListView() {
     persistTitle(next);
   };
 
-  const addItem = () => {
+  // Returns the new item's id so callers (the bottom-input Enter handler)
+  // can move focus to the freshly created bullet when the draft was empty.
+  const addItem = (): string => {
     const text = draftText.trim();
-    if (!text) return;
-    const newItem: ChecklistItem = {
-      id: crypto.randomUUID(),
-      text,
-      done: false,
-      due: null,
-    };
+    const newId = crypto.randomUUID();
+    const newItem: ChecklistItem = { id: newId, text, done: false, due: null };
     const next = [...items, newItem];
     setItems(next);
     setDraftText('');
     persistItems(next);
+    return newId;
   };
 
   // Enter on an inline item input: save the current text and insert a fresh
@@ -285,11 +290,25 @@ export default function ListView() {
             <div className="flex items-center gap-2 mt-3 px-3 py-2 rounded-lg border border-dashed border-[rgba(255,255,255,0.1)]">
               <Plus size={14} className="text-white/40 shrink-0" />
               <input
+                ref={draftInputRef}
                 type="text"
                 value={draftText}
                 onChange={(e) => setDraftText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
-                placeholder="Add an item — press Enter"
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return;
+                  e.preventDefault();
+                  const wasEmpty = !draftText.trim();
+                  const newId = addItem();
+                  if (wasEmpty) {
+                    // Empty Enter → focus the freshly created bullet so the
+                    // user can keep chaining Enter to spawn more.
+                    requestAnimationFrame(() => {
+                      const el = document.querySelector<HTMLInputElement>(`[data-item-id="${newId}"]`);
+                      el?.focus();
+                    });
+                  }
+                }}
+                placeholder="Press Enter to add a bullet"
                 className="flex-1 bg-transparent outline-none text-[14px] text-[#f5f2ed] placeholder-white/30"
               />
             </div>
