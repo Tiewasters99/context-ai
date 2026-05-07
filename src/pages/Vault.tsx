@@ -495,17 +495,20 @@ export default function Vault() {
                       {isExpanded && tree.length === 0 && (
                         <p className="pl-9 py-1 text-[10px] text-white/30">No matters yet</p>
                       )}
-                      {isExpanded && tree.map((node) => (
-                        <VaultMatterNode
-                          key={node.matter.id}
-                          node={node}
-                          depth={0}
-                          activeMatterId={matter?.id ?? null}
-                          expandedMatters={expandedMatters}
-                          toggleMatter={(id) => toggleSet(setExpandedMatters, id)}
-                          onSelect={(m) => switchToMatter(m.short_code ?? m.id)}
-                        />
-                      ))}
+                      {isExpanded && tree.length > 0 && (
+                        <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5">
+                          {tree.map((node) => (
+                            <VaultMatterNode
+                              key={node.matter.id}
+                              node={node}
+                              activeMatterId={matter?.id ?? null}
+                              expandedMatters={expandedMatters}
+                              toggleMatter={(id) => toggleSet(setExpandedMatters, id)}
+                              onSelect={(m) => switchToMatter(m.short_code ?? m.id)}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -663,7 +666,6 @@ export default function Vault() {
 
 interface VaultMatterNodeProps {
   node: MatterTreeNode;
-  depth: number;
   activeMatterId: string | null;
   expandedMatters: Set<string>;
   toggleMatter: (id: string) => void;
@@ -672,7 +674,6 @@ interface VaultMatterNodeProps {
 
 function VaultMatterNode({
   node,
-  depth,
   activeMatterId,
   expandedMatters,
   toggleMatter,
@@ -682,7 +683,6 @@ function VaultMatterNode({
   const hasChildren = children.length > 0;
   const isExpanded = expandedMatters.has(matter.id);
   const isActive = activeMatterId === matter.id;
-  const indent = 14 + depth * 12;
 
   return (
     <div>
@@ -706,7 +706,6 @@ function VaultMatterNode({
         <button
           onClick={() => onSelect(matter)}
           className="flex-1 flex items-center gap-1.5 py-1.5 pr-2 text-left min-w-0"
-          style={{ paddingLeft: `${indent - 19}px` }}
           title={matter.name}
         >
           <Folder size={11} className={`shrink-0 ${isActive ? 'text-[#e8b84a]' : 'text-[#d4a054]'}`} strokeWidth={1.75} />
@@ -716,12 +715,11 @@ function VaultMatterNode({
         </button>
       </div>
       {isExpanded && hasChildren && (
-        <div>
+        <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5">
           {children.map((child) => (
             <VaultMatterNode
               key={child.matter.id}
               node={child}
-              depth={depth + 1}
               activeMatterId={activeMatterId}
               expandedMatters={expandedMatters}
               toggleMatter={toggleMatter}

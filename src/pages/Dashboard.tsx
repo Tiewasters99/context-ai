@@ -147,12 +147,11 @@ export default function Dashboard() {
 
                   {/* Matter tree */}
                   {isServerExpanded && tree.length > 0 && (
-                    <div className="border-t border-[rgba(255,255,255,0.06)] py-1">
+                    <div className="border-t border-[rgba(255,255,255,0.06)] py-1 ml-5 pl-3 border-l border-[rgba(255,255,255,0.06)]">
                       {tree.map((node) => (
                         <DashboardMatterNode
                           key={node.matter.id}
                           node={node}
-                          depth={0}
                           expandedMatters={expandedMatters}
                           toggleMatter={(id) => toggle(expandedMatters, setExpandedMatters, id)}
                           onOpen={(matterId) => navigate(`/app/matterspace/${matterId}`)}
@@ -204,7 +203,6 @@ export default function Dashboard() {
 
 interface DashboardMatterNodeProps {
   node: MatterTreeNode;
-  depth: number;
   expandedMatters: Set<string>;
   toggleMatter: (id: string) => void;
   onOpen: (matterId: string) => void;
@@ -212,7 +210,6 @@ interface DashboardMatterNodeProps {
 
 function DashboardMatterNode({
   node,
-  depth,
   expandedMatters,
   toggleMatter,
   onOpen,
@@ -220,16 +217,13 @@ function DashboardMatterNode({
   const { matter, children } = node;
   const hasChildren = children.length > 0;
   const isExpanded = expandedMatters.has(matter.id);
-  // Indent each level by ~16px past the serverspace baseline (44px).
-  const indent = 44 + depth * 16;
 
   return (
     <div>
       <div className="flex items-center hover:bg-[rgba(255,255,255,0.04)] transition-colors group">
         <button
           onClick={() => onOpen(matter.id)}
-          className="flex items-center gap-2.5 flex-1 pr-4 py-1.5 text-left"
-          style={{ paddingLeft: `${indent}px` }}
+          className="flex items-center gap-2.5 flex-1 pr-4 py-1.5 pl-2 text-left"
         >
           {hasChildren ? (
             <span
@@ -257,12 +251,11 @@ function DashboardMatterNode({
         </button>
       </div>
       {isExpanded && hasChildren && (
-        <div>
+        <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5">
           {children.map((child) => (
             <DashboardMatterNode
               key={child.matter.id}
               node={child}
-              depth={depth + 1}
               expandedMatters={expandedMatters}
               toggleMatter={toggleMatter}
               onOpen={onOpen}
