@@ -14,6 +14,7 @@ import {
   persistVaultFile,
   watchDocumentStatus,
   deleteVaultDocument,
+  moveVaultDocument,
   type MatterRef,
 } from '@/lib/vault-persist';
 import { useServerspaces } from '@/hooks/useServerspaces';
@@ -157,6 +158,32 @@ export default function Vault() {
     for (const m of all) nameById.set(m.id, m.name);
     return { ids, nameById };
   }, [matter, serverspaces]);
+
+  // Drop handler shared by every matter row in the rail. Reads the file
+  // payload set by ImportPanel's drag source, calls the move endpoint,
+  // and re-lists so the moved file lands in the right group (or
+  // disappears, if the target is outside the current scope).
+  const handleFileDrop = useCallback(async (
+    e: React.DragEvent,
+    targetMatterId: string,
+  ) => {
+    e.preventDefault();
+    const raw = e.dataTransfer.getData('application/x-cs-vault-file');
+    if (!raw) return;
+    let payload: { docId: string; fromMatterId: string };
+    try { payload = JSON.parse(raw); } catch { return; }
+    if (payload.fromMatterId === targetMatterId) return;
+    setVaultFiles((prev) => prev.filter((f) => f.id !== payload.docId));
+    try {
+      await moveVaultDocument(payload.docId, targetMatterId);
+    } catch (err) {
+      console.error('move failed', err);
+    }
+    if (matter && matterScope) {
+      const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
+      setVaultFiles(refreshed);
+    }
+  }, [matter, matterScope]);
 
   // Hydrate the vault file list from the documents table when a matter loads.
   useEffect(() => {
@@ -542,6 +569,7 @@ export default function Vault() {
                               onSelect={(m) => switchToMatter(m.short_code ?? m.id)}
                               onAddChild={openNewMatter}
                               onDelete={openDeleteMatter}
+                              onDropFile={handleFileDrop}
                             />
                           ))}
                           <button
@@ -745,6 +773,7 @@ interface VaultMatterNodeProps {
   onSelect: (matter: MatterTreeNode['matter']) => void;
   onAddChild: (serverspaceId: string, parentMatterId: string | null, contextLabel: string) => void;
   onDelete: (matterId: string, matterName: string) => void;
+  onDropFile: (e: React.DragEvent, targetMatterId: string) => void;
 }
 
 function VaultMatterNode({
@@ -757,20 +786,33 @@ function VaultMatterNode({
   onSelect,
   onAddChild,
   onDelete,
+  onDropFile,
 }: VaultMatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
   const isExpanded = expandedMatters.has(matter.id);
   const isActive = activeMatterId === matter.id;
   const myLabel = `${ancestorLabel} / ${matter.name}`;
+  const [dropHover, setDropHover] = useState(false);
 
   return (
     <div>
       <div
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('application/x-cs-vault-file')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            if (!dropHover) setDropHover(true);
+          }
+        }}
+        onDragLeave={() => setDropHover(false)}
+        onDrop={(e) => { setDropHover(false); onDropFile(e, matter.id); }}
         className={`group flex items-center gap-1 rounded transition-colors ${
-          isActive
-            ? 'bg-[rgba(232,184,74,0.12)]'
-            : 'hover:bg-[rgba(255,255,255,0.04)]'
+          dropHover
+            ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60'
+            : isActive
+              ? 'bg-[rgba(232,184,74,0.12)]'
+              : 'hover:bg-[rgba(255,255,255,0.04)]'
         }`}
       >
         {hasChildren ? (
@@ -822,6 +864,7 @@ function VaultMatterNode({
               onSelect={onSelect}
               onAddChild={onAddChild}
               onDelete={onDelete}
+              onDropFile={onDropFile}
             />
           ))}
         </div>

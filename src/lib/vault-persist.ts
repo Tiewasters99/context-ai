@@ -238,6 +238,34 @@ export function watchDocumentStatus(
 
 
 // -----------------------------------------------------------------------------
+// Move a document to a different matter. Calls /api/move-document, which
+// performs the multi-step (storage rename, documents row, passages denorm)
+// under the user's session token so RLS enforces both matters' membership.
+// -----------------------------------------------------------------------------
+export async function moveVaultDocument(
+  documentId: string,
+  newMatterspaceId: string,
+): Promise<void> {
+  const session = (await supabase.auth.getSession()).data.session;
+  const accessToken = session?.access_token;
+  if (!accessToken) throw new Error('not authenticated');
+  const res = await fetch('/api/move-document', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ documentId, newMatterspaceId }),
+  });
+  if (!res.ok) {
+    let msg = `move failed: ${res.status}`;
+    try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+}
+
+
+// -----------------------------------------------------------------------------
 // Delete a document: removes documents row (cascades passages) + storage file.
 // -----------------------------------------------------------------------------
 export async function deleteVaultDocument(documentId: string): Promise<void> {

@@ -156,7 +156,22 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportP
   const renderFileRow = (file: VaultFile) => (
     <div
       key={file.id}
-      className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors group"
+      draggable={!!file.matterspace_id}
+      onDragStart={(e) => {
+        if (!file.matterspace_id) return;
+        // The Vault rail's matter rows read this on drop and call the
+        // move endpoint. Plain JSON over text/plain works across panels
+        // without needing a shared DndContext.
+        e.dataTransfer.setData(
+          'application/x-cs-vault-file',
+          JSON.stringify({ docId: file.id, fromMatterId: file.matterspace_id }),
+        );
+        e.dataTransfer.effectAllowed = 'move';
+      }}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors group ${
+        file.matterspace_id ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
+      title={file.matterspace_id ? 'Drag to a matter in the rail to move' : undefined}
     >
       {statusIcon[file.status]}
       <div className="flex-1 min-w-0">
