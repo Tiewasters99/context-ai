@@ -1,8 +1,10 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 
-// `storageKey` opts the card into persistent pin state. With a key, the card
-// remembers (across reloads) whether the user right-clicked to pin it and
-// where it was pinned. Without a key, pin still works but is in-memory only.
+// `storageKey` opts the card into persistent layout state. With a key, the
+// card remembers (across reloads) where the user last left it AND whether
+// they right-clicked to pin it. Position survives even when unpinned —
+// the pin flag just toggles whether drag is locked. Without a key, all
+// state is in-memory only.
 export function useDraggableResizable(storageKey?: string) {
   const cardRef = useRef<HTMLDivElement>(null);
   const isFullscreen = useRef(false);
@@ -10,23 +12,29 @@ export function useDraggableResizable(storageKey?: string) {
   const [pinned, setPinned] = useState(false);
   const savedPos = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
 
-  const writePinState = useCallback((card: HTMLDivElement) => {
-    if (!storageKey) return;
+  // Single localStorage record per card carrying both the last position
+  // and the pinned flag. Writes merge into the existing record so unpin
+  // doesn't lose position and a position update doesn't lose pin state.
+  const readState = useCallback(() => {
+    if (!storageKey) return null;
     try {
-      localStorage.setItem(storageKey, JSON.stringify({
-        pinned: true,
-        left: card.style.left,
-        top: card.style.top,
-        width: card.style.width,
-        height: card.style.height,
-      }));
-    } catch {}
+      const raw = localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) as {
+        pinned?: boolean; left?: string; top?: string; width?: string; height?: string;
+      } : null;
+    } catch { return null; }
   }, [storageKey]);
 
-  const clearPinState = useCallback(() => {
+  const writeState = useCallback((patch: {
+    pinned?: boolean; left?: string; top?: string; width?: string; height?: string;
+  }) => {
     if (!storageKey) return;
-    try { localStorage.removeItem(storageKey); } catch {}
-  }, [storageKey]);
+    try {
+      const prev = readState() || {};
+      const next = { ...prev, ...patch };
+      localStorage.setItem(storageKey, JSON.stringify(next));
+    } catch {}
+  }, [storageKey, readState]);
 
   // pin/unpin act on the live DOM as well as the persisted state. They're
   // safe to call from anywhere — the contextmenu handler, dblclick handler,
@@ -45,8 +53,14 @@ export function useDraggableResizable(storageKey?: string) {
     card.style.cursor = 'default';
     isPinned.current = true;
     setPinned(true);
-    writePinState(card);
-  }, [writePinState]);
+    writeState({
+      pinned: true,
+      left: card.style.left,
+      top: card.style.top,
+      width: card.style.width,
+      height: card.style.height,
+    });
+  }, [writeState]);
 
   const unpin = useCallback(() => {
     const card = cardRef.current;
@@ -54,8 +68,10 @@ export function useDraggableResizable(storageKey?: string) {
     isPinned.current = false;
     setPinned(false);
     card.style.cursor = 'grab';
-    clearPinState();
-  }, [clearPinState]);
+    // Keep position; just flip the pin flag so the card stays where the
+    // user left it but becomes draggable again.
+    writeState({ pinned: false });
+  }, [writeState]);
 
   const togglePin = useCallback(() => {
     if (isPinned.current) unpin();
@@ -66,27 +82,24 @@ export function useDraggableResizable(storageKey?: string) {
     const card = cardRef.current;
     if (!card) return;
 
-    // Restore pinned position from a prior session.
-    if (storageKey) {
-      try {
-        const raw = localStorage.getItem(storageKey);
-        if (raw) {
-          const saved = JSON.parse(raw);
-          if (saved && saved.pinned && saved.left && saved.top) {
-            card.style.position = 'fixed';
-            card.style.left = saved.left;
-            card.style.top = saved.top;
-            if (saved.width) card.style.width = saved.width;
-            if (saved.height) card.style.height = saved.height;
-            card.style.margin = '0';
-            card.style.zIndex = '30';
-            card.style.maxWidth = 'none';
-            card.style.cursor = 'default';
-            isPinned.current = true;
-            setPinned(true);
-          }
-        }
-      } catch {}
+    // Restore last-known position from a prior session. Position is
+    // applied even when the card was left unpinned so users come back to
+    // exactly where they put it. The pinned flag adds the lock on top.
+    const saved = readState();
+    if (saved && (saved.left || saved.top)) {
+      card.style.position = 'fixed';
+      if (saved.left) card.style.left = saved.left;
+      if (saved.top) card.style.top = saved.top;
+      if (saved.width) card.style.width = saved.width;
+      if (saved.height) card.style.height = saved.height;
+      card.style.margin = '0';
+      card.style.zIndex = '30';
+      card.style.maxWidth = 'none';
+      card.style.cursor = saved.pinned ? 'default' : 'grab';
+      if (saved.pinned) {
+        isPinned.current = true;
+        setPinned(true);
+      }
     }
 
     let isDragging = false;
@@ -182,6 +195,16 @@ export function useDraggableResizable(storageKey?: string) {
     };
 
     const onUp = () => {
+      // Persist the latest position whenever a drag or resize finishes,
+      // so unpinned cards still remember where the user left them.
+      if (isDragging || isResizing) {
+        writeState({
+          left: card.style.left,
+          top: card.style.top,
+          width: card.style.width,
+          height: card.style.height,
+        });
+      }
       isDragging = false;
       isResizing = false;
       if (!isFullscreen.current && !isPinned.current) card.style.cursor = 'grab';
@@ -221,7 +244,7 @@ export function useDraggableResizable(storageKey?: string) {
       card.removeEventListener('contextmenu', onContextMenu);
       card.removeEventListener('dblclick', onDoubleClick);
     };
-  }, [storageKey, pin, unpin]);
+  }, [storageKey, pin, unpin, readState, writeState]);
 
   const toggleFullscreen = useCallback(() => {
     const card = cardRef.current;
