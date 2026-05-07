@@ -16,6 +16,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
+import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -31,49 +33,19 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [newServerspaceName, setNewServerspaceName] = useState('');
   const newServerspaceRef = useRef<HTMLInputElement>(null);
 
-  // New matterspace modal — opened from the + button on a serverspace
-  // (creates a top-level matter) or on a matter row (creates a sub-matter
-  // under that parent). serverspaceId is the anchor in either case;
-  // parentMatterId is null for top-level creation. contextLabel is what
-  // we render under the modal title (e.g. "Creative" or "Creative / TikTok").
-  const [newMatterContext, setNewMatterContext] = useState<{
-    serverspaceId: string;
-    parentMatterId: string | null;
-    contextLabel: string;
-  } | null>(null);
-  const [newMatterName, setNewMatterName] = useState('');
-  const [newMatterShortCode, setNewMatterShortCode] = useState('');
-  const [newMatterShortCodeEdited, setNewMatterShortCodeEdited] = useState(false);
-  const [newMatterDescription, setNewMatterDescription] = useState('');
-  const newMatterNameRef = useRef<HTMLInputElement>(null);
+  const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
-
-  // Delete-matter confirmation. Tracks the target matter and the
-  // descendant ids gathered from the local tree, so the modal can
-  // show what will cascade.
-  const [deleteTarget, setDeleteTarget] = useState<{
-    matterId: string;
-    matterName: string;
-    descendantIds: string[];  // includes the target itself
-  } | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (showNewServerspace) newServerspaceRef.current?.focus();
   }, [showNewServerspace]);
-
-  useEffect(() => {
-    if (newMatterContext) newMatterNameRef.current?.focus();
-  }, [newMatterContext]);
 
   const { data: serverspaces = [] } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
   const [clientspaceId, setClientspaceId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [creatingMatter, setCreatingMatter] = useState(false);
-  const [matterError, setMatterError] = useState<string | null>(null);
 
   // Fetch the user's clientspace id once so we know the parent FK for
   // any new serverspace they create.
@@ -94,30 +66,12 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     };
   }, [user]);
 
-  // Auto-derive a short_code from the matter name (lowercase, hyphenate non-alnum,
-  // ensure leading letter, max 64 chars). User can override by typing in the field.
-  const slugify = (s: string) => {
-    let out = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    if (out && !/^[a-z]/.test(out)) out = 'm-' + out;
-    return out.slice(0, 64);
-  };
-
   const openNewMatter = (
     serverspaceId: string,
     parentMatterId: string | null,
     contextLabel: string,
   ) => {
     setNewMatterContext({ serverspaceId, parentMatterId, contextLabel });
-    setNewMatterName('');
-    setNewMatterShortCode('');
-    setNewMatterShortCodeEdited(false);
-    setNewMatterDescription('');
-    setMatterError(null);
-  };
-
-  const closeNewMatter = () => {
-    setNewMatterContext(null);
-    setMatterError(null);
   };
 
   const toggleMatter = (id: string) => {
@@ -129,112 +83,9 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
     });
   };
 
-  // Walk the loaded tree to collect the matter and every descendant id.
-  // Used when previewing a delete and when fanning out the content_items
-  // cleanup before we issue the cascading matter delete.
-  const collectDescendantIds = (rootMatterId: string): string[] => {
-    for (const s of serverspaces) {
-      const matchById = (n: MatterTreeNode): MatterTreeNode | null => {
-        if (n.matter.id === rootMatterId) return n;
-        for (const c of n.children) {
-          const hit = matchById(c);
-          if (hit) return hit;
-        }
-        return null;
-      };
-      const tree = buildMatterTree(s.matterspaces);
-      for (const root of tree) {
-        const node = matchById(root);
-        if (node) {
-          const out: string[] = [];
-          const walk = (x: MatterTreeNode) => {
-            out.push(x.matter.id);
-            for (const c of x.children) walk(c);
-          };
-          walk(node);
-          return out;
-        }
-      }
-    }
-    return [rootMatterId];
-  };
-
   const openDeleteMatter = (matterId: string, matterName: string) => {
-    const descendantIds = collectDescendantIds(matterId);
+    const descendantIds = collectDescendantIds(serverspaces, matterId);
     setDeleteTarget({ matterId, matterName, descendantIds });
-    setDeleteError(null);
-  };
-
-  const closeDeleteMatter = () => {
-    setDeleteTarget(null);
-    setDeleteError(null);
-  };
-
-  const confirmDeleteMatter = async () => {
-    if (!deleteTarget || deleting) return;
-    setDeleting(true);
-    setDeleteError(null);
-    try {
-      // 1) Clean up content_items for the target + descendants
-      //    (no FK cascade on space_id since it's a polymorphic ref).
-      const { error: ciErr } = await supabase
-        .from('content_items')
-        .delete()
-        .eq('space_type', 'matterspace')
-        .in('space_id', deleteTarget.descendantIds);
-      if (ciErr) throw new Error(`content cleanup: ${ciErr.message}`);
-
-      // 2) Delete the matter — DB cascade handles sub-matters
-      //    (parent_matterspace_id), documents, and passages.
-      const { error: mErr } = await supabase
-        .from('matterspaces')
-        .delete()
-        .eq('id', deleteTarget.matterId);
-      if (mErr) throw new Error(mErr.message);
-
-      closeDeleteMatter();
-      await refreshServerspaces();
-    } catch (e) {
-      setDeleteError(e instanceof Error ? e.message : 'Delete failed');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleCreateMatterspace = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newMatterContext || creatingMatter) return;
-    const name = newMatterName.trim();
-    const shortCode = (newMatterShortCodeEdited ? newMatterShortCode : slugify(name)).trim();
-    if (!name) { setMatterError('Name required'); return; }
-    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(shortCode)) {
-      setMatterError('Short code must be lowercase letters/digits/_/-, starting with a letter');
-      return;
-    }
-    setCreatingMatter(true);
-    setMatterError(null);
-    const { error } = await supabase.from('matterspaces').insert({
-      serverspace_id: newMatterContext.serverspaceId,
-      parent_matterspace_id: newMatterContext.parentMatterId,
-      name,
-      short_code: shortCode,
-      description: newMatterDescription.trim() || null,
-    });
-    setCreatingMatter(false);
-    if (error) {
-      setMatterError(
-        error.message.includes('duplicate') || error.code === '23505'
-          ? `Short code "${shortCode}" is already taken`
-          : error.message
-      );
-      return;
-    }
-    // Auto-expand the parent so the new sub-matter is visible.
-    if (newMatterContext.parentMatterId) {
-      setExpandedMatters((prev) => new Set(prev).add(newMatterContext.parentMatterId!));
-    }
-    closeNewMatter();
-    await refreshServerspaces();
   };
 
   const handleCreateServerspace = async (e: React.FormEvent) => {
@@ -442,127 +293,22 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
           {!collapsed && <span>Sign Out</span>}
         </button>
       </div>
-      {/* Delete Matter Confirmation */}
-      {deleteTarget && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/40" onClick={closeDeleteMatter} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
-                <Trash2 size={15} className="text-red-300" />
-                Delete matter
-              </h3>
-              <button
-                onClick={closeDeleteMatter}
-                disabled={deleting}
-                className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors disabled:opacity-40"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <p className="text-[13px] text-white/80 mb-2">
-              Delete <span className="text-[#e8b84a] font-semibold">{deleteTarget.matterName}</span>?
-            </p>
-            {deleteTarget.descendantIds.length > 1 && (
-              <p className="text-[12px] text-amber-300 mb-2">
-                This also deletes {deleteTarget.descendantIds.length - 1} sub-matter{deleteTarget.descendantIds.length - 1 === 1 ? '' : 's'} underneath.
-              </p>
-            )}
-            <p className="text-[11px] text-white/50 leading-relaxed mb-5">
-              All documents, passages, pages, lists, and tables in this matter (and its sub-matters) are permanently deleted. This cannot be undone.
-            </p>
-            {deleteError && (
-              <p className="text-[12px] text-red-300 mb-3">{deleteError}</p>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={closeDeleteMatter}
-                disabled={deleting}
-                className="flex-1 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-[13px] text-white/80 hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteMatter}
-                disabled={deleting}
-                className="flex-1 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-200 text-[13px] font-medium transition-colors disabled:opacity-40"
-              >
-                {deleting ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* New Matterspace Modal */}
       {newMatterContext && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/40" onClick={closeNewMatter} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-[15px] font-semibold text-white">
-                {newMatterContext.parentMatterId ? 'New Sub-Matter' : 'New Matter'}
-              </h3>
-              <button
-                onClick={closeNewMatter}
-                className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <p className="text-[11px] text-white/50 mb-5">
-              in <span className="text-[#e8b84a]/80">{newMatterContext.contextLabel}</span>
-            </p>
-            <form onSubmit={handleCreateMatterspace} className="space-y-3">
-              <input
-                ref={newMatterNameRef}
-                type="text"
-                value={newMatterName}
-                onChange={(e) => {
-                  setNewMatterName(e.target.value);
-                  if (!newMatterShortCodeEdited) setNewMatterShortCode(slugify(e.target.value));
-                }}
-                placeholder="Matter name"
-                disabled={creatingMatter}
-                className="w-full px-4 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[14px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#e8b84a] focus:border-transparent"
-              />
-              <div>
-                <input
-                  type="text"
-                  value={newMatterShortCode}
-                  onChange={(e) => {
-                    setNewMatterShortCode(e.target.value);
-                    setNewMatterShortCodeEdited(true);
-                  }}
-                  placeholder="short-code"
-                  disabled={creatingMatter}
-                  className="w-full px-4 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[14px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#e8b84a] focus:border-transparent font-mono"
-                />
-                <p className="mt-1.5 text-[10px] text-white/40 leading-snug">
-                  Used in URLs and the MCP <code className="text-white/60">matter</code> arg. Lowercase letters/digits/_/-, must be unique.
-                </p>
-              </div>
-              <textarea
-                value={newMatterDescription}
-                onChange={(e) => setNewMatterDescription(e.target.value)}
-                placeholder="Description (optional)"
-                disabled={creatingMatter}
-                rows={2}
-                className="w-full px-4 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[13px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#e8b84a] focus:border-transparent resize-none"
-              />
-              {matterError && (
-                <p className="text-[12px] text-red-300 leading-relaxed">{matterError}</p>
-              )}
-              <button
-                type="submit"
-                disabled={!newMatterName.trim() || creatingMatter}
-                className="w-full py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#f5d565] text-[#0e0e12] text-[13px] font-bold transition-colors disabled:opacity-40 shadow-[0_0_20px_rgba(240,200,80,0.3)]"
-              >
-                {creatingMatter ? 'Creating…' : 'Create Matter'}
-              </button>
-            </form>
-          </div>
-        </>
+        <NewMatterModal
+          context={newMatterContext}
+          onClose={() => setNewMatterContext(null)}
+          onCreated={() => {
+            if (newMatterContext.parentMatterId) {
+              setExpandedMatters((prev) => new Set(prev).add(newMatterContext.parentMatterId!));
+            }
+          }}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteMatterModal
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+        />
       )}
 
       {/* New Serverspace Modal */}

@@ -1,9 +1,11 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users } from 'lucide-react';
+import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
+import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
+import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
 import {
@@ -58,6 +60,23 @@ export default function Vault() {
   const [matterTreeOpen, setMatterTreeOpen] = useState(true);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+
+  // Matter management modals — Vault is a first-class place to spawn
+  // new matters/sub-matters and delete existing ones, so users don't
+  // have to bounce out to the sidebar.
+  const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
+  const openNewMatter = (
+    serverspaceId: string,
+    parentMatterId: string | null,
+    contextLabel: string,
+  ) => setNewMatterContext({ serverspaceId, parentMatterId, contextLabel });
+  const openDeleteMatter = (matterId: string, matterName: string) =>
+    setDeleteTarget({
+      matterId,
+      matterName,
+      descendantIds: collectDescendantIds(serverspaces, matterId),
+    });
 
   // Keep the active matter's ancestors expanded so the user can see
   // where they are in the tree on first paint.
@@ -482,18 +501,32 @@ export default function Vault() {
                   const tree = buildMatterTree(server.matterspaces);
                   return (
                     <div key={server.id}>
-                      <button
-                        onClick={() => toggleSet(setExpandedServers, server.id)}
-                        className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded text-left text-[12px] text-white/80 hover:bg-[rgba(255,255,255,0.04)] transition-colors"
-                      >
-                        <span className="text-[#e8b84a]/80 w-3 shrink-0">
-                          {isExpanded ? <ChevronDown size={11} strokeWidth={2.5} /> : <ChevronRight size={11} strokeWidth={2.5} />}
-                        </span>
-                        <Users size={12} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
-                        <span className="truncate">{server.name}</span>
-                      </button>
+                      <div className="group flex items-center gap-1 rounded hover:bg-[rgba(255,255,255,0.04)] transition-colors">
+                        <button
+                          onClick={() => toggleSet(setExpandedServers, server.id)}
+                          className="flex-1 flex items-center gap-1.5 px-2 py-1.5 text-left text-[12px] text-white/80 min-w-0"
+                        >
+                          <span className="text-[#e8b84a]/80 w-3 shrink-0">
+                            {isExpanded ? <ChevronDown size={11} strokeWidth={2.5} /> : <ChevronRight size={11} strokeWidth={2.5} />}
+                          </span>
+                          <Users size={12} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
+                          <span className="truncate">{server.name}</span>
+                        </button>
+                        <button
+                          onClick={() => openNewMatter(server.id, null, server.name)}
+                          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+                          title="New matter in this serverspace"
+                        >
+                          <Plus size={11} strokeWidth={2} />
+                        </button>
+                      </div>
                       {isExpanded && tree.length === 0 && (
-                        <p className="pl-9 py-1 text-[10px] text-white/30">No matters yet</p>
+                        <button
+                          onClick={() => openNewMatter(server.id, null, server.name)}
+                          className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5 w-[calc(100%-12px)] flex items-center gap-1.5 px-2 py-1.5 rounded text-[11px] text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.03)] transition-colors"
+                        >
+                          <Plus size={10} strokeWidth={2} /> First matter
+                        </button>
                       )}
                       {isExpanded && tree.length > 0 && (
                         <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5">
@@ -501,12 +534,22 @@ export default function Vault() {
                             <VaultMatterNode
                               key={node.matter.id}
                               node={node}
+                              ancestorLabel={server.name}
+                              serverspaceId={server.id}
                               activeMatterId={matter?.id ?? null}
                               expandedMatters={expandedMatters}
                               toggleMatter={(id) => toggleSet(setExpandedMatters, id)}
                               onSelect={(m) => switchToMatter(m.short_code ?? m.id)}
+                              onAddChild={openNewMatter}
+                              onDelete={openDeleteMatter}
                             />
                           ))}
+                          <button
+                            onClick={() => openNewMatter(server.id, null, server.name)}
+                            className="w-full mt-0.5 flex items-center gap-1.5 px-2 py-1.5 rounded text-[11px] text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.03)] transition-colors"
+                          >
+                            <Plus size={10} strokeWidth={2} /> New matter
+                          </button>
                         </div>
                       )}
                     </div>
@@ -659,6 +702,34 @@ export default function Vault() {
           onClose={() => setShowTemplates(false)}
         />
       )}
+      {newMatterContext && (
+        <NewMatterModal
+          context={newMatterContext}
+          onClose={() => setNewMatterContext(null)}
+          onCreated={() => {
+            // Auto-expand the parent (or its serverspace) so the new
+            // matter is immediately visible in the rail.
+            if (newMatterContext.parentMatterId) {
+              setExpandedMatters((prev) => new Set(prev).add(newMatterContext.parentMatterId!));
+            }
+            setExpandedServers((prev) => new Set(prev).add(newMatterContext.serverspaceId));
+          }}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteMatterModal
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            // If the active matter was deleted (or any of its ancestors),
+            // drop back to ephemeral mode so we don't render a stale
+            // breadcrumb to a now-gone row.
+            if (matter && deleteTarget.descendantIds.includes(matter.id)) {
+              setSearchParams({});
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -666,28 +737,37 @@ export default function Vault() {
 
 interface VaultMatterNodeProps {
   node: MatterTreeNode;
+  ancestorLabel: string;
+  serverspaceId: string;
   activeMatterId: string | null;
   expandedMatters: Set<string>;
   toggleMatter: (id: string) => void;
   onSelect: (matter: MatterTreeNode['matter']) => void;
+  onAddChild: (serverspaceId: string, parentMatterId: string | null, contextLabel: string) => void;
+  onDelete: (matterId: string, matterName: string) => void;
 }
 
 function VaultMatterNode({
   node,
+  ancestorLabel,
+  serverspaceId,
   activeMatterId,
   expandedMatters,
   toggleMatter,
   onSelect,
+  onAddChild,
+  onDelete,
 }: VaultMatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
   const isExpanded = expandedMatters.has(matter.id);
   const isActive = activeMatterId === matter.id;
+  const myLabel = `${ancestorLabel} / ${matter.name}`;
 
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded transition-colors ${
+        className={`group flex items-center gap-1 rounded transition-colors ${
           isActive
             ? 'bg-[rgba(232,184,74,0.12)]'
             : 'hover:bg-[rgba(255,255,255,0.04)]'
@@ -713,6 +793,20 @@ function VaultMatterNode({
             {matter.name}
           </span>
         </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onAddChild(serverspaceId, matter.id, myLabel); }}
+          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          title="New sub-matter"
+        >
+          <Plus size={10} strokeWidth={2} />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(matter.id, matter.name); }}
+          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
+          title="Delete matter"
+        >
+          <Trash2 size={10} strokeWidth={2} />
+        </button>
       </div>
       {isExpanded && hasChildren && (
         <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5">
@@ -720,10 +814,14 @@ function VaultMatterNode({
             <VaultMatterNode
               key={child.matter.id}
               node={child}
+              ancestorLabel={myLabel}
+              serverspaceId={serverspaceId}
               activeMatterId={activeMatterId}
               expandedMatters={expandedMatters}
               toggleMatter={toggleMatter}
               onSelect={onSelect}
+              onAddChild={onAddChild}
+              onDelete={onDelete}
             />
           ))}
         </div>
