@@ -27,6 +27,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline/promises';
+import { stdin, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { loadEnv } from './lib/env.mjs';
@@ -36,12 +38,55 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
 
 const args = parseArgs(process.argv.slice(2));
-if (args._.length === 0) die('Usage: analyze-case.mjs <case.pdf> --citation "..." --for "..." [--matter <code>] [--no-store]');
+if (args._.length === 0) die('Usage: analyze-case.mjs <case.pdf> [--citation "..."] [--for "..."] [--matter <code>] [--no-store] [--yes]');
 const pdfPath = expandTilde(args._[0]);
-const citation = args.citation || null;
-const proposition = args.for || null;
+let citation = args.citation || null;
+let proposition = args.for || null;
 const matterKey = args.matter ?? null;
 const persistEnabled = !args['no-store'];
+const skipConfirm = !!args.yes;
+
+// Interactive fallback: prompt for any missing fields. Robust against the
+// PowerShell-multi-line-paste class of mishap that silently corrupts $cite
+// or $prop when several commands are pasted at once.
+if (typeof citation !== 'string') {
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  citation = (await rl.question('Citation (Bluebook): ')).trim();
+  rl.close();
+}
+if (typeof proposition !== 'string') {
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  proposition = (await rl.question('Cited for (proposition): ')).trim();
+  rl.close();
+}
+if (!citation || !proposition) die('Citation and proposition both required.');
+
+// Sanity check the PDF filename against the citation. If no word from the
+// case name shows up in the filename, the user almost certainly typo'd or
+// PowerShell concatenated something — flag it before we waste an API call.
+const filenameLower = path.basename(pdfPath).toLowerCase();
+const caseNameWords = (citation.match(/^([^,]+)/) ?? [''])[1]
+  .toLowerCase()
+  .split(/[\s.,&'\-]+/)
+  .filter((w) => w.length >= 4 && !['matter','people','state','city','court','county','board','dept'].includes(w));
+const filenameMatch = caseNameWords.some((w) => filenameLower.includes(w));
+
+console.log('\n[analyze] About to run:');
+console.log(`  PDF:         ${pdfPath}`);
+console.log(`  Citation:    ${citation}`);
+console.log(`  Proposition: ${proposition}`);
+if (matterKey) console.log(`  Matter:      ${matterKey}`);
+if (!persistEnabled) console.log(`  Persistence: OFF (--no-store)`);
+if (caseNameWords.length > 0 && !filenameMatch) {
+  console.log(`  ⚠ WARNING: no word from the case name appears in the PDF filename — double-check that the PDF and citation match.`);
+}
+
+if (!skipConfirm) {
+  const rl = readline.createInterface({ input: stdin, output: stdout });
+  const answer = (await rl.question('Proceed? [Y/n] ')).trim().toLowerCase();
+  rl.close();
+  if (answer === 'n' || answer === 'no') die('Aborted by user.');
+}
 
 // ---- 1. Extract -------------------------------------------------------------
 console.log(`[analyze] reading ${path.basename(pdfPath)}`);
