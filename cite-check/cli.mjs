@@ -25,6 +25,7 @@
 // Westlaw paste prompts (flagged but not interactive), and the editor UI.
 
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,7 +42,7 @@ await loadEnv(path.resolve(__dirname, '..', '.env'));
 const args = parseArgs(process.argv.slice(2));
 if (args._.length === 0) die('Missing draft path. Usage: cli.mjs <draft.docx|draft.md> [--matter <short_code>] [--no-store]');
 
-const draftPath = args._[0];
+const draftPath = expandTilde(args._[0]);
 const matterKey = args.matter ?? null;
 const persistEnabled = !args['no-store'];
 
@@ -118,4 +119,15 @@ function parseArgs(argv) {
 function die(msg) {
   console.error(`[cite-check] ${msg}`);
   process.exit(1);
+}
+
+// Bash expands ~ to $HOME automatically; PowerShell and cmd.exe do not.
+// We expand it here so the CLI behaves identically across shells.
+function expandTilde(p) {
+  if (!p) return p;
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/') || p.startsWith('~\\')) {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return p;
 }

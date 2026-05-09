@@ -18,32 +18,60 @@ export async function extractCitations(draftText, { apiKey }) {
 
   const system = `You are a legal citation extractor. Read the draft and extract every legal citation with the surrounding proposition.
 
-Output ONLY a JSON array. Each element has:
-  - raw: the citation as it appears in the text
-  - citation_bluebook: the citation in canonical Bluebook form (best effort; if you can't, repeat the raw)
-  - case_name: short case name, or null for statutes
-  - court: court level (e.g., "S.Ct.", "2d Cir.", "N.Y.", "1st Dep't"), or null
-  - year: decision/effective year as integer, or null
-  - pin_cite: page or section pin if present, or null
-  - proposition: the textual claim the cite is supporting, drawn from the surrounding sentence (1-2 sentences max)
-  - signal: "see", "see also", "accord", "cf.", "but see", "e.g.", "compare", or null
-  - authority_type: one of "statute", "regulation", "case", "treatise", "rule", "other"
-  - doctrinal_subject: array of relevant subject tags (e.g., ["consumer protection"], ["bankruptcy"], ["First Amendment"])
-  - location: short snippet of surrounding text (~80 chars) so a human can find it in the draft
+For each distinct citation in the text, call the record_citations tool with all citations you found. Extract every citation — if the same case is cited multiple times, emit one entry per location.
 
 Rules:
-  - Extract every distinct citation. If the same case is cited multiple times, emit one entry per location.
-  - Don't invent citations. If unsure, omit.
-  - Treat statutes (11 U.S.C. § 523(a)(7), CPLR § 214(2), 6 RCNY § 6-47) as authority_type = "statute".
-  - Federal regulations (12 C.F.R. § 1026.x, eCFR cites) are authority_type = "regulation".
+  - Don't invent citations. If you're not sure something is a real cite, omit it.
+  - Statutes (11 U.S.C. § 523(a)(7), CPLR § 214(2), 6 RCNY § 6-47) are authority_type = "statute".
+  - Federal regulations (12 C.F.R. § 1026.x, eCFR) are authority_type = "regulation".
   - Cases are authority_type = "case".
-  - If unable to determine year, omit (null is fine).
-  - Output a single JSON array. No prose, no markdown, no explanation.`;
+  - "court" is the court level (e.g., "S.Ct.", "2d Cir.", "N.Y.", "1st Dep't"); null for statutes.
+  - "pin_cite" is the page or section pin (e.g., "282", "44", "486-87") if present.
+  - "signal" is "see", "see also", "accord", "cf.", "but see", "e.g.", "compare", or null.
+  - "doctrinal_subject" is an array of subject tags ("consumer protection", "bankruptcy", "First Amendment", etc).
+  - "location" is a short snippet of surrounding text (~80 chars) so a human can find this cite in the draft.
+  - "proposition" is the claim the cite is supporting, drawn from the surrounding sentence (1-2 sentences max).`;
+
+  const tools = [{
+    name: 'record_citations',
+    description: 'Record every legal citation extracted from the draft.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        citations: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              raw: { type: 'string' },
+              citation_bluebook: { type: 'string' },
+              case_name: { type: ['string', 'null'] },
+              court: { type: ['string', 'null'] },
+              year: { type: ['integer', 'null'] },
+              pin_cite: { type: ['string', 'null'] },
+              proposition: { type: ['string', 'null'] },
+              signal: { type: ['string', 'null'] },
+              authority_type: {
+                type: 'string',
+                enum: ['statute', 'regulation', 'case', 'treatise', 'rule', 'other'],
+              },
+              doctrinal_subject: { type: 'array', items: { type: 'string' } },
+              location: { type: ['string', 'null'] },
+            },
+            required: ['raw', 'authority_type'],
+          },
+        },
+      },
+      required: ['citations'],
+    },
+  }];
 
   const body = {
     model: MODEL,
-    max_tokens: 8000,
+    max_tokens: 16000,
     system,
+    tools,
+    tool_choice: { type: 'tool', name: 'record_citations' },
     messages: [{ role: 'user', content: draftText }],
   };
 
@@ -61,8 +89,12 @@ Rules:
     throw new Error(`Anthropic extract: ${res.status} ${t.slice(0, 400)}`);
   }
   const data = await res.json();
-  const text = data.content?.[0]?.text ?? '';
-  const cites = safeJsonArray(text);
+  const toolUse = (data.content ?? []).find((c) => c.type === 'tool_use');
+  const cites = Array.isArray(toolUse?.input?.citations) ? toolUse.input.citations : [];
+  if (cites.length === 0) {
+    console.error('[cite-check] WARNING: zero citations parsed. stop_reason:', data.stop_reason);
+    console.error('[cite-check] content blocks:', JSON.stringify(data.content, null, 2).slice(0, 2000));
+  }
   return cites.map(normaliseCite);
 }
 
@@ -136,17 +168,45 @@ function normaliseCite(c) {
 }
 
 function safeJsonArray(text) {
+  // Try direct parse first.
   try {
     const parsed = JSON.parse(text);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    // Try to extract a JSON array from messy output (e.g. ```json fences).
-    const m = text.match(/\[[\s\S]*\]/);
-    if (m) {
-      try { const p = JSON.parse(m[0]); return Array.isArray(p) ? p : []; } catch {}
+    if (Array.isArray(parsed)) return parsed;
+    // Allow a wrapped object: {"citations": [...]} / {"results": [...]} / etc.
+    if (parsed && typeof parsed === 'object') {
+      for (const key of ['citations', 'cites', 'results', 'items', 'data']) {
+        if (Array.isArray(parsed[key])) return parsed[key];
+      }
+    }
+  } catch {}
+
+  // Fall back: extract the largest balanced JSON array from messy text.
+  const start = text.indexOf('[');
+  if (start < 0) return [];
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end < 0) {
+    // Truncation: array opened but never closed. Try to repair by
+    // dropping the final partial object and closing.
+    const lastObjEnd = text.lastIndexOf('}');
+    if (lastObjEnd > start) {
+      const candidate = text.slice(start, lastObjEnd + 1) + ']';
+      try { const p = JSON.parse(candidate); if (Array.isArray(p)) return p; } catch {}
     }
     return [];
   }
+  try {
+    const p = JSON.parse(text.slice(start, end + 1));
+    return Array.isArray(p) ? p : [];
+  } catch { return []; }
 }
 
 function safeJson(text) {

@@ -97,6 +97,53 @@ export function makeStore() {
     if (error) throw new Error(`log verification: ${error.message}`);
   }
 
+  // Append a proposition to an authority. The supporting_quote +
+  // oblique fields are populated by analyze-case.mjs's structured
+  // analysis pass. Never deduplicates — same proposition with the same
+  // pin from a different brief is allowed (lawyers may cite the same
+  // case for the same point in multiple matters).
+  async function addProposition(p) {
+    const uid = await userId();
+    const { data, error } = await sb
+      .from('authority_propositions')
+      .insert({
+        authority_id: p.authority_id,
+        proposition_text: p.proposition_text,
+        pin_cite: p.pin_cite ?? null,
+        signal: p.signal ?? null,
+        supporting_quote: p.supporting_quote ?? null,
+        supporting_quote_location: p.supporting_quote_location ?? null,
+        oblique: p.oblique ?? false,
+        oblique_explanation: p.oblique_explanation ?? null,
+        author_user_id: uid,
+      })
+      .select('id')
+      .single();
+    if (error) throw new Error(`add proposition: ${error.message}`);
+    return data.id;
+  }
+
+  // Add a free-form editorial note to an authority. If matter_id is
+  // provided the note is matter-scoped (visibility='matter'); otherwise
+  // it's private to the user.
+  async function addEditorialNote({ authority_id, note_text, matter_id }) {
+    const uid = await userId();
+    const visibility = matter_id ? 'matter' : 'private';
+    const { data, error } = await sb
+      .from('authority_editorial_notes')
+      .insert({
+        authority_id,
+        note_text,
+        matter_id: matter_id ?? null,
+        visibility,
+        author_user_id: uid,
+      })
+      .select('id')
+      .single();
+    if (error) throw new Error(`add note: ${error.message}`);
+    return data.id;
+  }
+
   async function linkAuthorityToMatter({ matter_id, authority_id, notes, cited_in_briefs }) {
     const uid = await userId();
     // Upsert: if the link already exists, append to cited_in_briefs.
@@ -137,6 +184,8 @@ export function makeStore() {
     findByCitation,
     createAuthority,
     logVerification,
+    addProposition,
+    addEditorialNote,
     linkAuthorityToMatter,
   };
 }
