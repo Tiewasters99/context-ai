@@ -126,8 +126,12 @@ async function checkOne(cite, { store, anthropicApiKey }) {
     }
   }
 
-  // ---- 4. Persist if we got something new -------------------------------
-  if (!existing && store && (sourceText || cite.citation_bluebook)) {
+  // ---- 4. Persist if (and only if) we have real verification -----------
+  // Stub records (model-recall only, no source text) pollute the store
+  // and make subsequent runs look "verified (partial)" when nothing was
+  // actually checked. Persist only when we have opinion / statutory text
+  // we genuinely fetched or analyzed.
+  if (!existing && store && sourceText && verification_status === 'verified') {
     try {
       const created = await store.createAuthority({
         citation_bluebook: cite.citation_bluebook,

@@ -260,27 +260,33 @@ async function analyseOpinion({ opinionText, citation, proposition, apiKey }) {
 
   const system = `You are a careful legal-citation analyst. You will receive (a) the text of a court opinion and (b) the proposition the opinion is being cited for. Run a structured analysis and return it via the analyse_opinion tool.
 
-CRITICAL: the opinion text contains "*N" markers (e.g., "*282"). These are page-break markers in the official/unofficial reporter — page 282, page 283, etc. When you identify a supporting quote OR a reasoning passage, locate the nearest preceding "*N" marker and report N as the pin cite. Pin cites build trust; ALWAYS attempt to extract one.
+CRITICAL — DIRECT vs. OBLIQUE: be strict. A citation is "direct" only when a passage in the opinion uses the SAME KEY LEGAL VOCABULARY as the proposition.
+  - If the proposition is about "estoppel" but the opinion only discusses "laches" — even though laches is a sister doctrine and the rationale is parallel — set oblique=true. The lawyer's reader will not find the proposition's words in the opinion.
+  - If the proposition is about "consumer protection" but the opinion is in the "securities fraud" / Martin Act ecosystem, set oblique=true.
+  - If the proposition speaks of "officers and directors" but the opinion uses "principals" or "agents" without explicit linkage, prefer oblique=true.
+The test: would a clerk or opposing counsel reading the opinion recognize the proposition's exact language? If not, it's oblique.
 
-For supporting_quote: search the opinion for the SHORTEST passage that DIRECTLY supports the proposition — ideally a single sentence the lawyer could quote. Reproduce it verbatim.
+CRITICAL — PIN CITES: the opinion text contains "*N" markers (e.g., "*282"). These are page-break markers in the reporter. Whenever you identify a supporting quote OR a reasoning passage, locate the nearest preceding "*N" marker and report N as the pin cite. Pin cites build trust; always attempt to extract one even for oblique cites.
 
-For supporting_pin_cite: the page number (digits only, e.g., "282" or "486-87" if the quote spans pages) extracted from the nearest "*N" marker preceding the supporting_quote. Required when oblique=false. If multiple star markers exist, use the one immediately before or within the quoted passage.
+For supporting_quote: search the opinion for the shortest passage that DIRECTLY supports the proposition (per the strict test above). Reproduce verbatim. Leave null if oblique.
 
-For oblique: set true ONLY when no passage directly states or quotably supports the proposition — i.e., the proposition flows from the opinion's reasoning or holding pattern rather than from quotable language.
+For supporting_pin_cite: the page number from the nearest preceding "*N" marker; required when oblique=false. Null when oblique.
 
-For oblique_explanation (required when oblique=true): how the proposition derives from the opinion's reasoning rather than its words.
+For oblique: true when no passage directly states the proposition with matching vocabulary. The proposition may still be supported by the opinion's reasoning — that is what oblique_explanation captures.
 
-For reasoning_passage (when oblique=true): the strongest reasoning passage that supports the proposition by inference. Even though the cite is oblique, this passage should be reproduced verbatim so the lawyer can quote-cite to it.
+For oblique_explanation (required when oblique=true): explain (a) what doctrine/concept the opinion ACTUALLY discusses, (b) why that supports the proposition by analogy or reasoning, and (c) why a careful reader would not find the proposition's exact terms in the opinion.
 
-For reasoning_pin_cite (when oblique=true): the page number where the reasoning_passage appears, extracted from the nearest preceding "*N" marker. Even oblique cites should be anchored to a page; this lets the lawyer cite "Smith, 50 N.Y.2d at [PIN] (rationale applies equally to ...)" rather than offering a citation with no page.
+For reasoning_passage (when oblique=true): the strongest passage where the underlying rationale appears. Reproduce verbatim so the lawyer can quote-cite it.
 
-For related_cases: up to 5 cases this opinion cites that may enrich or complicate the proposition. For each, give the citation as it appears here and a one-sentence "why". Do not speculate beyond the text.
+For reasoning_pin_cite (when oblique=true): page number for the reasoning_passage. Even oblique cites should be anchored — lets the lawyer cite "Smith, 50 N.Y.2d at [PIN] (rationale applies equally to estoppel)".
+
+For related_cases: up to 5 cases this opinion cites that may enrich or complicate the proposition. Citation as it appears + one-sentence "why". Do not speculate beyond the text.
 
 For court_level: one of "U.S. Supreme Court", "federal circuit court", "federal district court", "state high court", "state intermediate appellate", "state trial", "agency", "other".
 
 For holding_summary: 1-3 sentences distilling what THIS case actually holds (independent of the cited proposition).
 
-Be honest. If the case doesn't support the proposition at all, say so plainly in oblique_explanation and set oblique=true.`;
+Be honest. The reader values "this case is parallel doctrine, not direct support" far more than "I forced a pin cite to make it look verified."`;
 
   const tools = [{
     name: 'analyse_opinion',
