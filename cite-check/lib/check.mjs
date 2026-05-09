@@ -33,12 +33,10 @@ async function checkOne(cite, { store, anthropicApiKey }) {
   let source_label = 'model recall';
   let authority_id = null;
   let verification_status = 'unverified';
+  let cachedProposition = null;
 
   // ---- 1. Lenient format check ------------------------------------------
   if (!cite.citation_bluebook) flags.push({ kind: 'format', detail: 'Could not normalize citation' });
-  if (cite.proposition && !cite.pin_cite && cite.authority_type === 'case') {
-    flags.push({ kind: 'pin', detail: 'Specific proposition without pin cite' });
-  }
 
   // ---- 2. Existence lookup ----------------------------------------------
   let existing = null;
@@ -56,6 +54,15 @@ async function checkOne(cite, { store, anthropicApiKey }) {
     source_url = null;
     authority_id = existing.id;
     verification_status = existing.verification_status ?? 'partial';
+
+    // If the user is citing this authority for a proposition we've
+    // already analyzed, prefer the stored structured findings (oblique
+    // flag, supporting quote, canonical pin) over a fresh rate call.
+    if (cite.proposition && store.getMatchingProposition) {
+      try {
+        cachedProposition = await store.getMatchingProposition(existing.id, cite.proposition);
+      } catch {}
+    }
   } else {
     // Not yet in store: try free DBs.
     let fetched;
@@ -80,14 +87,44 @@ async function checkOne(cite, { store, anthropicApiKey }) {
   // ---- 3. Confidence rating ---------------------------------------------
   let rating = 'medium';
   let justification = '';
-  try {
-    const r = await rateConfidence(cite, sourceText ?? '', { apiKey: anthropicApiKey });
-    rating = r.rating;
-    justification = r.justification;
-  } catch (err) {
-    flags.push({ kind: 'rate', detail: `rating failed: ${err.message}` });
+  if (cachedProposition) {
+    // Use the structured findings from the prior analyze-case run.
+    rating = cachedProposition.oblique ? 'medium' : 'high';
+    justification = cachedProposition.oblique
+      ? `Oblique citation: ${cachedProposition.oblique_explanation ?? 'verified by analyzer; supported by reasoning rather than quotable language.'}`
+      : (cachedProposition.supporting_quote
+          ? `Verified by analyzer. Supporting quote${cachedProposition.pin_cite ? ` (at ${cachedProposition.pin_cite})` : ''}: "${cachedProposition.supporting_quote.slice(0, 240)}${cachedProposition.supporting_quote.length > 240 ? '…' : ''}"`
+          : 'Verified by analyzer.');
+  } else {
+    try {
+      const r = await rateConfidence(cite, sourceText ?? '', { apiKey: anthropicApiKey });
+      rating = r.rating;
+      justification = r.justification;
+    } catch (err) {
+      flags.push({ kind: 'rate', detail: `rating failed: ${err.message}` });
+    }
   }
   if (rating === 'low') flags.push({ kind: 'confidence', detail: 'Low confidence — likely fabrication or mis-attribution' });
+
+  // ---- 3a. Pin-cite policy ---------------------------------------------
+  // Pin cites build trust even for general propositions. Only waive the
+  // pin requirement when the cite is genuinely oblique (no specific
+  // passage to pin to). Otherwise, suggest the canonical pin if we know
+  // it from the analyzer; flag absence regardless.
+  const isOblique = cachedProposition?.oblique === true;
+  const canonicalPin = cachedProposition?.pin_cite ?? null;
+  if (cite.authority_type === 'case' && cite.proposition) {
+    if (!cite.pin_cite && !isOblique) {
+      flags.push({
+        kind: 'pin',
+        detail: canonicalPin
+          ? `Add pin cite (canonical: ${canonicalPin})`
+          : 'Specific proposition without pin cite',
+      });
+    } else if (cite.pin_cite && canonicalPin && cite.pin_cite !== canonicalPin) {
+      flags.push({ kind: 'pin', detail: `Pin mismatch: draft has ${cite.pin_cite}, canonical is ${canonicalPin}` });
+    }
+  }
 
   // ---- 4. Persist if we got something new -------------------------------
   if (!existing && store && (sourceText || cite.citation_bluebook)) {
@@ -134,6 +171,8 @@ async function checkOne(cite, { store, anthropicApiKey }) {
 function decideFlag({ verification_status, rating, flags }) {
   if (rating === 'low') return 'red';
   if (verification_status === 'partial' && flags.some((f) => f.kind === 'fetch')) return 'blue';
+  // Pin-mismatch is more serious than pin-missing; both still yellow,
+  // but distinguish in the report. Any pin flag → yellow.
   if (rating === 'medium' || flags.some((f) => f.kind === 'pin')) return 'yellow';
   if (verification_status === 'verified' && rating === 'high') return 'green';
   return 'yellow';

@@ -106,6 +106,37 @@ export function makeStore() {
     if (error) throw new Error(`log verification: ${error.message}`);
   }
 
+  // Idempotent variant: removes any prior proposition row with the same
+  // (authority, text) before inserting a fresh one. Used by analyze-case
+  // so re-running on a case overwrites stale records (e.g. when an
+  // earlier run missed a pin cite that a later prompt revision captures).
+  async function upsertProposition(p) {
+    await sb
+      .from('authority_propositions')
+      .delete()
+      .eq('authority_id', p.authority_id)
+      .eq('proposition_text', p.proposition_text);
+    return addProposition(p);
+  }
+
+  // Find a stored proposition on this authority whose text matches.
+  // Phase 1: exact case-insensitive match (after trimming). The cli's
+  // cite-check uses this to skip re-rating when the same proposition
+  // was already analyzed.
+  async function getMatchingProposition(authority_id, proposition_text) {
+    if (!authority_id || !proposition_text) return null;
+    const { data, error } = await sb
+      .from('authority_propositions')
+      .select('*')
+      .eq('authority_id', authority_id)
+      .ilike('proposition_text', proposition_text.trim())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`match proposition: ${error.message}`);
+    return data;
+  }
+
   // Append a proposition to an authority. The supporting_quote +
   // oblique fields are populated by analyze-case.mjs's structured
   // analysis pass. Never deduplicates — same proposition with the same
@@ -194,6 +225,8 @@ export function makeStore() {
     createAuthority,
     logVerification,
     addProposition,
+    upsertProposition,
+    getMatchingProposition,
     addEditorialNote,
     linkAuthorityToMatter,
   };

@@ -147,16 +147,23 @@ if (persistEnabled) {
   });
 
   if (proposition) {
-    const propId = await store.addProposition({
+    // Prefer the analyzer's discovered pin (extracted from *N markers in
+    // the opinion text) over the pin in the user's draft citation —
+    // that way every record carries the canonical pin for the proposition,
+    // regardless of whether the draft happened to have one.
+    const discoveredPin = analysis.oblique
+      ? (analysis.reasoning_pin_cite ?? null)
+      : (analysis.supporting_pin_cite ?? null);
+    const propId = await store.upsertProposition({
       authority_id: authorityId,
       proposition_text: proposition,
-      pin_cite: parsePinCite(citation),
-      supporting_quote: analysis.supporting_quote ?? null,
-      supporting_quote_location: analysis.supporting_quote_location ?? null,
+      pin_cite: discoveredPin ?? parsePinCite(citation),
+      supporting_quote: analysis.supporting_quote ?? analysis.reasoning_passage ?? null,
+      supporting_quote_location: discoveredPin ? `at ${discoveredPin}` : null,
       oblique: !!analysis.oblique,
       oblique_explanation: analysis.oblique_explanation ?? null,
     });
-    console.log(`[analyze] proposition recorded (${propId.slice(0, 8)}).`);
+    console.log(`[analyze] proposition recorded (${propId.slice(0, 8)}); pin=${discoveredPin ?? '—'}; oblique=${!!analysis.oblique}.`);
   }
 
   if (Array.isArray(analysis.related_cases) && analysis.related_cases.length > 0) {
@@ -225,9 +232,10 @@ function stripEditorialLayer(text) {
     t = t.replace(re, '');
   }
 
-  // Strip Westlaw page references like "*282" embedded in text — these are
-  // West's pagination of unofficial reporters, contested doctrine.
-  t = t.replace(/\*\d+\s*/g, '');
+  // KEEP Westlaw star pagination ("*282" markers) — these are page numbers
+  // for the official/unofficial reporter and are facts about the document
+  // (Bender v. West, 2d Cir.), not TR editorial content. They are exactly
+  // what we need to surface pin cites to the lawyer.
 
   // Drop boilerplate footer lines from Westlaw exports.
   t = t.replace(/©\s*\d{4}\s*Thomson Reuters[\s\S]*?$/gim, '');
@@ -252,11 +260,21 @@ async function analyseOpinion({ opinionText, citation, proposition, apiKey }) {
 
   const system = `You are a careful legal-citation analyst. You will receive (a) the text of a court opinion and (b) the proposition the opinion is being cited for. Run a structured analysis and return it via the analyse_opinion tool.
 
-For supporting_quote: search the opinion for the SHORTEST passage that DIRECTLY supports the proposition — ideally a single sentence the lawyer could quote in a brief. Reproduce it verbatim. If the only support is a longer paragraph, return the paragraph but mark oblique=false.
+CRITICAL: the opinion text contains "*N" markers (e.g., "*282"). These are page-break markers in the official/unofficial reporter — page 282, page 283, etc. When you identify a supporting quote OR a reasoning passage, locate the nearest preceding "*N" marker and report N as the pin cite. Pin cites build trust; ALWAYS attempt to extract one.
 
-For oblique: set true ONLY if no passage directly states or quotably supports the proposition — i.e., the proposition flows from the opinion's reasoning or holding pattern rather than from quotable language. When oblique=true, give the strongest reasoning passage (longer is fine) and an explanation in oblique_explanation of how the proposition derives from it.
+For supporting_quote: search the opinion for the SHORTEST passage that DIRECTLY supports the proposition — ideally a single sentence the lawyer could quote. Reproduce it verbatim.
 
-For related_cases: identify up to 5 cases this opinion cites that look most likely to enrich or complicate the proposition. For each, give the citation as it appears in this opinion, and a one-sentence "why" explaining what it adds — DO NOT speculate beyond what's actually said. If fewer than 5 are clearly relevant, return only those.
+For supporting_pin_cite: the page number (digits only, e.g., "282" or "486-87" if the quote spans pages) extracted from the nearest "*N" marker preceding the supporting_quote. Required when oblique=false. If multiple star markers exist, use the one immediately before or within the quoted passage.
+
+For oblique: set true ONLY when no passage directly states or quotably supports the proposition — i.e., the proposition flows from the opinion's reasoning or holding pattern rather than from quotable language.
+
+For oblique_explanation (required when oblique=true): how the proposition derives from the opinion's reasoning rather than its words.
+
+For reasoning_passage (when oblique=true): the strongest reasoning passage that supports the proposition by inference. Even though the cite is oblique, this passage should be reproduced verbatim so the lawyer can quote-cite to it.
+
+For reasoning_pin_cite (when oblique=true): the page number where the reasoning_passage appears, extracted from the nearest preceding "*N" marker. Even oblique cites should be anchored to a page; this lets the lawyer cite "Smith, 50 N.Y.2d at [PIN] (rationale applies equally to ...)" rather than offering a citation with no page.
+
+For related_cases: up to 5 cases this opinion cites that may enrich or complicate the proposition. For each, give the citation as it appears here and a one-sentence "why". Do not speculate beyond the text.
 
 For court_level: one of "U.S. Supreme Court", "federal circuit court", "federal district court", "state high court", "state intermediate appellate", "state trial", "agency", "other".
 
@@ -271,10 +289,11 @@ Be honest. If the case doesn't support the proposition at all, say so plainly in
       type: 'object',
       properties: {
         supporting_quote: { type: ['string', 'null'] },
-        supporting_quote_location: { type: ['string', 'null'], description: 'page or section reference if visible in the source' },
+        supporting_pin_cite: { type: ['string', 'null'], description: 'official reporter page number for the supporting_quote, extracted from the nearest preceding *N marker' },
         oblique: { type: 'boolean' },
         oblique_explanation: { type: ['string', 'null'] },
         reasoning_passage: { type: ['string', 'null'] },
+        reasoning_pin_cite: { type: ['string', 'null'], description: 'page number where reasoning_passage appears (when oblique)' },
         court_level: { type: 'string' },
         holding_summary: { type: 'string' },
         related_cases: {
@@ -367,18 +386,18 @@ function renderReport({ pdfPath, citation, proposition, analysis, authorityId })
       lines.push('');
     }
     if (analysis.reasoning_passage) {
-      lines.push('**Strongest reasoning passage:**');
+      lines.push(`**Strongest reasoning passage${analysis.reasoning_pin_cite ? ` (at ${analysis.reasoning_pin_cite})` : ''}:**`);
       lines.push('');
       lines.push('> ' + analysis.reasoning_passage.replace(/\n/g, '\n> '));
       lines.push('');
     }
   } else if (analysis.supporting_quote) {
-    lines.push('✓ **Direct support found.**');
+    lines.push(`✓ **Direct support found${analysis.supporting_pin_cite ? ` (at ${analysis.supporting_pin_cite})` : ''}.**`);
     lines.push('');
     lines.push('> ' + analysis.supporting_quote.replace(/\n/g, '\n> '));
     lines.push('');
-    if (analysis.supporting_quote_location) {
-      lines.push(`_Located at: ${analysis.supporting_quote_location}_`);
+    if (analysis.supporting_pin_cite) {
+      lines.push(`_Pin cite: ${analysis.supporting_pin_cite}_`);
       lines.push('');
     }
   } else {
