@@ -6,17 +6,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+// Five-level flag scheme. The two ⊕ / ⊖ glyphs are deliberately distinct
+// from each other so a glance at the TOA tells you direction even before
+// the label.
 const FLAG_GLYPH = {
   green: '✓',
-  yellow: '⚠',
+  'lean-green': '⊕',
+  'lean-red': '⊖',
   red: '✗',
   blue: '◇',
 };
 
 const FLAG_LABEL = {
-  green: 'verified',
-  yellow: 'verify',
-  red: 'flagged',
+  green: 'verified — clean',
+  'lean-green': 'verified — minor issue',
+  'lean-red': 'unverified — model concern',
+  red: 'verified mismatch',
   blue: 'westlaw paste needed',
 };
 
@@ -40,7 +45,7 @@ function renderToa(results) {
   }
   const sections = [];
   sections.push('# Table of Authorities\n');
-  sections.push('Legend: ✓ verified · ⚠ verify · ✗ flagged · ◇ Westlaw paste needed\n');
+  sections.push('Legend: ✓ verified clean · ⊕ verified, minor issue · ⊖ unverified, model concern · ✗ verified mismatch · ◇ Westlaw paste needed\n');
   if (cases.length)    sections.push('## Cases\n\n' + dedup(cases).join('\n') + '\n');
   if (statutes.length) sections.push('## Statutes\n\n' + dedup(statutes).join('\n') + '\n');
   if (regs.length)     sections.push('## Regulations\n\n' + dedup(regs).join('\n') + '\n');

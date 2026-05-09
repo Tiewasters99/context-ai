@@ -172,12 +172,43 @@ async function checkOne(cite, { store, anthropicApiKey }) {
   };
 }
 
+// Five-level flag scheme — distinguishes "verified mismatch" (red) from
+// "unverified concern" (lean-red) so red is reserved for cases where we
+// actually read the source AND the model finds a real problem.
+//
+//   green       — source verified, model supports, name + pin correct
+//   lean-green  — source verified, model supports, but a fixable issue
+//                 (pin missing, parallel doctrine, oblique flag from
+//                 cached analyzer, etc.)
+//   lean-red    — source NOT verified; model recall raises concern. The
+//                 cite might be wrong, but we couldn't confirm. Needs a
+//                 Westlaw paste before we can claim certainty.
+//   red         — source verified AND model identifies a real mismatch.
+//                 Reserved for "definitely wrong" with the receipts.
+//   blue        — source not available and model is neutral. Pure
+//                 "Westlaw paste needed" pile.
 function decideFlag({ verification_status, rating, flags }) {
-  if (rating === 'low') return 'red';
-  if (verification_status === 'partial' && flags.some((f) => f.kind === 'fetch')) return 'blue';
-  // Pin-mismatch is more serious than pin-missing; both still yellow,
-  // but distinguish in the report. Any pin flag → yellow.
-  if (rating === 'medium' || flags.some((f) => f.kind === 'pin')) return 'yellow';
-  if (verification_status === 'verified' && rating === 'high') return 'green';
-  return 'yellow';
+  const verified = verification_status === 'verified';
+  const hasFetchFlag = flags.some((f) => f.kind === 'fetch');
+  const hasPinFlag = flags.some((f) => f.kind === 'pin');
+
+  // Verified + low rating = real mismatch we caught with our own eyes.
+  if (verified && rating === 'low') return 'red';
+
+  // Unverified + low rating = model concern from recall; flag it but
+  // don't claim certainty.
+  if (!verified && rating === 'low') return 'lean-red';
+
+  // Verified + high rating + no caveats = clean green.
+  if (verified && rating === 'high' && !hasPinFlag) return 'green';
+
+  // Verified + supports the proposition but with a caveat (pin missing,
+  // medium confidence, parallel doctrine flagged) = lean-green.
+  if (verified && (rating === 'high' || rating === 'medium')) return 'lean-green';
+
+  // No source available, no model concern = blue (Westlaw paste pile).
+  if (!verified && hasFetchFlag) return 'blue';
+
+  // Catch-all: lean-red (we don't have enough to commit to anything stronger).
+  return 'lean-red';
 }
