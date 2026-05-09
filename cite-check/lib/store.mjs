@@ -56,21 +56,30 @@ export function makeStore() {
     return data;
   }
 
-  // Lookup an existing authority record by exact citation match. If we
-  // find one in the user's own pool or in community, return it (avoid
-  // duplicating verification work).
+  // Lookup an existing authority record. Tries the literal citation first
+  // and, if no hit, a pin-stripped form (so a draft citing
+  // "Parkview, 71 N.Y.2d 274, 282 (1988)" finds a stored
+  // "Parkview, 71 N.Y.2d 274 (1988)"). Searches the user's own pool plus
+  // the community pool.
   async function findByCitation(citation) {
     if (!citation) return null;
-    const { data, error } = await sb
-      .from('authorities')
-      .select('*')
-      .eq('citation_bluebook', citation)
-      .or(`visibility.eq.community,contributor_user_id.eq.${await userId()}`)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw new Error(`lookup: ${error.message}`);
-    return data;
+    const candidates = [citation];
+    const stripped = stripPinCite(citation);
+    if (stripped !== citation) candidates.push(stripped);
+    const uid = await userId();
+    for (const cand of candidates) {
+      const { data, error } = await sb
+        .from('authorities')
+        .select('*')
+        .eq('citation_bluebook', cand)
+        .or(`visibility.eq.community,contributor_user_id.eq.${uid}`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`lookup: ${error.message}`);
+      if (data) return data;
+    }
+    return null;
   }
 
   async function createAuthority(record) {
@@ -188,4 +197,20 @@ export function makeStore() {
     addEditorialNote,
     linkAuthorityToMatter,
   };
+}
+
+// Drop a pin cite from a citation string. Examples:
+//   "Parkview, 71 N.Y.2d 274, 282 (1988)"   → "Parkview, 71 N.Y.2d 274 (1988)"
+//   "Russo Produce, 50 N.Y.2d 31, 44"        → "Russo Produce, 50 N.Y.2d 31"
+//   "Daleview, 62 N.Y.2d 30 (1984)"          → unchanged (no pin present)
+// Conservative: only strips when the pattern is unambiguously
+// "..., NUMBER (YEAR)" or "..., NUMBER" at end.
+function stripPinCite(citation) {
+  // Form 1: pin before year-parens.  ", PIN (YEAR)" → " (YEAR)"
+  const m1 = citation.replace(/,\s*\d+(?:[-–]\d+)?\s+(\(\d{4}\))\s*$/, ' $1');
+  if (m1 !== citation) return m1;
+  // Form 2: trailing pin without year.  ", PIN" at end → ""
+  const m2 = citation.replace(/,\s*\d+(?:[-–]\d+)?\s*$/, '');
+  if (m2 !== citation) return m2;
+  return citation;
 }
