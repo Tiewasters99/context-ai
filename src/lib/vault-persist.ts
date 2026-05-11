@@ -55,7 +55,7 @@ export async function resolveMatter(key: string): Promise<MatterRef | null> {
 export async function listMatterDocuments(matterspaceId: string): Promise<VaultFile[]> {
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id')
+    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
     .eq('matterspace_id', matterspaceId)
     .order('created_at', { ascending: false });
   if (error) {
@@ -74,7 +74,7 @@ export async function listMatterDocumentsRecursive(
   if (matterIds.length === 0) return [];
   const { data, error } = await supabase
     .from('documents')
-    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id')
+    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
     .in('matterspace_id', matterIds)
     .order('created_at', { ascending: false });
   if (error) {
@@ -92,6 +92,7 @@ function documentToVaultFile(doc: {
   processing_status: string;
   processing_error: string | null;
   matterspace_id?: string;
+  storage_path?: string | null;
 }, matterspace_name?: string): VaultFile {
   const name = doc.source_filename || doc.title || 'Untitled';
   const sizeBytes = doc.file_size_bytes || 0;
@@ -109,6 +110,7 @@ function documentToVaultFile(doc: {
     status: mapStatus(doc.processing_status),
     matterspace_id: doc.matterspace_id,
     matterspace_name,
+    storagePath: doc.storage_path ?? undefined,
   };
 }
 
@@ -135,7 +137,7 @@ function formatSize(bytes: number): string {
 export async function persistVaultFile(
   matter: MatterRef,
   file: File
-): Promise<{ documentId: string }> {
+): Promise<{ documentId: string; storagePath: string }> {
   const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
   const safeName = sanitizeStorageName(file.name);
   const title = file.name.replace(/\.[^.]+$/, '');
@@ -195,7 +197,7 @@ export async function persistVaultFile(
     console.error('ingest fetch:', err);
   });
 
-  return { documentId: doc.id };
+  return { documentId: doc.id, storagePath };
 }
 
 
@@ -282,6 +284,59 @@ export async function deleteVaultDocument(documentId: string): Promise<void> {
   if (doc?.storage_path) {
     await supabase.storage.from('vault-documents').remove([doc.storage_path]);
   }
+}
+
+
+// -----------------------------------------------------------------------------
+// Open / edit a document's original bytes (persistent mode).
+// -----------------------------------------------------------------------------
+
+// Download the original file the user uploaded for this document.
+export async function downloadVaultDocument(storagePath: string): Promise<Blob> {
+  const { data, error } = await supabase.storage
+    .from('vault-documents')
+    .download(storagePath);
+  if (error || !data) throw new Error(`download: ${error?.message ?? 'no data returned'}`);
+  return data;
+}
+
+// Overwrite a text document's bytes in storage, then re-run ingestion so the
+// search index (passages + embeddings) reflects the edit. Old passages are
+// cleared first because the ingest pipeline only inserts. The caller should
+// re-subscribe via watchDocumentStatus(documentId) to follow re-indexing.
+export async function saveVaultDocumentText(
+  documentId: string,
+  storagePath: string,
+  text: string,
+  contentType = 'text/plain',
+): Promise<void> {
+  const blob = new Blob([text], { type: contentType });
+  const { error: upErr } = await supabase.storage
+    .from('vault-documents')
+    .upload(storagePath, blob, { contentType, upsert: true });
+  if (upErr) throw new Error(`save: ${upErr.message}`);
+
+  // Reset the row so /api/ingest doesn't short-circuit on processing_status === 'ready'.
+  await supabase
+    .from('documents')
+    .update({ file_size_bytes: blob.size, processing_status: 'pending', processing_error: null })
+    .eq('id', documentId);
+  await supabase.from('passages').delete().eq('document_id', documentId);
+
+  triggerIngest(documentId).catch((err) => console.error('re-ingest:', err));
+}
+
+// Fire the server-side ingestion pipeline for an already-uploaded document.
+// Does not await the full pipeline; progress lands in documents.processing_status.
+export async function triggerIngest(documentId: string): Promise<void> {
+  const session = (await supabase.auth.getSession()).data.session;
+  const accessToken = session?.access_token;
+  if (!accessToken) throw new Error('not authenticated — cannot trigger ingest');
+  await fetch('/api/ingest', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ documentId }),
+  });
 }
 
 

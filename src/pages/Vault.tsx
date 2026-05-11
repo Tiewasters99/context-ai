@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
+import DocumentEditor from '@/components/vault/DocumentEditor';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import type { VaultFile } from '@/lib/vault-types';
@@ -44,6 +45,7 @@ export default function Vault() {
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
   const [showTemplates, setShowTemplates] = useState(false);
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
+  const [openFile, setOpenFile] = useState<VaultFile | null>(null);
 
   // Matter context: when /app/vault?matter=<short_code|uuid>, the Vault
   // operates in persistent mode — files go through Supabase Storage +
@@ -222,7 +224,7 @@ export default function Vault() {
     if (matter) {
       for (const file of arr) {
         try {
-          const { documentId } = await persistVaultFile(matter, file);
+          const { documentId, storagePath } = await persistVaultFile(matter, file);
           const stub: VaultFile = {
             id: documentId,
             name: file.name,
@@ -234,6 +236,7 @@ export default function Vault() {
             status: 'uploading',
             matterspace_id: matter.id,
             matterspace_name: matter.name,
+            storagePath,
           };
           setVaultFiles((prev) => [stub, ...prev]);
           // Poll until terminal — self-stops on ready/error.
@@ -298,6 +301,19 @@ export default function Vault() {
       return;
     }
     setVaultFiles((prev) => prev.filter((f) => f.id !== id));
+  }, [matter]);
+
+  // After an in-editor save: update the in-memory copy, and in persistent
+  // mode follow the server-side re-ingest back to "ready".
+  const handleDocumentSaved = useCallback((fileId: string, text: string) => {
+    setVaultFiles((prev) => prev.map((f) =>
+      f.id === fileId ? { ...f, textContent: text, status: matter ? 'uploading' : f.status } : f
+    ));
+    if (matter) {
+      watchDocumentStatus(fileId, (status) => {
+        setVaultFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status } : f));
+      });
+    }
   }, [matter]);
 
   const [bannerY, setBannerY] = useState(50); // vertical position %, 0=top, 100=bottom
@@ -391,7 +407,8 @@ export default function Vault() {
   const renderContent = () => {
     switch (activeView) {
       case 'import':
-        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} />;
+      case 'files':
+        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onOpenFile={setOpenFile} />;
       case 'workbench':
         return <AIWorkbench vaultFiles={vaultFiles} />;
       case 'home':
@@ -756,6 +773,14 @@ export default function Vault() {
               setSearchParams({});
             }
           }}
+        />
+      )}
+      {openFile && (
+        <DocumentEditor
+          file={openFile}
+          persistent={!!matter}
+          onClose={() => setOpenFile(null)}
+          onSaved={handleDocumentSaved}
         />
       )}
     </div>

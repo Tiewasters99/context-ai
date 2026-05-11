@@ -6,6 +6,8 @@ interface ImportPanelProps {
   files: VaultFile[];
   onAddFiles: (files: FileList | File[]) => void;
   onRemoveFile: (id: string) => void;
+  /** Open a file in the document reader/editor. */
+  onOpenFile?: (file: VaultFile) => void;
 }
 
 const statusIcon = {
@@ -22,7 +24,7 @@ const statusLabel = {
   error: 'Error',
 };
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onOpenFile }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -153,7 +155,12 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportP
     bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` :
     `${(bytes / 1024).toFixed(0)} KB`;
 
-  const renderFileRow = (file: VaultFile) => (
+  const openable = (file: VaultFile) =>
+    !!onOpenFile && (file.status === 'indexed' || file.status === 'error');
+
+  const renderFileRow = (file: VaultFile) => {
+    const canOpen = openable(file);
+    return (
     <div
       key={file.id}
       draggable={!!file.matterspace_id}
@@ -168,14 +175,15 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportP
         );
         e.dataTransfer.effectAllowed = 'move';
       }}
+      onClick={() => { if (canOpen) onOpenFile!(file); }}
       className={`flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors group ${
-        file.matterspace_id ? 'cursor-grab active:cursor-grabbing' : ''
+        canOpen ? 'cursor-pointer' : file.matterspace_id ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
-      title={file.matterspace_id ? 'Drag to a matter in the rail to move' : undefined}
+      title={canOpen ? 'Open document' : file.matterspace_id ? 'Drag to a matter in the rail to move' : undefined}
     >
       {statusIcon[file.status]}
       <div className="flex-1 min-w-0">
-        <p className="text-[13px] text-white truncate">{file.name}</p>
+        <p className={`text-[13px] truncate ${canOpen ? 'text-white group-hover:text-[#e8b84a] transition-colors' : 'text-white'}`}>{file.name}</p>
         <p className="text-[10px] text-white/50">
           {file.size} · {file.type.toUpperCase()} · {statusLabel[file.status]}
           {file.textContent && file.status === 'indexed' && (
@@ -184,13 +192,15 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile }: ImportP
         </p>
       </div>
       <button
-        onClick={() => onRemoveFile(file.id)}
+        onClick={(e) => { e.stopPropagation(); onRemoveFile(file.id); }}
         className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-all"
+        title="Remove from Vault"
       >
         <X size={12} />
       </button>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
