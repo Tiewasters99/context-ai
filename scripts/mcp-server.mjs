@@ -28,7 +28,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { TOOLS, callTool } from '../lib/mcp-core.mjs';
+import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -38,6 +38,10 @@ const SERVICE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
+  // Hard timeout on every Supabase call — a stalled query would otherwise
+  // hang this long-lived process forever (the MCP client only gives up
+  // after minutes). Fail fast so the caller can retry.
+  global: { fetch: timeoutFetch(15000, 'supabase query') },
 });
 
 const server = new Server(

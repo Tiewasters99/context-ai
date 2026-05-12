@@ -29,7 +29,12 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import { createHash, createHmac } from 'node:crypto';
 
-import { TOOLS, callTool } from '../lib/mcp-core.mjs';
+import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
+
+// Hard timeout on every Supabase call so a stalled query fails fast (with a
+// retryable error) instead of hanging the request until the MCP client's
+// own multi-minute timeout fires.
+const sbFetch = timeoutFetch(15000, 'supabase query');
 
 
 // -----------------------------------------------------------------------------
@@ -51,6 +56,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 function adminClient() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: sbFetch },
   });
 }
 
@@ -69,7 +75,7 @@ function userScopedClient(user_id) {
   };
   const jwt = signHS256(JWT_SECRET, payload);
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    global: { headers: { Authorization: `Bearer ${jwt}` }, fetch: sbFetch },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
