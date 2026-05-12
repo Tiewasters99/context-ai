@@ -5,6 +5,7 @@ export const providers: ProviderConfig[] = [
     id: 'anthropic',
     name: 'Anthropic',
     models: [
+      { id: 'claude-opus-4-7', apiModelId: 'claude-opus-4-7', name: 'Claude Opus 4.7', description: 'Most capable — complex reasoning, long documents, structured analysis', contextWindow: 200000, tier: 'pro' },
       { id: 'claude-opus', apiModelId: 'claude-opus-4-6-20250415', name: 'Claude Opus 4.6', description: 'Most capable — complex reasoning, long documents', contextWindow: 200000, tier: 'pro' },
       { id: 'claude-sonnet', apiModelId: 'claude-sonnet-4-6-20250514', name: 'Claude Sonnet 4.6', description: 'Fast and capable — great for most tasks', contextWindow: 200000, tier: 'free' },
     ],

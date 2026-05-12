@@ -12,8 +12,14 @@ export async function readDraft(filePath) {
     const { value } = await mammoth.extractRawText({ buffer });
     return value;
   }
+  if (ext === '.pdf') {
+    const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js');
+    const buffer = await fs.readFile(filePath);
+    const parsed = await pdfParse(buffer);
+    return parsed.text || '';
+  }
   if (ext === '.md' || ext === '.txt') {
     return fs.readFile(filePath, 'utf8');
   }
-  throw new Error(`Unsupported draft format: ${ext}. Use .docx or .md/.txt.`);
+  throw new Error(`Unsupported draft format: ${ext}. Use .docx, .pdf, or .md/.txt.`);
 }

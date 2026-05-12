@@ -6,6 +6,12 @@
     },
     "api/ingest.mjs": {
       "maxDuration": 60
+    },
+    "api/legal-source.mjs": {
+      "maxDuration": 60
+    },
+    "api/llm.mjs": {
+      "maxDuration": 300
     }
   },
   "rewrites": [

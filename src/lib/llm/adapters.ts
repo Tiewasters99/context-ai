@@ -1,4 +1,8 @@
-import type { ProviderAdapter, LLMRequest, ModelConfig } from './types';
+import type { ProviderAdapter, LLMRequest, ModelConfig, StructuredRequest } from './types';
+
+function structuredNotSupported(provider: string): never {
+  throw new Error(`Structured output is not yet implemented for ${provider}. Use an Anthropic or OpenAI model for this feature.`);
+}
 
 /** Anthropic Messages API */
 const anthropicAdapter: ProviderAdapter = {
@@ -27,6 +31,27 @@ const anthropicAdapter: ProviderAdapter = {
   isStreamDone(data: string): boolean {
     try { return JSON.parse(data).type === 'message_stop'; } catch { return false; }
   },
+  buildStructuredRequestBody(request: StructuredRequest, model: ModelConfig): string {
+    return JSON.stringify({
+      model: model.apiModelId,
+      max_tokens: request.maxTokens ?? 8192,
+      stream: false,
+      system: request.system,
+      tools: [{
+        name: request.toolName,
+        description: request.toolDescription,
+        input_schema: request.inputSchema,
+      }],
+      tool_choice: { type: 'tool', name: request.toolName },
+      messages: [{ role: 'user', content: request.userContent }],
+    });
+  },
+  parseStructuredResponse(responseJson: unknown): unknown | null {
+    const content = (responseJson as { content?: Array<{ type: string; input?: unknown }> })?.content;
+    if (!Array.isArray(content)) return null;
+    const toolUse = content.find((c) => c.type === 'tool_use');
+    return toolUse?.input ?? null;
+  },
 };
 
 /** OpenAI Chat Completions API (also used by xAI/Grok) */
@@ -54,6 +79,34 @@ const openaiAdapter: ProviderAdapter = {
   },
   isStreamDone(data: string): boolean {
     return data === '[DONE]';
+  },
+  buildStructuredRequestBody(request: StructuredRequest, model: ModelConfig): string {
+    const messages: Array<{ role: string; content: string }> = [];
+    if (request.system) messages.push({ role: 'system', content: request.system });
+    messages.push({ role: 'user', content: request.userContent });
+    return JSON.stringify({
+      model: model.apiModelId,
+      max_tokens: request.maxTokens ?? 8192,
+      stream: false,
+      temperature: 0,
+      messages,
+      tools: [{
+        type: 'function',
+        function: {
+          name: request.toolName,
+          description: request.toolDescription,
+          parameters: request.inputSchema,
+        },
+      }],
+      tool_choice: { type: 'function', function: { name: request.toolName } },
+    });
+  },
+  parseStructuredResponse(responseJson: unknown): unknown | null {
+    const call = (responseJson as {
+      choices?: Array<{ message?: { tool_calls?: Array<{ function?: { arguments?: string } }> } }>;
+    })?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
+    if (typeof call !== 'string') return null;
+    try { return JSON.parse(call); } catch { return null; }
   },
 };
 
@@ -96,9 +149,13 @@ const googleAdapter: ProviderAdapter = {
       return event.candidates?.[0]?.finishReason === 'STOP';
     } catch { return false; }
   },
+  // Gemini supports function calling; wiring it through the streaming proxy
+  // and response shape is left for when a Gemini-backed feature needs it.
+  buildStructuredRequestBody(): string { return structuredNotSupported('Google Gemini'); },
+  parseStructuredResponse(): unknown | null { return structuredNotSupported('Google Gemini'); },
 };
 
-/** xAI Grok — uses OpenAI-compatible API */
+/** xAI Grok — uses OpenAI-compatible API (including function calling) */
 const xaiAdapter: ProviderAdapter = {
   ...openaiAdapter,
   providerId: 'xai',

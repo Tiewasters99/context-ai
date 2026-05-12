@@ -1,4 +1,11 @@
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Plugin } from 'vite';
+
+// Absolute file: URL to the CLI's free-DB fetchers, resolved from the
+// project root (process.cwd() in the Vite config context) so the dynamic
+// import works regardless of where Vite stages its bundled config.
+const SOURCES_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'cite-check', 'lib', 'sources.mjs')).href;
 
 interface ProviderRoute {
   url: (model: string) => string;
@@ -107,6 +114,45 @@ export default function llmProxy(): Plugin {
         } catch (err: unknown) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Proxy error: ${err instanceof Error ? err.message : 'Unknown'}` }));
+        }
+      });
+
+      // Dev shim for the /api/legal-source Vercel function: proxy the free
+      // legal-DB fetchers so the browser cite-check engine works under `vite
+      // dev` without `vercel dev`. Production uses api/legal-source.mjs.
+      server.middlewares.use('/api/legal-source', async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405).end(); return; }
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let parsed: { authority_type?: string; citation_bluebook?: string; case_name?: string };
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+        try {
+          const { fetchStatute, fetchCase } = await import(SOURCES_MODULE_URL);
+          const cite = {
+            citation_bluebook: parsed.citation_bluebook ?? null,
+            case_name: parsed.case_name ?? null,
+          };
+          const t = parsed.authority_type;
+          let result;
+          if (t === 'statute' || t === 'regulation' || t === 'rule') {
+            result = await fetchStatute(cite);
+          } else if (t === 'case') {
+            result = await fetchCase(cite);
+          } else {
+            result = await fetchStatute(cite);
+            if (!result?.found && cite.case_name) result = await fetchCase(cite);
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result ?? { found: false }));
+        } catch (err: unknown) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ found: false, error: err instanceof Error ? err.message : 'fetch_failed' }));
         }
       });
 

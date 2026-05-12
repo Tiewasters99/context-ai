@@ -4,6 +4,7 @@ import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight } 
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
+import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import {
@@ -13,8 +14,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Pages', 'Lists', 'Tables', 'Vault'] as const;
+const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Vault'] as const;
 type Tab = typeof tabs[number];
+type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check'>;
 
 interface MatterRow {
   id: string;
@@ -190,7 +192,10 @@ export default function MatterspaceView() {
         </div>
 
         {/* Content */}
-        {activeTab !== 'Vault' && matter && (
+        {activeTab === 'Cite-Check' && matter && (
+          <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
+        )}
+        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>
@@ -199,19 +204,19 @@ export default function MatterspaceView() {
 }
 
 
-const TAB_TO_CONTENT_TYPE: Record<Exclude<Tab, 'Vault'>, ContentType> = {
+const TAB_TO_CONTENT_TYPE: Record<ContentTab, ContentType> = {
   Pages: 'page',
   Lists: 'list',
   Tables: 'database',
 };
 
-const TAB_META: Record<Exclude<Tab, 'Vault'>, { Icon: typeof FileText; label: string; verb: string; route: string }> = {
+const TAB_META: Record<ContentTab, { Icon: typeof FileText; label: string; verb: string; route: string }> = {
   Pages:  { Icon: FileText, label: 'pages',  verb: 'page',  route: 'page' },
   Lists:  { Icon: List,     label: 'lists',  verb: 'list',  route: 'list' },
   Tables: { Icon: Table,    label: 'tables', verb: 'table', route: 'table' },
 };
 
-function ContentSurface({ tab, matterId }: { tab: Exclude<Tab, 'Vault'>; matterId: string }) {
+function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }) {
   const navigate = useNavigate();
   const contentType = TAB_TO_CONTENT_TYPE[tab];
   const { Icon, label, verb, route } = TAB_META[tab];
