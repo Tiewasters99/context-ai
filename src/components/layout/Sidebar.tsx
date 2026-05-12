@@ -11,6 +11,7 @@ import { X,
   PanelLeft,
   Users,
   Trash2,
+  Plug,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -276,6 +277,19 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
           <Bot size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>AI Assistant</span>}
         </button>
+
+        <Link
+          to="/app/claude-connect"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
+            isActive('/app/claude-connect')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+          title="Connect Claude (and other MCP clients) to your matters"
+        >
+          <Plug size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Connect to Claude</span>}
+        </Link>
 
         <Link
           to="/app/settings"

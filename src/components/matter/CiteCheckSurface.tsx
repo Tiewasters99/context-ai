@@ -127,13 +127,13 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
         <div className="flex flex-col items-center text-center gap-4">
           <Loader2 size={26} className="text-[#d4a054] animate-spin" strokeWidth={1.75} />
           <div>
-            <p className="text-[14px] text-[#f5f1e8]">{progressHeadline(progress)}</p>
+            <p className="text-[16px] text-[#f5f1e8]">{progressHeadline(progress)}</p>
             {progress?.phase === 'checking' && progress.total ? (
-              <p className="text-[12px] text-white/50 mt-1">
+              <p className="text-[14px] text-white/50 mt-1">
                 {progress.index}/{progress.total} · <span className="text-white/70">{progress.current}</span>
               </p>
             ) : (
-              <p className="text-[12px] text-white/50 mt-1">{progress?.message ?? 'Working…'}</p>
+              <p className="text-[14px] text-white/50 mt-1">{progress?.message ?? 'Working…'}</p>
             )}
           </div>
           {progress?.phase === 'checking' && progress.total ? (
@@ -146,7 +146,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
           ) : null}
           <button
             onClick={cancelRun}
-            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/70 hover:bg-[#1c1c26] hover:text-white transition-colors"
+            className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[14px] text-white/70 hover:bg-[#1c1c26] hover:text-white transition-colors"
           >
             <X size={12} strokeWidth={2} /> Cancel
           </button>
@@ -180,16 +180,16 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
         {extracting ? (
           <div className="flex flex-col items-center gap-2 text-white/60">
             <Loader2 size={20} className="animate-spin text-[#d4a054]" />
-            <span className="text-[12px]">Reading file…</span>
+            <span className="text-[14px]">Reading file…</span>
           </div>
         ) : source ? (
           <div className="flex flex-col items-center gap-2">
             <FileText size={22} className="text-[#d4a054]" strokeWidth={1.5} />
-            <span className="text-[13px] text-[#f5f1e8]">{source.label}</span>
-            <span className="text-[11px] text-white/40">{source.text.length.toLocaleString()} characters ready</span>
+            <span className="text-[15px] text-[#f5f1e8]">{source.label}</span>
+            <span className="text-[13px] text-white/40">{source.text.length.toLocaleString()} characters ready</span>
             <button
               onClick={() => { setSource(null); setError(null); }}
-              className="mt-1 text-[11px] text-white/40 hover:text-white/70 transition-colors"
+              className="mt-1 text-[13px] text-white/40 hover:text-white/70 transition-colors"
             >
               Choose a different file
             </button>
@@ -197,11 +197,11 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
         ) : (
           <div className="flex flex-col items-center gap-3">
             <Upload size={22} className="text-white/30" strokeWidth={1.5} />
-            <p className="text-[13px] text-white/60">
+            <p className="text-[15px] text-white/60">
               Drop a brief here, or{' '}
               <button onClick={() => fileInputRef.current?.click()} className="text-[#e8b84a] hover:underline">browse</button>
             </p>
-            <p className="text-[11px] text-white/30">.docx, .pdf, .txt, .md</p>
+            <p className="text-[13px] text-white/30">.docx, .pdf, .txt, .md</p>
           </div>
         )}
         <input
@@ -215,7 +215,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
 
       <div className="mt-3">
         {!showPaste ? (
-          <button onClick={() => setShowPaste(true)} className="text-[12px] text-white/40 hover:text-white/70 transition-colors">
+          <button onClick={() => setShowPaste(true)} className="text-[14px] text-white/40 hover:text-white/70 transition-colors">
             …or paste text instead
           </button>
         ) : (
@@ -224,18 +224,18 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
             onChange={(e) => setPasteText(e.target.value)}
             placeholder="Paste the brief text here…"
             rows={6}
-            className="w-full select-text rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,16,0.72)] px-3 py-2 text-[13px] text-[#f5f1e8] placeholder:text-white/25 outline-none focus:border-[#d4a054]/40"
+            className="w-full select-text rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,16,0.72)] px-3 py-2 text-[15px] text-[#f5f1e8] placeholder:text-white/25 outline-none focus:border-[#d4a054]/40"
           />
         )}
       </div>
 
-      {error && <p className="text-[12px] text-red-300 mt-3">{error}</p>}
+      {error && <p className="text-[14px] text-red-300 mt-3">{error}</p>}
 
       <div className="flex justify-end mt-4">
         <button
           onClick={startRun}
           disabled={!canRun || extracting}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[15px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <FileText size={14} strokeWidth={1.75} /> Run cite-check
         </button>
@@ -244,7 +244,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
       {/* Run history */}
       {runs.data && runs.data.length > 0 && (
         <section className="mt-10">
-          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Past runs</h2>
+          <h2 className="text-[15px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Past runs</h2>
           <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
             {runs.data.map((r) => (
               <RunHistoryRow key={r.id} run={r} onOpen={() => openRun(r.id)} />
@@ -282,9 +282,9 @@ function RunHistoryRow({ run, onOpen }: { run: CiteCheckRunSummary; onOpen: () =
   return (
     <button onClick={onOpen} className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group">
       <FileText size={14} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
-      <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{run.source_label}</span>
+      <span className="text-[15px] text-[#f5f1e8] truncate flex-1">{run.source_label}</span>
       {counts && (
-        <span className="text-[11px] text-white/40 shrink-0 hidden sm:inline">
+        <span className="text-[13px] text-white/40 shrink-0 hidden sm:inline">
           {counts.red > 0 && <span className="text-red-400/80 mr-2">{FLAG_GLYPH.red}{counts.red}</span>}
           {counts.lean_red > 0 && <span className="text-orange-400/80 mr-2">{FLAG_GLYPH['lean-red']}{counts.lean_red}</span>}
           {counts.lean_green > 0 && <span className="text-[#d4a054] mr-2">{FLAG_GLYPH['lean-green']}{counts.lean_green}</span>}
@@ -292,8 +292,8 @@ function RunHistoryRow({ run, onOpen }: { run: CiteCheckRunSummary; onOpen: () =
           {counts.blue > 0 && <span className="text-sky-400/60">{FLAG_GLYPH.blue}{counts.blue}</span>}
         </span>
       )}
-      <span className={`text-[10px] shrink-0 ${badge.cls}`}>{badge.label}</span>
-      <span className="text-[10px] text-white/30 shrink-0">{new Date(run.created_at).toLocaleDateString()}</span>
+      <span className={`text-[12px] shrink-0 ${badge.cls}`}>{badge.label}</span>
+      <span className="text-[12px] text-white/30 shrink-0">{new Date(run.created_at).toLocaleDateString()}</span>
       <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors shrink-0" strokeWidth={2} />
     </button>
   );
@@ -306,23 +306,23 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
   const [filter, setFilter] = useState<CiteFlag | 'all'>('all');
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  if (isLoading) return <p className="text-center text-[12px] text-white/40 py-10">Loading run…</p>;
-  if (error || !run) return <p className="text-center text-[12px] text-red-300 py-10">{error instanceof Error ? error.message : 'Run not found'}</p>;
+  if (isLoading) return <p className="text-center text-[14px] text-white/40 py-10">Loading run…</p>;
+  if (error || !run) return <p className="text-center text-[14px] text-red-300 py-10">{error instanceof Error ? error.message : 'Run not found'}</p>;
 
   if (run.status === 'running') {
     return (
       <div className="py-10 text-center">
         <Loader2 size={22} className="text-[#d4a054] animate-spin mx-auto mb-3" />
-        <p className="text-[13px] text-white/60">This run is still in progress in another tab or session.</p>
-        <button onClick={onNewRun} className="mt-4 text-[12px] text-[#e8b84a] hover:underline">Start a new cite-check</button>
+        <p className="text-[15px] text-white/60">This run is still in progress in another tab or session.</p>
+        <button onClick={onNewRun} className="mt-4 text-[14px] text-[#e8b84a] hover:underline">Start a new cite-check</button>
       </div>
     );
   }
   if (run.status === 'error') {
     return (
       <div className="py-10 text-center">
-        <p className="text-[13px] text-red-300">This run failed: {run.error_message ?? 'unknown error'}</p>
-        <button onClick={onNewRun} className="mt-4 text-[12px] text-[#e8b84a] hover:underline">Start a new cite-check</button>
+        <p className="text-[15px] text-red-300">This run failed: {run.error_message ?? 'unknown error'}</p>
+        <button onClick={onNewRun} className="mt-4 text-[14px] text-[#e8b84a] hover:underline">Start a new cite-check</button>
       </div>
     );
   }
@@ -345,12 +345,12 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-4">
         <div className="min-w-0">
-          <p className="text-[13px] text-[#f5f1e8] truncate">{run.source_label}</p>
-          <p className="text-[11px] text-white/40">
+          <p className="text-[15px] text-[#f5f1e8] truncate">{run.source_label}</p>
+          <p className="text-[13px] text-white/40">
             {run.citations_total} citations · {run.status === 'interrupted' ? 'interrupted — partial results' : new Date(run.completed_at ?? run.created_at).toLocaleString()}
           </p>
         </div>
-        <button onClick={onNewRun} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors">
+        <button onClick={onNewRun} className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[14px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors">
           New cite-check
         </button>
       </div>
@@ -359,7 +359,7 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
       <div className="flex flex-wrap items-center gap-1.5 mb-1">
         <button
           onClick={() => setFilter('all')}
-          className={`px-2.5 py-1 rounded-md text-[12px] transition-colors ${filter === 'all' ? 'bg-[rgba(255,255,255,0.08)] text-[#f5f1e8]' : 'text-white/50 hover:text-white/80'}`}
+          className={`px-2.5 py-1 rounded-md text-[14px] transition-colors ${filter === 'all' ? 'bg-[rgba(255,255,255,0.08)] text-[#f5f1e8]' : 'text-white/50 hover:text-white/80'}`}
         >
           All {run.citations_total}
         </button>
@@ -368,13 +368,13 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
             key={c.flag}
             onClick={() => setFilter(filter === c.flag ? 'all' : c.flag)}
             title={FLAG_LABEL[c.flag]}
-            className={`px-2.5 py-1 rounded-md text-[12px] transition-colors ${filter === c.flag ? 'bg-[rgba(255,255,255,0.08)]' : 'hover:bg-[rgba(255,255,255,0.04)]'} ${FLAG_TINT[c.flag]}`}
+            className={`px-2.5 py-1 rounded-md text-[14px] transition-colors ${filter === c.flag ? 'bg-[rgba(255,255,255,0.08)]' : 'hover:bg-[rgba(255,255,255,0.04)]'} ${FLAG_TINT[c.flag]}`}
           >
             {FLAG_GLYPH[c.flag]} {c.n}
           </button>
         ))}
       </div>
-      <p className="text-[10px] text-white/30 mb-4">✓ verified clean · ⊕ verified, minor issue · ⊖ unverified concern · ✗ verified mismatch · ◇ Westlaw paste needed</p>
+      <p className="text-[12px] text-white/30 mb-4">✓ verified clean · ⊕ verified, minor issue · ⊖ unverified concern · ✗ verified mismatch · ◇ Westlaw paste needed</p>
 
       {/* Per-cite list */}
       <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
@@ -387,18 +387,18 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
                 onClick={() => setExpanded(isOpen ? null : idx)}
                 className="flex items-center gap-3 w-full px-4 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
               >
-                <span className={`text-[14px] w-4 text-center shrink-0 ${FLAG_TINT[e.flag]}`}>{FLAG_GLYPH[e.flag]}</span>
-                <span className="text-[13px] text-[#f5f1e8] truncate flex-1">
+                <span className={`text-[16px] w-4 text-center shrink-0 ${FLAG_TINT[e.flag]}`}>{FLAG_GLYPH[e.flag]}</span>
+                <span className="text-[15px] text-[#f5f1e8] truncate flex-1">
                   {e.citation}{e.pin ? <span className="text-white/40">, {e.pin}</span> : null}
                 </span>
-                {e.flags.length > 0 && <span className="text-[10px] text-white/30 shrink-0">{e.flags.length} note{e.flags.length === 1 ? '' : 's'}</span>}
+                {e.flags.length > 0 && <span className="text-[12px] text-white/30 shrink-0">{e.flags.length} note{e.flags.length === 1 ? '' : 's'}</span>}
                 {isOpen ? <ChevronDown size={13} className="text-white/30 shrink-0" /> : <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors shrink-0" />}
               </button>
               {isOpen && <CiteDetail e={e} />}
             </div>
           );
         })}
-        {shown.length === 0 && <p className="px-4 py-6 text-center text-[12px] text-white/40">No citations with that flag.</p>}
+        {shown.length === 0 && <p className="px-4 py-6 text-center text-[14px] text-white/40">No citations with that flag.</p>}
       </div>
 
       {/* Downloads */}
@@ -416,7 +416,7 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
 
 function CiteDetail({ e }: { e: ReportEntry }) {
   return (
-    <div className="px-4 pb-3 pt-1 pl-11 text-[12px] space-y-1 bg-[rgba(255,255,255,0.015)]">
+    <div className="px-4 pb-3 pt-1 pl-11 text-[14px] space-y-1 bg-[rgba(255,255,255,0.015)]">
       <p><span className="text-white/40">Status:</span> <span className="text-white/80">{FLAG_LABEL[e.flag]}</span> <span className="text-white/30">({e.verification_status} · {e.rating} confidence)</span></p>
       {e.proposition && <p><span className="text-white/40">Cited for:</span> <span className="text-white/80">{e.proposition}</span></p>}
       {e.signal && <p><span className="text-white/40">Signal:</span> <span className="text-white/80">{e.signal}</span></p>}
@@ -448,7 +448,7 @@ function DownloadButton({ filename, text, label }: { filename: string; text: str
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   return (
-    <button onClick={download} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors">
+    <button onClick={download} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[14px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors">
       <Download size={12} strokeWidth={2} /> {label}
     </button>
   );

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Send, FileText, Check, ChevronDown, Copy, Download, Square, AlertCircle, Info, Search, Zap } from 'lucide-react';
+import { Send, FileText, Check, ChevronDown, Copy, Download, Square, AlertCircle, Info, Search, Zap, Sparkles } from 'lucide-react';
 import { generate, allModels, estimateTokens } from '@/lib/llm';
 import { searchVaultFiles, autoSelectFiles } from '@/lib/search';
 import type { VaultFile } from '@/lib/vault-types';
@@ -7,11 +7,13 @@ import type { SearchResult } from '@/lib/search';
 
 interface AIWorkbenchProps {
   vaultFiles: VaultFile[];
+  /** Persist the current output as an editable draft in "Generated Documents". */
+  onSaveToVault?: (name: string, content: string) => void;
 }
 
 type Mode = 'manual' | 'auto';
 
-export default function AIWorkbench({ vaultFiles }: AIWorkbenchProps) {
+export default function AIWorkbench({ vaultFiles, onSaveToVault }: AIWorkbenchProps) {
   const models = useMemo(() => allModels(), []);
   const [selectedModelId, setSelectedModelId] = useState('claude-opus');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -22,6 +24,7 @@ export default function AIWorkbench({ vaultFiles }: AIWorkbenchProps) {
   const [showFileSelector, setShowFileSelector] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedToVault, setSavedToVault] = useState(false);
   const [routingInfo, setRoutingInfo] = useState('');
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<Mode>('auto');
@@ -134,6 +137,17 @@ export default function AIWorkbench({ vaultFiles }: AIWorkbenchProps) {
     URL.revokeObjectURL(url);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleSaveToVault = () => {
+    if (!output.trim() || !onSaveToVault) return;
+    // Name the draft after the first meaningful line of the instruction,
+    // falling back to a timestamp. Keep it filesystem-ish and short.
+    const firstLine = instruction.split('\n').map((s) => s.trim()).find(Boolean) ?? '';
+    const base = (firstLine ? firstLine.replace(/[^\w\s.,-]/g, '').slice(0, 60).trim() : '') || `Draft ${new Date().toLocaleString()}`;
+    onSaveToVault(`${base}.md`, output);
+    setSavedToVault(true);
+    setTimeout(() => setSavedToVault(false), 2800);
   };
 
   return (
@@ -351,6 +365,15 @@ export default function AIWorkbench({ vaultFiles }: AIWorkbenchProps) {
           </div>
           {output && !generating && (
             <div className="flex items-center gap-2">
+              {onSaveToVault && (
+                <button
+                  onClick={handleSaveToVault}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[rgba(232,184,74,0.12)] hover:bg-[rgba(232,184,74,0.2)] text-[#e8b84a] text-[11px] font-medium transition-colors"
+                  title="Save as an editable draft under Generated Documents"
+                >
+                  {savedToVault ? <><Check size={12} /> Saved to Vault</> : <><Sparkles size={12} /> Save to Vault</>}
+                </button>
+              )}
               <button
                 onClick={handleCopy}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/80 hover:text-white text-[11px] transition-colors"
@@ -361,7 +384,7 @@ export default function AIWorkbench({ vaultFiles }: AIWorkbenchProps) {
                 onClick={handleSave}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.06)] text-white/80 hover:text-white text-[11px] transition-colors"
               >
-                {saved ? <><Check size={12} className="text-emerald-400" /> Saved</> : <><Download size={12} /> Save</>}
+                {saved ? <><Check size={12} className="text-emerald-400" /> Downloaded</> : <><Download size={12} /> Download</>}
               </button>
             </div>
           )}

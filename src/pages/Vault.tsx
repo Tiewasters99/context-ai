@@ -5,6 +5,8 @@ import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import DocumentEditor from '@/components/vault/DocumentEditor';
+import GeneratedDocsPanel from '@/components/vault/GeneratedDocsPanel';
+import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import type { VaultFile } from '@/lib/vault-types';
@@ -21,12 +23,13 @@ import {
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
-type VaultView = 'home' | 'import' | 'workbench' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
+type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
   { icon: Upload, label: 'Import Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
   { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
+  { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
   { icon: Key, label: 'Bring Your Own Key', description: 'Use your own API keys for AI models', view: 'byok' },
   { icon: HardDrive, label: 'Storage', description: 'Manage your Vault storage (up to 100GB)', view: 'storage' },
@@ -45,6 +48,7 @@ export default function Vault() {
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
   const [showTemplates, setShowTemplates] = useState(false);
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
+  const [generatedDocs, setGeneratedDocs] = useState<VaultFile[]>([]);
   const [openFile, setOpenFile] = useState<VaultFile | null>(null);
 
   // Matter context: when /app/vault?matter=<short_code|uuid>, the Vault
@@ -303,18 +307,52 @@ export default function Vault() {
     setVaultFiles((prev) => prev.filter((f) => f.id !== id));
   }, [matter]);
 
-  // After an in-editor save: update the in-memory copy, and in persistent
-  // mode follow the server-side re-ingest back to "ready".
+  // After an in-editor save: update the in-memory copy (text + bytes so a
+  // re-open shows the edit). For a real persistent document, follow the
+  // server-side re-ingest back to "ready"; generated drafts stay in-memory.
   const handleDocumentSaved = useCallback((fileId: string, text: string) => {
+    const name = openFile?.name ?? 'document';
+    const bytes = new File([text], name);
+    if (openFile?.generated) {
+      setGeneratedDocs((prev) => prev.map((f) =>
+        f.id === fileId ? { ...f, textContent: text, file: bytes, sizeBytes: bytes.size, size: formatSize(bytes.size) } : f
+      ));
+      return;
+    }
+    const persisting = !!matter;
     setVaultFiles((prev) => prev.map((f) =>
-      f.id === fileId ? { ...f, textContent: text, status: matter ? 'uploading' : f.status } : f
+      f.id === fileId ? { ...f, textContent: text, file: bytes, status: persisting ? 'uploading' : f.status } : f
     ));
-    if (matter) {
+    if (persisting) {
       watchDocumentStatus(fileId, (status) => {
         setVaultFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status } : f));
       });
     }
-  }, [matter]);
+  }, [matter, openFile]);
+
+  // Stash an AI Workbench output as an editable draft under Generated Documents.
+  const addGeneratedDoc = useCallback((name: string, content: string) => {
+    const bytes = new File([content], name);
+    const doc: VaultFile = {
+      id: crypto.randomUUID(),
+      name,
+      path: name,
+      sizeBytes: bytes.size,
+      size: formatSize(bytes.size),
+      type: name.split('.').pop()?.toLowerCase() ?? 'md',
+      file: bytes,
+      status: 'indexed',
+      textContent: content,
+      generated: true,
+      createdAt: Date.now(),
+    };
+    setGeneratedDocs((prev) => [doc, ...prev]);
+  }, []);
+
+  const removeGeneratedDoc = useCallback((id: string) => {
+    setGeneratedDocs((prev) => prev.filter((d) => d.id !== id));
+    setOpenFile((cur) => (cur?.id === id ? null : cur));
+  }, []);
 
   const [bannerY, setBannerY] = useState(50); // vertical position %, 0=top, 100=bottom
   const bannerDragging = useRef(false);
@@ -410,7 +448,24 @@ export default function Vault() {
       case 'files':
         return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onOpenFile={setOpenFile} />;
       case 'workbench':
-        return <AIWorkbench vaultFiles={vaultFiles} />;
+        return <AIWorkbench vaultFiles={vaultFiles} onSaveToVault={addGeneratedDoc} />;
+      case 'citecheck':
+        return (
+          <div className="flex-1 overflow-y-auto px-8 py-8">
+            <div className="max-w-3xl mx-auto">
+              <p className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-4">Cite-Check</p>
+              {matter ? (
+                <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
+              ) : (
+                <p className="text-[13px] text-white/50">
+                  Pick a matter from the rail first — cite-check runs are stored on the matter, so the Vault needs to be in matter mode.
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      case 'generated':
+        return <GeneratedDocsPanel docs={generatedDocs} onOpen={setOpenFile} onRemove={removeGeneratedDoc} />;
       case 'home':
       default:
         return (
@@ -778,7 +833,7 @@ export default function Vault() {
       {openFile && (
         <DocumentEditor
           file={openFile}
-          persistent={!!matter}
+          persistent={!!matter && !openFile.generated}
           onClose={() => setOpenFile(null)}
           onSaved={handleDocumentSaved}
         />

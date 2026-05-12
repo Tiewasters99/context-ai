@@ -14,4 +14,9 @@ export interface VaultFile {
   matterspace_name?: string;
   /** Persistent mode: object path in the vault-documents bucket. */
   storagePath?: string;
+  /** True for AI-generated drafts kept in the "Generated Documents" view
+   *  (in-memory; never goes through Supabase). */
+  generated?: boolean;
+  /** When the generated draft was created (ms epoch). */
+  createdAt?: number;
 }
