@@ -12,6 +12,7 @@ import { X,
   Users,
   Trash2,
   Plug,
+  UserPlus,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -19,6 +20,7 @@ import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
+import ShareModal from '@/components/serverspace/ShareModal';
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -37,6 +39,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+  const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (showNewServerspace) newServerspaceRef.current?.focus();
@@ -212,26 +215,42 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
             const isExpanded = expandedSpaces.has(space.id);
             return (
               <div key={space.id}>
-                <button
-                  onClick={() => toggleExpanded(space.id)}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors text-left ${
+                <div
+                  className={`group flex items-center gap-1 rounded-md transition-colors ${
                     isActive(`/app/serverspace/${space.id}`)
-                      ? 'bg-[#16161d] text-white font-medium'
+                      ? 'bg-[#16161d] text-white'
                       : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
                   }`}
                 >
-                  <Users size={15} className="shrink-0" strokeWidth={1.75} />
+                  <button
+                    onClick={() => toggleExpanded(space.id)}
+                    className={`flex-1 flex items-center gap-2.5 px-3 py-2 text-[13px] text-left min-w-0 ${
+                      isActive(`/app/serverspace/${space.id}`) ? 'font-medium' : ''
+                    }`}
+                  >
+                    <Users size={15} className="shrink-0" strokeWidth={1.75} />
+                    {!collapsed && (
+                      <>
+                        <span className="flex-1 truncate">{space.name}</span>
+                        {isExpanded ? (
+                          <ChevronDown size={13} className="text-white/70 shrink-0" />
+                        ) : (
+                          <ChevronRight size={13} className="text-white/70 shrink-0" />
+                        )}
+                      </>
+                    )}
+                  </button>
                   {!collapsed && (
-                    <>
-                      <span className="flex-1 truncate">{space.name}</span>
-                      {isExpanded ? (
-                        <ChevronDown size={13} className="text-white/70 shrink-0" />
-                      ) : (
-                        <ChevronRight size={13} className="text-white/70 shrink-0" />
-                      )}
-                    </>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShareTarget({ id: space.id, name: space.name }); }}
+                      className="p-1.5 mr-1.5 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+                      aria-label="Share serverspace"
+                      title="Share serverspace"
+                    >
+                      <UserPlus size={13} strokeWidth={2} />
+                    </button>
                   )}
-                </button>
+                </div>
 
                 {/* Matterspaces — recursive tree */}
                 {isExpanded && !collapsed && (
@@ -322,6 +341,13 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
         <DeleteMatterModal
           target={deleteTarget}
           onClose={() => setDeleteTarget(null)}
+        />
+      )}
+      {shareTarget && (
+        <ShareModal
+          serverspaceId={shareTarget.id}
+          serverspaceName={shareTarget.name}
+          onClose={() => setShareTarget(null)}
         />
       )}
 
