@@ -6,6 +6,7 @@ import AIWorkbench from '@/components/vault/AIWorkbench';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import DocumentEditor from '@/components/vault/DocumentEditor';
 import GeneratedDocsPanel from '@/components/vault/GeneratedDocsPanel';
+import MusicLibrary from '@/components/layout/MusicLibrary';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
@@ -41,8 +42,9 @@ export default function Vault() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<VaultView>('home');
   const [musicPlaying, setMusicPlaying] = useState(false);
+  const [loadedTrack, setLoadedTrack] = useState<string | null>(null);
+  const [showMusicLibrary, setShowMusicLibrary] = useState(false);
   const musicRef = useRef<HTMLAudioElement | null>(null);
-  const musicInputRef = useRef<HTMLInputElement>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
@@ -369,43 +371,43 @@ export default function Vault() {
     };
   }, []);
 
-  const handleMusicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // Tear down previous audio
+  // Load a track from a URL (curated library entry) or an uploaded file blob
+  // and start it. Tears down any previous audio + revokes the prior blob URL.
+  const loadAndPlayTrack = (url: string) => {
     if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
-    if (musicUrlRef.current) { URL.revokeObjectURL(musicUrlRef.current); }
-    // Reset the input so re-selecting the same file fires onChange
-    e.target.value = '';
-
-    const url = URL.createObjectURL(file);
+    if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(musicUrlRef.current);
+    }
     musicUrlRef.current = url;
+    setLoadedTrack(url);
     const audio = new Audio(url);
     audio.loop = true;
     audio.volume = 0.5;
-
-    // Keep state in sync if playback ends or errors
     audio.addEventListener('pause', () => setMusicPlaying(false));
     audio.addEventListener('play', () => setMusicPlaying(true));
-
     musicRef.current = audio;
-    audio.play().then(() => {
-      setMusicPlaying(true);
-    }).catch(() => {
-      // Autoplay blocked — audio is ready, user must click toggle to start
-      setMusicPlaying(false);
-    });
+    audio.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false));
+  };
+
+  const handleMusicLibraryUpload = (file: File) => {
+    loadAndPlayTrack(URL.createObjectURL(file));
   };
 
   const toggleMusic = () => {
-    if (!musicRef.current) { musicInputRef.current?.click(); return; }
-    if (musicPlaying) {
-      musicRef.current.pause();
-    } else {
-      musicRef.current.play().catch(() => {
-        // Still blocked — no state change
-      });
+    // No track loaded → open the library so the user can pick one (or upload).
+    if (!musicRef.current) { setShowMusicLibrary(true); return; }
+    if (musicPlaying) musicRef.current.pause();
+    else musicRef.current.play().catch(() => { /* autoplay still blocked */ });
+  };
+
+  const ejectMusic = () => {
+    if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
+    if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(musicUrlRef.current);
     }
+    musicUrlRef.current = null;
+    setLoadedTrack(null);
+    setMusicPlaying(false);
   };
 
   const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -788,11 +790,19 @@ export default function Vault() {
             className={`p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] transition-all hover:scale-110 ${
               musicPlaying ? 'text-[#e8b84a] shadow-[0_0_15px_rgba(232,184,74,0.3)]' : 'text-white/80 hover:text-white'
             }`}
-            title={musicPlaying ? 'Pause music' : 'Play background music'}
+            title={!loadedTrack ? 'Open music library' : musicPlaying ? 'Pause music' : 'Play music'}
           >
             <Music size={22} strokeWidth={1.75} />
           </button>
-          <input ref={musicInputRef} type="file" accept="audio/*" onChange={handleMusicUpload} className="hidden" />
+          {loadedTrack && (
+            <button
+              onClick={ejectMusic}
+              className="p-3 rounded-full hover:bg-[rgba(255,255,255,0.1)] text-white/60 hover:text-white transition-all hover:scale-110"
+              title="Stop and clear track"
+            >
+              <X size={18} strokeWidth={1.75} />
+            </button>
+          )}
           <input ref={coverInputRef} type="file" accept="image/*" onChange={handleCoverUpload} className="hidden" />
         </div>
       )}
@@ -800,6 +810,14 @@ export default function Vault() {
         <TemplateLibrary
           onSelect={(url) => { setCoverUrl(url); setManualCoverOverride(true); setCoverMode('full'); setBannerY(50); }}
           onClose={() => setShowTemplates(false)}
+        />
+      )}
+      {showMusicLibrary && (
+        <MusicLibrary
+          currentTrack={loadedTrack}
+          onSelect={(url) => loadAndPlayTrack(url)}
+          onUpload={handleMusicLibraryUpload}
+          onClose={() => setShowMusicLibrary(false)}
         />
       )}
       {newMatterContext && (

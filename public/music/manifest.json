@@ -1,0 +1,5 @@
+[
+  {"id":"piano-classical-1","name":"Piano — Classical","file":"/music/piano-classical-1.mp3","category":"Classical","artist":"Public domain (via Pixabay)"},
+  {"id":"ambient-1","name":"Ambient 1","file":"/music/ambient-1.mp3","category":"Ambient","artist":"Curated"},
+  {"id":"ambient-2","name":"Ambient 2","file":"/music/ambient-2.mp3","category":"Ambient","artist":"Curated"}
+]

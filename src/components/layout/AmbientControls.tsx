@@ -12,6 +12,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Music, Image as ImageIcon, LayoutGrid, X, Maximize, EyeOff, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
+import MusicLibrary from '@/components/layout/MusicLibrary';
 
 export default function AmbientControls() {
   const [backdropUrl, setBackdropUrl] = useState<string | null>(null);
@@ -21,9 +22,13 @@ export default function AmbientControls() {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [musicPlaying, setMusicPlaying] = useState(false);
+  // Reactive copy of the loaded track's URL, so render knows whether to show
+  // the play/pause toggle vs. "open library" affordance. Distinct from
+  // musicUrlRef (which keeps the value for cleanup even between renders).
+  const [loadedTrack, setLoadedTrack] = useState<string | null>(null);
+  const [showMusicLibrary, setShowMusicLibrary] = useState(false);
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const musicUrlRef = useRef<string | null>(null);
-  const musicInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Apply / clear the backdrop CSS variable.
@@ -69,14 +74,15 @@ export default function AmbientControls() {
     }
   };
 
-  const handleMusicUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  // Load a track from a URL (curated library entry) or an uploaded file blob
+  // and start it. Tears down any previous audio + revokes the prior blob URL.
+  const loadAndPlayTrack = (url: string) => {
     if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
-    if (musicUrlRef.current) URL.revokeObjectURL(musicUrlRef.current);
-    const url = URL.createObjectURL(file);
+    if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(musicUrlRef.current);
+    }
     musicUrlRef.current = url;
+    setLoadedTrack(url);
     const audio = new Audio(url);
     audio.loop = true;
     audio.volume = 0.5;
@@ -86,10 +92,25 @@ export default function AmbientControls() {
     audio.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false));
   };
 
+  const handleLibraryUpload = (file: File) => {
+    loadAndPlayTrack(URL.createObjectURL(file));
+  };
+
   const toggleMusic = () => {
-    if (!musicRef.current) { musicInputRef.current?.click(); return; }
+    // No track loaded → open the library so the user can pick one (or upload).
+    if (!musicRef.current) { setShowMusicLibrary(true); return; }
     if (musicPlaying) musicRef.current.pause();
     else musicRef.current.play().catch(() => { /* autoplay still blocked */ });
+  };
+
+  const ejectMusic = () => {
+    if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
+    if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(musicUrlRef.current);
+    }
+    musicUrlRef.current = null;
+    setLoadedTrack(null);
+    setMusicPlaying(false);
   };
 
   const btn = 'p-3 rounded-full hover:bg-[rgba(255,255,255,0.12)] transition-all hover:scale-110 disabled:opacity-50 disabled:cursor-wait';
@@ -138,11 +159,19 @@ export default function AmbientControls() {
         <button
           onClick={toggleMusic}
           className={`${btn} ${musicPlaying ? 'text-[#e8b84a] shadow-[0_0_15px_rgba(232,184,74,0.3)]' : 'text-white/80 hover:text-white'}`}
-          title={musicPlaying ? 'Pause music' : 'Play background music'}
+          title={!loadedTrack ? 'Open music library' : musicPlaying ? 'Pause music' : 'Play music'}
         >
           <Music size={22} strokeWidth={1.75} />
         </button>
-        <input ref={musicInputRef} type="file" accept="audio/*" onChange={handleMusicUpload} className="hidden" />
+        {loadedTrack && (
+          <button
+            onClick={ejectMusic}
+            className={`${btn} text-white/60 hover:text-white`}
+            title="Stop and clear track"
+          >
+            <X size={18} strokeWidth={1.75} />
+          </button>
+        )}
         <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
       </div>
 
@@ -159,6 +188,15 @@ export default function AmbientControls() {
         <TemplateLibrary
           onSelect={(url) => { setBackdropUrl(url); setBackdropOn(true); }}
           onClose={() => setShowTemplates(false)}
+        />
+      )}
+
+      {showMusicLibrary && (
+        <MusicLibrary
+          currentTrack={loadedTrack}
+          onSelect={(url) => loadAndPlayTrack(url)}
+          onUpload={handleLibraryUpload}
+          onClose={() => setShowMusicLibrary(false)}
         />
       )}
     </>
