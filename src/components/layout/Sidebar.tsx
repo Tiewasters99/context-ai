@@ -39,7 +39,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
-  const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
+  const [shareTarget, setShareTarget] = useState<{ scope: 'serverspace' | 'matterspace'; id: string; name: string } | null>(null);
 
   useEffect(() => {
     if (showNewServerspace) newServerspaceRef.current?.focus();
@@ -242,7 +242,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                   </button>
                   {!collapsed && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); setShareTarget({ id: space.id, name: space.name }); }}
+                      onClick={(e) => { e.stopPropagation(); setShareTarget({ scope: 'serverspace', id: space.id, name: space.name }); }}
                       className="p-1.5 mr-1.5 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
                       aria-label="Share serverspace"
                       title="Share serverspace"
@@ -265,6 +265,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                         toggleMatter={toggleMatter}
                         onAddChild={openNewMatter}
                         onDelete={openDeleteMatter}
+                        onShare={(id, name) => setShareTarget({ scope: 'matterspace', id, name })}
                         isActive={isActive}
                       />
                     ))}
@@ -345,8 +346,9 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
       )}
       {shareTarget && (
         <ShareModal
-          serverspaceId={shareTarget.id}
-          serverspaceName={shareTarget.name}
+          scope={shareTarget.scope}
+          scopeId={shareTarget.id}
+          scopeName={shareTarget.name}
           onClose={() => setShareTarget(null)}
         />
       )}
@@ -406,6 +408,7 @@ interface MatterNodeProps {
     contextLabel: string,
   ) => void;
   onDelete: (matterId: string, matterName: string) => void;
+  onShare: (matterId: string, matterName: string) => void;
   isActive: (path: string) => boolean;
 }
 
@@ -417,6 +420,7 @@ function MatterNode({
   toggleMatter,
   onAddChild,
   onDelete,
+  onShare,
   isActive,
 }: MatterNodeProps) {
   const { matter, children } = node;
@@ -469,6 +473,18 @@ function MatterNode({
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            onShare(matter.id, matter.name);
+          }}
+          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          aria-label="Share matter"
+          title="Share matter"
+        >
+          <UserPlus size={11} strokeWidth={2} />
+        </button>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
             onDelete(matter.id, matter.name);
           }}
           className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
@@ -490,6 +506,7 @@ function MatterNode({
               toggleMatter={toggleMatter}
               onAddChild={onAddChild}
               onDelete={onDelete}
+              onShare={onShare}
               isActive={isActive}
             />
           ))}

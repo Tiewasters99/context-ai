@@ -1,20 +1,26 @@
-// Share a serverspace with another Contextspaces user. Lists current members
-// with their roles, lets owners/admins add a new member by email and pick a
-// role (viewer / member / admin), and lets them remove non-owner members.
+// Generic share modal — works for either a serverspace or a single
+// matterspace (which then also covers all sub-matters under it).
 //
-// Permissions, per the RLS in migration 005 (serverspace_members):
-//   - SELECT: any current member sees the membership list of shared spaces.
-//   - INSERT / DELETE: only owners + admins of that serverspace.
-// We let the modal open for everyone — the form just no-ops with a clear
-// error if the caller lacks permission, instead of needing a separate role
-// query before rendering. Lookup by email uses public.profiles, which is
-// readable by every authenticated user.
+// For 'serverspace' scope: queries serverspace_members; access flows down
+// to every matter under the serverspace.
+//
+// For 'matterspace' scope (introduced in migration 016): queries
+// matterspace_members; access is granted to that specific matter plus any
+// of its descendants, and does NOT flow up to sibling matters or the rest
+// of the serverspace. Useful for sharing a single case with co-counsel.
+//
+// Permissions (per RLS in migrations 005 + 016):
+//   SELECT membership rows  → any co-member of the scope.
+//   INSERT / DELETE         → owners + admins of the scope.
+// The modal opens for everyone — if the caller lacks admin rights, the
+// server rejects the write with a clear message that we surface inline.
 
 import { useEffect, useState } from 'react';
 import { X, UserPlus, Trash2, Loader2, AlertCircle, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
+type Scope = 'serverspace' | 'matterspace';
 type Role = 'owner' | 'admin' | 'member' | 'viewer';
 
 interface MemberRow {
@@ -27,15 +33,16 @@ interface MemberRow {
 }
 
 interface ShareModalProps {
-  serverspaceId: string;
-  serverspaceName: string;
+  scope: Scope;
+  scopeId: string;
+  scopeName: string;
   onClose: () => void;
 }
 
 const ROLE_OPTIONS: { value: Exclude<Role, 'owner'>; label: string; help: string }[] = [
-  { value: 'admin',  label: 'Admin',  help: 'Read + write + manage members & matters' },
-  { value: 'member', label: 'Member', help: 'Read + write documents in this serverspace' },
-  { value: 'viewer', label: 'Viewer', help: 'Read-only access to matters and documents' },
+  { value: 'admin',  label: 'Admin',  help: 'Read + write + manage members' },
+  { value: 'member', label: 'Member', help: 'Read + write documents and passages' },
+  { value: 'viewer', label: 'Viewer', help: 'Read-only access' },
 ];
 
 const ROLE_BADGE: Record<Role, string> = {
@@ -45,8 +52,27 @@ const ROLE_BADGE: Record<Role, string> = {
   viewer: 'bg-[rgba(255,255,255,0.04)] text-white/60',
 };
 
-export default function ShareModal({ serverspaceId, serverspaceName, onClose }: ShareModalProps) {
+// Per-scope wiring — single source of truth for the table + FK names so the
+// rest of the component stays scope-agnostic.
+const SCOPE_CONFIG = {
+  serverspace: {
+    table: 'serverspace_members' as const,
+    fk: 'serverspace_id' as const,
+    label: 'serverspace',
+    help: 'Members see every matter, document, and transcript in this serverspace.',
+  },
+  matterspace: {
+    table: 'matterspace_members' as const,
+    fk: 'matterspace_id' as const,
+    label: 'matter',
+    help: 'Members see this matter and any sub-matters under it — not the rest of the serverspace.',
+  },
+};
+
+export default function ShareModal({ scope, scopeId, scopeName, onClose }: ShareModalProps) {
   const { user } = useAuth();
+  const cfg = SCOPE_CONFIG[scope];
+
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -60,11 +86,10 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
   const loadMembers = async () => {
     setLoading(true);
     setListError(null);
-    // Pull memberships + the profile (email, display_name) of each member in one round-trip.
     const { data, error } = await supabase
-      .from('serverspace_members')
+      .from(cfg.table)
       .select('id, role, joined_at, user_id, user:profiles(id, email, display_name)')
-      .eq('serverspace_id', serverspaceId)
+      .eq(cfg.fk, scopeId)
       .order('joined_at', { ascending: true });
     if (error) { setListError(error.message); setLoading(false); return; }
     const rows: MemberRow[] = (data ?? []).map((r: any) => ({
@@ -79,7 +104,7 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
     setLoading(false);
   };
 
-  useEffect(() => { void loadMembers(); }, [serverspaceId]);
+  useEffect(() => { void loadMembers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [scopeId, scope]);
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +115,6 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
     setFlash(null);
     setSubmitting(true);
     try {
-      // 1. Find the profile by email. Profiles RLS allows any authed user to read.
       const { data: profile, error: profileErr } = await supabase
         .from('profiles')
         .select('id, email, display_name')
@@ -102,16 +126,15 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
         return;
       }
       if (members.some((m) => m.userId === profile.id)) {
-        setFormError(`${trimmed} is already a member.`);
+        setFormError(`${trimmed} is already a member of this ${cfg.label}.`);
         return;
       }
-      // 2. Insert membership. RLS will reject if caller isn't owner/admin.
       const { error: insErr } = await supabase
-        .from('serverspace_members')
-        .insert({ serverspace_id: serverspaceId, user_id: profile.id, role });
+        .from(cfg.table)
+        .insert({ [cfg.fk]: scopeId, user_id: profile.id, role });
       if (insErr) {
         if (/row-level security|permission/i.test(insErr.message)) {
-          throw new Error('Only owners and admins of this serverspace can add members.');
+          throw new Error(`Only owners and admins of this ${cfg.label} can add members.`);
         }
         throw new Error(insErr.message);
       }
@@ -126,16 +149,13 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
   };
 
   const handleRemove = async (m: MemberRow) => {
-    if (m.role === 'owner') return;                 // never remove an owner from this UI
-    if (user && m.userId === user.id) return;       // never remove yourself
-    if (!confirm(`Remove ${m.displayName || m.email} from "${serverspaceName}"?`)) return;
-    const { error } = await supabase
-      .from('serverspace_members')
-      .delete()
-      .eq('id', m.membershipId);
+    if (m.role === 'owner') return;
+    if (user && m.userId === user.id) return;
+    if (!confirm(`Remove ${m.displayName || m.email} from "${scopeName}"?`)) return;
+    const { error } = await supabase.from(cfg.table).delete().eq('id', m.membershipId);
     if (error) {
       setListError(/row-level security|permission/i.test(error.message)
-        ? 'Only owners and admins can remove members.'
+        ? `Only owners and admins can remove members from this ${cfg.label}.`
         : error.message);
       return;
     }
@@ -152,16 +172,13 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
         className="w-[min(540px,100%)] max-h-[88vh] flex flex-col rounded-2xl border border-[rgba(255,255,255,0.1)] shadow-2xl overflow-hidden"
         style={{ backgroundColor: 'rgba(10,10,16,0.97)' }}
       >
-        {/* Header */}
         <div className="px-6 py-5 border-b border-[rgba(255,255,255,0.08)] flex items-start justify-between shrink-0">
           <div className="min-w-0">
             <h2 className="text-[16px] font-semibold text-white truncate flex items-center gap-2">
               <UserPlus size={16} className="text-[#e8b84a]" strokeWidth={1.75} />
-              Share "{serverspaceName}"
+              Share {cfg.label} "{scopeName}"
             </h2>
-            <p className="text-[12px] text-white/60 mt-1">
-              Members see all matters, documents, and transcripts in this serverspace.
-            </p>
+            <p className="text-[12px] text-white/60 mt-1">{cfg.help}</p>
           </div>
           <button
             onClick={onClose}
@@ -172,7 +189,6 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
           </button>
         </div>
 
-        {/* Add member form */}
         <form onSubmit={handleAdd} className="px-6 py-5 border-b border-[rgba(255,255,255,0.06)] shrink-0">
           <label className="block text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-2">
             Add member by email
@@ -219,7 +235,6 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
           )}
         </form>
 
-        {/* Members list */}
         <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
           <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-3">
             Members ({members.length})
@@ -231,7 +246,9 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
           ) : listError ? (
             <p className="text-[12px] text-red-300/90 py-6">{listError}</p>
           ) : members.length === 0 ? (
-            <p className="text-[12px] text-white/40 py-6 text-center">No members yet.</p>
+            <p className="text-[12px] text-white/40 py-6 text-center">
+              No direct members yet.{scope === 'matterspace' && ' Members of the parent serverspace already have access via inheritance.'}
+            </p>
           ) : (
             <ul className="space-y-1">
               {members.map((m) => {
@@ -270,6 +287,7 @@ export default function ShareModal({ serverspaceId, serverspaceName, onClose }: 
 
         <div className="px-6 py-3 border-t border-[rgba(255,255,255,0.06)] text-[10px] text-white/40 shrink-0 text-center">
           New members must already have a Contextspaces.ai account.
+          {scope === 'matterspace' && ' Sub-matters under this one inherit your access automatically.'}
         </div>
       </div>
     </div>
