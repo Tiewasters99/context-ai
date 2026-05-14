@@ -133,10 +133,37 @@ async function authenticate(req) {
     return data.user_id;
   }
 
-  // Path B — OAuth access token (signed JWT issued by /api/oauth-token).
-  // Shape: three base64url segments separated by dots. If MCP_OAUTH_SECRET
-  // isn't configured we can't validate them and we fall through to a
-  // malformed_token error rather than crashing.
+  // Path B — opaque-wrapped OAuth access token. Format: "cspa_" + base64url
+  // of the compact JWT serialization. We unwrap to recover the JWT, then
+  // verify with MCP_OAUTH_SECRET. Wrapping exists so OAuth clients that
+  // try to introspect/verify JWT-shaped tokens client-side (claude.ai's
+  // connector library does this) see an opaque string and pass it through
+  // untouched.
+  if (token.startsWith('cspa_')) {
+    if (!process.env.MCP_OAUTH_SECRET) {
+      console.warn('[mcp auth] opaque token presented but MCP_OAUTH_SECRET not set');
+      throw new AuthError(401, 'invalid_token');
+    }
+    let inner;
+    try {
+      inner = Buffer.from(token.slice(5), 'base64url').toString('utf8');
+    } catch {
+      console.warn('[mcp auth] opaque token: base64url decode failed');
+      throw new AuthError(401, 'invalid_token');
+    }
+    const payload = verifyJwt(inner, process.env.MCP_OAUTH_SECRET);
+    if (payload && payload.typ === 'access' && payload.sub) {
+      console.log('[mcp auth] opaque ok: sub=%s', payload.sub);
+      return payload.sub;
+    }
+    console.warn('[mcp auth] opaque reject:',
+      payload ? { typ: payload.typ, hasSub: !!payload.sub, exp: payload.exp } : 'verify failed (sig/exp)');
+    throw new AuthError(401, 'invalid_token');
+  }
+
+  // Path C — bare JWT access token. Kept for backwards compatibility with
+  // any token issued before the opaque wrapper was introduced; new tokens
+  // always arrive in the cspa_ envelope above.
   if (token.split('.').length === 3) {
     if (!process.env.MCP_OAUTH_SECRET) {
       console.warn('[mcp auth] JWT-shaped token presented but MCP_OAUTH_SECRET not set');
@@ -152,7 +179,8 @@ async function authenticate(req) {
     throw new AuthError(401, 'invalid_token');
   }
 
-  console.warn('[mcp auth] malformed token shape: dots=%d len=%d', token.split('.').length - 1, token.length);
+  console.warn('[mcp auth] malformed token shape: prefix=%s dots=%d len=%d',
+    token.slice(0, 6), token.split('.').length - 1, token.length);
   throw new AuthError(401, 'malformed_token');
 }
 

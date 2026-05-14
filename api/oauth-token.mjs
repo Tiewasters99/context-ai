@@ -106,19 +106,17 @@ export default async function handler(req, res) {
   return json(res, 400, { error: 'unsupported_grant_type' });
 }
 
+// Build-time marker so we can confirm in production logs which version
+// of this file is actually serving traffic. Bump this string whenever
+// you change token shape so a stale Vercel deploy is obvious at a glance.
+const TOKEN_BUILD = '2026-05-14-opaque-cspa';
+
 function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
-  // Access token follows RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens):
-  //   header.typ = "at+jwt"
-  //   payload    = { iss, sub, aud, client_id, scope, exp, iat, jti, ... }
-  // Strict OAuth clients (claude.ai's Custom Connector library among them)
-  // refuse to call the resource server if any of these are missing — the
-  // earlier shape (sub/aud/scope only) is why claude.ai was getting a 200
-  // from us and then silently giving up before hitting /api/mcp.
-  //
-  // The internal `typ: 'access'` payload claim is kept (alongside the JOSE
-  // header `typ: 'at+jwt'`) so /api/mcp's existing verifier — which keys
-  // off `payload.typ === 'access'` — keeps working unchanged.
-  const access_token = signJwt(
+  // Internally we sign a normal JWT carrying everything we need to
+  // verify the request at /api/mcp (iss/sub/aud/client_id/scope/exp).
+  // The JOSE header still uses at+jwt per RFC 9068 in case any client
+  // unwraps far enough to look.
+  const inner = signJwt(
     {
       iss: issuer,
       typ: 'access',
@@ -131,11 +129,32 @@ function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
     ACCESS_TTL_SEC,
     'at+jwt',
   );
+
+  // Externally we wrap the JWT in a `cspa_` envelope (base64url over
+  // the compact JWT serialization). Why: RFC 6749 §1.4 says access
+  // tokens are opaque to the OAuth client — the client should just
+  // present them, not introspect them. claude.ai's connector library
+  // doesn't honor that: if a token has the three-dot JWT shape it tries
+  // to decode and verify the signature client-side. Since we sign with
+  // HS256 (a shared secret) there is no public key it can fetch, so
+  // verification fails and the connector aborts before ever calling
+  // /api/mcp. That matches the observed symptom: token endpoint 200,
+  // zero subsequent MCP calls. Wrapping kills the three-dot shape, so
+  // the client treats the token as opaque and forwards it unchanged;
+  // our resource server unwraps and verifies as before.
+  const access_token = 'cspa_' + Buffer.from(inner, 'utf8').toString('base64url');
+
+  // Refresh tokens are kept as raw JWTs — they're only ever submitted
+  // back to /api/oauth-token, which knows how to verify them, and
+  // claude.ai shouldn't be introspecting refresh tokens.
   const refresh_token = signJwt(
     { iss: issuer, typ: 'refresh', sub: user_id, client_id, scope },
     secret,
     REFRESH_TTL_SEC,
   );
+
+  console.log('[oauth-token] issued: build=%s sub=%s atLen=%d', TOKEN_BUILD, user_id, access_token.length);
+
   return json(res, 200, {
     access_token,
     token_type: 'Bearer',
