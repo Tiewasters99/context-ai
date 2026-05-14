@@ -45,6 +45,22 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Browser autofill override. Without this, Chrome/Edge/Safari paint
+   their own pale-yellow background + dark text on top of any input
+   they've autofilled — which on our dark glass surfaces renders as
+   "black text on a black field, can't see what I'm typing." The
+   :-webkit-autofill trick locks in our theme colors instead. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill {
+  -webkit-text-fill-color: #f0ebe3 !important;
+  -webkit-box-shadow: 0 0 0 100px rgba(10, 10, 16, 0.97) inset !important;
+  caret-color: #f0ebe3 !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 body {
   font-family: "Inter Variable", system-ui, -apple-system, sans-serif;
   color: #f0ebe3;

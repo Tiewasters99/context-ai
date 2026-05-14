@@ -193,7 +193,7 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
           <label className="block text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-2">
             Add member by email
           </label>
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex flex-col md:flex-row gap-2">
             <input
               type="email"
               value={email}
