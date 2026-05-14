@@ -5,6 +5,7 @@ import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
+import MatterThread from '@/components/matter/MatterThread';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import {
@@ -14,9 +15,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Vault'] as const;
+const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread'>;
 
 interface MatterRow {
   id: string;
@@ -195,7 +196,10 @@ export default function MatterspaceView() {
         {activeTab === 'Cite-Check' && matter && (
           <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && matter && (
+        {activeTab === 'Thread' && matter && (
+          <MatterThread matterId={matter.id} />
+        )}
+        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>
