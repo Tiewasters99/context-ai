@@ -16,6 +16,7 @@ import Vault from '@/pages/Vault';
 import ClaudeConnect from '@/pages/ClaudeConnect';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
+import OAuthAuthorize from '@/pages/OAuthAuthorize';
 
 const queryClient = new QueryClient();
 
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="/auth" element={<Auth />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/auth/reset" element={<ResetPassword />} />
+            <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
             <Route
               path="/app"
               element={

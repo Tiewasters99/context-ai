@@ -30,6 +30,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createHash, createHmac } from 'node:crypto';
 
 import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
+import { verifyJwt } from '../lib/oauth-jwt.mjs';
 
 // Hard timeout on every Supabase call so a stalled query fails fast (with a
 // retryable error) instead of hanging the request until the MCP client's
@@ -106,33 +107,45 @@ async function authenticate(req) {
     throw new AuthError(401, 'missing_bearer');
   }
   const token = auth.slice(7).trim();
-  if (!/^csp_[A-Za-z0-9_-]{16,}$/.test(token)) {
-    throw new AuthError(401, 'malformed_token');
+
+  // Path A — the legacy connector token format (csp_* opaque, looked up
+  // in connector_tokens). Cheap shape check so we can branch without a
+  // database round-trip for clearly non-csp tokens.
+  if (/^csp_[A-Za-z0-9_-]{16,}$/.test(token)) {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const admin = adminClient();
+    const { data, error } = await admin
+      .from('connector_tokens')
+      .select('id, user_id, expires_at, revoked_at')
+      .eq('token_hash', tokenHash)
+      .maybeSingle();
+    if (error) throw new AuthError(500, 'auth_db_error');
+    if (!data) throw new AuthError(401, 'invalid_token');
+    if (data.revoked_at) throw new AuthError(401, 'revoked');
+    if (data.expires_at && new Date(data.expires_at) < new Date()) {
+      throw new AuthError(401, 'expired');
+    }
+    admin
+      .from('connector_tokens')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('id', data.id)
+      .then(() => {}).catch(() => {});
+    return data.user_id;
   }
 
-  const tokenHash = createHash('sha256').update(token).digest('hex');
-  const admin = adminClient();
-  const { data, error } = await admin
-    .from('connector_tokens')
-    .select('id, user_id, expires_at, revoked_at')
-    .eq('token_hash', tokenHash)
-    .maybeSingle();
-  if (error) throw new AuthError(500, 'auth_db_error');
-  if (!data) throw new AuthError(401, 'invalid_token');
-  if (data.revoked_at) throw new AuthError(401, 'revoked');
-  if (data.expires_at && new Date(data.expires_at) < new Date()) {
-    throw new AuthError(401, 'expired');
+  // Path B — OAuth access token (signed JWT issued by /api/oauth-token).
+  // Shape: three base64url segments separated by dots. If MCP_OAUTH_SECRET
+  // isn't configured we can't validate them and we fall through to a
+  // malformed_token error rather than crashing.
+  if (token.split('.').length === 3 && process.env.MCP_OAUTH_SECRET) {
+    const payload = verifyJwt(token, process.env.MCP_OAUTH_SECRET);
+    if (payload && payload.typ === 'access' && payload.sub) {
+      return payload.sub;
+    }
+    throw new AuthError(401, 'invalid_token');
   }
 
-  // Fire-and-forget usage tracking; don't delay the request on this.
-  admin
-    .from('connector_tokens')
-    .update({ last_used_at: new Date().toISOString() })
-    .eq('id', data.id)
-    .then(() => {})
-    .catch(() => {});
-
-  return data.user_id;
+  throw new AuthError(401, 'malformed_token');
 }
 
 
@@ -210,6 +223,17 @@ export default async function handler(req, res) {
   } catch (err) {
     if (err instanceof AuthError) {
       res.statusCode = err.status;
+      // RFC 9728 / MCP spec: on 401, advertise where the protected-resource
+      // metadata lives so OAuth-capable clients (claude.ai's custom connector
+      // UI) can discover the flow without out-of-band configuration.
+      if (err.status === 401) {
+        const host = req.headers['x-forwarded-host'] || req.headers.host;
+        const proto = (req.headers['x-forwarded-proto'] || 'https').toString();
+        res.setHeader(
+          'www-authenticate',
+          `Bearer realm="mcp", error="${err.code}", resource_metadata="${proto}://${host}/.well-known/oauth-protected-resource"`,
+        );
+      }
       res.setHeader('content-type', 'application/json');
       return res.end(JSON.stringify({ error: err.code }));
     }
