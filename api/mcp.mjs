@@ -137,14 +137,22 @@ async function authenticate(req) {
   // Shape: three base64url segments separated by dots. If MCP_OAUTH_SECRET
   // isn't configured we can't validate them and we fall through to a
   // malformed_token error rather than crashing.
-  if (token.split('.').length === 3 && process.env.MCP_OAUTH_SECRET) {
+  if (token.split('.').length === 3) {
+    if (!process.env.MCP_OAUTH_SECRET) {
+      console.warn('[mcp auth] JWT-shaped token presented but MCP_OAUTH_SECRET not set');
+      throw new AuthError(401, 'invalid_token');
+    }
     const payload = verifyJwt(token, process.env.MCP_OAUTH_SECRET);
     if (payload && payload.typ === 'access' && payload.sub) {
+      console.log('[mcp auth] oauth ok: sub=%s', payload.sub);
       return payload.sub;
     }
+    console.warn('[mcp auth] oauth reject:',
+      payload ? { typ: payload.typ, hasSub: !!payload.sub, exp: payload.exp } : 'verify failed (sig/exp)');
     throw new AuthError(401, 'invalid_token');
   }
 
+  console.warn('[mcp auth] malformed token shape: dots=%d len=%d', token.split('.').length - 1, token.length);
   throw new AuthError(401, 'malformed_token');
 }
 
