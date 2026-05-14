@@ -14,7 +14,7 @@
 // hundred comments) and keeps the component logic simple.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Send, MessageSquare, X, Trash2, CornerDownRight } from 'lucide-react';
+import { Send, X, Trash2, CornerDownRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -46,6 +46,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
   const [sending, setSending] = useState(false);
 
   const feedRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const fetchComments = useCallback(async () => {
     const { data, error } = await supabase
@@ -104,6 +105,16 @@ export default function MatterThread({ matterId }: { matterId: string }) {
       el.scrollTop = el.scrollHeight;
     }
   }, [comments.length]);
+
+  // First-time-empty assist: when the thread opens with no comments,
+  // focus the composer so the user lands ready to type. Avoids the
+  // "where do I start?" confusion when the empty-state copy reads as
+  // a call to action.
+  useEffect(() => {
+    if (!loading && comments.length === 0) {
+      composerRef.current?.focus();
+    }
+  }, [loading, comments.length]);
 
   // Build a top-level list with their replies nested one level.
   const threaded = useMemo(() => {
@@ -214,6 +225,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
         )}
         <div className="flex gap-2 items-end">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -342,11 +354,10 @@ function Avatar({
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-14 text-center">
-      <MessageSquare size={26} className="text-white/15 mb-3" strokeWidth={1.5} />
-      <p className="text-[13px] text-white/55 max-w-xs leading-relaxed">
-        Start the conversation. Comments here are visible to everyone with access
-        to this matter — co-counsel, partners, anyone you've shared with.
+    <div className="flex flex-col items-center justify-center py-10 text-center">
+      <p className="text-[12px] text-white/40 max-w-sm leading-relaxed">
+        No messages yet. Use the composer below to write the first one — your
+        message will be visible to everyone with access to this matter.
       </p>
     </div>
   );
