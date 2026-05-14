@@ -36,6 +36,11 @@ export default async function handler(req, res) {
   const host = req.headers['x-forwarded-host'] || req.headers.host;
   const proto = (req.headers['x-forwarded-proto'] || 'https').toString();
   const resource = `${proto}://${host}/api/mcp`;
+  // Issuer = the origin of this deployment. Must match `issuer` in the
+  // authorization-server metadata document; OAuth 2.1 clients (claude.ai's
+  // Custom Connector among them) cross-check `iss` against AS metadata
+  // before trusting the access token.
+  const issuer = `${proto}://${host}`;
 
   // Coarse diagnostic — surfaces every token-exchange attempt in the function
   // log with the shape of what the client sent. Doesn't log secret material
@@ -74,7 +79,7 @@ export default async function handler(req, res) {
     }
 
     console.log('[oauth-token] success: sub=%s', codePayload.sub);
-    return issueTokens(res, secret, codePayload.sub, client_id, codePayload.scope || 'mcp', resource);
+    return issueTokens(res, secret, codePayload.sub, client_id, codePayload.scope || 'mcp', resource, issuer);
   }
 
   if (grant === 'refresh_token') {
@@ -94,21 +99,40 @@ export default async function handler(req, res) {
     }
 
     console.log('[oauth-token] refresh success: sub=%s', rPayload.sub);
-    return issueTokens(res, secret, rPayload.sub, client_id, rPayload.scope || 'mcp', resource);
+    return issueTokens(res, secret, rPayload.sub, client_id, rPayload.scope || 'mcp', resource, issuer);
   }
 
   console.warn('[oauth-token] unsupported grant_type=%s', grant);
   return json(res, 400, { error: 'unsupported_grant_type' });
 }
 
-function issueTokens(res, secret, user_id, client_id, scope, resource) {
+function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
+  // Access token follows RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens):
+  //   header.typ = "at+jwt"
+  //   payload    = { iss, sub, aud, client_id, scope, exp, iat, jti, ... }
+  // Strict OAuth clients (claude.ai's Custom Connector library among them)
+  // refuse to call the resource server if any of these are missing — the
+  // earlier shape (sub/aud/scope only) is why claude.ai was getting a 200
+  // from us and then silently giving up before hitting /api/mcp.
+  //
+  // The internal `typ: 'access'` payload claim is kept (alongside the JOSE
+  // header `typ: 'at+jwt'`) so /api/mcp's existing verifier — which keys
+  // off `payload.typ === 'access'` — keeps working unchanged.
   const access_token = signJwt(
-    { typ: 'access', sub: user_id, aud: resource, scope },
+    {
+      iss: issuer,
+      typ: 'access',
+      sub: user_id,
+      aud: resource,
+      client_id,
+      scope,
+    },
     secret,
     ACCESS_TTL_SEC,
+    'at+jwt',
   );
   const refresh_token = signJwt(
-    { typ: 'refresh', sub: user_id, client_id, scope },
+    { iss: issuer, typ: 'refresh', sub: user_id, client_id, scope },
     secret,
     REFRESH_TTL_SEC,
   );
