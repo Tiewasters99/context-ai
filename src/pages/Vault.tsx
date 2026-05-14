@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2 } from 'lucide-react';
+import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
@@ -7,6 +7,7 @@ import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import DocumentEditor from '@/components/vault/DocumentEditor';
 import GeneratedDocsPanel from '@/components/vault/GeneratedDocsPanel';
 import MusicLibrary from '@/components/layout/MusicLibrary';
+import ShareModal from '@/components/serverspace/ShareModal';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
@@ -75,6 +76,7 @@ export default function Vault() {
   // have to bounce out to the sidebar.
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
+  const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null);
   const openNewMatter = (
     serverspaceId: string,
     parentMatterId: string | null,
@@ -643,6 +645,7 @@ export default function Vault() {
                               onSelect={(m) => switchToMatter(m.short_code ?? m.id)}
                               onAddChild={openNewMatter}
                               onDelete={openDeleteMatter}
+                              onShare={(id, name) => setShareTarget({ id, name })}
                               onDropFile={handleFileDrop}
                             />
                           ))}
@@ -856,6 +859,14 @@ export default function Vault() {
           onSaved={handleDocumentSaved}
         />
       )}
+      {shareTarget && (
+        <ShareModal
+          scope="matterspace"
+          scopeId={shareTarget.id}
+          scopeName={shareTarget.name}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
     </div>
   );
 }
@@ -871,6 +882,7 @@ interface VaultMatterNodeProps {
   onSelect: (matter: MatterTreeNode['matter']) => void;
   onAddChild: (serverspaceId: string, parentMatterId: string | null, contextLabel: string) => void;
   onDelete: (matterId: string, matterName: string) => void;
+  onShare: (matterId: string, matterName: string) => void;
   onDropFile: (e: React.DragEvent, targetMatterId: string) => void;
 }
 
@@ -884,6 +896,7 @@ function VaultMatterNode({
   onSelect,
   onAddChild,
   onDelete,
+  onShare,
   onDropFile,
 }: VaultMatterNodeProps) {
   const { matter, children } = node;
@@ -941,6 +954,13 @@ function VaultMatterNode({
           <Plus size={10} strokeWidth={2} />
         </button>
         <button
+          onClick={(e) => { e.stopPropagation(); onShare(matter.id, matter.name); }}
+          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          title="Share matter"
+        >
+          <UserPlus size={10} strokeWidth={2} />
+        </button>
+        <button
           onClick={(e) => { e.stopPropagation(); onDelete(matter.id, matter.name); }}
           className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
           title="Delete matter"
@@ -962,6 +982,7 @@ function VaultMatterNode({
               onSelect={onSelect}
               onAddChild={onAddChild}
               onDelete={onDelete}
+              onShare={onShare}
               onDropFile={onDropFile}
             />
           ))}
