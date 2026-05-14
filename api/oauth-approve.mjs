@@ -11,9 +11,12 @@
 // ?code=...&state=... appended. The browser then navigates there, which
 // hands control back to the OAuth client (claude.ai).
 
+import { createClient } from '@supabase/supabase-js';
+
 import { signJwt, verifyJwt, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
-const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -22,23 +25,32 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
 
-  if (!SUPABASE_JWT_SECRET) return json(res, 500, { error: 'config_error', detail: 'SUPABASE_JWT_SECRET unset' });
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return json(res, 500, { error: 'config_error', detail: 'Supabase env vars unset' });
+  }
 
   let oauthSecret;
   try { oauthSecret = getOauthSecret(); }
   catch (e) { return json(res, 500, { error: 'config_error', detail: e.message }); }
 
-  // 1. Caller is the logged-in user (Supabase JWT in Authorization).
+  // 1. Caller is the logged-in user. We forward their Supabase access token
+  // to Supabase itself for validation via auth.getUser(); that handles any
+  // JWT key version (legacy HS256 + the newer ECC signing keys) without us
+  // having to keep our own verifier in sync with Supabase's key rotation.
   const auth = req.headers.authorization || req.headers.Authorization;
   if (!auth || !auth.toLowerCase().startsWith('bearer ')) {
     return json(res, 401, { error: 'login_required', detail: 'missing bearer' });
   }
   const sbToken = auth.slice(7).trim();
-  const sbPayload = verifyJwt(sbToken, SUPABASE_JWT_SECRET);
-  if (!sbPayload || !sbPayload.sub) {
-    return json(res, 401, { error: 'login_required', detail: 'invalid supabase token' });
+  const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${sbToken}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: userData, error: userErr } = await sb.auth.getUser();
+  if (userErr || !userData?.user?.id) {
+    return json(res, 401, { error: 'login_required', detail: userErr?.message || 'invalid supabase session' });
   }
-  const user_id = sbPayload.sub;
+  const user_id = userData.user.id;
 
   // 2. Validate the OAuth params.
   const body = typeof req.body === 'string' ? safeJson(req.body) : (req.body || {});
