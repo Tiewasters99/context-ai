@@ -128,11 +128,57 @@ export default function ClaudeConnect() {
             Connect to Claude
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-xl leading-relaxed">
-            Generate a connector token so Claude Desktop (and other MCP-compatible
-            clients) can search your matters, retrieve passages, and cite them
-            during drafting — authenticated as you, scoped to your data only.
+            Paste a connector token into <strong className="text-[var(--color-text-bright)]">Claude Desktop</strong>,
+            and Claude can search your matters, retrieve passages, and cite them
+            while you draft — authenticated as you, scoped to your data only.
           </p>
         </header>
+
+        {/* Desktop-first walkthrough */}
+        <section className="mb-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+          <h2
+            className="text-lg font-semibold text-[var(--color-text-bright)] mb-4"
+            style={{ fontFamily: 'Playfair Display Variable, serif' }}
+          >
+            Claude Desktop, in three steps
+          </h2>
+          <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
+              <span>
+                Install{' '}
+                <a
+                  href="https://claude.ai/download"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[var(--color-primary)] hover:underline"
+                >
+                  Claude Desktop
+                </a>
+                {' '}if you don't have it.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
+              <span>Generate a connector token below and copy it.</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
+              <span>
+                Paste the config snippet that appears into your{' '}
+                <code className="font-mono text-[var(--color-text-bright)]">
+                  claude_desktop_config.json
+                </code>
+                {' '}and restart Desktop.
+              </span>
+            </li>
+          </ol>
+          <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
+            Once connected, Claude can ask Contextspaces to search across your
+            matters in any conversation — no need to paste content into the
+            chat.
+          </p>
+        </section>
 
         {/* Endpoint banner */}
         <div className="mb-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-5">
@@ -221,6 +267,40 @@ export default function ClaudeConnect() {
               ))}
             </ul>
           )}
+        </section>
+
+        {/* Other clients — supplementary, deliberately below the fold */}
+        <section className="mt-14 pt-6 border-t border-[var(--color-border)]">
+          <h2 className="text-xs font-semibold text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">
+            Other clients
+          </h2>
+          <div className="text-sm text-[var(--color-text-secondary)] leading-relaxed space-y-3">
+            <p>
+              <strong className="text-[var(--color-text-bright)]">Claude Code</strong>{' '}
+              uses the same connector token via{' '}
+              <code className="font-mono text-xs text-[var(--color-text-bright)]">
+                claude mcp add
+              </code>
+              {' '}— handy for terminal-first workflows.
+            </p>
+            <p>
+              <strong className="text-[var(--color-text-bright)]">claude.ai on the web</strong>{' '}
+              is temporarily unavailable as a connector target. Anthropic shipped
+              a regression in April that prevents any third-party MCP server —
+              including their own Salesforce integration — from connecting
+              through the web Custom Connector UI. Tracking{' '}
+              <a
+                href="https://github.com/anthropics/claude-ai-mcp/issues/155"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--color-primary)] hover:underline"
+              >
+                upstream
+              </a>
+              ; Contextspaces will re-enable web support automatically as soon
+              as the fix ships — no action needed on your end.
+            </p>
+          </div>
         </section>
       </div>
 
