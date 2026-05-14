@@ -1,31 +1,81 @@
-// Music library modal — same pattern as TemplateLibrary but for audio. Lists
-// the tracks declared in `public/music/manifest.json` in a categorized grid;
-// clicking a card loads + plays that track via onSelect. Also exposes an
-// "Upload your own" affordance for the existing file-picker flow.
+// Music library modal — same pattern as TemplateLibrary but for audio.
+//
+// Two sources of tracks land in the same grid:
+//   1. Curated manifest at /music/manifest.json — same for every user, only
+//      changes via a code commit.
+//   2. User-added YouTube URLs from this device's localStorage (per-device
+//      persistence, no backend). The user clicks "Add YouTube", pastes a
+//      URL, names it, and it joins the grid.
+//
+// "Upload your own" still exposes a file picker for session-only playback
+// of a local audio file (handled by the parent's onUpload callback; not
+// persisted — by design, because the file blob doesn't live anywhere we
+// could re-fetch on next visit).
+//
+// onSelect now passes the full MusicTrack object so the parent can branch
+// playback on track.type ('audio' uses HTMLAudioElement; 'youtube' uses an
+// iframe).
 
 import { useEffect, useRef, useState } from 'react';
-import { X, Upload, Play, Pause, Music as MusicIcon } from 'lucide-react';
+import {
+  X,
+  Upload,
+  Play,
+  Pause,
+  Music as MusicIcon,
+  Video,
+  Trash2,
+  Plus,
+} from 'lucide-react';
+import {
+  type MusicTrack,
+  getUserTracks,
+  addYouTubeTrack,
+  removeUserTrack,
+  isValidYouTubeUrl,
+} from '@/lib/musicTracks';
 
-export interface MusicTrack {
+interface ManifestEntry {
   id: string;
   name: string;
-  file: string;       // URL relative to site root, e.g. "/music/foo.mp3"
+  file: string;
   category: string;
   artist?: string;
 }
 
 interface MusicLibraryProps {
-  onSelect: (url: string, name: string) => void;
+  onSelect: (track: MusicTrack) => void;
   onUpload: (file: File) => void;
   onClose: () => void;
-  /** URL of the currently-loaded track (highlights the matching card). */
-  currentTrack?: string | null;
+  /** Currently-loaded track id, used to highlight the matching card. */
+  currentTrackId?: string | null;
 }
 
-export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack }: MusicLibraryProps) {
-  const [tracks, setTracks] = useState<MusicTrack[]>([]);
+function manifestToTrack(m: ManifestEntry): MusicTrack {
+  return {
+    id: m.id,
+    name: m.name,
+    category: m.category,
+    artist: m.artist,
+    type: 'audio',
+    file: m.file,
+  };
+}
+
+export default function MusicLibrary({
+  onSelect,
+  onUpload,
+  onClose,
+  currentTrackId,
+}: MusicLibraryProps) {
+  const [curated, setCurated] = useState<MusicTrack[]>([]);
+  const [userTracks, setUserTracks] = useState<MusicTrack[]>([]);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [showAddYt, setShowAddYt] = useState(false);
+  const [ytUrl, setYtUrl] = useState('');
+  const [ytName, setYtName] = useState('');
+  const [ytError, setYtError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -34,12 +84,16 @@ export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack
         if (!r.ok) throw new Error(`manifest ${r.status}`);
         return r.json();
       })
-      .then((data: MusicTrack[]) => setTracks(data))
+      .then((data: ManifestEntry[]) => setCurated(data.map(manifestToTrack)))
       .catch((err) => setLoadError(err?.message ?? 'failed to load manifest'));
+    setUserTracks(getUserTracks());
   }, []);
 
+  const tracks = [...curated, ...userTracks];
   const categories = Array.from(new Set(tracks.map((t) => t.category)));
-  const filtered = activeCategory ? tracks.filter((t) => t.category === activeCategory) : tracks;
+  const filtered = activeCategory
+    ? tracks.filter((t) => t.category === activeCategory)
+    : tracks;
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -47,6 +101,28 @@ export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack
     if (!file) return;
     onUpload(file);
     onClose();
+  };
+
+  const handleAddYt = () => {
+    setYtError(null);
+    if (!isValidYouTubeUrl(ytUrl)) {
+      setYtError('That doesn\'t look like a YouTube URL.');
+      return;
+    }
+    try {
+      addYouTubeTrack({ url: ytUrl, name: ytName });
+      setUserTracks(getUserTracks());
+      setYtUrl('');
+      setYtName('');
+      setShowAddYt(false);
+    } catch (err) {
+      setYtError(err instanceof Error ? err.message : 'Failed to add track');
+    }
+  };
+
+  const handleRemove = (trackId: string) => {
+    removeUserTrack(trackId);
+    setUserTracks(getUserTracks());
   };
 
   return (
@@ -66,10 +142,27 @@ export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack
               Music Library
             </h2>
             <p className="text-[12px] text-white/60 mt-1">
-              {tracks.length} track{tracks.length !== 1 ? 's' : ''} — drop more into <code className="text-[#e8b84a]/70">public/music/</code> and add an entry to <code className="text-[#e8b84a]/70">manifest.json</code>.
+              {tracks.length} track{tracks.length !== 1 ? 's' : ''}
+              {userTracks.length > 0 && (
+                <>
+                  {' '}— {userTracks.length} of yours
+                </>
+              )}
+              . Paste a YouTube URL or upload an audio file to expand the library.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => setShowAddYt((v) => !v)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px] font-medium transition-colors ${
+                showAddYt
+                  ? 'bg-[#ff0000]/20 text-[#ff6464]'
+                  : 'bg-[rgba(255,0,0,0.08)] hover:bg-[rgba(255,0,0,0.18)] text-[#ff6464]'
+              }`}
+              title="Add a YouTube track"
+            >
+              <Video size={13} /> Add YouTube
+            </button>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[rgba(232,184,74,0.12)] hover:bg-[rgba(232,184,74,0.22)] text-[#e8b84a] text-[12px] font-medium transition-colors"
@@ -87,6 +180,43 @@ export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack
           </div>
           <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFile} className="hidden" />
         </div>
+
+        {/* Add YouTube inline form */}
+        {showAddYt && (
+          <div className="px-6 py-4 border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] shrink-0">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="url"
+                value={ytUrl}
+                onChange={(e) => setYtUrl(e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=…"
+                className="flex-1 bg-[rgba(10,10,16,0.6)] border border-[rgba(255,255,255,0.08)] rounded px-3 py-2 text-[12px] text-white placeholder-white/30 focus:outline-none focus:border-[#e8b84a]/40 transition-colors"
+                autoFocus
+              />
+              <input
+                type="text"
+                value={ytName}
+                onChange={(e) => setYtName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddYt(); }}
+                placeholder="Name (e.g. 'Lo-fi study')"
+                className="sm:w-56 bg-[rgba(10,10,16,0.6)] border border-[rgba(255,255,255,0.08)] rounded px-3 py-2 text-[12px] text-white placeholder-white/30 focus:outline-none focus:border-[#e8b84a]/40 transition-colors"
+              />
+              <button
+                onClick={handleAddYt}
+                disabled={!ytUrl.trim()}
+                className="flex items-center justify-center gap-1.5 px-3 py-2 rounded bg-[#e8b84a] text-black text-[12px] font-medium hover:bg-[#f5c558] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Plus size={12} /> Add
+              </button>
+            </div>
+            {ytError && (
+              <p className="text-[11px] text-red-300 mt-2">{ytError}</p>
+            )}
+            <p className="text-[10px] text-white/40 mt-2">
+              Stored only on this device. Other people sharing this matter won't see your additions.
+            </p>
+          </div>
+        )}
 
         {/* Category pills */}
         {categories.length > 1 && (
@@ -122,39 +252,55 @@ export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {filtered.map((t) => {
-                const isActive = currentTrack === t.file;
+                const isActive = currentTrackId === t.id;
+                const isYouTube = t.type === 'youtube';
                 return (
-                  <button
+                  <div
                     key={t.id}
-                    onClick={() => { onSelect(t.file, t.name); onClose(); }}
                     className={`group flex items-center gap-3 p-4 rounded-lg border transition-all text-left ${
                       isActive
                         ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.08)]'
                         : 'border-[rgba(255,255,255,0.06)] hover:border-[#e8b84a]/50 hover:bg-[rgba(255,255,255,0.03)]'
                     }`}
                   >
-                    <div
-                      className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-colors ${
-                        isActive
-                          ? 'bg-[#e8b84a]/20'
-                          : 'bg-[rgba(255,255,255,0.04)] group-hover:bg-[rgba(232,184,74,0.14)]'
-                      }`}
+                    <button
+                      onClick={() => { onSelect(t); onClose(); }}
+                      className="flex items-center gap-3 flex-1 min-w-0 text-left"
                     >
-                      {isActive ? (
-                        <Pause size={16} className="text-[#e8b84a]" strokeWidth={2} />
-                      ) : (
-                        <Play size={16} className="text-white/70 group-hover:text-[#e8b84a] transition-colors" strokeWidth={2} />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-[13px] truncate ${isActive ? 'text-[#e8b84a] font-medium' : 'text-white'}`}>
-                        {t.name}
-                      </p>
-                      <p className="text-[10px] text-white/40 truncate">
-                        {t.category}{t.artist ? ` · ${t.artist}` : ''}
-                      </p>
-                    </div>
-                  </button>
+                      <div
+                        className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-colors ${
+                          isActive
+                            ? 'bg-[#e8b84a]/20'
+                            : 'bg-[rgba(255,255,255,0.04)] group-hover:bg-[rgba(232,184,74,0.14)]'
+                        }`}
+                      >
+                        {isActive ? (
+                          <Pause size={16} className="text-[#e8b84a]" strokeWidth={2} />
+                        ) : isYouTube ? (
+                          <Video size={16} className="text-[#ff6464] group-hover:text-[#ff7878] transition-colors" strokeWidth={2} />
+                        ) : (
+                          <Play size={16} className="text-white/70 group-hover:text-[#e8b84a] transition-colors" strokeWidth={2} />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-[13px] truncate ${isActive ? 'text-[#e8b84a] font-medium' : 'text-white'}`}>
+                          {t.name}
+                        </p>
+                        <p className="text-[10px] text-white/40 truncate">
+                          {t.category}{t.artist ? ` · ${t.artist}` : ''}{isYouTube ? ' · YouTube' : ''}
+                        </p>
+                      </div>
+                    </button>
+                    {t.userAdded && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleRemove(t.id); }}
+                        className="shrink-0 p-1.5 rounded text-white/30 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
+                        title="Remove from your library"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -163,7 +309,7 @@ export default function MusicLibrary({ onSelect, onUpload, onClose, currentTrack
 
         <div className="px-6 py-3 border-t border-[rgba(255,255,255,0.06)] shrink-0">
           <p className="text-[10px] text-white/40 text-center">
-            Curated for focus and writing. Click a track to swap; the current track stops automatically.
+            Curated for focus and writing. Your YouTube additions stay on this device.
           </p>
         </div>
       </div>

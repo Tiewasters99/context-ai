@@ -5,14 +5,21 @@
 // any per-item cover (so it overlays the GPU-cluster default and any page's
 // own expanded cover for the session). Uploaded images persist to a
 // dedicated `ambient/` folder inside the cover-images bucket — kept separate
-// from the regular Contextspaces.ai covers. Music is session-only, exactly
-// like the Vault's.
+// from the regular Contextspaces.ai covers.
+//
+// Music supports two source types:
+//   - 'audio'   — HTMLAudioElement playing a local file URL (curated
+//                 manifest or session blob from "Upload your own").
+//   - 'youtube' — hidden YouTube iframe with autoplay+loop, controlled
+//                 via postMessage commands. Persists per-device via
+//                 localStorage (see src/lib/musicTracks.ts).
 
 import { useState, useRef, useEffect } from 'react';
 import { Music, Image as ImageIcon, LayoutGrid, X, Maximize, EyeOff, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import MusicLibrary from '@/components/layout/MusicLibrary';
+import { type MusicTrack, youtubeEmbedUrl } from '@/lib/musicTracks';
 
 export default function AmbientControls() {
   const [backdropUrl, setBackdropUrl] = useState<string | null>(null);
@@ -22,13 +29,11 @@ export default function AmbientControls() {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [musicPlaying, setMusicPlaying] = useState(false);
-  // Reactive copy of the loaded track's URL, so render knows whether to show
-  // the play/pause toggle vs. "open library" affordance. Distinct from
-  // musicUrlRef (which keeps the value for cleanup even between renders).
-  const [loadedTrack, setLoadedTrack] = useState<string | null>(null);
+  const [loadedTrack, setLoadedTrack] = useState<MusicTrack | null>(null);
   const [showMusicLibrary, setShowMusicLibrary] = useState(false);
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const musicUrlRef = useRef<string | null>(null);
+  const ytIframeRef = useRef<HTMLIFrameElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   // Apply / clear the backdrop CSS variable.
@@ -42,7 +47,10 @@ export default function AmbientControls() {
   // Tear down audio + blob URL (and any leftover backdrop var) on unmount.
   useEffect(() => () => {
     if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
-    if (musicUrlRef.current) { URL.revokeObjectURL(musicUrlRef.current); musicUrlRef.current = null; }
+    if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
+      URL.revokeObjectURL(musicUrlRef.current);
+      musicUrlRef.current = null;
+    }
     document.documentElement.style.removeProperty('--ambient-cover');
   }, []);
 
@@ -74,33 +82,67 @@ export default function AmbientControls() {
     }
   };
 
-  // Load a track from a URL (curated library entry) or an uploaded file blob
-  // and start it. Tears down any previous audio + revokes the prior blob URL.
-  const loadAndPlayTrack = (url: string) => {
+  // Send a YouTube iframe API command to the loaded player.
+  const ytCmd = (func: 'playVideo' | 'pauseVideo') => {
+    ytIframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args: [] }),
+      '*',
+    );
+  };
+
+  // Branch on track type. Audio uses the existing <audio> path; YouTube
+  // gets a hidden iframe rendered below, with autoplay handling initial
+  // playback and postMessage handling subsequent play/pause.
+  const loadAndPlayTrack = (track: MusicTrack) => {
+    // Tear down whatever was playing before.
     if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
     if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
       URL.revokeObjectURL(musicUrlRef.current);
     }
-    musicUrlRef.current = url;
-    setLoadedTrack(url);
-    const audio = new Audio(url);
-    audio.loop = true;
-    audio.volume = 0.5;
-    audio.addEventListener('play', () => setMusicPlaying(true));
-    audio.addEventListener('pause', () => setMusicPlaying(false));
-    musicRef.current = audio;
-    audio.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false));
+    musicUrlRef.current = null;
+    ytIframeRef.current = null;
+
+    setLoadedTrack(track);
+
+    if (track.type === 'audio' && track.file) {
+      musicUrlRef.current = track.file;
+      const audio = new Audio(track.file);
+      audio.loop = true;
+      audio.volume = 0.5;
+      audio.addEventListener('play', () => setMusicPlaying(true));
+      audio.addEventListener('pause', () => setMusicPlaying(false));
+      musicRef.current = audio;
+      audio.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false));
+    } else if (track.type === 'youtube') {
+      // The iframe renders below with autoplay=1, which kicks off playback
+      // as long as this load was triggered by a user gesture (clicking a
+      // library card counts). Mark as playing optimistically.
+      setMusicPlaying(true);
+    }
   };
 
   const handleLibraryUpload = (file: File) => {
-    loadAndPlayTrack(URL.createObjectURL(file));
+    // Session-only blob upload — wrap as a track shape so we go through the
+    // same loader path.
+    const url = URL.createObjectURL(file);
+    loadAndPlayTrack({
+      id: `upload-${Date.now()}`,
+      name: file.name.replace(/\.[^.]+$/, ''),
+      category: 'Upload',
+      type: 'audio',
+      file: url,
+    });
   };
 
   const toggleMusic = () => {
-    // No track loaded → open the library so the user can pick one (or upload).
-    if (!musicRef.current) { setShowMusicLibrary(true); return; }
-    if (musicPlaying) musicRef.current.pause();
-    else musicRef.current.play().catch(() => { /* autoplay still blocked */ });
+    if (!loadedTrack) { setShowMusicLibrary(true); return; }
+    if (loadedTrack.type === 'audio') {
+      if (musicPlaying) musicRef.current?.pause();
+      else musicRef.current?.play().catch(() => { /* autoplay still blocked */ });
+    } else if (loadedTrack.type === 'youtube') {
+      if (musicPlaying) { ytCmd('pauseVideo'); setMusicPlaying(false); }
+      else { ytCmd('playVideo'); setMusicPlaying(true); }
+    }
   };
 
   const ejectMusic = () => {
@@ -109,6 +151,7 @@ export default function AmbientControls() {
       URL.revokeObjectURL(musicUrlRef.current);
     }
     musicUrlRef.current = null;
+    ytIframeRef.current = null;
     setLoadedTrack(null);
     setMusicPlaying(false);
   };
@@ -175,6 +218,27 @@ export default function AmbientControls() {
         <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
       </div>
 
+      {/* YouTube playback. Rendered as a small visible mini-player above
+          the controls: gives the user a fallback if browser blocks
+          autoplay (they can click the visible YT player directly) and
+          shows what's playing at a glance. */}
+      {loadedTrack?.type === 'youtube' && loadedTrack.youtubeId && (
+        <iframe
+          ref={ytIframeRef}
+          src={youtubeEmbedUrl(loadedTrack.youtubeId)}
+          allow="autoplay; encrypted-media"
+          title={loadedTrack.name}
+          className="fixed z-40 rounded-lg border border-[rgba(255,255,255,0.08)] shadow-2xl"
+          style={{
+            right: '20px',
+            bottom: '74px',
+            width: '180px',
+            height: '102px',
+            backgroundColor: 'rgba(0,0,0,0.6)',
+          }}
+        />
+      )}
+
       {uploadError && (
         <button
           onClick={() => setUploadError(null)}
@@ -193,8 +257,8 @@ export default function AmbientControls() {
 
       {showMusicLibrary && (
         <MusicLibrary
-          currentTrack={loadedTrack}
-          onSelect={(url) => loadAndPlayTrack(url)}
+          currentTrackId={loadedTrack?.id ?? null}
+          onSelect={(track) => loadAndPlayTrack(track)}
           onUpload={handleLibraryUpload}
           onClose={() => setShowMusicLibrary(false)}
         />

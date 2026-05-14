@@ -7,6 +7,7 @@ import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import DocumentEditor from '@/components/vault/DocumentEditor';
 import GeneratedDocsPanel from '@/components/vault/GeneratedDocsPanel';
 import MusicLibrary from '@/components/layout/MusicLibrary';
+import { type MusicTrack, youtubeEmbedUrl } from '@/lib/musicTracks';
 import ShareModal from '@/components/serverspace/ShareModal';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -43,9 +44,10 @@ export default function Vault() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<VaultView>('home');
   const [musicPlaying, setMusicPlaying] = useState(false);
-  const [loadedTrack, setLoadedTrack] = useState<string | null>(null);
+  const [loadedTrack, setLoadedTrack] = useState<MusicTrack | null>(null);
   const [showMusicLibrary, setShowMusicLibrary] = useState(false);
   const musicRef = useRef<HTMLAudioElement | null>(null);
+  const ytIframeRef = useRef<HTMLIFrameElement | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
@@ -373,33 +375,63 @@ export default function Vault() {
     };
   }, []);
 
-  // Load a track from a URL (curated library entry) or an uploaded file blob
-  // and start it. Tears down any previous audio + revokes the prior blob URL.
-  const loadAndPlayTrack = (url: string) => {
+  // Send a YouTube iframe API command to the loaded player.
+  const ytCmd = (func: 'playVideo' | 'pauseVideo') => {
+    ytIframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args: [] }),
+      '*',
+    );
+  };
+
+  // Branch on track type. Audio uses HTMLAudioElement; YouTube uses a
+  // hidden iframe rendered below, with autoplay handling the first play
+  // and postMessage handling subsequent pause/resume.
+  const loadAndPlayTrack = (track: MusicTrack) => {
     if (musicRef.current) { musicRef.current.pause(); musicRef.current = null; }
     if (musicUrlRef.current && musicUrlRef.current.startsWith('blob:')) {
       URL.revokeObjectURL(musicUrlRef.current);
     }
-    musicUrlRef.current = url;
-    setLoadedTrack(url);
-    const audio = new Audio(url);
-    audio.loop = true;
-    audio.volume = 0.5;
-    audio.addEventListener('pause', () => setMusicPlaying(false));
-    audio.addEventListener('play', () => setMusicPlaying(true));
-    musicRef.current = audio;
-    audio.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false));
+    musicUrlRef.current = null;
+    ytIframeRef.current = null;
+
+    setLoadedTrack(track);
+
+    if (track.type === 'audio' && track.file) {
+      musicUrlRef.current = track.file;
+      const audio = new Audio(track.file);
+      audio.loop = true;
+      audio.volume = 0.5;
+      audio.addEventListener('pause', () => setMusicPlaying(false));
+      audio.addEventListener('play', () => setMusicPlaying(true));
+      musicRef.current = audio;
+      audio.play().then(() => setMusicPlaying(true)).catch(() => setMusicPlaying(false));
+    } else if (track.type === 'youtube') {
+      // iframe with autoplay=1 rendered below; user gesture (clicking
+      // the library card) satisfies the browser autoplay policy.
+      setMusicPlaying(true);
+    }
   };
 
   const handleMusicLibraryUpload = (file: File) => {
-    loadAndPlayTrack(URL.createObjectURL(file));
+    const url = URL.createObjectURL(file);
+    loadAndPlayTrack({
+      id: `upload-${Date.now()}`,
+      name: file.name.replace(/\.[^.]+$/, ''),
+      category: 'Upload',
+      type: 'audio',
+      file: url,
+    });
   };
 
   const toggleMusic = () => {
-    // No track loaded → open the library so the user can pick one (or upload).
-    if (!musicRef.current) { setShowMusicLibrary(true); return; }
-    if (musicPlaying) musicRef.current.pause();
-    else musicRef.current.play().catch(() => { /* autoplay still blocked */ });
+    if (!loadedTrack) { setShowMusicLibrary(true); return; }
+    if (loadedTrack.type === 'audio') {
+      if (musicPlaying) musicRef.current?.pause();
+      else musicRef.current?.play().catch(() => { /* autoplay still blocked */ });
+    } else if (loadedTrack.type === 'youtube') {
+      if (musicPlaying) { ytCmd('pauseVideo'); setMusicPlaying(false); }
+      else { ytCmd('playVideo'); setMusicPlaying(true); }
+    }
   };
 
   const ejectMusic = () => {
@@ -408,6 +440,7 @@ export default function Vault() {
       URL.revokeObjectURL(musicUrlRef.current);
     }
     musicUrlRef.current = null;
+    ytIframeRef.current = null;
     setLoadedTrack(null);
     setMusicPlaying(false);
   };
@@ -817,10 +850,29 @@ export default function Vault() {
       )}
       {showMusicLibrary && (
         <MusicLibrary
-          currentTrack={loadedTrack}
-          onSelect={(url) => loadAndPlayTrack(url)}
+          currentTrackId={loadedTrack?.id ?? null}
+          onSelect={(track) => loadAndPlayTrack(track)}
           onUpload={handleMusicLibraryUpload}
           onClose={() => setShowMusicLibrary(false)}
+        />
+      )}
+      {/* YouTube mini-player. Stays visible at 180x102 above the controls so
+          that if the browser blocks autoplay, the user can click the YT
+          play button directly. */}
+      {loadedTrack?.type === 'youtube' && loadedTrack.youtubeId && (
+        <iframe
+          ref={ytIframeRef}
+          src={youtubeEmbedUrl(loadedTrack.youtubeId)}
+          allow="autoplay; encrypted-media"
+          title={loadedTrack.name}
+          className="fixed z-40 rounded-lg border border-[rgba(255,255,255,0.08)] shadow-2xl"
+          style={{
+            right: '20px',
+            bottom: '74px',
+            width: '180px',
+            height: '102px',
+            backgroundColor: 'rgba(0,0,0,0.6)',
+          }}
         />
       )}
       {newMatterContext && (
