@@ -12,6 +12,15 @@
     },
     "api/llm.mjs": {
       "maxDuration": 300
+    },
+    "api/deepgram-token.mjs": {
+      "maxDuration": 10
+    },
+    "api/meeting-chat.mjs": {
+      "maxDuration": 60
+    },
+    "api/meeting-flag.mjs": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

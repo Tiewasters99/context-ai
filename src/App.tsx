@@ -14,6 +14,7 @@ import TableView from '@/pages/TableView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import ClaudeConnect from '@/pages/ClaudeConnect';
+import MeetingView from '@/pages/MeetingView';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="table/:id" element={<TableView />} />
               <Route path="vault" element={<Vault />} />
               <Route path="claude-connect" element={<ClaudeConnect />} />
+              <Route path="m/:id" element={<MeetingView />} />
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>

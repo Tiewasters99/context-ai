@@ -6,6 +6,7 @@ import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
+import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import {
@@ -15,9 +16,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Vault'] as const;
+const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread' | 'Meetings'>;
 
 interface MatterRow {
   id: string;
@@ -199,7 +200,10 @@ export default function MatterspaceView() {
         {activeTab === 'Thread' && matter && (
           <MatterThread matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && matter && (
+        {activeTab === 'Meetings' && matter && (
+          <MeetingsSurface matterId={matter.id} />
+        )}
+        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>
