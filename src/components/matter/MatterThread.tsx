@@ -116,6 +116,22 @@ export default function MatterThread({ matterId }: { matterId: string }) {
     }
   }, [loading, comments.length]);
 
+  // When the user clicks Reply on a comment, point replyTo at that
+  // comment, focus the composer textarea, and scroll it into view so
+  // the user can start typing immediately. Replies-to-replies flatten
+  // to the same top-level parent (handled by the caller passing the
+  // top's comment in).
+  const startReply = useCallback((target: CommentRow) => {
+    setReplyTo(target);
+    // Defer focus until after the state update + re-render so the
+    // textarea is the right shape (placeholder switched to "Write a
+    // reply…").
+    setTimeout(() => {
+      composerRef.current?.focus();
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 0);
+  }, []);
+
   // Build a top-level list with their replies nested one level.
   const threaded = useMemo(() => {
     const tops = comments.filter((c) => !c.parent_id);
@@ -133,12 +149,20 @@ export default function MatterThread({ matterId }: { matterId: string }) {
   const handleSend = async () => {
     const body = draft.trim();
     if (!body || !user || sending) return;
+    // Threading stays flat (one level deep): when replying to a top-level
+    // comment, parent_id = that top's id; when replying to a reply,
+    // parent_id = that reply's parent (i.e., still the top). The UI lets
+    // you click Reply on any comment, but the data model collapses to a
+    // single nesting level so the rendering stays readable.
+    const parentId = replyTo
+      ? (replyTo.parent_id ?? replyTo.id)
+      : null;
     setSending(true);
     setError(null);
     const { error } = await supabase.from('matter_comments').insert({
       matterspace_id: matterId,
       user_id: user.id,
-      parent_id: replyTo?.id ?? null,
+      parent_id: parentId,
       body,
     });
     setSending(false);
@@ -159,6 +183,81 @@ export default function MatterThread({ matterId }: { matterId: string }) {
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', c.id);
     // Realtime will refetch.
+  };
+
+  // Inline composer — renders right below the comment the user clicked
+  // Reply on. Closure access to all the parent state (draft, sending,
+  // error, etc.) so we don't have to prop-drill. Two render sites: under
+  // a comment (when replyTo.id matches) and at the bottom of the feed
+  // (when replyTo is null — i.e., writing a new top-level message).
+  const composer = (variant: 'inline' | 'bottom') => {
+    const isInline = variant === 'inline';
+    return (
+      <div
+        className={
+          isInline
+            ? 'mt-2 rounded-lg border border-[rgba(232,184,74,0.18)] bg-[rgba(232,184,74,0.04)] p-3'
+            : 'mt-3 border-t border-[rgba(255,255,255,0.06)] pt-3'
+        }
+      >
+        {isInline && replyTo && (
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[11px] text-[#e8b84a]">
+              Replying to {displayName(replyTo.author)}
+            </span>
+            <button
+              onClick={() => setReplyTo(null)}
+              className="text-white/40 hover:text-white/80"
+              title="Cancel reply"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        <div className="flex gap-2 items-end">
+          <textarea
+            ref={composerRef}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                e.preventDefault();
+                handleSend();
+              }
+              if (e.key === 'Escape' && replyTo) {
+                e.preventDefault();
+                setReplyTo(null);
+              }
+            }}
+            placeholder={isInline ? 'Write a reply…' : 'Write a message to the team…'}
+            rows={2}
+            maxLength={10000}
+            className="flex-1 rounded-lg bg-[rgba(10,10,16,0.6)] border border-[rgba(255,255,255,0.08)] px-3 py-2 text-[13px] text-[#f5f1e8] placeholder-white/30 resize-none focus:outline-none focus:border-[#e8b84a]/40 transition-colors"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!draft.trim() || sending}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[12px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Send size={13} strokeWidth={2} />
+            {sending ? 'Sending…' : isInline ? 'Reply' : 'Send'}
+          </button>
+        </div>
+        {!isInline && (
+          <p className="text-[10px] text-white/30 mt-1.5">
+            Visible to everyone with matter access. Cmd/Ctrl+Enter to send.
+          </p>
+        )}
+        {isInline && (
+          <p className="text-[10px] text-white/30 mt-1.5">
+            Cmd/Ctrl+Enter to send · Esc to cancel.
+          </p>
+        )}
+        {error && (
+          <p className="text-[11px] text-red-300 mt-2">{error}</p>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -182,20 +281,33 @@ export default function MatterThread({ matterId }: { matterId: string }) {
                 <CommentItem
                   comment={top}
                   currentUserId={user?.id}
-                  onReply={() => setReplyTo(top)}
+                  onReply={() => startReply(top)}
                   onDelete={() => handleDelete(top)}
                 />
+                {/* Inline composer right under the top comment when
+                    replying to it — spatially adjacent so the user
+                    sees their click "land" next to where they clicked. */}
+                {replyTo?.id === top.id && (
+                  <div className="ml-10">{composer('inline')}</div>
+                )}
                 {replies.length > 0 && (
                   <ul className="pl-7 space-y-2 border-l border-[rgba(255,255,255,0.06)] ml-3">
                     {replies.map((r) => (
-                      <li key={r.id}>
+                      <li key={r.id} className="space-y-2">
                         <CommentItem
                           comment={r}
                           currentUserId={user?.id}
-                          onReply={() => setReplyTo(top)}
+                          onReply={() => startReply(r)}
                           onDelete={() => handleDelete(r)}
                           isReply
                         />
+                        {/* Inline composer under a reply when replying
+                            to it — the data model still flattens to the
+                            top's parent_id (see handleSend), but the
+                            composer renders here spatially. */}
+                        {replyTo?.id === r.id && (
+                          <div className="ml-8">{composer('inline')}</div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -206,57 +318,10 @@ export default function MatterThread({ matterId }: { matterId: string }) {
         )}
       </div>
 
-      {/* Composer */}
-      <div className="mt-3 border-t border-[rgba(255,255,255,0.06)] pt-3">
-        {replyTo && (
-          <div className="flex items-center justify-between mb-2 px-3 py-1.5 rounded bg-[rgba(232,184,74,0.06)] border border-[rgba(232,184,74,0.18)]">
-            <span className="text-[11px] text-[#e8b84a]">
-              Replying to {displayName(replyTo.author)} —{' '}
-              <span className="text-white/50">{truncate(replyTo.body, 60)}</span>
-            </span>
-            <button
-              onClick={() => setReplyTo(null)}
-              className="text-white/40 hover:text-white/80"
-              title="Cancel reply"
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
-        <div className="flex gap-2 items-end">
-          <textarea
-            ref={composerRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            placeholder={
-              replyTo ? 'Write a reply…' : 'Write a message to the team…'
-            }
-            rows={2}
-            maxLength={10000}
-            className="flex-1 rounded-lg bg-[rgba(10,10,16,0.6)] border border-[rgba(255,255,255,0.08)] px-3 py-2 text-[13px] text-[#f5f1e8] placeholder-white/30 resize-none focus:outline-none focus:border-[#e8b84a]/40 transition-colors"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!draft.trim() || sending}
-            className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[12px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <Send size={13} strokeWidth={2} />
-            {sending ? 'Sending…' : 'Send'}
-          </button>
-        </div>
-        <p className="text-[10px] text-white/30 mt-1.5">
-          {replyTo ? 'Reply visible to everyone with matter access.' : 'Visible to everyone with matter access. Cmd/Ctrl+Enter to send.'}
-        </p>
-        {error && (
-          <p className="text-[11px] text-red-300 mt-2">{error}</p>
-        )}
-      </div>
+      {/* Bottom composer — only when we're writing a new top-level
+          message. When replying, the composer renders inline above and
+          this slot hides so there's never two composers competing. */}
+      {!replyTo && composer('bottom')}
     </div>
   );
 }
@@ -298,20 +363,23 @@ function CommentItem({
         <p className={`text-[#e8e5dc] whitespace-pre-wrap break-words ${isReply ? 'text-[12px]' : 'text-[13px]'}`}>
           {comment.body}
         </p>
-        <div className="flex items-center gap-3 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {!isReply && (
-            <button
-              onClick={onReply}
-              className="flex items-center gap-1 text-[10px] text-white/40 hover:text-[#e8b84a] transition-colors"
-            >
-              <CornerDownRight size={10} />
-              Reply
-            </button>
-          )}
+        {/* Reply is always visible (discoverability — the prior
+            opacity-on-hover treatment was a real problem: invisible on
+            touch, easy to miss on desktop). Delete stays hover-only
+            because it's destructive and we don't want it competing for
+            attention on every comment. */}
+        <div className="flex items-center gap-3 mt-1 group/actions">
+          <button
+            onClick={onReply}
+            className="flex items-center gap-1 text-[10px] text-white/50 hover:text-[#e8b84a] transition-colors"
+          >
+            <CornerDownRight size={10} />
+            Reply
+          </button>
           {isOwn && (
             <button
               onClick={onDelete}
-              className="flex items-center gap-1 text-[10px] text-white/40 hover:text-red-300 transition-colors"
+              className="flex items-center gap-1 text-[10px] text-white/30 hover:text-red-300 transition-colors opacity-0 group-hover:opacity-100"
               title="Delete"
             >
               <Trash2 size={10} />
@@ -371,10 +439,6 @@ function EmptyState() {
 function displayName(p: CommentRow['author']) {
   if (!p) return 'Unknown';
   return p.display_name?.trim() || p.email || 'Unknown';
-}
-
-function truncate(s: string, n: number) {
-  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
 function relativeTime(iso: string) {
