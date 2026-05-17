@@ -14,6 +14,14 @@ import {
 import mammoth from 'mammoth';
 import { supabase } from '@/lib/supabase';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
+import {
+  createAnnotation,
+  deleteAnnotation,
+  listAnnotations,
+  type Annotation,
+  type AnnotationColor,
+  type FractionalRect,
+} from '@/lib/document-annotations';
 
 // pdfjs worker URL — same pattern as src/lib/extract.ts. Resolved at build
 // time by Vite from the installed pdfjs-dist package.
@@ -63,6 +71,16 @@ export default function DocumentReader() {
   const [thumbnails, setThumbnails] = useState<(string | null)[]>([]);
   const [outline, setOutline] = useState<OutlineNode[] | null>(null);
 
+  // Annotations state — PDF only. Loaded once per document; updated
+  // optimistically on create/delete so we don't round-trip the DB for UX.
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [selectionMenu, setSelectionMenu] = useState<{
+    x: number;
+    y: number;
+    rects: FractionalRect[];
+    anchorText: string;
+  } | null>(null);
+
   const pdfDocRef = useRef<unknown>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
@@ -99,6 +117,8 @@ export default function DocumentReader() {
     setMatchIdx(0);
     setThumbnails([]);
     setOutline(null);
+    setAnnotations([]);
+    setSelectionMenu(null);
 
     void (async () => {
       const { data, error } = await supabase
@@ -314,6 +334,98 @@ export default function DocumentReader() {
     })();
     return () => { cancelled = true; };
   }, [loadState, fileKind, id]);
+
+  // Load annotations once per document.
+  useEffect(() => {
+    if (!id || loadState !== 'ready' || fileKind !== 'pdf') return;
+    let cancelled = false;
+    void (async () => {
+      const rows = await listAnnotations(id);
+      if (!cancelled) setAnnotations(rows);
+    })();
+    return () => { cancelled = true; };
+  }, [id, loadState, fileKind]);
+
+  // Watch text-layer selections — when the user releases the mouse after
+  // selecting text inside the current page, capture the rectangles in
+  // page-fractional coordinates so we can persist a highlight that scales
+  // cleanly to any zoom level.
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') return;
+
+    function handleMouseUp() {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) {
+        setSelectionMenu(null);
+        return;
+      }
+      const layer = textLayerRef.current;
+      if (!layer) return;
+
+      // Only show the popover when the selection is anchored inside the
+      // text layer (not random page chrome).
+      const anchorNode = sel.anchorNode;
+      if (!anchorNode || !layer.contains(anchorNode)) {
+        setSelectionMenu(null);
+        return;
+      }
+
+      const range = sel.getRangeAt(0);
+      const clientRects = Array.from(range.getClientRects()).filter(
+        (r) => r.width > 0 && r.height > 0,
+      );
+      if (clientRects.length === 0) {
+        setSelectionMenu(null);
+        return;
+      }
+
+      const layerRect = layer.getBoundingClientRect();
+      const fractRects: FractionalRect[] = clientRects.map((r) => ({
+        x: (r.left - layerRect.left) / layerRect.width,
+        y: (r.top - layerRect.top) / layerRect.height,
+        w: r.width / layerRect.width,
+        h: r.height / layerRect.height,
+      }));
+
+      const union = range.getBoundingClientRect();
+      setSelectionMenu({
+        x: union.left + union.width / 2,
+        y: union.top - 8,
+        rects: fractRects,
+        anchorText: sel.toString().trim().slice(0, 1000),
+      });
+    }
+
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => document.removeEventListener('mouseup', handleMouseUp);
+  }, [loadState, fileKind, page, zoom]);
+
+  const saveAnnotation = useCallback(
+    async (color: AnnotationColor) => {
+      if (!id || !selectionMenu) return;
+      const ann = await createAnnotation({
+        documentId: id,
+        page,
+        color,
+        rects: selectionMenu.rects,
+        anchorText: selectionMenu.anchorText,
+      });
+      if (ann) {
+        setAnnotations((prev) => [...prev, ann]);
+      }
+      // Clear selection + popover regardless of success.
+      window.getSelection()?.removeAllRanges();
+      setSelectionMenu(null);
+    },
+    [id, page, selectionMenu],
+  );
+
+  const removeAnnotation = useCallback(async (annId: string) => {
+    const ok = await deleteAnnotation(annId);
+    if (ok) {
+      setAnnotations((prev) => prev.filter((a) => a.id !== annId));
+    }
+  }, []);
 
   const jumpDest = useCallback(async (dest: unknown) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -565,6 +677,10 @@ export default function DocumentReader() {
             {loadState === 'ready' && fileKind === 'pdf' && (
               <div className="relative">
                 <canvas ref={canvasRef} className="block shadow-2xl" />
+                <AnnotationsOverlay
+                  annotations={annotations.filter((a) => a.page === page)}
+                  onRemove={(annId) => void removeAnnotation(annId)}
+                />
                 <div ref={textLayerRef} className="textLayer absolute inset-0" />
               </div>
             )}
@@ -622,6 +738,17 @@ export default function DocumentReader() {
       )}
         </div>
       </div>
+      {selectionMenu && (
+        <SelectionMenu
+          x={selectionMenu.x}
+          y={selectionMenu.y}
+          onPick={(c) => void saveAnnotation(c)}
+          onCancel={() => {
+            window.getSelection()?.removeAllRanges();
+            setSelectionMenu(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -640,6 +767,105 @@ function highlightTextLayerMatches(container: HTMLElement, query: string) {
       span.style.color = 'inherit';
     }
   });
+}
+
+// Inline colored boxes for each annotation rect on the current page.
+// Positioned inside the same parent as the canvas + text layer; sits
+// between them in z-order so highlights show through the (transparent)
+// text layer but selection still works on top.
+const ANNOTATION_FILL: Record<AnnotationColor, string> = {
+  gold: 'rgba(245, 207, 96, 0.45)',
+  green: 'rgba(134, 239, 172, 0.4)',
+  pink: 'rgba(244, 114, 182, 0.4)',
+  blue: 'rgba(96, 165, 250, 0.4)',
+};
+const ANNOTATION_DOT: Record<AnnotationColor, string> = {
+  gold: '#f5cf60',
+  green: '#86efac',
+  pink: '#f472b6',
+  blue: '#60a5fa',
+};
+
+function AnnotationsOverlay({
+  annotations,
+  onRemove,
+}: {
+  annotations: Annotation[];
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <div className="absolute inset-0 pointer-events-none">
+      {annotations.map((ann) =>
+        ann.rects.map((rect, i) => (
+          <div
+            key={`${ann.id}-${i}`}
+            className="absolute group"
+            style={{
+              left: `${rect.x * 100}%`,
+              top: `${rect.y * 100}%`,
+              width: `${rect.w * 100}%`,
+              height: `${rect.h * 100}%`,
+              backgroundColor: ANNOTATION_FILL[ann.color],
+              borderRadius: '2px',
+              pointerEvents: 'auto',
+            }}
+            title={ann.anchor_text || undefined}
+          >
+            {i === 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onRemove(ann.id); }}
+                className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-black/70 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                title="Remove highlight"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        )),
+      )}
+    </div>
+  );
+}
+
+function SelectionMenu({
+  x,
+  y,
+  onPick,
+  onCancel,
+}: {
+  x: number;
+  y: number;
+  onPick: (color: AnnotationColor) => void;
+  onCancel: () => void;
+}) {
+  const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
+  // Clamp to viewport so the popover doesn't get clipped off the top.
+  const top = Math.max(8, y - 44);
+  return (
+    <div
+      className="fixed z-[60] flex items-center gap-1 px-1.5 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
+      style={{ left: x, top, transform: 'translateX(-50%)' }}
+      onMouseDown={(e) => e.preventDefault()} // don't drop the selection on click
+    >
+      {colors.map((c) => (
+        <button
+          key={c}
+          onClick={() => onPick(c)}
+          className="w-5 h-5 rounded-full hover:scale-110 transition"
+          style={{ backgroundColor: ANNOTATION_DOT[c] }}
+          title={`Highlight ${c}`}
+        />
+      ))}
+      <div className="w-px h-4 bg-white/15 mx-0.5" />
+      <button
+        onClick={onCancel}
+        className="w-5 h-5 rounded-full flex items-center justify-center text-white/55 hover:text-white text-[12px] leading-none"
+        title="Cancel"
+      >
+        ×
+      </button>
+    </div>
+  );
 }
 
 function ReaderStyle({ theme }: { theme: Theme }) {
