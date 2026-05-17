@@ -9,9 +9,11 @@ import {
   Moon,
   X,
   Search,
+  PanelLeft,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { supabase } from '@/lib/supabase';
+import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 
 // pdfjs worker URL — same pattern as src/lib/extract.ts. Resolved at build
 // time by Vite from the installed pdfjs-dist package.
@@ -56,6 +58,11 @@ export default function DocumentReader() {
   const [searching, setSearching] = useState(false);
   const pageTextCacheRef = useRef<string[]>([]);
 
+  // Sidebar state — PDF only.
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [thumbnails, setThumbnails] = useState<(string | null)[]>([]);
+  const [outline, setOutline] = useState<OutlineNode[] | null>(null);
+
   const pdfDocRef = useRef<unknown>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
@@ -72,6 +79,13 @@ export default function DocumentReader() {
   }, []);
   useEffect(() => { localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom]);
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
+  useEffect(() => {
+    const s = localStorage.getItem('ctx_reader_sidebar_open');
+    if (s === '0') setSidebarOpen(false);
+  }, []);
+  useEffect(() => {
+    localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
+  }, [sidebarOpen]);
 
   // Load metadata, download blob, branch by file kind.
   useEffect(() => {
@@ -83,6 +97,8 @@ export default function DocumentReader() {
     pageTextCacheRef.current = [];
     setMatches([]);
     setMatchIdx(0);
+    setThumbnails([]);
+    setOutline(null);
 
     void (async () => {
       const { data, error } = await supabase
@@ -241,6 +257,81 @@ export default function DocumentReader() {
     [totalPages],
   );
 
+  // Fetch the PDF's outline (table of contents) once it loads. Many PDFs
+  // don't have one — that's fine, we just hide the Contents tab.
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pdf = pdfDocRef.current as any;
+    if (!pdf) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const o = await pdf.getOutline();
+        if (!cancelled) setOutline(o || null);
+      } catch {
+        if (!cancelled) setOutline(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [loadState, fileKind, id]);
+
+  // Render the thumbnail strip sequentially. Each page rendered to an
+  // offscreen canvas at low scale, captured as a data URL, and added to
+  // the thumbnails state so the sidebar can show it.
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pdf = pdfDocRef.current as any;
+    if (!pdf) return;
+    const N: number = pdf.numPages;
+    setThumbnails(new Array(N).fill(null));
+
+    let cancelled = false;
+    void (async () => {
+      for (let p = 1; p <= N; p++) {
+        if (cancelled) return;
+        try {
+          const pdfPage = await pdf.getPage(p);
+          const viewport = pdfPage.getViewport({ scale: 0.18 });
+          const off = document.createElement('canvas');
+          off.width = viewport.width;
+          off.height = viewport.height;
+          const ctx = off.getContext('2d');
+          if (!ctx) continue;
+          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+          if (cancelled) return;
+          const dataUrl = off.toDataURL('image/png');
+          setThumbnails((prev) => {
+            const next = prev.slice();
+            next[p - 1] = dataUrl;
+            return next;
+          });
+        } catch {
+          // Skip this thumbnail; sidebar will show "Rendering…" until eventually rerendered.
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [loadState, fileKind, id]);
+
+  const jumpDest = useCallback(async (dest: unknown) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pdf = pdfDocRef.current as any;
+    if (!pdf || !dest) return;
+    let destArr: unknown[] | null = null;
+    if (typeof dest === 'string') {
+      try { destArr = await pdf.getDestination(dest); } catch { return; }
+    } else if (Array.isArray(dest)) {
+      destArr = dest as unknown[];
+    }
+    if (!destArr) return;
+    try {
+      const pageIdx = await pdf.getPageIndex(destArr[0]);
+      setPage(pageIdx + 1);
+    } catch { /* dest resolution can fail on malformed PDFs */ }
+  }, []);
+
   // Arrow-key navigation.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -339,6 +430,17 @@ export default function DocumentReader() {
           >
             <X size={15} />
           </button>
+          {fileKind === 'pdf' && (
+            <button
+              onClick={() => setSidebarOpen((v) => !v)}
+              className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+                sidebarOpen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+              }`}
+              title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar (pages, contents)'}
+            >
+              <PanelLeft size={15} />
+            </button>
+          )}
           <span className="text-sm text-[var(--color-text-bright)] truncate">
             {doc?.title || 'Document'}
           </span>
@@ -438,40 +540,54 @@ export default function DocumentReader() {
         </div>
       </div>
 
-      <div
-        className="flex-1 overflow-auto flex items-start justify-center py-6 px-4"
-        style={{ backgroundColor: rootBg }}
-      >
-        {loadState === 'loading' && (
-          <p className="mt-10 text-[13px] text-white/50">Loading document…</p>
+      <div className="flex-1 flex flex-row min-h-0">
+        {sidebarOpen && fileKind === 'pdf' && loadState === 'ready' && (
+          <ReaderSidebar
+            totalPages={totalPages}
+            currentPage={page}
+            thumbnails={thumbnails}
+            outline={outline}
+            onJumpPage={(p) => setPage(p)}
+            onJumpDest={(d) => void jumpDest(d)}
+          />
         )}
-        {loadState === 'error' && (
-          <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
-        )}
-        {loadState === 'ready' && fileKind === 'pdf' && (
-          <div className="relative">
-            <canvas ref={canvasRef} className="block shadow-2xl" />
-            <div ref={textLayerRef} className="textLayer absolute inset-0" />
-          </div>
-        )}
-        {loadState === 'ready' && fileKind === 'docx' && docHtml && (
+        <div className="flex-1 flex flex-col min-w-0">
           <div
-            className="docx-page max-w-3xl w-full mx-auto shadow-2xl"
-            style={{
-              backgroundColor: theme === 'dark' ? '#1a1a22' : '#ffffff',
-              color: theme === 'dark' ? '#f0ebe3' : '#1a1810',
-              padding: '64px 80px',
-              fontSize: `${Math.round(16 * (zoom / 1.5))}px`,
-              lineHeight: 1.6,
-            }}
+            className="flex-1 overflow-auto flex items-start justify-center py-6 px-4"
+            style={{ backgroundColor: rootBg }}
           >
-            <div dangerouslySetInnerHTML={{ __html: docHtml }} />
+            {loadState === 'loading' && (
+              <p className="mt-10 text-[13px] text-white/50">Loading document…</p>
+            )}
+            {loadState === 'error' && (
+              <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
+            )}
+            {loadState === 'ready' && fileKind === 'pdf' && (
+              <div className="relative">
+                <canvas ref={canvasRef} className="block shadow-2xl" />
+                <div ref={textLayerRef} className="textLayer absolute inset-0" />
+              </div>
+            )}
+            {loadState === 'ready' && fileKind === 'docx' && docHtml && (
+              <div
+                className="docx-page max-w-3xl w-full mx-auto shadow-2xl"
+                style={{
+                  backgroundColor: theme === 'dark' ? '#1a1a22' : '#ffffff',
+                  color: theme === 'dark' ? '#f0ebe3' : '#1a1810',
+                  padding: '64px 80px',
+                  fontSize: `${Math.round(16 * (zoom / 1.5))}px`,
+                  lineHeight: 1.6,
+                }}
+              >
+                <div dangerouslySetInnerHTML={{ __html: docHtml }} />
+              </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {showBottomNav && (
-        <div className="flex items-center justify-center gap-3 h-12 border-t border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
+          {showBottomNav && (
+            <div className="flex items-center justify-center gap-3 h-12 border-t border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
+
+
           <button
             onClick={goPrev}
             disabled={page <= 1}
@@ -504,6 +620,8 @@ export default function DocumentReader() {
           </button>
         </div>
       )}
+        </div>
+      </div>
     </div>
   );
 }
