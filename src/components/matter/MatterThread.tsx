@@ -14,9 +14,11 @@
 // hundred comments) and keeps the component logic simple.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Send, X, Trash2, CornerDownRight } from 'lucide-react';
+import { Link as LinkRouter } from 'react-router-dom';
+import { Send, X, Trash2, CornerDownRight, Paperclip, FileText } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import DocumentPicker from './DocumentPicker';
 
 interface CommentRow {
   id: string;
@@ -27,6 +29,7 @@ interface CommentRow {
   created_at: string;
   updated_at: string | null;
   deleted_at: string | null;
+  attachment_document_ids: string[];
   author: {
     id: string;
     email: string;
@@ -44,6 +47,9 @@ export default function MatterThread({ matterId }: { matterId: string }) {
   const [draft, setDraft] = useState('');
   const [replyTo, setReplyTo] = useState<CommentRow | null>(null);
   const [sending, setSending] = useState(false);
+  const [attachments, setAttachments] = useState<{ id: string; title: string }[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [docTitles, setDocTitles] = useState<Record<string, string>>({});
 
   const feedRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -52,7 +58,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
     const { data, error } = await supabase
       .from('matter_comments')
       .select(
-        'id, matterspace_id, user_id, parent_id, body, created_at, updated_at, deleted_at, author:profiles(id, email, display_name, avatar_url)',
+        'id, matterspace_id, user_id, parent_id, body, created_at, updated_at, deleted_at, attachment_document_ids, author:profiles(id, email, display_name, avatar_url)',
       )
       .eq('matterspace_id', matterId)
       .is('deleted_at', null)
@@ -62,8 +68,25 @@ export default function MatterThread({ matterId }: { matterId: string }) {
       setLoading(false);
       return;
     }
-    setComments((data ?? []) as unknown as CommentRow[]);
+    const rows = (data ?? []) as unknown as CommentRow[];
+    setComments(rows);
     setLoading(false);
+
+    // Resolve attachment titles in one batch query so the chips have
+    // labels. Documents-table RLS gates this — the user only sees titles
+    // for documents they have access to anyway.
+    const allIds = Array.from(
+      new Set(rows.flatMap((r) => r.attachment_document_ids ?? [])),
+    );
+    if (allIds.length > 0) {
+      const { data: docs } = await supabase
+        .from('documents')
+        .select('id, title')
+        .in('id', allIds);
+      const titleMap: Record<string, string> = {};
+      for (const d of docs ?? []) titleMap[d.id as string] = d.title as string;
+      setDocTitles(titleMap);
+    }
   }, [matterId]);
 
   // Initial fetch + realtime subscription.
@@ -148,7 +171,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
 
   const handleSend = async () => {
     const body = draft.trim();
-    if (!body || !user || sending) return;
+    if ((!body && attachments.length === 0) || !user || sending) return;
     // Threading stays flat (one level deep): when replying to a top-level
     // comment, parent_id = that top's id; when replying to a reply,
     // parent_id = that reply's parent (i.e., still the top). The UI lets
@@ -163,15 +186,24 @@ export default function MatterThread({ matterId }: { matterId: string }) {
       matterspace_id: matterId,
       user_id: user.id,
       parent_id: parentId,
-      body,
+      body: body || '(attached)',
+      attachment_document_ids: attachments.map((a) => a.id),
     });
     setSending(false);
     if (error) {
       setError(error.message);
       return;
     }
+    // Optimistically seed titles so chips render immediately on the next
+    // realtime refetch without a re-query lag.
+    setDocTitles((prev) => {
+      const next = { ...prev };
+      for (const a of attachments) next[a.id] = a.title;
+      return next;
+    });
     setDraft('');
     setReplyTo(null);
+    setAttachments([]);
     // Realtime will refetch; no manual append.
   };
 
@@ -235,14 +267,42 @@ export default function MatterThread({ matterId }: { matterId: string }) {
             className="flex-1 rounded-lg bg-[rgba(10,10,16,0.6)] border border-[rgba(255,255,255,0.08)] px-3 py-2 text-[13px] text-[#f5f1e8] placeholder-white/30 resize-none focus:outline-none focus:border-[#e8b84a]/40 transition-colors"
           />
           <button
+            onClick={() => setPickerOpen(true)}
+            className="shrink-0 flex items-center justify-center w-9 h-9 rounded-lg border border-[rgba(255,255,255,0.08)] text-white/55 hover:text-[#e8b84a] hover:border-[#e8b84a]/30 hover:bg-[#e8b84a]/5 transition-colors"
+            title="Attach documents from this matter"
+            type="button"
+          >
+            <Paperclip size={14} strokeWidth={2} />
+          </button>
+          <button
             onClick={handleSend}
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && attachments.length === 0) || sending}
             className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[12px] font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
           >
             <Send size={13} strokeWidth={2} />
             {sending ? 'Sending…' : isInline ? 'Reply' : 'Send'}
           </button>
         </div>
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {attachments.map((a) => (
+              <span
+                key={a.id}
+                className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-md bg-[#e8b84a]/10 border border-[#e8b84a]/25 text-[#e8b84a] text-[11px]"
+              >
+                <FileText size={11} strokeWidth={1.75} />
+                <span className="max-w-[180px] truncate">{a.title}</span>
+                <button
+                  onClick={() => setAttachments((prev) => prev.filter((x) => x.id !== a.id))}
+                  className="w-4 h-4 inline-flex items-center justify-center rounded hover:bg-white/10 text-white/55 hover:text-white"
+                  title="Remove"
+                >
+                  <X size={9} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {!isInline && (
           <p className="text-[10px] text-white/30 mt-1.5">
             Visible to everyone with matter access. Cmd/Ctrl+Enter to send.
@@ -281,6 +341,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
                 <CommentItem
                   comment={top}
                   currentUserId={user?.id}
+                  docTitles={docTitles}
                   onReply={() => startReply(top)}
                   onDelete={() => handleDelete(top)}
                 />
@@ -297,6 +358,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
                         <CommentItem
                           comment={r}
                           currentUserId={user?.id}
+                          docTitles={docTitles}
                           onReply={() => startReply(r)}
                           onDelete={() => handleDelete(r)}
                           isReply
@@ -322,6 +384,18 @@ export default function MatterThread({ matterId }: { matterId: string }) {
           message. When replying, the composer renders inline above and
           this slot hides so there's never two composers competing. */}
       {!replyTo && composer('bottom')}
+
+      {pickerOpen && (
+        <DocumentPicker
+          matterId={matterId}
+          initiallySelected={attachments.map((a) => a.id)}
+          onCancel={() => setPickerOpen(false)}
+          onConfirm={(picked) => {
+            setAttachments(picked);
+            setPickerOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -334,12 +408,14 @@ export default function MatterThread({ matterId }: { matterId: string }) {
 function CommentItem({
   comment,
   currentUserId,
+  docTitles,
   onReply,
   onDelete,
   isReply = false,
 }: {
   comment: CommentRow;
   currentUserId?: string;
+  docTitles: Record<string, string>;
   onReply: () => void;
   onDelete: () => void;
   isReply?: boolean;
@@ -363,6 +439,22 @@ function CommentItem({
         <p className={`text-[#e8e5dc] whitespace-pre-wrap break-words ${isReply ? 'text-[12px]' : 'text-[13px]'}`}>
           {comment.body}
         </p>
+        {comment.attachment_document_ids && comment.attachment_document_ids.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {comment.attachment_document_ids.map((docId) => (
+              <LinkRouter
+                key={docId}
+                to={`/app/document/${docId}`}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[rgba(232,184,74,0.08)] border border-[#e8b84a]/25 text-[#e8b84a] hover:bg-[rgba(232,184,74,0.15)] transition-colors text-[11px]"
+              >
+                <FileText size={11} strokeWidth={1.75} />
+                <span className="max-w-[220px] truncate">
+                  {docTitles[docId] || 'Document'}
+                </span>
+              </LinkRouter>
+            ))}
+          </div>
+        )}
         {/* Reply is always visible (discoverability — the prior
             opacity-on-hover treatment was a real problem: invisible on
             touch, easy to miss on desktop). Delete stays hover-only
