@@ -526,7 +526,7 @@ export default function MeetingView() {
           </div>
           <form
             onSubmit={sendQuestion}
-            className="border-t border-[var(--color-border)] p-3 flex gap-2 bg-[var(--color-surface)]"
+            className="border-t border-[var(--color-border)] p-3 mb-20 flex gap-2 bg-[var(--color-surface)]"
           >
             <input
               value={pending}

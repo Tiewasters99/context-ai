@@ -66,7 +66,7 @@ body {
   color: #f0ebe3;
   letter-spacing: -0.011em;
   font-feature-settings: "cv11", "ss01", "ss03";
-  background: #0a0a10 url('/gpu-cluster.png') center center / cover fixed no-repeat;
+  background: #000000;
   min-height: 100vh;
 }
 

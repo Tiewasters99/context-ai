@@ -15,7 +15,7 @@
 //                 localStorage (see src/lib/musicTracks.ts).
 
 import { useState, useRef, useEffect } from 'react';
-import { Music, Image as ImageIcon, LayoutGrid, X, Maximize, EyeOff, Loader2 } from 'lucide-react';
+import { Music, Image as ImageIcon, LayoutGrid, X, Maximize, EyeOff, Loader2, Repeat } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import MusicLibrary from '@/components/layout/MusicLibrary';
@@ -31,10 +31,17 @@ export default function AmbientControls() {
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [loadedTrack, setLoadedTrack] = useState<MusicTrack | null>(null);
   const [showMusicLibrary, setShowMusicLibrary] = useState(false);
+  const [loop, setLoop] = useState(true);
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const musicUrlRef = useRef<string | null>(null);
   const ytIframeRef = useRef<HTMLIFrameElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Mirror the loop toggle into the currently-playing audio element so the
+  // change takes effect mid-track (HTMLAudioElement.loop is reactive).
+  useEffect(() => {
+    if (musicRef.current) musicRef.current.loop = loop;
+  }, [loop]);
 
   // Apply / clear the backdrop CSS variable.
   useEffect(() => {
@@ -107,7 +114,7 @@ export default function AmbientControls() {
     if (track.type === 'audio' && track.file) {
       musicUrlRef.current = track.file;
       const audio = new Audio(track.file);
-      audio.loop = true;
+      audio.loop = loop;
       audio.volume = 0.5;
       audio.addEventListener('play', () => setMusicPlaying(true));
       audio.addEventListener('pause', () => setMusicPlaying(false));
@@ -206,6 +213,15 @@ export default function AmbientControls() {
         >
           <Music size={22} strokeWidth={1.75} />
         </button>
+        {loadedTrack && loadedTrack.type === 'audio' && (
+          <button
+            onClick={() => setLoop((v) => !v)}
+            className={`${btn} ${loop ? 'text-[#e8b84a]' : 'text-white/60 hover:text-white'}`}
+            title={loop ? 'Looping — click to play once' : 'Play once — click to loop'}
+          >
+            <Repeat size={20} strokeWidth={1.75} />
+          </button>
+        )}
         {loadedTrack && (
           <button
             onClick={ejectMusic}
