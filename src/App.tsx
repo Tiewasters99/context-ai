@@ -17,6 +17,7 @@ import ClaudeConnect from '@/pages/ClaudeConnect';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
+import DocumentReader from '@/pages/DocumentReader';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
@@ -72,6 +73,7 @@ export default function App() {
               <Route path="vault" element={<Vault />} />
               <Route path="claude-connect" element={<ClaudeConnect />} />
               <Route path="m/:id" element={<MeetingView />} />
+              <Route path="document/:id" element={<DocumentReader />} />
             </Route>
             <Route
               path="/connect"

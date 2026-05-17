@@ -483,7 +483,15 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onOpenFile={setOpenFile} />;
+        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onOpenFile={(file) => {
+          // Persistent matter PDFs have a documents-table UUID — route to the PDF reader.
+          // Non-PDFs and ephemeral session uploads fall back to the inline editor.
+          const isPdf =
+            file.type === 'application/pdf' ||
+            file.name.toLowerCase().endsWith('.pdf');
+          if (file.matterspace_id && isPdf) navigate(`/app/document/${file.id}`);
+          else setOpenFile(file);
+        }} />;
       case 'workbench':
         return <AIWorkbench vaultFiles={vaultFiles} onSaveToVault={addGeneratedDoc} />;
       case 'citecheck':
