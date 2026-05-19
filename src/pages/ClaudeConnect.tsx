@@ -9,6 +9,7 @@ import {
   Key,
   AlertCircle,
   X,
+  ChevronRight,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -127,11 +128,72 @@ export default function ClaudeConnect() {
           >
             Connect to Claude
           </h1>
-          <p className="mt-3 text-[var(--color-text-secondary)] max-w-xl leading-relaxed">
-            Paste a connector token into <strong className="text-[var(--color-text-bright)]">Claude Desktop</strong>,
-            and Claude can search your matters, retrieve passages, and cite them
-            while you draft — authenticated as you, scoped to your data only.
+          <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
+            Connect Contextspaces to{' '}
+            <strong className="text-[var(--color-text-bright)]">Claude Desktop</strong>{' '}
+            and the matters you've already loaded become part of any Claude
+            conversation — no uploading, no copy-pasting, no re-explaining the
+            case. Once Desktop Claude is enabled, you can:
           </p>
+          <ul className="mt-5 space-y-2.5 text-[var(--color-text-secondary)] leading-relaxed max-w-2xl">
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Chat about anything</strong>,
+                just as you would with Claude outside of Contextspaces.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Analyze cases</strong>{' '}
+                in matters you've shared with Claude.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Get pincites</strong>{' '}
+                for cases sitting in your Contextspaces Vault, ready to drop
+                into a draft.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Summarize transcripts</strong>{' '}
+                — a 400-page deposition into a shape you can navigate.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Read an entire matter or sub-matter for context</strong>{' '}
+                before answering, so nothing gets pulled out of context.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Talk through specific issues</strong>{' '}
+                in your matter or sub-matter as you draft.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <strong className="text-[var(--color-text-bright)]">Perform agentic tasks</strong>{' '}
+                on your behalf — with any additional permissions you authorize.
+              </span>
+            </li>
+          </ul>
+          <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
+            Claude only sees the matters or sub-matters you specifically
+            authorize. If you like, you can grant access to your entire
+            Contextspace — or to just the smallest sub-matter. Your choice.
+            Revoke or modify permissions at any time.
+          </div>
         </header>
 
         {/* Desktop-first walkthrough */}
@@ -160,23 +222,28 @@ export default function ClaudeConnect() {
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
-              <span>Generate a connector token below and copy it.</span>
+              <span>
+                Generate a token below. You'll see a Contextspaces URL and a
+                bearer token — copy them both.
+              </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
-                Paste the config snippet that appears into your{' '}
-                <code className="font-mono text-[var(--color-text-bright)]">
-                  claude_desktop_config.json
-                </code>
-                {' '}and restart Desktop.
+                In Claude Desktop, open{' '}
+                <strong className="text-[var(--color-text-bright)]">
+                  Settings → Connectors → Add custom connector
+                </strong>
+                . Paste the URL and the token, name it{' '}
+                <em>Contextspaces</em>, and save. That's it.
               </span>
             </li>
           </ol>
           <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
-            Once connected, Claude can ask Contextspaces to search across your
-            matters in any conversation — no need to paste content into the
-            chat.
+            Prefer editing a config file? The token dialog has an{' '}
+            <em>Advanced</em> option that gives you a JSON snippet to paste
+            into <code className="font-mono">claude_desktop_config.json</code>{' '}
+            instead.
           </p>
         </section>
 
@@ -401,6 +468,7 @@ function NewTokenModal({
   onClose: () => void;
 }) {
   const snippet = claudeDesktopConfigSnippet(token);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
     <div
@@ -419,7 +487,7 @@ function NewTokenModal({
             </h3>
             <p className="text-sm text-[var(--color-text-muted)] mt-1">
               <span className="text-[var(--color-primary)]">{name}</span> —
-              visible only now. Copy it before closing this dialog.
+              visible only now. Copy both values below before closing.
             </p>
           </div>
           <button
@@ -430,7 +498,30 @@ function NewTokenModal({
           </button>
         </div>
 
-        {/* The token itself */}
+        {/* What to do */}
+        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
+          In Claude Desktop, open{' '}
+          <strong className="text-[var(--color-text-bright)]">
+            Settings → Connectors → Add custom connector
+          </strong>
+          . Paste the two values below, name it{' '}
+          <em>Contextspaces</em>, and save.
+        </p>
+
+        {/* Endpoint URL */}
+        <div className="mb-4">
+          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
+            Endpoint URL
+          </label>
+          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+            <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
+              {MCP_ENDPOINT_URL}
+            </code>
+            <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
+          </div>
+        </div>
+
+        {/* Bearer token */}
         <div className="mb-6">
           <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
             Bearer token
@@ -443,33 +534,49 @@ function NewTokenModal({
           </div>
         </div>
 
-        {/* Config snippet */}
-        <div className="mb-6">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
-            Claude Desktop config — paste into your{' '}
-            <code className="font-mono text-[var(--color-text-secondary)]">
-              claude_desktop_config.json
-            </code>
-          </label>
-          <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">
-              {snippet}
-            </pre>
-            <div className="absolute top-2 right-2">
-              <CopyButton value={snippet} label="config" />
+        {/* Advanced disclosure — JSON config snippet */}
+        <div className="mb-6 border-t border-[var(--color-border)] pt-4">
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5"
+          >
+            <ChevronRight
+              size={12}
+              className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+            />
+            Advanced: paste a config file instead
+          </button>
+          {showAdvanced && (
+            <div className="mt-3">
+              <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
+                If your Claude Desktop version doesn't have the Connectors UI
+                yet, paste this snippet into{' '}
+                <code className="font-mono text-[var(--color-text-secondary)]">
+                  claude_desktop_config.json
+                </code>{' '}
+                and restart.
+              </p>
+              <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+                <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">
+                  {snippet}
+                </pre>
+                <div className="absolute top-2 right-2">
+                  <CopyButton value={snippet} label="config" />
+                </div>
+              </div>
+              <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed">
+                Windows:{' '}
+                <code className="font-mono">
+                  %APPDATA%\Claude\claude_desktop_config.json
+                </code>
+                . macOS:{' '}
+                <code className="font-mono">
+                  ~/Library/Application Support/Claude/claude_desktop_config.json
+                </code>
+                .
+              </p>
             </div>
-          </div>
-          <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed">
-            On Windows this file lives at{' '}
-            <code className="font-mono">
-              %APPDATA%\Claude\claude_desktop_config.json
-            </code>
-            . On macOS:{' '}
-            <code className="font-mono">
-              ~/Library/Application Support/Claude/claude_desktop_config.json
-            </code>
-            . Restart Claude Desktop after pasting.
-          </p>
+          )}
         </div>
 
         <div className="flex justify-end gap-3">
@@ -477,7 +584,7 @@ function NewTokenModal({
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition"
           >
-            I have the token — close
+            I have what I need — close
           </button>
         </div>
       </div>
