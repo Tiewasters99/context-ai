@@ -225,19 +225,16 @@ export default function DocumentReader() {
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        // pdfjs renders natively in the target colors when pageColors is
-        // passed. This is the "true" dark mode — light text on a dark page
-        // background, not a CSS-filter invert. Far cleaner for color images.
+        // PACER-style rendering: leave the document's own colors alone —
+        // true white pages, true black ink, faithful images for scans
+        // (death certificates, handwritten exhibits, etc.) — and let the
+        // surrounding frame do the dark-mode work. Recoloring the page
+        // itself via pdfjs pageColors made everything look black-on-black
+        // and distorted scanned exhibits.
         const renderOpts: Record<string, unknown> = {
           canvasContext: ctx,
           viewport,
         };
-        if (theme === 'dark') {
-          renderOpts.pageColors = {
-            background: '#0a0a10',
-            foreground: '#f0ebe3',
-          };
-        }
         await pdfPage.render(renderOpts).promise;
         if (cancelled) return;
 
@@ -523,7 +520,7 @@ export default function DocumentReader() {
   // ────────────────────────────────────────────────────────────────────
   // Render
   // ────────────────────────────────────────────────────────────────────
-  const rootBg = theme === 'dark' ? '#0a0a10' : '#f3ecd9';
+  const rootBg = theme === 'dark' ? '#000000' : '#f3ecd9';
   const showBottomNav = loadState === 'ready' && fileKind === 'pdf' && totalPages > 0;
 
   return (
@@ -688,8 +685,8 @@ export default function DocumentReader() {
               <div
                 className="docx-page max-w-3xl w-full mx-auto shadow-2xl"
                 style={{
-                  backgroundColor: theme === 'dark' ? '#1a1a22' : '#ffffff',
-                  color: theme === 'dark' ? '#f0ebe3' : '#1a1810',
+                  backgroundColor: '#ffffff',
+                  color: '#1a1810',
                   padding: '64px 80px',
                   fontSize: `${Math.round(16 * (zoom / 1.5))}px`,
                   lineHeight: 1.6,
