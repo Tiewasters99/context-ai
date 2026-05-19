@@ -416,6 +416,7 @@ interface DueDateFieldProps {
 }
 
 function DueDateField({ value, onChange, overdue, todayDue, muted }: DueDateFieldProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const colorClass = muted
     ? 'text-white/30'
     : overdue
@@ -426,20 +427,51 @@ function DueDateField({ value, onChange, overdue, todayDue, muted }: DueDateFiel
           ? 'text-white/70'
           : 'text-white/30 hover:text-white/60';
 
-  // Wrap the date input in a label so the icon/calendar opens it on click.
+  // Modern browsers won't open a date picker from a label wrapping an
+  // input styled to zero size — call showPicker() explicitly off a ref.
+  const openPicker = () => {
+    const el = inputRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === 'function') {
+      try { el.showPicker(); return; } catch { /* fall through */ }
+    }
+    el.focus();
+    el.click();
+  };
+
   return (
-    <label className={`flex items-center gap-1 cursor-pointer text-[11px] shrink-0 px-2 py-1 rounded hover:bg-[rgba(255,255,255,0.04)] transition-colors ${colorClass}`} title="Due date">
-      <Calendar size={11} />
-      {value
-        ? <span>{formatShortDate(value)}</span>
-        : <span className="hidden group-hover:inline">Due</span>}
+    <span className={`relative inline-flex items-center gap-1 text-[11px] shrink-0 px-2 py-1 rounded hover:bg-[rgba(255,255,255,0.04)] transition-colors ${colorClass}`}>
+      <button
+        type="button"
+        onClick={openPicker}
+        className="flex items-center gap-1 cursor-pointer"
+        title="Due date"
+      >
+        <Calendar size={11} />
+        {value
+          ? <span>{formatShortDate(value)}</span>
+          : <span className="hidden group-hover:inline">Due</span>}
+      </button>
+      {value && !muted && (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          className="text-white/30 hover:text-red-300 transition-colors"
+          title="Clear due date"
+        >
+          <X size={10} />
+        </button>
+      )}
       <input
+        ref={inputRef}
         type="date"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="absolute opacity-0 w-0 h-0 -z-10"
+        className="absolute inset-0 opacity-0 pointer-events-none"
+        tabIndex={-1}
+        aria-hidden="true"
       />
-    </label>
+    </span>
   );
 }
 
