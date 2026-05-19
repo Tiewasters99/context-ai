@@ -14,18 +14,19 @@
 // (or press Esc) to collapse. Expansion is local state, not persisted.
 
 import { useEffect, useState, useRef } from 'react';
-import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical } from 'lucide-react';
+import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical, LayoutGrid } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import TemplateLibrary from '@/components/vault/TemplateLibrary';
 
-const templateCovers = [
-  { id: 'gradient-indigo',   name: 'Indigo Wave', value: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%)' },
-  { id: 'gradient-ocean',    name: 'Ocean',       value: 'linear-gradient(135deg, #0ea5e9 0%, #2563eb 50%, #1e40af 100%)' },
-  { id: 'gradient-sunset',   name: 'Sunset',      value: 'linear-gradient(135deg, #f97316 0%, #ef4444 50%, #dc2626 100%)' },
-  { id: 'gradient-forest',   name: 'Forest',      value: 'linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%)' },
-  { id: 'gradient-midnight', name: 'Midnight',    value: 'linear-gradient(135deg, #1e293b 0%, #334155 50%, #475569 100%)' },
-  { id: 'gradient-rose',     name: 'Rose Gold',   value: 'linear-gradient(135deg, #fb7185 0%, #e11d48 50%, #be123c 100%)' },
-  { id: 'gradient-aurora',   name: 'Aurora',      value: 'linear-gradient(135deg, #6366f1 0%, #06b6d4 50%, #10b981 100%)' },
-  { id: 'gradient-amber',    name: 'Amber',       value: 'linear-gradient(135deg, #f59e0b 0%, #d97706 50%, #b45309 100%)' },
+const featuredCovers = [
+  { id: 'abstract-painting', name: 'Abstract',        file: '/templates/abstract-painting.png' },
+  { id: 'alhambra-light',    name: 'Alhambra Light',  file: '/templates/alhambra-light.png' },
+  { id: 'algiers-bay-day',   name: 'Algiers Bay',     file: '/templates/algiers-bay-day.png' },
+  { id: 'atlantis-ruins',    name: 'Atlantis Ruins',  file: '/templates/atlantis-ruins.png' },
+  { id: 'big-bang',          name: 'Big Bang',        file: '/templates/big-bang.png' },
+  { id: 'boat-1',            name: 'Boat',            file: '/templates/boat-1.png' },
+  { id: 'ballerina-1',       name: 'Ballerina',       file: '/templates/ballerina-1.png' },
+  { id: 'alhambra-arches',   name: 'Alhambra Arches', file: '/templates/alhambra-arches.png' },
 ];
 
 interface CoverImageProps {
@@ -283,6 +284,7 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
   const [urlDraft, setUrlDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showLibrary, setShowLibrary] = useState(false);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -392,21 +394,21 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
           </div>
         </div>
 
-        {/* Templates */}
+        {/* Featured covers — sample from the template library */}
         <div className="mb-4">
           <div className="flex items-center gap-1.5 text-xs font-medium text-white/60 mb-3">
             <Palette size={12} />
-            Gradient templates
+            Featured covers
           </div>
           <div className="grid grid-cols-4 gap-2">
-            {templateCovers.map((t) => (
+            {featuredCovers.map((t) => (
               <button
                 key={t.id}
-                onClick={() => onSelect(t.value)}
+                onClick={() => onSelect(t.file)}
                 className="group relative h-16 rounded-lg overflow-hidden border-2 border-transparent hover:border-[#e8b84a] transition-colors"
                 title={t.name}
               >
-                <div className="w-full h-full" style={{ background: t.value }} />
+                <img src={t.file} alt="" className="w-full h-full object-cover" loading="lazy" />
                 <div className="absolute inset-0 flex items-end opacity-0 group-hover:opacity-100 transition-opacity">
                   <span className="w-full text-center text-[10px] font-medium text-white bg-black/40 py-0.5">
                     {t.name}
@@ -415,6 +417,15 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
               </button>
             ))}
           </div>
+
+          <button
+            onClick={() => setShowLibrary(true)}
+            className="mt-3 flex items-center justify-center gap-2 w-full py-2 rounded-md border border-[rgba(255,255,255,0.1)] text-xs text-white/60 hover:text-[#e8b84a] hover:border-[#e8b84a]/40 hover:bg-[rgba(232,184,74,0.04)] transition-colors"
+            title="Browse the full cover library"
+          >
+            <LayoutGrid size={14} />
+            Browse all covers
+          </button>
         </div>
 
         {/* Remove */}
@@ -424,6 +435,13 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
           </button>
         )}
       </div>
+
+      {showLibrary && (
+        <TemplateLibrary
+          onSelect={(url) => { onSelect(url); setShowLibrary(false); }}
+          onClose={() => setShowLibrary(false)}
+        />
+      )}
     </>
   );
 }
