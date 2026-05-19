@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { X,
   Home,
@@ -13,7 +13,20 @@ import { X,
   Trash2,
   Plug,
   UserPlus,
+  Folder,
 } from 'lucide-react';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  pointerWithin,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
@@ -21,6 +34,14 @@ import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import ShareModal from '@/components/serverspace/ShareModal';
+
+// Drag-and-drop ids are encoded as "matter:<uuid>" or "ss-root:<uuid>" so
+// dragEnd can tell whether the drop target is a matter (nest underneath)
+// or a serverspace's top-level area (re-parent to null inside that serverspace).
+type DragData = { kind: 'matter'; matterId: string; serverspaceId: string };
+type DropData =
+  | { kind: 'matter'; matterId: string; serverspaceId: string }
+  | { kind: 'ss-root'; serverspaceId: string };
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -50,6 +71,88 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
   const [clientspaceId, setClientspaceId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // Drag-and-drop state for re-parenting matters in the sidebar tree.
+  const [dragging, setDragging] = useState<DragData | null>(null);
+  const [reparentError, setReparentError] = useState<string | null>(null);
+  // Distance-activation so single clicks on rows continue to navigate
+  // via the embedded <Link>; only an actual movement engages drag mode.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  // Descendants of the currently-dragged matter — used to grey out invalid
+  // drop targets (a matter can't be dropped under one of its own children).
+  const draggingDescendants = useMemo(() => {
+    if (!dragging) return new Set<string>();
+    return new Set(collectDescendantIds(serverspaces, dragging.matterId));
+  }, [dragging, serverspaces]);
+
+  // Flat lookup for the drag overlay's display name.
+  const draggingMatterName = useMemo(() => {
+    if (!dragging) return null;
+    for (const s of serverspaces) {
+      const m = s.matterspaces.find((x) => x.id === dragging.matterId);
+      if (m) return m.name;
+    }
+    return null;
+  }, [dragging, serverspaces]);
+
+  const onDragStart = (e: DragStartEvent) => {
+    const data = e.active.data.current as DragData | undefined;
+    if (data?.kind === 'matter') {
+      setDragging(data);
+      setReparentError(null);
+    }
+  };
+
+  const onDragEnd = async (e: DragEndEvent) => {
+    const src = e.active.data.current as DragData | undefined;
+    const dst = e.over?.data.current as DropData | undefined;
+    setDragging(null);
+    if (!src || !dst) return;
+
+    // Resolve target: matter row → nest under that matter; ss-root → top-level.
+    const newParentId = dst.kind === 'matter' ? dst.matterId : null;
+    const targetServerspaceId = dst.serverspaceId;
+
+    // No-op: dropped onto self, or onto its current parent.
+    if (src.matterId === newParentId) return;
+    const currentParent = serverspaces
+      .flatMap((s) => s.matterspaces)
+      .find((m) => m.id === src.matterId)?.parent_matterspace_id ?? null;
+    if (currentParent === newParentId && src.serverspaceId === targetServerspaceId) return;
+
+    // Cross-serverspace drops are blocked by the matterspaces parent-check
+    // trigger (migration 008). Catch in UI instead of letting the user see
+    // a raw db error.
+    if (src.serverspaceId !== targetServerspaceId) {
+      setReparentError('Matters can only be re-parented within the same serverspace.');
+      return;
+    }
+
+    // Cycle prevention: can't drop a matter under one of its own descendants.
+    if (newParentId && draggingDescendants.has(newParentId)) {
+      setReparentError('Cannot nest a matter under one of its own sub-matters.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('matterspaces')
+      .update({ parent_matterspace_id: newParentId })
+      .eq('id', src.matterId);
+    if (error) {
+      setReparentError(error.message);
+      return;
+    }
+    // Expand the destination so the user immediately sees the moved matter.
+    if (newParentId) {
+      setExpandedMatters((prev) => new Set(prev).add(newParentId));
+    } else {
+      setExpandedSpaces((prev) => new Set(prev).add(targetServerspaceId));
+    }
+    await refreshServerspaces();
+  };
 
   // Fetch the user's clientspace id once so we know the parent FK for
   // any new serverspace they create.
@@ -209,7 +312,26 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
           </button>
         </div>
 
-        {/* Serverspace List */}
+        {/* Serverspace List — wrapped in DndContext so matters can be
+            drag-and-dropped between parents within the same serverspace. */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={pointerWithin}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+        >
+        {reparentError && !collapsed && (
+          <div className="mx-2 mb-2 px-2 py-1.5 rounded-md border border-red-400/30 bg-red-400/10 text-[11px] text-red-300 leading-snug">
+            {reparentError}
+            <button
+              onClick={() => setReparentError(null)}
+              className="float-right text-red-200 hover:text-red-100 -mt-0.5"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div className="space-y-px">
           {serverspaces.map((space) => {
             const isExpanded = expandedSpaces.has(space.id);
@@ -252,9 +374,13 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                   )}
                 </div>
 
-                {/* Matterspaces — recursive tree */}
+                {/* Matterspaces — recursive tree, wrapped in a droppable so
+                    matters dragged here land as top-level under this serverspace. */}
                 {isExpanded && !collapsed && (
-                  <div className="ml-5 pl-3.5 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px">
+                  <ServerspaceDropZone
+                    serverspaceId={space.id}
+                    dragging={dragging}
+                  >
                     {buildMatterTree(space.matterspaces).map((node) => (
                       <MatterNode
                         key={node.matter.id}
@@ -267,6 +393,8 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                         onDelete={openDeleteMatter}
                         onShare={(id, name) => setShareTarget({ scope: 'matterspace', id, name })}
                         isActive={isActive}
+                        dragging={dragging}
+                        draggingDescendants={draggingDescendants}
                       />
                     ))}
                     <button
@@ -276,12 +404,21 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
                       <Plus size={11} strokeWidth={2} />
                       <span>New matter</span>
                     </button>
-                  </div>
+                  </ServerspaceDropZone>
                 )}
               </div>
             );
           })}
         </div>
+        <DragOverlay>
+          {dragging && draggingMatterName && (
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#1c1c26] border border-[#e8b84a]/40 text-[12px] text-[#f5f1e8] shadow-lg shadow-black/40">
+              <Folder size={12} className="text-[#d4a054]" strokeWidth={1.75} />
+              <span className="font-medium">{draggingMatterName}</span>
+            </div>
+          )}
+        </DragOverlay>
+        </DndContext>
       </nav>
 
       {/* Bottom Actions */}
@@ -396,6 +533,45 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
 }
 
 
+// "Drop here to make top-level under this serverspace" zone. The whole
+// expanded matter-list area becomes a droppable; nested matter-row
+// droppables (inside MatterNode) take priority via pointerWithin, so
+// this zone only "wins" when the user releases on whitespace.
+function ServerspaceDropZone({
+  serverspaceId,
+  dragging,
+  children,
+}: {
+  serverspaceId: string;
+  dragging: DragData | null;
+  children: React.ReactNode;
+}) {
+  const dropId = `ss-root:${serverspaceId}`;
+  const dropData: DropData = { kind: 'ss-root', serverspaceId };
+  const { setNodeRef, isOver } = useDroppable({ id: dropId, data: dropData });
+
+  const isDragging = !!dragging;
+  const isValid = !!dragging && dragging.serverspaceId === serverspaceId;
+  // Highlight the area as a valid drop only when something is being dragged
+  // from the SAME serverspace; cross-serverspace drops are not allowed.
+  const ring =
+    isDragging && isOver && isValid
+      ? 'ring-1 ring-[#e8b84a]/60 bg-[#e8b84a]/5'
+      : isDragging && isOver && !isValid
+        ? 'ring-1 ring-red-400/40'
+        : '';
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`ml-5 pl-3.5 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px rounded-r-md transition-shadow ${ring}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+
 interface MatterNodeProps {
   node: MatterTreeNode;
   ancestorLabel: string;
@@ -410,6 +586,8 @@ interface MatterNodeProps {
   onDelete: (matterId: string, matterName: string) => void;
   onShare: (matterId: string, matterName: string) => void;
   isActive: (path: string) => boolean;
+  dragging: DragData | null;
+  draggingDescendants: Set<string>;
 }
 
 function MatterNode({
@@ -422,6 +600,8 @@ function MatterNode({
   onDelete,
   onShare,
   isActive,
+  dragging,
+  draggingDescendants,
 }: MatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
@@ -429,14 +609,55 @@ function MatterNode({
   const myLabel = `${ancestorLabel} / ${matter.name}`;
   const path = `/app/matterspace/${matter.id}`;
 
+  const dragData: DragData = { kind: 'matter', matterId: matter.id, serverspaceId };
+  const dropData: DropData = { kind: 'matter', matterId: matter.id, serverspaceId };
+
+  const {
+    setNodeRef: setDragRef,
+    attributes,
+    listeners,
+    isDragging: thisRowIsDragging,
+  } = useDraggable({ id: `matter-drag:${matter.id}`, data: dragData });
+
+  // This matter row is also a droppable so other matters can be nested
+  // underneath it.
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `matter-drop:${matter.id}`,
+    data: dropData,
+  });
+
+  // Drop-validity feedback. Hide highlights entirely when nothing is
+  // being dragged so the UI stays calm during normal use.
+  const isOwnDragSource = dragging?.matterId === matter.id;
+  const isDescendantOfDragged = !isOwnDragSource && draggingDescendants.has(matter.id);
+  const isSameServerspaceAsDragged = !!dragging && dragging.serverspaceId === serverspaceId;
+  const isValidDropTarget =
+    !!dragging && !isOwnDragSource && !isDescendantOfDragged && isSameServerspaceAsDragged;
+  const dropHighlight =
+    isOver && isValidDropTarget
+      ? 'ring-1 ring-[#e8b84a]/70 bg-[#e8b84a]/10'
+      : isOver && !!dragging && !isValidDropTarget
+        ? 'ring-1 ring-red-400/50'
+        : '';
+  const sourceDim = thisRowIsDragging ? 'opacity-40' : '';
+
+  // Combine refs (drag + drop) on the same row element.
+  const setRowRef = (el: HTMLElement | null) => {
+    setDragRef(el);
+    setDropRef(el);
+  };
+
   return (
     <div>
       <div
+        ref={setRowRef}
+        {...attributes}
+        {...listeners}
         className={`group flex items-center gap-1 rounded-md transition-colors ${
           isActive(path)
             ? 'bg-[#16161d] text-white'
             : 'text-white/70 hover:bg-[rgba(255,255,255,0.04)]'
-        }`}
+        } ${dropHighlight} ${sourceDim}`}
       >
         {hasChildren ? (
           <button
@@ -508,6 +729,8 @@ function MatterNode({
               onDelete={onDelete}
               onShare={onShare}
               isActive={isActive}
+              dragging={dragging}
+              draggingDescendants={draggingDescendants}
             />
           ))}
         </div>
