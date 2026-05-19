@@ -20,6 +20,22 @@ const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'V
 type Tab = typeof tabs[number];
 type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread' | 'Meetings'>;
 
+const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
+
+// Vault is an action (it navigates away), not a content state. We never
+// persist or restore it as a "last viewed" tab — falling back to Pages
+// keeps the matter view from opening on an empty content area.
+function loadInitialTab(matterId: string | undefined): Tab {
+  if (!matterId) return 'Pages';
+  try {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY(matterId));
+    if (saved && saved !== 'Vault' && (tabs as readonly string[]).includes(saved)) {
+      return saved as Tab;
+    }
+  } catch {}
+  return 'Pages';
+}
+
 interface MatterRow {
   id: string;
   name: string;
@@ -38,7 +54,18 @@ interface ServerspaceRow {
 export default function MatterspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<Tab>('Vault');
+  const [activeTab, setActiveTab] = useState<Tab>(() => loadInitialTab(id));
+
+  useEffect(() => {
+    setActiveTab(loadInitialTab(id));
+  }, [id]);
+
+  useEffect(() => {
+    if (!id || activeTab === 'Vault') return;
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY(id), activeTab);
+    } catch {}
+  }, [activeTab, id]);
   const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.matterspace.card');
 
   const [matter, setMatter] = useState<MatterRow | null>(null);
