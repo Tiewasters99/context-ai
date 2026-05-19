@@ -245,7 +245,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
       {runs.data && runs.data.length > 0 && (
         <section className="mt-10">
           <h2 className="text-[15px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Past runs</h2>
-          <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+          <div className="rounded-lg border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.08)]">
             {runs.data.map((r) => (
               <RunHistoryRow key={r.id} run={r} onOpen={() => openRun(r.id)} />
             ))}
@@ -377,7 +377,7 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
       <p className="text-[12px] text-white/30 mb-4">✓ verified clean · ⊕ verified, minor issue · ⊖ unverified concern · ✗ verified mismatch · ◇ Westlaw paste needed</p>
 
       {/* Per-cite list */}
-      <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+      <div className="rounded-lg border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.08)]">
         {shown.map((e) => {
           const idx = entries.indexOf(e);
           const isOpen = expanded === idx;

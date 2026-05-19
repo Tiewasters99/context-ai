@@ -136,7 +136,7 @@ export default function ServerspaceView() {
             </p>
           )}
           {tree.length > 0 && (
-            <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.5)] py-1 overflow-hidden">
+            <div className="rounded-lg border border-[rgba(255,255,255,0.14)] bg-[rgba(10,10,16,0.5)] py-1 overflow-hidden">
               {tree.map((node) => (
                 <ServerMatterNode
                   key={node.matter.id}

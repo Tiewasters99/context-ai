@@ -82,7 +82,7 @@ export default function ConnectMeetings() {
       )}
 
       {!loading && meetings.length > 0 && (
-        <div className="rounded-xl border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)] bg-[rgba(10,10,16,0.5)]">
+        <div className="rounded-xl border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.08)] bg-[rgba(10,10,16,0.5)]">
           {meetings.map((m) => (
             <button
               key={m.id}

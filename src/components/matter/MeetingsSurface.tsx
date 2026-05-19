@@ -77,7 +77,7 @@ export default function MeetingsSurface({ matterId }: Props) {
       )}
 
       {!loading && meetings.length > 0 && (
-        <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+        <div className="rounded-lg border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.08)]">
           {meetings.map((m) => (
             <button
               key={m.id}

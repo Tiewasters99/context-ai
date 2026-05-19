@@ -106,7 +106,7 @@ export default function Dashboard() {
         {/* Serverspaces Explorer */}
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Serverspaces</h2>
-          <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] overflow-hidden">
+          <div className="rounded-lg border border-[rgba(255,255,255,0.14)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] overflow-hidden">
             {loadingServerspaces && (
               <div className="px-4 py-3 text-[12px] text-[#8a8693]">Loading serverspaces…</div>
             )}
@@ -177,7 +177,7 @@ export default function Dashboard() {
             <button
               key={a.label}
               onClick={() => navigate(a.path)}
-              className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.06)] hover:border-[rgba(255,255,255,0.1)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
+              className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.14)] hover:border-[rgba(255,255,255,0.22)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
             >
               <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
                 <a.icon size={15} className="text-[#d4a054]" strokeWidth={1.75} />

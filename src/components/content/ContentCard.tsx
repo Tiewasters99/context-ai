@@ -44,7 +44,7 @@ export default function ContentCard({ item, onClick }: ContentCardProps) {
   return (
     <button
       onClick={() => onClick?.(item)}
-      className="flex w-full items-center gap-4 rounded-xl border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] p-4 text-left transition-all hover:shadow-md hover:border-[rgba(255,255,255,0.1)]"
+      className="flex w-full items-center gap-4 rounded-xl border border-[rgba(255,255,255,0.14)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] p-4 text-left transition-all hover:shadow-md hover:border-[rgba(255,255,255,0.22)]"
     >
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#1c1c26] text-[#8a8693]">
         <Icon size={20} />

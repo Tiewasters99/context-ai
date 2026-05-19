@@ -184,7 +184,7 @@ export default function MatterspaceView() {
         {subMatters.length > 0 && (
           <section className="mt-6">
             <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Sub-matters</h2>
-            <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+            <div className="rounded-lg border border-[rgba(255,255,255,0.18)] bg-[rgba(22,22,34,0.85)] backdrop-blur-[20px] overflow-hidden divide-y divide-[rgba(255,255,255,0.06)]">
               {subMatters.map((sub) => (
                 <button
                   key={sub.id}
@@ -307,7 +307,7 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
         </div>
       )}
       {!isLoading && items.length > 0 && (
-        <div className="rounded-lg border border-[rgba(255,255,255,0.06)] overflow-hidden divide-y divide-[rgba(255,255,255,0.04)]">
+        <div className="rounded-lg border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.08)]">
           {items.map((item) => (
             <Link
               key={item.id}
