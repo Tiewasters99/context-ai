@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
+import ActivityFeed from '@/components/activity/ActivityFeed';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
@@ -16,24 +17,29 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Vault'] as const;
+const tabs = ['Updates', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread' | 'Meetings'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
-// Vault is an action (it navigates away), not a content state. We never
-// persist or restore it as a "last viewed" tab — falling back to Pages
-// keeps the matter view from opening on an empty content area.
-function loadInitialTab(matterId: string | undefined): Tab {
-  if (!matterId) return 'Pages';
+// Vault is an action (it navigates away), not a content state — never
+// persisted or restored as a "last viewed" tab. The default landing tab
+// is Updates: "what's happening" is the natural thing to see first. An
+// optional ?tab= query param (used by activity-feed deep links) overrides
+// both the saved tab and the default.
+function loadInitialTab(matterId: string | undefined, override?: string | null): Tab {
+  if (override && override !== 'Vault' && (tabs as readonly string[]).includes(override)) {
+    return override as Tab;
+  }
+  if (!matterId) return 'Updates';
   try {
     const saved = localStorage.getItem(TAB_STORAGE_KEY(matterId));
     if (saved && saved !== 'Vault' && (tabs as readonly string[]).includes(saved)) {
       return saved as Tab;
     }
   } catch {}
-  return 'Pages';
+  return 'Updates';
 }
 
 interface MatterRow {
@@ -54,11 +60,14 @@ interface ServerspaceRow {
 export default function MatterspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<Tab>(() => loadInitialTab(id));
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<Tab>(() =>
+    loadInitialTab(id, searchParams.get('tab')),
+  );
 
   useEffect(() => {
-    setActiveTab(loadInitialTab(id));
-  }, [id]);
+    setActiveTab(loadInitialTab(id, searchParams.get('tab')));
+  }, [id, searchParams]);
 
   useEffect(() => {
     if (!id || activeTab === 'Vault') return;
@@ -221,6 +230,9 @@ export default function MatterspaceView() {
         </div>
 
         {/* Content */}
+        {activeTab === 'Updates' && matter && (
+          <ActivityFeed matterId={matter.id} />
+        )}
         {activeTab === 'Cite-Check' && matter && (
           <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
         )}
@@ -230,7 +242,7 @@ export default function MatterspaceView() {
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

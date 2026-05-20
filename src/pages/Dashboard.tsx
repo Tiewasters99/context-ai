@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,6 +8,8 @@ import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import ActivityFeed, { describe, relativeTime } from '@/components/activity/ActivityFeed';
+import { useActivityFeed } from '@/hooks/useActivityFeed';
 
 const quickActions = [
   { label: 'Create Serverspace', icon: Plus, path: '#' },
@@ -21,8 +23,18 @@ export default function Dashboard() {
   // Shared query — same cache as the sidebar. Mutations from either view
   // invalidate and both refetch.
   const { data: serverspaces = [], isLoading: loadingServerspaces } = useServerspaces();
+  const { data: activity = [] } = useActivityFeed(undefined);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+
+  // matter_id -> name, so the cross-matter feed can label each row.
+  const matterNames = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of serverspaces) {
+      for (const mt of s.matterspaces) m.set(mt.id, mt.name);
+    }
+    return m;
+  }, [serverspaces]);
 
   const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.dashboard.mainCard');
   const [showCard, setShowCard] = useState(true);
@@ -82,7 +94,11 @@ export default function Dashboard() {
         <h1 className="text-[22px] font-semibold text-[#f5f2ed]">
           Welcome back, {displayName}
         </h1>
-        <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium">Here's what's happening in your Contextspace.</p>
+        <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium truncate">
+          {activity.length > 0
+            ? `${describe(activity[0])} · ${relativeTime(activity[0].occurred_at)}`
+            : "Here's what's happening in your Contextspace."}
+        </p>
         <p className="text-[11px] text-white/30 mt-1">Drag to move · right-click to pin · double-click to release.</p>
 
         {/* The Door — entrance to the Vault, anchored at the heart of the card */}
@@ -172,6 +188,14 @@ export default function Dashboard() {
         </section>
 
         {/* Quick Actions */}
+        {/* Recent activity across all matters */}
+        <section className="mt-8">
+          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">
+            Recent activity
+          </h2>
+          <ActivityFeed matterNames={matterNames} maxItems={10} />
+        </section>
+
         <div className="grid grid-cols-1 gap-3 mt-10">
           {quickActions.map((a) => (
             <button
