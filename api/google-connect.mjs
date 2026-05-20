@@ -17,7 +17,9 @@ import { signJwt } from '../lib/oauth-jwt.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
+// .trim() — env vars pasted by hand can carry a stray leading/trailing
+// space or newline; that whitespace makes Google reject the credentials.
+const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 
 const REDIRECT_URI = 'https://www.contextspaces.ai/api/google-callback';
 const SCOPE = 'openid email https://www.googleapis.com/auth/gmail.readonly';

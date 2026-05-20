@@ -18,8 +18,11 @@ import { encrypt } from '../lib/connections-crypto.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+// .trim() — env vars pasted by hand can carry a stray leading/trailing
+// space or newline; that whitespace makes Google reject the credentials
+// with "invalid_client" at the token exchange.
+const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
+const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
 
 const REDIRECT_URI = 'https://www.contextspaces.ai/api/google-callback';
 const APP_CONNECTIONS = 'https://www.contextspaces.ai/app/connections';
