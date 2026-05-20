@@ -14,6 +14,7 @@ import TableView from '@/pages/TableView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import ClaudeConnect from '@/pages/ClaudeConnect';
+import Connections from '@/pages/Connections';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
@@ -71,7 +72,8 @@ export default function App() {
               <Route path="list/:id" element={<ListView />} />
               <Route path="table/:id" element={<TableView />} />
               <Route path="vault" element={<Vault />} />
-              <Route path="claude-connect" element={<ClaudeConnect />} />
+              <Route path="connections" element={<Connections />} />
+              <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
             </Route>

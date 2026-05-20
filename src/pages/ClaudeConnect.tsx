@@ -114,10 +114,10 @@ export default function ClaudeConnect() {
       <div className="max-w-3xl mx-auto px-6 py-10">
         {/* Back link */}
         <Link
-          to="/app"
+          to="/app/connections"
           className="inline-flex items-center gap-1.5 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)] transition mb-8"
         >
-          <ArrowLeft size={14} /> Back
+          <ArrowLeft size={14} /> Back to Connections
         </Link>
 
         {/* Header */}
