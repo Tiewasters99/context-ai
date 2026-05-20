@@ -9,6 +9,7 @@ import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import ActivityFeed, { describe, relativeTime } from '@/components/activity/ActivityFeed';
+import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
 import { useActivityFeed } from '@/hooks/useActivityFeed';
 
 const quickActions = [
@@ -188,6 +189,14 @@ export default function Dashboard() {
         </section>
 
         {/* Quick Actions */}
+        {/* Upcoming deadlines across all matters */}
+        <section className="mt-8">
+          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">
+            Upcoming deadlines
+          </h2>
+          <UpcomingDeadlines matterNames={matterNames} />
+        </section>
+
         {/* Recent activity across all matters */}
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">

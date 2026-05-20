@@ -5,6 +5,7 @@ import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
 import ActivityFeed from '@/components/activity/ActivityFeed';
+import MatterCalendar from '@/components/matter/MatterCalendar';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
@@ -17,9 +18,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Vault'] as const;
+const tabs = ['Updates', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Calendar'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
@@ -233,6 +234,9 @@ export default function MatterspaceView() {
         {activeTab === 'Updates' && matter && (
           <ActivityFeed matterId={matter.id} />
         )}
+        {activeTab === 'Calendar' && matter && (
+          <MatterCalendar matterId={matter.id} />
+        )}
         {activeTab === 'Cite-Check' && matter && (
           <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
         )}
@@ -242,7 +246,7 @@ export default function MatterspaceView() {
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Calendar' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

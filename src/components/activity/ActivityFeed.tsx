@@ -12,6 +12,7 @@ import {
   MessageSquare,
   CheckCircle2,
   Mic,
+  CalendarClock,
   Activity,
 } from 'lucide-react';
 import { useActivityFeed, type ActivityEvent } from '@/hooks/useActivityFeed';
@@ -34,6 +35,7 @@ const ICON: Record<string, typeof FileText> = {
   cite_check_completed: CheckCircle2,
   meeting_started: Mic,
   meeting_ended: Mic,
+  event_added: CalendarClock,
 };
 
 export function describe(e: ActivityEvent): string {
@@ -47,6 +49,7 @@ export function describe(e: ActivityEvent): string {
     case 'cite_check_completed': return `Cite-check completed on ${e.title}`;
     case 'meeting_started':      return `${who} started the meeting “${e.title}”`;
     case 'meeting_ended':        return `Meeting “${e.title}” ended`;
+    case 'event_added':          return `${who} added “${e.title}” to the calendar`;
     default:                     return e.title;
   }
 }
@@ -61,6 +64,7 @@ function routeFor(e: ActivityEvent): string {
     case 'cite_check_completed': return `/app/matterspace/${e.matter_id}?tab=Cite-Check`;
     case 'meeting_started':
     case 'meeting_ended':        return `/app/m/${e.ref_id}`;
+    case 'event_added':          return `/app/matterspace/${e.matter_id}?tab=Calendar`;
     default:                     return `/app/matterspace/${e.matter_id}`;
   }
 }
