@@ -41,12 +41,13 @@ export default async function handler(req, res) {
     return redirect(res, `${APP_CONNECTIONS}?error=missing_code`);
   }
 
-  // Verify state -> user id.
+  // Verify state -> user id + integration kind.
   const payload = verifyJwt(String(q.state), process.env.MCP_OAUTH_SECRET || '');
   if (!payload || !payload.sub) {
     return redirect(res, `${APP_CONNECTIONS}?error=bad_state`);
   }
   const userId = payload.sub;
+  const kind = payload.kind === 'google_calendar' ? 'google_calendar' : 'gmail';
 
   // Exchange the authorization code for tokens.
   let tokenData;
@@ -100,7 +101,7 @@ export default async function handler(req, res) {
   const { error: upErr } = await admin.from('connections').upsert(
     {
       user_id: userId,
-      kind: 'gmail',
+      kind,
       status: 'connected',
       connected_email: connectedEmail,
       scopes: tokenData.scope || null,
@@ -115,7 +116,7 @@ export default async function handler(req, res) {
     return redirect(res, `${APP_CONNECTIONS}?error=save_failed`);
   }
 
-  return redirect(res, `${APP_CONNECTIONS}?connected=gmail`);
+  return redirect(res, `${APP_CONNECTIONS}?connected=${kind}`);
 }
 
 function redirect(res, url) {

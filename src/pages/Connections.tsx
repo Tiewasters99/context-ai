@@ -2,9 +2,9 @@
 // Contextspaces and the tools a lawyer works in.
 //
 // Claude Desktop (outbound) — state derived from connector_tokens.
-// Gmail (inbound) — live: OAuth connect flow via /api/google-connect,
-//   state from the connections table (migration 026).
-// Google Calendar — "coming soon" until its OAuth lifecycle is built.
+// Gmail and Google Calendar (inbound) — live OAuth connections, state
+//   from the connections table (migration 026); both run through the
+//   same /api/google-connect + /api/google-callback flow.
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -15,9 +15,11 @@ import {
   useConnectionsInvalidate,
   startGoogleConnect,
   disconnectConnection,
+  type Connection,
 } from '@/hooks/useConnections';
 
 type ConnState = 'connected' | 'not_connected' | 'needs_attention' | 'coming_soon';
+type GoogleKind = 'gmail' | 'google_calendar';
 
 function StateBadge({ state }: { state: ConnState }) {
   if (state === 'connected') {
@@ -48,6 +50,92 @@ function StateBadge({ state }: { state: ConnState }) {
   );
 }
 
+// A live Google OAuth integration row (Gmail or Calendar) — identical
+// behaviour, parameterised by kind.
+function GoogleConnectionRow({
+  icon: Icon,
+  name,
+  defaultBlurb,
+  connection,
+  busy,
+  onConnect,
+  onDisconnect,
+}: {
+  icon: typeof Mail;
+  name: string;
+  defaultBlurb: string;
+  connection: Connection | undefined;
+  busy: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  const state: ConnState = connection
+    ? connection.status === 'needs_attention'
+      ? 'needs_attention'
+      : 'connected'
+    : 'not_connected';
+
+  return (
+    <div className="flex items-center gap-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4">
+      <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
+        <Icon size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="flex items-center gap-2.5">
+          <span className="text-[15px] font-medium text-[var(--color-text-bright)]">
+            {name}
+          </span>
+          <StateBadge state={state} />
+        </span>
+        <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
+          {state === 'connected' && connection?.connected_email
+            ? `Connected as ${connection.connected_email}.`
+            : state === 'needs_attention'
+              ? 'Reconnect to restore access.'
+              : defaultBlurb}
+        </span>
+      </span>
+      {state === 'connected' ? (
+        <button
+          onClick={onDisconnect}
+          disabled={busy}
+          className="text-[13px] text-[var(--color-text-secondary)] hover:text-[#f87171] transition shrink-0 disabled:opacity-50"
+        >
+          Disconnect
+        </button>
+      ) : (
+        <button
+          onClick={onConnect}
+          disabled={busy}
+          className="px-3.5 py-1.5 rounded-lg bg-[var(--color-primary)] text-[#1a1408] text-[13px] font-semibold transition hover:bg-[var(--color-primary-hover)] shrink-0 disabled:opacity-50"
+        >
+          {busy ? 'Starting…' : state === 'needs_attention' ? 'Reconnect' : 'Connect'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const GOOGLE_INTEGRATIONS: {
+  kind: GoogleKind;
+  icon: typeof Mail;
+  name: string;
+  blurb: string;
+}[] = [
+  {
+    kind: 'gmail',
+    icon: Mail,
+    name: 'Gmail',
+    blurb: 'Sort client email into the right matter automatically.',
+  },
+  {
+    kind: 'google_calendar',
+    icon: Calendar,
+    name: 'Google Calendar',
+    blurb: 'Sync matter deadlines and events both ways.',
+  },
+];
+
 export default function Connections() {
   const navigate = useNavigate();
   const { data: connections = [] } = useConnections();
@@ -58,12 +146,14 @@ export default function Connections() {
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
     () => {
       const p = new URLSearchParams(window.location.search);
-      if (p.get('connected') === 'gmail') {
-        return { kind: 'ok', text: 'Gmail connected.' };
+      const connected = p.get('connected');
+      if (connected === 'gmail') return { kind: 'ok', text: 'Gmail connected.' };
+      if (connected === 'google_calendar') {
+        return { kind: 'ok', text: 'Google Calendar connected.' };
       }
       const err = p.get('error');
       if (err) {
-        return { kind: 'err', text: `Couldn't connect Gmail: ${err.replace(/_/g, ' ')}` };
+        return { kind: 'err', text: `Couldn't connect: ${err.replace(/_/g, ' ')}` };
       }
       return null;
     },
@@ -97,17 +187,10 @@ export default function Connections() {
     };
   }, []);
 
-  const gmail = connections.find((c) => c.kind === 'gmail');
-  const gmailState: ConnState = gmail
-    ? gmail.status === 'needs_attention'
-      ? 'needs_attention'
-      : 'connected'
-    : 'not_connected';
-
-  const handleConnectGmail = async () => {
+  const handleConnect = async (kind: GoogleKind) => {
     setBusy(true);
     try {
-      await startGoogleConnect(); // redirects the browser to Google
+      await startGoogleConnect(kind); // redirects the browser to Google
     } catch (e) {
       setBanner({
         kind: 'err',
@@ -117,17 +200,16 @@ export default function Connections() {
     }
   };
 
-  const handleDisconnectGmail = async () => {
-    if (!gmail) return;
+  const handleDisconnect = async (connection: Connection, label: string) => {
     if (
       !confirm(
-        'Disconnect Gmail? Contextspaces will lose access to your email until you reconnect.',
+        `Disconnect ${label}? Contextspaces will lose access until you reconnect.`,
       )
     )
       return;
     setBusy(true);
     try {
-      await disconnectConnection(gmail.id);
+      await disconnectConnection(connection.id);
       invalidateConnections();
     } catch (e) {
       setBanner({
@@ -206,72 +288,29 @@ export default function Connections() {
             <ChevronRight size={16} className="text-[var(--color-text-muted)] shrink-0" />
           </button>
 
-          {/* Gmail — live OAuth connection */}
-          <div className="flex items-center gap-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4">
-            <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
-              <Mail size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="flex items-center gap-2.5">
-                <span className="text-[15px] font-medium text-[var(--color-text-bright)]">
-                  Gmail
-                </span>
-                <StateBadge state={gmailState} />
-              </span>
-              <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
-                {gmailState === 'connected' && gmail?.connected_email
-                  ? `Connected as ${gmail.connected_email}.`
-                  : gmailState === 'needs_attention'
-                    ? 'Reconnect to restore access to your email.'
-                    : 'Sort client email into the right matter automatically.'}
-              </span>
-            </span>
-            {gmailState === 'connected' ? (
-              <button
-                onClick={handleDisconnectGmail}
-                disabled={busy}
-                className="text-[13px] text-[var(--color-text-secondary)] hover:text-[#f87171] transition shrink-0 disabled:opacity-50"
-              >
-                Disconnect
-              </button>
-            ) : (
-              <button
-                onClick={handleConnectGmail}
-                disabled={busy}
-                className="px-3.5 py-1.5 rounded-lg bg-[var(--color-primary)] text-[#1a1408] text-[13px] font-semibold transition hover:bg-[var(--color-primary-hover)] shrink-0 disabled:opacity-50"
-              >
-                {busy
-                  ? 'Starting…'
-                  : gmailState === 'needs_attention'
-                    ? 'Reconnect'
-                    : 'Connect'}
-              </button>
-            )}
-          </div>
-
-          {/* Google Calendar — coming soon */}
-          <div className="flex items-center gap-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 opacity-60">
-            <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
-              <Calendar size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
-            </span>
-            <span className="flex-1 min-w-0">
-              <span className="flex items-center gap-2.5">
-                <span className="text-[15px] font-medium text-[var(--color-text-bright)]">
-                  Google Calendar
-                </span>
-                <StateBadge state="coming_soon" />
-              </span>
-              <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
-                Sync matter deadlines and events both ways.
-              </span>
-            </span>
-          </div>
+          {/* Gmail + Google Calendar — live OAuth connections */}
+          {GOOGLE_INTEGRATIONS.map((integ) => {
+            const connection = connections.find((c) => c.kind === integ.kind);
+            return (
+              <GoogleConnectionRow
+                key={integ.kind}
+                icon={integ.icon}
+                name={integ.name}
+                defaultBlurb={integ.blurb}
+                connection={connection}
+                busy={busy}
+                onConnect={() => handleConnect(integ.kind)}
+                onDisconnect={() =>
+                  connection && handleDisconnect(connection, integ.name)
+                }
+              />
+            );
+          })}
         </div>
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
-          Connecting Gmail asks Google for read access to your mail; the token
-          is encrypted before it is stored, and you can disconnect at any time.
-          Google Calendar is next.
+          Connecting Gmail or Calendar asks Google for access; the token is
+          encrypted before it is stored, and you can disconnect at any time.
         </p>
       </div>
     </div>

@@ -22,7 +22,14 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 
 const REDIRECT_URI = 'https://www.contextspaces.ai/api/google-callback';
-const SCOPE = 'openid email https://www.googleapis.com/auth/gmail.readonly';
+
+// One OAuth client, two integrations — the requested scope differs.
+// gmail.readonly is a Google "restricted" scope; calendar.events is the
+// lighter "sensitive" tier.
+const SCOPES = {
+  gmail: 'openid email https://www.googleapis.com/auth/gmail.readonly',
+  google_calendar: 'openid email https://www.googleapis.com/auth/calendar.events',
+};
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -60,9 +67,15 @@ export default async function handler(req, res) {
     return json(res, 401, { error: 'invalid_session' });
   }
 
-  // Signed, 10-minute state carrying the user id.
+  // Which integration — gmail (default) or google_calendar.
+  const kind = String((req.query && req.query.kind) || 'gmail');
+  if (!SCOPES[kind]) {
+    return json(res, 400, { error: 'unknown_integration' });
+  }
+
+  // Signed, 10-minute state carrying the user id and the integration kind.
   const state = signJwt(
-    { sub: userData.user.id, kind: 'gmail' },
+    { sub: userData.user.id, kind },
     process.env.MCP_OAUTH_SECRET,
     600,
   );
@@ -73,7 +86,7 @@ export default async function handler(req, res) {
       client_id: GOOGLE_CLIENT_ID,
       redirect_uri: REDIRECT_URI,
       response_type: 'code',
-      scope: SCOPE,
+      scope: SCOPES[kind],
       access_type: 'offline',
       prompt: 'consent',
       state,

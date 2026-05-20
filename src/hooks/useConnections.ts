@@ -31,17 +31,23 @@ export function useConnectionsInvalidate() {
   return () => qc.invalidateQueries({ queryKey: ['connections'] });
 }
 
-// Kicks off the Google OAuth flow: asks the server for the Google
-// authorization URL, then redirects the browser to it.
-export async function startGoogleConnect(): Promise<void> {
+// Kicks off the Google OAuth flow for one integration ('gmail' or
+// 'google_calendar'): asks the server for the Google authorization URL,
+// then redirects the browser to it.
+export async function startGoogleConnect(
+  kind: 'gmail' | 'google_calendar',
+): Promise<void> {
   const {
     data: { session },
   } = await supabase.auth.getSession();
   if (!session) throw new Error('Not signed in');
-  const resp = await fetch('/api/google-connect', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${session.access_token}` },
-  });
+  const resp = await fetch(
+    `/api/google-connect?kind=${encodeURIComponent(kind)}`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    },
+  );
   const body = await resp.json().catch(() => ({}));
   if (!resp.ok || !body.url) {
     throw new Error(body.error || 'Could not start the Google connection');
