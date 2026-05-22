@@ -10,6 +10,9 @@ import {
   X,
   Search,
   PanelLeft,
+  Scan,
+  Maximize,
+  Minimize,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { supabase } from '@/lib/supabase';
@@ -58,6 +61,16 @@ export default function DocumentReader() {
   const [zoom, setZoom] = useState(1.5);
   const [theme, setTheme] = useState<Theme>('parchment');
 
+  // Fit-page mode (PDF only). When on, each page is scaled so the entire
+  // page is visible at once — one screenful = exactly one PDF page, so the
+  // reader's pages line up with the PDF's pages for citation/citechecking.
+  // Default on; `renderedScale` is the scale the last render actually used.
+  const [fitPage, setFitPage] = useState(true);
+  const [renderedScale, setRenderedScale] = useState(1.5);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  // Bumped whenever the content pane resizes, to re-fit the page.
+  const [containerTick, setContainerTick] = useState(0);
+
   // Search state — PDF only.
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -84,6 +97,8 @@ export default function DocumentReader() {
   const pdfDocRef = useRef<unknown>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   // Restore persisted prefs.
   useEffect(() => {
@@ -94,9 +109,12 @@ export default function DocumentReader() {
     }
     const t = localStorage.getItem('ctx_reader_theme') as Theme | null;
     if (t === 'parchment' || t === 'dark') setTheme(t);
+    const f = localStorage.getItem('ctx_reader_fit');
+    if (f === '0') setFitPage(false);
   }, []);
   useEffect(() => { localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom]);
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
+  useEffect(() => { localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage]);
   useEffect(() => {
     const s = localStorage.getItem('ctx_reader_sidebar_open');
     if (s === '0') setSidebarOpen(false);
@@ -104,6 +122,36 @@ export default function DocumentReader() {
   useEffect(() => {
     localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
   }, [sidebarOpen]);
+
+  // Track OS fullscreen state so the toolbar button reflects reality even
+  // when the user leaves fullscreen via Escape.
+  useEffect(() => {
+    function onFsChange() {
+      setIsFullscreen(document.fullscreenElement === rootRef.current);
+    }
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  // Re-fit the page whenever the content pane resizes — window resize,
+  // sidebar toggle, or entering/leaving fullscreen.
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerTick((t) => t + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else if (rootRef.current) {
+      void rootRef.current.requestFullscreen();
+      // Entering fullscreen is about reading one page at a time — fit it.
+      setFitPage(true);
+    }
+  }, []);
 
   // Load metadata, download blob, branch by file kind.
   useEffect(() => {
@@ -216,7 +264,26 @@ export default function DocumentReader() {
         };
         if (cancelled) return;
 
-        const viewport = pdfPage.getViewport({ scale: zoom });
+        // Compute the render scale. In fit-page mode, scale the page so
+        // the entire page is visible at once inside the content pane —
+        // one screenful = exactly one PDF page, which is what makes the
+        // reader's pages line up with the PDF's pages for citation.
+        let scale = zoom;
+        if (fitPage) {
+          const pane = contentRef.current;
+          if (pane && pane.clientWidth > 0 && pane.clientHeight > 0) {
+            const natural = pdfPage.getViewport({ scale: 1 });
+            const PAD = 24; // breathing room around the page
+            const fit = Math.min(
+              (pane.clientWidth - PAD * 2) / natural.width,
+              (pane.clientHeight - PAD * 2) / natural.height,
+            );
+            scale = Math.max(0.1, Math.min(fit, 6));
+          }
+        }
+        setRenderedScale(scale);
+
+        const viewport = pdfPage.getViewport({ scale });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         canvas.style.width = `${viewport.width}px`;
@@ -266,7 +333,7 @@ export default function DocumentReader() {
       cancelled = true;
       if (textLayer) try { textLayer.cancel(); } catch { /* noop */ }
     };
-  }, [page, zoom, loadState, fileKind, id, theme, searchQuery, matches, matchIdx]);
+  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx]);
 
   const goPrev = useCallback(() => setPage((p) => Math.max(1, p - 1)), []);
   const goNext = useCallback(
@@ -452,10 +519,11 @@ export default function DocumentReader() {
       ) return;
       if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+      else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goPrev, goNext]);
+  }, [goPrev, goNext, toggleFullscreen]);
 
   // ────────────────────────────────────────────────────────────────────
   // Search (PDF only). On submit, scan every page's text content for the
@@ -525,6 +593,7 @@ export default function DocumentReader() {
 
   return (
     <div
+      ref={rootRef}
       className="flex flex-col h-full"
       style={{ backgroundColor: rootBg }}
     >
@@ -623,22 +692,51 @@ export default function DocumentReader() {
             </>
           )}
           <button
-            onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
+            onClick={() => {
+              const base = fitPage ? renderedScale : zoom;
+              setFitPage(false);
+              setZoom(Math.max(0.5, +(base - 0.25).toFixed(2)));
+            }}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
             title="Zoom out"
           >
             <ZoomOut size={15} />
           </button>
           <span className="text-xs text-white/55 tabular-nums w-12 text-center">
-            {Math.round(zoom * 100)}%
+            {fileKind === 'pdf' && fitPage ? 'Fit' : `${Math.round(zoom * 100)}%`}
           </span>
           <button
-            onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
+            onClick={() => {
+              const base = fitPage ? renderedScale : zoom;
+              setFitPage(false);
+              setZoom(Math.min(4, +(base + 0.25).toFixed(2)));
+            }}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
             title="Zoom in"
           >
             <ZoomIn size={15} />
           </button>
+          {fileKind === 'pdf' && (
+            <button
+              onClick={() => setFitPage((v) => !v)}
+              className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+                fitPage ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+              }`}
+              title={fitPage ? 'Fit page is on — whole page visible' : 'Fit whole page to screen'}
+            >
+              <Scan size={15} />
+            </button>
+          )}
+          <button
+            onClick={toggleFullscreen}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+              isFullscreen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+            }`}
+            title={isFullscreen ? 'Exit full screen (F)' : 'Full screen (F)'}
+          >
+            {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+          </button>
+          <div className="w-px h-5 bg-white/10 mx-1" />
           <button
             onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
@@ -662,7 +760,10 @@ export default function DocumentReader() {
         )}
         <div className="flex-1 flex flex-col min-w-0">
           <div
-            className="flex-1 overflow-auto flex items-start justify-center py-6 px-4"
+            ref={contentRef}
+            className={`flex-1 overflow-auto flex justify-center ${
+              fileKind === 'pdf' && fitPage ? 'items-center' : 'items-start py-6 px-4'
+            }`}
             style={{ backgroundColor: rootBg }}
           >
             {loadState === 'loading' && (
