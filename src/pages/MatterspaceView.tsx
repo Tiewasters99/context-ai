@@ -210,8 +210,9 @@ export default function MatterspaceView() {
           </section>
         )}
 
-        {/* Tabs */}
-        <div className="flex gap-1 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">
+        {/* Tabs — wrap onto extra rows as the card narrows so no tab ever
+            spills outside the card (the card resizes down to 300px wide). */}
+        <div className="flex flex-wrap gap-x-1 gap-y-0.5 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">
           {tabs.map((tab) => (
             <button
               key={tab}
@@ -219,7 +220,7 @@ export default function MatterspaceView() {
                 if (tab === 'Vault') enterVault();
                 else setActiveTab(tab);
               }}
-              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab
                   ? 'border-[#d4a054] text-[#d4a054]'
                   : 'border-transparent text-white/80 hover:text-[#f5f1e8]'
