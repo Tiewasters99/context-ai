@@ -5,21 +5,25 @@
 // Gmail and Google Calendar (inbound) — live OAuth connections, state
 //   from the connections table (migration 026); both run through the
 //   same /api/google-connect + /api/google-callback flow.
+// Microsoft 365 (inbound) — live OAuth connection (OneDrive + SharePoint
+//   read access); runs through /api/microsoft-connect +
+//   /api/microsoft-callback (migration 027 adds the kind value).
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X } from 'lucide-react';
+import { ArrowLeft, Plug, Mail, Calendar, Cloud, ChevronRight, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import {
   useConnections,
   useConnectionsInvalidate,
   startGoogleConnect,
+  startMicrosoftConnect,
   disconnectConnection,
   type Connection,
 } from '@/hooks/useConnections';
 
 type ConnState = 'connected' | 'not_connected' | 'needs_attention' | 'coming_soon';
-type GoogleKind = 'gmail' | 'google_calendar';
+type IntegrationKind = 'gmail' | 'google_calendar' | 'microsoft_365';
 
 function StateBadge({ state }: { state: ConnState }) {
   if (state === 'connected') {
@@ -50,9 +54,10 @@ function StateBadge({ state }: { state: ConnState }) {
   );
 }
 
-// A live Google OAuth integration row (Gmail or Calendar) — identical
-// behaviour, parameterised by kind.
-function GoogleConnectionRow({
+// A live OAuth integration row — identical behaviour for every
+// provider, parameterised by kind. Used for Gmail, Google Calendar, and
+// Microsoft 365 today.
+function OauthConnectionRow({
   icon: Icon,
   name,
   defaultBlurb,
@@ -116,8 +121,8 @@ function GoogleConnectionRow({
   );
 }
 
-const GOOGLE_INTEGRATIONS: {
-  kind: GoogleKind;
+const INTEGRATIONS: {
+  kind: IntegrationKind;
   icon: typeof Mail;
   name: string;
   blurb: string;
@@ -133,6 +138,12 @@ const GOOGLE_INTEGRATIONS: {
     icon: Calendar,
     name: 'Google Calendar',
     blurb: 'Sync matter deadlines and events both ways.',
+  },
+  {
+    kind: 'microsoft_365',
+    icon: Cloud,
+    name: 'Microsoft 365',
+    blurb: 'Pull OneDrive and SharePoint documents into the right matter.',
   },
 ];
 
@@ -150,6 +161,9 @@ export default function Connections() {
       if (connected === 'gmail') return { kind: 'ok', text: 'Gmail connected.' };
       if (connected === 'google_calendar') {
         return { kind: 'ok', text: 'Google Calendar connected.' };
+      }
+      if (connected === 'microsoft_365') {
+        return { kind: 'ok', text: 'Microsoft 365 connected.' };
       }
       const err = p.get('error');
       if (err) {
@@ -187,10 +201,15 @@ export default function Connections() {
     };
   }, []);
 
-  const handleConnect = async (kind: GoogleKind) => {
+  const handleConnect = async (kind: IntegrationKind) => {
     setBusy(true);
     try {
-      await startGoogleConnect(kind); // redirects the browser to Google
+      // Microsoft has its own flow; Gmail and Calendar share Google's.
+      if (kind === 'microsoft_365') {
+        await startMicrosoftConnect();
+      } else {
+        await startGoogleConnect(kind);
+      }
     } catch (e) {
       setBanner({
         kind: 'err',
@@ -288,11 +307,11 @@ export default function Connections() {
             <ChevronRight size={16} className="text-[var(--color-text-muted)] shrink-0" />
           </button>
 
-          {/* Gmail + Google Calendar — live OAuth connections */}
-          {GOOGLE_INTEGRATIONS.map((integ) => {
+          {/* Gmail, Google Calendar, Microsoft 365 — live OAuth connections */}
+          {INTEGRATIONS.map((integ) => {
             const connection = connections.find((c) => c.kind === integ.kind);
             return (
-              <GoogleConnectionRow
+              <OauthConnectionRow
                 key={integ.kind}
                 icon={integ.icon}
                 name={integ.name}
@@ -309,7 +328,7 @@ export default function Connections() {
         </div>
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
-          Connecting Gmail or Calendar asks Google for access; the token is
+          Connecting an account asks the provider for access; the token is
           encrypted before it is stored, and you can disconnect at any time.
         </p>
       </div>
