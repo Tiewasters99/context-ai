@@ -484,12 +484,19 @@ export default function Vault() {
       case 'import':
       case 'files':
         return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onOpenFile={(file) => {
-          // Persistent matter PDFs have a documents-table UUID — route to the PDF reader.
-          // Non-PDFs and ephemeral session uploads fall back to the inline editor.
-          const isPdf =
+          // Routing rule: any matter-persisted PDF or DOCX opens in the
+          // full-screen DocumentReader (pages, search, annotations). The
+          // inline DocumentEditor modal handles text-editable formats
+          // (md/txt/code/csv/…) where in-place editing is the point, and
+          // ephemeral session uploads, which don't have a documents-table
+          // row yet for the reader to look up.
+          const name = file.name.toLowerCase();
+          const isReadable =
             file.type === 'application/pdf' ||
-            file.name.toLowerCase().endsWith('.pdf');
-          if (file.matterspace_id && isPdf) navigate(`/app/document/${file.id}`);
+            name.endsWith('.pdf') ||
+            file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+            name.endsWith('.docx');
+          if (file.matterspace_id && isReadable) navigate(`/app/document/${file.id}`);
           else setOpenFile(file);
         }} />;
       case 'workbench':
