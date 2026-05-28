@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Lock, Unlock, X } from 'lucide-react';
+import { Lock, Unlock, X, Download } from 'lucide-react';
+import { pageToDocxBlob, downloadBlob, safeFilename } from '@/lib/export-page';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
@@ -74,6 +75,20 @@ export default function PageView() {
     persist({ is_locked: !item.is_locked });
   };
 
+  const [exportingKind, setExportingKind] = useState<'docx' | null>(null);
+  const exportDocx = async () => {
+    if (!item || exportingKind) return;
+    setExportingKind('docx');
+    try {
+      const blob = await pageToDocxBlob(item.content?.body, item.title);
+      downloadBlob(blob, safeFilename(item.title, '.docx'));
+    } catch (e) {
+      console.error('export to .docx failed', e);
+    } finally {
+      setExportingKind(null);
+    }
+  };
+
   const isLocked = item?.is_locked ?? false;
 
   return (
@@ -99,6 +114,14 @@ export default function PageView() {
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
+            <button
+              onClick={exportDocx}
+              disabled={!item || exportingKind === 'docx'}
+              className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={exportingKind === 'docx' ? 'Exporting…' : 'Download as Word (.docx)'}
+            >
+              <Download size={14} strokeWidth={2} />
+            </button>
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
             <PinToggle pinned={pinned} onToggle={togglePin} />
             <FullscreenToggle onToggle={toggleFullscreen} />

@@ -13,6 +13,7 @@ import {
   Scan,
   Maximize,
   Minimize,
+  Download,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { supabase } from '@/lib/supabase';
@@ -340,6 +341,34 @@ export default function DocumentReader() {
     () => setPage((p) => Math.min(totalPages, p + 1)),
     [totalPages],
   );
+
+  const [downloading, setDownloading] = useState(false);
+  const handleDownload = useCallback(async () => {
+    if (!doc?.storage_path || downloading) return;
+    setDownloading(true);
+    try {
+      const { data: blob, error } = await supabase.storage
+        .from('vault-documents')
+        .download(doc.storage_path);
+      if (error || !blob) {
+        setErrorMsg(error?.message || 'Failed to download the file.');
+        return;
+      }
+      const ext = fileKind === 'pdf' ? '.pdf' : '.docx';
+      const fallback = (doc.title || 'document').replace(/[\\/:*?"<>|]+/g, '_') + ext;
+      const filename = doc.source_filename || fallback;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } finally {
+      setDownloading(false);
+    }
+  }, [doc, fileKind, downloading]);
 
   // Fetch the PDF's outline (table of contents) once it loads. Many PDFs
   // don't have one — that's fine, we just hide the Contents tab.
@@ -737,6 +766,14 @@ export default function DocumentReader() {
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
           <div className="w-px h-5 bg-white/10 mx-1" />
+          <button
+            onClick={handleDownload}
+            disabled={downloading || !doc?.storage_path}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title={downloading ? 'Downloading…' : 'Download original file'}
+          >
+            <Download size={15} />
+          </button>
           <button
             onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
