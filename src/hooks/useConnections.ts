@@ -55,25 +55,6 @@ export async function startGoogleConnect(
   window.location.href = body.url;
 }
 
-// Kicks off the Microsoft Entra OAuth flow for Microsoft 365 (OneDrive +
-// SharePoint). Same shape as startGoogleConnect — server returns the
-// Microsoft authorization URL, the browser redirects to it.
-export async function startMicrosoftConnect(): Promise<void> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) throw new Error('Not signed in');
-  const resp = await fetch('/api/microsoft-connect', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${session.access_token}` },
-  });
-  const body = await resp.json().catch(() => ({}));
-  if (!resp.ok || !body.url) {
-    throw new Error(body.error || 'Could not start the Microsoft connection');
-  }
-  window.location.href = body.url;
-}
-
 export async function disconnectConnection(id: string): Promise<void> {
   const { error } = await supabase.from('connections').delete().eq('id', id);
   if (error) throw error;
