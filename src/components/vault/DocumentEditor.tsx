@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { X, Save, Loader2, FileText, Lock, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Save, Loader2, FileText, Lock, CheckCircle, AlertCircle, Download } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
 import { downloadVaultDocument, saveVaultDocumentText } from '@/lib/vault-persist';
+import { downloadBlob } from '@/lib/export-page';
 
 // File extensions we treat as plain text — these open in an editable textarea
 // and can be saved back. Everything else opens read-only (text is extracted
@@ -140,6 +141,27 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
 
   const canSave = state.phase === 'ready' && state.editable && dirty && !saving;
 
+  const [downloading, setDownloading] = useState(false);
+  const canDownload =
+    !downloading &&
+    ((persistent && !!file.storagePath) ||
+      (!persistent && !!file.file && file.file.size > 0));
+  const handleDownload = useCallback(async () => {
+    if (!canDownload) return;
+    setDownloading(true);
+    try {
+      const blob =
+        persistent && file.storagePath
+          ? await downloadVaultDocument(file.storagePath)
+          : file.file!;
+      downloadBlob(blob, file.name);
+    } catch (err) {
+      console.error('vault download failed', err);
+    } finally {
+      setDownloading(false);
+    }
+  }, [canDownload, persistent, file.storagePath, file.file, file.name]);
+
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 sm:p-8 animate-[fadeIn_0.15s_ease-out]"
@@ -183,6 +205,14 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
               {saving ? 'Saving…' : 'Save'}
             </button>
           )}
+          <button
+            onClick={handleDownload}
+            disabled={!canDownload}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title={downloading ? 'Downloading…' : 'Download original file'}
+          >
+            {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} strokeWidth={2} />}
+          </button>
           <button
             onClick={() => !saving && onClose()}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
