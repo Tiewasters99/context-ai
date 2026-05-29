@@ -495,7 +495,8 @@ export default function Vault() {
             file.type === 'application/pdf' ||
             name.endsWith('.pdf') ||
             file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-            name.endsWith('.docx');
+            name.endsWith('.docx') ||
+            name.endsWith('.fountain');
           if (file.matterspace_id && isReadable) navigate(`/app/document/${file.id}`);
           else setOpenFile(file);
         }} />;
