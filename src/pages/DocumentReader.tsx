@@ -18,6 +18,9 @@ import {
 import mammoth from 'mammoth';
 import { supabase } from '@/lib/supabase';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
+import CoverImage from '@/components/layout/CoverImage';
+import CoverModeToggle from '@/components/ui/CoverModeToggle';
+import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   createAnnotation,
   deleteAnnotation,
@@ -40,6 +43,7 @@ type DocMeta = {
   storage_path: string | null;
   source_filename: string | null;
   page_count: number | null;
+  cover_url: string | null;
 };
 
 type FileKind = 'pdf' | 'docx' | 'unsupported';
@@ -172,7 +176,7 @@ export default function DocumentReader() {
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count')
+        .select('id, title, storage_path, source_filename, page_count, cover_url')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -341,6 +345,23 @@ export default function DocumentReader() {
     () => setPage((p) => Math.min(totalPages, p + 1)),
     [totalPages],
   );
+
+  // Cover support — mirrors how Pages/Lists/Tables use CoverImage.
+  // Expanded mode promotes the cover to the page background via a CSS var,
+  // so we don't need to do anything beyond passing through the controlled
+  // expansion state.
+  const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
+  const handleCoverChange = useCallback(async (next: string | null) => {
+    if (!id) return;
+    setDoc((cur) => (cur ? { ...cur, cover_url: next } : cur));
+    const { error } = await supabase
+      .from('documents')
+      .update({ cover_url: next })
+      .eq('id', id);
+    if (error) {
+      console.error('cover save failed', error);
+    }
+  }, [id]);
 
   const [downloading, setDownloading] = useState(false);
   const handleDownload = useCallback(async () => {
@@ -628,6 +649,21 @@ export default function DocumentReader() {
     >
       <ReaderStyle theme={theme} />
 
+      {/* Cover image — same component Pages/Lists/Tables use. When no cover
+          is set, this is a discoverable "Add cover" bar (subtle until hover);
+          when set, a 180px banner; when expanded, becomes the page background
+          via CSS variable so the reader chrome stays in front. */}
+      {loadState === 'ready' && (
+        <CoverImage
+          coverUrl={doc?.cover_url ?? null}
+          onCoverChange={handleCoverChange}
+          editable={!!doc}
+          expanded={coverExpanded}
+          onExpandChange={setCoverExpanded}
+          persistKey={id ? `cs.doc.cover.${id}` : undefined}
+        />
+      )}
+
       <div className="flex items-center justify-between gap-2 px-3 h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
@@ -765,6 +801,11 @@ export default function DocumentReader() {
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
+          <CoverModeToggle
+            hasCover={!!doc?.cover_url}
+            expanded={coverExpanded}
+            onToggle={() => setCoverExpanded(!coverExpanded)}
+          />
           <div className="w-px h-5 bg-white/10 mx-1" />
           <button
             onClick={handleDownload}
