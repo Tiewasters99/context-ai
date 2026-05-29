@@ -16,6 +16,7 @@ import {
   Download,
 } from 'lucide-react';
 import mammoth from 'mammoth';
+import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import CoverImage from '@/components/layout/CoverImage';
@@ -46,7 +47,7 @@ type DocMeta = {
   cover_url: string | null;
 };
 
-type FileKind = 'pdf' | 'docx' | 'unsupported';
+type FileKind = 'pdf' | 'docx' | 'fountain' | 'unsupported';
 type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
@@ -60,6 +61,9 @@ export default function DocumentReader() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
   const [docHtml, setDocHtml] = useState<string | null>(null);
+  // For .fountain — the parser produces a separate title-page block we
+  // want to render above the script body.
+  const [titlePageHtml, setTitlePageHtml] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -196,11 +200,12 @@ export default function DocumentReader() {
       const kind: FileKind =
         fn.endsWith('.pdf') ? 'pdf'
         : fn.endsWith('.docx') ? 'docx'
+        : fn.endsWith('.fountain') ? 'fountain'
         : 'unsupported';
       setFileKind(kind);
 
       if (kind === 'unsupported') {
-        setErrorMsg('Unsupported file type — the reader currently handles PDF and Word (.docx).');
+        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), and Fountain (.fountain).');
         setLoadState('error');
         return;
       }
@@ -230,6 +235,18 @@ export default function DocumentReader() {
           const savedPage = localStorage.getItem(`ctx_reader_page_${id}`);
           const start = savedPage ? parseInt(savedPage, 10) : 1;
           setPage(start >= 1 && start <= pdf.numPages ? start : 1);
+        } else if (kind === 'fountain') {
+          // Fountain — plain-text screenplay. Parse via fountain-js and let
+          // the parser hand us back semantic HTML (h3 scene headings,
+          // .dialogue divs, h4 character names, p action/dialogue) — our
+          // CSS does the Courier / centred-name / indented-dialogue layout.
+          const text = await blob.text();
+          if (cancelled) return;
+          const parsed = new Fountain().parse(text, true);
+          setTitlePageHtml(parsed.html?.title_page ?? null);
+          setDocHtml(parsed.html?.script ?? '');
+          setTotalPages(1);
+          setPage(1);
         } else {
           // DOCX — convert to HTML once. Word has no page concept, so we
           // treat it as a single scrollable document.
@@ -874,6 +891,32 @@ export default function DocumentReader() {
                 <div dangerouslySetInnerHTML={{ __html: docHtml }} />
               </div>
             )}
+            {loadState === 'ready' && fileKind === 'fountain' && (
+              <div
+                className="fountain-page max-w-[8.5in] w-full mx-auto shadow-2xl"
+                style={{
+                  backgroundColor: '#fafaf6',
+                  color: '#15130b',
+                  padding: '72px 96px',
+                  fontFamily: '"Courier Prime", "Courier New", Courier, monospace',
+                  fontSize: `${Math.round(15 * (zoom / 1.5))}px`,
+                  lineHeight: 1.4,
+                }}
+              >
+                {titlePageHtml && (
+                  <div
+                    className="fountain-title-page"
+                    dangerouslySetInnerHTML={{ __html: titlePageHtml }}
+                  />
+                )}
+                {docHtml && (
+                  <div
+                    className="fountain-script"
+                    dangerouslySetInnerHTML={{ __html: docHtml }}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           {showBottomNav && (
@@ -1084,6 +1127,31 @@ function ReaderStyle({ theme }: { theme: Theme }) {
       .docx-page img { max-width: 100%; height: auto; }
       .docx-page strong { font-weight: 700; }
       .docx-page em { font-style: italic; }
+
+      /* Fountain — standard screenplay layout. fountain-js emits semantic
+         HTML (h3 scene headings, .dialogue divs with h4 character + p
+         dialogue, p action, .centered transitions). We do the standard
+         Hollywood-style positioning: scene headings in caps bold flush
+         left, action flush left, character names centred uppercase,
+         dialogue indented from both sides, parentheticals indented
+         further and italicised, transitions right-aligned caps. */
+      .fountain-page { white-space: pre-wrap; }
+      .fountain-title-page { text-align: center; margin-bottom: 4em; padding-bottom: 2em; border-bottom: 1px solid rgba(0,0,0,0.1); }
+      .fountain-title-page h1 { font-size: 1.4em; font-weight: 700; text-transform: uppercase; margin: 0.5em 0; letter-spacing: 0.05em; }
+      .fountain-title-page p { margin: 0.3em 0; }
+      .fountain-title-page .authors { margin-top: 2em; }
+      .fountain-script h3 { font-weight: 700; text-transform: uppercase; margin: 1.6em 0 0.4em; font-size: 1em; }
+      .fountain-script p { margin: 0.7em 0; }
+      .fountain-script .dialogue { margin: 0.8em 0 0.8em 1.6in; max-width: 3.5in; }
+      .fountain-script .dialogue h4 { font-weight: 400; text-transform: uppercase; text-align: left; margin: 0 0 0 1in; font-size: 1em; }
+      .fountain-script .dialogue p { margin: 0; }
+      .fountain-script .dialogue .parenthetical { font-style: italic; margin-left: 0.5in; }
+      .fountain-script .centered { text-align: center; }
+      .fountain-script .transition,
+      .fountain-script p.transition { text-align: right; text-transform: uppercase; font-weight: 700; margin: 1em 0; }
+      .fountain-script .note { background: rgba(250, 220, 120, 0.25); padding: 0 2px; border-radius: 2px; }
+      .fountain-script .section { font-weight: 700; text-transform: uppercase; margin: 1.6em 0 0.4em; color: rgba(21,19,11,0.55); }
+      .fountain-script .synopsis { color: rgba(21,19,11,0.55); font-style: italic; }
     `}</style>
   );
 }

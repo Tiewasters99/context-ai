@@ -31,6 +31,7 @@
     "@tiptap/starter-kit": "^3.22.5",
     "@xmldom/xmldom": "^0.9.5",
     "docx": "^9.7.1",
+    "fountain-js": "^1.2.4",
     "jszip": "^3.10.1",
     "lucide-react": "^1.7.0",
     "mammoth": "^1.12.0",
