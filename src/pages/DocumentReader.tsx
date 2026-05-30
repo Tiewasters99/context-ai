@@ -413,11 +413,20 @@ export default function DocumentReader() {
       });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok || !body.ok) {
+        // Google's API returns details under body.detail.error.message — surface
+        // that string when we have it so we don't show the bare code.
+        const googleMsg = body?.detail?.error?.message
+          || body?.detail?.error_description
+          || (typeof body?.detail === 'string' ? body.detail : null);
         const msg =
           body.error === 'drive_needs_reconnect' ? 'Reconnect Google Drive — your token expired.'
           : body.error === 'drive_not_connected' ? 'Connect Google Drive in Connections first.'
           : body.error === 'file_too_large' ? 'File is too large for Drive export (75 MB cap).'
+          : googleMsg ? `Drive: ${googleMsg}`
           : body.error || 'Drive export failed.';
+        // Always log the full response — the banner is for the user, the
+        // console is for us to debug from a screenshot.
+        console.error('drive-export failed:', body);
         setDriveBanner({ kind: 'err', text: msg });
         return;
       }
