@@ -47,7 +47,10 @@ export default async function handler(req, res) {
     return redirect(res, `${APP_CONNECTIONS}?error=bad_state`);
   }
   const userId = payload.sub;
-  const kind = payload.kind === 'google_calendar' ? 'google_calendar' : 'gmail';
+  const kind =
+    payload.kind === 'google_calendar' ? 'google_calendar'
+    : payload.kind === 'google_drive' ? 'google_drive'
+    : 'gmail';
 
   // Exchange the authorization code for tokens.
   let tokenData;

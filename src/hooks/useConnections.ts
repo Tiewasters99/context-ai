@@ -31,11 +31,11 @@ export function useConnectionsInvalidate() {
   return () => qc.invalidateQueries({ queryKey: ['connections'] });
 }
 
-// Kicks off the Google OAuth flow for one integration ('gmail' or
-// 'google_calendar'): asks the server for the Google authorization URL,
-// then redirects the browser to it.
+// Kicks off the Google OAuth flow for one integration ('gmail',
+// 'google_calendar', or 'google_drive'): asks the server for the Google
+// authorization URL, then redirects the browser to it.
 export async function startGoogleConnect(
-  kind: 'gmail' | 'google_calendar',
+  kind: 'gmail' | 'google_calendar' | 'google_drive',
 ): Promise<void> {
   const {
     data: { session },

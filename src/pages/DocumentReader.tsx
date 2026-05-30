@@ -14,6 +14,7 @@ import {
   Maximize,
   Minimize,
   Download,
+  HardDrive,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -22,6 +23,7 @@ import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSideb
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
+import { useConnections } from '@/hooks/useConnections';
 import {
   createAnnotation,
   deleteAnnotation,
@@ -379,6 +381,57 @@ export default function DocumentReader() {
       console.error('cover save failed', error);
     }
   }, [id]);
+
+  // Google Drive export — visible only when the user has a google_drive
+  // connection. Clicking POSTs to /api/drive-export, which fetches the
+  // blob server-side and pushes to the user's Drive (in a Contextspaces
+  // folder).
+  const { data: connections = [] } = useConnections();
+  const hasDriveConnection = connections.some(
+    (c) => c.kind === 'google_drive' && c.status === 'connected',
+  );
+  const [driveExporting, setDriveExporting] = useState(false);
+  const [driveBanner, setDriveBanner] = useState<
+    { kind: 'ok'; text: string; link: string | null }
+    | { kind: 'err'; text: string }
+    | null
+  >(null);
+  const handleDriveExport = useCallback(async () => {
+    if (!id || !doc?.storage_path || driveExporting) return;
+    setDriveExporting(true);
+    setDriveBanner(null);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not signed in');
+      const resp = await fetch('/api/drive-export', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ documentId: id, folderName: 'Contextspaces' }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok || !body.ok) {
+        const msg =
+          body.error === 'drive_needs_reconnect' ? 'Reconnect Google Drive — your token expired.'
+          : body.error === 'drive_not_connected' ? 'Connect Google Drive in Connections first.'
+          : body.error === 'file_too_large' ? 'File is too large for Drive export (75 MB cap).'
+          : body.error || 'Drive export failed.';
+        setDriveBanner({ kind: 'err', text: msg });
+        return;
+      }
+      setDriveBanner({
+        kind: 'ok',
+        text: `Saved to your Google Drive${body.folderName ? ` › ${body.folderName}` : ''}.`,
+        link: body.webViewLink ?? null,
+      });
+    } catch (e) {
+      setDriveBanner({ kind: 'err', text: e instanceof Error ? e.message : 'Drive export failed.' });
+    } finally {
+      setDriveExporting(false);
+    }
+  }, [id, doc, driveExporting]);
 
   const [downloading, setDownloading] = useState(false);
   const handleDownload = useCallback(async () => {
@@ -832,6 +885,16 @@ export default function DocumentReader() {
           >
             <Download size={15} />
           </button>
+          {hasDriveConnection && (
+            <button
+              onClick={handleDriveExport}
+              disabled={driveExporting || !doc?.storage_path}
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              title={driveExporting ? 'Saving to Drive…' : 'Save to Google Drive'}
+            >
+              <HardDrive size={15} />
+            </button>
+          )}
           <button
             onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
@@ -841,6 +904,35 @@ export default function DocumentReader() {
           </button>
         </div>
       </div>
+
+      {driveBanner && (
+        <div
+          className={`flex items-center gap-2 px-3 py-2 text-xs border-b border-[var(--color-border)] ${
+            driveBanner.kind === 'ok'
+              ? 'bg-[#4ade80]/10 text-[#4ade80]'
+              : 'bg-[#f87171]/10 text-[#f87171]'
+          }`}
+        >
+          <span className="flex-1">{driveBanner.text}</span>
+          {driveBanner.kind === 'ok' && driveBanner.link && (
+            <a
+              href={driveBanner.link}
+              target="_blank"
+              rel="noreferrer"
+              className="underline hover:no-underline"
+            >
+              Open in Drive
+            </a>
+          )}
+          <button
+            onClick={() => setDriveBanner(null)}
+            className="opacity-70 hover:opacity-100"
+            aria-label="Dismiss"
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 flex flex-row min-h-0">
         {sidebarOpen && fileKind === 'pdf' && loadState === 'ready' && (

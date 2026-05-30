@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plug, Mail, Calendar, Cloud, ChevronRight, X } from 'lucide-react';
+import { ArrowLeft, Plug, Mail, Calendar, Cloud, ChevronRight, X, HardDrive } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import {
   useConnections,
@@ -23,7 +23,7 @@ import {
 } from '@/hooks/useConnections';
 
 type ConnState = 'connected' | 'not_connected' | 'needs_attention' | 'coming_soon';
-type IntegrationKind = 'gmail' | 'google_calendar' | 'microsoft_365';
+type IntegrationKind = 'gmail' | 'google_calendar' | 'google_drive' | 'microsoft_365';
 
 function StateBadge({ state }: { state: ConnState }) {
   if (state === 'connected') {
@@ -140,6 +140,12 @@ const INTEGRATIONS: {
     blurb: 'Sync matter deadlines and events both ways.',
   },
   {
+    kind: 'google_drive',
+    icon: HardDrive,
+    name: 'Google Drive',
+    blurb: 'Export documents and pages straight to your Drive.',
+  },
+  {
     kind: 'microsoft_365',
     icon: Cloud,
     name: 'Microsoft 365',
@@ -161,6 +167,9 @@ export default function Connections() {
       if (connected === 'gmail') return { kind: 'ok', text: 'Gmail connected.' };
       if (connected === 'google_calendar') {
         return { kind: 'ok', text: 'Google Calendar connected.' };
+      }
+      if (connected === 'google_drive') {
+        return { kind: 'ok', text: 'Google Drive connected.' };
       }
       if (connected === 'microsoft_365') {
         return { kind: 'ok', text: 'Microsoft 365 connected.' };
