@@ -23,12 +23,15 @@ const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 
 const REDIRECT_URI = 'https://www.contextspaces.ai/api/google-callback';
 
-// One OAuth client, two integrations — the requested scope differs.
-// gmail.readonly is a Google "restricted" scope; calendar.events is the
-// lighter "sensitive" tier.
+// One OAuth client, several integrations — the requested scope differs.
+//   gmail            — restricted tier (heavy verification)
+//   google_calendar  — sensitive tier (lighter verification)
+//   google_drive     — non-sensitive (drive.file — can only access files
+//                     this app creates; no verification needed)
 const SCOPES = {
   gmail: 'openid email https://www.googleapis.com/auth/gmail.readonly',
   google_calendar: 'openid email https://www.googleapis.com/auth/calendar.events',
+  google_drive: 'openid email https://www.googleapis.com/auth/drive.file',
 };
 
 export default async function handler(req, res) {

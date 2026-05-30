@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X } from 'lucide-react';
+import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import {
   useConnections,
@@ -19,7 +19,7 @@ import {
 } from '@/hooks/useConnections';
 
 type ConnState = 'connected' | 'not_connected' | 'needs_attention' | 'coming_soon';
-type GoogleKind = 'gmail' | 'google_calendar';
+type GoogleKind = 'gmail' | 'google_calendar' | 'google_drive';
 
 function StateBadge({ state }: { state: ConnState }) {
   if (state === 'connected') {
@@ -134,6 +134,12 @@ const GOOGLE_INTEGRATIONS: {
     name: 'Google Calendar',
     blurb: 'Sync matter deadlines and events both ways.',
   },
+  {
+    kind: 'google_drive',
+    icon: HardDrive,
+    name: 'Google Drive',
+    blurb: 'Export documents and pages straight to your Drive.',
+  },
 ];
 
 export default function Connections() {
@@ -150,6 +156,9 @@ export default function Connections() {
       if (connected === 'gmail') return { kind: 'ok', text: 'Gmail connected.' };
       if (connected === 'google_calendar') {
         return { kind: 'ok', text: 'Google Calendar connected.' };
+      }
+      if (connected === 'google_drive') {
+        return { kind: 'ok', text: 'Google Drive connected.' };
       }
       const err = p.get('error');
       if (err) {
