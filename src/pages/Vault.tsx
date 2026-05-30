@@ -25,6 +25,7 @@ import {
 } from '@/lib/vault-persist';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import { isZip, expandZip } from '@/lib/vault-zip';
 
 type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
 
@@ -228,7 +229,45 @@ export default function Vault() {
     `${(bytes / 1024).toFixed(0)} KB`;
 
   const addVaultFiles = useCallback(async (fileList: FileList | File[]) => {
-    const arr = Array.from(fileList);
+    const incoming = Array.from(fileList);
+
+    // Expand any .zip archives first. Each contained file flows into the
+    // normal upload path below as if the user had selected it directly,
+    // so per-file status, ingest, and re-index all work unchanged. While
+    // a zip is extracting we show a temporary placeholder row so the user
+    // sees that *something* is happening on big archives.
+    const arr: File[] = [];
+    for (const file of incoming) {
+      if (!isZip(file)) {
+        arr.push(file);
+        continue;
+      }
+      const placeholderId = crypto.randomUUID();
+      setVaultFiles((prev) => [{
+        id: placeholderId,
+        name: `Extracting ${file.name}…`,
+        path: file.name,
+        size: formatSize(file.size),
+        sizeBytes: file.size,
+        type: 'zip',
+        file,
+        status: 'uploading' as const,
+      }, ...prev]);
+      try {
+        const { files, skipped, truncatedAt } = await expandZip(file);
+        if (skipped.length) console.log(`zip ${file.name}: skipped ${skipped.length} entries:`, skipped.slice(0, 10));
+        if (truncatedAt) console.warn(`zip ${file.name}: truncated at ${truncatedAt} files`);
+        setVaultFiles((prev) => prev.filter((f) => f.id !== placeholderId));
+        arr.push(...files);
+      } catch (err: any) {
+        console.error('expandZip:', err.message);
+        setVaultFiles((prev) => prev.map((f) =>
+          f.id === placeholderId
+            ? { ...f, name: file.name, status: 'error' as const, textContent: `[Zip extraction failed: ${err.message}]` }
+            : f,
+        ));
+      }
+    }
 
     // Persistent mode — upload + ingest via Supabase, poll for status.
     if (matter) {
