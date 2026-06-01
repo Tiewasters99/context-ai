@@ -6,7 +6,7 @@
 
 import {
   authenticateConnectorToken,
-  adminClient,
+  userScopedClient,
   corsHeaders,
   json,
   handleAuthError,
@@ -24,11 +24,12 @@ export default async function handler(req, res) {
     return handleAuthError(res, err);
   }
 
-  const sb = adminClient();
+  // User-scoped client → RLS on matterspaces filters to the user's
+  // matters automatically (membership-based, not owner-column-based).
+  const sb = userScopedClient(userId);
   const { data, error } = await sb
     .from('matterspaces')
     .select('id, name, short_code, parent_matterspace_id, serverspace:serverspaces(name)')
-    .eq('owner_id', userId)
     .order('name', { ascending: true });
   if (error) return json(res, 500, { error: `query_failed: ${error.message}` });
 
