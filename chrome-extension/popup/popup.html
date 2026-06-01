@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>Contextspaces</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Contextspaces</h1>
+    <p id="status" class="muted">Loading…</p>
+  </header>
+
+  <section id="connected" hidden>
+    <p>You're signed in. The Contextspaces button will appear when you compose a Gmail message.</p>
+    <button id="reset" class="ghost">Sign out (remove token)</button>
+  </section>
+
+  <section id="connect">
+    <p>Paste the Contextspaces token from your dashboard to enable Vault-attach inside Gmail.</p>
+    <textarea id="token-input" placeholder="csp_…" rows="3" autocomplete="off" spellcheck="false"></textarea>
+    <button id="save">Save token</button>
+    <p class="muted small">
+      Don't have one? Open
+      <a id="open-connections" href="#">contextspaces.ai/app/connections/claude</a>
+      and copy a token from the Claude Desktop setup — same format, works for the extension too.
+    </p>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width" />
+  <title>Pick a document</title>
+  <link rel="stylesheet" href="picker.css" />
+</head>
+<body>
+  <header>
+    <h1>Attach from Contextspaces</h1>
+    <button id="close" class="x" aria-label="Close">×</button>
+  </header>
+
+  <section id="loading" class="muted">Loading matters…</section>
+
+  <section id="error" class="error" hidden></section>
+
+  <section id="not-signed-in" hidden>
+    <p>You're not signed in. Open the Contextspaces extension popup (click the toolbar icon) and paste a token.</p>
+  </section>
+
+  <section id="matter-pick" hidden>
+    <label for="matter-select">Matter</label>
+    <select id="matter-select"></select>
+  </section>
+
+  <section id="doc-list" hidden>
+    <p class="muted small" id="doc-list-status">Loading documents…</p>
+    <ul id="doc-ul"></ul>
+  </section>
+
+  <script src="picker.js"></script>
+</body>
+</html>

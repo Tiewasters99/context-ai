@@ -1,0 +1,78 @@
+/* All Contextspaces-injected UI scoped under csp-* class names so we
+   never collide with Gmail's own selectors. */
+
+.csp-attach-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 8px 14px;
+  border-radius: 4px;
+  font: 500 13px/1 "Google Sans", Roboto, Arial, sans-serif;
+  background: #1a1c20;
+  color: #f0c850;
+  border: 1px solid rgba(240, 200, 80, 0.35);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s;
+}
+.csp-attach-btn:hover {
+  background: #22252a;
+  border-color: rgba(240, 200, 80, 0.6);
+}
+.csp-attach-icon {
+  font-size: 14px;
+  font-weight: 700;
+}
+.csp-attach-label {
+  letter-spacing: 0.01em;
+}
+
+.csp-picker-frame {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(520px, 92vw);
+  height: min(620px, 88vh);
+  border: none;
+  border-radius: 10px;
+  background: #0e0e12;
+  box-shadow: 0 12px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+  z-index: 2147483646;
+}
+
+.csp-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  max-width: 420px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #16161d;
+  color: #f5f2ed;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  font: 13px/1.4 "Google Sans", Roboto, Arial, sans-serif;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.csp-toast a {
+  color: #e8b84a;
+  text-decoration: none;
+}
+.csp-toast a:hover { text-decoration: underline; }
+.csp-toast-ok { border-left: 3px solid #4ade80; }
+.csp-toast-err { border-left: 3px solid #f87171; }
+.csp-toast-msg { flex: 1; }
+.csp-toast-close {
+  background: transparent;
+  border: none;
+  color: rgba(245,242,237,0.6);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.csp-toast-close:hover { color: #f5f2ed; }
