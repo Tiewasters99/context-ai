@@ -5,7 +5,7 @@
 
 import {
   authenticateConnectorToken,
-  adminClient,
+  userScopedClient,
   corsHeaders,
   json,
   handleAuthError,
@@ -26,18 +26,18 @@ export default async function handler(req, res) {
   const matterId = (req.query && req.query.matter) || '';
   if (!matterId) return json(res, 400, { error: 'matter param required' });
 
-  const sb = adminClient();
+  // RLS on documents already filters to matters the user has access to.
+  // If the user can read the matter they can read its documents; if not,
+  // the query returns an empty list and we 404 below.
+  const sb = userScopedClient(userId);
 
-  // Confirm the matter belongs to this user before listing its docs.
   const { data: matter, error: mErr } = await sb
     .from('matterspaces')
-    .select('id, owner_id')
+    .select('id')
     .eq('id', matterId)
     .maybeSingle();
   if (mErr) return json(res, 500, { error: `matter_lookup: ${mErr.message}` });
-  if (!matter || matter.owner_id !== userId) {
-    return json(res, 404, { error: 'matter_not_found' });
-  }
+  if (!matter) return json(res, 404, { error: 'matter_not_found' });
 
   const { data, error } = await sb
     .from('documents')

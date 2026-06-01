@@ -11,6 +11,7 @@
 import {
   authenticateConnectorToken,
   adminClient,
+  userScopedClient,
   corsHeaders,
   json,
   handleAuthError,
@@ -43,10 +44,14 @@ export default async function handler(req, res) {
   const folderName = typeof body.folderName === 'string' ? body.folderName.trim() : 'Contextspaces';
   if (!documentId) return json(res, 400, { error: 'documentId required' });
 
+  // Use the user-scoped client for the document lookup — RLS confirms
+  // the user can access this document. Use the admin client only for
+  // the connections row (encrypted refresh token) and the storage
+  // blob fetch.
+  const sb = userScopedClient(userId);
   const admin = adminClient();
 
-  // Authorize the document — it must belong to a matter owned by this user.
-  const { data: doc, error: docErr } = await admin
+  const { data: doc, error: docErr } = await sb
     .from('documents')
     .select('id, title, source_filename, storage_path, file_size_bytes, matterspace_id')
     .eq('id', documentId)
@@ -56,14 +61,6 @@ export default async function handler(req, res) {
   if (!doc.storage_path) return json(res, 400, { error: 'document_has_no_file' });
   if (doc.file_size_bytes && doc.file_size_bytes > MAX_EXPORT_BYTES) {
     return json(res, 413, { error: 'file_too_large', maxBytes: MAX_EXPORT_BYTES });
-  }
-  const { data: matter, error: mErr } = await admin
-    .from('matterspaces')
-    .select('owner_id')
-    .eq('id', doc.matterspace_id)
-    .maybeSingle();
-  if (mErr || !matter || matter.owner_id !== userId) {
-    return json(res, 404, { error: 'document_not_found' });
   }
 
   // Google Drive connection lookup.
