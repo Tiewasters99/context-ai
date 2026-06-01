@@ -143,8 +143,11 @@ export default function GrokConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
               <span>
-                Generate a token below — you'll see the Contextspaces endpoint
-                URL and a Bearer token.
+                Scroll down to <strong className="text-[var(--color-text-bright)]">Generate a new token</strong>,
+                type a label (e.g. "Grok — Web"), and click{' '}
+                <strong className="text-[var(--color-text-bright)]">Generate</strong>. A dialog opens
+                with the Contextspaces endpoint URL and a one-time Bearer token —
+                copy both before closing.
               </span>
             </li>
             <li className="flex gap-3">
@@ -152,9 +155,10 @@ export default function GrokConnect() {
               <span>
                 In Grok's settings, find the{' '}
                 <strong className="text-[var(--color-text-bright)]">MCP Connectors</strong>{' '}
-                (sometimes labelled Tools, Custom Servers, or Integrations
-                depending on your build), add a new server, paste the URL and
-                the token, and save.
+                panel (sometimes labelled Tools, Custom Servers, or Integrations
+                depending on your build), add a new server, paste the URL into
+                the URL field and the token into the Bearer / Authorization
+                field, and save.
               </span>
             </li>
           </ol>
