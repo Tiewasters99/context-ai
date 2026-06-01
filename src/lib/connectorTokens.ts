@@ -57,3 +57,41 @@ export function claudeDesktopConfigSnippet(token: string): string {
     2,
   );
 }
+
+// Gemini CLI accepts the same HTTP MCP shape under `mcpServers` in its
+// settings file (`~/.gemini/settings.json` or a per-project
+// `.gemini/settings.json`). Older builds may key the file as
+// `config.json`; the snippet is identical either way.
+export function geminiConfigSnippet(token: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        contextspaces: {
+          url: MCP_ENDPOINT_URL,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
+// Grok exposes MCP servers via its settings UI (URL + Bearer token).
+// For users on a CLI / scripted setup, the same JSON shape works as a
+// custom-config block — Grok's MCP handling is the same Streamable
+// HTTP protocol Claude and Gemini speak.
+export function grokConfigSnippet(token: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        contextspaces: {
+          url: MCP_ENDPOINT_URL,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}

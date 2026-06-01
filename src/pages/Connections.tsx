@@ -316,7 +316,49 @@ export default function Connections() {
             <ChevronRight size={16} className="text-[var(--color-text-muted)] shrink-0" />
           </button>
 
-          {/* Gmail, Google Calendar, Microsoft 365 — live OAuth connections */}
+          {/* Gemini — navigate to detail */}
+          <button
+            onClick={() => navigate('/app/connections/gemini')}
+            className="flex items-center gap-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4 text-left transition hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-surface-raised)]"
+          >
+            <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
+              <Plug size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="flex items-center gap-2.5">
+                <span className="text-[15px] font-medium text-[var(--color-text-bright)]">
+                  Gemini
+                </span>
+              </span>
+              <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
+                Same toolset for Google's Gemini — CLI today, web/desktop as MCP support rolls out.
+              </span>
+            </span>
+            <ChevronRight size={16} className="text-[var(--color-text-muted)] shrink-0" />
+          </button>
+
+          {/* Grok — navigate to detail */}
+          <button
+            onClick={() => navigate('/app/connections/grok')}
+            className="flex items-center gap-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4 text-left transition hover:border-[var(--color-primary)]/50 hover:bg-[var(--color-surface-raised)]"
+          >
+            <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
+              <Plug size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
+            </span>
+            <span className="flex-1 min-w-0">
+              <span className="flex items-center gap-2.5">
+                <span className="text-[15px] font-medium text-[var(--color-text-bright)]">
+                  Grok
+                </span>
+              </span>
+              <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
+                Connect Contextspaces to xAI's Grok via MCP — same URL, same token.
+              </span>
+            </span>
+            <ChevronRight size={16} className="text-[var(--color-text-muted)] shrink-0" />
+          </button>
+
+          {/* Gmail, Google Calendar, Google Drive — live OAuth connections */}
           {INTEGRATIONS.map((integ) => {
             const connection = connections.find((c) => c.kind === integ.kind);
             return (
