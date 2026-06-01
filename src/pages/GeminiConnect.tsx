@@ -148,22 +148,23 @@ export default function GeminiConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
               <span>
-                Generate a token below — you'll see the Contextspaces endpoint
-                URL and a Bearer token. Both go in the same config block.
+                Scroll down to <strong className="text-[var(--color-text-bright)]">Generate a new token</strong>,
+                type a label (e.g. "Gemini CLI"), and click{' '}
+                <strong className="text-[var(--color-text-bright)]">Generate</strong>. A dialog opens
+                with three things you'll need:
+                {' '}the endpoint URL,
+                {' '}a one-time Bearer token,
+                {' '}and (under <em>Advanced</em>) a ready-to-paste JSON snippet
+                that bundles both.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
-                Paste the snippet (Advanced section of the token dialog) into{' '}
-                <code className="font-mono text-xs text-[var(--color-text-bright)]">
-                  ~/.gemini/settings.json
-                </code>
-                {' '}or your project's{' '}
-                <code className="font-mono text-xs text-[var(--color-text-bright)]">
-                  .gemini/settings.json
-                </code>
-                . Restart Gemini and the Contextspaces tools are live.
+                Open <code className="font-mono text-xs text-[var(--color-text-bright)]">~/.gemini/settings.json</code>{' '}
+                (or your project's <code className="font-mono text-xs text-[var(--color-text-bright)]">.gemini/settings.json</code>),
+                paste the JSON snippet from the dialog's <em>Advanced</em> section, save, and restart Gemini.
+                The Contextspaces tools are then live in any Gemini session.
               </span>
             </li>
           </ol>
