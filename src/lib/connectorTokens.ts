@@ -58,16 +58,36 @@ export function claudeDesktopConfigSnippet(token: string): string {
   );
 }
 
-// Gemini CLI accepts the same HTTP MCP shape under `mcpServers` in its
-// settings file (`~/.gemini/settings.json` or a per-project
-// `.gemini/settings.json`). Older builds may key the file as
-// `config.json`; the snippet is identical either way.
+// Legacy Gemini CLI: HTTP MCP shape with `url` (sunsets 2026-06-18 for
+// Google One / unpaid tiers — Google is unifying CLI surfaces under
+// Antigravity). Keep this snippet around for users who haven't migrated
+// yet, but the page directs new users at antigravityConfigSnippet.
 export function geminiConfigSnippet(token: string): string {
   return JSON.stringify(
     {
       mcpServers: {
         contextspaces: {
           url: MCP_ENDPOINT_URL,
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
+// Antigravity CLI (Google's replacement for Gemini CLI). Same protocol,
+// two cosmetic differences from the Gemini CLI shape:
+//   - file lives at ~/.gemini/config/mcp_config.json (not ~/.gemini/settings.json)
+//   - the field is `serverUrl`, not `url`
+// The Bearer-token + headers convention is unchanged.
+export function antigravityConfigSnippet(token: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        contextspaces: {
+          serverUrl: MCP_ENDPOINT_URL,
           headers: { Authorization: `Bearer ${token}` },
         },
       },
