@@ -169,10 +169,11 @@ export default function GeminiConnect() {
             </li>
           </ol>
           <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
-            Gemini web / desktop MCP UIs are rolling out unevenly across 2026 —
-            if your build has a Connectors panel, paste the URL and the token
-            there instead. The same token works in any Gemini surface that
-            speaks MCP.
+            The Gemini web app at <strong>gemini.google.com</strong> does not
+            currently expose an MCP-connector setting — only the CLI does.
+            Google has announced MCP support for the web and desktop apps but
+            the user-facing panel hasn't shipped. When it does, the same URL +
+            Bearer token below will work there with no token regeneration.
           </p>
         </section>
 
@@ -325,9 +326,13 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
         </div>
 
         <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-          In Gemini's settings (CLI: <code className="font-mono text-xs">~/.gemini/settings.json</code>;
-          web/desktop: <strong className="text-[var(--color-text-bright)]">Connectors / MCP Servers</strong>),
-          add a Contextspaces server with the URL and token below.
+          The Gemini CLI is the working path today: paste the JSON snippet
+          below (under <em>Advanced</em>) into{' '}
+          <code className="font-mono text-xs">~/.gemini/settings.json</code> and
+          restart Gemini. Gemini's web and desktop apps don't yet have a
+          user-facing MCP-connector panel — once Google ships one (announced,
+          not yet live), the same URL and Bearer token below will paste
+          straight into it.
         </p>
 
         <div className="mb-4">
