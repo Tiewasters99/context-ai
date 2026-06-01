@@ -4,28 +4,32 @@
 .csp-attach-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-left: 8px;
-  padding: 8px 14px;
-  border-radius: 4px;
-  font: 500 13px/1 "Google Sans", Roboto, Arial, sans-serif;
-  background: #1a1c20;
-  color: #f0c850;
-  border: 1px solid rgba(240, 200, 80, 0.35);
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: 0 2px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #d4a054;
+  border: none;
   cursor: pointer;
   user-select: none;
-  transition: background 0.12s, border-color 0.12s;
+  vertical-align: middle;
+  transition: background 0.12s;
 }
 .csp-attach-btn:hover {
-  background: #22252a;
-  border-color: rgba(240, 200, 80, 0.6);
+  background: rgba(212, 160, 84, 0.14);
+  color: #e8b84a;
 }
-.csp-attach-icon {
-  font-size: 14px;
-  font-weight: 700;
+.csp-attach-btn .csp-attach-icon {
+  display: block;
+  width: 20px;
+  height: 20px;
 }
-.csp-attach-label {
-  letter-spacing: 0.01em;
+/* Label is on the title attribute / tooltip only — no inline text. */
+.csp-attach-btn .csp-attach-label {
+  display: none;
 }
 
 .csp-picker-frame {
