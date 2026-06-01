@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   generateConnectorToken,
+  antigravityConfigSnippet,
   geminiConfigSnippet,
   MCP_ENDPOINT_URL,
 } from '@/lib/connectorTokens';
@@ -109,17 +110,21 @@ export default function GeminiConnect() {
             Connect to Gemini
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            Wire Contextspaces into{' '}
-            <strong className="text-[var(--color-text-bright)]">Gemini</strong>{' '}
-            — primarily the Gemini CLI today, with the web and desktop apps
-            picking up MCP support across 2026. The same connection works on
-            every Gemini surface that speaks MCP: same URL, same token.
+            Wire Contextspaces into Google's Gemini models via the{' '}
+            <strong className="text-[var(--color-text-bright)]">Antigravity CLI</strong>
+            {' '}— Google's unified terminal agent (the rebranded successor to
+            the Gemini CLI). Once connected you can ask Gemini to read your
+            matters, draw pincites from your Vault, and act on your behalf —
+            same toolset Claude gets, no copy-pasting between surfaces.
           </p>
-          <p className="mt-4 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            Once connected you can ask Gemini to read your matters, draw
-            pincites from your Vault, and act on your behalf — same toolset
-            Claude gets, no copy-pasting between surfaces.
-          </p>
+          <div className="mt-5 max-w-2xl rounded-lg border border-[#f0c850]/35 bg-[#f0c850]/5 px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">Heads-up:</strong>{' '}
+            Google is sunsetting the legacy Gemini CLI for Google One and
+            unpaid tiers on <strong>2026-06-18</strong>. Antigravity is the
+            replacement — same models, same MCP protocol, slightly different
+            config file. If you're still on Gemini CLI, the legacy snippet is
+            at the bottom of this page.
+          </div>
 
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
@@ -133,47 +138,52 @@ export default function GeminiConnect() {
         <section className="mb-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           <h2 className="text-lg font-semibold text-[var(--color-text-bright)] mb-4"
               style={{ fontFamily: 'Playfair Display Variable, serif' }}>
-            Gemini CLI, in three steps
+            Antigravity CLI, in three steps
           </h2>
           <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
               <span>
-                Install the Gemini CLI if you don't have it:{' '}
-                <code className="font-mono text-xs bg-[var(--color-surface-raised)] px-1.5 py-0.5 rounded">
-                  npm install -g @google/gemini-cli
+                Install Antigravity CLI (run in PowerShell on Windows):{' '}
+                <code className="font-mono text-xs bg-[var(--color-surface-raised)] px-1.5 py-0.5 rounded block mt-2">
+                  irm https://antigravity.google/cli/install.ps1 | iex
                 </code>
+                <span className="block mt-2 text-xs text-[var(--color-text-muted)]">
+                  macOS / Linux:{' '}
+                  <code className="font-mono">curl -fsSL https://antigravity.google/cli/install.sh | bash</code>.
+                  The installer drops a binary named <strong>agy</strong> (not <em>antigravity</em>).
+                </span>
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
               <span>
                 Scroll down to <strong className="text-[var(--color-text-bright)]">Generate a new token</strong>,
-                type a label (e.g. "Gemini CLI"), and click{' '}
+                type a label (e.g. "Antigravity CLI"), and click{' '}
                 <strong className="text-[var(--color-text-bright)]">Generate</strong>. A dialog opens
-                with three things you'll need:
-                {' '}the endpoint URL,
-                {' '}a one-time Bearer token,
-                {' '}and (under <em>Advanced</em>) a ready-to-paste JSON snippet
-                that bundles both.
+                with the endpoint URL, a one-time Bearer token, and a
+                ready-to-paste JSON snippet (under <em>Advanced</em>) you'll
+                drop into the config file.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
-                Open <code className="font-mono text-xs text-[var(--color-text-bright)]">~/.gemini/settings.json</code>{' '}
-                (or your project's <code className="font-mono text-xs text-[var(--color-text-bright)]">.gemini/settings.json</code>),
-                paste the JSON snippet from the dialog's <em>Advanced</em> section, save, and restart Gemini.
-                The Contextspaces tools are then live in any Gemini session.
+                Open (or create){' '}
+                <code className="font-mono text-xs text-[var(--color-text-bright)]">~/.gemini/config/mcp_config.json</code>{' '}
+                — yes, the folder is still <code className="font-mono">.gemini</code>{' '}
+                (Antigravity reuses Gemini's config root). Paste the JSON
+                snippet from the dialog's <em>Advanced</em> section, save, and
+                run <code className="font-mono">agy</code>. Contextspaces tools
+                are live in any agy session.
               </span>
             </li>
           </ol>
           <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
             The Gemini web app at <strong>gemini.google.com</strong> does not
-            currently expose an MCP-connector setting — only the CLI does.
-            Google has announced MCP support for the web and desktop apps but
-            the user-facing panel hasn't shipped. When it does, the same URL +
-            Bearer token below will work there with no token regeneration.
+            currently expose an MCP-connector setting. Google has announced
+            MCP support across surfaces; when the web panel ships, the same
+            URL and Bearer token from the dialog will work there too.
           </p>
         </section>
 
@@ -305,8 +315,10 @@ function TokenItem({ token, onRevoke }: { token: TokenRow; onRevoke: (id: string
 
 
 function NewTokenModal({ token, name, onClose }: { token: string; name: string; onClose: () => void }) {
-  const snippet = geminiConfigSnippet(token);
+  const snippet = antigravityConfigSnippet(token);
+  const legacySnippet = geminiConfigSnippet(token);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showLegacy, setShowLegacy] = useState(false);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true">
       <div className="w-full max-w-2xl bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-auto">
@@ -326,13 +338,11 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
         </div>
 
         <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-          The Gemini CLI is the working path today: paste the JSON snippet
-          below (under <em>Advanced</em>) into{' '}
-          <code className="font-mono text-xs">~/.gemini/settings.json</code> and
-          restart Gemini. Gemini's web and desktop apps don't yet have a
-          user-facing MCP-connector panel — once Google ships one (announced,
-          not yet live), the same URL and Bearer token below will paste
-          straight into it.
+          Paste the JSON below (under <em>Advanced</em>) into{' '}
+          <code className="font-mono text-xs">~/.gemini/config/mcp_config.json</code>{' '}
+          and run <code className="font-mono">agy</code>. If you're still on
+          the legacy Gemini CLI (sunsetting 2026-06-18 for free tiers), see
+          the legacy snippet near the bottom of this dialog.
         </p>
 
         <div className="mb-4">
@@ -360,8 +370,9 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
             <div className="mt-3">
               <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
                 Drop this into{' '}
-                <code className="font-mono text-[var(--color-text-secondary)]">~/.gemini/settings.json</code>{' '}
-                (or your project's <code className="font-mono">.gemini/settings.json</code>) and restart.
+                <code className="font-mono text-[var(--color-text-secondary)]">~/.gemini/config/mcp_config.json</code>{' '}
+                for Antigravity CLI. On Windows that's{' '}
+                <code className="font-mono">%USERPROFILE%\.gemini\config\mcp_config.json</code>.
               </p>
               <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
                 <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">{snippet}</pre>
@@ -369,6 +380,30 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
                   <CopyButton value={snippet} label="config" />
                 </div>
               </div>
+
+              <button
+                onClick={() => setShowLegacy((v) => !v)}
+                className="mt-4 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5"
+              >
+                <ChevronRight size={12} className={`transition-transform ${showLegacy ? 'rotate-90' : ''}`} />
+                Legacy Gemini CLI snippet (sunsets 2026-06-18 for free tiers)
+              </button>
+              {showLegacy && (
+                <div className="mt-3">
+                  <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
+                    For the soon-to-sunset Gemini CLI — paste this into{' '}
+                    <code className="font-mono text-[var(--color-text-secondary)]">~/.gemini/settings.json</code>.
+                    Same token, different field name (<code className="font-mono">url</code> vs.{' '}
+                    <code className="font-mono">serverUrl</code>) and path.
+                  </p>
+                  <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+                    <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">{legacySnippet}</pre>
+                    <div className="absolute top-2 right-2">
+                      <CopyButton value={legacySnippet} label="legacy config" />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
