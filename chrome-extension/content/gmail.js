@@ -14,37 +14,61 @@ const BUTTON_ID = 'csp-gmail-attach-btn';
 const PICKER_FRAME_ID = 'csp-gmail-picker-frame';
 const TOAST_ID = 'csp-gmail-toast';
 
-// Watch the whole page for compose windows mounting.
-const observer = new MutationObserver(() => scanForComposeWindows());
+console.log('[Contextspaces] content script loaded on', location.href);
+
+// Watch the whole page for compose windows mounting. Gmail mounts /
+// unmounts compose dialogs dynamically as the user opens "Compose" or
+// switches between inbox views, so we re-scan on any DOM mutation
+// (throttled by a microtask) and on a 1s interval as a safety net.
+let scanScheduled = false;
+function scheduleScan() {
+  if (scanScheduled) return;
+  scanScheduled = true;
+  queueMicrotask(() => { scanScheduled = false; scanForComposeWindows(); });
+}
+const observer = new MutationObserver(scheduleScan);
 observer.observe(document.body, { childList: true, subtree: true });
+setInterval(scheduleScan, 1000);
 scanForComposeWindows();
 
 function scanForComposeWindows() {
-  // Gmail compose dialogs are positioned dialogs with role="dialog" and
-  // contain a Send button identifiable by its data tooltip / aria-label.
-  const dialogs = document.querySelectorAll('div[role="dialog"]');
-  for (const dlg of dialogs) {
-    if (dlg.querySelector(`#${BUTTON_ID}`)) continue;
-    const sendBtn = findSendButton(dlg);
-    if (!sendBtn) continue;
-    injectButton(dlg, sendBtn);
-  }
-}
-
-function findSendButton(dlg) {
-  // Send button has role="button" and either data-tooltip starting with
-  // "Send" or aria-label starting with "Send".
-  const candidates = dlg.querySelectorAll('div[role="button"]');
-  for (const b of candidates) {
-    const tip = b.getAttribute('data-tooltip') || '';
+  // Permissive detection: any element with role="button" whose
+  // aria-label OR data-tooltip starts with "Send". This catches both
+  // the full-screen compose ("Send") and the bottom-right inline
+  // compose ("Send (Ctrl-Enter)"), and survives Gmail's variation
+  // across consumer/Workspace accounts and languages-as-long-as-they-
+  // -use-English-aria. Each Send button maps to one compose toolbar,
+  // so injection is naturally idempotent via the BUTTON_ID check.
+  const sendCandidates = document.querySelectorAll(
+    'div[role="button"][aria-label], div[role="button"][data-tooltip]'
+  );
+  let sendCount = 0;
+  for (const b of sendCandidates) {
     const lab = b.getAttribute('aria-label') || '';
-    if (/^Send\b/i.test(tip) || /^Send\b/i.test(lab)) return b;
+    const tip = b.getAttribute('data-tooltip') || '';
+    if (!/^Send\b/i.test(lab) && !/^Send\b/i.test(tip)) continue;
+    sendCount++;
+    // The compose's toolbar row is the Send button's parent element;
+    // we check it (not the whole document) for an existing CSP button
+    // so multi-compose windows each get their own button.
+    const slot = b.parentElement;
+    if (!slot) continue;
+    const row = slot.parentElement || slot;
+    if (row.querySelector(`#${BUTTON_ID}`)) continue;
+    injectButton(b);
   }
-  return null;
+  if (sendCount === 0 && !window.__cspNoSendLoggedRecently) {
+    window.__cspNoSendLoggedRecently = true;
+    setTimeout(() => { window.__cspNoSendLoggedRecently = false; }, 5000);
+    console.log('[Contextspaces] no Send button found yet — waiting for compose to open');
+  }
 }
 
-function injectButton(dlg, sendBtn) {
-  // Sit immediately to the right of Send in the toolbar.
+function injectButton(sendBtn) {
+  // Find the closest compose dialog ancestor — that's the scope for
+  // openPicker so messages from the picker iframe route back to the
+  // right compose if there are multiple open.
+  const dlg = sendBtn.closest('div[role="dialog"]') || sendBtn.parentElement;
   const btn = document.createElement('div');
   btn.id = BUTTON_ID;
   btn.className = 'csp-attach-btn';
@@ -60,10 +84,12 @@ function injectButton(dlg, sendBtn) {
     e.stopPropagation();
     openPicker(dlg);
   });
-  // Insert after the parent containing send (Gmail puts each toolbar
-  // item in a sibling div; appending after sendBtn's parent works).
+  // Insert after the parent containing Send. Gmail wraps each toolbar
+  // item in a sibling div; inserting after sendBtn.parentElement keeps
+  // us aligned in the same row.
   const slot = sendBtn.parentElement || sendBtn;
   slot.parentElement?.insertBefore(btn, slot.nextSibling);
+  console.log('[Contextspaces] injected button next to Send');
 }
 
 function openPicker(composeDlg) {
