@@ -75,8 +75,14 @@ function injectButton(sendBtn) {
   btn.setAttribute('role', 'button');
   btn.setAttribute('tabindex', '0');
   btn.title = 'Attach from Contextspaces';
+  // Inline SVG: an open "C" glyph in the Contextspaces gold so the
+  // brand reads at toolbar scale without depending on icon fonts.
   btn.innerHTML = `
-    <span class="csp-attach-icon" aria-hidden="true">⌘</span>
+    <svg class="csp-attach-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M17 6.5 A 7.5 7.5 0 1 0 17 17.5"
+            stroke="currentColor" stroke-width="2.5"
+            fill="none" stroke-linecap="round"/>
+    </svg>
     <span class="csp-attach-label">Contextspaces</span>
   `;
   btn.addEventListener('click', (e) => {
