@@ -30,6 +30,22 @@ export default function Dashboard() {
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
 
+  // The dashboard cover is a personal, device-local backdrop — there's no
+  // per-item row to store it on, so persist the chosen URL in localStorage.
+  // (Previously it had no coverUrl/onCoverChange wiring at all, so a picked
+  // cover vanished immediately — the "covers aren't persistent" bug.)
+  const DASH_COVER_KEY = 'cs.dashboard.cover';
+  const [dashboardCover, setDashboardCover] = useState<string | null>(() => {
+    try { return localStorage.getItem(DASH_COVER_KEY); } catch { return null; }
+  });
+  const handleDashboardCover = useCallback((url: string | null) => {
+    setDashboardCover(url);
+    try {
+      if (url) localStorage.setItem(DASH_COVER_KEY, url);
+      else localStorage.removeItem(DASH_COVER_KEY);
+    } catch {}
+  }, []);
+
   // Create a matter or sub-matter from the dashboard tree. NewMatterModal
   // invalidates the shared serverspaces cache on success, so the tree here
   // refetches automatically — no manual reload needed.
@@ -69,7 +85,12 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen relative">
-      <CoverImage editable />
+      <CoverImage
+        coverUrl={dashboardCover}
+        onCoverChange={handleDashboardCover}
+        editable
+        persistKey={DASH_COVER_KEY}
+      />
 
       {!showCard && (
         <button
