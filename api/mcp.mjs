@@ -234,6 +234,7 @@ export default async function handler(req, res) {
       try {
         const result = await callTool(sb, name, args, {
           openaiApiKey: OPENAI_API_KEY,
+          googleApiKey: process.env.GOOGLE_API_KEY, // enables file_document OCR of scanned PDFs
         });
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],

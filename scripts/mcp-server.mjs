@@ -56,6 +56,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     const result = await callTool(supabase, name, args, {
       openaiApiKey: process.env.OPENAI_API_KEY,
+      googleApiKey: process.env.GOOGLE_API_KEY, // enables file_document OCR of scanned PDFs
     });
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   } catch (err) {
