@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight } from 'lucide-react';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -12,6 +12,7 @@ import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
+import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import {
   useContentItems,
   createContentItem,
@@ -84,6 +85,8 @@ export default function MatterspaceView() {
   const [subMatters, setSubMatters] = useState<{ id: string; name: string }[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+  const refreshServerspaces = useServerspacesRefresh();
+  const titleRef = useRef<HTMLHeadingElement>(null);
 
   // Re-fetch just the child matters — used after creating a sub-matter so the
   // card updates without a full reload. (This view reads its own children
@@ -97,6 +100,27 @@ export default function MatterspaceView() {
       .order('name');
     setSubMatters(data ?? []);
   }, [id]);
+
+  // Keep the editable header text in sync with the loaded/renamed matter,
+  // but never clobber what the user is actively typing.
+  useEffect(() => {
+    if (titleRef.current && matter && document.activeElement !== titleRef.current) {
+      titleRef.current.textContent = matter.name;
+    }
+  }, [matter?.id, matter?.name]);
+
+  // Inline rename (matter or sub-matter — every matter opens its own card,
+  // so this one handler covers every depth). Save on blur; empty reverts.
+  const handleRenameBlur = useCallback(async () => {
+    if (!matter) return;
+    const next = (titleRef.current?.textContent ?? '').trim();
+    if (!next) { if (titleRef.current) titleRef.current.textContent = matter.name; return; }
+    if (next === matter.name) return;
+    const { error } = await supabase.from('matterspaces').update({ name: next }).eq('id', matter.id);
+    if (error) { if (titleRef.current) titleRef.current.textContent = matter.name; return; }
+    setMatter({ ...matter, name: next });
+    refreshServerspaces(); // sidebar + dashboard reflect the new name
+  }, [matter, refreshServerspaces]);
 
   useEffect(() => {
     if (!id) return;
@@ -188,9 +212,27 @@ export default function MatterspaceView() {
             <Folder size={20} className="text-[#d4a054]" />
           </div>
           <div className="flex-1 min-w-0">
-            <h1 className="text-2xl font-bold text-[#f5f2ed] truncate">
-              {loadError ? 'Matterspace' : matter?.name ?? 'Loading…'}
-            </h1>
+            {matter && !loadError ? (
+              <h1
+                ref={titleRef}
+                contentEditable
+                suppressContentEditableWarning
+                onBlur={handleRenameBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+                  if (e.key === 'Escape') {
+                    if (titleRef.current) titleRef.current.textContent = matter.name;
+                    (e.target as HTMLElement).blur();
+                  }
+                }}
+                title="Click to rename"
+                className="text-2xl font-bold text-[#f5f2ed] outline-none break-words rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.06)] transition-colors"
+              />
+            ) : (
+              <h1 className="text-2xl font-bold text-[#f5f2ed] truncate">
+                {loadError ? 'Matterspace' : 'Loading…'}
+              </h1>
+            )}
             {matter?.description && <p className="text-sm text-white/80">{matter.description}</p>}
             {loadError && <p className="text-sm text-red-300">{loadError}</p>}
           </div>
