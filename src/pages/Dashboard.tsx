@@ -11,6 +11,7 @@ import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import ActivityFeed, { describe, relativeTime } from '@/components/activity/ActivityFeed';
 import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
 import { useActivityFeed } from '@/hooks/useActivityFeed';
+import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 
 const quickActions = [
   { label: 'Create Serverspace', icon: Plus, path: '#' },
@@ -27,6 +28,17 @@ export default function Dashboard() {
   const { data: activity = [] } = useActivityFeed(undefined);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
+  const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+
+  // Create a matter or sub-matter from the dashboard tree. NewMatterModal
+  // invalidates the shared serverspaces cache on success, so the tree here
+  // refetches automatically — no manual reload needed.
+  const openNewMatter = useCallback(
+    (serverspaceId: string, parentMatterId: string | null, contextLabel: string) => {
+      setNewMatterContext({ serverspaceId, parentMatterId, contextLabel });
+    },
+    [],
+  );
 
   // matter_id -> name, so the cross-matter feed can label each row.
   const matterNames = useMemo(() => {
@@ -169,17 +181,34 @@ export default function Dashboard() {
                         <DashboardMatterNode
                           key={node.matter.id}
                           node={node}
+                          serverspaceId={server.id}
+                          ancestorLabel={server.name}
                           expandedMatters={expandedMatters}
                           toggleMatter={(id) => toggle(expandedMatters, setExpandedMatters, id)}
                           onOpen={(matterId) => navigate(`/app/matterspace/${matterId}`)}
+                          onAddChild={openNewMatter}
                         />
                       ))}
+                      <button
+                        onClick={() => openNewMatter(server.id, null, server.name)}
+                        className="flex items-center gap-1.5 px-2 py-1.5 text-[12px] text-white/50 hover:text-[#e8b84a] transition-colors"
+                      >
+                        <Plus size={12} strokeWidth={2} />
+                        New matter
+                      </button>
                     </div>
                   )}
 
                   {isServerExpanded && tree.length === 0 && (
-                    <div className="pl-11 pr-4 py-2.5 border-t border-[rgba(255,255,255,0.06)]">
+                    <div className="pl-11 pr-4 py-2.5 border-t border-[rgba(255,255,255,0.06)] flex items-center justify-between">
                       <p className="text-[12px] text-[#5a5665]">No matterspaces yet</p>
+                      <button
+                        onClick={() => openNewMatter(server.id, null, server.name)}
+                        className="flex items-center gap-1.5 text-[12px] text-white/50 hover:text-[#e8b84a] transition-colors"
+                      >
+                        <Plus size={12} strokeWidth={2} />
+                        New matter
+                      </button>
                     </div>
                   )}
                 </div>
@@ -229,6 +258,13 @@ export default function Dashboard() {
           </p>
         </div>
       )}
+
+      {newMatterContext && (
+        <NewMatterModal
+          context={newMatterContext}
+          onClose={() => setNewMatterContext(null)}
+        />
+      )}
     </div>
   );
 }
@@ -236,27 +272,34 @@ export default function Dashboard() {
 
 interface DashboardMatterNodeProps {
   node: MatterTreeNode;
+  serverspaceId: string;
+  ancestorLabel: string;
   expandedMatters: Set<string>;
   toggleMatter: (id: string) => void;
   onOpen: (matterId: string) => void;
+  onAddChild: (serverspaceId: string, parentMatterId: string | null, contextLabel: string) => void;
 }
 
 function DashboardMatterNode({
   node,
+  serverspaceId,
+  ancestorLabel,
   expandedMatters,
   toggleMatter,
   onOpen,
+  onAddChild,
 }: DashboardMatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
   const isExpanded = expandedMatters.has(matter.id);
+  const myLabel = `${ancestorLabel} / ${matter.name}`;
 
   return (
     <div>
       <div className="flex items-center hover:bg-[rgba(255,255,255,0.04)] transition-colors group">
         <button
           onClick={() => onOpen(matter.id)}
-          className="flex items-center gap-2.5 flex-1 pr-4 py-1.5 pl-2 text-left"
+          className="flex items-center gap-2.5 flex-1 min-w-0 pr-2 py-1.5 pl-2 text-left"
         >
           {hasChildren ? (
             <span
@@ -277,10 +320,22 @@ function DashboardMatterNode({
           <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
           <span className="text-[13px] text-[#f5f1e8] truncate">{matter.name}</span>
           {hasChildren && (
-            <span className="text-[10px] text-white/30 ml-auto">
+            <span className="text-[10px] text-white/30 ml-auto shrink-0">
               {children.length} sub-matter{children.length === 1 ? '' : 's'}
             </span>
           )}
+        </button>
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onAddChild(serverspaceId, matter.id, myLabel);
+          }}
+          className="p-1 mr-2 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          aria-label="Add sub-matter"
+          title="Add sub-matter"
+        >
+          <Plus size={12} strokeWidth={2} />
         </button>
       </div>
       {isExpanded && hasChildren && (
@@ -289,9 +344,12 @@ function DashboardMatterNode({
             <DashboardMatterNode
               key={child.matter.id}
               node={child}
+              serverspaceId={serverspaceId}
+              ancestorLabel={myLabel}
               expandedMatters={expandedMatters}
               toggleMatter={toggleMatter}
               onOpen={onOpen}
+              onAddChild={onAddChild}
             />
           ))}
         </div>
