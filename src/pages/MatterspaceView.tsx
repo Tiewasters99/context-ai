@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight } from 'lucide-react';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -12,7 +12,8 @@ import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
-import { useServerspacesRefresh } from '@/hooks/useServerspaces';
+import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
+import { buildMatterTree } from '@/lib/matter-tree';
 import {
   useContentItems,
   createContentItem,
@@ -366,6 +367,21 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  // Multi-select + move-to-matter (re-file mis-filed items into the right
+  // matter/sub-matter). Move reassigns space_id — never copies — so the
+  // per-matter isolation contract holds.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showMove, setShowMove] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  useEffect(() => { setSelected(new Set()); }, [tab, matterId]);
+
+  const anySelected = selected.size > 0;
+  const allSelected = items.length > 0 && selected.size === items.length;
+  const toggleOne = (id: string) =>
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(items.map((i) => i.id)));
+
   const handleCreate = async () => {
     if (creating) return;
     setCreating(true);
@@ -380,20 +396,66 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
     }
   };
 
+  const moveSelected = async (destId: string) => {
+    if (!selected.size) return;
+    setMoving(true);
+    setMoveError(null);
+    try {
+      const ids = [...selected];
+      const { error: e } = await supabase.from('content_items').update({ space_id: destId }).in('id', ids);
+      if (e) throw e;
+      invalidate.invalidateList(space, contentType); // source matter
+      invalidate.invalidateList({ spaceId: destId, spaceType: 'matterspace' }, contentType); // destination
+      setSelected(new Set());
+      setShowMove(false);
+    } catch (e) {
+      setMoveError(e instanceof Error ? e.message : 'Move failed');
+    } finally {
+      setMoving(false);
+    }
+  };
+
   return (
     <div>
-      <div className="flex justify-end mb-4">
+      <div className="flex items-center justify-between mb-4 gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {items.length > 0 && (
+            <button
+              onClick={toggleAll}
+              className="flex items-center gap-1.5 px-2 py-1.5 rounded text-[12px] text-white/60 hover:text-white transition-colors"
+              title="Select all"
+            >
+              {allSelected ? <CheckSquare size={13} /> : <Square size={13} />}
+              Select all
+            </button>
+          )}
+          {anySelected && (
+            <>
+              <button
+                onClick={() => setShowMove(true)}
+                disabled={moving}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 transition-colors disabled:opacity-40"
+              >
+                <MoveRight size={12} strokeWidth={2} />
+                {moving ? 'Moving…' : `Move ${selected.size} to…`}
+              </button>
+              <button onClick={() => setSelected(new Set())} className="text-[12px] text-white/40 hover:text-white/70 transition-colors">
+                Clear
+              </button>
+            </>
+          )}
+        </div>
         <button
           onClick={handleCreate}
           disabled={creating}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40 shrink-0"
         >
           <Plus size={12} strokeWidth={2} />
           {creating ? 'Creating…' : `New ${verb}`}
         </button>
       </div>
-      {createError && (
-        <p className="text-[12px] text-red-300 mb-3">{createError}</p>
+      {(createError || moveError) && (
+        <p className="text-[12px] text-red-300 mb-3">{createError || moveError}</p>
       )}
       {isLoading && (
         <p className="text-center text-[12px] text-white/40 py-8">Loading…</p>
@@ -413,22 +475,123 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
       )}
       {!isLoading && items.length > 0 && (
         <div className="rounded-lg border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.08)]">
-          {items.map((item) => (
-            <Link
-              key={item.id}
-              to={`/app/${route}/${item.id}`}
-              className="flex items-center gap-3 px-4 py-2.5 hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
-            >
-              <Icon size={14} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
-              <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{item.title}</span>
-              {item.is_locked && <Lock size={11} className="text-white/40 shrink-0" />}
-              <span className="text-[11px] text-white/45 shrink-0">
-                {new Date(item.updated_at).toLocaleDateString()}
-              </span>
-            </Link>
-          ))}
+          {items.map((item) => {
+            const isSel = selected.has(item.id);
+            return (
+              <div
+                key={item.id}
+                className={`flex items-center transition-colors group ${isSel ? 'bg-[#e8b84a]/10' : 'hover:bg-[rgba(255,255,255,0.04)]'}`}
+              >
+                <button
+                  onClick={() => toggleOne(item.id)}
+                  className="pl-4 pr-2 py-2.5 shrink-0 text-white/40 hover:text-[#e8b84a] transition-colors"
+                  aria-label={isSel ? 'Deselect' : 'Select'}
+                >
+                  {isSel
+                    ? <CheckSquare size={14} className="text-[#e8b84a]" />
+                    : <Square size={14} className={anySelected ? '' : 'opacity-0 group-hover:opacity-100'} />}
+                </button>
+                <Link to={`/app/${route}/${item.id}`} className="flex items-center gap-3 pr-4 py-2.5 flex-1 min-w-0">
+                  <Icon size={14} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
+                  <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{item.title}</span>
+                  {item.is_locked && <Lock size={11} className="text-white/40 shrink-0" />}
+                  <span className="text-[11px] text-white/45 shrink-0">
+                    {new Date(item.updated_at).toLocaleDateString()}
+                  </span>
+                </Link>
+              </div>
+            );
+          })}
         </div>
       )}
+
+      {showMove && (
+        <MoveToMatterModal
+          excludeId={matterId}
+          count={selected.size}
+          noun={label}
+          busy={moving}
+          onClose={() => setShowMove(false)}
+          onPick={moveSelected}
+        />
+      )}
     </div>
+  );
+}
+
+
+// Pick a destination matter for a multi-select move. Lists every matter
+// (indented by depth, grouped by serverspace); the current matter is shown
+// but disabled. Reuses the shared serverspaces cache + tree builder.
+function MoveToMatterModal({
+  excludeId,
+  count,
+  noun,
+  busy,
+  onClose,
+  onPick,
+}: {
+  excludeId: string;
+  count: number;
+  noun: string;
+  busy: boolean;
+  onClose: () => void;
+  onPick: (destId: string) => void;
+}) {
+  const { data: serverspaces = [] } = useServerspaces();
+
+  const flatten = (
+    nodes: ReturnType<typeof buildMatterTree>,
+    depth = 0,
+    out: { id: string; name: string; depth: number }[] = [],
+  ) => {
+    for (const n of nodes) {
+      out.push({ id: n.matter.id, name: n.matter.name, depth });
+      flatten(n.children, depth + 1, out);
+    }
+    return out;
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[70] bg-black/50" onClick={onClose} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-full max-w-md max-h-[70vh] overflow-y-auto rounded-xl border border-[rgba(255,255,255,0.12)] p-5 bg-[#12121a]">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-[15px] font-semibold text-white">Move {count} {noun}</h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+        <p className="text-[11px] text-white/50 mb-4">Choose a destination matter or sub-matter.</p>
+        <div className="space-y-3">
+          {serverspaces.map((s) => (
+            <div key={s.id}>
+              <p className="text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-1 px-1">{s.name}</p>
+              <div className="space-y-px">
+                {flatten(buildMatterTree(s.matterspaces)).map((m) => {
+                  const isCurrent = m.id === excludeId;
+                  return (
+                    <button
+                      key={m.id}
+                      disabled={isCurrent || busy}
+                      onClick={() => onPick(m.id)}
+                      style={{ paddingLeft: `${8 + m.depth * 16}px` }}
+                      className={`flex items-center gap-2 w-full pr-3 py-1.5 rounded text-left text-[13px] transition-colors ${
+                        isCurrent
+                          ? 'text-white/30 cursor-default'
+                          : 'text-[#f5f1e8] hover:bg-[rgba(232,184,74,0.12)] hover:text-[#e8b84a]'
+                      }`}
+                    >
+                      <Folder size={13} className="shrink-0 text-[#d4a054]" strokeWidth={1.75} />
+                      <span className="truncate">{m.name}{isCurrent ? '  (current)' : ''}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
