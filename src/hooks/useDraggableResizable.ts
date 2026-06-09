@@ -91,7 +91,9 @@ export function useDraggableResizable(storageKey?: string) {
       if (saved.left) card.style.left = saved.left;
       if (saved.top) card.style.top = saved.top;
       if (saved.width) card.style.width = saved.width;
-      if (saved.height) card.style.height = saved.height;
+      // A restored explicit height must scroll its overflow, or content
+      // spills past the card edge (the bug: text escapes a shortened card).
+      if (saved.height) { card.style.height = saved.height; card.style.overflowY = 'auto'; }
       card.style.margin = '0';
       card.style.zIndex = '30';
       card.style.maxWidth = 'none';
@@ -168,7 +170,11 @@ export function useDraggableResizable(storageKey?: string) {
         isResizing = true;
         resizeEdge = edge;
         makeFixed();
+        // Pin the height and let content scroll within it, so resizing
+        // (especially shrinking from the bottom/top) reflows rather than
+        // letting items overflow outside the card.
         card.style.height = origH + 'px';
+        card.style.overflowY = 'auto';
       } else {
         isDragging = true;
         makeFixed();
@@ -267,6 +273,7 @@ export function useDraggableResizable(storageKey?: string) {
       card.style.zIndex = '40';
       card.style.borderRadius = '0';
       card.style.cursor = 'default';
+      card.style.overflowY = 'auto';
       isFullscreen.current = true;
     } else {
       if (savedPos.current) {
@@ -275,6 +282,8 @@ export function useDraggableResizable(storageKey?: string) {
         card.style.width = savedPos.current.width;
         card.style.height = savedPos.current.height;
       }
+      // Keep scrolling only if we're returning to an explicitly-sized card.
+      card.style.overflowY = savedPos.current?.height ? 'auto' : '';
       card.style.borderRadius = '';
       card.style.cursor = isPinned.current ? 'default' : 'grab';
       isFullscreen.current = false;
