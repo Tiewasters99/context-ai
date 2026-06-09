@@ -151,6 +151,7 @@ export default function MatterspaceView() {
         coverUrl={matter?.cover_url ?? null}
         onCoverChange={handleCoverChange}
         editable={true}
+        persistKey={matter ? `cs.cover.matter.${matter.id}` : undefined}
       />
 
       <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
