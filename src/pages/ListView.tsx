@@ -285,7 +285,9 @@ export default function ListView() {
               contentEditable
               suppressContentEditableWarning
               onBlur={handleTitleBlur}
-              className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled_List'] empty:before:text-white/30"
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); } }}
+              title="Click to rename this list"
+              className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.06)] transition-colors empty:before:content-['Untitled_List'] empty:before:text-white/45"
             />
             <div className="flex items-center justify-between mb-4">
               <p className="text-[12px] text-white/55">
