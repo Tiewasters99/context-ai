@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { Folder, FileText, List, Table, DoorOpen, Plus, X, Lock, ChevronRight } from 'lucide-react';
+import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
@@ -82,6 +83,20 @@ export default function MatterspaceView() {
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
   const [subMatters, setSubMatters] = useState<{ id: string; name: string }[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+
+  // Re-fetch just the child matters — used after creating a sub-matter so the
+  // card updates without a full reload. (This view reads its own children
+  // directly rather than via useServerspaces, so it must refetch itself.)
+  const fetchSubMatters = useCallback(async () => {
+    if (!id) return;
+    const { data } = await supabase
+      .from('matterspaces')
+      .select('id, name')
+      .eq('parent_matterspace_id', id)
+      .order('name');
+    setSubMatters(data ?? []);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -190,23 +205,45 @@ export default function MatterspaceView() {
           )}
         </div>
 
-        {/* Sub-matters */}
-        {subMatters.length > 0 && (
+        {/* Sub-matters — always shown (with a create affordance) so the matter
+            card mirrors the Vault/Sidebar: you can nest sub- and sub-sub-matters
+            from anywhere. Each child opens its own card, so this one button
+            gives creation at every depth. */}
+        {matter && (
           <section className="mt-6">
-            <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Sub-matters</h2>
-            <div className="rounded-lg border border-[rgba(255,255,255,0.18)] bg-[rgba(22,22,34,0.85)] backdrop-blur-[20px] overflow-hidden divide-y divide-[rgba(255,255,255,0.06)]">
-              {subMatters.map((sub) => (
-                <button
-                  key={sub.id}
-                  onClick={() => navigate(`/app/matterspace/${sub.id}`)}
-                  className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
-                >
-                  <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
-                  <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{sub.name}</span>
-                  <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors" strokeWidth={2} />
-                </button>
-              ))}
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider">Sub-matters</h2>
+              <button
+                onClick={() =>
+                  setNewMatterContext({
+                    serverspaceId: matter.serverspace_id,
+                    parentMatterId: matter.id,
+                    contextLabel: serverspace ? `${serverspace.name} / ${matter.name}` : matter.name,
+                  })
+                }
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors"
+              >
+                <Plus size={12} strokeWidth={2} />
+                New sub-matter
+              </button>
             </div>
+            {subMatters.length > 0 ? (
+              <div className="rounded-lg border border-[rgba(255,255,255,0.18)] bg-[rgba(22,22,34,0.85)] backdrop-blur-[20px] overflow-hidden divide-y divide-[rgba(255,255,255,0.06)]">
+                {subMatters.map((sub) => (
+                  <button
+                    key={sub.id}
+                    onClick={() => navigate(`/app/matterspace/${sub.id}`)}
+                    className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
+                  >
+                    <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
+                    <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{sub.name}</span>
+                    <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors" strokeWidth={2} />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-white/40">No sub-matters yet.</p>
+            )}
           </section>
         )}
 
@@ -251,6 +288,14 @@ export default function MatterspaceView() {
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>
+
+      {newMatterContext && (
+        <NewMatterModal
+          context={newMatterContext}
+          onClose={() => setNewMatterContext(null)}
+          onCreated={() => { fetchSubMatters(); }}
+        />
+      )}
     </div>
   );
 }
