@@ -112,7 +112,7 @@ export default function Dashboard() {
             ? `${describe(activity[0])} · ${relativeTime(activity[0].occurred_at)}`
             : "Here's what's happening in your Contextspace."}
         </p>
-        <p className="text-[11px] text-white/30 mt-1">Drag to move · right-click to pin · double-click to release.</p>
+        <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
 
         {/* The Door — entrance to the Vault, anchored at the heart of the card */}
         <button

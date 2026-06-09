@@ -242,7 +242,7 @@ export default function MatterspaceView() {
                 ))}
               </div>
             ) : (
-              <p className="text-[12px] text-white/40">No sub-matters yet.</p>
+              <p className="text-[12px] text-white/55">No sub-matters yet.</p>
             )}
           </section>
         )}
@@ -379,7 +379,7 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
               <Icon size={14} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
               <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{item.title}</span>
               {item.is_locked && <Lock size={11} className="text-white/40 shrink-0" />}
-              <span className="text-[10px] text-white/30 shrink-0">
+              <span className="text-[11px] text-white/45 shrink-0">
                 {new Date(item.updated_at).toLocaleDateString()}
               </span>
             </Link>

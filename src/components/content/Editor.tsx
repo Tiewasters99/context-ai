@@ -46,7 +46,7 @@ export function RichTextEditor({ initialContent, editable, onSave }: EditorProps
       Placeholder.configure({
         placeholder: 'Start writing… use the toolbar or Markdown shortcuts (## heading, * list, > quote)',
         emptyEditorClass:
-          'before:content-[attr(data-placeholder)] before:text-white/30 before:absolute before:pointer-events-none',
+          'before:content-[attr(data-placeholder)] before:text-white/50 before:absolute before:pointer-events-none',
       }),
       Link.configure({
         openOnClick: false,

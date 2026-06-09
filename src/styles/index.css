@@ -214,7 +214,7 @@ textarea {
 /* TipTap placeholder for empty editors — shows our prompt text. */
 .rich-text p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.5);
   float: left;
   height: 0;
   pointer-events: none;

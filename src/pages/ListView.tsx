@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, ArrowUpDown } from 'lucide-react';
+import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, ArrowUpDown, FileText } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -27,6 +27,7 @@ import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
   updateContentItem,
+  createContentItem,
   useContentInvalidate,
 } from '@/hooks/useContentItems';
 
@@ -34,7 +35,8 @@ interface ChecklistItem {
   id: string;
   text: string;
   done: boolean;
-  due?: string | null;  // YYYY-MM-DD or null
+  due?: string | null;       // YYYY-MM-DD or null
+  linked_page_id?: string | null;  // child page spawned from this item, if any
 }
 
 function readListContent(content: Record<string, unknown> | undefined): ChecklistItem[] {
@@ -46,7 +48,8 @@ function readListContent(content: Record<string, unknown> | undefined): Checklis
       const o = r as Record<string, unknown>;
       if (typeof o.id !== 'string' || typeof o.text !== 'string') return null;
       const due = typeof o.due === 'string' ? o.due : null;
-      return { id: o.id, text: o.text, done: !!o.done, due };
+      const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
+      return { id: o.id, text: o.text, done: !!o.done, due, linked_page_id };
     })
     .filter((x): x is ChecklistItem => x !== null);
 }
@@ -124,7 +127,7 @@ export default function ListView() {
   const addItem = (): string => {
     const text = draftText.trim();
     const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text, done: false, due: null };
+    const newItem: ChecklistItem = { id: newId, text, done: false, due: null, linked_page_id: null };
     const next = [...items, newItem];
     setItems(next);
     setDraftText('');
@@ -136,7 +139,7 @@ export default function ListView() {
   // item right below. Returns the new item's id so the caller can focus it.
   const insertItemAfter = (afterItemId: string, currentText: string): string => {
     const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null };
+    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null, linked_page_id: null };
     const next: ChecklistItem[] = [];
     for (const i of items) {
       next.push(i.id === afterItemId ? { ...i, text: currentText } : i);
@@ -157,6 +160,44 @@ export default function ListView() {
     const next = items.filter((i) => i.id !== itemId);
     setItems(next);
     persistItems(next);
+  };
+
+  // Expand a list item into a full page. If the item already has a linked
+  // page, just navigate; otherwise create a new content_item of type 'page'
+  // in the same space, store its id back on the item, and navigate.
+  const expandItem = async (itemId: string) => {
+    if (!item) return;
+    const target = items.find((i) => i.id === itemId);
+    if (!target) return;
+
+    if (target.linked_page_id) {
+      navigate(`/app/page/${target.linked_page_id}`);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const page = await createContentItem({
+        space: { spaceId: item.space_id, spaceType: item.space_type },
+        contentType: 'page',
+        title: target.text.trim() || 'Untitled Page',
+      });
+      const next = items.map((i) =>
+        i.id === itemId ? { ...i, linked_page_id: page.id } : i,
+      );
+      setItems(next);
+      await updateContentItem(item.id, { content: { items: next } });
+      invalidate.invalidateItem(item.id);
+      invalidate.invalidateList(
+        { spaceId: item.space_id, spaceType: item.space_type },
+        'page',
+      );
+      navigate(`/app/page/${page.id}`);
+    } catch (e) {
+      console.error('expand failed', e);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const sensors = useSensors(
@@ -247,7 +288,7 @@ export default function ListView() {
               className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled_List'] empty:before:text-white/30"
             />
             <div className="flex items-center justify-between mb-4">
-              <p className="text-[11px] text-white/30">
+              <p className="text-[12px] text-white/55">
                 {saving ? 'Saving…' : `${doneCount} of ${items.length} complete · ${progress}%`}
               </p>
               <button
@@ -281,6 +322,7 @@ export default function ListView() {
                       onChangeDue={(due) => updateItem(it.id, { due: due || null })}
                       onDelete={() => deleteItem(it.id)}
                       onEnter={(currentText) => insertItemAfter(it.id, currentText)}
+                      onExpand={() => expandItem(it.id)}
                     />
                   ))}
                 </div>
@@ -309,7 +351,7 @@ export default function ListView() {
                   }
                 }}
                 placeholder="Press Enter to add a bullet"
-                className="flex-1 bg-transparent outline-none text-[14px] text-[#f5f2ed] placeholder-white/30"
+                className="flex-1 bg-transparent outline-none text-[14px] text-[#f5f2ed] placeholder-white/55"
               />
             </div>
           </>
@@ -329,9 +371,10 @@ interface SortableItemProps {
   onChangeDue: (due: string) => void;
   onDelete: () => void;
   onEnter: (currentText: string) => string;
+  onExpand: () => void;
 }
 
-function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter }: SortableItemProps) {
+function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -395,6 +438,17 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
         todayDue={!!todayDue}
         muted={item.done}
       />
+      <button
+        onClick={onExpand}
+        className={`p-1 rounded transition-all shrink-0 ${
+          item.linked_page_id
+            ? 'text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)]'
+            : 'opacity-0 group-hover:opacity-100 text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.06)]'
+        }`}
+        title={item.linked_page_id ? 'Open as page' : 'Expand to a full page'}
+      >
+        <FileText size={13} />
+      </button>
       <button
         onClick={onDelete}
         className="opacity-0 group-hover:opacity-100 p-1 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
