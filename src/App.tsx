@@ -21,6 +21,8 @@ import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
 import DocumentReader from '@/pages/DocumentReader';
+import DiscoveryHome from '@/pages/discovery/DiscoveryHome';
+import ReviewRoom from '@/pages/discovery/ReviewRoom';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
@@ -74,6 +76,8 @@ export default function App() {
               <Route path="list/:id" element={<ListView />} />
               <Route path="table/:id" element={<TableView />} />
               <Route path="vault" element={<Vault />} />
+              <Route path="discovery" element={<DiscoveryHome />} />
+              <Route path="discovery/production/:id" element={<ReviewRoom />} />
               <Route path="connections" element={<Connections />} />
               <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="connections/gemini" element={<GeminiConnect />} />
