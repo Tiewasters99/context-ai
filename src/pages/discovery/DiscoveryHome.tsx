@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Stamp, Plus, X, FolderInput, FileArchive, Terminal, RefreshCw, ChevronRight, UploadCloud,
+  Stamp, X, FolderInput, FileArchive, Terminal, RefreshCw, ChevronRight, UploadCloud,
+  ArrowDownToLine, ArrowUpFromLine,
 } from 'lucide-react';
 import PinToggle from '@/components/ui/PinToggle';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -31,7 +32,8 @@ export default function DiscoveryHome() {
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [showNew, setShowNew] = useState(false);
+  // Which direction the New Production panel opens with; null = closed.
+  const [showNew, setShowNew] = useState<ProductionDirection | null>(null);
 
   // Resolve ?matter= (short_code or uuid) and seed the four preset tag defs
   // on first open of Discovery for this matter.
@@ -162,13 +164,24 @@ export default function DiscoveryHome() {
             <RefreshCw size={14} strokeWidth={2} />
           </button>
           {matter && (
-            <button
-              onClick={() => setShowNew(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors shrink-0"
-            >
-              <Plus size={15} strokeWidth={1.75} />
-              New production
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => setShowNew('incoming')}
+                title="Register a production received from opposing counsel"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#7aa2c9]/10 hover:bg-[#7aa2c9]/20 border border-[#7aa2c9]/30 text-[#9cc0e0] text-[13px] font-medium transition-colors"
+              >
+                <ArrowDownToLine size={15} strokeWidth={1.75} />
+                Incoming production
+              </button>
+              <button
+                onClick={() => setShowNew('outgoing')}
+                title="Start a production to opposing counsel"
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
+              >
+                <ArrowUpFromLine size={15} strokeWidth={1.75} />
+                Outgoing production
+              </button>
+            </div>
           )}
         </div>
 
@@ -182,8 +195,10 @@ export default function DiscoveryHome() {
           <div className="flex flex-col items-center justify-center py-14 text-center">
             <FolderInput size={30} className="text-white/20 mb-3" strokeWidth={1.5} />
             <p className="text-[13px] text-white/50 max-w-sm">
-              No productions yet. Click <span className="text-[#e8b84a]">New production</span> to
-              register an incoming volume from opposing counsel or start an outgoing one.
+              No productions yet. Click <span className="text-[#9cc0e0]">Incoming production</span> to
+              register a volume received from opposing counsel, or{' '}
+              <span className="text-[#e8b84a]">Outgoing production</span> to start producing your
+              client&rsquo;s documents.
             </p>
           </div>
         )}
@@ -258,8 +273,9 @@ export default function DiscoveryHome() {
       {showNew && matter && (
         <NewProductionPanel
           matter={matter}
-          onClose={() => setShowNew(false)}
-          onDone={() => { setShowNew(false); void refresh(); }}
+          initialDirection={showNew}
+          onClose={() => setShowNew(null)}
+          onDone={() => { setShowNew(null); void refresh(); }}
         />
       )}
     </div>
@@ -273,10 +289,12 @@ export default function DiscoveryHome() {
 
 function NewProductionPanel({
   matter,
+  initialDirection,
   onClose,
   onDone,
 }: {
   matter: MatterRef;
+  initialDirection: ProductionDirection;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -285,7 +303,7 @@ function NewProductionPanel({
 
   // Step 1 fields
   const [name, setName] = useState('');
-  const [direction, setDirection] = useState<ProductionDirection>('incoming');
+  const [direction, setDirection] = useState<ProductionDirection>(initialDirection);
   const [party, setParty] = useState('');
   const [date, setDate] = useState('');
   const [requestRefs, setRequestRefs] = useState('');
