@@ -164,24 +164,15 @@ export default function DiscoveryHome() {
             <RefreshCw size={14} strokeWidth={2} />
           </button>
           {matter && (
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => setShowNew('incoming')}
-                title="Register a production received from opposing counsel"
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#7aa2c9]/10 hover:bg-[#7aa2c9]/20 border border-[#7aa2c9]/30 text-[#9cc0e0] text-[13px] font-medium transition-colors"
-              >
-                <ArrowDownToLine size={15} strokeWidth={1.75} />
-                Incoming production
-              </button>
-              <button
-                onClick={() => setShowNew('outgoing')}
-                title="Start a production to opposing counsel"
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
-              >
-                <ArrowUpFromLine size={15} strokeWidth={1.75} />
-                Outgoing production
-              </button>
-            </div>
+            <button
+              onClick={() => setShowNew('incoming')}
+              title="Register an incoming production or start an outgoing one — pick the direction inside"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors shrink-0"
+            >
+              <ArrowDownToLine size={14} strokeWidth={1.75} />
+              <ArrowUpFromLine size={14} strokeWidth={1.75} className="-ml-1.5" />
+              Incoming / Outgoing production
+            </button>
           )}
         </div>
 
@@ -195,10 +186,9 @@ export default function DiscoveryHome() {
           <div className="flex flex-col items-center justify-center py-14 text-center">
             <FolderInput size={30} className="text-white/20 mb-3" strokeWidth={1.5} />
             <p className="text-[13px] text-white/50 max-w-sm">
-              No productions yet. Click <span className="text-[#9cc0e0]">Incoming production</span> to
-              register a volume received from opposing counsel, or{' '}
-              <span className="text-[#e8b84a]">Outgoing production</span> to start producing your
-              client&rsquo;s documents.
+              No productions yet. Click <span className="text-[#e8b84a]">Incoming / Outgoing production</span>{' '}
+              to register a volume received from opposing counsel, or to start producing your
+              client&rsquo;s documents — pick the direction inside the card.
             </p>
           </div>
         )}
