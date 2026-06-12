@@ -13,6 +13,9 @@
     "api/llm.mjs": {
       "maxDuration": 300
     },
+    "api/assistant.mjs": {
+      "maxDuration": 300
+    },
     "api/deepgram-token.mjs": {
       "maxDuration": 10
     },

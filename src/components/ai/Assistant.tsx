@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { X, Send, EyeOff, Eye, Pencil, ChevronDown } from 'lucide-react';
 import type { ChatMessage, AssistantMode } from '@/lib/types';
+import { supabase } from '@/lib/supabase';
 
 interface AssistantProps {
   isOpen: boolean;
@@ -25,15 +27,18 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<AssistantMode>('observer');
   const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const { id: matterId } = useParams();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text || loading) return;
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -41,19 +46,96 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       content: text,
       timestamp: new Date(),
     };
-
-    setMessages((prev) => [...prev, userMessage]);
+    const next = [...messages, userMessage];
+    setMessages(next);
     setInput('');
+    setLoading(true);
+    setSearching(true);
 
-    setTimeout(() => {
-      const reply: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: "I'm still learning! This is a mock response. Full AI integration is coming soon.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, reply]);
-    }, 600);
+    const append = (content: string) =>
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: 'assistant', content, timestamp: new Date() },
+      ]);
+
+    // One assistant bubble that fills in as the answer streams.
+    const assistantId = crypto.randomUUID();
+    let acc = '';
+    let created = false;
+    const ensureAssistant = () => {
+      if (created) return;
+      created = true;
+      setSearching(false);
+      setMessages((prev) => [
+        ...prev,
+        { id: assistantId, role: 'assistant', content: '', timestamp: new Date() },
+      ]);
+    };
+    const setAssistant = (content: string) =>
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content } : m)));
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      if (!token) throw new Error('You need to be signed in to use the assistant.');
+
+      const res = await fetch('/api/assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          messages: next.map((m) => ({ role: m.role, content: m.content })),
+          matterId,
+        }),
+      });
+
+      // Pre-stream failures (401, config errors) arrive as plain JSON.
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
+        throw new Error(data?.error || `Request failed (${res.status})`);
+      }
+
+      // Parse the SSE stream: `data: {json}\n\n` per event.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload) continue;
+          let ev: { type?: string; text?: string; message?: string };
+          try { ev = JSON.parse(payload); } catch { continue; }
+          if (ev.type === 'text' && ev.text) {
+            ensureAssistant();
+            acc += ev.text;
+            setAssistant(acc);
+          } else if (ev.type === 'error') {
+            ensureAssistant();
+            acc += (acc ? '\n\n' : '') + `⚠️ ${ev.message || 'Something went wrong.'}`;
+            setAssistant(acc);
+          }
+          // 'tool' / 'done' events need no UI change in M1.1.
+        }
+      }
+      if (!created) append('No answer was returned.');
+    } catch (err) {
+      const msg = `⚠️ ${err instanceof Error ? err.message : 'Something went wrong.'}`;
+      if (created) {
+        acc += (acc ? '\n\n' : '') + msg;
+        setAssistant(acc);
+      } else {
+        append(msg);
+      }
+    } finally {
+      setLoading(false);
+      setSearching(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -148,6 +230,13 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               </div>
             </div>
           ))}
+          {searching && (
+            <div className="flex justify-start">
+              <div className="max-w-[85%] px-3 py-2 rounded-xl rounded-bl-sm text-sm italic bg-[rgba(20,20,30,0.8)] text-[#8a8693]">
+                Searching the matter…
+              </div>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -159,12 +248,13 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything..."
-              className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 outline-none"
+              disabled={loading}
+              placeholder={loading ? 'Searching…' : 'Ask anything...'}
+              className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 outline-none disabled:opacity-60"
             />
             <button
               onClick={handleSend}
-              disabled={!input.trim()}
+              disabled={!input.trim() || loading}
               className="p-1 rounded text-[#8a8693] hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-[#8a8693] transition-colors"
             >
               <Send className="h-4 w-4" />
