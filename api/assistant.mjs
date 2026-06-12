@@ -10,7 +10,8 @@
 // assistant can only read what the signed-in user can read.
 //
 // Request body:
-//   { messages: {role:'user'|'assistant', content:string}[], matterId?: string }
+//   { messages: {role:'user'|'assistant', content:string}[], matterId?: string,
+//     context?: { route?: string, tab?: string, matterName?: string } }
 //
 // Response:
 //   { text: string, usedTools: string[] }     on success
@@ -66,6 +67,7 @@ export default async function handler(req, res) {
   const body = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
   const messages = body?.messages;
   const matterId = body?.matterId || undefined;
+  const context = sanitizeContext(body?.context);
   if (!Array.isArray(messages) || messages.length === 0) {
     return json(res, 400, { error: 'messages (non-empty array) required' });
   }
@@ -90,6 +92,7 @@ export default async function handler(req, res) {
       openaiApiKey: OPENAI_API_KEY,
       messages,
       matterId,
+      context,
     });
     emit({ type: 'done', usedTools });
   } catch (err) {
@@ -108,4 +111,13 @@ function json(res, status, obj) {
 
 function safeJsonParse(s) {
   try { return JSON.parse(s); } catch { return null; }
+}
+
+// Situational context from the browser — keep only short strings so nothing
+// oversized or oddly-typed reaches the system prompt.
+function sanitizeContext(c) {
+  if (!c || typeof c !== 'object') return undefined;
+  const pick = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined);
+  const out = { route: pick(c.route), tab: pick(c.tab), matterName: pick(c.matterName) };
+  return out.route || out.tab || out.matterName ? out : undefined;
 }

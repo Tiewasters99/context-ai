@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft,
   ChevronRight,
@@ -57,6 +57,7 @@ type Match = { page: number; index: number };
 export default function DocumentReader() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -133,6 +134,19 @@ export default function DocumentReader() {
   useEffect(() => {
     localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
   }, [sidebarOpen]);
+
+  // Deep-link: when the URL carries ?page=N (e.g. the in-app assistant opened
+  // this document to a cited page), jump there once the page count is known.
+  // Decoupled from the heavy PDF-load effect so opening the SAME document to a
+  // new page (query-only change, no remount) still jumps. Takes precedence
+  // over the localStorage last-page restore because it runs after load sets
+  // totalPages.
+  useEffect(() => {
+    const p = parseInt(searchParams.get('page') ?? '', 10);
+    if (Number.isFinite(p) && p >= 1 && totalPages > 0) {
+      setPage(Math.min(p, totalPages));
+    }
+  }, [searchParams, totalPages]);
 
   // Track OS fullscreen state so the toolbar button reflects reality even
   // when the user leaves fullscreen via Escape.
