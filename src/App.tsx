@@ -13,6 +13,7 @@ import ListView from '@/pages/ListView';
 import TableView from '@/pages/TableView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
+import DocumentBuilder from '@/pages/DocumentBuilder';
 import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
@@ -74,6 +75,7 @@ export default function App() {
               <Route path="list/:id" element={<ListView />} />
               <Route path="table/:id" element={<TableView />} />
               <Route path="vault" element={<Vault />} />
+              <Route path="document-builder" element={<DocumentBuilder />} />
               <Route path="connections" element={<Connections />} />
               <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="connections/gemini" element={<GeminiConnect />} />
