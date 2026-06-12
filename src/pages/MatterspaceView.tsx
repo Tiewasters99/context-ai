@@ -12,6 +12,7 @@ import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
+import { setOrchestratorContext, clearOrchestratorContext } from '@/lib/orchestrator-context';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { buildMatterTree } from '@/lib/matter-tree';
 import {
@@ -88,6 +89,13 @@ export default function MatterspaceView() {
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const refreshServerspaces = useServerspacesRefresh();
   const titleRef = useRef<HTMLHeadingElement>(null);
+
+  // Tell the Orchestrator where the user is — the active tab lives only in
+  // this component's state, so the panel can't read it from the router.
+  useEffect(() => {
+    setOrchestratorContext({ tab: activeTab, matterName: matter?.name });
+    return clearOrchestratorContext;
+  }, [activeTab, matter?.name]);
 
   // Re-fetch just the child matters — used after creating a sub-matter so the
   // card updates without a full reload. (This view reads its own children

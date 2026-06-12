@@ -166,7 +166,11 @@ export default function llmProxy(): Plugin {
         if (req.method !== 'POST') { res.writeHead(405).end(); return; }
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
-        let parsed: { messages?: { role: 'user' | 'assistant'; content: string }[]; matterId?: string };
+        let parsed: {
+          messages?: { role: 'user' | 'assistant'; content: string }[];
+          matterId?: string;
+          context?: { route?: string; tab?: string; matterName?: string };
+        };
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
@@ -219,6 +223,7 @@ export default function llmProxy(): Plugin {
             openaiApiKey: OPENAI_API_KEY,
             messages: parsed.messages || [],
             matterId: parsed.matterId || undefined,
+            context: parsed.context || undefined,
           });
           emit({ type: 'done', usedTools });
         } catch (err: unknown) {

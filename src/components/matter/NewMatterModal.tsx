@@ -19,6 +19,10 @@ interface Props {
   context: NewMatterContext;
   onClose: () => void;
   onCreated?: (matterId: string) => void;
+  // Optional pre-fill (e.g. the Orchestrator proposing a sub-matter). The user
+  // still reviews and submits — this only seeds the fields.
+  initialName?: string;
+  initialDescription?: string;
 }
 
 const slugify = (s: string) => {
@@ -27,12 +31,12 @@ const slugify = (s: string) => {
   return out.slice(0, 64);
 };
 
-export default function NewMatterModal({ context, onClose, onCreated }: Props) {
+export default function NewMatterModal({ context, onClose, onCreated, initialName = '', initialDescription = '' }: Props) {
   const refreshServerspaces = useServerspacesRefresh();
-  const [name, setName] = useState('');
-  const [shortCode, setShortCode] = useState('');
+  const [name, setName] = useState(initialName);
+  const [shortCode, setShortCode] = useState(initialName ? slugify(initialName) : '');
   const [shortCodeEdited, setShortCodeEdited] = useState(false);
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(initialDescription);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
