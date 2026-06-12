@@ -7,6 +7,10 @@ import type { Plugin } from 'vite';
 // import works regardless of where Vite stages its bundled config.
 const SOURCES_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'cite-check', 'lib', 'sources.mjs')).href;
 
+// Dev shim target for the /api/assistant Vercel function (lib/assistant-core.mjs),
+// so the in-app Assistant works under `vite dev` without `vercel dev`.
+const ASSISTANT_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'lib', 'assistant-core.mjs')).href;
+
 interface ProviderRoute {
   url: (model: string) => string;
   headers: (apiKey: string) => Record<string, string>;
@@ -153,6 +157,74 @@ export default function llmProxy(): Plugin {
         } catch (err: unknown) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ found: false, error: err instanceof Error ? err.message : 'fetch_failed' }));
+        }
+      });
+
+      // Dev shim for the /api/assistant Vercel function: runs the in-app
+      // Assistant agent loop under `vite dev`. Production uses api/assistant.mjs.
+      server.middlewares.use('/api/assistant', async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405).end(); return; }
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        let parsed: { messages?: { role: 'user' | 'assistant'; content: string }[]; matterId?: string };
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString());
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+
+        const auth = req.headers['authorization'];
+        if (!auth || !auth.toLowerCase().startsWith('bearer ')) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'missing_bearer' }));
+          return;
+        }
+        const userToken = auth.slice(7).trim();
+
+        const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+        const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+        const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+        const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+        const missing: string[] = [];
+        if (!SUPABASE_URL) missing.push('VITE_SUPABASE_URL');
+        if (!SUPABASE_ANON_KEY) missing.push('VITE_SUPABASE_ANON_KEY');
+        if (!ANTHROPIC_API_KEY) missing.push('ANTHROPIC_API_KEY');
+        if (!OPENAI_API_KEY) missing.push('OPENAI_API_KEY');
+        if (missing.length) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'config_error', missing_env: missing }));
+          return;
+        }
+
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+        });
+        const emit = (ev: unknown) => {
+          try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch { /* client gone */ }
+        };
+        try {
+          const { createClient } = await import('@supabase/supabase-js');
+          const { runAssistantStream } = await import(ASSISTANT_MODULE_URL);
+          const sb = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+            global: { headers: { Authorization: `Bearer ${userToken}` } },
+            auth: { persistSession: false, autoRefreshToken: false },
+          });
+          const { usedTools } = await runAssistantStream({
+            supabase: sb,
+            anthropicKey: ANTHROPIC_API_KEY,
+            openaiApiKey: OPENAI_API_KEY,
+            messages: parsed.messages || [],
+            matterId: parsed.matterId || undefined,
+          });
+          emit({ type: 'done', usedTools });
+        } catch (err: unknown) {
+          emit({ type: 'error', message: err instanceof Error ? err.message : 'assistant_failed' });
+        } finally {
+          res.end();
         }
       });
 
