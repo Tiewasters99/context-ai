@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { X, Send, EyeOff, Eye, Pencil, ChevronDown } from 'lucide-react';
-import type { ChatMessage, AssistantMode } from '@/lib/types';
+import { X, Send } from 'lucide-react';
+import type { ChatMessage } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -11,12 +11,6 @@ interface AssistantProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-const modeConfig: Record<AssistantMode, { icon: typeof EyeOff; label: string; description: string }> = {
-  blind: { icon: EyeOff, label: 'Blind', description: 'Assistant cannot see your content' },
-  observer: { icon: Eye, label: 'Observer', description: 'Assistant can see your current page' },
-  collaborative: { icon: Pencil, label: 'Collaborative', description: 'Assistant can view and edit content' },
-};
 
 const welcomeMessage: ChatMessage = {
   id: 'welcome',
@@ -28,8 +22,6 @@ const welcomeMessage: ChatMessage = {
 export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [input, setInput] = useState('');
-  const [mode, setMode] = useState<AssistantMode>('observer');
-  const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const { id: matterId } = useParams();
@@ -263,8 +255,6 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     }
   };
 
-  const ActiveIcon = modeConfig[mode].icon;
-
   return (
     <>
       {isOpen && (
@@ -278,56 +268,13 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)]">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-white">Orchestrator</h2>
-            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-400">
-              {modeConfig[mode].label}
-            </span>
-          </div>
+          <h2 className="text-sm font-semibold text-white">Orchestrator</h2>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
-        </div>
-
-        {/* Mode Selector */}
-        <div className="px-4 py-2 border-b border-[rgba(255,255,255,0.08)] relative">
-          <button
-            onClick={() => setModeDropdownOpen(!modeDropdownOpen)}
-            className="flex items-center gap-2 w-full px-3 py-2 rounded-lg bg-[rgba(20,20,30,0.8)] hover:bg-[rgba(40,40,55,0.8)] text-sm text-[#e8e4de] transition-colors"
-          >
-            <ActiveIcon className="h-3.5 w-3.5 text-indigo-400" />
-            <span className="flex-1 text-left">{modeConfig[mode].label}</span>
-            <ChevronDown className={`h-3.5 w-3.5 text-[#5a5665] transition-transform ${modeDropdownOpen ? 'rotate-180' : ''}`} />
-          </button>
-
-          {modeDropdownOpen && (
-            <div className="absolute left-4 right-4 top-full mt-1 bg-[rgba(20,20,30,0.8)] border border-[rgba(255,255,255,0.08)] rounded-lg overflow-hidden shadow-xl z-10">
-              {(Object.keys(modeConfig) as AssistantMode[]).map((key) => {
-                const { icon: Icon, label, description } = modeConfig[key];
-                return (
-                  <button
-                    key={key}
-                    onClick={() => {
-                      setMode(key);
-                      setModeDropdownOpen(false);
-                    }}
-                    className={`flex items-start gap-3 w-full px-3 py-2.5 text-left hover:bg-[rgba(40,40,55,0.8)] transition-colors ${
-                      mode === key ? 'bg-[rgba(40,40,55,0.8)]/50' : ''
-                    }`}
-                  >
-                    <Icon className="h-4 w-4 mt-0.5 text-indigo-400 shrink-0" />
-                    <div>
-                      <div className="text-sm font-medium text-white">{label}</div>
-                      <div className="text-xs text-[#8a8693]">{description}</div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
 
         {/* Messages */}
