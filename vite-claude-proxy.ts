@@ -224,6 +224,7 @@ export default function llmProxy(): Plugin {
             messages: parsed.messages || [],
             matterId: parsed.matterId || undefined,
             context: parsed.context || undefined,
+            emit,
           });
           emit({ type: 'done', usedTools });
         } catch (err: unknown) {
