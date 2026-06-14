@@ -93,6 +93,7 @@ export default async function handler(req, res) {
       messages,
       matterId,
       context,
+      emit,
     });
     emit({ type: 'done', usedTools });
   } catch (err) {
