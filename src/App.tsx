@@ -24,6 +24,8 @@ import ConnectMeetings from '@/pages/connect/ConnectMeetings';
 import DocumentReader from '@/pages/DocumentReader';
 import DiscoveryHome from '@/pages/discovery/DiscoveryHome';
 import ReviewRoom from '@/pages/discovery/ReviewRoom';
+import DiscoveryLayout from '@/components/layout/DiscoveryLayout';
+import DiscoveryDashboard from '@/pages/discovery/DiscoveryDashboard';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
@@ -52,12 +54,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // Subdomain boot: at discovery.contextspaces.ai the root goes straight into
+  // the standalone Discovery product instead of the Contextspaces landing page.
+  // Same build, same backend — the host just picks which front door opens.
+  const discoveryHost =
+    typeof window !== 'undefined' && /^discovery\./i.test(window.location.hostname);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Landing />} />
+            <Route path="/" element={discoveryHost ? <Navigate to="/discovery" replace /> : <Landing />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/auth/reset" element={<ResetPassword />} />
@@ -86,6 +94,22 @@ export default function App() {
               <Route path="connections/grok" element={<GrokConnect />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
+            </Route>
+            <Route
+              path="/discovery"
+              element={
+                <ProtectedRoute>
+                  <DiscoveryLayout />
+                </ProtectedRoute>
+              }
+            >
+              {/* Product-level overview across all cases */}
+              <Route index element={<DiscoveryDashboard />} />
+              {/* Per-case ledger + intake — the same component as the /app tab,
+                  reads ?matter=<short_code|uuid>, reused inside the standalone shell */}
+              <Route path="case" element={<DiscoveryHome />} />
+              {/* Production review room — reused */}
+              <Route path="production/:id" element={<ReviewRoom />} />
             </Route>
             <Route
               path="/connect"

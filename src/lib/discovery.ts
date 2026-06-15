@@ -645,3 +645,58 @@ export async function uploadIntakeFile(
   if (error) throw new Error(`upload ${file.name}: ${error.message}`);
   return path;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-matter views — for the standalone Discovery app (/discovery), which
+// presents Discovery as its own product rather than a per-matter tab. RLS still
+// scopes every row to what the signed-in user may access, so "all" means "all
+// the productions/cases this user can see," nothing more.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AllProductionsEntry extends ProductionListEntry {
+  matter_name: string;        // the "case" the production belongs to
+  serverspace_name: string | null;
+}
+
+// Every production across all of the user's matters, newest first — the
+// standalone dashboard's ledger. The per-matter listProductions() stays the
+// source for the in-matter feature; this is the product-level overview.
+export async function listAllProductions(): Promise<AllProductionsEntry[]> {
+  const { data, error } = await supabase
+    .from('productions')
+    .select('*, production_items(count), matterspaces(name, serverspaces(name))')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`list all productions: ${error.message}`);
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const counts = row.production_items as { count: number }[] | null;
+    const matter = row.matterspaces as { name?: string; serverspaces?: { name?: string } | null } | null;
+    const entry = { ...row } as unknown as AllProductionsEntry;
+    entry.item_count = counts?.[0]?.count ?? 0;
+    entry.matter_name = matter?.name ?? 'Unknown case';
+    entry.serverspace_name = matter?.serverspaces?.name ?? null;
+    delete (entry as unknown as Record<string, unknown>).production_items;
+    delete (entry as unknown as Record<string, unknown>).matterspaces;
+    return entry;
+  });
+}
+
+export interface MatterOption {
+  id: string;
+  name: string;
+  serverspace_name: string | null;
+}
+
+// The user's matters ("cases"), for the standalone "start discovery in a case"
+// picker. RLS scopes to matters the user can access.
+export async function listMyMatters(): Promise<MatterOption[]> {
+  const { data, error } = await supabase
+    .from('matterspaces')
+    .select('id, name, serverspaces(name)')
+    .order('name', { ascending: true });
+  if (error) throw new Error(`list matters: ${error.message}`);
+  return (data ?? []).map((m: Record<string, unknown>) => ({
+    id: m.id as string,
+    name: m.name as string,
+    serverspace_name: (m.serverspaces as { name?: string } | null)?.name ?? null,
+  }));
+}
