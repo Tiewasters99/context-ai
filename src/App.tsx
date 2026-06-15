@@ -35,8 +35,9 @@ const queryClient = new QueryClient();
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
 
-  // TODO: Remove this bypass before production
-  const DEV_BYPASS_AUTH = true;
+  // Auth bypass for LOCAL DEV ONLY — must stay false in production so the
+  // login gate is enforced. Flip to true only on your own machine if needed.
+  const DEV_BYPASS_AUTH = false;
 
   if (loading && !DEV_BYPASS_AUTH) {
     return (
