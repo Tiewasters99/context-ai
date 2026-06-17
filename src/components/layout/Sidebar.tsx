@@ -15,6 +15,7 @@ import { X,
   UserPlus,
   Folder,
   FileStack,
+  LayoutGrid,
 } from 'lucide-react';
 import {
   DndContext,
@@ -307,6 +308,19 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
         >
           <FileStack size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Document Builder</span>}
+        </Link>
+
+        {/* Productivity Suite */}
+        <Link
+          to="/app/suite"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            isActive('/app/suite')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+        >
+          <LayoutGrid size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Productivity Suite</span>}
         </Link>
 
         {/* Serverspaces Header */}
