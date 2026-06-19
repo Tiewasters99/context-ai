@@ -323,12 +323,12 @@ async function expandPaths(inputs) {
       const entries = await fs.readdir(abs, { recursive: true, withFileTypes: true });
       for (const e of entries) {
         if (!e.isFile()) continue;
-        if (!/\.(pdf|txt|md|docx|epub)$/i.test(e.name)) continue;
+        if (!/\.(pdf|txt|md|docx|epub|xlsx)$/i.test(e.name)) continue;
         const parent = e.parentPath || e.path || abs;
         out.push(path.join(parent, e.name));
       }
       out.sort();
-    } else if (/\.(pdf|txt|md|docx|epub)$/i.test(abs)) {
+    } else if (/\.(pdf|txt|md|docx|epub|xlsx)$/i.test(abs)) {
       out.push(abs);
     }
   }
@@ -342,6 +342,7 @@ function mimeFor(ext) {
     '.md': 'text/markdown',
     '.epub': 'application/epub+zip',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
   return m[ext] || 'application/octet-stream';
 }

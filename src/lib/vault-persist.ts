@@ -356,6 +356,7 @@ function mimeFor(ext: string): string {
     '.txt': 'text/plain',
     '.md': 'text/markdown',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
   return m[ext] || 'application/octet-stream';
 }
