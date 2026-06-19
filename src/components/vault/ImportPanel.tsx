@@ -205,7 +205,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onOpenFil
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
       <div className="px-6 py-5 border-b border-[rgba(255,255,255,0.08)]">
-        <h2 className="text-[18px] font-semibold text-white mb-1">Import Documents</h2>
+        <h2 className="text-[18px] font-semibold text-white mb-1">Import/Display Documents</h2>
         <p className="text-[13px] text-white/80">
           Add files and folders. Text is extracted automatically for AI analysis.
         </p>

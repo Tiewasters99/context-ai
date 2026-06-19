@@ -30,7 +30,7 @@ import { isZip, expandZip } from '@/lib/vault-zip';
 type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
-  { icon: Upload, label: 'Import Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
+  { icon: Upload, label: 'Import/Display Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
   { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
   { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
