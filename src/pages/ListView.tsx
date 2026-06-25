@@ -37,21 +37,46 @@ interface ChecklistItem {
   done: boolean;
   due?: string | null;       // YYYY-MM-DD or null
   linked_page_id?: string | null;  // child page spawned from this item, if any
+  depth: number;             // 0 = top level; each step deeper is a nested sub-point
+}
+
+// Sub-point markers by nesting level. Level 0 keeps the checkbox as its bullet;
+// deeper levels get a glyph: caret, then dash, then onward (cycling).
+const SUBPOINT_MARKERS = ['›', '–', '◦', '▪'];
+
+function depthMarker(depth: number): string | null {
+  if (depth <= 0) return null;
+  return SUBPOINT_MARKERS[(depth - 1) % SUBPOINT_MARKERS.length];
+}
+
+// Keep the outline well-formed: the first item is always top-level, and no item
+// can sit more than one level deeper than the item directly above it. Run this
+// after any structural change (reorder, delete, outdent) so depths stay valid.
+function clampDepths(list: ChecklistItem[]): ChecklistItem[] {
+  let prevDepth = 0;
+  return list.map((it, idx) => {
+    const max = idx === 0 ? 0 : prevDepth + 1;
+    const d = Math.min(Math.max(0, it.depth ?? 0), max);
+    prevDepth = d;
+    return d === it.depth ? it : { ...it, depth: d };
+  });
 }
 
 function readListContent(content: Record<string, unknown> | undefined): ChecklistItem[] {
   const raw = content?.items;
   if (!Array.isArray(raw)) return [];
-  return raw
+  const parsed = raw
     .map((r): ChecklistItem | null => {
       if (!r || typeof r !== 'object') return null;
       const o = r as Record<string, unknown>;
       if (typeof o.id !== 'string' || typeof o.text !== 'string') return null;
       const due = typeof o.due === 'string' ? o.due : null;
       const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
-      return { id: o.id, text: o.text, done: !!o.done, due, linked_page_id };
+      const depth = typeof o.depth === 'number' && o.depth > 0 ? Math.floor(o.depth) : 0;
+      return { id: o.id, text: o.text, done: !!o.done, due, linked_page_id, depth };
     })
     .filter((x): x is ChecklistItem => x !== null);
+  return clampDepths(parsed);
 }
 
 type SortMode = 'manual' | 'due';
@@ -127,7 +152,7 @@ export default function ListView() {
   const addItem = (): string => {
     const text = draftText.trim();
     const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text, done: false, due: null, linked_page_id: null };
+    const newItem: ChecklistItem = { id: newId, text, done: false, due: null, linked_page_id: null, depth: 0 };
     const next = [...items, newItem];
     setItems(next);
     setDraftText('');
@@ -139,7 +164,9 @@ export default function ListView() {
   // item right below. Returns the new item's id so the caller can focus it.
   const insertItemAfter = (afterItemId: string, currentText: string): string => {
     const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null, linked_page_id: null };
+    // A fresh sibling inherits the indent level of the item it follows.
+    const afterDepth = items.find((i) => i.id === afterItemId)?.depth ?? 0;
+    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null, linked_page_id: null, depth: afterDepth };
     const next: ChecklistItem[] = [];
     for (const i of items) {
       next.push(i.id === afterItemId ? { ...i, text: currentText } : i);
@@ -157,7 +184,38 @@ export default function ListView() {
   };
 
   const deleteItem = (itemId: string) => {
-    const next = items.filter((i) => i.id !== itemId);
+    const next = clampDepths(items.filter((i) => i.id !== itemId));
+    setItems(next);
+    persistItems(next);
+  };
+
+  // Tab indents an item one level (capped at one deeper than the row above it);
+  // Shift+Tab outdents. Both also commit the item's in-flight text edit, so a
+  // pending keystroke isn't lost when the row re-renders at its new depth.
+  const handleIndent = (itemId: string, currentText: string) => {
+    const idx = items.findIndex((i) => i.id === itemId);
+    if (idx < 0) return;
+    const cur = items[idx].depth;
+    const maxDepth = idx > 0 ? items[idx - 1].depth + 1 : 0;
+    const nd = Math.min(cur + 1, maxDepth);
+    if (nd === cur) {
+      if (items[idx].text !== currentText) updateItem(itemId, { text: currentText });
+      return;
+    }
+    const next = items.map((i) => i.id === itemId ? { ...i, depth: nd, text: currentText } : i);
+    setItems(next);
+    persistItems(next);
+  };
+
+  const handleOutdent = (itemId: string, currentText: string) => {
+    const idx = items.findIndex((i) => i.id === itemId);
+    if (idx < 0) return;
+    const cur = items[idx].depth;
+    if (cur <= 0) {
+      if (items[idx].text !== currentText) updateItem(itemId, { text: currentText });
+      return;
+    }
+    const next = clampDepths(items.map((i) => i.id === itemId ? { ...i, depth: cur - 1, text: currentText } : i));
     setItems(next);
     persistItems(next);
   };
@@ -211,7 +269,7 @@ export default function ListView() {
     const oldIndex = items.findIndex((i) => i.id === active.id);
     const newIndex = items.findIndex((i) => i.id === over.id);
     if (oldIndex < 0 || newIndex < 0) return;
-    const next = arrayMove(items, oldIndex, newIndex);
+    const next = clampDepths(arrayMove(items, oldIndex, newIndex));
     setItems(next);
     persistItems(next);
   };
@@ -324,6 +382,8 @@ export default function ListView() {
                       onChangeDue={(due) => updateItem(it.id, { due: due || null })}
                       onDelete={() => deleteItem(it.id)}
                       onEnter={(currentText) => insertItemAfter(it.id, currentText)}
+                      onIndent={(currentText) => handleIndent(it.id, currentText)}
+                      onOutdent={(currentText) => handleOutdent(it.id, currentText)}
                       onExpand={() => expandItem(it.id)}
                     />
                   ))}
@@ -373,17 +433,21 @@ interface SortableItemProps {
   onChangeDue: (due: string) => void;
   onDelete: () => void;
   onEnter: (currentText: string) => string;
+  onIndent: (currentText: string) => void;
+  onOutdent: (currentText: string) => void;
   onExpand: () => void;
 }
 
-function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand }: SortableItemProps) {
+function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onIndent, onOutdent, onExpand }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
+  const marker = depthMarker(item.depth);
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    marginLeft: item.depth * 22,
   };
 
   // Draft local text so each keystroke doesn't trigger a save round-trip.
@@ -409,6 +473,15 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
           <GripVertical size={13} />
         </button>
       )}
+      {marker && (
+        <span
+          className="shrink-0 w-3 text-center text-white/35 text-[14px] leading-none select-none"
+          aria-hidden="true"
+          title={`Sub-point (level ${item.depth + 1})`}
+        >
+          {marker}
+        </span>
+      )}
       <button onClick={onToggle} className="shrink-0 transition-opacity hover:opacity-70" title={item.done ? 'Mark incomplete' : 'Mark done'}>
         {item.done
           ? <CheckCircle2 size={18} className="text-[#4ade80]" />
@@ -420,6 +493,13 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
         onChange={(e) => setText(e.target.value)}
         onBlur={() => { if (text !== item.text) onChangeText(text); }}
         onKeyDown={(e) => {
+          if (e.key === 'Tab') {
+            // Tab / Shift+Tab indent / outdent this row.
+            e.preventDefault();
+            if (e.shiftKey) onOutdent(text);
+            else onIndent(text);
+            return;
+          }
           if (e.key === 'Enter') {
             e.preventDefault();
             const newId = onEnter(text);
