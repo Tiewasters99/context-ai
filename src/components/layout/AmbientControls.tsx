@@ -170,7 +170,7 @@ export default function AmbientControls() {
   return (
     <>
       <div
-        className="fixed bottom-5 right-5 flex items-center gap-1.5 z-50"
+        className="fixed bottom-[4.5rem] right-3 md:bottom-5 md:right-5 flex items-center gap-1.5 z-50"
         style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.55))' }}
       >
         {hasBackdrop && (

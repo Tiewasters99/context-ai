@@ -24,6 +24,7 @@ import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import { useConnections } from '@/hooks/useConnections';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import {
   createAnnotation,
   deleteAnnotation,
@@ -58,6 +59,7 @@ export default function DocumentReader() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile();
 
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -128,9 +130,12 @@ export default function DocumentReader() {
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
   useEffect(() => { localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage]);
   useEffect(() => {
+    // On a phone the thumbnail rail would swallow the page, so start closed
+    // regardless of the saved desktop preference.
+    if (isMobile) { setSidebarOpen(false); return; }
     const s = localStorage.getItem('ctx_reader_sidebar_open');
     if (s === '0') setSidebarOpen(false);
-  }, []);
+  }, [isMobile]);
   useEffect(() => {
     localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
   }, [sidebarOpen]);
@@ -998,7 +1003,7 @@ export default function DocumentReader() {
                 style={{
                   backgroundColor: '#ffffff',
                   color: '#1a1810',
-                  padding: '64px 80px',
+                  padding: isMobile ? '28px 20px' : '64px 80px',
                   fontSize: `${Math.round(16 * (zoom / 1.5))}px`,
                   lineHeight: 1.6,
                 }}
@@ -1012,7 +1017,7 @@ export default function DocumentReader() {
                 style={{
                   backgroundColor: '#fafaf6',
                   color: '#15130b',
-                  padding: '72px 96px',
+                  padding: isMobile ? '32px 22px' : '72px 96px',
                   fontFamily: '"Courier Prime", "Courier New", Courier, monospace',
                   fontSize: `${Math.round(15 * (zoom / 1.5))}px`,
                   lineHeight: 1.4,

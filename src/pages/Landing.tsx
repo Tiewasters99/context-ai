@@ -65,14 +65,16 @@ export default function Landing() {
       >
 
         {/* Nav */}
-        <nav className="relative z-10 flex items-center justify-between w-full pl-[8.9%] pr-[10%] h-20">
+        <nav className="relative z-10 flex items-center justify-between w-full px-6 sm:pl-[8.9%] sm:pr-[10%] h-20">
           <span className="text-white" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>
             <span className="flex flex-col leading-none">
-              <span className="text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span>
-              <span className="text-[25px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">Spaces</span><span className="text-white">.ai</span></span>
+              <span className="text-[28px] sm:text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span>
+              <span className="text-[20px] sm:text-[25px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">Spaces</span><span className="text-white">.ai</span></span>
             </span>
           </span>
-          <div className="relative" style={{ width: '500px' }}>
+          {/* Desktop: the original absolutely-positioned link cluster. On
+              phones it collides with the logo, so collapse to just Sign In. */}
+          <div className="hidden sm:block relative" style={{ width: '500px' }}>
             <a href="#pricing" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '380px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Pricing</a>
             <a href="#features" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '195px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Features</a>
             <Link
@@ -82,6 +84,13 @@ export default function Landing() {
               Sign In
             </Link>
           </div>
+          <Link
+            to="/auth"
+            className="sm:hidden text-[18px] font-semibold text-[#e8b84a] hover:text-[#f0c860] transition-colors"
+            style={{ textShadow: '0 0 12px rgba(212,160,84,0.5), 0 1px 6px rgba(0,0,0,0.9)' }}
+          >
+            Sign In
+          </Link>
         </nav>
 
         {/* Hero — just words, no boxes */}

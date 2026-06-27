@@ -70,6 +70,29 @@ body {
   min-height: 100vh;
 }
 
+/* ── Mobile foundation ──────────────────────────────────────────────
+   The app was authored desktop-first with fixed pixel widths, so on a
+   phone those layouts spill past the viewport and the browser zooms the
+   whole page out to compensate (the "everything is tiny / clipped on the
+   right" symptom). Clamp horizontal overflow at the root, and stop iOS
+   from auto-inflating font sizes when the device rotates. */
+html,
+body {
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* On phones, give running prose a true reading size + measure. The
+   editor body is 15px on desktop (dense, fine with a mouse); at arm's
+   length on a phone that reads as fine print. */
+@media (max-width: 767px) {
+  .rich-text {
+    font-size: 17px;
+    line-height: 1.7;
+  }
+}
+
 h1, h2, h3, h4, h5, h6 {
   letter-spacing: -0.025em;
   font-weight: 600;

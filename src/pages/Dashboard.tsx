@@ -67,7 +67,7 @@ export default function Dashboard() {
     return m;
   }, [serverspaces]);
 
-  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.dashboard.mainCard');
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable('cs.dashboard.mainCard');
   const [showCard, setShowCard] = useState(true);
   const [enteringVault, setEnteringVault] = useState(false);
 
@@ -109,11 +109,14 @@ export default function Dashboard() {
           toggles. Visibility flips via display rather than unmount+remount. */}
       <div
         ref={cardRef}
-        className={`max-w-2xl mx-auto px-6 py-8 mt-[55vh] mb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] cursor-grab select-none ${showCard ? '' : 'hidden'}`}
+        className={`max-w-2xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] ${
+          isMobile ? 'px-4 py-6 mt-4 mb-8' : 'px-6 py-8 mt-[55vh] mb-8 cursor-grab select-none'
+        } ${showCard ? '' : 'hidden'}`}
         style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}
       >
-        {/* Drag handle + pin + fullscreen + close */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
+        {/* Drag handle + pin + fullscreen + close — desktop only; on a phone
+            the card flows in place, so move/pin/fullscreen are meaningless. */}
+        <div className={`items-center justify-between mb-4 -mt-1 ${isMobile ? 'hidden' : 'flex'}`}>
           <button
             onClick={() => setShowCard(false)}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
@@ -135,7 +138,9 @@ export default function Dashboard() {
             ? `${describe(activity[0])} · ${relativeTime(activity[0].occurred_at)}`
             : "Here's what's happening in your Contextspace."}
         </p>
-        <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
+        {!isMobile && (
+          <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
+        )}
 
         {/* The Door — entrance to the Vault, anchored at the heart of the card */}
         <button

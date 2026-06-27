@@ -19,7 +19,7 @@ import { RichTextEditor, normalizeBody } from '@/components/content/Editor';
 export default function PageView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.pageview.card');
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable('cs.pageview.card');
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -102,7 +102,7 @@ export default function PageView() {
         persistKey={id ? `cs.cover.${id}` : undefined}
       />
 
-      <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+      <div ref={cardRef} className={`max-w-4xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 ${isMobile ? 'px-4 py-6' : 'px-8 py-8 cursor-grab select-none'}`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen */}
         <div className="flex items-center justify-between mb-4 -mt-1">
           <button
@@ -112,7 +112,7 @@ export default function PageView() {
           >
             <X size={14} strokeWidth={2} />
           </button>
-          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <div className={`w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors ${isMobile ? 'invisible' : ''}`} title="Drag to move" />
           <div className="flex items-center gap-1">
             <button
               onClick={exportDocx}
@@ -143,7 +143,7 @@ export default function PageView() {
         )}
 
         {item && initialBody && (
-          <div className="flex gap-8">
+          <div className="flex flex-col-reverse md:flex-row gap-8">
             <div className="flex-1 min-w-0">
               <div
                 ref={titleRef}
@@ -160,8 +160,8 @@ export default function PageView() {
               />
             </div>
 
-            <div className="w-56 shrink-0">
-              <div className="sticky top-8 space-y-6">
+            <div className="w-full md:w-56 shrink-0">
+              <div className="md:sticky md:top-8 space-y-6">
                 <button
                   onClick={toggleLock}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors w-full ${

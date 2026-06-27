@@ -27,6 +27,7 @@ import {
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
+import { useIsMobile } from '@/hooks/useIsMobile';
 
 // 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
 // case — they highlighted, then silently showed Home. They return to the menu
@@ -42,6 +43,7 @@ const menuItems: { icon: typeof Upload; label: string; description: string; view
 ];
 
 export default function Vault() {
+  const isMobile = useIsMobile();
   const [illuminated, setIlluminated] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<VaultView>('home');
@@ -546,6 +548,9 @@ export default function Vault() {
 
   const handleMenuClick = (view: VaultView) => {
     setActiveView(view);
+    // On a phone the menu is a full-width overlay; collapse it once a tool
+    // is chosen so the workspace itself comes into view.
+    if (isMobile) setMenuOpen(false);
   };
 
   const renderContent = () => {
@@ -648,7 +653,7 @@ export default function Vault() {
       {/* Menu panel */}
       <div
         className={`h-full flex flex-col border-r border-[rgba(255,255,255,0.08)] transition-all duration-700 ease-in-out overflow-hidden shrink-0 ${
-          !illuminated ? 'w-0 border-r-0' : menuOpen ? 'w-80' : 'w-14'
+          !illuminated ? 'w-0 border-r-0' : menuOpen ? (isMobile ? 'w-full' : 'w-80') : 'w-14'
         }`}
         style={{ backgroundColor: 'rgba(8,8,14,0.95)' }}
       >
