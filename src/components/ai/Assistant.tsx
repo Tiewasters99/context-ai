@@ -262,7 +262,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       )}
 
       <div
-        className={`fixed top-0 right-0 h-full w-80 border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out backdrop-blur-[30px] ${
+        className={`fixed top-0 right-0 h-full w-[88vw] sm:w-80 max-w-[22rem] border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out backdrop-blur-[30px] ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >

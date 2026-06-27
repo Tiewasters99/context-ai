@@ -46,12 +46,18 @@ type DropData =
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
+  // Rendered inside MainLayout's off-canvas drawer on phones. In that mode
+  // the sidebar is never collapsed (the drawer either covers the screen or
+  // is slid away entirely) and takes a phone-friendly width.
+  isMobile?: boolean;
 }
 
-export default function Sidebar({ onToggleAssistant }: SidebarProps) {
+export default function Sidebar({ onToggleAssistant, isMobile = false }: SidebarProps) {
   const { user, signOut } = useAuth();
   const location = useLocation();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsedState, setCollapsedState] = useState(false);
+  // On mobile the rail is always full-width inside the drawer.
+  const collapsed = isMobile ? false : collapsedState;
   const [expandedSpaces, setExpandedSpaces] = useState<Set<string>>(new Set());
   const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
   const [showNewServerspace, setShowNewServerspace] = useState(false);
@@ -238,7 +244,7 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
 
   const isActive = (path: string) => location.pathname === path;
 
-  const sidebarWidth = collapsed ? 'w-16' : 'w-64';
+  const sidebarWidth = isMobile ? 'w-[82vw] max-w-[20rem]' : collapsed ? 'w-16' : 'w-64';
 
   return (
     <aside
@@ -252,13 +258,15 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
             Context<span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>
           </span>
         )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-white/70 transition-colors"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          <PanelLeft size={16} strokeWidth={1.75} />
-        </button>
+        {!isMobile && (
+          <button
+            onClick={() => setCollapsedState(!collapsedState)}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-white/70 transition-colors"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            <PanelLeft size={16} strokeWidth={1.75} />
+          </button>
+        )}
       </div>
 
       {/* User Section */}

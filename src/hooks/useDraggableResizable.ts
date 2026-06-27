@@ -1,11 +1,20 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { useIsMobile } from './useIsMobile';
 
 // `storageKey` opts the card into persistent layout state. With a key, the
 // card remembers (across reloads) where the user last left it AND whether
 // they right-clicked to pin it. Position survives even when unpinned —
 // the pin flag just toggles whether drag is locked. Without a key, all
 // state is in-memory only.
+//
+// On phones, dragging a card into place with a thumb is hostile, and a
+// position saved on a wide desktop renders the card off-screen. So the
+// whole drag/resize/restore machinery is disabled below the mobile
+// breakpoint: the card sheds any inline positioning and flows in normal
+// document order. Consumers can read the returned `isMobile` to hide the
+// drag handle / pin / fullscreen affordances, which mean nothing here.
 export function useDraggableResizable(storageKey?: string) {
+  const isMobile = useIsMobile();
   const cardRef = useRef<HTMLDivElement>(null);
   const isFullscreen = useRef(false);
   const isPinned = useRef(false);
@@ -81,6 +90,16 @@ export function useDraggableResizable(storageKey?: string) {
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
+
+    // Phone: cards don't float. Strip any inline positioning we (or a
+    // prior desktop session restored from localStorage) applied so the
+    // card returns to normal flow, and bind no drag/resize listeners.
+    if (isMobile) {
+      for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY'] as const) {
+        card.style[prop] = '';
+      }
+      return;
+    }
 
     // Restore last-known position from a prior session. Position is
     // applied even when the card was left unpinned so users come back to
@@ -250,7 +269,7 @@ export function useDraggableResizable(storageKey?: string) {
       card.removeEventListener('contextmenu', onContextMenu);
       card.removeEventListener('dblclick', onDoubleClick);
     };
-  }, [storageKey, pin, unpin, readState, writeState]);
+  }, [storageKey, pin, unpin, readState, writeState, isMobile]);
 
   const toggleFullscreen = useCallback(() => {
     const card = cardRef.current;
@@ -290,5 +309,5 @@ export function useDraggableResizable(storageKey?: string) {
     }
   }, []);
 
-  return { cardRef, toggleFullscreen, pinned, togglePin };
+  return { cardRef, toggleFullscreen, pinned, togglePin, isMobile };
 }
