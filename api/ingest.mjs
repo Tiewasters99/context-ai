@@ -26,11 +26,15 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { processDocument } from '../lib/ingest-core.mjs';
+import { processDocument, MEDIA_EXTENSIONS } from '../lib/ingest-core.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Optional: enables OCR of scanned, image-only PDFs (no text layer). Same key
+// the MCP ingest path uses (api/mcp.mjs). When absent, scanned PDFs still fail
+// with "no passages extracted" as before — OCR is purely additive.
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 
 export default async function handler(req, res) {
@@ -100,12 +104,40 @@ export default async function handler(req, res) {
   const fileBuf = Buffer.from(arrayBuf);
   const ext = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
 
+  // Scanned-PDF OCR fallback. Only wired for PDFs and only when a key is
+  // present. Gemini OCR of a large scan can exceed the 60s serverless budget,
+  // so the pipeline only invokes this when the PDF extracts to ~no text; small
+  // and medium scans (exhibits) finish comfortably. Big image-only productions
+  // still need the CLI (scripts/ocr-scanned.mjs) or the background worker.
+  let ocr = null;
+  if (GOOGLE_API_KEY && ext === '.pdf') {
+    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
+    ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
+  }
+
+  // Audio/video transcription. Handles Gemini-native formats (wav/mp3/mov/mpg/
+  // mp4/etc.) inline within the serverless budget. Formats Gemini won't take
+  // (.wma) or long recordings can exceed 60s — those route to the CLI
+  // (scripts/transcribe-av.mjs, which also transcodes) or the background worker.
+  let transcribe = null;
+  if (GOOGLE_API_KEY && MEDIA_EXTENSIONS.includes(ext)) {
+    const { transcribeMedia, mimeForMediaExt } = await import('../lib/transcribe-gemini.mjs');
+    const mimeType = mimeForMediaExt(ext);
+    if (mimeType) {
+      transcribe = (buf, { kind }) => transcribeMedia(buf, { apiKey: GOOGLE_API_KEY, mimeType, kind });
+    }
+    // No mimeType (e.g. .wma) → leave transcribe null; ingest-core stores the
+    // file as-is (viewable) instead of erroring. Transcript comes from the CLI.
+  }
+
   try {
     const { passageCount } = await processDocument(sb, {
       documentId: doc.id,
       fileBuf,
       ext,
       openaiApiKey: OPENAI_API_KEY,
+      ocr,
+      transcribe,
     });
     return json(res, 200, { ok: true, passageCount });
   } catch (err) {
