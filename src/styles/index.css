@@ -76,30 +76,35 @@ h1, h2, h3, h4, h5, h6 {
   color: #f8f5ef;
 }
 
-/* Refined scrollbar — wide enough to see and grab (the old 5px/0.1 thumb
-   was nearly invisible; side sliders should read as a clear control). */
+/* Scrollbars / side sliders — deliberately large and bright. These double as
+   the sidebar's scroll control, and a dim thin thumb was nearly impossible to
+   see or grab. Wide track, high-contrast thumb at rest, gold on hover. */
 ::-webkit-scrollbar {
-  width: 11px;
-  height: 11px;
+  width: 15px;
+  height: 15px;
 }
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.22);
-  border-radius: 6px;
-  border: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.42);
+  border-radius: 8px;
+  border: 3px solid transparent;
   background-clip: padding-box;
-  min-height: 40px;
+  min-height: 48px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(232, 184, 74, 0.55);
+  background: rgba(232, 184, 74, 0.85);
   background-clip: padding-box;
 }
-/* Firefox */
+::-webkit-scrollbar-thumb:active {
+  background: rgba(232, 184, 74, 1);
+  background-clip: padding-box;
+}
+/* Firefox — 'auto' keeps a full-width, grabbable bar (not the thin variant). */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scrollbar-width: auto;
+  scrollbar-color: rgba(255, 255, 255, 0.42) rgba(255, 255, 255, 0.05);
 }
 
 /* Selection */
