@@ -19,6 +19,7 @@ import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
 import Connections from '@/pages/Connections';
+import Settings from '@/pages/Settings';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
@@ -91,6 +92,7 @@ export default function App() {
               <Route path="suite" element={<ProductivitySuite />} />
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
+              <Route path="settings" element={<Settings />} />
               <Route path="connections" element={<Connections />} />
               <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="connections/gemini" element={<GeminiConnect />} />
