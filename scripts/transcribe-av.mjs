@@ -150,8 +150,11 @@ function transcodeToMp3(buf, ext) {
     const outPath = path.join(tmp, `av_${tag}.mp3`);
     try {
       await fs.writeFile(inPath, buf);
-      // -vn drop video, 16kHz mono 64k mp3: speech-grade, ~10x smaller.
-      const ff = spawn('ffmpeg', ['-y', '-i', inPath, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '64k', outPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+      // -vn drop video, 16kHz mono 32k mp3: speech-grade and small. Bitrate
+      // matters: at 64k a ~50min recording became a ~24MB single-shot upload
+      // that kept dropping mid-flight (fetch failed); 32k halves it and the
+      // same file uploads cleanly. Transcription quality is unaffected.
+      const ff = spawn('ffmpeg', ['-y', '-i', inPath, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '32k', outPath], { stdio: ['ignore', 'ignore', 'pipe'] });
       let err = '';
       ff.stderr.on('data', (d) => { err += d.toString(); });
       ff.on('error', reject);
