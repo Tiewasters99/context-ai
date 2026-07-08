@@ -8,7 +8,13 @@
 
 import { signJwt, verifyJwt, pkceS256, safeEqual, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
-const ACCESS_TTL_SEC = 60 * 60;        // 1 hour
+// Access tokens live 12 hours: long enough that a full trial-prep day never
+// mid-session refreshes (each refresh is a chance for a mobile client to
+// fumble and strand the connector), short enough that a stolen token ages out
+// same-day. Refresh stays 30 days. Revocation story is unchanged either way —
+// these are stateless JWTs, so revocation = rotate MCP_OAUTH_SECRET (which
+// logs every client out; see lib/oauth-jwt.mjs).
+const ACCESS_TTL_SEC = 60 * 60 * 12;       // 12 hours
 const REFRESH_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
 
 export default async function handler(req, res) {
@@ -109,7 +115,7 @@ export default async function handler(req, res) {
 // Build-time marker so we can confirm in production logs which version
 // of this file is actually serving traffic. Bump this string whenever
 // you change token shape so a stale Vercel deploy is obvious at a glance.
-const TOKEN_BUILD = '2026-05-14-opaque-cspa';
+const TOKEN_BUILD = '2026-07-08-ttl12h';
 
 function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
   // Internally we sign a normal JWT carrying everything we need to

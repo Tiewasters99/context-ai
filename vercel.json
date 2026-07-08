@@ -2,7 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/mcp.mjs": {
-      "maxDuration": 30
+      "maxDuration": 60
+    },
+    "api/health.mjs": {
+      "maxDuration": 10
     },
     "api/ingest.mjs": {
       "maxDuration": 60
