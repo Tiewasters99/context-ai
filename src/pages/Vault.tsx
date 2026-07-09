@@ -55,6 +55,10 @@ export default function Vault() {
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
   const [showTemplates, setShowTemplates] = useState(false);
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
+  // User-visible notice for operations that previously failed silently
+  // (zip entries skipped, move/delete errors). One slot; new notices replace
+  // old ones.
+  const [vaultNotice, setVaultNotice] = useState<{ kind: 'warn' | 'err'; text: string } | null>(null);
   const [generatedDocs, setGeneratedDocs] = useState<VaultFile[]>([]);
   const [openFile, setOpenFile] = useState<VaultFile | null>(null);
 
@@ -191,7 +195,13 @@ export default function Vault() {
     try {
       await moveVaultDocument(payload.docId, targetMatterId);
     } catch (err) {
+      // The row was removed optimistically — without a notice a failed move
+      // looks exactly like a successful one. The refresh below restores it.
       console.error('move failed', err);
+      setVaultNotice({
+        kind: 'err',
+        text: `Move failed — the document stays in its current matter. (${err instanceof Error ? err.message : 'unknown error'})`,
+      });
     }
     if (matter && matterScope) {
       const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
@@ -258,6 +268,12 @@ export default function Vault() {
         const { files, skipped, truncatedAt } = await expandZip(file);
         if (skipped.length) console.log(`zip ${file.name}: skipped ${skipped.length} entries:`, skipped.slice(0, 10));
         if (truncatedAt) console.warn(`zip ${file.name}: truncated at ${truncatedAt} files`);
+        if (skipped.length || truncatedAt) {
+          const parts = [];
+          if (skipped.length) parts.push(`${skipped.length} entr${skipped.length === 1 ? 'y was' : 'ies were'} skipped (unsupported type or folder)`);
+          if (truncatedAt) parts.push(`import stopped at ${truncatedAt} files`);
+          setVaultNotice({ kind: 'warn', text: `${file.name}: ${parts.join('; ')}.` });
+        }
         setVaultFiles((prev) => prev.filter((f) => f.id !== placeholderId));
         arr.push(...files);
       } catch (err: any) {
@@ -351,13 +367,15 @@ export default function Vault() {
 
   const removeVaultFile = useCallback((id: string) => {
     if (matter) {
-      // Persistent mode — delete from DB + storage. Optimistic UI removal;
-      // on error we leave a console message but do not re-add the row.
+      // Persistent mode — delete from DB + storage. The row only leaves the
+      // list when the delete actually succeeded; a failed delete keeps the
+      // row and says so (previously it vanished either way, so a failed
+      // delete looked successful).
       deleteVaultDocument(id)
         .then(() => setVaultFiles((prev) => prev.filter((f) => f.id !== id)))
         .catch((err) => {
           console.error('deleteVaultDocument:', err.message);
-          setVaultFiles((prev) => prev.filter((f) => f.id !== id));
+          setVaultNotice({ kind: 'err', text: `Delete failed — the document is still in the Vault. (${err.message})` });
         });
       return;
     }
@@ -825,6 +843,24 @@ export default function Vault() {
 
       {/* Main area */}
       <div className="flex-1 flex relative">
+        {vaultNotice && (
+          <div
+            className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-lg px-3 py-2 rounded-lg border text-xs shadow-xl ${
+              vaultNotice.kind === 'err'
+                ? 'bg-[#2a1214] border-[#f87171]/40 text-[#f8b4b4]'
+                : 'bg-[#2a2412] border-[#e8b84a]/40 text-[#f0dfa8]'
+            }`}
+          >
+            <span className="flex-1">{vaultNotice.text}</span>
+            <button
+              onClick={() => setVaultNotice(null)}
+              className="opacity-70 hover:opacity-100 shrink-0"
+              aria-label="Dismiss"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
         {!illuminated ? (
           /* Dark state — dot with subtle hint */
           <div className="flex-1 flex items-center justify-center">
