@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus } from 'lucide-react';
+import { X, Upload, FileText, Bot, FolderOpen, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
@@ -28,7 +28,10 @@ import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
 
-type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
+// 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
+// case — they highlighted, then silently showed Home. They return to the menu
+// when the views actually exist.
+type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
   { icon: Upload, label: 'Import/Display Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
@@ -36,9 +39,6 @@ const menuItems: { icon: typeof Upload; label: string; description: string; view
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
   { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
-  { icon: Key, label: 'Bring Your Own Key', description: 'Use your own API keys for AI models', view: 'byok' },
-  { icon: HardDrive, label: 'Storage', description: 'Manage your Vault storage (up to 100GB)', view: 'storage' },
-  { icon: Settings, label: 'Vault Settings', description: 'Configure models, permissions, and preferences', view: 'settings' },
 ];
 
 export default function Vault() {
@@ -819,18 +819,8 @@ export default function Vault() {
           </div>
         )}
 
-        {/* Storage footer */}
-        {menuOpen && (
-          <div className="px-4 py-4 border-t border-[rgba(255,255,255,0.08)]">
-            <div className="flex items-center justify-between text-[11px] text-white/70">
-              <span>Storage used</span>
-              <span>0 / 5 GB (Free)</span>
-            </div>
-            <div className="mt-2 h-1 bg-[rgba(255,255,255,0.06)] rounded-full overflow-hidden">
-              <div className="h-full w-0 bg-[#e8b84a] rounded-full" />
-            </div>
-          </div>
-        )}
+        {/* Storage meter returns here once it reports real usage — the old
+            footer hardcoded "0 / 5 GB" and never updated. */}
       </div>
 
       {/* Main area */}
