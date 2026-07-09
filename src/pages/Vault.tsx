@@ -21,6 +21,7 @@ import {
   watchDocumentStatus,
   deleteVaultDocument,
   moveVaultDocument,
+  triggerIngest,
   type MatterRef,
 } from '@/lib/vault-persist';
 import { useServerspaces } from '@/hooks/useServerspaces';
@@ -209,8 +210,8 @@ export default function Vault() {
       for (const f of files) {
         if (f.status === 'uploading' || f.status === 'indexing') {
           cleanups.push(
-            watchDocumentStatus(f.id, (status) => {
-              setVaultFiles((prev) => prev.map((x) => x.id === f.id ? { ...x, status } : x));
+            watchDocumentStatus(f.id, (status, errorMessage) => {
+              setVaultFiles((prev) => prev.map((x) => x.id === f.id ? { ...x, status, errorMessage } : x));
             })
           );
         }
@@ -289,9 +290,9 @@ export default function Vault() {
           };
           setVaultFiles((prev) => [stub, ...prev]);
           // Poll until terminal — self-stops on ready/error.
-          watchDocumentStatus(documentId, (status) => {
+          watchDocumentStatus(documentId, (status, errorMessage) => {
             setVaultFiles((prev) =>
-              prev.map((f) => f.id === documentId ? { ...f, status } : f)
+              prev.map((f) => f.id === documentId ? { ...f, status, errorMessage } : f)
             );
           });
         } catch (err: any) {
@@ -336,6 +337,17 @@ export default function Vault() {
       }
     }
   }, [matter]);
+
+  // Re-run server-side ingestion for a document that errored (e.g. a scanned
+  // PDF that failed before OCR was wired, or a transient embed failure). Flips
+  // the row back to "uploading" locally, fires /api/ingest, and re-polls.
+  const retryVaultFile = useCallback((id: string) => {
+    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', errorMessage: undefined } : f));
+    triggerIngest(id).catch((err) => console.error('retry ingest:', err.message));
+    watchDocumentStatus(id, (status, errorMessage) => {
+      setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status, errorMessage } : f));
+    });
+  }, []);
 
   const removeVaultFile = useCallback((id: string) => {
     if (matter) {
@@ -522,7 +534,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF or DOCX opens in the
           // full-screen DocumentReader (pages, search, annotations). The
           // inline DocumentEditor modal handles text-editable formats

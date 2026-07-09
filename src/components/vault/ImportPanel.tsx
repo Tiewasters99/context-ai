@@ -1,11 +1,13 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder } from 'lucide-react';
+import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 
 interface ImportPanelProps {
   files: VaultFile[];
   onAddFiles: (files: FileList | File[]) => void;
   onRemoveFile: (id: string) => void;
+  /** Re-run ingestion for an errored file (persistent mode only). */
+  onRetryFile?: (id: string) => void;
   /** Open a file in the document reader/editor. */
   onOpenFile?: (file: VaultFile) => void;
 }
@@ -24,7 +26,25 @@ const statusLabel = {
   error: 'Error',
 };
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onOpenFile }: ImportPanelProps) {
+// Translate raw pipeline errors into something a user can act on. The raw
+// message is still available on hover (title attr) for debugging.
+function friendlyIngestError(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.includes('no passages extracted')) {
+    return 'No readable text found — likely a scanned or image-only file. Retry runs OCR.';
+  }
+  if (m.includes('statement timeout') || m.includes('timed out') || m.includes('504')) {
+    return 'Processing timed out — the file may be very large. Retry, or split it.';
+  }
+  if (m.includes('embed') && m.includes('token')) {
+    return 'File too dense to index in one pass — Retry after the pipeline update.';
+  }
+  if (m.includes('drm')) return 'This file is DRM-protected and cannot be indexed.';
+  if (m.includes('download:')) return 'Stored file could not be read back — try re-uploading.';
+  return msg;
+}
+
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -190,7 +210,21 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onOpenFil
             <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
           )}
         </p>
+        {file.status === 'error' && file.errorMessage && (
+          <p className="text-[10px] text-red-400/90 truncate" title={file.errorMessage}>
+            {friendlyIngestError(file.errorMessage)}
+          </p>
+        )}
       </div>
+      {file.status === 'error' && onRetryFile && file.matterspace_id && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRetryFile(file.id); }}
+          className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-[rgba(232,184,74,0.12)] text-[#e8b84a] hover:bg-[rgba(232,184,74,0.25)] transition-colors"
+          title="Re-run ingestion for this document"
+        >
+          <RefreshCw size={11} /> Retry
+        </button>
+      )}
       <button
         onClick={(e) => { e.stopPropagation(); onRemoveFile(file.id); }}
         className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-all"

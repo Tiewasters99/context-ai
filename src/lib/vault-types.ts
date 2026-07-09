@@ -7,6 +7,8 @@ export interface VaultFile {
   type: string;
   file: File;
   status: 'uploading' | 'indexing' | 'indexed' | 'error';
+  /** Why ingestion failed (documents.processing_error) — shown on error rows. */
+  errorMessage?: string;
   /** Extracted text content, available after indexing */
   textContent?: string;
   /** Set in persistent mode so the import panel can group by matter. */
