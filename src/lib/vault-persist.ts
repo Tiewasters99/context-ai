@@ -108,6 +108,7 @@ function documentToVaultFile(doc: {
     // server already has the bytes; the UI never reads .file in this mode.
     file: new File([], name),
     status: mapStatus(doc.processing_status),
+    errorMessage: doc.processing_error ?? undefined,
     matterspace_id: doc.matterspace_id,
     matterspace_name,
     storagePath: doc.storage_path ?? undefined,
