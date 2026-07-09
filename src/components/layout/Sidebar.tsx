@@ -47,14 +47,17 @@ type DropData =
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
+  // Real open/closed state of the assistant panel, owned by MainLayout — the
+  // sidebar used to track its own copy, which desynced when the panel was
+  // closed from its own X.
+  assistantOpen?: boolean;
 }
 
-export default function Sidebar({ onToggleAssistant }: SidebarProps) {
+export default function Sidebar({ onToggleAssistant, assistantOpen = false }: SidebarProps) {
   const { user, signOut } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [expandedSpaces, setExpandedSpaces] = useState<Set<string>>(new Set());
-  const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
   const [showNewServerspace, setShowNewServerspace] = useState(false);
 
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
@@ -389,9 +392,9 @@ export default function Sidebar({ onToggleAssistant }: SidebarProps) {
       {/* Bottom Actions */}
       <div className="border-t border-[rgba(255,255,255,0.06)] p-2.5 space-y-px">
         <button
-          onClick={() => { setAiAssistantEnabled(!aiAssistantEnabled); onToggleAssistant?.(); }}
+          onClick={() => onToggleAssistant?.()}
           className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
-            aiAssistantEnabled
+            assistantOpen
               ? 'bg-[rgba(212,160,84,0.08)] text-[#e8b84a]'
               : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
           }`}

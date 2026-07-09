@@ -16,7 +16,7 @@ export default function MainLayout() {
   return (
     <div className="flex h-screen">
       {!onVault && <AmbientControls />}
-      <Sidebar onToggleAssistant={() => setAssistantOpen(!assistantOpen)} />
+      <Sidebar onToggleAssistant={() => setAssistantOpen(!assistantOpen)} assistantOpen={assistantOpen} />
 
       <div className="flex-1 flex flex-col min-w-0 bg-cover bg-fixed bg-no-repeat" style={{ backgroundColor: '#000000', backgroundImage: "var(--ambient-cover, var(--page-cover, none))", backgroundPosition: 'var(--page-cover-position, center)' }}>
         {/* Top bar */}
