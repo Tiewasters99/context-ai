@@ -292,9 +292,10 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
     const u = urlDraft.trim();
     if (!u) return;
     if (!/^https?:\/\//i.test(u) && !u.startsWith('data:image/')) {
-      alert('Please paste a URL starting with http(s):// (or a data:image/ URI).');
+      setUploadError('Please paste a URL starting with http(s):// (or a data:image/ URI).');
       return;
     }
+    setUploadError(null);
     onSelect(u);
   };
 
@@ -363,9 +364,6 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
             onChange={handleFile}
             className="hidden"
           />
-          {uploadError && (
-            <p className="mt-1.5 text-[11px] text-red-300">{uploadError}</p>
-          )}
         </div>
 
         {/* Paste URL */}
@@ -392,6 +390,11 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
               Use
             </button>
           </div>
+          {/* Shared error line for both the upload and URL paths — the
+              popover is small enough that one spot serves both. */}
+          {uploadError && (
+            <p className="mt-1.5 text-[11px] text-red-300">{uploadError}</p>
+          )}
         </div>
 
         {/* Featured covers — sample from the template library */}
