@@ -86,12 +86,12 @@ export default function Landing() {
 
         {/* Hero — just words, no boxes */}
         <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-20">
-          <h1 className="text-[72px] sm:text-[90px] font-black text-white leading-[1.02] tracking-tight text-center" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 100px rgba(0,0,0,0.8)' }}>
-            Your workspace,<br />
-            <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>simplified.</span>
+          <h1 className="text-[56px] sm:text-[80px] font-black text-white leading-[1.05] tracking-tight text-center" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 100px rgba(0,0,0,0.8)' }}>
+            Every case file,<br />
+            <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>one question away.</span>
           </h1>
-          <p className="mt-8 text-[26px] text-white max-w-xl mx-auto leading-relaxed text-center font-bold" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,0.7)' }}>
-            The productivity platform that gets out of your way. Organize your work, collaborate with your team, and let us do the rest.
+          <p className="mt-8 text-[22px] sm:text-[26px] text-white max-w-2xl mx-auto leading-relaxed text-center font-bold" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,0.7)' }}>
+            Contextspaces turns your matter documents — even scanned exhibits and depositions — into answers with page:line citations. Your clients stay separated. Your AI plugs in. Built by a litigator.
           </p>
           <div className="mt-10">
             <Link
@@ -200,7 +200,7 @@ export default function Landing() {
                   <span className="text-[#d4a054]">Spaces.ai</span>
                 </span>
               </span>
-              <p className="text-[12px] text-[#5a5665] mt-2">Your workspace, simplified.</p>
+              <p className="text-[12px] text-[#5a5665] mt-2">Every case file, one question away.</p>
             </div>
             <div className="flex gap-14">
               <div>
@@ -210,20 +210,9 @@ export default function Landing() {
                   <li><a href="#pricing" className="hover:text-[#e8e4de] transition-colors">Pricing</a></li>
                 </ul>
               </div>
-              <div>
-                <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Company</h4>
-                <ul className="space-y-2 text-[12px] text-[#5a5665]">
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">About</a></li>
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Contact</a></li>
-                </ul>
-              </div>
-              <div>
-                <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Legal</h4>
-                <ul className="space-y-2 text-[12px] text-[#5a5665]">
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Privacy</a></li>
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Terms</a></li>
-                </ul>
-              </div>
+              {/* Company and Legal columns return when their pages exist —
+                  href="#" links on Privacy/Terms are a credibility hole for a
+                  product that asks lawyers to upload client files. */}
             </div>
           </div>
         </div>
