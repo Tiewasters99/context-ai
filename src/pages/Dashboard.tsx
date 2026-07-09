@@ -12,9 +12,10 @@ import ActivityFeed, { describe, relativeTime } from '@/components/activity/Acti
 import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
 import { useActivityFeed } from '@/hooks/useActivityFeed';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
+import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 
 const quickActions = [
-  { label: 'Create Serverspace', icon: Plus, path: '#' },
+  { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace' as const },
 ];
 
 export default function Dashboard() {
@@ -29,6 +30,7 @@ export default function Dashboard() {
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+  const [showNewServerspace, setShowNewServerspace] = useState(false);
 
   // The dashboard cover is a personal, device-local backdrop — there's no
   // per-item row to store it on, so persist the chosen URL in localStorage.
@@ -163,7 +165,12 @@ export default function Dashboard() {
             {!loadingServerspaces && serverspaces.length === 0 && (
               <div className="px-4 py-3 text-[12px] text-[#8a8693]">
                 No serverspaces yet.{' '}
-                <span className="text-[#d4a054]">Create one to get started.</span>
+                <button
+                  onClick={() => setShowNewServerspace(true)}
+                  className="text-[#d4a054] hover:text-[#e8b84a] underline underline-offset-2 transition-colors"
+                >
+                  Create one to get started.
+                </button>
               </div>
             )}
             {serverspaces.map((server, serverIdx) => {
@@ -259,7 +266,7 @@ export default function Dashboard() {
           {quickActions.map((a) => (
             <button
               key={a.label}
-              onClick={() => navigate(a.path)}
+              onClick={() => { if (a.action === 'new-serverspace') setShowNewServerspace(true); }}
               className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.14)] hover:border-[rgba(255,255,255,0.22)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
             >
               <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
@@ -285,6 +292,10 @@ export default function Dashboard() {
           context={newMatterContext}
           onClose={() => setNewMatterContext(null)}
         />
+      )}
+
+      {showNewServerspace && (
+        <NewServerspaceModal onClose={() => setShowNewServerspace(false)} />
       )}
     </div>
   );
