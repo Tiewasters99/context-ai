@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Search, Bell } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import AmbientControls from './AmbientControls';
@@ -32,15 +32,10 @@ export default function MainLayout() {
             </button>
           </div>
 
-          <div className="flex items-center gap-0.5">
-            <button className="p-2 rounded-md hover:bg-[#22222e] text-white/60 hover:text-white transition-colors">
-              <Search size={16} strokeWidth={1.75} />
-            </button>
-            <button className="p-2 rounded-md hover:bg-[#22222e] text-white/60 hover:text-white transition-colors relative">
-              <Bell size={16} strokeWidth={1.75} />
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[#d4a054] rounded-full" />
-            </button>
-          </div>
+          {/* Search and notifications will live here once they exist — an
+              unwired button (and a permanently-lit unread dot) erodes trust
+              faster than an empty corner does. */}
+          <div className="flex items-center gap-0.5" />
         </header>
 
         {/* Content */}
