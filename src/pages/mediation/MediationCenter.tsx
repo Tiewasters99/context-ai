@@ -94,7 +94,7 @@ export default function MediationCenter() {
   }, []);
 
   return (
-    <div className="max-w-3xl mx-auto px-8 py-12">
+    <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <PageHead
         kicker="Contextspaces"
         title="Mediation Center"

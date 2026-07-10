@@ -43,7 +43,7 @@ export default function MediationRegister() {
 
   if (done) {
     return (
-      <div className="max-w-3xl mx-auto px-8 py-12">
+      <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
         <PageHead kicker="Contextspaces Mediation" title="The matter is registered" />
         <p className="text-[14px] text-white/70 leading-relaxed max-w-xl">
           Send the other side this invite code — the mediation begins the moment they appear:
@@ -73,7 +73,7 @@ export default function MediationRegister() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-8 py-12">
+    <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <PageHead
         kicker="Contextspaces Mediation"
         title="Register a mediation"

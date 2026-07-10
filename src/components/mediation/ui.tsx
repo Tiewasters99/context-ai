@@ -99,7 +99,7 @@ export function PageHead({ kicker, title, lede }: { kicker: string; title: strin
     <header className="mb-8">
       <p className="text-[11px] uppercase tracking-[0.18em] text-[#d4a054] mb-2">{kicker}</p>
       <h1
-        className="text-[32px] font-semibold tracking-tight text-white"
+        className="text-[26px] sm:text-[32px] font-semibold tracking-tight text-white"
         style={{ fontFamily: '"Playfair Display Variable", serif' }}
       >
         {title}

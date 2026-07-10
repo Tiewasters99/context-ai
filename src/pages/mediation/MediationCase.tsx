@@ -384,7 +384,7 @@ function SchedulingStage({ view, onRefresh }: { view: CaseView; onRefresh: () =>
                         disabled={day < info.window.from || day > info.window.to}
                         onClick={() => toggle(day)}
                         aria-pressed={picked.includes(day)}
-                        className={`h-8 rounded text-[12px] transition-colors disabled:opacity-20 disabled:cursor-not-allowed ${
+                        className={`h-10 sm:h-8 rounded text-[13px] sm:text-[12px] transition-colors disabled:opacity-20 disabled:cursor-not-allowed ${
                           picked.includes(day)
                             ? 'bg-[#d4a054] text-[#12100a] font-semibold'
                             : 'text-white/70 hover:bg-[rgba(255,255,255,0.07)]'
@@ -1243,7 +1243,7 @@ export default function MediationCase() {
 
   if (needsAuth) {
     return (
-      <div className="max-w-3xl mx-auto px-8 py-12">
+      <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
         <PageHead kicker="Contextspaces Mediation" title="The case room" />
         <p className="text-[14px] text-white/70">This room is confidential — sign in to take your seat.</p>
         <div className="mt-6">
@@ -1255,7 +1255,7 @@ export default function MediationCase() {
 
   if (!view) {
     return (
-      <div className="max-w-3xl mx-auto px-8 py-12">
+      <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
         {loadError ? (
           <>
             <Notice>{loadError}</Notice>
@@ -1273,7 +1273,7 @@ export default function MediationCase() {
   const currentIdx = stageIndex(view.status);
 
   return (
-    <div className="max-w-3xl mx-auto px-8 py-12">
+    <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <header className="mb-8">
         <p className="text-[11px] uppercase tracking-[0.18em] text-[#d4a054] mb-2">
           <Link to="/app/mediation" className="hover:text-[#e8b84a] transition-colors">Contextspaces Mediation</Link>
@@ -1302,7 +1302,7 @@ export default function MediationCase() {
         {STAGES.map((stage, i) => {
           const state = i < currentIdx ? 'past' : i === currentIdx ? 'current' : 'future';
           return (
-            <li key={stage.key} className={`relative flex gap-5 ${state === 'future' ? 'opacity-35' : ''}`}>
+            <li key={stage.key} className={`relative flex gap-3.5 sm:gap-5 ${state === 'future' ? 'opacity-35' : ''}`}>
               {/* Rail */}
               <div className="flex flex-col items-center w-9 shrink-0">
                 <span
