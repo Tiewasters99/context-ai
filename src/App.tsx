@@ -20,6 +20,8 @@ import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
 import Connections from '@/pages/Connections';
 import Settings from '@/pages/Settings';
+import MootBench from '@/pages/moot/MootBench';
+import MootSession from '@/pages/moot/MootSession';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
@@ -97,6 +99,8 @@ export default function App() {
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="moot-bench" element={<MootBench />} />
+              <Route path="moot-bench/:id" element={<MootSession />} />
               <Route path="mediation" element={<MediationCenter />} />
               <Route path="mediation/register" element={<MediationRegister />} />
               <Route path="mediation/join" element={<MediationJoin />} />

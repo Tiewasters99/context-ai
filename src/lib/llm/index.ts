@@ -1,5 +1,7 @@
 export { generate } from './generate';
 export type { GenerateOptions, GenerateResult } from './generate';
+export { converse } from './converse';
+export type { ConverseOptions } from './converse';
 export { generateStructured } from './structured';
 export type { GenerateStructuredOptions } from './structured';
 export { providers, findModel, allModels } from './providers';

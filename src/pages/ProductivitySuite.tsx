@@ -17,6 +17,13 @@ interface Product {
 
 const PRODUCTS: Product[] = [
   {
+    name: 'Moot Bench',
+    tagline: 'Oral-argument prep: hand up the briefs, take a bench memo, then stand for questioning by a hot AI bench. Share the transcript with the team.',
+    accent: '#e8b84a',
+    to: '/app/moot-bench',
+    status: 'New',
+  },
+  {
     name: 'Discovery',
     tagline: 'Intake, review, tag, Bates-stamp, and produce documents — incoming and outgoing.',
     accent: '#d4a054',
