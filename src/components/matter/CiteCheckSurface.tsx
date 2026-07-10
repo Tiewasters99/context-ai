@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback } from 'react';
-import { FileText, X, ChevronRight, ChevronDown, Upload, Download, Loader2 } from 'lucide-react';
+import { FileText, X, ChevronRight, ChevronDown, Upload, Download, Loader2, Library } from 'lucide-react';
 import { extractText } from '@/lib/extract';
 import { runCiteCheck, FLAG_GLYPH, FLAG_LABEL, type RunProgress, type CiteFlag, type ReportEntry } from '@/lib/cite-check';
+import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
+import DocumentPicker from '@/components/matter/DocumentPicker';
 import {
   useCiteCheckRuns,
   useCiteCheckRun,
@@ -27,6 +29,8 @@ const ACCEPTED_EXT = '.docx,.pdf,.txt,.md';
 interface PendingSource {
   label: string;
   text: string;
+  /** Set when the source is a document already ingested in the corpus. */
+  documentId?: string;
 }
 
 export default function CiteCheckSurface({ matterId }: { matterId: string; matterName?: string }) {
@@ -40,6 +44,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
   const [showPaste, setShowPaste] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [showDocPicker, setShowDocPicker] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -66,6 +71,23 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
     }
   }, []);
 
+  // Check a document already ingested in the corpus — no re-upload. Loads the
+  // document's indexed passages back into one string and runs the same engine.
+  const acceptCorpusDoc = useCallback(async (docId: string) => {
+    setShowDocPicker(false);
+    setError(null);
+    setExtracting(true);
+    try {
+      const loaded = await loadCorpusDocumentText(docId);
+      setSource({ label: loaded.title, text: loaded.text, documentId: loaded.documentId });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load that document.');
+      setSource(null);
+    } finally {
+      setExtracting(false);
+    }
+  }, []);
+
   const startRun = useCallback(async () => {
     const src: PendingSource | null = source
       ?? (pasteText.trim().length >= 40
@@ -83,6 +105,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
         matterId,
         draftText: src.text,
         sourceLabel: src.label,
+        documentId: src.documentId ?? null,
         onProgress: setProgress,
         signal: controller.signal,
       });
@@ -212,6 +235,26 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
           onChange={(e) => { const f = e.target.files?.[0]; if (f) acceptFile(f); e.target.value = ''; }}
         />
       </div>
+
+      <div className="mt-3 flex items-center gap-4">
+        <button
+          onClick={() => setShowDocPicker(true)}
+          className="flex items-center gap-1.5 text-[14px] text-[#e8b84a]/80 hover:text-[#e8b84a] transition-colors"
+        >
+          <Library size={14} strokeWidth={1.75} /> Check a document already in this matter
+        </button>
+      </div>
+      {showDocPicker && (
+        <DocumentPicker
+          matterId={matterId}
+          onCancel={() => setShowDocPicker(false)}
+          onConfirm={(sel) => {
+            if (sel.length === 0) { setShowDocPicker(false); return; }
+            // Cite-check runs are per-brief; use the first selection.
+            void acceptCorpusDoc(sel[0].id);
+          }}
+        />
+      )}
 
       <div className="mt-3">
         {!showPaste ? (

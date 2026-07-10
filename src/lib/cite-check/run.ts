@@ -11,7 +11,7 @@ import { checkOne } from './check';
 import { linkAuthorityToMatter } from './persist';
 import { renderToa, renderReport } from './render';
 
-const DEFAULT_MODEL_ID = 'claude-opus-4-7';
+const DEFAULT_MODEL_ID = 'claude-opus-4-8';
 
 export interface RunCiteCheckOptions {
   matterId: string;
