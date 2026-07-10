@@ -185,12 +185,18 @@ function renderMarkdown(conv) {
     `*Source: ${bucket}${conv.project ? ` · ${conv.project}` : ''}${when ? ` · ${when}` : ''}${conv.url ? ` · ${conv.url}` : ''}*`,
     '',
   ];
+  // Strip embedded base64 blobs (data URIs, bare base64 runs): they carry no
+  // searchable signal and their token density (~1.3 chars/token vs the 4 the
+  // pipeline assumes) blows the embeddings per-input limit.
+  const scrub = (s) => s
+    .replace(/data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]+/gi, '[embedded file]')
+    .replace(/[A-Za-z0-9+/=]{2000,}/g, '[binary data]');
   if (conv.text) {
-    lines.push(conv.text);
+    lines.push(scrub(conv.text));
   } else if (conv.messages) {
     for (const m of conv.messages) {
       const who = m.role === 'user' ? 'User' : 'Assistant';
-      const content = (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).trim();
+      const content = scrub((typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).trim());
       if (!content) continue;
       lines.push(`**${who}:**`, '', content, '');
     }
