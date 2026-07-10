@@ -26,7 +26,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { processDocument, MEDIA_EXTENSIONS } from '../lib/ingest-core.mjs';
+import { processDocument, MEDIA_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -98,14 +98,7 @@ export default async function handler(req, res) {
   // to the caller. Files below the thresholds keep the fast inline path and
   // don't depend on worker uptime at all.
   const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
-  const size = doc.file_size_bytes || 0;
-  const MB = 1024 * 1024;
-  const needsWorker =
-    ext0 === '.wma' ||                                       // ffmpeg transcode — impossible here
-    (MEDIA_EXTENSIONS.includes(ext0) && size > 12 * MB) ||   // long recordings
-    (ext0 === '.pdf' && size > 10 * MB) ||                   // big scans → OCR too slow inline
-    size > 20 * MB;                                          // anything huge
-  if (needsWorker) {
+  if (needsWorkerIngest(ext0, doc.file_size_bytes)) {
     // Don't double-enqueue when the user mashes Retry.
     const { data: existing } = await sb.from('processing_jobs')
       .select('id').eq('job_type', 'ingest_document')
