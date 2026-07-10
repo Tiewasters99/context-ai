@@ -79,7 +79,7 @@ export default async function handler(req, res) {
   // Look up the document. RLS rejects this if the user doesn't have access.
   const { data: doc, error: docErr } = await sb
     .from('documents')
-    .select('id, storage_path, source_filename, processing_status, matterspace_id')
+    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes')
     .eq('id', documentId)
     .maybeSingle();
   if (docErr) return json(res, 500, { error: `lookup: ${docErr.message}` });
@@ -89,6 +89,48 @@ export default async function handler(req, res) {
   }
   if (doc.processing_status === 'ready') {
     return json(res, 200, { ok: true, alreadyReady: true });
+  }
+
+  // Heavy-job routing: files this function cannot finish inside the 60s
+  // serverless budget go to the always-on worker via the processing_jobs
+  // queue (worker/discovery-worker.mjs, job_type ingest_document). The Vault
+  // UI polls documents.processing_status either way, so queueing is invisible
+  // to the caller. Files below the thresholds keep the fast inline path and
+  // don't depend on worker uptime at all.
+  const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
+  const size = doc.file_size_bytes || 0;
+  const MB = 1024 * 1024;
+  const needsWorker =
+    ext0 === '.wma' ||                                       // ffmpeg transcode — impossible here
+    (MEDIA_EXTENSIONS.includes(ext0) && size > 12 * MB) ||   // long recordings
+    (ext0 === '.pdf' && size > 10 * MB) ||                   // big scans → OCR too slow inline
+    size > 20 * MB;                                          // anything huge
+  if (needsWorker) {
+    // Don't double-enqueue when the user mashes Retry.
+    const { data: existing } = await sb.from('processing_jobs')
+      .select('id').eq('job_type', 'ingest_document')
+      .in('status', ['queued', 'running'])
+      .contains('payload', { document_id: doc.id })
+      .limit(1);
+    if (!existing?.length) {
+      const { error: qErr } = await sb.from('processing_jobs').insert({
+        matterspace_id: doc.matterspace_id,
+        job_type: 'ingest_document',
+        payload: { document_id: doc.id },
+      });
+      // Queue insert failing (e.g. RLS/schema drift) must not strand the doc —
+      // fall through to the inline attempt, which is what happened before.
+      if (qErr) {
+        console.error('enqueue ingest_document failed, falling back inline:', qErr.message);
+      } else {
+        await sb.from('documents')
+          .update({ processing_status: 'pending', processing_error: null })
+          .eq('id', doc.id);
+        return json(res, 202, { ok: true, queued: true });
+      }
+    } else {
+      return json(res, 202, { ok: true, queued: true, deduped: true });
+    }
   }
 
   // Download the file from storage. RLS on the storage bucket enforces

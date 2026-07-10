@@ -22,7 +22,13 @@
 //   WORKER_ID        - identifier recorded on claimed jobs
 //
 // Job types: intake_zip | intake_files | intake_folder | stamp_production |
-//            package_production
+//            package_production | ingest_document
+//
+// ingest_document makes this the shared always-on worker for the whole app:
+// /api/ingest enqueues documents too big for the serverless budget (large
+// scans needing OCR, long recordings, .wma needing ffmpeg transcode) and this
+// process runs them through the same lib/ingest-core.mjs pipeline with no
+// timeout. payload: { document_id }.
 
 import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs/promises';
@@ -103,6 +109,7 @@ async function dispatch(job) {
     case 'intake_folder': return intakeFolder(job);
     case 'stamp_production': return stampProduction(job);
     case 'package_production': return packageProduction(job);
+    case 'ingest_document': return ingestDocument(job);
     default: throw new Error(`Unknown job_type '${job.job_type}'`);
   }
 }
@@ -357,6 +364,94 @@ async function ingestDisplayPdf(prod, item, pdfBuf, filename) {
     // Ingestion failure is non-fatal: the item is still reviewable.
   }
   await supabase.from('production_items').update({ document_id: docRow.id }).eq('id', item.id);
+}
+
+// ---------------------------------------------------------------------------
+// Vault document ingestion (the shared-worker job type)
+// ---------------------------------------------------------------------------
+// Same pipeline as /api/ingest, but with no serverless timeout and with
+// ffmpeg available — so 1,000-page scans OCR fully and .wma/.m4a recordings
+// transcode before transcription. The Vault UI needs no special handling:
+// it polls documents.processing_status, which processDocument updates
+// stage-by-stage exactly as the inline path does.
+async function ingestDocument(job) {
+  const docId = job.payload?.document_id;
+  if (!docId) throw new Error('ingest_document: payload.document_id missing');
+
+  const { data: doc, error } = await supabase.from('documents')
+    .select('id, storage_path, source_filename, matterspace_id, processing_status')
+    .eq('id', docId).single();
+  if (error) throw new Error(`document ${docId}: ${error.message}`);
+  if (!doc.storage_path) throw new Error('document has no storage_path');
+  if (doc.processing_status === 'ready') { log(`  ${doc.source_filename}: already ready, skipping`); return; }
+
+  await progress(job, 5, `Downloading ${doc.source_filename}`);
+  const fileBuf = await downloadFromBucket('vault-documents', doc.storage_path);
+  const ext = doc.source_filename?.includes('.')
+    ? '.' + doc.source_filename.split('.').pop().toLowerCase() : '';
+
+  // Idempotency: a retried job (or a doc that failed mid-embed on a previous
+  // attempt) may have partial passages. Clear before re-running — same
+  // pattern as scripts/reingest.mjs.
+  await supabase.from('passages').delete().eq('document_id', docId);
+
+  let ocr = null;
+  let transcribe = null;
+  if (GOOGLE_API_KEY) {
+    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
+    ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
+    transcribe = async (buf, { ext: mediaExt, kind, onProgress }) => {
+      const { transcribeMedia, mimeForMediaExt } = await import('../lib/transcribe-gemini.mjs');
+      let mediaBuf = buf;
+      let mimeType = mimeForMediaExt(mediaExt);
+      // .wma has no Gemini support and .m4a is unreliable — transcode both to
+      // speech-grade mp3 (16 kHz mono 32k: small enough that long recordings
+      // upload without drops).
+      if (!mimeType || mediaExt === '.m4a' || mediaExt === '.wma') {
+        await progress(job, 15, 'Transcoding for transcription (ffmpeg)');
+        mediaBuf = await transcodeToMp3(buf, mediaExt);
+        mimeType = 'audio/mp3';
+      }
+      return transcribeMedia(mediaBuf, { apiKey: GOOGLE_API_KEY, mimeType, kind, onProgress });
+    };
+  }
+
+  // Rough stage → progress mapping so the queue row tells a human story.
+  const stagePct = { extracting: 20, chunking: 55, embedding: 75, ready: 99 };
+  const { passageCount } = await processDocument(supabase, {
+    documentId: docId,
+    fileBuf,
+    ext,
+    openaiApiKey: OPENAI_API_KEY,
+    ocr,
+    transcribe,
+    onProgress: ({ stage, message }) => {
+      progress(job, stagePct[stage] ?? 40, message).catch(() => {});
+    },
+  });
+  log(`  ${doc.source_filename}: ${passageCount} passages`);
+}
+
+// 16 kHz mono 32k mp3 — speech-grade and small (see scripts/transcribe-av.mjs).
+async function transcodeToMp3(buf, ext) {
+  const { spawn } = await import('node:child_process');
+  const tag = crypto.randomUUID().slice(0, 8);
+  const inPath = path.join(os.tmpdir(), `wrk_${tag}${ext || '.bin'}`);
+  const outPath = path.join(os.tmpdir(), `wrk_${tag}.mp3`);
+  try {
+    await fs.writeFile(inPath, buf);
+    await new Promise((resolve, reject) => {
+      const ff = spawn('ffmpeg', ['-y', '-i', inPath, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '32k', outPath], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let err = '';
+      ff.stderr.on('data', (d) => { err += d.toString(); });
+      ff.on('error', reject);
+      ff.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${err.slice(-300)}`))));
+    });
+    return await fs.readFile(outPath);
+  } finally {
+    await fs.unlink(inPath).catch(() => {});
+    await fs.unlink(outPath).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,10 +765,14 @@ async function matterNameOf(matterspaceId) {
 }
 
 async function downloadFromStorage(storagePath, attempts = 3) {
+  return downloadFromBucket(BUCKET, storagePath, attempts);
+}
+
+async function downloadFromBucket(bucket, storagePath, attempts = 3) {
   for (let i = 1; ; i++) {
-    const { data, error } = await supabase.storage.from(BUCKET).download(storagePath);
+    const { data, error } = await supabase.storage.from(bucket).download(storagePath);
     if (!error) return Buffer.from(await data.arrayBuffer());
-    if (i >= attempts) throw new Error(`storage download ${storagePath}: ${error.message}`);
+    if (i >= attempts) throw new Error(`storage download ${bucket}/${storagePath}: ${error.message}`);
     await sleep(1000 * i);
   }
 }

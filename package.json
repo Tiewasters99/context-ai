@@ -10,7 +10,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker": "node worker/discovery-worker.mjs",
+    "worker:once": "node worker/discovery-worker.mjs --once"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
