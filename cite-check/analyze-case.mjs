@@ -327,7 +327,7 @@ Be honest. The reader values "this case is parallel doctrine, not direct support
   ].join('\n');
 
   const body = {
-    model: 'claude-opus-4-7',
+    model: 'claude-opus-4-8',
     max_tokens: 8000,
     system,
     tools,

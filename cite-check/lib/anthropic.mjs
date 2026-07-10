@@ -11,7 +11,7 @@
 // We use Claude 4.7 with a tight system prompt and JSON-mode output.
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-opus-4-7';
+const MODEL = 'claude-opus-4-8';
 
 export async function extractCitations(draftText, { apiKey }) {
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY required');

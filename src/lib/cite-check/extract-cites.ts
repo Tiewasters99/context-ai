@@ -60,7 +60,7 @@ interface RawCite {
 
 export async function extractCitations(
   draftText: string,
-  opts: { modelId: string; signal?: AbortSignal } = { modelId: 'claude-opus-4-7' },
+  opts: { modelId: string; signal?: AbortSignal } = { modelId: 'claude-opus-4-8' },
 ): Promise<Cite[]> {
   const result = await generateStructured<{ citations?: RawCite[] }>({
     modelId: opts.modelId,
