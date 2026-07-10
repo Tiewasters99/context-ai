@@ -15,6 +15,7 @@ import {
   UserPlus,
   Folder,
   LayoutGrid,
+  Scale,
 } from 'lucide-react';
 import {
   DndContext,
@@ -261,6 +262,19 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false }: Si
         >
           <LayoutGrid size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Productivity Suite</span>}
+        </Link>
+
+        {/* Mediation Center */}
+        <Link
+          to="/app/mediation"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            isActive('/app/mediation')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+        >
+          <Scale size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Mediation Center</span>}
         </Link>
 
         {/* Serverspaces Header */}

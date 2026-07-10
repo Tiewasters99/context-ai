@@ -28,6 +28,10 @@ import DiscoveryHome from '@/pages/discovery/DiscoveryHome';
 import ReviewRoom from '@/pages/discovery/ReviewRoom';
 import DiscoveryLayout from '@/components/layout/DiscoveryLayout';
 import DiscoveryDashboard from '@/pages/discovery/DiscoveryDashboard';
+import MediationCenter from '@/pages/mediation/MediationCenter';
+import MediationRegister from '@/pages/mediation/MediationRegister';
+import MediationJoin from '@/pages/mediation/MediationJoin';
+import MediationCase from '@/pages/mediation/MediationCase';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
@@ -93,6 +97,10 @@ export default function App() {
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="mediation" element={<MediationCenter />} />
+              <Route path="mediation/register" element={<MediationRegister />} />
+              <Route path="mediation/join" element={<MediationJoin />} />
+              <Route path="mediation/case/:id" element={<MediationCase />} />
               <Route path="connections" element={<Connections />} />
               <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="connections/gemini" element={<GeminiConnect />} />
