@@ -12,12 +12,15 @@ export interface PrepSource {
   content: string;
 }
 
+export type PrepMode = 'bench' | 'colleague';
+
 export interface PrepSession {
   id: string;
   owner_id: string;
   matterspace_id: string | null;
   title: string;
   model_id: string;
+  mode: PrepMode;
   sources: PrepSource[];
   bench_memo: string | null;
   status: 'memo' | 'prepping' | 'ended';
@@ -56,6 +59,7 @@ export async function createSession(input: {
   title: string;
   modelId: string;
   matterspaceId: string | null;
+  mode: PrepMode;
   sources: PrepSource[];
 }): Promise<PrepSession> {
   const { data: userData } = await supabase.auth.getUser();
@@ -68,6 +72,9 @@ export async function createSession(input: {
       title: input.title,
       model_id: input.modelId,
       matterspace_id: input.matterspaceId,
+      mode: input.mode,
+      // The colleague conversation starts immediately — no memo stage.
+      status: input.mode === 'colleague' ? 'prepping' : 'memo',
       sources: input.sources,
     })
     .select('*')
@@ -157,19 +164,40 @@ export function hotBenchSystem(session: PrepSession): string {
   ].join('\n');
 }
 
+export function colleagueSystem(session: PrepSession): string {
+  const sources = session.sources
+    .map((s) => `--- ${s.name} ---\n${s.content}`)
+    .join('\n\n');
+  return [
+    'You are counsel\'s smartest colleague, helping them prepare for oral argument. You have read the entire record below and know it cold.',
+    '',
+    'How this works:',
+    '- Counsel drives. They will ask you to enumerate things ("what are the motions in limine?", "what are the movant\'s main arguments?", "what did we argue in opposition?") — answer crisply and completely, organized so the structure sticks: numbered lists, the strongest framing of each argument, the response to it.',
+    '- The goal is internalization. Counsel is working through the arguments until they own them — until they can walk into court without notes. Help that happen: when counsel articulates an argument back, sharpen it; when their version is weaker than the record supports, say so and give the stronger formulation; when they miss a counter, surface it.',
+    '- Be a colleague, not a cheerleader. Direct, candid, collegial. Push back where the argument is soft. Flag the questions a judge is likely to ask about whatever you are discussing.',
+    '- Stay grounded in the record and authorities below; cite them by name when it helps counsel find things later.',
+    '- If counsel asks you to quiz them or drill a topic, do it — short rounds, immediate feedback.',
+    '',
+    'The record:',
+    '',
+    sources,
+  ].join('\n');
+}
+
 /* ====================== Transcript + sharing ====================== */
 
 export function formatTranscript(session: PrepSession, messages: PrepMessage[]): string {
   const when = new Date(session.created_at).toLocaleDateString('en-US', {
     year: 'numeric', month: 'long', day: 'numeric',
   });
+  const colleague = session.mode === 'colleague';
   const lines = [
-    `MOOT BENCH TRANSCRIPT — ${session.title}`,
-    `Prepared ${when} · the bench: ${session.model_id}`,
+    `${colleague ? 'ARGUMENT PREP TRANSCRIPT' : 'MOOT BENCH TRANSCRIPT'} — ${session.title}`,
+    `Prepared ${when} · ${colleague ? 'with' : 'the bench'}: ${session.model_id}`,
     '',
   ];
   for (const m of messages) {
-    lines.push(m.role === 'bench' ? 'THE COURT:' : 'COUNSEL:');
+    lines.push(m.role === 'bench' ? (colleague ? 'COLLEAGUE:' : 'THE COURT:') : 'COUNSEL:');
     lines.push(m.content.trim());
     lines.push('');
   }

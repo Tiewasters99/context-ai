@@ -4,7 +4,7 @@ import { Copy, Share2, Square } from 'lucide-react';
 import { generate, converse, findModel, type LLMMessage } from '@/lib/llm';
 import {
   getSession, updateSession, listMessages, addMessage,
-  benchMemoInstruction, hotBenchSystem, formatTranscript, shareToThread,
+  benchMemoInstruction, hotBenchSystem, colleagueSystem, formatTranscript, shareToThread,
   type PrepSession, type PrepMessage,
 } from '@/lib/moot';
 import { GoldButton, QuietButton, Working, Notice, TEXTAREA_CLASS } from '@/components/mediation/ui';
@@ -85,15 +85,17 @@ export default function MootSession() {
 
   /* ---------------- The argument ---------------- */
 
-  // Rebuild the provider-agnostic message history: bench speaks as the
-  // assistant, counsel as the user, with the fixed opening line first.
-  const history = useCallback((ms: PrepMessage[]): LLMMessage[] => [
-    OPENING,
-    ...ms.map((m): LLMMessage => ({
+  // Rebuild the provider-agnostic message history: the model (bench or
+  // colleague) speaks as the assistant, counsel as the user. Bench mode
+  // opens with a fixed counsel line so the court asks the first question;
+  // in colleague mode counsel genuinely speaks first.
+  const history = useCallback((ms: PrepMessage[], s: PrepSession): LLMMessage[] => {
+    const mapped = ms.map((m): LLMMessage => ({
       role: m.role === 'bench' ? 'assistant' : 'user',
       content: m.content,
-    })),
-  ], []);
+    }));
+    return s.mode === 'bench' ? [OPENING, ...mapped] : mapped;
+  }, []);
 
   const askBench = useCallback(async (ms: PrepMessage[], s: PrepSession) => {
     setStreaming('bench');
@@ -104,9 +106,11 @@ export default function MootSession() {
     let text = '';
     await converse({
       modelId: s.model_id,
-      system: hotBenchSystem(s),
-      messages: history(ms),
-      maxTokens: 1024,
+      system: s.mode === 'colleague' ? colleagueSystem(s) : hotBenchSystem(s),
+      messages: history(ms, s),
+      // A judge's question is short; a colleague laying out seven motions
+      // and the arguments on each needs room.
+      maxTokens: s.mode === 'colleague' ? 4096 : 1024,
       signal: ctrl.signal,
       callbacks: {
         onChunk: (t) => { text += t; setLiveText(text); },
@@ -213,6 +217,8 @@ export default function MootSession() {
 
   const modelName = findModel(session.model_id)?.model.name ?? session.model_id;
   const inArgument = session.status !== 'memo';
+  const colleague = session.mode === 'colleague';
+  const speaker = colleague ? 'Your colleague' : 'The court';
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
@@ -224,15 +230,16 @@ export default function MootSession() {
           {session.title}
         </h1>
         <p className="text-[12.5px] text-white/50 mt-1.5">
-          The bench: {modelName}
+          {colleague ? 'Prepping with' : 'The bench'}: {modelName}
           <span className="mx-2 text-white/25">—</span>
           {session.sources.length} document{session.sources.length === 1 ? '' : 's'} in the record
-          {session.status === 'ended' && <><span className="mx-2 text-white/25">—</span>argument concluded</>}
+          {session.status === 'ended' && <><span className="mx-2 text-white/25">—</span>{colleague ? 'session concluded' : 'argument concluded'}</>}
         </p>
         <div className="mt-4 h-px w-24 bg-gradient-to-r from-[#d4a054] to-transparent" />
       </header>
 
-      {/* ---- Bench memo ---- */}
+      {/* ---- Bench memo (bench mode only) ---- */}
+      {!colleague && (
       <section className="mb-6">
         <button
           type="button"
@@ -275,6 +282,7 @@ export default function MootSession() {
           </div>
         )}
       </section>
+      )}
 
       {/* ---- Begin ---- */}
       {session.bench_memo && session.status === 'memo' && (
@@ -295,10 +303,18 @@ export default function MootSession() {
           style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}
         >
           <div ref={scrollRef} className="max-h-[30rem] min-h-[8rem] overflow-y-auto px-4 py-4 space-y-3.5">
+            {colleague && messages.length === 0 && !streaming && (
+              <p className="text-[12.5px] text-white/35 leading-relaxed">
+                Your colleague has read the whole record and is ready when you are. Start
+                wherever helps: &ldquo;Walk me through the motions in limine,&rdquo; &ldquo;What
+                are the movant&rsquo;s main arguments and what did we say in
+                opposition?&rdquo; — then work the arguments until you own them.
+              </p>
+            )}
             {messages.map((m) =>
               m.role === 'bench' ? (
                 <div key={m.id} className="max-w-[92%] sm:max-w-[85%]">
-                  <span className="block text-[10px] uppercase tracking-wider text-[#d4a054] mb-1">The court</span>
+                  <span className="block text-[10px] uppercase tracking-wider text-[#d4a054] mb-1">{speaker}</span>
                   <p className="text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap rounded-lg rounded-tl-none border border-[rgba(212,160,84,0.25)] bg-[rgba(212,160,84,0.05)] px-3.5 py-2.5">
                     {m.content}
                   </p>
@@ -313,7 +329,7 @@ export default function MootSession() {
             )}
             {streaming === 'bench' && (
               <div className="max-w-[92%] sm:max-w-[85%]">
-                <span className="block text-[10px] uppercase tracking-wider text-[#d4a054] mb-1">The court</span>
+                <span className="block text-[10px] uppercase tracking-wider text-[#d4a054] mb-1">{speaker}</span>
                 <p className="text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap rounded-lg rounded-tl-none border border-[rgba(212,160,84,0.25)] bg-[rgba(212,160,84,0.05)] px-3.5 py-2.5">
                   {liveText || <span className="text-white/40 italic">…</span>}
                 </p>
@@ -328,13 +344,13 @@ export default function MootSession() {
                 rows={2}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder="Answer the court… (Ctrl+Enter to submit)"
+                placeholder={colleague ? 'Ask, argue, or work through a point… (Ctrl+Enter to send)' : 'Answer the court… (Ctrl+Enter to submit)'}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void answer();
                 }}
               />
               <GoldButton onClick={() => void answer()} disabled={!draft.trim() || !!streaming}>
-                Answer
+                {colleague ? 'Send' : 'Answer'}
               </GoldButton>
             </div>
           )}
@@ -348,7 +364,7 @@ export default function MootSession() {
         <div className="flex flex-wrap items-center gap-3 mt-6">
           {session.status === 'prepping' && (
             <QuietButton onClick={() => void endSession()}>
-              <Square size={13} /> Conclude argument
+              <Square size={13} /> {colleague ? 'Wrap up' : 'Conclude argument'}
             </QuietButton>
           )}
           {messages.length > 0 && (

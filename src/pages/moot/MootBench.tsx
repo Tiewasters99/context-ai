@@ -10,7 +10,7 @@ import { collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
 import {
   listSessions, createSession, deleteSession,
-  type PrepSession, type PrepSource,
+  type PrepSession, type PrepSource, type PrepMode,
 } from '@/lib/moot';
 import { GoldButton, Working, Notice, FieldLabel, INPUT_CLASS, PageHead } from '@/components/mediation/ui';
 
@@ -35,6 +35,7 @@ export default function MootBench() {
   const [title, setTitle] = useState('');
   const models = useMemo(() => allModels(), []);
   const [modelId, setModelId] = useState(models[0]?.id ?? '');
+  const [mode, setMode] = useState<PrepMode>('bench');
   const [matterId, setMatterId] = useState('');
   const [sources, setSources] = useState<PrepSource[]>([]);
   const [extracting, setExtracting] = useState(false);
@@ -120,6 +121,7 @@ export default function MootBench() {
         title: cleanTitle,
         modelId,
         matterspaceId: matterId || null,
+        mode,
         sources: [...fromMatter, ...sources],
       });
       navigate(`/app/moot-bench/${s.id}`);
@@ -143,7 +145,7 @@ export default function MootBench() {
       <PageHead
         kicker="Productivity Suite"
         title="Moot Bench"
-        lede="Argue before a hot bench before you argue before the real one. Hand up the briefs, take a bench memo, then stand for questioning — by the model of your choice."
+        lede="Prepare for oral argument two ways: stand before a hot bench that questions you like the real one, or sit down with a brilliant colleague who knows the record cold and work the arguments until you own them."
       />
 
       {/* ---- New session ---- */}
@@ -154,6 +156,40 @@ export default function MootBench() {
         <h2 className="text-[11px] uppercase tracking-wider text-white/50 mb-4">New session</h2>
 
         <div className="space-y-4">
+          {/* Mode: adversarial bench, or a colleague to internalize with */}
+          <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Prep mode">
+            {([
+              {
+                key: 'bench' as const,
+                title: 'The hot bench',
+                blurb: 'A skeptical judge asks one question at a time, weakest point first. Take a bench memo, then stand for argument.',
+              },
+              {
+                key: 'colleague' as const,
+                title: 'A brilliant colleague',
+                blurb: 'Work through the motions and arguments with a colleague who knows the record cold — until you own the material.',
+              },
+            ]).map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                role="radio"
+                aria-checked={mode === m.key}
+                onClick={() => setMode(m.key)}
+                className={`text-left rounded-lg border px-4 py-3 transition-colors ${
+                  mode === m.key
+                    ? 'border-[#d4a054] bg-[rgba(212,160,84,0.06)]'
+                    : 'border-[rgba(255,255,255,0.1)] hover:border-[rgba(255,255,255,0.25)]'
+                }`}
+              >
+                <span className={`block text-[13.5px] font-semibold ${mode === m.key ? 'text-[#e8b84a]' : 'text-white/85'}`}>
+                  {m.title}
+                </span>
+                <span className="block text-[12px] text-white/45 leading-snug mt-1">{m.blurb}</span>
+              </button>
+            ))}
+          </div>
+
           <div>
             <FieldLabel htmlFor="moot-title">Argument</FieldLabel>
             <input
@@ -264,7 +300,9 @@ export default function MootBench() {
             onClick={start}
             disabled={!title.trim() || (sources.length === 0 && pickedDocIds.size === 0) || creating}
           >
-            {creating ? 'Opening the courtroom…' : 'Prepare the bench memo'}
+            {creating
+              ? 'Opening the room…'
+              : mode === 'bench' ? 'Prepare the bench memo' : 'Sit down with your colleague'}
           </GoldButton>
         </div>
       </section>
@@ -288,7 +326,11 @@ export default function MootBench() {
                 >
                   <span className="text-[13.5px] text-white truncate">{s.title}</span>
                   <span className="text-[11.5px] text-[#d4a054] shrink-0">
-                    {s.status === 'memo' ? 'Bench memo' : s.status === 'prepping' ? 'In argument' : 'Ended'}
+                    {s.status === 'memo'
+                      ? 'Bench memo'
+                      : s.status === 'prepping'
+                        ? (s.mode === 'colleague' ? 'In prep' : 'In argument')
+                        : 'Ended'}
                   </span>
                 </Link>
                 <button
