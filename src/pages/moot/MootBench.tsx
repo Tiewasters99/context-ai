@@ -4,6 +4,10 @@ import { Upload, X, Trash2 } from 'lucide-react';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { allModels } from '@/lib/llm';
 import { extractText } from '@/lib/extract';
+import { listMatterDocumentsRecursive } from '@/lib/vault-persist';
+import type { VaultFile } from '@/lib/vault-types';
+import { collectDescendantIds } from '@/components/matter/DeleteMatterModal';
+import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
 import {
   listSessions, createSession, deleteSession,
   type PrepSession, type PrepSource,
@@ -38,6 +42,12 @@ export default function MootBench() {
   const [formError, setFormError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Documents already ingested into the selected matter (and its
+  // sub-matters) — the preferred source: they stay inside Contextspaces and
+  // scanned PDFs arrive already OCR'd.
+  const [matterDocs, setMatterDocs] = useState<VaultFile[] | null>(null);
+  const [pickedDocIds, setPickedDocIds] = useState<Set<string>>(new Set());
+
   const { data: serverspaces = [] } = useServerspaces();
   const matterOptions = useMemo(
     () =>
@@ -46,6 +56,30 @@ export default function MootBench() {
       ),
     [serverspaces],
   );
+
+  // Load the matter's document list whenever the matter changes.
+  useEffect(() => {
+    setPickedDocIds(new Set());
+    if (!matterId) { setMatterDocs(null); return; }
+    let cancelled = false;
+    const ids = collectDescendantIds(serverspaces, matterId);
+    const nameById = new Map(
+      serverspaces.flatMap((s) => s.matterspaces.map((m) => [m.id, m.name] as const)),
+    );
+    listMatterDocumentsRecursive(ids.length ? ids : [matterId], nameById)
+      .then((docs) => { if (!cancelled) setMatterDocs(docs); })
+      .catch(() => { if (!cancelled) setMatterDocs([]); });
+    return () => { cancelled = true; };
+  }, [matterId, serverspaces]);
+
+  const togglePickedDoc = (id: string) => {
+    setPickedDocIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const handleFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -71,15 +105,22 @@ export default function MootBench() {
 
   const start = async () => {
     const cleanTitle = title.trim();
-    if (!cleanTitle || sources.length === 0 || creating) return;
+    if (!cleanTitle || (sources.length === 0 && pickedDocIds.size === 0) || creating) return;
     setCreating(true);
     setFormError('');
     try {
+      // Pull picked matter documents from the corpus (already ingested +
+      // OCR'd) and merge with any device uploads.
+      const fromMatter: PrepSource[] = [];
+      for (const docId of pickedDocIds) {
+        const doc = await loadCorpusDocumentText(docId);
+        fromMatter.push({ name: doc.title, content: doc.text });
+      }
       const s = await createSession({
         title: cleanTitle,
         modelId,
         matterspaceId: matterId || null,
-        sources,
+        sources: [...fromMatter, ...sources],
       });
       navigate(`/app/moot-bench/${s.id}`);
     } catch (e) {
@@ -144,8 +185,41 @@ export default function MootBench() {
             </div>
           </div>
 
+          {/* Preferred source: documents already in the matter's Vault */}
+          {matterId && (
+            <div>
+              <FieldLabel htmlFor="moot-matter-docs">From the matter's Vault</FieldLabel>
+              {!matterDocs && <p className="text-[12px] text-white/40">Loading documents…</p>}
+              {matterDocs && matterDocs.length === 0 && (
+                <p className="text-[12px] text-white/40">No documents in this matter yet — upload below or ingest them into the matter first.</p>
+              )}
+              {matterDocs && matterDocs.length > 0 && (
+                <ul id="moot-matter-docs" className="max-h-48 overflow-y-auto rounded-md border border-[rgba(255,255,255,0.1)] divide-y divide-[rgba(255,255,255,0.05)]">
+                  {matterDocs.map((d) => {
+                    const ready = d.status === 'indexed';
+                    return (
+                      <li key={d.id}>
+                        <label className={`flex items-center gap-2.5 px-3 py-2 text-[12.5px] ${ready ? 'text-white/80 hover:bg-white/5 cursor-pointer' : 'text-white/30'}`}>
+                          <input
+                            type="checkbox"
+                            disabled={!ready}
+                            checked={pickedDocIds.has(d.id)}
+                            onChange={() => togglePickedDoc(d.id)}
+                            className="accent-[#d4a054] shrink-0"
+                          />
+                          <span className="truncate flex-1">{d.name}</span>
+                          {!ready && <span className="text-[10px] uppercase tracking-wider shrink-0">not indexed</span>}
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          )}
+
           <div>
-            <FieldLabel htmlFor="moot-files">The briefs and record</FieldLabel>
+            <FieldLabel htmlFor="moot-files">{matterId ? 'Or upload from this device' : 'The briefs and record'}</FieldLabel>
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
@@ -186,7 +260,10 @@ export default function MootBench() {
 
           {formError && <Notice>{formError}</Notice>}
 
-          <GoldButton onClick={start} disabled={!title.trim() || sources.length === 0 || creating}>
+          <GoldButton
+            onClick={start}
+            disabled={!title.trim() || (sources.length === 0 && pickedDocIds.size === 0) || creating}
+          >
             {creating ? 'Opening the courtroom…' : 'Prepare the bench memo'}
           </GoldButton>
         </div>
