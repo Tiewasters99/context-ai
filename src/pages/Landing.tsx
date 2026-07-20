@@ -1,58 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, Check } from 'lucide-react';
-
-const tiers = [
-  {
-    name: 'Free',
-    price: '$0',
-    description: 'For individuals getting started',
-    features: [
-      '1 Contextspace',
-      '3 Serverspaces',
-      '5 GB Vault storage',
-      '50 AI requests/month (Sonnet)',
-      'Blind AI mode only',
-      'Unlimited pages & lists',
-      'Community support',
-    ],
-    cta: 'Get Started',
-    highlighted: false,
-  },
-  {
-    name: 'Pro',
-    price: '$29/mo',
-    description: 'For professionals and small teams',
-    features: [
-      'Everything in Free',
-      'Unlimited Serverspaces',
-      '100 GB Vault storage',
-      'Unlimited Sonnet + 500 Opus/month',
-      'All AI modes (Blind, Observer, Collaborative)',
-      'Bring Your Own Key',
-      '10 Matterspaces per Serverspace',
-      'Priority support',
-    ],
-    cta: 'Get Started',
-    highlighted: true,
-  },
-  {
-    name: 'Max',
-    price: '$79/mo',
-    description: 'For teams that need everything',
-    features: [
-      'Everything in Pro',
-      '1 TB Vault storage',
-      'Unlimited Opus requests',
-      'Connected storage (OneDrive, Google Drive)',
-      'Unlimited Matterspaces',
-      'Advanced permissions & audit logs',
-      'White-labeling',
-      'Dedicated support',
-    ],
-    cta: 'Get Started',
-    highlighted: false,
-  },
-];
+import { ArrowRight } from 'lucide-react';
 
 export default function Landing() {
   return (
@@ -75,7 +22,6 @@ export default function Landing() {
           {/* Desktop: the original absolutely-positioned link cluster. On
               phones it collides with the logo, so collapse to just Sign In. */}
           <div className="hidden sm:block relative" style={{ width: '500px' }}>
-            <a href="#pricing" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '380px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Pricing</a>
             <a href="#features" className="absolute text-[20px] text-white hover:text-[#d4a054] transition-colors font-medium" style={{ right: '195px', textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>Features</a>
             <Link
               to="/auth"
@@ -100,7 +46,7 @@ export default function Landing() {
             <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>one question away.</span>
           </h1>
           <p className="mt-8 text-[22px] sm:text-[26px] text-white max-w-2xl mx-auto leading-relaxed text-center font-bold" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,0.7)' }}>
-            Contextspaces turns your matter documents — even scanned exhibits and depositions — into answers with page:line citations. Your clients stay separated. Your AI plugs in. Built by a litigator.
+            Contextspaces turns everything you feed it — scanned exhibits, depositions, recordings, emails — into source material for you and any frontier AI to work with. Your clients stay separated. Built by a litigator.
           </p>
           <div className="mt-10">
             <Link
@@ -124,27 +70,89 @@ export default function Landing() {
       {/* Features — just text, no cards */}
       <section id="features" className="bg-[#0a0a10] py-24 px-6">
         <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] mb-8">What we do</h2>
+          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] mb-8">What you can do</h2>
 
           <div className="space-y-16">
             <div>
-              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Contextspaces</h3>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Feed it anything</h3>
               <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
-                Your home base. A clean, organized view of all your Serverspaces — always one click away, never buried.
+                Scanned PDFs are OCR&rsquo;d. Depositions, hearings, and meetings are transcribed from
+                audio and video. Emails arrive with their attachments; decks and Office documents
+                extract cleanly. Everything becomes searchable, citable text — and every matter
+                stays behind its own wall.
               </p>
             </div>
 
             <div>
-              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Serverspaces</h3>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Work with any model you choose</h3>
               <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
-                Your matters and projects live here. Pages, lists, databases, members — everything configured in one place.
+                Claude, ChatGPT, Gemini, and Grok connect directly to your matters. Draft, analyze,
+                edit, and proofread across hundreds — even thousands — of files with whichever model
+                you trust for the job. Your documents live in one place; the AI comes to them.
               </p>
             </div>
 
             <div>
-              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">AI Assistant</h3>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Keep every conversation</h3>
               <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
-                A native AI assistant built into Contextspaces.ai from the start — not an add-on or afterthought that guesses at what you need.
+                Your AI chats are captured into the workspace — searchable, retrievable, and ready
+                to be analyzed like any other source material. The thinking you do with a model
+                stops evaporating when the tab closes.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Prepare for oral argument</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                Moot Bench puts your motion in front of a hot bench of frontier models — or pairs
+                you with a brilliant colleague to pressure-test the argument before the one that
+                counts.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Serve and respond to discovery</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                A review room for every production: classify and sort the corpus against the
+                demands, key everything to the controlling inventory, and produce — with the lawyer
+                making every call.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Check every citation</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                Cite-checking runs against real sources and your matter&rsquo;s own record, so a
+                quote that drifted from the transcript gets caught before a judge catches it.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">Resolve it in the Mediation Center</h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                A dedicated space for structured negotiation — register a case, bring the other
+                side in, and let both parties work from the same record.
+              </p>
+            </div>
+
+            <div>
+              <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-3">
+                Open a storefront in three dimensions
+                <span className="ml-3 align-middle text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em]">Beta</span>
+              </h3>
+              <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto">
+                The more your practice lives in Contextspaces, the more it can power a specialized
+                3-D storefront on Grapheon — a navigable office with proprietary art and music and
+                an AI receptionist who answers general questions about your practice and routes
+                visitors to a consultation with you.{' '}
+                <a
+                  href="https://grapheon.ai/miniverses"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#d4a054] hover:text-[#e8b84a] transition-colors"
+                >
+                  Step into the first one: Quainton Law — The Offices
+                </a>.
               </p>
             </div>
           </div>
@@ -156,45 +164,33 @@ export default function Landing() {
         <div className="w-16 h-px bg-[#d4a054]/40" />
       </div>
 
-      {/* Pricing */}
-      <section id="pricing" className="bg-[#0a0a10] py-24 px-6">
-        <div className="max-w-4xl mx-auto">
-          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] text-center mb-4">Pricing</h2>
-          <h3 className="text-[24px] font-semibold text-[#f5f2ed] text-center mb-14">Start free. Upgrade when you're ready.</h3>
-          <div className="grid md:grid-cols-3 gap-5">
-            {tiers.map((tier) => (
-              <div
-                key={tier.name}
-                className={`p-7 rounded-lg border ${
-                  tier.highlighted
-                    ? 'border-[#d4a054]/50 bg-[#d4a054]/[0.04]'
-                    : 'border-[rgba(255,255,255,0.06)] bg-transparent'
-                }`}
-              >
-                <h3 className="text-[15px] font-semibold text-[#f5f2ed]">{tier.name}</h3>
-                <p className="text-[12px] text-[#8a8693] mt-1">{tier.description}</p>
-                <p className="text-[28px] font-semibold text-[#f5f2ed] mt-4">{tier.price}</p>
-                <ul className="mt-6 space-y-2.5">
-                  {tier.features.map((feature) => (
-                    <li key={feature} className="flex items-center gap-2.5 text-[13px] text-[#8a8693]">
-                      <Check size={14} className="text-[#d4a054] shrink-0" strokeWidth={2} />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  to="/auth"
-                  className={`block text-center mt-7 py-2.5 rounded-md text-[13px] font-medium transition-colors ${
-                    tier.highlighted
-                      ? 'bg-[#d4a054] hover:bg-[#c4903a] text-[#0e0e12] font-semibold'
-                      : 'border border-[rgba(255,255,255,0.1)] text-[#e8e4de] hover:bg-[rgba(255,255,255,0.04)]'
-                  }`}
-                >
-                  {tier.cta}
-                </Link>
-              </div>
-            ))}
-          </div>
+      {/* Credibility — one line, no logos */}
+      <section className="bg-[#0a0a10] py-20 px-6">
+        <p className="text-[18px] text-[#c9c4bb] leading-relaxed max-w-xl mx-auto text-center">
+          Contextspaces is built and used daily by a practicing litigator with an active state and
+          federal docket. Every feature exists because a live case demanded it.
+        </p>
+      </section>
+
+      {/* Divider — thin gold line */}
+      <div className="bg-[#0a0a10] flex justify-center">
+        <div className="w-16 h-px bg-[#d4a054]/40" />
+      </div>
+
+      {/* Early access — replaces pricing until billing is real */}
+      <section id="get-started" className="bg-[#0a0a10] py-24 px-6">
+        <div className="max-w-3xl mx-auto text-center">
+          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] mb-4">Early access</h2>
+          <h3 className="text-[24px] font-semibold text-[#f5f2ed] mb-4">Free while we build.</h3>
+          <p className="text-[16px] text-[#8a8693] leading-relaxed max-w-lg mx-auto mb-10">
+            Bring a matter and put it to work. Pricing arrives when it&rsquo;s earned — not before.
+          </p>
+          <Link
+            to="/auth"
+            className="inline-flex items-center gap-2 px-7 py-3 rounded-md text-[15px] font-semibold bg-[#d4a054] hover:bg-[#c4903a] text-[#0e0e12] transition-colors"
+          >
+            Get Started Free <ArrowRight size={16} strokeWidth={2} />
+          </Link>
         </div>
       </section>
 
@@ -216,7 +212,7 @@ export default function Landing() {
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Product</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
                   <li><a href="#features" className="hover:text-[#e8e4de] transition-colors">Features</a></li>
-                  <li><a href="#pricing" className="hover:text-[#e8e4de] transition-colors">Pricing</a></li>
+                  <li><a href="#get-started" className="hover:text-[#e8e4de] transition-colors">Early Access</a></li>
                 </ul>
               </div>
               {/* Company and Legal columns return when their pages exist —
