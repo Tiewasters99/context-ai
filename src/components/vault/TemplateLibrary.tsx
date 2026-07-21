@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
-import { X, Lock, Check } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { X, Check, RefreshCw } from 'lucide-react';
+import PinToggle from '@/components/ui/PinToggle';
+import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 
 interface Template {
   id: string;
@@ -8,9 +10,6 @@ interface Template {
   category: string;
 }
 
-const FREE_CATEGORIES = new Set(['Sea & Coast', 'Landscapes', 'Abstract', 'Tech']);
-const FREE_TRIAL_DAYS = 14;
-
 interface TemplateLibraryProps {
   onSelect: (url: string) => void;
   onClose: () => void;
@@ -18,66 +17,109 @@ interface TemplateLibraryProps {
 
 export default function TemplateLibrary({ onSelect, onClose }: TemplateLibraryProps) {
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
+  const { cardRef, pinned, togglePin, isMobile } = useDraggableResizable('cs.vault.templateLibrary');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setLoadError(null);
+    fetch('/templates/manifest.json')
+      .then((r) => {
+        if (!r.ok) throw new Error(`manifest ${r.status}`);
+        return r.json();
+      })
+      .then((data: Template[]) => setTemplates(data))
+      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  }, []);
 
   useEffect(() => {
-    fetch('/templates/manifest.json')
-      .then((r) => r.json())
-      .then((data: Template[]) => setTemplates(data))
-      .catch(() => {});
-  }, []);
+    load();
+  }, [load]);
 
   const categories = [...new Set(templates.map((t) => t.category))];
   const filtered = activeCategory ? templates.filter((t) => t.category === activeCategory) : templates;
-  const isFree = (t: Template) => FREE_CATEGORIES.has(t.category);
-  const freeCount = templates.filter(isFree).length;
-  const premiumCount = templates.length - freeCount;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-      <div className="w-[900px] max-h-[85vh] rounded-2xl border border-[rgba(255,255,255,0.08)] overflow-hidden flex flex-col" style={{ backgroundColor: 'rgba(10,10,16,0.97)' }}>
-        {/* Header */}
-        <div className="px-6 py-5 border-b border-[rgba(255,255,255,0.08)] flex items-center justify-between shrink-0">
-          <div>
-            <h2 className="text-[18px] font-semibold text-white">Background Templates</h2>
-            <p className="text-[12px] text-white/60 mt-1">
-              {freeCount} free · {premiumCount} premium · <span className="text-[#e8b84a]">{FREE_TRIAL_DAYS}-day free trial on all</span>
-            </p>
+      <div
+        ref={cardRef}
+        className="w-[900px] max-h-[85vh] rounded-2xl border border-[rgba(255,255,255,0.08)] overflow-hidden flex flex-col"
+        style={{ backgroundColor: 'rgba(10,10,16,0.97)' }}
+      >
+        {/* Header — also the drag ribbon */}
+        <div className="px-6 pt-2 pb-5 border-b border-[rgba(255,255,255,0.08)] shrink-0 cursor-grab">
+          {!isMobile && (
+            <div className="flex justify-center mb-2">
+              <div className="w-12 h-1 rounded-full bg-white/25 hover:bg-white/45 transition-colors" title="Drag to move" />
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-[18px] font-semibold text-white">Background Templates</h2>
+              <p className="text-[12px] text-white/60 mt-1">
+                {loading ? 'Loading…' : `${templates.length} backgrounds`}
+              </p>
+            </div>
+            <div className="flex items-center gap-1">
+              {!isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
+              <button
+                onClick={onClose}
+                className="p-2 rounded-lg hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
-          >
-            <X size={18} />
-          </button>
         </div>
 
         {/* Category pills */}
-        <div className="px-6 py-3 border-b border-[rgba(255,255,255,0.06)] flex gap-2 flex-wrap shrink-0">
-          <button
-            onClick={() => setActiveCategory(null)}
-            className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors ${
-              !activeCategory ? 'bg-[#e8b84a] text-black' : 'bg-[rgba(255,255,255,0.06)] text-white/70 hover:bg-[rgba(255,255,255,0.1)]'
-            }`}
-          >
-            All ({templates.length})
-          </button>
-          {categories.map((cat) => (
+        {templates.length > 0 && (
+          <div className="px-6 py-3 border-b border-[rgba(255,255,255,0.06)] flex gap-2 flex-wrap shrink-0">
             <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
+              onClick={() => setActiveCategory(null)}
               className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors ${
-                activeCategory === cat ? 'bg-[#e8b84a] text-black' : 'bg-[rgba(255,255,255,0.06)] text-white/70 hover:bg-[rgba(255,255,255,0.1)]'
+                !activeCategory ? 'bg-[#e8b84a] text-black' : 'bg-[rgba(255,255,255,0.06)] text-white/70 hover:bg-[rgba(255,255,255,0.1)]'
               }`}
             >
-              {cat}
+              All ({templates.length})
             </button>
-          ))}
-        </div>
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`px-3 py-1.5 rounded-full text-[11px] font-medium transition-colors ${
+                  activeCategory === cat ? 'bg-[#e8b84a] text-black' : 'bg-[rgba(255,255,255,0.06)] text-white/70 hover:bg-[rgba(255,255,255,0.1)]'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Grid */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
+          {loadError && (
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <p className="text-[13px] text-white/60 text-center max-w-sm">
+                The template library didn&rsquo;t load ({loadError}). This is usually a
+                connection hiccup — your backgrounds are still there.
+              </p>
+              <button
+                onClick={load}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.08)] hover:bg-[rgba(255,255,255,0.14)] text-white text-[12px] font-medium transition-colors"
+              >
+                <RefreshCw size={13} /> Retry
+              </button>
+            </div>
+          )}
+          {!loadError && !loading && templates.length === 0 && (
+            <p className="py-16 text-center text-[13px] text-white/50">No templates found.</p>
+          )}
           <div className="grid grid-cols-4 gap-3">
             {filtered.map((t) => (
               <button
@@ -96,26 +138,9 @@ export default function TemplateLibrary({ onSelect, onClose }: TemplateLibraryPr
                   <p className="text-[11px] text-white font-medium truncate">{t.name}</p>
                   <p className="text-[9px] text-white/50">{t.category}</p>
                 </div>
-                {!isFree(t) && (
-                  <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
-                    <Lock size={10} className="text-[#e8b84a]" />
-                  </div>
-                )}
-                {isFree(t) && (
-                  <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded bg-black/60 text-[8px] text-emerald-400 font-bold uppercase">
-                    Free
-                  </div>
-                )}
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-[rgba(255,255,255,0.06)] shrink-0">
-          <p className="text-[10px] text-white/40 text-center">
-            All artwork by Contextspaces.ai. Premium templates are free for {FREE_TRIAL_DAYS} days, then $2.99/mo for the full library.
-          </p>
         </div>
       </div>
 
@@ -132,11 +157,7 @@ export default function TemplateLibrary({ onSelect, onClose }: TemplateLibraryPr
               <div className="px-5 py-4 flex items-center justify-between" style={{ backgroundColor: 'rgba(10,10,16,0.97)' }}>
                 <div>
                   <h3 className="text-[15px] font-semibold text-white">{previewTemplate.name}</h3>
-                  <p className="text-[11px] text-white/50 mt-0.5">
-                    {previewTemplate.category}
-                    {!isFree(previewTemplate) && <span className="text-[#e8b84a] ml-2">Premium · Free during trial</span>}
-                    {isFree(previewTemplate) && <span className="text-emerald-400 ml-2">Free forever</span>}
-                  </p>
+                  <p className="text-[11px] text-white/50 mt-0.5">{previewTemplate.category}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
