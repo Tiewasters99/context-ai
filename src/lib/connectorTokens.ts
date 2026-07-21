@@ -97,6 +97,34 @@ export function antigravityConfigSnippet(token: string): string {
   );
 }
 
+// ChatGPT itself cannot use the tokens above: OpenAI's connector flow
+// speaks OAuth (PKCE, via CIMD or dynamic client registration) and will
+// not present a static bearer token or API key. The ChatGPT page walks
+// the user through that OAuth flow instead.
+//
+// The OpenAI *API* is the exception — the Responses API's `mcp` tool
+// takes arbitrary headers, so a connector token works there. This is the
+// block that page offers for scripted / SDK use.
+export function openaiResponsesSnippet(token: string): string {
+  return JSON.stringify(
+    {
+      model: 'gpt-5',
+      tools: [
+        {
+          type: 'mcp',
+          server_label: 'contextspaces',
+          server_url: MCP_ENDPOINT_URL,
+          headers: { Authorization: `Bearer ${token}` },
+          require_approval: 'never',
+        },
+      ],
+      input: 'List my matters, then search the Peloso deposition for causation.',
+    },
+    null,
+    2,
+  );
+}
+
 // Grok exposes MCP servers via its settings UI (URL + Bearer token).
 // For users on a CLI / scripted setup, the same JSON shape works as a
 // custom-config block — Grok's MCP handling is the same Streamable

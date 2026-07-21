@@ -17,6 +17,7 @@ import DocumentBuilder from '@/pages/DocumentBuilder';
 import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
+import ChatGPTConnect from '@/pages/ChatGPTConnect';
 import Connections from '@/pages/Connections';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
@@ -80,6 +81,7 @@ export default function App() {
               <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="connections/gemini" element={<GeminiConnect />} />
               <Route path="connections/grok" element={<GrokConnect />} />
+              <Route path="connections/chatgpt" element={<ChatGPTConnect />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
             </Route>
