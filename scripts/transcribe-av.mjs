@@ -59,12 +59,30 @@ const candidates = (await fetchMedia(matter.id))
   .filter((d) => !ONLY || ONLY.some((s) => (d.source_filename || '').toLowerCase().includes(s)));
 log(`A/V candidates without transcript: ${candidates.length}${ONLY ? `  (--only ${ONLY.join(',')})` : ''}`);
 
-// Group by content hash (download once to hash + reuse buffer).
+// Group by content hash (download once to hash + reuse buffer). Network
+// resets are routine over a 540-file sweep — retry each download with
+// backoff and skip (not die) on persistent failure.
+async function downloadWithRetry(storagePath, name) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const { data: blob, error } = await supabase.storage.from('vault-documents').download(storagePath);
+      if (!error && blob) return Buffer.from(await blob.arrayBuffer());
+      if (attempt === 4) log(`  ! download failed: ${name} — ${error?.message ?? 'no data'}`);
+    } catch (e) {
+      if (attempt === 4) log(`  ! download failed: ${name} — ${e.message}`);
+    }
+    if (attempt < 4) await new Promise((r) => setTimeout(r, attempt * 2000));
+  }
+  return null;
+}
+
 const groups = new Map();
+let hashed = 0;
 for (const d of candidates) {
-  const { data: blob, error } = await supabase.storage.from('vault-documents').download(d.storage_path);
-  if (error || !blob) { log(`  ! download failed: ${d.source_filename}`); continue; }
-  const buf = Buffer.from(await blob.arrayBuffer());
+  const buf = await downloadWithRetry(d.storage_path, d.source_filename);
+  if (!buf) continue;
+  hashed++;
+  if (hashed % 50 === 0) log(`  hashed ${hashed}/${candidates.length}…`);
   const hash = crypto.createHash('sha256').update(buf).digest('hex');
   if (!groups.has(hash)) groups.set(hash, { rows: [], buf });
   groups.get(hash).rows.push(d);
