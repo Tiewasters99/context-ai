@@ -195,21 +195,38 @@ async function clonePassages(fromId, dupRow) {
 }
 
 async function fetchMedia(matterId) {
+  // The per-row passages(count) aggregate blows the statement timeout on
+  // large matters (Fleming: 900+ media rows among thousands of docs). Page
+  // plain rows, narrow to media files, then batch-check which already have
+  // passages.
   let all = [], from = 0;
   for (;;) {
     const { data, error } = await supabase.from('documents')
-      .select('id, source_filename, storage_path, processing_status, processing_error, passages(count)')
+      .select('id, source_filename, storage_path, processing_status, processing_error')
       .eq('matterspace_id', matterId)
+      .order('id')
       .range(from, from + 999);
     if (error) throw new Error(error.message);
     all = all.concat(data);
     if (data.length < 1000) break; from += 1000;
   }
-  // keep only rows with no passages yet
-  return all.filter((d) => {
-    const cnt = Array.isArray(d.passages) ? (d.passages[0]?.count ?? 0) : 0;
-    return cnt === 0;
-  });
+  const media = all.filter((d) => d.storage_path && MEDIA_EXTENSIONS.includes(extOf(d.source_filename)));
+  const withPassages = new Set();
+  for (let i = 0; i < media.length; i += 200) {
+    const ids = media.slice(i, i + 200).map((d) => d.id);
+    let pFrom = 0;
+    for (;;) {
+      const { data, error } = await supabase.from('passages')
+        .select('document_id')
+        .in('document_id', ids)
+        .order('document_id')
+        .range(pFrom, pFrom + 999);
+      if (error) throw new Error(error.message);
+      for (const p of data) withPassages.add(p.document_id);
+      if (data.length < 1000) break; pFrom += 1000;
+    }
+  }
+  return media.filter((d) => !withPassages.has(d.id));
 }
 
 async function resolveMatter(key) {
