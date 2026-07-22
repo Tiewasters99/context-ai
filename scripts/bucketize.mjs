@@ -11,6 +11,8 @@
 //   node scripts/bucketize.mjs --matter fleming --dry-run
 //   node scripts/bucketize.mjs --matter fleming --limit 5          (pilot)
 //   node scripts/bucketize.mjs --matter fleming                    (full run)
+//   node scripts/bucketize.mjs --matter fleming --batch            (Batch API, 50% cheaper;
+//                                                                   results usually <1h)
 //   node scripts/bucketize.mjs --matter fleming --concurrency 4
 //   node scripts/bucketize.mjs --matter fleming --doc <uuid>       (one doc)
 //
@@ -30,7 +32,12 @@ import {
   buildClassifyUserContent,
   decodeAssignments,
 } from '../lib/bucketizer-core.mjs';
-import { generateStructuredAnthropic } from '../lib/structured-anthropic.mjs';
+import {
+  generateStructuredAnthropic,
+  buildStructuredParams,
+  extractStructuredOutput,
+  runStructuredBatch,
+} from '../lib/structured-anthropic.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -103,20 +110,20 @@ if (DRY) {
 const queue = candidates.slice(0, LIMIT === Infinity ? undefined : LIMIT);
 const summary = { done: 0, proposed: 0, skippedNoText: 0, failed: [] };
 
-async function classifyOne(doc) {
+// Build the model request for one document, or null if it has no text.
+async function buildDocRequest(doc) {
   const { data: passages, error } = await supabase.from('passages')
     .select('id, text')
     .eq('document_id', doc.id)
     .order('sequence_number')
     .range(0, 199);
   if (error) throw new Error(`passages: ${error.message}`);
-  if (!passages.length) { summary.skippedNoText++; return; }
+  if (!passages.length) return null;
 
   const { userContent, refToPassageId } = buildClassifyUserContent(
     { title: doc.title, docType: doc.doc_type }, passages, outline,
   );
-  const result = await generateStructuredAnthropic({
-    apiKey: ANTHROPIC_API_KEY,
+  const params = buildStructuredParams({
     model: MODEL,
     system: CLASSIFY_SYSTEM,
     userContent,
@@ -124,6 +131,10 @@ async function classifyOne(doc) {
     toolDescription: CLASSIFY_TOOL_DESCRIPTION,
     inputSchema: CLASSIFY_SCHEMA,
   });
+  return { params, refToPassageId };
+}
+
+async function persistResult(doc, result, refToPassageId) {
   const rows = decodeAssignments(result, refToId, refToPassageId).map((r) => ({
     ...r,
     matterspace_id: matter.id,
@@ -139,23 +150,86 @@ async function classifyOne(doc) {
   summary.proposed += rows.length;
 }
 
-let cursor = 0;
-async function worker() {
-  for (;;) {
-    const i = cursor++;
-    if (i >= queue.length) return;
-    const doc = queue[i];
+if (args.batch) {
+  // -- Batch API mode: 50% of synchronous pricing; results usually within
+  // -- the hour. Prepare every request (the passage fetches), submit in
+  // -- chunks, poll, persist.
+  log('Preparing batch requests…');
+  const prepared = [];
+  for (const doc of queue) {
     try {
-      await classifyOne(doc);
-      summary.done++;
-      log(`  [${summary.done}/${queue.length}] ${doc.title}`);
+      const req = await buildDocRequest(doc);
+      if (!req) { summary.skippedNoText++; continue; }
+      prepared.push({ doc, ...req });
     } catch (e) {
       summary.failed.push({ title: doc.title, error: e.message });
-      log(`  ! ${doc.title}: ${e.message}`);
+    }
+    if ((prepared.length + summary.skippedNoText) % 100 === 0) {
+      log(`  prepared ${prepared.length}/${queue.length}`);
     }
   }
+  log(`Prepared ${prepared.length} requests (${summary.skippedNoText} no-text skipped).`);
+
+  const CHUNK = 500; // stay well under the 256MB per-batch cap
+  const byId = new Map(prepared.map((p) => [p.doc.id, p]));
+  for (let i = 0; i < prepared.length; i += CHUNK) {
+    const chunk = prepared.slice(i, i + CHUNK);
+    log(`\nSubmitting batch ${Math.floor(i / CHUNK) + 1}/${Math.ceil(prepared.length / CHUNK)} (${chunk.length} docs)…`);
+    const { batchId, results } = await runStructuredBatch({
+      apiKey: ANTHROPIC_API_KEY,
+      entries: chunk.map((p) => ({ customId: p.doc.id, params: p.params })),
+      onProgress: (b) => log(`  [${b.id}] ${b.processing_status} — ${b.request_counts.processing} processing, ${b.request_counts.succeeded} ok, ${b.request_counts.errored} err`),
+    });
+    for (const r of results) {
+      const p = byId.get(r.custom_id);
+      if (!p) continue;
+      if (r.result.type === 'succeeded') {
+        try {
+          await persistResult(p.doc, extractStructuredOutput(r.result.message), p.refToPassageId);
+          summary.done++;
+        } catch (e) {
+          summary.failed.push({ title: p.doc.title, error: e.message });
+        }
+      } else {
+        summary.failed.push({ title: p.doc.title, error: r.result.type });
+      }
+    }
+    log(`  batch done — ${summary.done} classified so far`);
+  }
+} else {
+  async function classifyOne(doc) {
+    const req = await buildDocRequest(doc);
+    if (!req) { summary.skippedNoText++; return; }
+    const result = await generateStructuredAnthropic({
+      apiKey: ANTHROPIC_API_KEY,
+      model: MODEL,
+      system: CLASSIFY_SYSTEM,
+      userContent: req.params.messages[0].content,
+      toolName: CLASSIFY_TOOL_NAME,
+      toolDescription: CLASSIFY_TOOL_DESCRIPTION,
+      inputSchema: CLASSIFY_SCHEMA,
+    });
+    await persistResult(doc, result, req.refToPassageId);
+  }
+
+  let cursor = 0;
+  async function worker() {
+    for (;;) {
+      const i = cursor++;
+      if (i >= queue.length) return;
+      const doc = queue[i];
+      try {
+        await classifyOne(doc);
+        summary.done++;
+        log(`  [${summary.done}/${queue.length}] ${doc.title}`);
+      } catch (e) {
+        summary.failed.push({ title: doc.title, error: e.message });
+        log(`  ! ${doc.title}: ${e.message}`);
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
 }
-await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
 
 log(`\nDone. classified: ${summary.done}  |  proposals written: ${summary.proposed}  |  no-text skipped: ${summary.skippedNoText}  |  failed: ${summary.failed.length}`);
 for (const f of summary.failed) log(`  failed: ${f.title} — ${f.error}`);
