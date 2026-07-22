@@ -79,7 +79,7 @@ if (args.doc) {
   const docs = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase.from('documents')
-      .select('id, title, doc_type')
+      .select('id, title, doc_type, metadata')
       .eq('matterspace_id', matter.id)
       .eq('processing_status', 'ready')
       .order('id')
@@ -96,7 +96,10 @@ if (args.doc) {
     if (error) die(error.message);
     for (const r of data) classified.add(r.document_id);
   }
-  candidates = docs.filter((d) => !classified.has(d.id));
+  // "Classified" = has rows OR was examined and fit no bucket (sentinel in
+  // metadata) — without the sentinel, zero-assignment docs would be
+  // re-submitted on every run, forever.
+  candidates = docs.filter((d) => !classified.has(d.id) && !d.metadata?.bucketizer?.no_buckets_at);
 }
 log(`Unclassified ready documents: ${candidates.length}${LIMIT < Infinity ? `  (running first ${LIMIT})` : ''}`);
 
@@ -146,6 +149,11 @@ async function persistResult(doc, result, refToPassageId) {
     const { error: insErr } = await supabase.from('bucketizer_classifications')
       .upsert(rows, { onConflict: 'document_id,node_id', ignoreDuplicates: true });
     if (insErr) throw new Error(`insert: ${insErr.message}`);
+  } else {
+    // Examined, no bucket fits — mark so the doc isn't re-queued next run.
+    const { data: d } = await supabase.from('documents').select('metadata').eq('id', doc.id).single();
+    const metadata = { ...(d?.metadata ?? {}), bucketizer: { ...(d?.metadata?.bucketizer ?? {}), no_buckets_at: new Date().toISOString() } };
+    await supabase.from('documents').update({ metadata }).eq('id', doc.id);
   }
   summary.proposed += rows.length;
 }
