@@ -217,18 +217,24 @@ export interface ClassifyProgress {
   errors: number;
 }
 
-interface DocRow { id: string; title: string; doc_type: string | null }
+interface DocRow {
+  id: string;
+  title: string;
+  doc_type: string | null;
+  metadata?: { bucketizer?: { no_buckets_at?: string } } | null;
+}
 
 /**
- * Ready documents in the matter with no classification rows yet — the
- * "unbucketized" queue.
+ * Ready documents in the matter that haven't been examined yet — no
+ * classification rows AND no "no buckets fit" sentinel (without the
+ * sentinel, zero-assignment docs would be re-classified on every run).
  */
 export async function listUnclassifiedDocs(matterId: string): Promise<DocRow[]> {
   const docs: DocRow[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from('documents')
-      .select('id, title, doc_type')
+      .select('id, title, doc_type, metadata')
       .eq('matterspace_id', matterId)
       .eq('processing_status', 'ready')
       .order('id')
@@ -247,7 +253,7 @@ export async function listUnclassifiedDocs(matterId: string): Promise<DocRow[]> 
     if (error) throw new Error(error.message);
     for (const row of data ?? []) classified.add(row.document_id as string);
   }
-  return docs.filter((d) => !classified.has(d.id));
+  return docs.filter((d) => !classified.has(d.id) && !d.metadata?.bucketizer?.no_buckets_at);
 }
 
 /**
@@ -300,7 +306,19 @@ export async function classifyDocument(input: {
     status: 'proposed',
     model_id: modelId,
   }));
-  if (!rows.length) return 0;
+  if (!rows.length) {
+    // Examined, no bucket fits — mark so the doc isn't re-queued next run.
+    const { data: d } = await supabase
+      .from('documents').select('metadata').eq('id', input.doc.id).single();
+    const prior = (d?.metadata ?? {}) as Record<string, unknown>;
+    await supabase.from('documents').update({
+      metadata: {
+        ...prior,
+        bucketizer: { ...(prior.bucketizer as object ?? {}), no_buckets_at: new Date().toISOString() },
+      },
+    }).eq('id', input.doc.id);
+    return 0;
+  }
   const { error: insErr } = await supabase
     .from('bucketizer_classifications')
     .upsert(rows, { onConflict: 'document_id,node_id', ignoreDuplicates: true });

@@ -8,7 +8,6 @@ import PinToggle from '@/components/ui/PinToggle';
 import ActivityFeed from '@/components/activity/ActivityFeed';
 import MatterCalendar from '@/components/matter/MatterCalendar';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
-import BucketizerSurface from '@/components/matter/BucketizerSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
@@ -23,7 +22,7 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Calendar', 'Pages', 'Lists', 'Tables', 'Bucketizer', 'Cite-Check', 'Thread', 'Meetings', 'Discovery', 'Vault'] as const;
+const tabs = ['Updates', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
 type Tab = typeof tabs[number];
 type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Calendar'>;
 
@@ -34,7 +33,7 @@ const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 // landing tab is Updates: "what's happening" is the natural thing to see
 // first. An optional ?tab= query param (used by activity-feed deep links)
 // overrides both the saved tab and the default.
-const NAV_TABS: readonly string[] = ['Vault', 'Discovery'];
+const NAV_TABS: readonly string[] = ['Vault', 'Discovery', 'Bucketizer'];
 function loadInitialTab(matterId: string | undefined, override?: string | null): Tab {
   if (override && !NAV_TABS.includes(override) && (tabs as readonly string[]).includes(override)) {
     return override as Tab;
@@ -171,6 +170,12 @@ export default function MatterspaceView() {
     if (!matter) return;
     const matterArg = matter.short_code ?? matter.id;
     navigate(`/app/discovery?matter=${encodeURIComponent(matterArg)}`);
+  };
+
+  // The Bucketizer lives in the Productivity Suite; the matter *calls* it.
+  const enterBucketizer = () => {
+    if (!matter) return;
+    navigate(`/app/bucketizer?matter=${encodeURIComponent(matter.id)}`);
   };
 
   const handleCoverChange = async (url: string | null) => {
@@ -329,6 +334,7 @@ export default function MatterspaceView() {
               onClick={() => {
                 if (tab === 'Vault') enterVault();
                 else if (tab === 'Discovery') enterDiscovery();
+                else if (tab === 'Bucketizer') enterBucketizer();
                 else setActiveTab(tab);
               }}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -348,9 +354,6 @@ export default function MatterspaceView() {
         )}
         {activeTab === 'Calendar' && matter && (
           <MatterCalendar matterId={matter.id} />
-        )}
-        {activeTab === 'Bucketizer' && matter && (
-          <BucketizerSurface matterId={matter.id} />
         )}
         {activeTab === 'Cite-Check' && matter && (
           <CiteCheckSurface matterId={matter.id} matterName={matter.name} />

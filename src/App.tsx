@@ -21,6 +21,7 @@ import GrokConnect from '@/pages/GrokConnect';
 import ChatGPTConnect from '@/pages/ChatGPTConnect';
 import Connections from '@/pages/Connections';
 import Settings from '@/pages/Settings';
+import BucketizerHome from '@/pages/BucketizerHome';
 import MootBench from '@/pages/moot/MootBench';
 import MootSession from '@/pages/moot/MootSession';
 import MeetingView from '@/pages/MeetingView';
@@ -100,6 +101,7 @@ export default function App() {
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="bucketizer" element={<BucketizerHome />} />
               <Route path="moot-bench" element={<MootBench />} />
               <Route path="moot-bench/:id" element={<MootSession />} />
               <Route path="mediation" element={<MediationCenter />} />
