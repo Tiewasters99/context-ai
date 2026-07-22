@@ -528,7 +528,17 @@ function NodeDetail({
             <FileText className="w-4 h-4 mt-0.5 shrink-0 text-zinc-500" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-zinc-200 truncate">{d.documentTitle}</span>
+                {/* The whole point of the chain: bucket → document → open and
+                    review. New tab so the review queue stays put. */}
+                <a
+                  href={`/app/document/${d.classification.document_id}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="text-sm text-zinc-200 truncate hover:text-[#d4a054] hover:underline underline-offset-2"
+                  title="Open document in a new tab"
+                >
+                  {d.documentTitle}
+                </a>
                 {d.classification.status === 'confirmed' ? (
                   <span className="shrink-0 text-[11px] text-emerald-400">confirmed</span>
                 ) : (
