@@ -48,6 +48,7 @@ type DocMeta = {
   source_filename: string | null;
   page_count: number | null;
   cover_url: string | null;
+  matterspace_id: string | null;
 };
 
 type FileKind = 'pdf' | 'docx' | 'fountain' | 'unsupported';
@@ -201,7 +202,7 @@ export default function DocumentReader() {
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -765,7 +766,14 @@ export default function DocumentReader() {
       <div className="flex items-center justify-between gap-2 px-3 h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => {
+              // In a fresh tab (opened from the Bucketizer or a shared link)
+              // there is no history to go back to — land on the document's
+              // matter instead of silently doing nothing.
+              if (window.history.length > 1) navigate(-1);
+              else if (doc?.matterspace_id) navigate(`/app/matterspace/${doc.matterspace_id}`);
+              else navigate('/app');
+            }}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
             title="Close"
           >
