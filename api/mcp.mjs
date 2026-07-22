@@ -181,10 +181,21 @@ export default async function handler(req, res) {
   );
   res.setHeader(
     'access-control-allow-methods',
-    'GET, POST, DELETE, OPTIONS'
+    'POST, DELETE, OPTIONS'
   );
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
+    return res.end();
+  }
+
+  // MCP Streamable HTTP: a GET opens the optional long-lived "standalone
+  // SSE" push stream, which a serverless function cannot hold open — clients
+  // that open one watch it die, retry, and then poison the whole connection
+  // (Antigravity/Gemini, 2026-07-22). Per spec, refuse with 405 so clients
+  // fall back to POST-only operation.
+  if (req.method === 'GET') {
+    res.statusCode = 405;
+    res.setHeader('allow', 'POST, DELETE, OPTIONS');
     return res.end();
   }
 
