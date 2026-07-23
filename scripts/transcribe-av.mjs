@@ -43,6 +43,11 @@ const GOOGLE_API_KEY = DRY ? (process.env.GOOGLE_API_KEY || '') : requireEnv('GO
 const LIMIT = args.limit ? parseInt(args.limit, 10) : Infinity;
 const MODEL = args.model || 'gemini-2.5-flash';
 const ONLY = args.only ? String(args.only).toLowerCase().split(',').map((s) => s.trim()).filter(Boolean) : null;
+// --transcode: re-encode EVERY file to 16kHz mono mp3 before sending. For
+// files Gemini's stream hangs on repeatedly even though the format is
+// nominally native (19 Fleming jail-call mp3s, 2026-07-23) — a clean
+// re-encode strips whatever container oddity trips the backend.
+const FORCE_TRANSCODE = !!args.transcode;
 if (!args.matter) die('Missing --matter');
 
 // Formats Gemini takes as-is; everything else in MEDIA_EXTENSIONS is transcoded.
@@ -114,7 +119,7 @@ for (const g of uniqueGroups) {
     // Normalize the format Gemini will receive.
     let sendBuf = g.buf;
     let sendExt = origExt;
-    if (!NATIVE_OK.has(origExt)) {
+    if (!NATIVE_OK.has(origExt) || FORCE_TRANSCODE) {
       log(`    transcoding ${origExt} -> mp3 (ffmpeg)`);
       sendBuf = await transcodeToMp3(g.buf, origExt);
       sendExt = '.mp3';
