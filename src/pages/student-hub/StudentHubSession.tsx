@@ -206,7 +206,7 @@ export default function StudentHubSession() {
       <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
         <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 4, padding: '8px 16px' }}>
           <Link
-            to="/app/student-hub"
+            to="/app/student-hub/readings"
             style={{
               fontFamily: T.sans, fontSize: 12, fontWeight: 600, color: T.faint,
               textDecoration: 'none', padding: '10px 10px 10px 0', whiteSpace: 'nowrap',
