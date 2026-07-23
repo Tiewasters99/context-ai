@@ -31,6 +31,13 @@ const PRODUCTS: Product[] = [
     status: 'New',
   },
   {
+    name: 'Student Hub',
+    tagline: 'Scan your casebook, take the brief and the outline, then sit for a spoken Socratic cold call — before your professor gets the chance.',
+    accent: '#A98B45',
+    to: '/app/student-hub',
+    status: 'New',
+  },
+  {
     name: 'Discovery',
     tagline: 'Intake, review, tag, Bates-stamp, and produce documents — incoming and outgoing.',
     accent: '#d4a054',
