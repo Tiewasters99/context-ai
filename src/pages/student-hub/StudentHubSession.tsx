@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { converse } from '@/lib/llm';
 import {
-  getSession, updateSession, listMessages, addMessage,
+  getSession, updateSession, listMessages, addMessage, getPageUrls,
   generateBrief, generateOutline, professorSystem, professorHistory, formatTranscript,
   type StudySession, type StudyMessage,
 } from '@/lib/student-hub';
@@ -13,18 +13,21 @@ import {
 } from '@/components/student-hub/ui';
 import { useDictation, useProfessorVoice } from '@/components/student-hub/voice';
 
-// One reading, three postures: the brief (what you'd say if called on cold),
-// the outline (what you fold into the course outline), and the cold call
-// itself — a spoken Socratic session with the professor.
+// One reading, four postures: the reading itself (the actual pages of the
+// student's scanned casebook), the brief (what you'd say if called on cold),
+// the outline (what you fold into the course outline), and the cold call —
+// a spoken Socratic session with the professor.
 
-type TabId = 'brief' | 'outline' | 'coldcall';
+type TabId = 'reading' | 'brief' | 'outline' | 'coldcall';
 
 export default function StudentHubSession() {
   const { id } = useParams();
   const [session, setSession] = useState<StudySession | null>(null);
   const [messages, setMessages] = useState<StudyMessage[]>([]);
   const [loadError, setLoadError] = useState('');
-  const [tab, setTab] = useState<TabId>('coldcall');
+  const [tab, setTab] = useState<TabId>('reading');
+  const [pageUrls, setPageUrls] = useState<string[] | null>(null);
+  const [pagesError, setPagesError] = useState('');
 
   const [working, setWorking] = useState<'brief' | 'outline' | 'professor' | null>(null);
   const [liveText, setLiveText] = useState('');
@@ -49,6 +52,16 @@ export default function StudentHubSession() {
       .catch((e) => setLoadError(e instanceof Error ? e.message : 'Could not open the reading.'));
     return () => abortRef.current?.abort();
   }, [id]);
+
+  // Signed URLs for the scanned pages, fetched once the session is known.
+  useEffect(() => {
+    if (!session?.pages?.length) return;
+    let stale = false;
+    getPageUrls(session.pages)
+      .then((urls) => { if (!stale) setPageUrls(urls); })
+      .catch((e) => { if (!stale) setPagesError(e instanceof Error ? e.message : 'Your pages could not be fetched.'); });
+    return () => { stale = true; };
+  }, [session?.pages]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -201,6 +214,7 @@ export default function StudentHubSession() {
           >
             ← Readings
           </Link>
+          <HubTab label="The reading" active={tab === 'reading'} onClick={() => setTab('reading')} />
           <HubTab label="Case brief" active={tab === 'brief'} onClick={() => setTab('brief')} />
           <HubTab label="Outline" active={tab === 'outline'} onClick={() => setTab('outline')} />
           <HubTab label="Cold call" active={tab === 'coldcall'} onClick={() => setTab('coldcall')} />
@@ -211,6 +225,51 @@ export default function StudentHubSession() {
         flex: 1, maxWidth: 780, margin: '0 auto', width: '100%', boxSizing: 'border-box',
         padding: '22px 20px 36px', display: 'flex', flexDirection: 'column',
       }}>
+        {/* ---------------- The reading ---------------- */}
+        {tab === 'reading' && (
+          <div>
+            {session.pages?.length ? (
+              <>
+                {pagesError && <ErrorNote>{pagesError}</ErrorNote>}
+                {!pageUrls && !pagesError && (
+                  <p style={{ fontFamily: T.mono, fontSize: 12, color: T.faint, padding: '32px 0', textAlign: 'center' }}>
+                    Fetching your pages…
+                  </p>
+                )}
+                {pageUrls?.map((url, i) => (
+                  <figure key={i} style={{ margin: '0 0 18px' }}>
+                    <img
+                      src={url}
+                      alt={`Page ${i + 1} of the reading`}
+                      loading="lazy"
+                      style={{
+                        width: '100%', display: 'block', background: '#FFFFFF',
+                        border: `1px solid ${T.rule}`, borderRadius: 2,
+                      }}
+                    />
+                    <figcaption style={{
+                      fontFamily: T.mono, fontSize: 11, color: T.faint,
+                      textAlign: 'center', paddingTop: 6,
+                    }}>
+                      {i + 1} / {pageUrls.length}
+                    </figcaption>
+                  </figure>
+                ))}
+              </>
+            ) : (
+              <div style={{
+                fontFamily: T.serif, fontSize: 15.5, lineHeight: 1.6, color: T.ink,
+                whiteSpace: 'pre-wrap', padding: '6px 0',
+              }}>
+                {session.reading}
+              </div>
+            )}
+            <div style={{ textAlign: 'center', padding: '22px 0 8px' }}>
+              <GreenButton onClick={() => setTab('coldcall')}>Proceed to the cold call</GreenButton>
+            </div>
+          </div>
+        )}
+
         {/* ---------------- Case brief ---------------- */}
         {tab === 'brief' && (
           <div>

@@ -31,6 +31,8 @@ export interface StudySession {
   citation: string;
   source_label: string;
   reading: string;
+  /** Ordered storage paths of the scanned pages backing this reading, if any. */
+  pages: string[] | null;
   brief: BriefField[] | null;
   outline: OutlineSection[] | null;
   model_id: string;
@@ -47,6 +49,21 @@ export interface StudyMessage {
 }
 
 export const DEFAULT_MODEL_ID = 'claude-opus-4-8';
+
+// Private bucket; objects live under the owner's uid folder and RLS keeps
+// them owner-only (migration 038) — the scan never leaves the account.
+export const SCAN_BUCKET = 'student-hub-scans';
+
+/** Short-lived signed URLs for a session's scanned pages, in reading order. */
+export async function getPageUrls(paths: string[]): Promise<string[]> {
+  const { data, error } = await supabase.storage
+    .from(SCAN_BUCKET)
+    .createSignedUrls(paths, 3600);
+  if (error) throw new Error(error.message);
+  return (data ?? [])
+    .map((d) => d.signedUrl)
+    .filter((u): u is string => !!u);
+}
 
 /* ============================ CRUD ============================ */
 
