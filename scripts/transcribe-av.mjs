@@ -170,7 +170,9 @@ function transcodeToMp3(buf, ext) {
     const tmp = os.tmpdir();
     const tag = crypto.createHash('sha1').update(buf).digest('hex').slice(0, 12);
     const inPath = path.join(tmp, `av_${tag}${ext}`);
-    const outPath = path.join(tmp, `av_${tag}.mp3`);
+    // Distinct output name — mp3-to-mp3 re-encodes (--transcode) collide
+    // with the input otherwise and ffmpeg refuses to run.
+    const outPath = path.join(tmp, `av_${tag}-16k.mp3`);
     try {
       await fs.writeFile(inPath, buf);
       // -vn drop video, 16kHz mono 32k mp3: speech-grade and small. Bitrate
