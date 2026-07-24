@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { converse } from '@/lib/llm';
 import {
-  getSession, updateSession, listMessages, addMessage, getPageUrls, listAllReadings,
+  getSession, updateSession, listMessages, addMessage, clearMessages, getPageUrls, listAllReadings,
   generateBrief, generateOutline, professorSystem, professorHistory, formatTranscript,
   type StudySession, type StudyMessage, type Highlight, type Resource, type OutlineAnnotations,
 } from '@/lib/student-hub';
@@ -50,6 +50,7 @@ export default function StudentHubSession() {
   const [exportNote, setExportNote] = useState('');
   const [exportDone, setExportDone] = useState<ExportResult | null>(null);
   const [includeNotes, setIncludeNotes] = useState(true);
+  const [confirmClear, setConfirmClear] = useState(false);
   // Page magnification for the reader; remembered on this machine.
   const [zoom, setZoom] = useState(() => {
     const z = Number(localStorage.getItem('student-hub-zoom'));
@@ -302,7 +303,7 @@ export default function StudentHubSession() {
       />
 
       <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
-        <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 4, padding: '8px 16px' }}>
+        <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 4, padding: '8px 16px', flexWrap: 'wrap' }}>
           <Link
             to={`/app/student-hub${session.text_id ? `?text=${session.text_id}` : ''}`}
             style={{
@@ -598,6 +599,7 @@ export default function StudentHubSession() {
 
             {error && <ErrorNote>{error}</ErrorNote>}
             {dictation.error && <ErrorNote>{dictation.error}</ErrorNote>}
+            {voice.lastError && <ErrorNote>the professor&rsquo;s voice: {voice.lastError}</ErrorNote>}
 
             {/* Answer row */}
             <div style={{ borderTop: `1px solid ${T.rule}`, paddingTop: 12, display: 'flex', gap: 10 }}>
@@ -639,8 +641,23 @@ export default function StudentHubSession() {
             </div>
 
             {messages.length > 0 && (
-              <div style={{ marginTop: 14 }}>
+              <div style={{ marginTop: 14, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <QuietControl onClick={() => void copyTranscript()}>copy the transcript</QuietControl>
+                {confirmClear ? (
+                  <QuietControl
+                    onClick={() => {
+                      voice.stop();
+                      clearMessages(session.id, 'coldcall')
+                        .then(() => { setMessages([]); setStarted(false); setConfirmClear(false); })
+                        .catch((e) => setError(e instanceof Error ? e.message : 'Could not clear the transcript.'));
+                    }}
+                    style={{ color: T.paper, background: T.oxblood, borderColor: T.oxblood }}
+                  >
+                    clear the whole cold call?
+                  </QuietControl>
+                ) : (
+                  <QuietControl onClick={() => setConfirmClear(true)}>clear</QuietControl>
+                )}
               </div>
             )}
           </div>
