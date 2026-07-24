@@ -153,17 +153,34 @@ export function useProfessorVoice() {
 
   const speak = useCallback((text: string) => {
     if (!supported || !enabledRef.current || !text) return;
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    if (voiceRef.current) u.voice = voiceRef.current;
-    u.rate = 0.98;
-    u.pitch = 0.9;
-    u.onstart = () => setSpeaking(true);
-    u.onend = () => setSpeaking(false);
-    u.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(u);
-    // iOS occasionally leaves the queue paused after a cancel().
-    window.speechSynthesis.resume();
+    const synth = window.speechSynthesis;
+    const start = () => {
+      const u = new SpeechSynthesisUtterance(text);
+      // iOS: a voice object cached from an earlier getVoices() can silently
+      // kill the utterance — always re-match against a fresh list.
+      const vs = synth.getVoices();
+      const v =
+        (voiceRef.current && vs.find((x) => x.name === voiceRef.current!.name)) ||
+        vs.find((x) => /Daniel|Arthur|George|en-GB/i.test(x.name + x.lang)) ||
+        vs.find((x) => x.lang?.startsWith('en')) || null;
+      if (v) u.voice = v;
+      u.rate = 0.98;
+      u.pitch = 0.9;
+      u.onstart = () => setSpeaking(true);
+      u.onend = () => setSpeaking(false);
+      u.onerror = () => setSpeaking(false);
+      synth.speak(u);
+      // iOS occasionally leaves the queue paused after a cancel().
+      synth.resume();
+    };
+    // iOS: an utterance issued in the same tick as cancel() is silently
+    // swallowed — give the engine a beat to settle first.
+    if (synth.speaking || synth.pending) {
+      synth.cancel();
+      window.setTimeout(start, 180);
+    } else {
+      start();
+    }
   }, [supported]);
 
   return { supported, enabled, setEnabled, speaking, speak, stop };
