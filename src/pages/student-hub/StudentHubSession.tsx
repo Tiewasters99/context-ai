@@ -15,6 +15,7 @@ import { useDictation, useProfessorVoice } from '@/components/student-hub/voice'
 import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights';
 import { StudyPanel, type GroupSeed } from '@/components/student-hub/StudyPanel';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
+import { exportReading, downloadReading, type ExportResult } from '@/lib/student-hub-export';
 
 // One reading, five postures: the reading itself (the actual pages of the
 // student's scanned casebook, highlightable), the brief, the interactive
@@ -44,6 +45,11 @@ export default function StudentHubSession() {
   const [resTitle, setResTitle] = useState('');
   const [resUrl, setResUrl] = useState('');
   const [groupSeed, setGroupSeed] = useState<GroupSeed | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState('');
+  const [exportDone, setExportDone] = useState<ExportResult | null>(null);
+  const [includeNotes, setIncludeNotes] = useState(true);
   // Page magnification for the reader; remembered on this machine.
   const [zoom, setZoom] = useState(() => {
     const z = Number(localStorage.getItem('student-hub-zoom'));
@@ -308,6 +314,14 @@ export default function StudentHubSession() {
           <HubTab label="Outline" active={tab === 'outline'} onClick={() => setTab('outline')} />
           <HubTab label="Cold call" active={tab === 'coldcall'} onClick={() => setTab('coldcall')} />
           <HubTab label="Notes" active={tab === 'notes'} onClick={() => setTab('notes')} />
+          <span style={{ flex: 1 }} />
+          <QuietControl
+            onClick={() => setExportOpen((v) => !v)}
+            style={{ alignSelf: 'center' }}
+            title="File this reading into your regular Contextspaces library"
+          >
+            {exportOpen ? 'close export' : 'file to Contextspaces →'}
+          </QuietControl>
         </div>
       </nav>
 
@@ -315,6 +329,60 @@ export default function StudentHubSession() {
         flex: 1, maxWidth: 780, margin: '0 auto', width: '100%', boxSizing: 'border-box',
         padding: '22px 20px 36px', display: 'flex', flexDirection: 'column',
       }}>
+        {/* ---------------- Export to Contextspaces ---------------- */}
+        {exportOpen && (
+          <section style={{
+            border: `1px solid ${T.rule}`, borderTop: `2px solid ${T.brass}`, borderRadius: 2,
+            padding: '14px 16px', marginBottom: 20,
+          }}>
+            {!exportDone ? (
+              <>
+                <p style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, lineHeight: 1.55, margin: '0 0 10px' }}>
+                  Files <em>{session.title}</em> into <strong>Academic — Contracts</strong>
+                  {session.chapter ? <> → {session.chapter}</> : null} as a regular Contextspaces
+                  document — indexed and searchable, reachable from any LLM you&rsquo;ve connected
+                  over MCP. The space is private to you; the reading stays yours alone.
+                </p>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontFamily: T.sans, fontSize: 12.5, color: T.ink }}>
+                  <input type="checkbox" checked={includeNotes} onChange={(e) => setIncludeNotes(e.target.checked)} />
+                  include my brief, outline, notes &amp; cold-call transcript as a companion document
+                </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
+                  <GreenButton
+                    disabled={exporting}
+                    onClick={() => {
+                      setExporting(true);
+                      setError('');
+                      exportReading(session, session.chapter || 'Loose readings', { includeStudyNotes: includeNotes }, setExportNote)
+                        .then(setExportDone)
+                        .catch((e) => setError(e instanceof Error ? e.message : 'The export failed.'))
+                        .finally(() => setExporting(false));
+                    }}
+                  >
+                    {exporting ? 'Filing…' : 'Export'}
+                  </GreenButton>
+                  <QuietControl onClick={() => downloadReading(session)}>
+                    download a copy instead
+                  </QuietControl>
+                  {exporting && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.faint }}>{exportNote}</span>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, lineHeight: 1.6, margin: 0 }}>
+                Filed. <Link to={`/app/matterspace/${exportDone.matterId}`} style={{ color: T.green }}>
+                Open {exportDone.matterName} in Contextspaces →</Link>
+                {exportDone.shortCode && (
+                  <span style={{ display: 'block', fontFamily: T.sans, fontSize: 12, color: T.faint, marginTop: 6 }}>
+                    From a connected LLM, the matter answers to <code style={{ fontFamily: T.mono }}>{exportDone.shortCode}</code>.
+                  </span>
+                )}
+              </p>
+            )}
+          </section>
+        )}
+
         {/* ---------------- The reading ---------------- */}
         {tab === 'reading' && (
           <div>
