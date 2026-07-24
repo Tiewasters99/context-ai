@@ -31,5 +31,7 @@
   {"id":"reggae-2","name":"Cathedral to Caribbean — ii","file":"/music/reggae-piece-2.mp3","category":"Reggae","artist":"Grapheon"},
   {"id":"studio-ambient","name":"Ambient Cinematic","file":"/music/studio-ambient.mp3","category":"Studio","artist":"Grapheon"},
   {"id":"civil-war-instrumental","name":"Banner of the Broken Union (Instrumental)","file":"/music/civil-war-banner-of-the-broken-union-instrumental.mp3","category":"Historical","artist":"Grapheon"},
-  {"id":"civil-war-vocal","name":"Banner Over Broken Fields (Vocal)","file":"/music/civil-war-banner-over-broken-fields-vocal.mp3","category":"Historical","artist":"Grapheon"}
+  {"id":"civil-war-vocal","name":"Banner Over Broken Fields (Vocal)","file":"/music/civil-war-banner-over-broken-fields-vocal.mp3","category":"Historical","artist":"Grapheon"},
+  {"id":"acoustic-ballad-1","name":"Threshold Signal","file":"/music/acoustic-ballad-threshold-signal.mp3","category":"Acoustic Ballad","artist":"Grapheon"},
+  {"id":"acoustic-ballad-2","name":"Nanocamera Drift","file":"/music/acoustic-ballad-nanocamera-drift.mp3","category":"Acoustic Ballad","artist":"Grapheon"}
 ]
