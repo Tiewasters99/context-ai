@@ -24,9 +24,23 @@ export interface OutlineSection {
   items: string[];
 }
 
+export interface StudyText {
+  id: string;
+  owner_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface StudySession {
   id: string;
   owner_id: string;
+  /** The text (scanned casebook/chapter) this reading belongs to; null = loose reading from the shelf. */
+  text_id: string | null;
+  chapter: string;
+  section: string;
+  kind: 'case' | 'material';
+  sort: number;
   title: string;
   citation: string;
   source_label: string;
@@ -67,10 +81,43 @@ export async function getPageUrls(paths: string[]): Promise<string[]> {
 
 /* ============================ CRUD ============================ */
 
+export async function listTexts(): Promise<StudyText[]> {
+  const { data, error } = await supabase
+    .from('student_hub_texts')
+    .select('*')
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as StudyText[];
+}
+
+/** All readings of one text, in shelf order (chapter/section grouping is by field). */
+export async function listReadings(textId: string): Promise<StudySession[]> {
+  const { data, error } = await supabase
+    .from('student_hub_sessions')
+    .select('*')
+    .eq('text_id', textId)
+    .order('sort', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as StudySession[];
+}
+
+/** Which of these readings have cold-call transcripts under way. */
+export async function sessionsWithTranscripts(sessionIds: string[]): Promise<Set<string>> {
+  if (!sessionIds.length) return new Set();
+  const { data, error } = await supabase
+    .from('student_hub_messages')
+    .select('session_id')
+    .in('session_id', sessionIds);
+  if (error) throw new Error(error.message);
+  return new Set((data ?? []).map((r) => r.session_id as string));
+}
+
+/** Loose readings only — filed from the shelf, not part of any text. */
 export async function listSessions(): Promise<StudySession[]> {
   const { data, error } = await supabase
     .from('student_hub_sessions')
     .select('*')
+    .is('text_id', null)
     .order('updated_at', { ascending: false });
   if (error) throw new Error(error.message);
   return (data ?? []) as StudySession[];

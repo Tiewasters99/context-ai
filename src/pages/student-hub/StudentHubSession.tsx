@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { converse } from '@/lib/llm';
 import {
   getSession, updateSession, listMessages, addMessage, getPageUrls,
@@ -25,7 +25,11 @@ export default function StudentHubSession() {
   const [session, setSession] = useState<StudySession | null>(null);
   const [messages, setMessages] = useState<StudyMessage[]>([]);
   const [loadError, setLoadError] = useState('');
-  const [tab, setTab] = useState<TabId>('reading');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState<TabId>(() => {
+    const q = searchParams.get('tab');
+    return q === 'brief' || q === 'outline' || q === 'coldcall' ? q : 'reading';
+  });
   const [pageUrls, setPageUrls] = useState<string[] | null>(null);
   const [pagesError, setPagesError] = useState('');
 
@@ -206,7 +210,7 @@ export default function StudentHubSession() {
       <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
         <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 4, padding: '8px 16px' }}>
           <Link
-            to="/app/student-hub/readings"
+            to="/app/student-hub"
             style={{
               fontFamily: T.sans, fontSize: 12, fontWeight: 600, color: T.faint,
               textDecoration: 'none', padding: '10px 10px 10px 0', whiteSpace: 'nowrap',
