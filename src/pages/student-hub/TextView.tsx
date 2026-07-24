@@ -5,7 +5,7 @@ import {
   type StudyText, type StudySession, type OutlineAnnotations,
 } from '@/lib/student-hub';
 import { T } from '@/components/student-hub/theme';
-import { HubStyles, Kicker, HubTab, ErrorNote, GreenButton } from '@/components/student-hub/ui';
+import { HubStyles, HubTab, ErrorNote, GreenButton } from '@/components/student-hub/ui';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
 import StudentHubHome from './StudentHubHome';
 
@@ -32,18 +32,15 @@ export default function TextView() {
   const [drawer, setDrawer] = useState<Drawer>('readings');
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
-  // The hub opens at the library: just "Texts". Picking a text reveals its
-  // chapter; clicking "Texts" again puts the chapter away.
-  const [mode, setMode] = useState<'library' | 'text'>('library');
+  // A clean landing that fills out as you click: Texts opens the picker,
+  // choosing a chapter fills the drawers.
+  const [picker, setPicker] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [outlining, setOutlining] = useState<string | null>(null);
 
   useEffect(() => {
     listTexts()
-      .then((ts) => {
-        setTexts(ts);
-        if (ts.length) setTextId(ts[0].id);
-      })
+      .then(setTexts)
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not open your library.'));
   }, []);
 
@@ -139,29 +136,28 @@ export default function TextView() {
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%' }}>
       <HubStyles />
 
-      {/* ---- Texts caption band: the toggle between library and chapter ---- */}
-      <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '24px 24px 18px' }}>
+      {/* ---- Caption band: Contextspaces · Student Hub · Texts, one level ---- */}
+      <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '20px 24px 16px' }}>
         <div style={{ maxWidth: 780, margin: '0 auto' }}>
-          <Kicker>Contextspaces · Student Hub</Kicker>
-          <button
-            type="button"
-            onClick={() => setMode(mode === 'text' ? 'library' : textId ? 'text' : 'library')}
-            aria-expanded={mode === 'library'}
-            aria-label="Texts — open your library"
-            style={{
-              appearance: 'none', border: 'none', background: 'transparent', cursor: 'pointer',
-              display: 'flex', alignItems: 'baseline', gap: 12, padding: 0, margin: '0.15em 0 0',
-            }}
-          >
-            <span style={{
-              fontFamily: T.serif, fontSize: 'clamp(26px, 5vw, 36px)', color: T.paper, fontWeight: 400,
-            }}>
-              Texts
-            </span>
-            <span style={{ color: T.brass, fontSize: 15, flexShrink: 0 }}>{mode === 'library' ? '▴' : '▾'}</span>
-          </button>
-          {mode === 'text' && selected && (
-            <div style={{ marginTop: 4 }}>
+          <div style={{
+            fontFamily: T.sans, fontSize: 13, fontWeight: 700,
+            letterSpacing: '0.14em', textTransform: 'uppercase', color: T.brass,
+          }}>
+            Contextspaces · Student Hub ·{' '}
+            <button
+              type="button"
+              onClick={() => setPicker((v) => !v)}
+              aria-expanded={picker}
+              style={{
+                appearance: 'none', border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit', color: T.paper,
+              }}
+            >
+              Texts <span style={{ color: T.brass }}>{picker ? '▴' : '▾'}</span>
+            </button>
+          </div>
+          {selected && !picker && (
+            <div style={{ marginTop: 6 }}>
               <span style={{ fontFamily: T.serif, fontSize: 16, fontStyle: 'italic', color: T.paper }}>
                 {selected.title}
               </span>
@@ -175,15 +171,25 @@ export default function TextView() {
         </div>
       </header>
 
-      {/* ---- The library: pick a text ---- */}
-      {mode === 'library' && (
+      {/* ---- Drawers: present from the start; they fill in as you choose ---- */}
+      <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
+        <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', gap: 4, padding: '8px 16px', flexWrap: 'wrap' }}>
+          <HubTab label="Readings" active={drawer === 'readings'} onClick={() => setDrawer('readings')} />
+          <HubTab label="Outlines" active={drawer === 'outlines'} onClick={() => setDrawer('outlines')} />
+          <HubTab label="Case briefs" active={drawer === 'briefs'} onClick={() => setDrawer('briefs')} />
+          <HubTab label="Cold calls" active={drawer === 'coldcalls'} onClick={() => setDrawer('coldcalls')} />
+        </div>
+      </nav>
+
+      {/* ---- The picker: click Texts, choose your text ---- */}
+      {picker && (
         <main style={{ maxWidth: 780, margin: '0 auto', padding: '26px 20px 48px' }}>
           {error && <ErrorNote>{error}</ErrorNote>}
           {texts?.map((t) => (
             <button
               key={t.id}
               type="button"
-              onClick={() => { setTextId(t.id); setMode('text'); setExpanded(new Set()); }}
+              onClick={() => { setTextId(t.id); setPicker(false); setExpanded(new Set()); }}
               style={{
                 appearance: 'none', border: 'none', cursor: 'pointer', display: 'flex',
                 alignItems: 'baseline', gap: 12, width: '100%', textAlign: 'left',
@@ -210,19 +216,16 @@ export default function TextView() {
         </main>
       )}
 
-      {/* ---- Drawers ---- */}
-      {mode === 'text' && (
-      <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
-        <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', gap: 4, padding: '8px 16px', flexWrap: 'wrap' }}>
-          <HubTab label="Readings" active={drawer === 'readings'} onClick={() => setDrawer('readings')} />
-          <HubTab label="Outlines" active={drawer === 'outlines'} onClick={() => setDrawer('outlines')} />
-          <HubTab label="Case briefs" active={drawer === 'briefs'} onClick={() => setDrawer('briefs')} />
-          <HubTab label="Cold calls" active={drawer === 'coldcalls'} onClick={() => setDrawer('coldcalls')} />
-        </div>
-      </nav>
+      {/* ---- Clean landing, before a text is chosen ---- */}
+      {!picker && !textId && (
+        <main style={{ maxWidth: 780, margin: '0 auto', padding: '44px 20px' }}>
+          <p style={{ fontFamily: T.serif, fontSize: 15, color: T.faint, lineHeight: 1.6, maxWidth: 420 }}>
+            Click <em>Texts</em> above and choose a chapter. The room fills in as you go.
+          </p>
+        </main>
       )}
 
-      {mode === 'text' && (
+      {!picker && textId && (
       <main style={{ maxWidth: 780, margin: '0 auto', padding: '20px 20px 48px' }}>
         {error && <ErrorNote>{error}</ErrorNote>}
 
