@@ -140,7 +140,22 @@ export default function TextView() {
       {/* ---- My texts caption band: click the title to open the library ---- */}
       <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '24px 24px 18px' }}>
         <div style={{ maxWidth: 780, margin: '0 auto', position: 'relative' }}>
-          <Kicker>Contextspaces · Student Hub · My texts</Kicker>
+          <Kicker>
+            Contextspaces · Student Hub ·{' '}
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-expanded={menuOpen}
+              style={{
+                appearance: 'none', border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit', color: 'inherit',
+                textDecoration: 'underline', textUnderlineOffset: 3,
+                textDecorationColor: 'rgba(169,139,69,0.6)',
+              }}
+            >
+              My texts {menuOpen ? '▴' : '▾'}
+            </button>
+          </Kicker>
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
