@@ -4,6 +4,7 @@
 // letterspaced sans for chrome, mono for transcript apparatus.
 
 import type { ReactNode, CSSProperties, ButtonHTMLAttributes } from 'react';
+import { Link } from 'react-router-dom';
 import { T } from './theme';
 
 /** Pulse for the live mic; disabled wholesale under prefers-reduced-motion. */
@@ -27,18 +28,31 @@ export function Kicker({ children }: { children: ReactNode }) {
   );
 }
 
-/** Case-caption header band: greenDark, brass 3px rule, italic serif title. */
-export function CaseCaption({ kicker, title, citation }: {
+/** Case-caption header band: greenDark, brass 3px rule, italic serif title.
+ *  `backTo` puts the persistent paper back-arrow at the head of the kicker. */
+export function CaseCaption({ kicker, title, citation, backTo }: {
   kicker: string;
   title: string;
   citation?: string;
+  backTo?: string;
 }) {
   // Set the "v." small and non-italic, as in a printed caption.
   const parts = title.split(/ v\.? /);
   return (
     <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '24px 24px 18px' }}>
       <div style={{ maxWidth: 780, margin: '0 auto' }}>
-        <Kicker>{kicker}</Kicker>
+        <Kicker>
+          {backTo && (
+            <Link
+              to={backTo}
+              aria-label="Back"
+              style={{ color: T.paper, textDecoration: 'none', marginRight: 14, fontSize: 14 }}
+            >
+              ←
+            </Link>
+          )}
+          {kicker}
+        </Kicker>
         <h1 style={{
           fontFamily: T.serif, fontSize: 'clamp(22px, 4vw, 30px)', color: T.paper,
           fontStyle: 'italic', fontWeight: 400, margin: '0.2em 0 0',

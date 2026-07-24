@@ -13,7 +13,7 @@ import {
 } from '@/components/student-hub/ui';
 import { useDictation, useProfessorVoice } from '@/components/student-hub/voice';
 import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights';
-import { AskAide } from '@/components/student-hub/AskAide';
+import { StudyPanel, type GroupSeed } from '@/components/student-hub/StudyPanel';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
 
 // One reading, five postures: the reading itself (the actual pages of the
@@ -43,6 +43,19 @@ export default function StudentHubSession() {
   const [notesDraft, setNotesDraft] = useState<string | null>(null);
   const [resTitle, setResTitle] = useState('');
   const [resUrl, setResUrl] = useState('');
+  const [groupSeed, setGroupSeed] = useState<GroupSeed | null>(null);
+  // Page magnification for the reader; remembered on this machine.
+  const [zoom, setZoom] = useState(() => {
+    const z = Number(localStorage.getItem('student-hub-zoom'));
+    return z >= 1 && z <= 3 ? z : 1;
+  });
+  const changeZoom = (delta: number) => {
+    setZoom((z) => {
+      const next = Math.min(3, Math.max(1, Math.round((z + delta) * 4) / 4));
+      localStorage.setItem('student-hub-zoom', String(next));
+      return next;
+    });
+  };
   const [pageUrls, setPageUrls] = useState<string[] | null>(null);
   const [pagesError, setPagesError] = useState('');
 
@@ -270,6 +283,7 @@ export default function StudentHubSession() {
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <HubStyles />
       <CaseCaption
+        backTo={`/app/student-hub${session.text_id ? `?text=${session.text_id}` : ''}`}
         kicker={`Contextspaces · Student Hub${session.source_label ? ` · ${session.source_label}` : ''}`}
         title={session.title}
         citation={session.citation || undefined}
@@ -310,44 +324,67 @@ export default function StudentHubSession() {
                   </p>
                 )}
                 {pageUrls && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <QuietControl onClick={() => changeZoom(-0.25)} disabled={zoom <= 1} aria-label="Smaller pages">A−</QuietControl>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 38, textAlign: 'center' }}>
+                        {Math.round(zoom * 100)}%
+                      </span>
+                      <QuietControl onClick={() => changeZoom(0.25)} disabled={zoom >= 3} aria-label="Larger pages">A+</QuietControl>
+                    </span>
                     <QuietControl
                       onClick={() => setMarking((v) => !v)}
                       style={marking ? { background: T.brass, color: T.paper, borderColor: T.brass } : undefined}
-                      title="Drag on a page to highlight; click a highlight to remove it"
+                      title="Drag on a page to highlight; click a highlight for its note or to remove it"
                     >
                       {marking ? '✎ highlighting — drag on the page' : '✎ highlight'}
                     </QuietControl>
                   </div>
                 )}
-                {pageUrls?.map((url, i) => (
-                  <figure key={i} style={{ margin: '0 0 18px' }}>
-                    <PageWithHighlights
-                      src={url}
-                      pageIndex={i}
-                      alt={`Page ${i + 1} of the reading`}
-                      highlights={session.highlights ?? []}
-                      marking={marking}
-                      onAdd={addHighlight}
-                      onNote={noteHighlight}
-                      onRemove={removeHighlight}
-                    />
-                    <figcaption style={{
-                      fontFamily: T.mono, fontSize: 11, color: T.faint,
-                      textAlign: 'center', paddingTop: 6,
-                    }}>
-                      {i + 1} / {pageUrls.length}
-                    </figcaption>
-                  </figure>
-                ))}
+                <div style={{ overflowX: zoom > 1 ? 'auto' : 'visible' }}>
+                  {pageUrls?.map((url, i) => (
+                    <figure key={i} style={{ margin: '0 0 18px', width: `${zoom * 100}%` }}>
+                      <PageWithHighlights
+                        src={url}
+                        pageIndex={i}
+                        alt={`Page ${i + 1} of the reading`}
+                        highlights={session.highlights ?? []}
+                        marking={marking}
+                        onAdd={addHighlight}
+                        onNote={noteHighlight}
+                        onRemove={removeHighlight}
+                        onAskGroup={session.text_id ? (h) => setGroupSeed({
+                          content: '',
+                          anchor: { page: h.page, note: h.note, reading_title: session.title },
+                          nonce: Date.now(),
+                        }) : undefined}
+                      />
+                      <figcaption style={{
+                        fontFamily: T.mono, fontSize: 11, color: T.faint,
+                        textAlign: 'center', paddingTop: 6,
+                      }}>
+                        {i + 1} / {pageUrls.length}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
               </>
             ) : (
-              <div style={{
-                fontFamily: T.serif, fontSize: 15.5, lineHeight: 1.6, color: T.ink,
-                whiteSpace: 'pre-wrap', padding: '6px 0',
-              }}>
-                {session.reading}
-              </div>
+              <>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, paddingBottom: 8 }}>
+                  <QuietControl onClick={() => changeZoom(-0.25)} disabled={zoom <= 1} aria-label="Smaller text">A−</QuietControl>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 38, textAlign: 'center' }}>
+                    {Math.round(zoom * 100)}%
+                  </span>
+                  <QuietControl onClick={() => changeZoom(0.25)} disabled={zoom >= 3} aria-label="Larger text">A+</QuietControl>
+                </div>
+                <div style={{
+                  fontFamily: T.serif, fontSize: 15.5 * zoom, lineHeight: 1.6, color: T.ink,
+                  whiteSpace: 'pre-wrap', padding: '6px 0',
+                }}>
+                  {session.reading}
+                </div>
+              </>
             )}
             <div style={{ textAlign: 'center', padding: '22px 0 8px' }}>
               <GreenButton onClick={() => setTab('coldcall')}>Proceed to the cold call</GreenButton>
@@ -413,6 +450,9 @@ export default function StudentHubSession() {
                   library={library}
                   currentId={session.id}
                   onChange={saveAnnotations}
+                  onMessageGroup={session.text_id
+                    ? () => setGroupSeed({ content: '', nonce: Date.now() })
+                    : undefined}
                 />
                 <QuietControl onClick={() => void prepareOutline()} title="Regenerates the skeleton; your notes, points, and cross-references stay">
                   outline it again
@@ -618,7 +658,11 @@ export default function StudentHubSession() {
         {error && tab !== 'coldcall' && <div style={{ marginTop: 12 }}><ErrorNote>{error}</ErrorNote></div>}
       </main>
 
-      <AskAide session={session} />
+      <StudyPanel
+        session={session}
+        seed={groupSeed}
+        onSeedConsumed={() => setGroupSeed(null)}
+      />
     </div>
   );
 }

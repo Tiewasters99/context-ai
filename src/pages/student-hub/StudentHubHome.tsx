@@ -97,6 +97,7 @@ export default function StudentHubHome() {
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%' }}>
       <HubStyles />
       <CaseCaption
+        backTo="/app/student-hub"
         kicker="Contextspaces · Student Hub · The shelf"
         title="The shelf"
         citation="Loose readings and the intake desk. Your texts live in the hub."

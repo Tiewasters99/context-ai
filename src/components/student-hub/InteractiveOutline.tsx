@@ -12,7 +12,7 @@ import { QuietControl } from './ui';
 
 type LibraryReading = Pick<StudySession, 'id' | 'title' | 'kind' | 'citation'>;
 
-export function InteractiveOutline({ outline, annotations, library, currentId, onChange }: {
+export function InteractiveOutline({ outline, annotations, library, currentId, onChange, onMessageGroup }: {
   outline: OutlineSection[];
   annotations: OutlineAnnotations;
   /** Every reading in the library, for cross-references. */
@@ -20,6 +20,8 @@ export function InteractiveOutline({ outline, annotations, library, currentId, o
   /** The reading this outline belongs to (excluded from cross-reference options). */
   currentId: string;
   onChange: (next: OutlineAnnotations) => void;
+  /** Opens the study-group chat; when absent the button previews as disabled. */
+  onMessageGroup?: () => void;
 }) {
   const navigate = useNavigate();
   const [noteOpen, setNoteOpen] = useState<string | null>(null);
@@ -158,9 +160,15 @@ export function InteractiveOutline({ outline, annotations, library, currentId, o
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 2 }}>
-        <QuietControl disabled title="Study groups are coming — up to five classmates over one shared text">
-          message your study group — soon
-        </QuietControl>
+        {onMessageGroup ? (
+          <QuietControl onClick={onMessageGroup} title="Open the study-group chat">
+            message your study group
+          </QuietControl>
+        ) : (
+          <QuietControl disabled title="Open the reading to message your study group">
+            message your study group
+          </QuietControl>
+        )}
       </div>
       {outline.map((sec, i) => (
         <div key={i} style={{ marginBottom: 26 }}>

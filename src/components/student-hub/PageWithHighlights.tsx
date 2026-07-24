@@ -10,7 +10,7 @@ import { T } from './theme';
 
 const MIN_FRACTION = 0.01;
 
-export function PageWithHighlights({ src, pageIndex, alt, highlights, marking, onAdd, onNote, onRemove }: {
+export function PageWithHighlights({ src, pageIndex, alt, highlights, marking, onAdd, onNote, onRemove, onAskGroup }: {
   src: string;
   pageIndex: number;
   alt: string;
@@ -21,6 +21,8 @@ export function PageWithHighlights({ src, pageIndex, alt, highlights, marking, o
   /** idx is the position in the full highlights array. */
   onNote: (idx: number, note: string) => void;
   onRemove: (idx: number) => void;
+  /** Bring this passage to the study group. */
+  onAskGroup?: (h: Highlight) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
@@ -154,7 +156,7 @@ export function PageWithHighlights({ src, pageIndex, alt, highlights, marking, o
               fontFamily: T.serif, fontSize: 13.5, fontStyle: 'italic', lineHeight: 1.5, color: T.ink,
             }}
           />
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
             <button
               type="button"
               onPointerDown={(e) => e.preventDefault()}
@@ -167,6 +169,20 @@ export function PageWithHighlights({ src, pageIndex, alt, highlights, marking, o
             >
               remove highlight
             </button>
+            {onAskGroup && (
+              <button
+                type="button"
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => { onAskGroup(highlights[openIdx]); setOpenIdx(null); }}
+                style={{
+                  appearance: 'none', border: 'none', background: 'none', cursor: 'pointer', padding: 0,
+                  fontFamily: T.sans, fontSize: 11, fontWeight: 600, letterSpacing: '0.05em',
+                  textTransform: 'uppercase', color: T.green,
+                }}
+              >
+                ask the group
+              </button>
+            )}
             <button
               type="button"
               onPointerDown={(e) => e.preventDefault()}
