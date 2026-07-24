@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   listTexts, listReadings, sessionsWithTranscripts, updateSession, generateOutline,
   type StudyText, type StudySession, type OutlineAnnotations,
@@ -26,7 +26,10 @@ const DRAWER_TAB: Record<Drawer, string> = {
 export default function TextView() {
   const navigate = useNavigate();
   const [texts, setTexts] = useState<StudyText[] | null>(null);
-  const [textId, setTextId] = useState<string>('');
+  // The chosen text lives in the URL, so the browser's back button walks
+  // chapter -> landing instead of leaving Contextspaces.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const textId = searchParams.get('text') ?? '';
   const [readings, setReadings] = useState<StudySession[]>([]);
   const [inProgress, setInProgress] = useState<Set<string>>(new Set());
   const [drawer, setDrawer] = useState<Drawer>('readings');
@@ -43,6 +46,8 @@ export default function TextView() {
       .then(setTexts)
       .catch((e) => setError(e instanceof Error ? e.message : 'Could not open your library.'));
   }, []);
+
+  useEffect(() => { setExpanded(new Set()); }, [textId]);
 
   useEffect(() => {
     if (!textId) return;
@@ -137,12 +142,25 @@ export default function TextView() {
       <HubStyles />
 
       {/* ---- Caption band: Contextspaces · Student Hub · Texts, one level ---- */}
-      <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '20px 24px 16px' }}>
+      <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '28px 24px 22px' }}>
         <div style={{ maxWidth: 780, margin: '0 auto' }}>
           <div style={{
-            fontFamily: T.sans, fontSize: 13, fontWeight: 700,
-            letterSpacing: '0.14em', textTransform: 'uppercase', color: T.brass,
+            fontFamily: T.sans, fontSize: 15, fontWeight: 700,
+            letterSpacing: '0.15em', textTransform: 'uppercase', color: T.brass,
           }}>
+            {(picker || textId) && (
+              <button
+                type="button"
+                onClick={() => { setPicker(false); if (textId) setSearchParams({}); }}
+                aria-label="Back to the hub"
+                style={{
+                  appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
+                  padding: 0, marginRight: 14, font: 'inherit', color: T.paper,
+                }}
+              >
+                ←
+              </button>
+            )}
             Contextspaces · Student Hub ·{' '}
             <button
               type="button"
@@ -173,7 +191,7 @@ export default function TextView() {
 
       {/* ---- Drawers: present from the start; they fill in as you choose ---- */}
       <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
-        <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', gap: 4, padding: '8px 16px', flexWrap: 'wrap' }}>
+        <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', gap: 6, padding: '11px 16px', flexWrap: 'wrap' }}>
           <HubTab label="Readings" active={drawer === 'readings'} onClick={() => setDrawer('readings')} />
           <HubTab label="Outlines" active={drawer === 'outlines'} onClick={() => setDrawer('outlines')} />
           <HubTab label="Case briefs" active={drawer === 'briefs'} onClick={() => setDrawer('briefs')} />
@@ -189,7 +207,7 @@ export default function TextView() {
             <button
               key={t.id}
               type="button"
-              onClick={() => { setTextId(t.id); setPicker(false); setExpanded(new Set()); }}
+              onClick={() => { setSearchParams({ text: t.id }); setPicker(false); }}
               style={{
                 appearance: 'none', border: 'none', cursor: 'pointer', display: 'flex',
                 alignItems: 'baseline', gap: 12, width: '100%', textAlign: 'left',
