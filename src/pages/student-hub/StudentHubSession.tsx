@@ -191,6 +191,9 @@ export default function StudentHubSession() {
   const answer = useCallback(async () => {
     const text = draft.trim();
     if (!session || !text || working) return;
+    // Release the mic before the professor replies — a live mic makes iOS
+    // duck playback into the quiet "call" audio route.
+    if (dictation.listening) dictation.toggle();
     voice.stop();
     setDraft('');
     setError('');
@@ -205,7 +208,7 @@ export default function StudentHubSession() {
     const next = [...messages, mine];
     setMessages(next);
     await callProfessor(next, session);
-  }, [session, draft, working, messages, voice, callProfessor]);
+  }, [session, draft, working, messages, voice, dictation, callProfessor]);
 
   /* ------------- The student's own layer ------------- */
 
