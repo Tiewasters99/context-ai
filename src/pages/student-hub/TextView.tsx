@@ -32,7 +32,9 @@ export default function TextView() {
   const [drawer, setDrawer] = useState<Drawer>('readings');
   const [closed, setClosed] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
-  const [menuOpen, setMenuOpen] = useState(false);
+  // The hub opens at the library: just "Texts". Picking a text reveals its
+  // chapter; clicking "Texts" again puts the chapter away.
+  const [mode, setMode] = useState<'library' | 'text'>('library');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [outlining, setOutlining] = useState<string | null>(null);
 
@@ -137,80 +139,79 @@ export default function TextView() {
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%' }}>
       <HubStyles />
 
-      {/* ---- My texts caption band: click the title to open the library ---- */}
+      {/* ---- Texts caption band: the toggle between library and chapter ---- */}
       <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '24px 24px 18px' }}>
-        <div style={{ maxWidth: 780, margin: '0 auto', position: 'relative' }}>
-          <Kicker>
-            Contextspaces · Student Hub ·{' '}
-            <button
-              type="button"
-              onClick={() => setMenuOpen((v) => !v)}
-              aria-expanded={menuOpen}
-              style={{
-                appearance: 'none', border: 'none', background: 'none', cursor: 'pointer', padding: 0,
-                font: 'inherit', letterSpacing: 'inherit', textTransform: 'inherit', color: 'inherit',
-                textDecoration: 'underline', textUnderlineOffset: 3,
-                textDecorationColor: 'rgba(169,139,69,0.6)',
-              }}
-            >
-              My texts {menuOpen ? '▴' : '▾'}
-            </button>
-          </Kicker>
+        <div style={{ maxWidth: 780, margin: '0 auto' }}>
+          <Kicker>Contextspaces · Student Hub</Kicker>
           <button
             type="button"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-expanded={menuOpen}
-            aria-label="My texts — choose a text"
+            onClick={() => setMode(mode === 'text' ? 'library' : textId ? 'text' : 'library')}
+            aria-expanded={mode === 'library'}
+            aria-label="Texts — open your library"
             style={{
               appearance: 'none', border: 'none', background: 'transparent', cursor: 'pointer',
-              display: 'flex', alignItems: 'baseline', gap: 10, padding: 0, margin: '0.2em 0 0',
-              textAlign: 'left', maxWidth: '100%',
+              display: 'flex', alignItems: 'baseline', gap: 12, padding: 0, margin: '0.15em 0 0',
             }}
           >
             <span style={{
-              fontFamily: T.serif, fontSize: 'clamp(20px, 3.5vw, 27px)', color: T.paper,
-              fontStyle: 'italic', fontWeight: 400,
+              fontFamily: T.serif, fontSize: 'clamp(26px, 5vw, 36px)', color: T.paper, fontWeight: 400,
             }}>
-              {selected ? selected.title : 'Opening your library…'}
+              Texts
             </span>
-            <span style={{ color: T.brass, fontSize: 13, flexShrink: 0 }}>{menuOpen ? '▴' : '▾'}</span>
+            <span style={{ color: T.brass, fontSize: 15, flexShrink: 0 }}>{mode === 'library' ? '▴' : '▾'}</span>
           </button>
-          {menuOpen && texts && (
-            <div style={{
-              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 20, marginTop: 10,
-              background: T.paper, border: `1px solid ${T.rule}`, borderTop: `3px solid ${T.brass}`,
-              borderRadius: 2, maxHeight: 320, overflowY: 'auto',
-            }}>
-              {texts.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => { setTextId(t.id); setMenuOpen(false); setExpanded(new Set()); }}
-                  style={{
-                    appearance: 'none', border: 'none', cursor: 'pointer', display: 'block',
-                    width: '100%', textAlign: 'left', padding: '12px 16px',
-                    background: t.id === textId ? 'rgba(31,77,58,0.07)' : 'transparent',
-                    borderBottom: `1px solid ${T.rule}`,
-                    fontFamily: T.serif, fontSize: 16, fontStyle: 'italic', color: T.ink,
-                  }}
-                >
-                  {t.title}
-                </button>
-              ))}
-              <div style={{ padding: '10px 16px', fontFamily: T.sans, fontSize: 11.5, color: T.faint }}>
-                Scan more chapters and they take their place here.
-              </div>
-            </div>
-          )}
-          {readings.length > 0 && (
-            <div style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)', marginTop: 4 }}>
-              {sectionCount} section{sectionCount === 1 ? '' : 's'} · {readings.length} reading{readings.length === 1 ? '' : 's'}
+          {mode === 'text' && selected && (
+            <div style={{ marginTop: 4 }}>
+              <span style={{ fontFamily: T.serif, fontSize: 16, fontStyle: 'italic', color: T.paper }}>
+                {selected.title}
+              </span>
+              {readings.length > 0 && (
+                <span style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)', marginLeft: 10 }}>
+                  {sectionCount} section{sectionCount === 1 ? '' : 's'} · {readings.length} reading{readings.length === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
           )}
         </div>
       </header>
 
+      {/* ---- The library: pick a text ---- */}
+      {mode === 'library' && (
+        <main style={{ maxWidth: 780, margin: '0 auto', padding: '26px 20px 48px' }}>
+          {error && <ErrorNote>{error}</ErrorNote>}
+          {texts?.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => { setTextId(t.id); setMode('text'); setExpanded(new Set()); }}
+              style={{
+                appearance: 'none', border: 'none', cursor: 'pointer', display: 'flex',
+                alignItems: 'baseline', gap: 12, width: '100%', textAlign: 'left',
+                padding: '16px 4px', background: 'transparent', borderBottom: `1px solid ${T.rule}`,
+              }}
+            >
+              <span style={{ color: T.brass, fontFamily: T.serif, flexShrink: 0 }}>§</span>
+              <span style={{ fontFamily: T.serif, fontSize: 18, fontStyle: 'italic', color: T.ink }}>
+                {t.title}
+              </span>
+            </button>
+          ))}
+          <p style={{ fontFamily: T.sans, fontSize: 12, color: T.faint, marginTop: 18 }}>
+            Scan more chapters and books and they take their place here.
+          </p>
+          <div style={{ marginTop: 18 }}>
+            <Link
+              to="/app/student-hub/shelf"
+              style={{ fontFamily: T.sans, fontSize: 12, color: T.faint, textDecoration: 'none' }}
+            >
+              The shelf — loose readings &amp; paste a new one →
+            </Link>
+          </div>
+        </main>
+      )}
+
       {/* ---- Drawers ---- */}
+      {mode === 'text' && (
       <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
         <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', gap: 4, padding: '8px 16px', flexWrap: 'wrap' }}>
           <HubTab label="Readings" active={drawer === 'readings'} onClick={() => setDrawer('readings')} />
@@ -219,7 +220,9 @@ export default function TextView() {
           <HubTab label="Cold calls" active={drawer === 'coldcalls'} onClick={() => setDrawer('coldcalls')} />
         </div>
       </nav>
+      )}
 
+      {mode === 'text' && (
       <main style={{ maxWidth: 780, margin: '0 auto', padding: '20px 20px 48px' }}>
         {error && <ErrorNote>{error}</ErrorNote>}
 
@@ -353,6 +356,7 @@ export default function TextView() {
           </Link>
         </div>
       </main>
+      )}
     </div>
   );
 }
