@@ -121,6 +121,30 @@ export function useProfessorVoice() {
     };
   }, [supported]);
 
+  // iOS only lets a page speak after speechSynthesis ran inside a real user
+  // gesture. The professor speaks asynchronously (after the model responds),
+  // so the first tap anywhere primes the channel with a silent utterance;
+  // every later programmatic speak() is then audible.
+  useEffect(() => {
+    if (!supported) return;
+    const unlock = () => {
+      try {
+        const u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+        window.speechSynthesis.resume();
+      } catch { /* best effort */ }
+      document.removeEventListener('touchend', unlock);
+      document.removeEventListener('click', unlock);
+    };
+    document.addEventListener('touchend', unlock);
+    document.addEventListener('click', unlock);
+    return () => {
+      document.removeEventListener('touchend', unlock);
+      document.removeEventListener('click', unlock);
+    };
+  }, [supported]);
+
   const stop = useCallback(() => {
     if (!supported) return;
     window.speechSynthesis.cancel();
@@ -138,6 +162,8 @@ export function useProfessorVoice() {
     u.onend = () => setSpeaking(false);
     u.onerror = () => setSpeaking(false);
     window.speechSynthesis.speak(u);
+    // iOS occasionally leaves the queue paused after a cancel().
+    window.speechSynthesis.resume();
   }, [supported]);
 
   return { supported, enabled, setEnabled, speaking, speak, stop };
