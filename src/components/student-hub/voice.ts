@@ -8,6 +8,12 @@
 // diarized transcription — heavier than a study session needs.)
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+
+// One sample of silence — played inside the first real tap to unlock the
+// audio element for later programmatic playback (iOS autoplay policy).
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
 interface SpeechRecognitionLike {
   lang: string;
@@ -104,6 +110,10 @@ export function useProfessorVoice() {
   // WebKit garbage-collects an utterance nothing references — the speech
   // then dies before onstart ever fires. Hold it until it finishes.
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // The professor's primary voice: server-generated audio through one
+  // reused (gesture-unlocked) element. Web Speech is the fallback only.
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const urlRef = useRef<string | null>(null);
   const enabledRef = useRef(enabled);
   useEffect(() => { enabledRef.current = enabled; });
 
@@ -124,19 +134,25 @@ export function useProfessorVoice() {
     };
   }, [supported]);
 
-  // iOS only lets a page speak after speechSynthesis ran inside a real user
-  // gesture. The professor speaks asynchronously (after the model responds),
-  // so the first tap anywhere primes the channel with a silent utterance;
-  // every later programmatic speak() is then audible.
+  // iOS gates all programmatic audio behind a real user gesture. The first
+  // tap anywhere primes BOTH channels: the audio element (which plays the
+  // professor's server-generated voice) and speechSynthesis (the fallback).
   useEffect(() => {
-    if (!supported) return;
     const unlock = () => {
       try {
-        const u = new SpeechSynthesisUtterance(' ');
-        u.volume = 0;
-        window.speechSynthesis.speak(u);
-        window.speechSynthesis.resume();
+        if (!audioRef.current) audioRef.current = new Audio();
+        const a = audioRef.current;
+        a.src = SILENT_WAV;
+        void a.play().catch(() => { /* unlocked on the next gesture instead */ });
       } catch { /* best effort */ }
+      if (supported) {
+        try {
+          const u = new SpeechSynthesisUtterance(' ');
+          u.volume = 0;
+          window.speechSynthesis.speak(u);
+          window.speechSynthesis.resume();
+        } catch { /* best effort */ }
+      }
       document.removeEventListener('touchend', unlock);
       document.removeEventListener('click', unlock);
     };
@@ -149,12 +165,16 @@ export function useProfessorVoice() {
   }, [supported]);
 
   const stop = useCallback(() => {
-    if (!supported) return;
-    window.speechSynthesis.cancel();
+    const a = audioRef.current;
+    if (a) {
+      a.pause();
+      a.currentTime = 0;
+    }
+    if (supported) window.speechSynthesis.cancel();
     setSpeaking(false);
   }, [supported]);
 
-  const speak = useCallback((text: string) => {
+  const webSpeak = useCallback((text: string) => {
     if (!supported || !enabledRef.current || !text) return;
     const synth = window.speechSynthesis;
     const start = (attempt: number) => {
@@ -201,6 +221,38 @@ export function useProfessorVoice() {
       start(1);
     }
   }, [supported]);
+
+  const speak = useCallback((text: string) => {
+    if (!enabledRef.current || !text) return;
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) throw new Error('no session');
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error(`tts ${res.status}`);
+        const blob = await res.blob();
+        if (!enabledRef.current) return;
+        if (!audioRef.current) audioRef.current = new Audio();
+        const a = audioRef.current;
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = URL.createObjectURL(blob);
+        a.onplaying = () => setSpeaking(true);
+        a.onended = () => setSpeaking(false);
+        a.onerror = () => setSpeaking(false);
+        a.src = urlRef.current;
+        await a.play();
+      } catch {
+        // No endpoint (vite dev), no credit, or playback refused — fall
+        // back to the browser's own speech engine.
+        webSpeak(text);
+      }
+    })();
+  }, [webSpeak]);
 
   return { supported, enabled, setEnabled, speaking, speak, stop };
 }
