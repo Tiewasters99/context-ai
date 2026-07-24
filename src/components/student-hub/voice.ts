@@ -170,6 +170,8 @@ export function useProfessorVoice() {
   const supported = typeof window !== 'undefined' && 'speechSynthesis' in window;
   const [enabled, setEnabled] = useState(true);
   const [speaking, setSpeaking] = useState(false);
+  // Surfaced to the UI — a silent professor must say why he is silent.
+  const [lastError, setLastError] = useState('');
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
   // WebKit garbage-collects an utterance nothing references — the speech
   // then dies before onstart ever fires. Hold it until it finishes.
@@ -308,7 +310,12 @@ export function useProfessorVoice() {
     a.onended = finish;
     a.onerror = finish;
     a.src = item.url;
-    void a.play().catch(finish);
+    void a.play().catch((err) => {
+      const msg = err instanceof Error ? `playback refused: ${err.message}` : 'playback refused';
+      console.warn('[professor-voice]', msg);
+      setLastError(msg);
+      finish();
+    });
   }, [drainCheck]);
 
   const pump = useCallback(() => {
@@ -324,18 +331,24 @@ export function useProfessorVoice() {
         try {
           const { data } = await supabase.auth.getSession();
           const token = data.session?.access_token;
-          if (!token) throw new Error('no session');
+          if (!token) throw new Error('not signed in');
           const res = await fetch('/api/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({ text: item.text }),
           });
-          if (!res.ok) throw new Error(`tts ${res.status}`);
+          if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`voice request failed (${res.status}) ${detail.slice(0, 120)}`);
+          }
           const blob = await res.blob();
           item.url = URL.createObjectURL(blob);
           item.state = 'ready';
-        } catch {
+        } catch (err) {
           item.state = 'failed';
+          const msg = err instanceof Error ? err.message : 'voice request failed';
+          console.warn('[professor-voice]', msg);
+          setLastError(msg);
           // Endpoint missing (vite dev) or credit gone: if nothing has
           // played yet, hand the whole turn to the browser engine at end.
           if (!playedAnyRef.current) fallbackRef.current = true;
@@ -350,6 +363,7 @@ export function useProfessorVoice() {
 
   /** Start a professor turn — clears the previous pipeline. */
   const beginTurn = useCallback(() => {
+    setLastError('');
     queueRef.current = [];
     bufferRef.current = '';
     turnTextRef.current = '';
@@ -408,5 +422,5 @@ export function useProfessorVoice() {
 
   useEffect(() => () => stop(), [stop]);
 
-  return { supported, enabled, setEnabled, speaking, beginTurn, addText, endTurn, stop };
+  return { supported, enabled, setEnabled, speaking, lastError, beginTurn, addText, endTurn, stop };
 }

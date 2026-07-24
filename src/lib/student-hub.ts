@@ -244,6 +244,19 @@ export async function addMessage(
   return data as StudyMessage;
 }
 
+/** Wipe a conversation thread (e.g. restart the cold call). */
+export async function clearMessages(
+  sessionId: string,
+  thread: MessageThread = 'coldcall',
+): Promise<void> {
+  const { error } = await supabase
+    .from('student_hub_messages')
+    .delete()
+    .eq('session_id', sessionId)
+    .eq('thread', thread);
+  if (error) throw new Error(error.message);
+}
+
 /** Every reading across the library — for cross-references between cases. */
 export async function listAllReadings(): Promise<Pick<StudySession, 'id' | 'title' | 'kind' | 'citation'>[]> {
   const { data, error } = await supabase

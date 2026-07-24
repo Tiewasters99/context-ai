@@ -84,9 +84,9 @@ export function HubTab({ label, active, onClick }: {
         appearance: 'none', border: 'none', cursor: 'pointer',
         background: active ? T.green : 'transparent',
         color: active ? T.paper : T.green,
-        fontFamily: T.sans, fontSize: 14, fontWeight: 600,
-        letterSpacing: '0.06em', textTransform: 'uppercase',
-        padding: '11px 20px', borderRadius: 2,
+        fontFamily: T.sans, fontSize: 13, fontWeight: 600,
+        letterSpacing: '0.05em', textTransform: 'uppercase',
+        padding: '10px 14px', borderRadius: 2,
         borderBottom: active ? `2px solid ${T.brass}` : '2px solid transparent',
         transition: 'background 120ms ease',
       }}

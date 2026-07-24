@@ -274,6 +274,8 @@ export default function AmbientControls() {
       {showMusicLibrary && (
         <MusicLibrary
           currentTrackId={loadedTrack?.id ?? null}
+          playing={musicPlaying}
+          onToggleActive={toggleMusic}
           onSelect={(track) => loadAndPlayTrack(track)}
           onUpload={handleLibraryUpload}
           onClose={() => setShowMusicLibrary(false)}

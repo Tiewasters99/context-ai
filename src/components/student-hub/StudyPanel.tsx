@@ -245,22 +245,33 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
   /* ---------------- render ---------------- */
 
   if (!open) {
-    return (
+    // Two slim index tabs on the right edge — like tabs on a binder.
+    // Quieter than a floating pill, and clear of the corner controls.
+    const edgeTab = (top: string, label: string, target: 'aide' | 'group') => (
       <button
+        key={target}
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => { setTab(target); setOpen(true); }}
         style={{
-          // Mid-page right, clear of the ambient cover and music controls
-          // that live in the corners.
-          position: 'fixed', right: 14, top: '50%', transform: 'translateY(-50%)', zIndex: 40,
-          appearance: 'none', cursor: 'pointer', borderRadius: 999,
-          border: `1px solid ${T.greenDark}`, background: T.greenDark, color: T.paper,
-          fontFamily: T.sans, fontSize: 12, fontWeight: 600, letterSpacing: '0.05em',
-          padding: '10px 18px',
+          position: 'fixed', right: 0, top, transform: 'translateY(-50%)', zIndex: 40,
+          appearance: 'none', cursor: 'pointer',
+          writingMode: 'vertical-rl',
+          background: T.greenDark, color: T.paper,
+          border: 'none', borderLeft: `2px solid ${T.brass}`,
+          borderRadius: '6px 0 0 6px',
+          fontFamily: T.sans, fontSize: 10.5, fontWeight: 700,
+          letterSpacing: '0.12em', textTransform: 'uppercase',
+          padding: '14px 7px',
         }}
       >
-        Aide &amp; group
+        {label}
       </button>
+    );
+    return (
+      <>
+        {edgeTab('30%', 'The aide', 'aide')}
+        {edgeTab('56%', 'Group', 'group')}
+      </>
     );
   }
 
