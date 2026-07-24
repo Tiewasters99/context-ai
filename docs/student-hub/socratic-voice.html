@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Hub — Cold Call (voice testbed)</title>
+<style>
+  :root{--paper:#FAF8F2;--ink:#1C1B17;--green:#1F4D3A;--greendk:#153728;--ox:#7A2E2E;--brass:#A98B45;--rule:#D9D4C7;--faint:#6E6A5E}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:'Iowan Old Style','Palatino Linotype',Georgia,serif}
+  header{background:var(--greendk);border-bottom:3px solid var(--brass);padding:24px 20px 18px}
+  .wrap{max-width:760px;margin:0 auto;padding:0 4px}
+  .kicker{font-family:-apple-system,'Segoe UI',sans-serif;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--brass)}
+  h1{font-size:clamp(22px,4vw,30px);color:var(--paper);font-style:italic;font-weight:400;margin:.2em 0 0}
+  h1 .v{font-style:normal;font-size:.7em;opacity:.7}
+  .cite{font-size:13px;color:rgba(250,248,242,.65);margin-top:4px}
+  main{max-width:760px;margin:0 auto;padding:20px 16px 40px}
+  .setup label{font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ox)}
+  .setup input{width:100%;padding:10px 12px;border:1px solid var(--rule);border-radius:2px;font-family:monospace;font-size:14px;margin:6px 0 4px;background:#fff}
+  .note{font-size:13px;color:var(--faint);line-height:1.5}
+  button{appearance:none;cursor:pointer;border:none;border-radius:2px;font-family:-apple-system,'Segoe UI',sans-serif;font-weight:600}
+  .primary{background:var(--green);color:var(--paper);font-size:14px;letter-spacing:.04em;padding:12px 26px;margin-top:14px}
+  .primary:disabled{background:var(--rule);cursor:default}
+  #log{margin-top:8px}
+  .turn{margin:14px 0}
+  .who{font-family:monospace;font-size:11px;letter-spacing:.08em;margin-bottom:4px}
+  .who.prof{color:var(--ox)} .who.stud{color:var(--green)}
+  .line{display:flex;gap:12px}
+  .ln{font-family:monospace;font-size:11px;color:var(--rule);width:24px;text-align:right;flex-shrink:0;padding-top:4px}
+  .tx{font-size:15.5px;line-height:1.6}
+  .bar{display:flex;align-items:center;gap:14px;padding:6px 0 8px;font-family:-apple-system,'Segoe UI',sans-serif;font-size:12px}
+  .pill{border:1px solid var(--rule);background:transparent;color:var(--faint);font-size:11px;letter-spacing:.05em;padding:5px 12px;border-radius:999px}
+  .pill.on{background:var(--green);color:var(--paper)}
+  .stop{background:none;color:var(--ox);font-size:11px}
+  .row{border-top:1px solid var(--rule);padding-top:12px;display:flex;gap:10px}
+  #mic{width:46px;flex-shrink:0;font-size:18px;background:#fff;border:1px solid var(--rule);color:var(--green)}
+  #mic.rec{background:var(--ox);color:var(--paper);border-color:var(--ox);animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(122,46,46,.45)}50%{box-shadow:0 0 0 8px rgba(122,46,46,0)}}
+  textarea{flex:1;resize:none;font-family:inherit;font-size:15px;line-height:1.5;padding:10px 12px;border:1px solid var(--rule);border-radius:2px;background:#fff;outline:none}
+  #send{background:var(--ox);color:var(--paper);font-size:13px;letter-spacing:.05em;padding:0 22px}
+  #send:disabled{background:var(--rule)}
+  .err{font-family:-apple-system,'Segoe UI',sans-serif;font-size:13px;color:var(--ox);padding:6px 0 0 36px}
+  .thinking{font-family:monospace;font-size:12px;color:var(--faint);padding-left:36px}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="kicker">Contextspaces &middot; Student Hub &middot; Voice testbed (local)</div>
+  <h1>Hawkins <span class="v">v.</span> McGee</h1>
+  <div class="cite">84 N.H. 114, 146 A. 641 (1929) &middot; scanned from your casebook, ch. 1 &sect; 1</div>
+</div></header>
+<main>
+  <div id="setup" class="setup">
+    <label for="key">Anthropic API key</label>
+    <input id="key" type="password" placeholder="sk-ant-..." autocomplete="off">
+    <div class="note">Held in this page's memory only &mdash; never stored, never sent anywhere but api.anthropic.com. Serve this file from localhost (e.g. <code>python3 -m http.server</code>), open it in Chrome, and allow the microphone when prompted.</div>
+    <button class="primary" id="begin">Take your seat</button>
+  </div>
+  <div id="room" class="hidden">
+    <div class="bar">
+      <button class="pill on" id="voice">&#9679; Professor speaks</button>
+      <button class="stop hidden" id="stopspk">&#9632; Stop</button>
+      <span class="note" id="srnote"></span>
+    </div>
+    <div id="log"></div>
+    <div class="thinking hidden" id="thinking">The professor considers&hellip;</div>
+    <div class="err hidden" id="err"></div>
+    <div class="row">
+      <button id="mic" title="Dictate your answer">&#127908;</button>
+      <textarea id="inp" rows="2" placeholder="Answer the professor &mdash; type or tap the mic"></textarea>
+      <button id="send">Answer</button>
+    </div>
+  </div>
+</main>
+<script>
+const CASE_TEXT = `HAWKINS v. McGEE, Supreme Court of New Hampshire, 1929. 84 N.H. 114, 146 A. 641.
+Assumpsit against a surgeon for breach of an alleged warranty of the success of an operation (removal of scar tissue from plaintiff's burned right palm and grafting of skin from his chest). Jury verdict of $3,000 for plaintiff on the warranty count; a negligence count was nonsuited. Trial court ordered the verdict set aside as excessive unless plaintiff remitted all above $500; plaintiff refused.
+BRANCH, J.: Statements that the boy would be in the hospital "three or four days, not over four," and back to work "a few days" later, were mere opinions or predictions and impose no contractual liability. But the statement "I will guarantee to make the hand a hundred per cent perfect hand or a hundred per cent good hand," if uttered, would establish a warranty. Whether words could possibly bear the contractual meaning imputed to them is a preliminary question of law, but the trial court did not err in submitting the contract question to the jury: there was evidence the defendant repeatedly solicited the operation, and plaintiff's counsel advanced the theory that he wished to "experiment on skin grafting," in which he had little experience — supporting the inference that the words were intended at face value as an inducement to consent.
+Damages: the jury charge allowed recovery for (1) pain and suffering from the operation and (2) ill effects of the operation on the hand. This was error. Contract damages are "compensation for a breach, measured in the terms of the contract"; the purpose is "to put the plaintiff in as good a position as he would have been in had the defendant kept his contract" (Williston). The case is analogous to a machine warranted to do certain work: damages are the difference between the value of the machine as warranted and its actual value, plus incidental losses within the parties' contemplation. The true measure here is the difference between the value to him of a perfect or good hand, as promised, and the value of his hand in its present condition, plus incidental consequences fairly within the contemplation of the parties. Pain incident to the operation was part of the consideration the plaintiff gave — part of the price paid for a good hand — and furnishes no test of the difference in value. Worsening of the hand is not a separate element; it is subsumed in the true rule, and damages could be assessed for failure to improve the hand even absent worsening. Defendant's requested instructions (including that both parties must have "understood" a guarantee) were properly denied: the standard is external, not internal; mental reservations are immaterial where the promise was made and relied on. New trial.
+NOTE: On the eve of the new trial McGee paid Hawkins $1,400 and settled. McGee's suit against his liability insurer failed: the policy covered "malpractice, error, or mistake," not the "special contract." McGee v. United States Fidelity & Guaranty Co., 53 F.2d 953 (1st Cir. 1931). The complaint had alleged three months' hospitalization and that the grafted tissue became matted and hair-growing, leaving the hand practically useless where before it had been practical and useful.
+SULLIVAN v. O'CONNOR, 363 Mass. 579, 296 N.E.2d 183 (1973): surgeon promised to enhance a professional entertainer's appearance by nose surgery; three operations left it worse. Jury instructions embraced a reliance measure — out-of-pocket expenses plus worsening of condition plus pain and suffering of the unnecessary third operation — and the court upheld them, doubting whether the expectancy (value of the promised nose) should be available in such cases, while noting plaintiff waived any claim to it.
+CONTEXT (Fuller & Perdue, The Reliance Interest in Contract Damages): three protectable interests — restitution (disgorge value conferred on defendant), reliance (restore plaintiff's position before the promise), expectation (give plaintiff the value of the promised performance). Restitution presents the strongest claim to judicial intervention (defendant gained what plaintiff lost); expectation, though the default measure, arguably presents the least impressive claim.`;
+
+const PROMPT = "Context: you are helping a first-year law student prepare for a Contracts class on the material below, which the student scanned from their own casebook. Default to Socratic questioning, as their professor would. But follow the student's lead: if they say they don't understand something, shift into explanation and work it through with them iteratively until it's solid, then pick the questioning back up. The goal is that they walk into class genuinely prepared. Here is the reading:\n\n" + CASE_TEXT;
+
+let apiKey="", history=[], lineNo=1, voiceOn=true, chosenVoice=null, rec=null, listening=false;
+const $=id=>document.getElementById(id);
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+const TTS="speechSynthesis" in window;
+
+function pickVoice(){const vs=speechSynthesis.getVoices();chosenVoice=vs.find(v=>/Daniel|Arthur|George|en-GB/i.test(v.name+v.lang))||vs.find(v=>v.lang&&v.lang.startsWith("en"))||vs[0]||null;}
+if(TTS){pickVoice();speechSynthesis.onvoiceschanged=pickVoice;}
+
+function speak(t){if(!TTS||!voiceOn)return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);
+  if(chosenVoice)u.voice=chosenVoice;u.rate=.98;u.pitch=.9;
+  u.onstart=()=>$("stopspk").classList.remove("hidden");
+  u.onend=u.onerror=()=>$("stopspk").classList.add("hidden");
+  speechSynthesis.speak(u);}
+function stopSpeak(){if(TTS){speechSynthesis.cancel();$("stopspk").classList.add("hidden");}}
+
+function render(){const log=$("log");log.innerHTML="";lineNo=1;
+  for(const m of history){const d=document.createElement("div");d.className="turn";
+    const w=document.createElement("div");w.className="who "+(m.role==="prof"?"prof":"stud");
+    w.textContent=m.role==="prof"?"THE PROFESSOR:":"THE STUDENT:";d.appendChild(w);
+    for(const r of m.content.split("\n").filter(Boolean)){const l=document.createElement("div");l.className="line";
+      l.innerHTML='<div class="ln">'+(lineNo++)+'</div>';const t=document.createElement("div");t.className="tx";
+      t.textContent=r;l.appendChild(t);d.appendChild(l);}
+    log.appendChild(d);}
+  window.scrollTo(0,document.body.scrollHeight);}
+
+async function callProf(){$("thinking").classList.remove("hidden");$("err").classList.add("hidden");$("send").disabled=true;
+  try{
+    const messages=[{role:"user",content:PROMPT+"\n\nBegin the cold call now."},
+      ...history.map(m=>({role:m.role==="prof"?"assistant":"user",content:m.content}))];
+    const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":apiKey,
+        "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,messages})});
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error&&e.error.message||("HTTP "+res.status));}
+    const data=await res.json();
+    const text=(data.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+    if(!text)throw new Error("Empty response");
+    history.push({role:"prof",content:text});render();speak(text);
+  }catch(e){$("err").textContent="API error: "+e.message;$("err").classList.remove("hidden");}
+  finally{$("thinking").classList.add("hidden");$("send").disabled=false;}}
+
+$("begin").onclick=()=>{apiKey=$("key").value.trim();
+  if(!apiKey){$("key").focus();return;}
+  $("setup").classList.add("hidden");$("room").classList.remove("hidden");
+  if(!SR){$("mic").style.display="none";$("srnote").textContent="Dictation needs Chrome/Edge/Safari — typing only.";}
+  callProf();};
+
+$("voice").onclick=()=>{voiceOn=!voiceOn;if(!voiceOn)stopSpeak();
+  $("voice").classList.toggle("on",voiceOn);
+  $("voice").innerHTML=voiceOn?"&#9679; Professor speaks":"&#9675; Professor muted";};
+$("stopspk").onclick=stopSpeak;
+
+$("mic").onclick=()=>{if(!SR)return;
+  if(listening){rec&&rec.stop();return;}
+  stopSpeak();rec=new SR();rec.lang="en-US";rec.continuous=false;rec.interimResults=true;
+  let finalText="";
+  rec.onresult=e=>{let interim="";
+    for(let i=e.resultIndex;i<e.results.length;i++){const t=e.results[i][0].transcript;
+      if(e.results[i].isFinal)finalText+=t;else interim+=t;}
+    $("inp").value=(finalText+" "+interim).trim();};
+  rec.onstart=()=>{listening=true;$("mic").classList.add("rec");$("mic").innerHTML="&#9632;";};
+  rec.onend=()=>{listening=false;$("mic").classList.remove("rec");$("mic").innerHTML="&#127908;";
+    if(finalText.trim())$("inp").value=finalText.trim();};
+  rec.onerror=e=>{listening=false;$("mic").classList.remove("rec");$("mic").innerHTML="&#127908;";
+    if(e.error==="not-allowed"||e.error==="service-not-allowed"){
+      $("err").textContent="Microphone blocked. Check the padlock icon in the address bar and allow the mic, and make sure you're on http://localhost (not file://).";
+      $("err").classList.remove("hidden");}};
+  try{rec.start();}catch(_){}};
+
+function send(){const t=$("inp").value.trim();if(!t)return;
+  history.push({role:"student",content:t});$("inp").value="";render();callProf();}
+$("send").onclick=send;
+$("inp").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
+</script>
+</body>
+</html>
