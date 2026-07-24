@@ -45,19 +45,30 @@ export default async function handler(req, res) {
   const text = String(req.body?.text ?? '').slice(0, MAX_CHARS).trim();
   if (!text) return json(res, 400, { error: 'empty_text' });
 
-  const ttsRes = await fetch('https://api.openai.com/v1/audio/speech', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'tts-1',
-      voice: 'onyx',
-      speed: 0.95,
-      input: text,
-    }),
+  const speak = (body) =>
+    fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+  // The directable model first — same price class as tts-1, but it can
+  // act the part instead of reading in a monotone.
+  let ttsRes = await speak({
+    model: 'gpt-4o-mini-tts',
+    voice: 'onyx',
+    input: text,
+    instructions:
+      'You are a seasoned law professor conducting a Socratic dialogue: measured, ' +
+      'deliberate pacing; dry, incisive, quietly authoritative; a hint of wry ' +
+      'amusement when pressing a point. Never rushed, never sing-song.',
   });
+  if (!ttsRes.ok) {
+    ttsRes = await speak({ model: 'tts-1', voice: 'onyx', speed: 0.95, input: text });
+  }
 
   if (!ttsRes.ok) {
     const detail = await ttsRes.text().catch(() => '');
