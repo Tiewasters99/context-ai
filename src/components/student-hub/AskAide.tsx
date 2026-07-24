@@ -99,7 +99,9 @@ export function AskAide({ session }: { session: StudySession }) {
         type="button"
         onClick={() => setOpen(true)}
         style={{
-          position: 'fixed', right: 18, bottom: 18, zIndex: 40,
+          // Mid-page right, clear of the ambient cover and music controls
+          // that live in the corners.
+          position: 'fixed', right: 14, top: '50%', transform: 'translateY(-50%)', zIndex: 40,
           appearance: 'none', cursor: 'pointer', borderRadius: 999,
           border: `1px solid ${T.greenDark}`, background: T.greenDark, color: T.paper,
           fontFamily: T.sans, fontSize: 12, fontWeight: 600, letterSpacing: '0.05em',
@@ -115,8 +117,8 @@ export function AskAide({ session }: { session: StudySession }) {
   return (
     <div
       style={{
-        position: 'fixed', right: 18, bottom: 18, zIndex: 40,
-        transform: `translate(${drag.x}px, ${drag.y}px)`,
+        position: 'fixed', right: 14, top: '50%', zIndex: 40,
+        transform: `translate(${drag.x}px, calc(-50% + ${drag.y}px))`,
         width: 'min(420px, calc(100vw - 36px))', height: 'min(480px, calc(100vh - 80px))',
         minWidth: 300, minHeight: 260, resize: 'both', overflow: 'hidden',
         display: 'flex', flexDirection: 'column',

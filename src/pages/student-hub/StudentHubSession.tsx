@@ -203,8 +203,15 @@ export default function StudentHubSession() {
     void persist({ highlights: [...(session?.highlights ?? []), h] });
   }, [persist, session]);
 
-  const removeHighlight = useCallback((h: Highlight) => {
-    void persist({ highlights: (session?.highlights ?? []).filter((x) => x !== h) });
+  const removeHighlight = useCallback((idx: number) => {
+    void persist({ highlights: (session?.highlights ?? []).filter((_, i) => i !== idx) });
+  }, [persist, session]);
+
+  const noteHighlight = useCallback((idx: number, note: string) => {
+    void persist({
+      highlights: (session?.highlights ?? []).map((h, i) =>
+        (i === idx ? { ...h, note: note || undefined } : h)),
+    });
   }, [persist, session]);
 
   const saveAnnotations = useCallback((annotations: OutlineAnnotations) => {
@@ -212,9 +219,13 @@ export default function StudentHubSession() {
   }, [persist]);
 
   const addResource = useCallback(() => {
-    const url = resUrl.trim();
-    if (!url) return;
-    const r: Resource = { title: resTitle.trim() || url, url };
+    let title = resTitle.trim();
+    let url = resUrl.trim();
+    if (!title && !url) return;
+    // A bare link typed into the label box still works; a label alone is a
+    // perfectly good resource (a lecture, a study-group handout).
+    if (!url && /^https?:\/\//i.test(title)) { url = title; title = ''; }
+    const r: Resource = { title: title || url, url };
     void persist({ resources: [...(session?.resources ?? []), r] });
     setResTitle('');
     setResUrl('');
@@ -318,6 +329,7 @@ export default function StudentHubSession() {
                       highlights={session.highlights ?? []}
                       marking={marking}
                       onAdd={addHighlight}
+                      onNote={noteHighlight}
                       onRemove={removeHighlight}
                     />
                     <figcaption style={{
@@ -547,14 +559,18 @@ export default function StudentHubSession() {
               return (
                 <div key={i} style={{ borderBottom: `1px solid ${T.rule}`, padding: '10px 0' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                    <a
-                      href={r.url}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      style={{ fontFamily: T.serif, fontSize: 15, color: T.green, textDecorationColor: T.rule, flex: 1 }}
-                    >
-                      {r.title}
-                    </a>
+                    {r.url ? (
+                      <a
+                        href={r.url}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        style={{ fontFamily: T.serif, fontSize: 15, color: T.green, textDecorationColor: T.rule, flex: 1 }}
+                      >
+                        {r.title}
+                      </a>
+                    ) : (
+                      <span style={{ fontFamily: T.serif, fontSize: 15, color: T.ink, flex: 1 }}>{r.title}</span>
+                    )}
                     <QuietControl onClick={() => removeResource(r)} aria-label={`Remove ${r.title}`}>×</QuietControl>
                   </div>
                   {yt && (
@@ -574,9 +590,10 @@ export default function StudentHubSession() {
               <input
                 value={resTitle}
                 onChange={(e) => setResTitle(e.target.value)}
-                placeholder="Label (e.g. lecture on expectation damages)"
+                onKeyDown={(e) => { if (e.key === 'Enter') addResource(); }}
+                placeholder="What is it — e.g. Prof. Cohen's lecture on promissory estoppel"
                 style={{
-                  flex: '1 1 220px', padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
+                  flex: '1 1 260px', padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
                   background: '#FFFFFF', outline: 'none', fontFamily: T.serif, fontSize: 14, color: T.ink,
                 }}
               />
@@ -584,14 +601,17 @@ export default function StudentHubSession() {
                 value={resUrl}
                 onChange={(e) => setResUrl(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') addResource(); }}
-                placeholder="https:// — a YouTube link embeds its video"
+                placeholder="Link (optional) — YouTube links embed"
                 style={{
-                  flex: '2 1 260px', padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
+                  flex: '1 1 220px', padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
                   background: '#FFFFFF', outline: 'none', fontFamily: T.mono, fontSize: 12.5, color: T.ink,
                 }}
               />
-              <QuietControl onClick={addResource} disabled={!resUrl.trim()}>add</QuietControl>
+              <QuietControl onClick={addResource} disabled={!resTitle.trim() && !resUrl.trim()}>add</QuietControl>
             </div>
+            <p style={{ fontFamily: T.sans, fontSize: 11.5, color: T.faint, marginTop: 6 }}>
+              A label alone is fine — the link is optional.
+            </p>
           </div>
         )}
 

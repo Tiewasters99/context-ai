@@ -24,13 +24,15 @@ export interface OutlineSection {
   items: string[];
 }
 
-/** A page highlight, as fractions of the page image (resolution-independent). */
+/** A page highlight, as fractions of the page image (resolution-independent).
+ *  With a note attached it is a Kindle-style in-text annotation. */
 export interface Highlight {
   page: number;
   x: number;
   y: number;
   w: number;
   h: number;
+  note?: string;
 }
 
 export interface Resource {
