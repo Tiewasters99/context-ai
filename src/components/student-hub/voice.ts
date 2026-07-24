@@ -101,6 +101,9 @@ export function useProfessorVoice() {
   const [enabled, setEnabled] = useState(true);
   const [speaking, setSpeaking] = useState(false);
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  // WebKit garbage-collects an utterance nothing references — the speech
+  // then dies before onstart ever fires. Hold it until it finishes.
+  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
   const enabledRef = useRef(enabled);
   useEffect(() => { enabledRef.current = enabled; });
 
@@ -154,8 +157,9 @@ export function useProfessorVoice() {
   const speak = useCallback((text: string) => {
     if (!supported || !enabledRef.current || !text) return;
     const synth = window.speechSynthesis;
-    const start = () => {
+    const start = (attempt: number) => {
       const u = new SpeechSynthesisUtterance(text);
+      utterRef.current = u;
       // iOS: a voice object cached from an earlier getVoices() can silently
       // kill the utterance — always re-match against a fresh list.
       const vs = synth.getVoices();
@@ -166,20 +170,35 @@ export function useProfessorVoice() {
       if (v) u.voice = v;
       u.rate = 0.98;
       u.pitch = 0.9;
-      u.onstart = () => setSpeaking(true);
-      u.onend = () => setSpeaking(false);
-      u.onerror = () => setSpeaking(false);
+      let started = false;
+      u.onstart = () => { started = true; setSpeaking(true); };
+      u.onend = () => {
+        if (utterRef.current === u) utterRef.current = null;
+        setSpeaking(false);
+      };
+      u.onerror = () => {
+        if (utterRef.current === u) utterRef.current = null;
+        setSpeaking(false);
+      };
       synth.speak(u);
       // iOS occasionally leaves the queue paused after a cancel().
       synth.resume();
+      // Watchdog: if the engine never actually starts (iOS after the mic
+      // held the audio session, or a swallowed utterance), retry once.
+      window.setTimeout(() => {
+        if (!started && attempt < 2 && utterRef.current === u) {
+          synth.cancel();
+          window.setTimeout(() => start(attempt + 1), 250);
+        }
+      }, 1200);
     };
     // iOS: an utterance issued in the same tick as cancel() is silently
     // swallowed — give the engine a beat to settle first.
     if (synth.speaking || synth.pending) {
       synth.cancel();
-      window.setTimeout(start, 180);
+      window.setTimeout(() => start(1), 180);
     } else {
-      start();
+      start(1);
     }
   }, [supported]);
 
