@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { converse } from '@/lib/llm';
 import {
-  getSession, updateSession, listMessages, addMessage, getPageUrls,
+  getSession, updateSession, listMessages, addMessage, getPageUrls, listAllReadings,
   generateBrief, generateOutline, professorSystem, professorHistory, formatTranscript,
-  type StudySession, type StudyMessage,
+  type StudySession, type StudyMessage, type Highlight, type Resource, type OutlineAnnotations,
 } from '@/lib/student-hub';
 import { T } from '@/components/student-hub/theme';
 import {
@@ -12,13 +12,21 @@ import {
   Transcript,
 } from '@/components/student-hub/ui';
 import { useDictation, useProfessorVoice } from '@/components/student-hub/voice';
+import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights';
+import { AskAide } from '@/components/student-hub/AskAide';
+import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
 
-// One reading, four postures: the reading itself (the actual pages of the
-// student's scanned casebook), the brief (what you'd say if called on cold),
-// the outline (what you fold into the course outline), and the cold call —
-// a spoken Socratic session with the professor.
+// One reading, five postures: the reading itself (the actual pages of the
+// student's scanned casebook, highlightable), the brief, the interactive
+// outline, the cold call, and the student's own notes & resources. The
+// study aide floats over all of them.
 
-type TabId = 'reading' | 'brief' | 'outline' | 'coldcall';
+type TabId = 'reading' | 'brief' | 'outline' | 'coldcall' | 'notes';
+
+function youtubeId(url: string): string | null {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
 
 export default function StudentHubSession() {
   const { id } = useParams();
@@ -28,8 +36,13 @@ export default function StudentHubSession() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<TabId>(() => {
     const q = searchParams.get('tab');
-    return q === 'brief' || q === 'outline' || q === 'coldcall' ? q : 'reading';
+    return q === 'brief' || q === 'outline' || q === 'coldcall' || q === 'notes' ? q : 'reading';
   });
+  const [marking, setMarking] = useState(false);
+  const [library, setLibrary] = useState<Pick<StudySession, 'id' | 'title' | 'kind' | 'citation'>[]>([]);
+  const [notesDraft, setNotesDraft] = useState<string | null>(null);
+  const [resTitle, setResTitle] = useState('');
+  const [resUrl, setResUrl] = useState('');
   const [pageUrls, setPageUrls] = useState<string[] | null>(null);
   const [pagesError, setPagesError] = useState('');
 
@@ -56,6 +69,11 @@ export default function StudentHubSession() {
       .catch((e) => setLoadError(e instanceof Error ? e.message : 'Could not open the reading.'));
     return () => abortRef.current?.abort();
   }, [id]);
+
+  // The library, for cross-references in the interactive outline.
+  useEffect(() => {
+    listAllReadings().then(setLibrary).catch(() => { /* outline refs just stay empty */ });
+  }, []);
 
   // Signed URLs for the scanned pages, fetched once the session is known.
   useEffect(() => {
@@ -167,6 +185,45 @@ export default function StudentHubSession() {
     await callProfessor(next, session);
   }, [session, draft, working, messages, voice, callProfessor]);
 
+  /* ------------- The student's own layer ------------- */
+
+  const persist = useCallback(async (
+    patch: Partial<Pick<StudySession, 'highlights' | 'annotations' | 'notes' | 'resources'>>,
+  ) => {
+    if (!session) return;
+    setSession({ ...session, ...patch });
+    try {
+      await updateSession(session.id, patch);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Your marks could not be saved.');
+    }
+  }, [session]);
+
+  const addHighlight = useCallback((h: Highlight) => {
+    void persist({ highlights: [...(session?.highlights ?? []), h] });
+  }, [persist, session]);
+
+  const removeHighlight = useCallback((h: Highlight) => {
+    void persist({ highlights: (session?.highlights ?? []).filter((x) => x !== h) });
+  }, [persist, session]);
+
+  const saveAnnotations = useCallback((annotations: OutlineAnnotations) => {
+    void persist({ annotations });
+  }, [persist]);
+
+  const addResource = useCallback(() => {
+    const url = resUrl.trim();
+    if (!url) return;
+    const r: Resource = { title: resTitle.trim() || url, url };
+    void persist({ resources: [...(session?.resources ?? []), r] });
+    setResTitle('');
+    setResUrl('');
+  }, [persist, session, resTitle, resUrl]);
+
+  const removeResource = useCallback((r: Resource) => {
+    void persist({ resources: (session?.resources ?? []).filter((x) => x !== r) });
+  }, [persist, session]);
+
   const copyTranscript = useCallback(async () => {
     if (!session) return;
     try {
@@ -222,6 +279,7 @@ export default function StudentHubSession() {
           <HubTab label="Case brief" active={tab === 'brief'} onClick={() => setTab('brief')} />
           <HubTab label="Outline" active={tab === 'outline'} onClick={() => setTab('outline')} />
           <HubTab label="Cold call" active={tab === 'coldcall'} onClick={() => setTab('coldcall')} />
+          <HubTab label="Notes" active={tab === 'notes'} onClick={() => setTab('notes')} />
         </div>
       </nav>
 
@@ -240,16 +298,27 @@ export default function StudentHubSession() {
                     Fetching your pages…
                   </p>
                 )}
+                {pageUrls && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: 8 }}>
+                    <QuietControl
+                      onClick={() => setMarking((v) => !v)}
+                      style={marking ? { background: T.brass, color: T.paper, borderColor: T.brass } : undefined}
+                      title="Drag on a page to highlight; click a highlight to remove it"
+                    >
+                      {marking ? '✎ highlighting — drag on the page' : '✎ highlight'}
+                    </QuietControl>
+                  </div>
+                )}
                 {pageUrls?.map((url, i) => (
                   <figure key={i} style={{ margin: '0 0 18px' }}>
-                    <img
+                    <PageWithHighlights
                       src={url}
+                      pageIndex={i}
                       alt={`Page ${i + 1} of the reading`}
-                      loading="lazy"
-                      style={{
-                        width: '100%', display: 'block', background: '#FFFFFF',
-                        border: `1px solid ${T.rule}`, borderRadius: 2,
-                      }}
+                      highlights={session.highlights ?? []}
+                      marking={marking}
+                      onAdd={addHighlight}
+                      onRemove={removeHighlight}
                     />
                     <figcaption style={{
                       fontFamily: T.mono, fontSize: 11, color: T.faint,
@@ -326,18 +395,16 @@ export default function StudentHubSession() {
             )}
             {session.outline && working !== 'outline' && (
               <>
-                {session.outline.map((sec, i) => (
-                  <div key={i} style={{ marginBottom: 26 }}>
-                    <div style={{ fontFamily: T.serif, fontSize: 18, fontWeight: 700, color: T.green, marginBottom: 10 }}>{sec.heading}</div>
-                    {sec.items.map((it, j) => (
-                      <div key={j} style={{ display: 'flex', gap: 10, padding: '5px 0 5px 8px' }}>
-                        <div style={{ color: T.brass, fontFamily: T.serif }}>§</div>
-                        <div style={{ fontFamily: T.serif, fontSize: 15, lineHeight: 1.55, color: T.ink }}>{it}</div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-                <QuietControl onClick={() => void prepareOutline()}>outline it again</QuietControl>
+                <InteractiveOutline
+                  outline={session.outline}
+                  annotations={session.annotations ?? {}}
+                  library={library}
+                  currentId={session.id}
+                  onChange={saveAnnotations}
+                />
+                <QuietControl onClick={() => void prepareOutline()} title="Regenerates the skeleton; your notes, points, and cross-references stay">
+                  outline it again
+                </QuietControl>
               </>
             )}
           </div>
@@ -453,8 +520,85 @@ export default function StudentHubSession() {
           </div>
         )}
 
+        {/* ---------------- Notes & resources ---------------- */}
+        {tab === 'notes' && (
+          <div>
+            <label htmlFor="hub-notes" style={{ ...fieldLabel, color: T.green }}>Your notes</label>
+            <textarea
+              id="hub-notes"
+              value={notesDraft ?? session.notes ?? ''}
+              onChange={(e) => setNotesDraft(e.target.value)}
+              onBlur={() => {
+                if (notesDraft !== null && notesDraft !== session.notes) void persist({ notes: notesDraft });
+              }}
+              rows={14}
+              placeholder="Class notes, questions to raise, things the professor stressed… saved when you click away."
+              style={{
+                width: '100%', boxSizing: 'border-box', margin: '8px 0 24px',
+                padding: '14px 16px', border: `1px solid ${T.rule}`, borderRadius: 2,
+                background: '#FFFFFF', color: T.ink, outline: 'none', resize: 'vertical',
+                fontFamily: T.serif, fontSize: 15, lineHeight: 1.6,
+              }}
+            />
+
+            <div style={{ ...fieldLabel, marginBottom: 6 }}>Outside resources</div>
+            {(session.resources ?? []).map((r, i) => {
+              const yt = youtubeId(r.url);
+              return (
+                <div key={i} style={{ borderBottom: `1px solid ${T.rule}`, padding: '10px 0' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      style={{ fontFamily: T.serif, fontSize: 15, color: T.green, textDecorationColor: T.rule, flex: 1 }}
+                    >
+                      {r.title}
+                    </a>
+                    <QuietControl onClick={() => removeResource(r)} aria-label={`Remove ${r.title}`}>×</QuietControl>
+                  </div>
+                  {yt && (
+                    <div style={{ margin: '10px 0 4px', aspectRatio: '16 / 9', maxWidth: 560 }}>
+                      <iframe
+                        src={`https://www.youtube.com/embed/${yt}`}
+                        title={r.title}
+                        allowFullScreen
+                        style={{ width: '100%', height: '100%', border: `1px solid ${T.rule}`, borderRadius: 2 }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+              <input
+                value={resTitle}
+                onChange={(e) => setResTitle(e.target.value)}
+                placeholder="Label (e.g. lecture on expectation damages)"
+                style={{
+                  flex: '1 1 220px', padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
+                  background: '#FFFFFF', outline: 'none', fontFamily: T.serif, fontSize: 14, color: T.ink,
+                }}
+              />
+              <input
+                value={resUrl}
+                onChange={(e) => setResUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') addResource(); }}
+                placeholder="https:// — a YouTube link embeds its video"
+                style={{
+                  flex: '2 1 260px', padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
+                  background: '#FFFFFF', outline: 'none', fontFamily: T.mono, fontSize: 12.5, color: T.ink,
+                }}
+              />
+              <QuietControl onClick={addResource} disabled={!resUrl.trim()}>add</QuietControl>
+            </div>
+          </div>
+        )}
+
         {error && tab !== 'coldcall' && <div style={{ marginTop: 12 }}><ErrorNote>{error}</ErrorNote></div>}
       </main>
+
+      <AskAide session={session} />
     </div>
   );
 }

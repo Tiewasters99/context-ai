@@ -24,6 +24,36 @@ export interface OutlineSection {
   items: string[];
 }
 
+/** A page highlight, as fractions of the page image (resolution-independent). */
+export interface Highlight {
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface Resource {
+  title: string;
+  url: string;
+}
+
+export interface OutlineMark {
+  note?: string;
+  refs?: { id: string; title: string }[];
+}
+
+/**
+ * The student's layer on a generated outline, keyed by position so the
+ * outline itself can be regenerated without losing the layer:
+ * marks["2.4"] = section 2, item 4; custom["2"] = the student's own
+ * points appended to section 2.
+ */
+export interface OutlineAnnotations {
+  marks?: Record<string, OutlineMark>;
+  custom?: Record<string, string[]>;
+}
+
 export interface StudyText {
   id: string;
   owner_id: string;
@@ -49,6 +79,10 @@ export interface StudySession {
   pages: string[] | null;
   brief: BriefField[] | null;
   outline: OutlineSection[] | null;
+  notes: string;
+  highlights: Highlight[];
+  annotations: OutlineAnnotations;
+  resources: Resource[];
   model_id: string;
   created_at: string;
   updated_at: string;
@@ -161,7 +195,9 @@ export async function createSession(input: {
 
 export async function updateSession(
   id: string,
-  patch: Partial<Pick<StudySession, 'title' | 'citation' | 'source_label' | 'brief' | 'outline' | 'model_id'>>,
+  patch: Partial<Pick<StudySession,
+    'title' | 'citation' | 'source_label' | 'brief' | 'outline' | 'model_id' |
+    'notes' | 'highlights' | 'annotations' | 'resources'>>,
 ): Promise<void> {
   const { error } = await supabase
     .from('student_hub_sessions')
@@ -175,11 +211,17 @@ export async function deleteSession(id: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
-export async function listMessages(sessionId: string): Promise<StudyMessage[]> {
+export type MessageThread = 'coldcall' | 'ask';
+
+export async function listMessages(
+  sessionId: string,
+  thread: MessageThread = 'coldcall',
+): Promise<StudyMessage[]> {
   const { data, error } = await supabase
     .from('student_hub_messages')
     .select('*')
     .eq('session_id', sessionId)
+    .eq('thread', thread)
     .order('created_at', { ascending: true });
   if (error) throw new Error(error.message);
   return (data ?? []) as StudyMessage[];
@@ -189,14 +231,26 @@ export async function addMessage(
   sessionId: string,
   role: 'professor' | 'student',
   content: string,
+  thread: MessageThread = 'coldcall',
 ): Promise<StudyMessage> {
   const { data, error } = await supabase
     .from('student_hub_messages')
-    .insert({ session_id: sessionId, role, content })
+    .insert({ session_id: sessionId, role, content, thread })
     .select('*')
     .single();
   if (error) throw new Error(error.message);
   return data as StudyMessage;
+}
+
+/** Every reading across the library — for cross-references between cases. */
+export async function listAllReadings(): Promise<Pick<StudySession, 'id' | 'title' | 'kind' | 'citation'>[]> {
+  const { data, error } = await supabase
+    .from('student_hub_sessions')
+    .select('id,title,kind,citation')
+    .not('text_id', 'is', null)
+    .order('sort', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Pick<StudySession, 'id' | 'title' | 'kind' | 'citation'>[];
 }
 
 /* ==================== Caption extraction ==================== */
@@ -336,6 +390,24 @@ export function professorSystem(session: StudySession): string {
     'then wait. But follow the student\'s lead — if they say they don\'t understand, shift into explanation and work',
     'it through with them until it is solid, then pick the questioning back up. The goal is that they walk into',
     'class genuinely prepared.',
+    PARAPHRASE_RULE,
+    '',
+    'The reading:',
+    '',
+    session.reading,
+  ].join('\n');
+}
+
+// The study aide answers directly — the counterpoint to the Socratic
+// professor. It handles vocabulary, procedure, and legal history ("what is
+// an action in assumpsit?") and ties them to modern law.
+export function aideSystem(session: StudySession): string {
+  return [
+    'You are the study aide at a first-year law student\'s elbow while they read their casebook. Unlike their',
+    'professor, you answer directly and plainly — no Socratic games. When the question is about vocabulary,',
+    'procedure, or legal history (an action in assumpsit, a writ, a nonsuit, a remittitur), explain what it was',
+    'and what it corresponds to today. When the question is about the reading, ground your answer in it.',
+    'Keep answers short and precise; go deeper only when asked.',
     PARAPHRASE_RULE,
     '',
     'The reading:',
