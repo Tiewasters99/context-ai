@@ -147,6 +147,9 @@ export default function StudentHubSession() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     let text = '';
+    // The professor speaks sentence by sentence while still composing —
+    // each completed sentence goes straight to the voice pipeline.
+    voice.beginTurn();
     await converse({
       modelId: s.model_id,
       system: professorSystem(s),
@@ -156,18 +159,18 @@ export default function StudentHubSession() {
       maxTokens: 1024,
       signal: ctrl.signal,
       callbacks: {
-        onChunk: (t) => { text += t; setLiveText(text); },
+        onChunk: (t) => { text += t; setLiveText(text); voice.addText(t); },
         onDone: () => { /* persisted below */ },
         onError: (e) => setError(e),
       },
     });
+    voice.endTurn();
     setWorking(null);
     setLiveText('');
     if (!text) return;
     try {
       const saved = await addMessage(s.id, 'professor', text);
       setMessages((prev) => [...prev, saved]);
-      voice.speak(text);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The question could not be saved.');
     }

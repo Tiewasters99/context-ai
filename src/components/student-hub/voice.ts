@@ -1,11 +1,14 @@
-// Client-side voice for the Student Hub, on the browser's own Web Speech
-// API: SpeechRecognition for dictation, speechSynthesis for the professor.
-// No audio or text leaves the page except through the browser's built-in
-// speech services. Dictation lands in the input for review — the hooks
-// never submit anything themselves (design doc, "Interaction principles").
+// Client-side voice for the Student Hub.
 //
-// (The app's other voice surface, meetings, streams PCM to Deepgram for
-// diarized transcription — heavier than a study session needs.)
+// Dictation: the browser's SpeechRecognition, run continuously with
+// auto-restart (the engine times itself out on pauses; the student taps
+// the mic off when done). Text lands in the input for review — never
+// auto-submits (design doc, "Interaction principles").
+//
+// The professor: server-generated audio (/api/tts), streamed by SENTENCE —
+// the first sentence plays while the model is still composing the rest,
+// through one gesture-unlocked audio element. The browser's own
+// speechSynthesis remains only as fallback (vite dev, missing credit).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -14,6 +17,8 @@ import { supabase } from '@/lib/supabase';
 // audio element for later programmatic playback (iOS autoplay policy).
 const SILENT_WAV =
   'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+
+/* ============================ dictation ============================ */
 
 interface SpeechRecognitionLike {
   lang: string;
@@ -39,69 +44,128 @@ function getRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
 }
 
 /**
- * Dictation. `onText` receives the current best transcript (interim results
- * included) — wire it to the input's value so the student can review and
- * edit before sending.
+ * Continuous dictation. `onText` receives the current best transcript
+ * (interim results included). Listening survives the engine's silence
+ * timeouts — it restarts itself until the student taps the mic off.
  */
 export function useDictation(onText: (text: string) => void) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState('');
   const recRef = useRef<SpeechRecognitionLike | null>(null);
+  const wantRef = useRef(false);
+  const finalRef = useRef('');
   const onTextRef = useRef(onText);
   useEffect(() => { onTextRef.current = onText; });
 
   const supported = getRecognitionCtor() !== null;
 
-  useEffect(() => () => recRef.current?.stop(), []);
+  useEffect(() => () => {
+    wantRef.current = false;
+    recRef.current?.stop();
+  }, []);
 
-  const toggle = useCallback(() => {
+  const begin = useCallback(function beginRecognition() {
     const Ctor = getRecognitionCtor();
     if (!Ctor) return;
-    if (recRef.current) {
-      recRef.current.stop();
-      return;
-    }
-    setError('');
     const rec = new Ctor();
     recRef.current = rec;
     rec.lang = 'en-US';
-    rec.continuous = false;
+    rec.continuous = true;
     rec.interimResults = true;
-    let finalText = '';
     rec.onresult = (e) => {
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const t = e.results[i][0].transcript;
-        if (e.results[i].isFinal) finalText += t;
+        if (e.results[i].isFinal) finalRef.current += t + ' ';
         else interim += t;
       }
-      onTextRef.current((finalText + ' ' + interim).trim());
+      onTextRef.current((finalRef.current + interim).trim());
     };
     rec.onstart = () => setListening(true);
     rec.onend = () => {
       recRef.current = null;
+      // The engine gives up during pauses; if the student still wants the
+      // mic, pick straight back up with the transcript intact.
+      if (wantRef.current) {
+        try { beginRecognition(); return; } catch { /* fall through */ }
+      }
       setListening(false);
-      if (finalText.trim()) onTextRef.current(finalText.trim());
+      if (finalRef.current.trim()) onTextRef.current(finalRef.current.trim());
     };
     rec.onerror = (e) => {
-      recRef.current = null;
-      setListening(false);
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        wantRef.current = false;
         setError('Microphone blocked — allow it from the padlock icon in the address bar, or type your answer.');
       }
+      // Everything else (no-speech, aborted, network) flows into onend,
+      // which restarts while the mic is wanted.
     };
     try {
       rec.start();
     } catch {
       recRef.current = null;
+      wantRef.current = false;
       setListening(false);
     }
   }, []);
 
+  const toggle = useCallback(() => {
+    if (!getRecognitionCtor()) return;
+    if (wantRef.current || recRef.current) {
+      wantRef.current = false;
+      recRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    setError('');
+    finalRef.current = '';
+    wantRef.current = true;
+    begin();
+  }, [begin]);
+
   return { supported, listening, error, toggle };
 }
 
-/** The professor's voice — a measured, slightly lowered reading voice. */
+/* ========================= the professor ========================= */
+
+// Sentence boundaries in legal prose: split at .!? followed by whitespace
+// and an uppercase/quote start — but never after the abbreviations that
+// litter case law ("Hawkins v. McGee", "Mr.", "U.S.", "§ 90 cmt. b").
+const NO_SPLIT_AFTER = /\b(?:v|vs|Mr|Mrs|Ms|Dr|Prof|Hon|J|JJ|Jr|Sr|No|Nos|Inc|Co|Corp|Ltd|art|Art|sec|Sec|cmt|para|p|pp|e\.g|i\.e|U\.S|N\.H|N\.E|A|So)\.$/;
+const MIN_CHUNK = 80;
+
+function extractSentences(buffer: string): { chunks: string[]; rest: string } {
+  const chunks: string[] = [];
+  let pending = '';
+  let rest = buffer;
+  for (;;) {
+    const m = rest.match(/[.!?…]["')\]]?\s+(?=["'([]?[A-Z0-9])/);
+    if (!m || m.index === undefined) break;
+    const end = m.index + m[0].length;
+    const candidate = rest.slice(0, m.index + 1);
+    if (NO_SPLIT_AFTER.test(candidate.trimEnd())) {
+      // Abbreviation, not a boundary — swallow it into pending and keep looking.
+      pending += rest.slice(0, end);
+      rest = rest.slice(end);
+      continue;
+    }
+    pending += rest.slice(0, end);
+    rest = rest.slice(end);
+    if (pending.trim().length >= MIN_CHUNK) {
+      chunks.push(pending.trim());
+      pending = '';
+    }
+  }
+  return { chunks, rest: pending + rest };
+}
+
+interface QueueItem {
+  text: string;
+  url: string | null;
+  state: 'waiting' | 'fetching' | 'ready' | 'failed';
+}
+
+/** The professor's voice — sentence-streamed server audio. */
 export function useProfessorVoice() {
   const supported = typeof window !== 'undefined' && 'speechSynthesis' in window;
   const [enabled, setEnabled] = useState(true);
@@ -110,12 +174,20 @@ export function useProfessorVoice() {
   // WebKit garbage-collects an utterance nothing references — the speech
   // then dies before onstart ever fires. Hold it until it finishes.
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
-  // The professor's primary voice: server-generated audio through one
-  // reused (gesture-unlocked) element. Web Speech is the fallback only.
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const urlRef = useRef<string | null>(null);
   const enabledRef = useRef(enabled);
   useEffect(() => { enabledRef.current = enabled; });
+
+  // The sentence pipeline for the current professor turn.
+  const queueRef = useRef<QueueItem[]>([]);
+  const bufferRef = useRef('');
+  const turnTextRef = useRef('');
+  const turnEndedRef = useRef(true);
+  const playIndexRef = useRef(0);
+  const playingRef = useRef(false);
+  const fetchingRef = useRef(0);
+  const fallbackRef = useRef(false);
+  const playedAnyRef = useRef(false);
 
   useEffect(() => {
     if (!supported) return;
@@ -135,8 +207,8 @@ export function useProfessorVoice() {
   }, [supported]);
 
   // iOS gates all programmatic audio behind a real user gesture. The first
-  // tap anywhere primes BOTH channels: the audio element (which plays the
-  // professor's server-generated voice) and speechSynthesis (the fallback).
+  // tap anywhere primes BOTH channels: the audio element (primary) and
+  // speechSynthesis (fallback).
   useEffect(() => {
     const unlock = () => {
       try {
@@ -164,24 +236,12 @@ export function useProfessorVoice() {
     };
   }, [supported]);
 
-  const stop = useCallback(() => {
-    const a = audioRef.current;
-    if (a) {
-      a.pause();
-      a.currentTime = 0;
-    }
-    if (supported) window.speechSynthesis.cancel();
-    setSpeaking(false);
-  }, [supported]);
-
   const webSpeak = useCallback((text: string) => {
     if (!supported || !enabledRef.current || !text) return;
     const synth = window.speechSynthesis;
     const start = (attempt: number) => {
       const u = new SpeechSynthesisUtterance(text);
       utterRef.current = u;
-      // iOS: a voice object cached from an earlier getVoices() can silently
-      // kill the utterance — always re-match against a fresh list.
       const vs = synth.getVoices();
       const v =
         (voiceRef.current && vs.find((x) => x.name === voiceRef.current!.name)) ||
@@ -201,10 +261,7 @@ export function useProfessorVoice() {
         setSpeaking(false);
       };
       synth.speak(u);
-      // iOS occasionally leaves the queue paused after a cancel().
       synth.resume();
-      // Watchdog: if the engine never actually starts (iOS after the mic
-      // held the audio session, or a swallowed utterance), retry once.
       window.setTimeout(() => {
         if (!started && attempt < 2 && utterRef.current === u) {
           synth.cancel();
@@ -212,8 +269,6 @@ export function useProfessorVoice() {
         }
       }, 1200);
     };
-    // iOS: an utterance issued in the same tick as cancel() is silently
-    // swallowed — give the engine a beat to settle first.
     if (synth.speaking || synth.pending) {
       synth.cancel();
       window.setTimeout(() => start(1), 180);
@@ -222,37 +277,136 @@ export function useProfessorVoice() {
     }
   }, [supported]);
 
-  const speak = useCallback((text: string) => {
-    if (!enabledRef.current || !text) return;
-    void (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token;
-        if (!token) throw new Error('no session');
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ text }),
-        });
-        if (!res.ok) throw new Error(`tts ${res.status}`);
-        const blob = await res.blob();
-        if (!enabledRef.current) return;
-        if (!audioRef.current) audioRef.current = new Audio();
-        const a = audioRef.current;
-        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-        urlRef.current = URL.createObjectURL(blob);
-        a.onplaying = () => setSpeaking(true);
-        a.onended = () => setSpeaking(false);
-        a.onerror = () => setSpeaking(false);
-        a.src = urlRef.current;
-        await a.play();
-      } catch {
-        // No endpoint (vite dev), no credit, or playback refused — fall
-        // back to the browser's own speech engine.
-        webSpeak(text);
-      }
-    })();
-  }, [webSpeak]);
+  const drainCheck = useCallback(() => {
+    if (turnEndedRef.current
+      && playIndexRef.current >= queueRef.current.length
+      && !playingRef.current) {
+      setSpeaking(false);
+    }
+  }, []);
 
-  return { supported, enabled, setEnabled, speaking, speak, stop };
+  const tryPlay = useCallback(function tryPlayNext() {
+    if (playingRef.current || !enabledRef.current) return;
+    const q = queueRef.current;
+    while (playIndexRef.current < q.length && q[playIndexRef.current].state === 'failed') {
+      playIndexRef.current += 1;
+    }
+    const item = q[playIndexRef.current];
+    if (!item || item.state !== 'ready' || !item.url) { drainCheck(); return; }
+    if (!audioRef.current) audioRef.current = new Audio();
+    const a = audioRef.current;
+    playingRef.current = true;
+    playedAnyRef.current = true;
+    const finish = () => {
+      if (item.url) URL.revokeObjectURL(item.url);
+      item.url = null;
+      playIndexRef.current += 1;
+      playingRef.current = false;
+      tryPlayNext();
+    };
+    a.onplaying = () => setSpeaking(true);
+    a.onended = finish;
+    a.onerror = finish;
+    a.src = item.url;
+    void a.play().catch(finish);
+  }, [drainCheck]);
+
+  const pump = useCallback(() => {
+    if (fallbackRef.current || !enabledRef.current) return;
+    const q = queueRef.current;
+    // Fetch up to two sentences ahead of playback.
+    for (const item of q) {
+      if (fetchingRef.current >= 2) break;
+      if (item.state !== 'waiting') continue;
+      item.state = 'fetching';
+      fetchingRef.current += 1;
+      void (async () => {
+        try {
+          const { data } = await supabase.auth.getSession();
+          const token = data.session?.access_token;
+          if (!token) throw new Error('no session');
+          const res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ text: item.text }),
+          });
+          if (!res.ok) throw new Error(`tts ${res.status}`);
+          const blob = await res.blob();
+          item.url = URL.createObjectURL(blob);
+          item.state = 'ready';
+        } catch {
+          item.state = 'failed';
+          // Endpoint missing (vite dev) or credit gone: if nothing has
+          // played yet, hand the whole turn to the browser engine at end.
+          if (!playedAnyRef.current) fallbackRef.current = true;
+        } finally {
+          fetchingRef.current -= 1;
+          tryPlay();
+          pump();
+        }
+      })();
+    }
+  }, [tryPlay]);
+
+  /** Start a professor turn — clears the previous pipeline. */
+  const beginTurn = useCallback(() => {
+    queueRef.current = [];
+    bufferRef.current = '';
+    turnTextRef.current = '';
+    turnEndedRef.current = false;
+    playIndexRef.current = 0;
+    playingRef.current = false;
+    fallbackRef.current = false;
+    playedAnyRef.current = false;
+  }, []);
+
+  /** Feed streamed text; complete sentences begin speaking immediately. */
+  const addText = useCallback((fragment: string) => {
+    if (!enabledRef.current || turnEndedRef.current) return;
+    turnTextRef.current += fragment;
+    bufferRef.current += fragment;
+    const { chunks, rest } = extractSentences(bufferRef.current);
+    bufferRef.current = rest;
+    for (const c of chunks) queueRef.current.push({ text: c, url: null, state: 'waiting' });
+    if (chunks.length) pump();
+  }, [pump]);
+
+  /** The model finished — flush the tail and let the queue drain. */
+  const endTurn = useCallback(() => {
+    if (turnEndedRef.current) return;
+    turnEndedRef.current = true;
+    const tail = bufferRef.current.trim();
+    bufferRef.current = '';
+    if (tail && enabledRef.current) {
+      queueRef.current.push({ text: tail, url: null, state: 'waiting' });
+      pump();
+    }
+    if (fallbackRef.current && !playedAnyRef.current) {
+      webSpeak(turnTextRef.current);
+    }
+    drainCheck();
+  }, [pump, webSpeak, drainCheck]);
+
+  const stop = useCallback(() => {
+    turnEndedRef.current = true;
+    for (const item of queueRef.current) {
+      if (item.url) URL.revokeObjectURL(item.url);
+    }
+    queueRef.current = [];
+    playIndexRef.current = 0;
+    playingRef.current = false;
+    const a = audioRef.current;
+    if (a) {
+      a.onended = null;
+      a.onerror = null;
+      a.pause();
+      a.currentTime = 0;
+    }
+    if (supported) window.speechSynthesis.cancel();
+    setSpeaking(false);
+  }, [supported]);
+
+  useEffect(() => () => stop(), [stop]);
+
+  return { supported, enabled, setEnabled, speaking, beginTurn, addText, endTurn, stop };
 }
