@@ -52,6 +52,11 @@ export default function CoverImage({
   persistKey,
 }: CoverImageProps) {
   const [isHovered, setIsHovered] = useState(false);
+  // Touch has no hover-out: a tap toggles the controls instead, a tap
+  // anywhere else (or the ✕) puts them away.
+  const [touchControls, setTouchControls] = useState(false);
+  const lastPointerType = useRef('mouse');
+  const bannerRef = useRef<HTMLDivElement>(null);
   const [showPicker, setShowPicker] = useState(false);
   const [internalExpanded, setInternalExpanded] = useState(false);
   const isControlled = expandedProp !== undefined;
@@ -131,6 +136,16 @@ export default function CoverImage({
     dragRef.current = { active: true, startY: e.clientY, startBg: bgY };
   };
 
+  // Tap-away dismisses touch-summoned controls.
+  useEffect(() => {
+    if (!touchControls) return;
+    const away = (e: PointerEvent) => {
+      if (!bannerRef.current?.contains(e.target as Node)) setTouchControls(false);
+    };
+    document.addEventListener('pointerdown', away);
+    return () => document.removeEventListener('pointerdown', away);
+  }, [touchControls]);
+
   // Esc key collapses the expanded view.
   useEffect(() => {
     if (!expanded) return;
@@ -188,11 +203,19 @@ export default function CoverImage({
     <>
       {!expanded && <div className="relative w-full">
         <div
+          ref={bannerRef}
           className="relative w-full h-[180px] overflow-hidden cursor-pointer"
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
+          onPointerDown={(e) => { lastPointerType.current = e.pointerType; }}
           onClick={(e) => {
             if ((e.target as HTMLElement).closest('button')) return;
+            // Touch: the first tap summons the controls, a second tap on the
+            // cover puts them away. Expansion is the Expand button's job.
+            if (lastPointerType.current === 'touch' && editable) {
+              setTouchControls((v) => !v);
+              return;
+            }
             setExpanded(true);
           }}
           title="Click to expand to background"
@@ -203,33 +226,43 @@ export default function CoverImage({
             <div className="w-full h-full" style={{ background: cover }} />
           )}
 
-          {/* Hover overlay — controls only show in editable mode */}
+          {/* Overlay controls — hover on desktop, tap-toggled on touch.
+              pointer-events-none while hidden, so invisible buttons never
+              swallow taps. */}
           {editable && (
             <div
               className={`absolute inset-0 flex items-end justify-end p-3 transition-opacity duration-200 ${
-                isHovered ? 'opacity-100' : 'opacity-0'
+                isHovered || touchControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
               }`}
               style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.4), transparent 50%)' }}
             >
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap justify-end">
                 <button
-                  onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+                  onClick={(e) => { e.stopPropagation(); setTouchControls(false); setExpanded(true); }}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors flex items-center gap-1.5"
                   title="Expand"
                 >
                   <Maximize2 size={12} /> Expand
                 </button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); handleRemove(); }}
+                  onClick={(e) => { e.stopPropagation(); setTouchControls(false); handleRemove(); }}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
                 >
                   Hide cover
                 </button>
                 <button
-                  onClick={(e) => { e.stopPropagation(); setShowPicker(true); }}
+                  onClick={(e) => { e.stopPropagation(); setTouchControls(false); setShowPicker(true); }}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
                 >
                   Change cover
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setTouchControls(false); setIsHovered(false); }}
+                  className="px-2.5 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
+                  title="Leave the cover as it is"
+                  aria-label="Dismiss cover options"
+                >
+                  <X size={12} />
                 </button>
               </div>
             </div>

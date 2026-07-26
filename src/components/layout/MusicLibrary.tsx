@@ -49,6 +49,10 @@ interface MusicLibraryProps {
   onClose: () => void;
   /** Currently-loaded track id, used to highlight the matching card. */
   currentTrackId?: string | null;
+  /** Whether the loaded track is audibly playing (drives the card icon). */
+  playing?: boolean;
+  /** Tap on the already-loaded track toggles play/pause instead of reloading. */
+  onToggleActive?: () => void;
 }
 
 function manifestToTrack(m: ManifestEntry): MusicTrack {
@@ -67,6 +71,8 @@ export default function MusicLibrary({
   onUpload,
   onClose,
   currentTrackId,
+  playing = false,
+  onToggleActive,
 }: MusicLibraryProps) {
   const [curated, setCurated] = useState<MusicTrack[]>([]);
   const [userTracks, setUserTracks] = useState<MusicTrack[]>([]);
@@ -264,7 +270,13 @@ export default function MusicLibrary({
                     }`}
                   >
                     <button
-                      onClick={() => { onSelect(t); onClose(); }}
+                      onClick={() => {
+                        // Tapping the loaded track pauses/resumes in place —
+                        // no need to eject and reload.
+                        if (isActive && onToggleActive) { onToggleActive(); return; }
+                        onSelect(t);
+                        onClose();
+                      }}
                       className="flex items-center gap-3 flex-1 min-w-0 text-left"
                     >
                       <div
@@ -274,8 +286,10 @@ export default function MusicLibrary({
                             : 'bg-[rgba(255,255,255,0.04)] group-hover:bg-[rgba(232,184,74,0.14)]'
                         }`}
                       >
-                        {isActive ? (
+                        {isActive && playing ? (
                           <Pause size={16} className="text-[#e8b84a]" strokeWidth={2} />
+                        ) : isActive ? (
+                          <Play size={16} className="text-[#e8b84a]" strokeWidth={2} />
                         ) : isYouTube ? (
                           <Video size={16} className="text-[#ff6464] group-hover:text-[#ff7878] transition-colors" strokeWidth={2} />
                         ) : (

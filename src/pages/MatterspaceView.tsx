@@ -22,9 +22,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Discovery', 'Vault'] as const;
+const tabs = ['Updates', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Calendar'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Calendar'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
@@ -33,7 +33,7 @@ const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 // landing tab is Updates: "what's happening" is the natural thing to see
 // first. An optional ?tab= query param (used by activity-feed deep links)
 // overrides both the saved tab and the default.
-const NAV_TABS: readonly string[] = ['Vault', 'Discovery'];
+const NAV_TABS: readonly string[] = ['Vault', 'Discovery', 'Bucketizer'];
 function loadInitialTab(matterId: string | undefined, override?: string | null): Tab {
   if (override && !NAV_TABS.includes(override) && (tabs as readonly string[]).includes(override)) {
     return override as Tab;
@@ -170,6 +170,12 @@ export default function MatterspaceView() {
     if (!matter) return;
     const matterArg = matter.short_code ?? matter.id;
     navigate(`/app/discovery?matter=${encodeURIComponent(matterArg)}`);
+  };
+
+  // The Bucketizer lives in the Productivity Suite; the matter *calls* it.
+  const enterBucketizer = () => {
+    if (!matter) return;
+    navigate(`/app/bucketizer?matter=${encodeURIComponent(matter.id)}`);
   };
 
   const handleCoverChange = async (url: string | null) => {
@@ -328,6 +334,7 @@ export default function MatterspaceView() {
               onClick={() => {
                 if (tab === 'Vault') enterVault();
                 else if (tab === 'Discovery') enterDiscovery();
+                else if (tab === 'Bucketizer') enterBucketizer();
                 else setActiveTab(tab);
               }}
               className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
@@ -357,7 +364,7 @@ export default function MatterspaceView() {
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Calendar' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Calendar' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

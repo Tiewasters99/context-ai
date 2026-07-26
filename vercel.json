@@ -22,6 +22,9 @@
     "api/deepgram-token.mjs": {
       "maxDuration": 10
     },
+    "api/tts.mjs": {
+      "maxDuration": 60
+    },
     "api/meeting-chat.mjs": {
       "maxDuration": 60
     },

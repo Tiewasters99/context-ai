@@ -17,10 +17,24 @@ interface Product {
 
 const PRODUCTS: Product[] = [
   {
+    name: 'Bucketizer',
+    tagline: 'Your case theory as a living tree — every document classified against the elements you must prove. AI-proposed, attorney-confirmed.',
+    accent: '#34d399',
+    to: '/app/bucketizer',
+    status: 'New',
+  },
+  {
     name: 'Moot Bench',
     tagline: 'Oral-argument prep: hand up the briefs, take a bench memo, then stand for questioning by a hot AI bench. Share the transcript with the team.',
     accent: '#e8b84a',
     to: '/app/moot-bench',
+    status: 'New',
+  },
+  {
+    name: 'Student Hub',
+    tagline: 'Scan your casebook, take the brief and the outline, then sit for a spoken Socratic cold call — before your professor gets the chance.',
+    accent: '#A98B45',
+    to: '/app/student-hub',
     status: 'New',
   },
   {

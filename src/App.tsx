@@ -21,8 +21,12 @@ import GrokConnect from '@/pages/GrokConnect';
 import ChatGPTConnect from '@/pages/ChatGPTConnect';
 import Connections from '@/pages/Connections';
 import Settings from '@/pages/Settings';
+import BucketizerHome from '@/pages/BucketizerHome';
 import MootBench from '@/pages/moot/MootBench';
 import MootSession from '@/pages/moot/MootSession';
+import TextView from '@/pages/student-hub/TextView';
+import StudentHubHome from '@/pages/student-hub/StudentHubHome';
+import StudentHubSession from '@/pages/student-hub/StudentHubSession';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
@@ -100,8 +104,12 @@ export default function App() {
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
               <Route path="settings" element={<Settings />} />
+              <Route path="bucketizer" element={<BucketizerHome />} />
               <Route path="moot-bench" element={<MootBench />} />
               <Route path="moot-bench/:id" element={<MootSession />} />
+              <Route path="student-hub" element={<TextView />} />
+              <Route path="student-hub/shelf" element={<StudentHubHome />} />
+              <Route path="student-hub/:id" element={<StudentHubSession />} />
               <Route path="mediation" element={<MediationCenter />} />
               <Route path="mediation/register" element={<MediationRegister />} />
               <Route path="mediation/join" element={<MediationJoin />} />
