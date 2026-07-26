@@ -17,7 +17,8 @@
 //   VITE_SUPABASE_URL             (same project as the web app)
 //   VITE_SUPABASE_ANON_KEY
 //   SUPABASE_SERVICE_ROLE_KEY     (only used to look up connector_tokens)
-//   SUPABASE_JWT_SECRET           (used to sign per-request user JWTs)
+//   MCP_SIGNING_KEY_JWK_B64       (EC P-256 key, base64 JWK; signs user JWTs)
+//   MCP_SIGNING_KEY_ID            (kid of that key, registered with Supabase)
 //   OPENAI_API_KEY                (only used by the search tool)
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -27,10 +28,11 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createClient } from '@supabase/supabase-js';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
 import { verifyJwt } from '../lib/oauth-jwt.mjs';
+import { signSupabaseUserJwt, userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 
 // Hard timeout on every Supabase call so a stalled query fails fast (with a
 // retryable error) instead of hanging the request until the MCP client's
@@ -44,7 +46,6 @@ const sbFetch = timeoutFetch(15000, 'supabase query');
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 
@@ -65,28 +66,11 @@ function adminClient() {
 // this client hit Postgres as the user, so RLS policies on matterspaces,
 // documents, and passages enforce correct scoping with no app-side logic.
 function userScopedClient(user_id) {
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    sub: user_id,
-    role: 'authenticated',
-    aud: 'authenticated',
-    iss: 'supabase',
-    iat: now,
-    exp: now + 3600, // 1 hour; request is well under a second
-  };
-  const jwt = signHS256(JWT_SECRET, payload);
+  const jwt = signSupabaseUserJwt(user_id);
   return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${jwt}` }, fetch: sbFetch },
     auth: { persistSession: false, autoRefreshToken: false },
   });
-}
-
-function signHS256(secret, payload) {
-  const header = { alg: 'HS256', typ: 'JWT' };
-  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const data = `${b64(header)}.${b64(payload)}`;
-  const sig = createHmac('sha256', secret).update(data).digest('base64url');
-  return `${data}.${sig}`;
 }
 
 
@@ -209,7 +193,7 @@ export default async function handler(req, res) {
   if (!SUPABASE_URL) missing.push('VITE_SUPABASE_URL');
   if (!SUPABASE_ANON_KEY) missing.push('VITE_SUPABASE_ANON_KEY');
   if (!SERVICE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
-  if (!JWT_SECRET) missing.push('SUPABASE_JWT_SECRET');
+  if (!userJwtConfigured()) missing.push('MCP_SIGNING_KEY_JWK_B64 + MCP_SIGNING_KEY_ID');
   if (missing.length) {
     res.statusCode = 500;
     res.setHeader('content-type', 'application/json');

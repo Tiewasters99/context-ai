@@ -27,6 +27,12 @@
     },
     "api/meeting-flag.mjs": {
       "maxDuration": 30
+    },
+    "api/mediation.mjs": {
+      "maxDuration": 300
+    },
+    "api/mediation-webhook.mjs": {
+      "maxDuration": 30
     }
   },
   "rewrites": [

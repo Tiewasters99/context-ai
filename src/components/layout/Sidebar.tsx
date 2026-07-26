@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { X,
+import {
   Home,
   Plus,
   ChevronRight,
@@ -14,7 +14,8 @@ import { X,
   Plug,
   UserPlus,
   Folder,
-  FileStack,
+  LayoutGrid,
+  Scale,
 } from 'lucide-react';
 import {
   DndContext,
@@ -35,6 +36,7 @@ import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import ShareModal from '@/components/serverspace/ShareModal';
+import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 
 // Drag-and-drop ids are encoded as "matter:<uuid>" or "ss-root:<uuid>" so
 // dragEnd can tell whether the drop target is a matter (nest underneath)
@@ -46,38 +48,32 @@ type DropData =
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
+  // Real open/closed state of the assistant panel, owned by MainLayout — the
+  // sidebar used to track its own copy, which desynced when the panel was
+  // closed from its own X.
+  assistantOpen?: boolean;
   // Rendered inside MainLayout's off-canvas drawer on phones. In that mode
   // the sidebar is never collapsed (the drawer either covers the screen or
   // is slid away entirely) and takes a phone-friendly width.
   isMobile?: boolean;
 }
 
-export default function Sidebar({ onToggleAssistant, isMobile = false }: SidebarProps) {
+export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMobile = false }: SidebarProps) {
   const { user, signOut } = useAuth();
   const location = useLocation();
   const [collapsedState, setCollapsedState] = useState(false);
   // On mobile the rail is always full-width inside the drawer.
   const collapsed = isMobile ? false : collapsedState;
   const [expandedSpaces, setExpandedSpaces] = useState<Set<string>>(new Set());
-  const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
   const [showNewServerspace, setShowNewServerspace] = useState(false);
-  const [newServerspaceName, setNewServerspaceName] = useState('');
-  const newServerspaceRef = useRef<HTMLInputElement>(null);
 
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [shareTarget, setShareTarget] = useState<{ scope: 'serverspace' | 'matterspace'; id: string; name: string } | null>(null);
 
-  useEffect(() => {
-    if (showNewServerspace) newServerspaceRef.current?.focus();
-  }, [showNewServerspace]);
-
   const { data: serverspaces = [] } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
-  const [clientspaceId, setClientspaceId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
 
   // Drag-and-drop state for re-parenting matters in the sidebar tree.
   const [dragging, setDragging] = useState<DragData | null>(null);
@@ -161,25 +157,6 @@ export default function Sidebar({ onToggleAssistant, isMobile = false }: Sidebar
     await refreshServerspaces();
   };
 
-  // Fetch the user's clientspace id once so we know the parent FK for
-  // any new serverspace they create.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!user) return;
-      const { data: cs } = await supabase
-        .from('clientspaces')
-        .select('id')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (cancelled) return;
-      if (cs) setClientspaceId(cs.id);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
   const openNewMatter = (
     serverspaceId: string,
     parentMatterId: string | null,
@@ -200,32 +177,6 @@ export default function Sidebar({ onToggleAssistant, isMobile = false }: Sidebar
   const openDeleteMatter = (matterId: string, matterName: string) => {
     const descendantIds = collectDescendantIds(serverspaces, matterId);
     setDeleteTarget({ matterId, matterName, descendantIds });
-  };
-
-  const handleCreateServerspace = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const name = newServerspaceName.trim();
-    if (!name || creating) return;
-    if (!clientspaceId) {
-      setCreateError(
-        'No clientspace found for your account. Refresh the page and try again.',
-      );
-      return;
-    }
-    setCreating(true);
-    setCreateError(null);
-    const { error } = await supabase
-      .from('serverspaces')
-      .insert({ clientspace_id: clientspaceId, name });
-    setCreating(false);
-    if (error) {
-      setCreateError(error.message);
-      return;
-    }
-    setShowNewServerspace(false);
-    setNewServerspaceName('');
-    // Invalidate the shared cache — sidebar and dashboard both refetch.
-    await refreshServerspaces();
   };
 
   const displayName = user?.user_metadata?.display_name ?? user?.email ?? 'User';
@@ -304,17 +255,34 @@ export default function Sidebar({ onToggleAssistant, isMobile = false }: Sidebar
           {!collapsed && <span>My Contextspace</span>}
         </Link>
 
-        {/* Document Builder */}
+        {/* Document Builder is still a stub (route works at
+            /app/document-builder) — it returns to the nav when it does
+            something. */}
+
+        {/* Productivity Suite */}
         <Link
-          to="/app/document-builder"
+          to="/app/suite"
           className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
-            isActive('/app/document-builder')
+            isActive('/app/suite')
               ? 'bg-[#16161d] text-white font-medium'
               : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
           }`}
         >
-          <FileStack size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Document Builder</span>}
+          <LayoutGrid size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Productivity Suite</span>}
+        </Link>
+
+        {/* Mediation Center */}
+        <Link
+          to="/app/mediation"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            isActive('/app/mediation')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+        >
+          <Scale size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Mediation Center</span>}
         </Link>
 
         {/* Serverspaces Header */}
@@ -446,9 +414,9 @@ export default function Sidebar({ onToggleAssistant, isMobile = false }: Sidebar
       {/* Bottom Actions */}
       <div className="border-t border-[rgba(255,255,255,0.06)] p-2.5 space-y-px">
         <button
-          onClick={() => { setAiAssistantEnabled(!aiAssistantEnabled); onToggleAssistant?.(); }}
+          onClick={() => onToggleAssistant?.()}
           className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
-            aiAssistantEnabled
+            assistantOpen
               ? 'bg-[rgba(212,160,84,0.08)] text-[#e8b84a]'
               : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
           }`}
@@ -512,43 +480,9 @@ export default function Sidebar({ onToggleAssistant, isMobile = false }: Sidebar
         />
       )}
 
-      {/* New Serverspace Modal */}
+      {/* New Serverspace Modal — shared with the Dashboard quick action */}
       {showNewServerspace && (
-        <>
-          <div className="fixed inset-0 z-50 bg-black/40" onClick={() => setShowNewServerspace(false)} />
-          <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-[15px] font-semibold text-white">New Serverspace</h3>
-              <button
-                onClick={() => { setShowNewServerspace(false); setCreateError(null); }}
-                className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors"
-              >
-                <X size={16} />
-              </button>
-            </div>
-            <form onSubmit={handleCreateServerspace}>
-              <input
-                ref={newServerspaceRef}
-                type="text"
-                value={newServerspaceName}
-                onChange={(e) => setNewServerspaceName(e.target.value)}
-                placeholder="Serverspace name"
-                disabled={creating}
-                className="w-full px-4 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[14px] text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-[#e8b84a] focus:border-transparent"
-              />
-              {createError && (
-                <p className="mt-3 text-[12px] text-red-300 leading-relaxed">{createError}</p>
-              )}
-              <button
-                type="submit"
-                disabled={!newServerspaceName.trim() || creating}
-                className="w-full mt-4 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#f5d565] text-[#0e0e12] text-[13px] font-bold transition-colors disabled:opacity-40 shadow-[0_0_20px_rgba(240,200,80,0.3)]"
-              >
-                {creating ? 'Creating…' : 'Create Serverspace'}
-              </button>
-            </form>
-          </div>
-        </>
+        <NewServerspaceModal onClose={() => setShowNewServerspace(false)} />
       )}
     </aside>
   );

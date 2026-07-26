@@ -5,25 +5,21 @@
 // Gmail and Google Calendar (inbound) — live OAuth connections, state
 //   from the connections table (migration 026); both run through the
 //   same /api/google-connect + /api/google-callback flow.
-// Microsoft 365 (inbound) — live OAuth connection (OneDrive + SharePoint
-//   read access); runs through /api/microsoft-connect +
-//   /api/microsoft-callback (migration 027 adds the kind value).
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plug, Mail, Calendar, Cloud, ChevronRight, X, HardDrive } from 'lucide-react';
+import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import {
   useConnections,
   useConnectionsInvalidate,
   startGoogleConnect,
-  startMicrosoftConnect,
   disconnectConnection,
   type Connection,
 } from '@/hooks/useConnections';
 
 type ConnState = 'connected' | 'not_connected' | 'needs_attention' | 'coming_soon';
-type IntegrationKind = 'gmail' | 'google_calendar' | 'google_drive' | 'microsoft_365';
+type GoogleKind = 'gmail' | 'google_calendar' | 'google_drive';
 
 function StateBadge({ state }: { state: ConnState }) {
   if (state === 'connected') {
@@ -54,10 +50,9 @@ function StateBadge({ state }: { state: ConnState }) {
   );
 }
 
-// A live OAuth integration row — identical behaviour for every
-// provider, parameterised by kind. Used for Gmail, Google Calendar, and
-// Microsoft 365 today.
-function OauthConnectionRow({
+// A live Google OAuth integration row (Gmail or Calendar) — identical
+// behaviour, parameterised by kind.
+function GoogleConnectionRow({
   icon: Icon,
   name,
   defaultBlurb,
@@ -159,8 +154,8 @@ function AssistantRow({
   );
 }
 
-const INTEGRATIONS: {
-  kind: IntegrationKind;
+const GOOGLE_INTEGRATIONS: {
+  kind: GoogleKind;
   icon: typeof Mail;
   name: string;
   blurb: string;
@@ -183,12 +178,6 @@ const INTEGRATIONS: {
     name: 'Google Drive',
     blurb: 'Export documents and pages straight to your Drive.',
   },
-  {
-    kind: 'microsoft_365',
-    icon: Cloud,
-    name: 'Microsoft 365',
-    blurb: 'Pull OneDrive and SharePoint documents into the right matter.',
-  },
 ];
 
 export default function Connections() {
@@ -208,9 +197,6 @@ export default function Connections() {
       }
       if (connected === 'google_drive') {
         return { kind: 'ok', text: 'Google Drive connected.' };
-      }
-      if (connected === 'microsoft_365') {
-        return { kind: 'ok', text: 'Microsoft 365 connected.' };
       }
       const err = p.get('error');
       if (err) {
@@ -248,15 +234,10 @@ export default function Connections() {
     };
   }, []);
 
-  const handleConnect = async (kind: IntegrationKind) => {
+  const handleConnect = async (kind: GoogleKind) => {
     setBusy(true);
     try {
-      // Microsoft has its own flow; Gmail and Calendar share Google's.
-      if (kind === 'microsoft_365') {
-        await startMicrosoftConnect();
-      } else {
-        await startGoogleConnect(kind);
-      }
+      await startGoogleConnect(kind); // redirects the browser to Google
     } catch (e) {
       setBanner({
         kind: 'err',
@@ -358,10 +339,10 @@ export default function Connections() {
           />
 
           {/* Gmail, Google Calendar, Google Drive — live OAuth connections */}
-          {INTEGRATIONS.map((integ) => {
+          {GOOGLE_INTEGRATIONS.map((integ) => {
             const connection = connections.find((c) => c.kind === integ.kind);
             return (
-              <OauthConnectionRow
+              <GoogleConnectionRow
                 key={integ.kind}
                 icon={integ.icon}
                 name={integ.name}
@@ -378,7 +359,7 @@ export default function Connections() {
         </div>
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
-          Connecting an account asks the provider for access; the token is
+          Connecting Gmail or Calendar asks Google for access; the token is
           encrypted before it is stored, and you can disconnect at any time.
         </p>
       </div>

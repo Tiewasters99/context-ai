@@ -62,11 +62,17 @@ const openaiAdapter: ProviderAdapter = {
     if (request.system) {
       messages.unshift({ role: 'system', content: request.system });
     }
+    // GPT-5.x (and o-series) chat completions reject `max_tokens` and any
+    // non-default temperature — they take `max_completion_tokens` and no
+    // sampling params. Older chat models keep the legacy fields. This check
+    // stays in the adapter so feature code never cares.
+    const modern = /^(gpt-5|o\d)/.test(model.apiModelId);
     return JSON.stringify({
       model: model.apiModelId,
-      max_tokens: request.maxTokens ?? 4096,
+      ...(modern
+        ? { max_completion_tokens: request.maxTokens ?? 4096 }
+        : { max_tokens: request.maxTokens ?? 4096, temperature: request.temperature ?? 0.7 }),
       stream: request.stream,
-      temperature: request.temperature ?? 0.7,
       messages,
     });
   },
@@ -84,11 +90,13 @@ const openaiAdapter: ProviderAdapter = {
     const messages: Array<{ role: string; content: string }> = [];
     if (request.system) messages.push({ role: 'system', content: request.system });
     messages.push({ role: 'user', content: request.userContent });
+    const modern = /^(gpt-5|o\d)/.test(model.apiModelId);
     return JSON.stringify({
       model: model.apiModelId,
-      max_tokens: request.maxTokens ?? 8192,
+      ...(modern
+        ? { max_completion_tokens: request.maxTokens ?? 8192 }
+        : { max_tokens: request.maxTokens ?? 8192, temperature: 0 }),
       stream: false,
-      temperature: 0,
       messages,
       tools: [{
         type: 'function',

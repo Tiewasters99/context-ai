@@ -1,0 +1,22 @@
+# Fly.io config for the Contextspaces shared worker.
+# Deploy (from repo root, after `fly auth login` once):
+#   fly launch --no-deploy --copy-config --name contextspaces-worker
+#   fly secrets set VITE_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... OPENAI_API_KEY=... GOOGLE_API_KEY=...
+#   fly deploy
+#
+# One always-on machine, no public ports — the worker only makes outbound
+# calls (Supabase, OpenAI, Gemini). See worker/RUNBOOK.md.
+app = "contextspaces-worker"
+primary_region = "ewr"
+
+[build]
+  dockerfile = "worker/Dockerfile"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+# No [[services]] section on purpose: nothing listens; Fly keeps the process
+# running and restarts it if it exits.
+[processes]
+  worker = "node worker/discovery-worker.mjs"

@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Bot, Key, FolderOpen, HardDrive, Settings, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus } from 'lucide-react';
+import { X, Upload, FileText, Bot, FolderOpen, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
@@ -29,17 +29,17 @@ import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
-type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated' | 'byok' | 'storage' | 'settings';
+// 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
+// case — they highlighted, then silently showed Home. They return to the menu
+// when the views actually exist.
+type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
-  { icon: Upload, label: 'Import Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
+  { icon: Upload, label: 'Import/Display Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
   { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
   { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
-  { icon: Key, label: 'Bring Your Own Key', description: 'Use your own API keys for AI models', view: 'byok' },
-  { icon: HardDrive, label: 'Storage', description: 'Manage your Vault storage (up to 100GB)', view: 'storage' },
-  { icon: Settings, label: 'Vault Settings', description: 'Configure models, permissions, and preferences', view: 'settings' },
 ];
 
 export default function Vault() {
@@ -57,6 +57,10 @@ export default function Vault() {
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
   const [showTemplates, setShowTemplates] = useState(false);
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
+  // User-visible notice for operations that previously failed silently
+  // (zip entries skipped, move/delete errors). One slot; new notices replace
+  // old ones.
+  const [vaultNotice, setVaultNotice] = useState<{ kind: 'warn' | 'err'; text: string } | null>(null);
   const [generatedDocs, setGeneratedDocs] = useState<VaultFile[]>([]);
   const [openFile, setOpenFile] = useState<VaultFile | null>(null);
 
@@ -193,7 +197,13 @@ export default function Vault() {
     try {
       await moveVaultDocument(payload.docId, targetMatterId);
     } catch (err) {
+      // The row was removed optimistically — without a notice a failed move
+      // looks exactly like a successful one. The refresh below restores it.
       console.error('move failed', err);
+      setVaultNotice({
+        kind: 'err',
+        text: `Move failed — the document stays in its current matter. (${err instanceof Error ? err.message : 'unknown error'})`,
+      });
     }
     if (matter && matterScope) {
       const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
@@ -260,6 +270,12 @@ export default function Vault() {
         const { files, skipped, truncatedAt } = await expandZip(file);
         if (skipped.length) console.log(`zip ${file.name}: skipped ${skipped.length} entries:`, skipped.slice(0, 10));
         if (truncatedAt) console.warn(`zip ${file.name}: truncated at ${truncatedAt} files`);
+        if (skipped.length || truncatedAt) {
+          const parts = [];
+          if (skipped.length) parts.push(`${skipped.length} entr${skipped.length === 1 ? 'y was' : 'ies were'} skipped (unsupported type or folder)`);
+          if (truncatedAt) parts.push(`import stopped at ${truncatedAt} files`);
+          setVaultNotice({ kind: 'warn', text: `${file.name}: ${parts.join('; ')}.` });
+        }
         setVaultFiles((prev) => prev.filter((f) => f.id !== placeholderId));
         arr.push(...files);
       } catch (err: any) {
@@ -353,13 +369,15 @@ export default function Vault() {
 
   const removeVaultFile = useCallback((id: string) => {
     if (matter) {
-      // Persistent mode — delete from DB + storage. Optimistic UI removal;
-      // on error we leave a console message but do not re-add the row.
+      // Persistent mode — delete from DB + storage. The row only leaves the
+      // list when the delete actually succeeded; a failed delete keeps the
+      // row and says so (previously it vanished either way, so a failed
+      // delete looked successful).
       deleteVaultDocument(id)
         .then(() => setVaultFiles((prev) => prev.filter((f) => f.id !== id)))
         .catch((err) => {
           console.error('deleteVaultDocument:', err.message);
-          setVaultFiles((prev) => prev.filter((f) => f.id !== id));
+          setVaultNotice({ kind: 'err', text: `Delete failed — the document is still in the Vault. (${err.message})` });
         });
       return;
     }
@@ -824,22 +842,30 @@ export default function Vault() {
           </div>
         )}
 
-        {/* Storage footer */}
-        {menuOpen && (
-          <div className="px-4 py-4 border-t border-[rgba(255,255,255,0.08)]">
-            <div className="flex items-center justify-between text-[11px] text-white/70">
-              <span>Storage used</span>
-              <span>0 / 5 GB (Free)</span>
-            </div>
-            <div className="mt-2 h-1 bg-[rgba(255,255,255,0.06)] rounded-full overflow-hidden">
-              <div className="h-full w-0 bg-[#e8b84a] rounded-full" />
-            </div>
-          </div>
-        )}
+        {/* Storage meter returns here once it reports real usage — the old
+            footer hardcoded "0 / 5 GB" and never updated. */}
       </div>
 
       {/* Main area */}
       <div className="flex-1 flex relative">
+        {vaultNotice && (
+          <div
+            className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-lg px-3 py-2 rounded-lg border text-xs shadow-xl ${
+              vaultNotice.kind === 'err'
+                ? 'bg-[#2a1214] border-[#f87171]/40 text-[#f8b4b4]'
+                : 'bg-[#2a2412] border-[#e8b84a]/40 text-[#f0dfa8]'
+            }`}
+          >
+            <span className="flex-1">{vaultNotice.text}</span>
+            <button
+              onClick={() => setVaultNotice(null)}
+              className="opacity-70 hover:opacity-100 shrink-0"
+              aria-label="Dismiss"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
         {!illuminated ? (
           /* Dark state — dot with subtle hint */
           <div className="flex-1 flex items-center justify-center">

@@ -91,6 +91,16 @@ body {
     font-size: 17px;
     line-height: 1.7;
   }
+
+  /* iOS Safari zooms the whole page when focusing a form control whose
+     font-size is under 16px. Most of our inputs are 13–14px for desktop
+     density; on phones, hold every control at 16px so tapping a field
+     (especially the mediation textareas) never lurches the viewport. */
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }
 
 h1, h2, h3, h4, h5, h6 {

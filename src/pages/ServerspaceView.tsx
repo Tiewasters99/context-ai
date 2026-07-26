@@ -20,7 +20,7 @@ interface ServerspaceRow {
 export default function ServerspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.serverspace.card');
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable('cs.serverspace.card');
 
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
   const [matters, setMatters] = useState<ServerspaceMatter[]>([]);
@@ -114,9 +114,12 @@ export default function ServerspaceView() {
         persistKey={serverspace ? `cs.cover.server.${serverspace.id}` : undefined}
       />
 
-      <div ref={cardRef} className="max-w-5xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Close + drag handle + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
+      <div ref={cardRef} className={`max-w-5xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] ${
+        isMobile ? 'px-4 py-6 my-4' : 'px-8 py-8 my-8 cursor-grab select-none'
+      }`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Close + drag handle + fullscreen — desktop only; on a phone the
+            card flows in place (same treatment as the Dashboard card). */}
+        <div className={`items-center justify-between mb-4 -mt-1 ${isMobile ? 'hidden' : 'flex'}`}>
           <button
             onClick={() => navigate('/app')}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"

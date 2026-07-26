@@ -19,8 +19,8 @@ const coreFeatures = [
 const suiteApps = [
   {
     title: 'Discovery',
-    badge: null,
-    body: 'Document review, privilege triage, and production — inside the workspace where the matter already lives. No export to a vendor silo, no per-gigabyte tax on your own evidence, and review output that lands as page-cited passages beside the briefs that will use them.',
+    badge: 'Beta',
+    body: 'Intake, review, tag, Bates-stamp, and produce documents — incoming and outgoing — inside the workspace where the matter already lives. No export to a vendor silo, no per-gigabyte tax on your own evidence, and review output that lands as page-cited passages beside the briefs that will use them.',
   },
   {
     title: 'FileSaver.ai',
@@ -28,9 +28,9 @@ const suiteApps = [
     body: 'The suite’s chat-capture utility. Saves your AI conversations from ChatGPT, Claude, Gemini, and Grok and syncs them into Contextspaces — turning scattered, ephemeral sessions into a durable, searchable asset of the firm.',
   },
   {
-    title: 'Oral Argument Prep',
-    badge: null,
-    body: 'Matter-scoped project environments for research, brief-writing, and oral argument preparation — with the record and your authorities a page-cited click away.',
+    title: 'Moot Bench',
+    badge: 'New',
+    body: 'Oral-argument prep: hand up the briefs, take a bench memo, then stand for questioning by a hot AI bench — or work the argument through with a brilliant colleague. Share the transcript with the team.',
   },
   {
     title: 'Storefronts',
@@ -39,7 +39,7 @@ const suiteApps = [
   },
   {
     title: 'Mediation Center',
-    badge: 'Coming soon',
+    badge: 'Beta',
     body: 'AI-facilitated resolution for smaller two-party disputes, paired with what no other platform provides: independent attorney review of the proposed settlement for each side, at a flat fee that finally puts mediation within reach.',
   },
   {
@@ -72,7 +72,7 @@ const secondaryFeatures = [
   },
   {
     title: 'Integrations',
-    body: 'Gmail, Google Calendar, Google Drive, and Microsoft 365 — plus a Chrome extension that attaches Vault documents straight from Gmail.',
+    body: 'Gmail, Google Calendar, and Google Drive — plus a Chrome extension that attaches Vault documents straight from Gmail.',
   },
   {
     title: 'A workspace with a soul',

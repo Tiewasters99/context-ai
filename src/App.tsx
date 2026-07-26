@@ -14,15 +14,27 @@ import TableView from '@/pages/TableView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import DocumentBuilder from '@/pages/DocumentBuilder';
+import ProductivitySuite from '@/pages/ProductivitySuite';
 import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
 import ChatGPTConnect from '@/pages/ChatGPTConnect';
 import Connections from '@/pages/Connections';
+import Settings from '@/pages/Settings';
+import MootBench from '@/pages/moot/MootBench';
+import MootSession from '@/pages/moot/MootSession';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
 import DocumentReader from '@/pages/DocumentReader';
+import DiscoveryHome from '@/pages/discovery/DiscoveryHome';
+import ReviewRoom from '@/pages/discovery/ReviewRoom';
+import DiscoveryLayout from '@/components/layout/DiscoveryLayout';
+import DiscoveryDashboard from '@/pages/discovery/DiscoveryDashboard';
+import MediationCenter from '@/pages/mediation/MediationCenter';
+import MediationRegister from '@/pages/mediation/MediationRegister';
+import MediationJoin from '@/pages/mediation/MediationJoin';
+import MediationCase from '@/pages/mediation/MediationCase';
 import AuthCallback from '@/pages/AuthCallback';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
@@ -32,8 +44,9 @@ const queryClient = new QueryClient();
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
 
-  // TODO: Remove this bypass before production
-  const DEV_BYPASS_AUTH = true;
+  // Auth bypass for LOCAL DEV ONLY — must stay false in production so the
+  // login gate is enforced. Flip to true only on your own machine if needed.
+  const DEV_BYPASS_AUTH = false;
 
   if (loading && !DEV_BYPASS_AUTH) {
     return (
@@ -51,12 +64,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // Subdomain boot: at discovery.contextspaces.ai the root goes straight into
+  // the standalone Discovery product instead of the Contextspaces landing page.
+  // Same build, same backend — the host just picks which front door opens.
+  const discoveryHost =
+    typeof window !== 'undefined' && /^discovery\./i.test(window.location.hostname);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
           <Routes>
-            <Route path="/" element={<Landing />} />
+            <Route path="/" element={discoveryHost ? <Navigate to="/discovery" replace /> : <Landing />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
             <Route path="/auth/reset" element={<ResetPassword />} />
@@ -77,6 +96,16 @@ export default function App() {
               <Route path="table/:id" element={<TableView />} />
               <Route path="vault" element={<Vault />} />
               <Route path="document-builder" element={<DocumentBuilder />} />
+              <Route path="suite" element={<ProductivitySuite />} />
+              <Route path="discovery" element={<DiscoveryHome />} />
+              <Route path="discovery/production/:id" element={<ReviewRoom />} />
+              <Route path="settings" element={<Settings />} />
+              <Route path="moot-bench" element={<MootBench />} />
+              <Route path="moot-bench/:id" element={<MootSession />} />
+              <Route path="mediation" element={<MediationCenter />} />
+              <Route path="mediation/register" element={<MediationRegister />} />
+              <Route path="mediation/join" element={<MediationJoin />} />
+              <Route path="mediation/case/:id" element={<MediationCase />} />
               <Route path="connections" element={<Connections />} />
               <Route path="connections/claude" element={<ClaudeConnect />} />
               <Route path="connections/gemini" element={<GeminiConnect />} />
@@ -84,6 +113,22 @@ export default function App() {
               <Route path="connections/chatgpt" element={<ChatGPTConnect />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
+            </Route>
+            <Route
+              path="/discovery"
+              element={
+                <ProtectedRoute>
+                  <DiscoveryLayout />
+                </ProtectedRoute>
+              }
+            >
+              {/* Product-level overview across all cases */}
+              <Route index element={<DiscoveryDashboard />} />
+              {/* Per-case ledger + intake — the same component as the /app tab,
+                  reads ?matter=<short_code|uuid>, reused inside the standalone shell */}
+              <Route path="case" element={<DiscoveryHome />} />
+              {/* Production review room — reused */}
+              <Route path="production/:id" element={<ReviewRoom />} />
             </Route>
             <Route
               path="/connect"

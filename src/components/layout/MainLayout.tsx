@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, NavLink } from 'react-router-dom';
-import { ArrowLeft, Search, Bell, Menu, Home, FileStack, DoorOpen, Plug, Bot } from 'lucide-react';
+import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import AmbientControls from './AmbientControls';
@@ -41,11 +41,12 @@ export default function MainLayout() {
             <Sidebar
               isMobile
               onToggleAssistant={() => { setAssistantOpen(!assistantOpen); setDrawerOpen(false); }}
+              assistantOpen={assistantOpen}
             />
           </div>
         </>
       ) : (
-        <Sidebar onToggleAssistant={() => setAssistantOpen(!assistantOpen)} />
+        <Sidebar onToggleAssistant={() => setAssistantOpen(!assistantOpen)} assistantOpen={assistantOpen} />
       )}
 
       <div className="flex-1 flex flex-col min-w-0 bg-cover bg-fixed bg-no-repeat" style={{ backgroundColor: '#000000', backgroundImage: "var(--ambient-cover, var(--page-cover, none))", backgroundPosition: 'var(--page-cover-position, center)' }}>
@@ -77,15 +78,10 @@ export default function MainLayout() {
             </span>
           )}
 
-          <div className="flex items-center gap-0.5">
-            <button className="p-2 rounded-md hover:bg-[#22222e] text-white/60 hover:text-white transition-colors">
-              <Search size={16} strokeWidth={1.75} />
-            </button>
-            <button className="p-2 rounded-md hover:bg-[#22222e] text-white/60 hover:text-white transition-colors relative">
-              <Bell size={16} strokeWidth={1.75} />
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 bg-[#d4a054] rounded-full" />
-            </button>
-          </div>
+          {/* Search and notifications will live here once they exist — an
+              unwired button (and a permanently-lit unread dot) erodes trust
+              faster than an empty corner does. */}
+          <div className="flex items-center gap-0.5" />
         </header>
 
         {/* Content — extra bottom padding on mobile so the fixed tab bar
@@ -123,10 +119,6 @@ function MobileTabBar({
       <NavLink to="/app" end className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
         <Home size={19} strokeWidth={1.75} />
         <span>Home</span>
-      </NavLink>
-      <NavLink to="/app/document-builder" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
-        <FileStack size={19} strokeWidth={1.75} />
-        <span>Docs</span>
       </NavLink>
       <NavLink to="/app/vault" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
         <DoorOpen size={19} strokeWidth={1.75} />
