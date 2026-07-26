@@ -43,9 +43,14 @@ const suiteApps = [
     body: 'AI-facilitated resolution for smaller two-party disputes, paired with what no other platform provides: independent attorney review of the proposed settlement for each side, at a flat fee that finally puts mediation within reach.',
   },
   {
-    title: 'Bucketizer.ai',
-    badge: 'Coming soon',
-    body: 'A living outline of your case, built from the complaint and enriched dynamically with page-cited documents as discovery proceeds and the case file gets more complete.',
+    title: 'Bucketizer',
+    badge: 'New',
+    body: 'Your case theory as a living tree — built from the complaint, with every document classified against the elements you must prove as discovery proceeds. AI-proposed, attorney-confirmed.',
+  },
+  {
+    title: 'Student Hub',
+    badge: 'New',
+    body: 'Scan your casebook, take the brief and the outline, then sit for a spoken Socratic cold call — before your professor gets the chance.',
   },
 ];
 
