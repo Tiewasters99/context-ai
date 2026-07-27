@@ -9,6 +9,10 @@ export async function extractText(file: File): Promise<string> {
       return extractPdf(file);
     case 'docx':
       return extractDocx(file);
+    case 'pptx': {
+      const { extractPptxText } = await import('@/lib/pptx');
+      return extractPptxText(file);
+    }
     case 'txt':
     case 'md':
     case 'csv':

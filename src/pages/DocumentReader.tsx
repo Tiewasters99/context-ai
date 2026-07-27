@@ -51,7 +51,33 @@ type DocMeta = {
   matterspace_id: string | null;
 };
 
-type FileKind = 'pdf' | 'docx' | 'fountain' | 'unsupported';
+type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'unsupported';
+
+// PPTX display: one white card per slide, built from the same slide text the
+// ingest pipeline indexes (lib/pptx-extract.mjs's browser twin). Not a pixel
+// render of the deck — a readable one, with speaker notes kept visible.
+async function pptxDeckHtml(data: ArrayBuffer): Promise<string> {
+  const { extractPptxSlides } = await import('@/lib/pptx');
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const slides = await extractPptxSlides(data);
+  return slides
+    .map((s) => {
+      const [title, ...rest] = s.lines;
+      return (
+        `<section class="pptx-slide"><span class="pptx-slide-num">${s.num}</span>` +
+        (title ? `<h2>${esc(title)}</h2>` : '') +
+        rest.map((l) => `<p>${esc(l)}</p>`).join('') +
+        (s.notes.length
+          ? `<aside class="pptx-notes"><strong>Speaker notes</strong>${s.notes
+              .map((l) => `<p>${esc(l)}</p>`)
+              .join('')}</aside>`
+          : '') +
+        `</section>`
+      );
+    })
+    .join('');
+}
 type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
@@ -223,11 +249,12 @@ export default function DocumentReader() {
         fn.endsWith('.pdf') ? 'pdf'
         : fn.endsWith('.docx') ? 'docx'
         : fn.endsWith('.fountain') ? 'fountain'
+        : fn.endsWith('.pptx') ? 'pptx'
         : 'unsupported';
       setFileKind(kind);
 
       if (kind === 'unsupported') {
-        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), and Fountain (.fountain).');
+        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), and Fountain (.fountain).');
         setLoadState('error');
         return;
       }
@@ -267,6 +294,13 @@ export default function DocumentReader() {
           const parsed = new Fountain().parse(text, true);
           setTitlePageHtml(parsed.html?.title_page ?? null);
           setDocHtml(parsed.html?.script ?? '');
+          setTotalPages(1);
+          setPage(1);
+        } else if (kind === 'pptx') {
+          // PPTX — one card per slide, single scrollable deck.
+          const html = await pptxDeckHtml(arrayBuffer);
+          if (cancelled) return;
+          setDocHtml(html);
           setTotalPages(1);
           setPage(1);
         } else {
@@ -474,7 +508,7 @@ export default function DocumentReader() {
         setErrorMsg(error?.message || 'Failed to download the file.');
         return;
       }
-      const ext = fileKind === 'pdf' ? '.pdf' : '.docx';
+      const ext = fileKind === 'pdf' ? '.pdf' : fileKind === 'pptx' ? '.pptx' : '.docx';
       const fallback = (doc.title || 'document').replace(/[\\/:*?"<>|]+/g, '_') + ext;
       const filename = doc.source_filename || fallback;
       const url = URL.createObjectURL(blob);
@@ -1019,6 +1053,13 @@ export default function DocumentReader() {
                 <div dangerouslySetInnerHTML={{ __html: docHtml }} />
               </div>
             )}
+            {loadState === 'ready' && fileKind === 'pptx' && docHtml && (
+              <div
+                className="pptx-deck max-w-3xl w-full mx-auto"
+                style={{ fontSize: `${Math.round(16 * (zoom / 1.5))}px` }}
+                dangerouslySetInnerHTML={{ __html: docHtml }}
+              />
+            )}
             {loadState === 'ready' && fileKind === 'fountain' && (
               <div
                 className="fountain-page max-w-[8.5in] w-full mx-auto shadow-2xl"
@@ -1255,6 +1296,18 @@ function ReaderStyle({ theme }: { theme: Theme }) {
       .docx-page img { max-width: 100%; height: auto; }
       .docx-page strong { font-weight: 700; }
       .docx-page em { font-style: italic; }
+
+      /* PPTX — one white card per slide, slide number top-right, speaker
+         notes in a marked block under the slide body. A readable rendering
+         of the deck's text, not a pixel-faithful one. */
+      .pptx-deck { display: flex; flex-direction: column; gap: 1.75em; }
+      .pptx-slide { position: relative; background: #ffffff; color: #1a1810; border-radius: 6px; padding: 2.4em 2.8em 2.1em; box-shadow: 0 12px 40px rgba(0,0,0,0.45); }
+      .pptx-slide h2 { font-size: 1.45em; font-weight: 700; line-height: 1.25; margin: 0 0 0.7em; }
+      .pptx-slide p { margin: 0.45em 0; line-height: 1.5; }
+      .pptx-slide-num { position: absolute; top: 0.6em; right: 0.9em; font-size: 0.72em; color: rgba(0,0,0,0.35); }
+      .pptx-notes { margin-top: 1.5em; padding: 0.9em 1.1em; background: #f6f3ea; border-left: 3px solid #d4a054; font-size: 0.85em; color: #5c574a; }
+      .pptx-notes strong { display: block; font-size: 0.78em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: #a08340; margin-bottom: 0.35em; }
+      .pptx-notes p { margin: 0.3em 0; }
 
       /* Fountain — standard screenplay layout. fountain-js emits semantic
          HTML (h3 scene headings, .dialogue divs with h4 character + p
