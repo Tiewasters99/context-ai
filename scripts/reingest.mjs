@@ -13,11 +13,17 @@
 // Usage:
 //   node scripts/reingest.mjs <document_id> [<document_id> ...]
 //   node scripts/reingest.mjs --matter <short_code>          (all docs in matter)
+//   node scripts/reingest.mjs --matter <short_code> --ext .jpg,.jpeg,.png
+//                                    (only docs whose filename has these extensions)
 //
 // Required env (read from ./.env):
 //   VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY
 //   OPENAI_API_KEY
+// Optional env:
+//   GOOGLE_API_KEY — wires the Gemini OCR + transcription hooks, exactly like
+//   the production entry points. Without it, scanned PDFs/images re-ingest to
+//   zero passages and A/V loses its transcript — so it's near-mandatory.
 
 import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs/promises';
@@ -32,6 +38,8 @@ await loadEnv(path.resolve(__dirname, '..', '.env'));
 const SUPABASE_URL = requireEnv('VITE_SUPABASE_URL');
 const SERVICE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const OPENAI_API_KEY = requireEnv('OPENAI_API_KEY');
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || null;
+if (!GOOGLE_API_KEY) log('WARNING: no GOOGLE_API_KEY — OCR/transcription hooks disabled for this run.');
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -86,11 +94,28 @@ async function reingestOne(documentId) {
     })
     .eq('id', documentId);
 
+  // Same Gemini hooks the production entry points wire, so a re-ingest can
+  // never produce less than the original ingest did.
+  let ocr;
+  let transcribe;
+  if (GOOGLE_API_KEY) {
+    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
+    ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
+    const { transcribeMedia, mimeForMediaExt } = await import('../lib/transcribe-gemini.mjs');
+    transcribe = (buf, { ext: mediaExt, kind, onProgress }) => {
+      const mimeType = mimeForMediaExt(mediaExt);
+      if (!mimeType) throw new Error(`no Gemini mime for ${mediaExt} — use scripts/transcribe-av.mjs (ffmpeg)`);
+      return transcribeMedia(buf, { apiKey: GOOGLE_API_KEY, mimeType, kind, onProgress });
+    };
+  }
+
   const result = await processDocument(supabase, {
     documentId,
     fileBuf,
     ext,
     openaiApiKey: OPENAI_API_KEY,
+    ocr,
+    transcribe,
     onProgress: ({ stage, message }) => log(`  ${stage}: ${message}`),
   });
   log(`  ✓ ${result.passageCount} passages`);
@@ -100,18 +125,27 @@ async function reingestOne(documentId) {
 
 async function resolveDocIds(args) {
   if (args.matter) {
+    // Comparing a non-UUID string against the uuid `id` column 400s the whole
+    // .or() query, so pick the column by shape instead.
+    const col = /^[0-9a-f-]{36}$/i.test(args.matter) ? 'id' : 'short_code';
     const { data: m, error: mErr } = await supabase
       .from('matterspaces')
       .select('id')
-      .or(`short_code.eq.${args.matter},id.eq.${args.matter}`)
+      .eq(col, args.matter)
       .maybeSingle();
     if (mErr || !m) throw new Error(`matter lookup: ${mErr?.message ?? 'not found'}`);
     const { data: docs, error: dErr } = await supabase
       .from('documents')
-      .select('id')
+      .select('id, source_filename')
       .eq('matterspace_id', m.id);
     if (dErr) throw new Error(`docs lookup: ${dErr.message}`);
-    return docs.map((d) => d.id);
+    let picked = docs;
+    if (args.ext) {
+      const wanted = String(args.ext).split(',').map((e) => e.trim().toLowerCase())
+        .map((e) => (e.startsWith('.') ? e : `.${e}`));
+      picked = docs.filter((d) => wanted.includes(path.extname(d.source_filename || '').toLowerCase()));
+    }
+    return picked.map((d) => d.id);
   }
   return args._;
 }

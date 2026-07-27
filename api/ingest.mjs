@@ -26,7 +26,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { processDocument, MEDIA_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
+import { processDocument, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -139,13 +139,14 @@ export default async function handler(req, res) {
   const fileBuf = Buffer.from(arrayBuf);
   const ext = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
 
-  // Scanned-PDF OCR fallback. Only wired for PDFs and only when a key is
-  // present. Gemini OCR of a large scan can exceed the 60s serverless budget,
-  // so the pipeline only invokes this when the PDF extracts to ~no text; small
-  // and medium scans (exhibits) finish comfortably. Big image-only productions
-  // still need the CLI (scripts/ocr-scanned.mjs) or the background worker.
+  // Scanned-document OCR. Wired for PDFs (invoked only when the PDF extracts
+  // to ~no text) and for JPEG/PNG images (scanned pages — always OCR'd), when
+  // a key is present. Gemini OCR of a large scan can exceed the 60s serverless
+  // budget; small and medium scans (exhibits, single page images) finish
+  // comfortably. Big image-only productions still need the CLI
+  // (scripts/ocr-scanned.mjs) or the background worker.
   let ocr = null;
-  if (GOOGLE_API_KEY && ext === '.pdf') {
+  if (GOOGLE_API_KEY && (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext))) {
     const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
     ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
   }
