@@ -386,6 +386,15 @@ export default function DocumentReader() {
         textLayerContainer.innerHTML = '';
         textLayerContainer.style.width = `${viewport.width}px`;
         textLayerContainer.style.height = `${viewport.height}px`;
+        // pdfjs's TextLayer emits spans sized by CSS variables
+        // (--font-height, --scale-x) that only resolve against a
+        // viewer-supplied scale factor; the library expects the embedding
+        // viewer to set it. Without it every span falls back to the
+        // inherited 16px font and selection geometry drifts off the canvas
+        // — invisible at zoom ≈ 1.3, but in fit-page mode you select text
+        // inches away from the cursor.
+        textLayerContainer.style.setProperty('--scale-factor', String(scale));
+        textLayerContainer.style.setProperty('--total-scale-factor', String(scale));
 
         const pdfjsLib = await import('pdfjs-dist');
         textLayer = new pdfjsLib.TextLayer({
@@ -1272,15 +1281,31 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         line-height: 1.0;
         user-select: text;
         pointer-events: auto;
+        --min-font-size: 1;
+        --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+        --min-font-size-inv: calc(1 / var(--min-font-size));
       }
-      .textLayer > span,
-      .textLayer > br {
+      /* Mirrors pdfjs-dist's own pdf_viewer.css text-layer contract —
+         spans carry --font-height/--scale-x/--rotate inline; these rules
+         turn them into real geometry. Keep selector shapes identical to
+         upstream (marked-content PDFs nest their spans). */
+      .textLayer :is(span, br) {
         color: transparent;
         position: absolute;
         white-space: pre;
         cursor: text;
         transform-origin: 0% 0%;
       }
+      .textLayer > :not(.markedContent),
+      .textLayer .markedContent span:not(.markedContent) {
+        z-index: 1;
+        --font-height: 0;
+        font-size: calc(var(--text-scale-factor) * var(--font-height));
+        --scale-x: 1;
+        --rotate: 0deg;
+        transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+      }
+      .textLayer .markedContent { display: contents; }
       .textLayer ::selection { background: ${selectionBg}; }
       .textLayer ::-moz-selection { background: ${selectionBg}; }
 
