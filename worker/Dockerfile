@@ -14,6 +14,10 @@ RUN apt-get update \
 WORKDIR /app
 
 # Only what the worker needs; the Vite front-end never builds here.
+# puppeteer is a prod dep of the chat-sync tooling, which never runs in this
+# image — skip its Chrome download or npm ci dies fetching a browser.
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
