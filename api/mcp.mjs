@@ -218,8 +218,19 @@ export default async function handler(req, res) {
     const sb = userScopedClient(user_id);
 
     const server = new Server(
-      { name: 'contextspaces-retrieval', version: '0.2.0' },
-      { capabilities: { tools: {} } }
+      { name: 'contextspaces-retrieval', version: '0.3.0' },
+      {
+        capabilities: { tools: {} },
+        instructions:
+          'Contextspaces stores both searchable text (passages with page:line ' +
+          'citations) and the original files behind every document. Media ' +
+          'originals — video, audio, images, as-filed PDFs — are accessible: ' +
+          'call get_media with a document UUID to receive a short-lived ' +
+          'streaming URL (supports HTTP Range). When a user asks you to watch ' +
+          'or analyze a video stored in Contextspaces, use get_media and fetch ' +
+          'the URL yourself; do not report that video is unavailable and do ' +
+          'not ask for a local file path.',
+      }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: TOOLS,
