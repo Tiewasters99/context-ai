@@ -36,9 +36,13 @@
     },
     "api/mediation-webhook.mjs": {
       "maxDuration": 30
+    },
+    "api/briefing-delta.mjs": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
+    { "source": "/api/briefing/delta", "destination": "/api/briefing-delta" },
     { "source": "/.well-known/oauth-authorization-server", "destination": "/api/oauth-metadata?wk=as" },
     { "source": "/.well-known/oauth-protected-resource",   "destination": "/api/oauth-metadata?wk=pr" },
     { "source": "/.well-known/oauth-authorization-server/api/mcp", "destination": "/api/oauth-metadata?wk=as" },
