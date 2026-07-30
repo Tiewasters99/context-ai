@@ -4,6 +4,7 @@ import { X, Send } from 'lucide-react';
 import type { ChatMessage } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
+import { ASSISTANT_COMMAND_EVENT, type AssistantCommand } from '@/lib/assistant-bus';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { moveVaultDocument } from '@/lib/vault-persist';
 
@@ -123,8 +124,13 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     }
   };
 
-  const handleSend = async () => {
-    const text = input.trim();
+  // Commands arrive from other surfaces (the docket's highlight-to-Run
+  // chip, next-step Run buttons) carrying the matter they came from. The
+  // scope sticks for follow-up questions in the same panel session and is
+  // replaced by the next command. A ref, not state: nothing re-renders.
+  const commandMatterRef = useRef<{ id?: string; name?: string } | null>(null);
+
+  const send = async (text: string) => {
     if (!text || loading) return;
 
     const userMessage: ChatMessage = {
@@ -135,7 +141,6 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     };
     const next = [...messages, userMessage];
     setMessages(next);
-    setInput('');
     setLoading(true);
     setSearching(true);
 
@@ -171,8 +176,14 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           messages: next.map((m) => ({ role: m.role, content: m.content })),
-          matterId,
-          context: { route: location.pathname, ...getOrchestratorContext() },
+          matterId: commandMatterRef.current?.id ?? matterId,
+          context: {
+            route: location.pathname,
+            ...getOrchestratorContext(),
+            ...(commandMatterRef.current?.name
+              ? { matterName: commandMatterRef.current.name }
+              : {}),
+          },
         }),
       });
 
@@ -248,12 +259,34 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     }
   };
 
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput('');
+    void send(text);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
+
+  // Subscribe once; route events through a ref so the handler always calls
+  // the latest send() without re-subscribing every render.
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; });
+  useEffect(() => {
+    const onCommand = (e: Event) => {
+      const cmd = (e as CustomEvent<AssistantCommand>).detail;
+      if (!cmd?.prompt?.trim()) return;
+      commandMatterRef.current = { id: cmd.matterId, name: cmd.matterName };
+      void sendRef.current(cmd.prompt.trim());
+    };
+    window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
+    return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
+  }, []);
 
   return (
     <>

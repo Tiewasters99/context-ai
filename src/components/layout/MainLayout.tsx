@@ -5,20 +5,31 @@ import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import AmbientControls from './AmbientControls';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
 
 export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer records WHERE it was opened; any navigation makes it derive
+  // closed — the route change is the user's signal they're done with the
+  // menu. Derived, so no state-syncing effect is needed.
+  const [drawerOpenAt, setDrawerOpenAt] = useState<string | null>(null);
+  const drawerOpen = drawerOpenAt === location.pathname;
+  const setDrawerOpen = (open: boolean) =>
+    setDrawerOpenAt(open ? location.pathname : null);
   // The Vault renders its own full-screen overlay with its own ambient
   // controls, so skip the shared cluster there.
   const onVault = location.pathname.endsWith('/vault');
 
-  // Any navigation closes the mobile drawer — the route change is the
-  // user's signal they're done with the menu.
-  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
+  // A command dispatched from any surface (docket highlight-to-Run, etc.)
+  // slides the Orchestrator open; Assistant itself executes the prompt.
+  useEffect(() => {
+    const open = () => setAssistantOpen(true);
+    window.addEventListener(ASSISTANT_COMMAND_EVENT, open);
+    return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, open);
+  }, []);
 
   return (
     <div className="flex h-screen">

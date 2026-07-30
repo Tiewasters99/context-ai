@@ -114,6 +114,9 @@ export interface DocketEntry {
   occurred_at: string;
   text: string;
   actor_id?: string | null;
+  /** In-app destination when the entry points at an artifact (a filed
+      document, the calendar). Entries are live, not just a record. */
+  link?: string;
 }
 
 const ACTIVITY_LABELS: Record<string, string> = {
@@ -154,7 +157,7 @@ export function useDocketSheet(matterId: string | null) {
           .limit(80),
         supabase
           .from('activity_feed')
-          .select('event_type, title, occurred_at')
+          .select('event_type, title, occurred_at, ref_id')
           .eq('matter_id', matterId!)
           .order('occurred_at', { ascending: false })
           .limit(40),
@@ -184,6 +187,9 @@ export function useDocketSheet(matterId: string | null) {
           kind: 'activity',
           occurred_at: e.occurred_at,
           text: `${ACTIVITY_LABELS[e.event_type] ?? e.event_type} — ${e.title ?? ''}`,
+          link: e.event_type === 'document_uploaded' && e.ref_id
+            ? `/app/document/${e.ref_id}`
+            : undefined,
         });
       }
       for (const e of calendar.data ?? []) {
@@ -191,6 +197,7 @@ export function useDocketSheet(matterId: string | null) {
           kind: 'calendar',
           occurred_at: `${e.event_date}T00:00:00Z`,
           text: `${e.event_type === 'deadline' ? 'Deadline' : e.event_type}: ${e.title}${e.completed_at ? ' ✓' : ''}`,
+          link: `/app/matterspace/${matterId}?tab=Calendar`,
         });
       }
       return entries.sort((a, b) => b.occurred_at.localeCompare(a.occurred_at));

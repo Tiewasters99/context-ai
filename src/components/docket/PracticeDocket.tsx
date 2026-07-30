@@ -6,12 +6,13 @@
 // are the signal (gold, first-class); system events are the record.
 // Deliberately refuses Notion-ness: one fixed schema, no configuration.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowUpRight, CalendarClock, ChevronDown, ChevronRight, Pencil, Plus,
+  ArrowUpRight, CalendarClock, ChevronDown, ChevronRight, Pencil, Plus, Zap,
 } from 'lucide-react';
+import { runInAssistant } from '@/lib/assistant-bus';
 import {
   useDocket, useSetMatterState, useDocketSheet, addDocketNote,
   STATUS_COLORS, type DocketRow, type DocketStatus,
@@ -36,6 +37,7 @@ function formatEntryDate(iso: string): string {
 export default function PracticeDocket() {
   const { docket, undocketed, isLoading, error } = useDocket();
   const [openId, setOpenId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   if (isLoading) {
     return <p className="text-[12px] text-white/40">Loading the docket…</p>;
@@ -52,7 +54,10 @@ export default function PracticeDocket() {
   }
 
   return (
-    <div>
+    // select-text overrides the draggable dashboard card's select-none:
+    // docket text must be highlightable — a selection becomes a command.
+    <div ref={rootRef} className="select-text">
+      <SelectionRunChip container={rootRef} />
       {docket.length === 0 ? (
         <p className="text-[13px] text-white/40 leading-relaxed">
           The docket is empty. Threads appear when a matter is given a state —
@@ -96,11 +101,27 @@ function DocketRowView({ row, open, onToggle }: { row: DocketRow; open: boolean;
     ? <ChevronDown size={13} strokeWidth={2.5} className="text-[#e8b84a]/80 shrink-0" />
     : <ChevronRight size={13} strokeWidth={2.5} className="text-white/30 shrink-0" />;
 
+  // The row is a div, not a <button>: buttons suppress text selection, and
+  // highlighted docket text is a command. The click guard below keeps a
+  // text-selection drag from toggling the row.
+  const guardedToggle = () => {
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    onToggle();
+  };
+
   return (
-    <div className="border-t first:border-t-0 border-[rgba(255,255,255,0.06)]">
-      <button
-        onClick={onToggle}
-        className={`w-full text-left px-4 py-2.5 hover:bg-[rgba(255,255,255,0.04)] transition-colors ${open ? 'bg-[rgba(255,255,255,0.03)]' : ''}`}
+    <div
+      className="border-t first:border-t-0 border-[rgba(255,255,255,0.06)]"
+      data-matter-id={row.id}
+      data-matter-name={row.name}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={guardedToggle}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+        className={`w-full text-left px-4 py-2.5 cursor-pointer hover:bg-[rgba(255,255,255,0.04)] transition-colors ${open ? 'bg-[rgba(255,255,255,0.03)]' : ''}`}
       >
         {/* Desktop: 5 columns */}
         <div className="hidden md:grid grid-cols-[minmax(0,1.05fr)_minmax(0,1.5fr)_minmax(0,1.1fr)_64px_84px] gap-3 items-baseline">
@@ -143,7 +164,7 @@ function DocketRowView({ row, open, onToggle }: { row: DocketRow; open: boolean;
             {row.headline ?? 'no headline'}
           </p>
         </div>
-      </button>
+      </div>
       {open && <DocketSheet row={row} />}
     </div>
   );
@@ -185,6 +206,13 @@ function DocketSheet({ row }: { row: DocketRow }) {
             <p className="text-white/65">
               Next: {row.next_action}
               {row.next_action_owner && <span className="text-[#d4a054]/90"> — {row.next_action_owner}</span>}
+              <button
+                onClick={() => runInAssistant({ prompt: row.next_action!, matterId: row.id, matterName: row.name })}
+                title="Run this step with the Orchestrator"
+                className="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded text-[10.5px] font-medium text-[#e8b84a] bg-[rgba(212,160,84,0.12)] hover:bg-[rgba(212,160,84,0.22)] transition-colors align-middle"
+              >
+                <Zap size={10} strokeWidth={2.5} /> Run
+              </button>
             </p>
           )}
           {row.waiting_on && <p className="text-white/50">Waiting on {row.waiting_on}</p>}
@@ -254,11 +282,22 @@ function DocketSheet({ row }: { row: DocketRow }) {
                 e.kind === 'note' ? 'bg-[#e8b84a]' : 'bg-white/25'
               }`}
             />
-            <span className={`text-[12px] leading-snug min-w-0 ${
-              e.kind === 'note' ? 'text-[#f5f1e8]' : 'text-white/55'
-            }`}>
-              {e.text}
-            </span>
+            {e.link ? (
+              <button
+                onClick={() => navigate(e.link!)}
+                className={`text-[12px] leading-snug min-w-0 text-left hover:text-[#e8b84a] underline-offset-2 hover:underline transition-colors ${
+                  e.kind === 'note' ? 'text-[#f5f1e8]' : 'text-white/55'
+                }`}
+              >
+                {e.text}
+              </button>
+            ) : (
+              <span className={`text-[12px] leading-snug min-w-0 ${
+                e.kind === 'note' ? 'text-[#f5f1e8]' : 'text-white/55'
+              }`}>
+                {e.text}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -378,6 +417,65 @@ function StateEditor({ row, onDone }: { row: DocketRow; onDone: () => void }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// ── Highlight-to-command: select any docket text and a Run chip floats
+//    above the selection; clicking hands the selection to the Orchestrator
+//    as a command, scoped to the matter the text belongs to. The docket's
+//    entries are dynamic — an instruction like "find screenplay" executes,
+//    it doesn't just sit there as a reminder. ──────────────────────────────
+function SelectionRunChip({ container }: { container: React.RefObject<HTMLDivElement | null> }) {
+  const [chip, setChip] = useState<{
+    x: number; y: number; text: string; matterId?: string; matterName?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let timer = 0;
+    const update = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const sel = window.getSelection();
+        const root = container.current;
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !root) { setChip(null); return; }
+        const text = sel.toString().trim();
+        if (!text || text.length > 600) { setChip(null); return; }
+        const anchor = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement;
+        if (!anchor || !root.contains(anchor)) { setChip(null); return; }
+        const holder = anchor.closest('[data-matter-id]');
+        const rect = sel.getRangeAt(0).getBoundingClientRect();
+        setChip({
+          x: Math.min(Math.max(rect.left + rect.width / 2, 56), window.innerWidth - 56),
+          y: Math.max(rect.top - 36, 8),
+          text,
+          matterId: holder?.getAttribute('data-matter-id') ?? undefined,
+          matterName: holder?.getAttribute('data-matter-name') ?? undefined,
+        });
+      }, 140);
+    };
+    document.addEventListener('selectionchange', update);
+    return () => {
+      document.removeEventListener('selectionchange', update);
+      window.clearTimeout(timer);
+    };
+  }, [container]);
+
+  if (!chip) return null;
+  return (
+    <button
+      style={{ position: 'fixed', left: chip.x, top: chip.y, transform: 'translateX(-50%)', zIndex: 60 }}
+      // preventDefault on mousedown so clicking the chip doesn't collapse
+      // the selection before the click handler reads it.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        runInAssistant({ prompt: chip.text, matterId: chip.matterId, matterName: chip.matterName });
+        window.getSelection()?.removeAllRanges();
+        setChip(null);
+      }}
+      className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11.5px] font-semibold text-[#0a0a10] bg-[#e8b84a] shadow-lg shadow-black/50 hover:bg-[#f5d565] transition-colors"
+    >
+      <Zap size={11} strokeWidth={2.5} /> Run
+    </button>
   );
 }
 
