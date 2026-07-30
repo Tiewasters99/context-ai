@@ -5,7 +5,6 @@ import Spinner from '@/components/ui/Spinner';
 import Landing from '@/pages/Landing';
 import Auth from '@/pages/Auth';
 import Dashboard from '@/pages/Dashboard';
-import KnowledgeMap from '@/pages/KnowledgeMap';
 import MainLayout from '@/components/layout/MainLayout';
 import ServerspaceView from '@/pages/ServerspaceView';
 import MatterspaceView from '@/pages/MatterspaceView';
@@ -94,10 +93,6 @@ export default function App() {
               }
             >
               <Route index element={<Dashboard />} />
-              {/* Knowledge Map — rollout: linked from Dashboard + mobile tab;
-                  becomes the post-login default once it has proven itself. */}
-              <Route path="map" element={<KnowledgeMap />} />
-              <Route path="map/:code" element={<KnowledgeMap />} />
               <Route path="serverspace/:id" element={<ServerspaceView />} />
               <Route path="matterspace/:id" element={<MatterspaceView />} />
               <Route path="page/:id" element={<PageView />} />
