@@ -16,7 +16,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
-    "archiver": "^7.0.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -33,6 +32,9 @@
     "@tiptap/react": "^3.22.5",
     "@tiptap/starter-kit": "^3.22.5",
     "@xmldom/xmldom": "^0.9.5",
+    "archiver": "^7.0.1",
+    "d3-hierarchy": "^3.1.2",
+    "d3-interpolate": "^3.0.1",
     "docx": "^9.7.1",
     "fountain-js": "^1.2.4",
     "imapflow": "^1.4.2",
@@ -55,6 +57,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@types/d3-hierarchy": "^3.1.7",
+    "@types/d3-interpolate": "^3.0.4",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

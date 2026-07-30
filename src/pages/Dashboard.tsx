@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate } from 'lucide-react';
+import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate, Orbit } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -141,6 +141,17 @@ export default function Dashboard() {
         {!isMobile && (
           <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
         )}
+
+        {/* Knowledge Map — the practice as one field. Quiet link during
+            rollout; becomes the landing surface once it has earned it. */}
+        <button
+          onClick={() => navigate('/app/map')}
+          className="group flex items-center gap-2 mt-4 text-[13px] text-white/60 hover:text-[#e8b84a] transition-colors"
+        >
+          <Orbit size={15} strokeWidth={1.75} className="text-[#d4a054] group-hover:rotate-45 transition-transform duration-500" />
+          <span>See your whole practice as a map</span>
+          <ChevronRight size={13} strokeWidth={2} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+        </button>
 
         {/* The Door — entrance to the Vault, anchored at the heart of the card */}
         <button

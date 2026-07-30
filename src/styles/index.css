@@ -258,6 +258,20 @@ textarea {
   pointer-events: none;
 }
 
+/* Knowledge Map — deadline pull. The ONE animated treatment a node may
+   carry: a slow breathing ring for deadlines inside 7 days. Overdue rings
+   are steady (heavier stroke, no motion). Honors reduced-motion. */
+@keyframes kmPulse {
+  0%, 100% { stroke-opacity: 0.22; }
+  50%      { stroke-opacity: 0.85; }
+}
+.km-pulse {
+  animation: kmPulse 2.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .km-pulse { animation: none; stroke-opacity: 0.7; }
+}
+
 /* Vault entrance animations */
 @keyframes fadeIn {
   from { opacity: 0; }

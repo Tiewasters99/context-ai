@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, NavLink } from 'react-router-dom';
-import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot } from 'lucide-react';
+import { ArrowLeft, Menu, Home, DoorOpen, Orbit, Plug, Bot } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import AmbientControls from './AmbientControls';
@@ -119,6 +119,10 @@ function MobileTabBar({
       <NavLink to="/app" end className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
         <Home size={19} strokeWidth={1.75} />
         <span>Home</span>
+      </NavLink>
+      <NavLink to="/app/map" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
+        <Orbit size={19} strokeWidth={1.75} />
+        <span>Map</span>
       </NavLink>
       <NavLink to="/app/vault" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
         <DoorOpen size={19} strokeWidth={1.75} />
