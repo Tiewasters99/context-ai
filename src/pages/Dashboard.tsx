@@ -13,6 +13,7 @@ import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
 import { useActivityFeed } from '@/hooks/useActivityFeed';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
+import PracticeDocket from '@/components/docket/PracticeDocket';
 
 const quickActions = [
   { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace' as const },
@@ -141,6 +142,13 @@ export default function Dashboard() {
         {!isMobile && (
           <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
         )}
+
+        {/* The Practice Docket — every working thread, one linear sheet,
+            deadline-first. The first thing a working lawyer sees. */}
+        <section className="mt-8">
+          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Docket</h2>
+          <PracticeDocket />
+        </section>
 
         {/* The Door — entrance to the Vault, anchored at the heart of the card */}
         <button
