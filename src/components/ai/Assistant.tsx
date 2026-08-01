@@ -301,7 +301,12 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)]">
-          <h2 className="text-sm font-semibold text-white">Orchestrator</h2>
+          {/* Truth-in-labeling: name the model that actually answers. Keep
+              in sync with MODEL in lib/assistant-core.mjs — the Orchestrator
+              runs ONE fixed model; there is no silent model switching. */}
+          <h2 className="text-sm font-semibold text-white">
+            Orchestrator <span className="text-[11px] font-normal text-white/45">· Opus 4.8</span>
+          </h2>
           <button
             onClick={onClose}
             className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
