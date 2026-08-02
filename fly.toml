@@ -13,8 +13,16 @@ primary_region = "ewr"
   dockerfile = "worker/Dockerfile"
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "1gb"
+  # shared-cpu-1x caps at 2048 MiB, which is not enough headroom for the large
+  # scans that were OOM-killing this machine. 2x is the smallest tier that
+  # allows 4gb, and the extra core is useful anyway: OCR and ffmpeg transcodes
+  # are the slow path here.
+  size = "shared-cpu-2x"
+  # 1gb OOM-killed the worker on large scans (2026-08-02): a 2,000-page PDF
+  # holds the file buffer, the rendered pages, and the passage array at once,
+  # and SIGKILL runs no catch block — so the job died silently and burned a
+  # retry attempt each time. Headroom is cheaper than a poison-pill loop.
+  memory = "4gb"
 
 # No [[services]] section on purpose: nothing listens; Fly keeps the process
 # running and restarts it if it exits.
