@@ -140,18 +140,22 @@ as $$
 declare
   v_count int := 0;
 begin
-  -- Uploads that never landed: nothing to process, say so plainly.
+  -- Uploads that never landed: nothing to process, say so plainly. A document
+  -- whose upload died still reads 'pending' — there is no 'uploading' state to
+  -- check for, the CHECK constraint on documents.processing_status permits only
+  -- pending/extracting/chunking/embedding/ready/error. The null storage_path is
+  -- what distinguishes "never arrived" from "waiting its turn".
   update public.documents
      set processing_status = 'error',
          processing_error  = 'The upload did not finish, so there is no file to process. Please upload it again.'
-   where processing_status in ('pending', 'uploading')
+   where processing_status = 'pending'
      and storage_path is null
      and created_at < now() - make_interval(mins => p_idle_minutes);
 
   with stranded as (
     select d.id, d.matterspace_id
       from public.documents d
-     where d.processing_status in ('pending', 'extracting', 'chunking', 'embedding', 'uploading')
+     where d.processing_status in ('pending', 'extracting', 'chunking', 'embedding')
        and d.storage_path is not null
        and d.created_at < now() - make_interval(mins => p_idle_minutes)
        and not exists (
