@@ -54,6 +54,26 @@ fly deploy
 fly logs
 ```
 
+## Migration 044 — deploy the worker BEFORE running the SQL
+
+Order matters here, and the intuitive order is the wrong one.
+
+044 gives `claim_discovery_job` a reaper: any job whose worker has not
+heartbeated for 5 minutes is reclaimed, and after `max_attempts` it is failed
+for good. That is only safe once a worker is actually heartbeating.
+
+**Deploy the worker first, then run the migration.** A worker running ahead of
+the migration is harmless — `heartbeat_job` and `recover_stranded_documents`
+do not exist yet so the calls log a failure and continue, and the `heartbeat_at`
+column in the progress update makes that one statement fail silently. Nothing
+throws; the only visible loss is the progress note until the SQL lands.
+
+The reverse order opens a real window. Between the migration landing and the
+new worker booting, the reaper is live and nothing is beating, so every job
+already running longer than 5 minutes gets reclaimed mid-flight — and a long
+OCR or transcription pass can burn all three attempts and be marked
+permanently failed before the deploy finishes.
+
 ## Also in the pending-dashboard batch
 
 Run `supabase/migrations/032_processing_jobs_rls.sql` in the Supabase SQL
