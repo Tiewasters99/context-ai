@@ -27,6 +27,7 @@ import {
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
+import { takePendingUpload } from '@/lib/upload-handoff';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 // 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
@@ -42,11 +43,23 @@ const menuItems: { icon: typeof Upload; label: string; description: string; view
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
 ];
 
+const VIEW_PARAM_VALUES: readonly VaultView[] = ['home', 'import', 'workbench', 'citecheck', 'files', 'generated'];
+
 export default function Vault() {
   const isMobile = useIsMobile();
-  const [illuminated, setIlluminated] = useState(false);
+  // Arriving with intent skips the ceremony: matter-scoped entry (and any
+  // explicit ?view=) lands illuminated, straight on the requested surface —
+  // documents by default. The "click to enter" ritual remains only for the
+  // bare ephemeral Vault, where it's character rather than friction.
+  const [initialParams] = useState(() => new URLSearchParams(window.location.search));
+  const initialView = ((): VaultView => {
+    const v = initialParams.get('view');
+    if (v && (VIEW_PARAM_VALUES as readonly string[]).includes(v)) return v as VaultView;
+    return initialParams.get('matter') ? 'files' : 'home';
+  })();
+  const [illuminated, setIlluminated] = useState(initialView !== 'home');
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeView, setActiveView] = useState<VaultView>('home');
+  const [activeView, setActiveView] = useState<VaultView>(initialView);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [loadedTrack, setLoadedTrack] = useState<MusicTrack | null>(null);
   const [showMusicLibrary, setShowMusicLibrary] = useState(false);
@@ -355,6 +368,16 @@ export default function Vault() {
       }
     }
   }, [matter]);
+
+  // Files picked on the matter card (before navigation) start uploading the
+  // moment the matter resolves — the user arrives to an already-running
+  // upload, not a menu. takePendingUpload is one-shot, so the re-run when
+  // addVaultFiles changes identity is harmless.
+  useEffect(() => {
+    if (!matter) return;
+    const pending = takePendingUpload();
+    if (pending?.length) addVaultFiles(pending);
+  }, [matter, addVaultFiles]);
 
   // Re-run server-side ingestion for a document that errored (e.g. a scanned
   // PDF that failed before OCR was wired, or a transient embed failure). Flips

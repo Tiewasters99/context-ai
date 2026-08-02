@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight, Upload } from 'lucide-react';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -12,6 +12,7 @@ import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
+import { setPendingUpload } from '@/lib/upload-handoff';
 import { setOrchestratorContext, clearOrchestratorContext } from '@/lib/orchestrator-context';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { buildMatterTree } from '@/lib/matter-tree';
@@ -166,6 +167,38 @@ export default function MatterspaceView() {
     navigate(`/app/vault?matter=${encodeURIComponent(matterArg)}`);
   };
 
+  // One-click upload: the OS file picker opens immediately; the picked files
+  // ride to the Vault via the upload-handoff slot and start uploading on
+  // arrival. uploadTargetRef lets the same hidden input serve the matter
+  // header AND each sub-matter row.
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadTargetRef = useRef<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const promptUpload = (targetMatterArg: string) => {
+    uploadTargetRef.current = targetMatterArg;
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    const target = uploadTargetRef.current;
+    if (!files?.length || !target) return;
+    setPendingUpload(files);
+    e.target.value = ''; // allow re-picking the same file next time
+    navigate(`/app/vault?matter=${encodeURIComponent(target)}&view=files`);
+  };
+
+  // Dropping files anywhere on the matter card uploads to this matter.
+  const handleCardDrop = (e: React.DragEvent) => {
+    if (!e.dataTransfer.files?.length) return;
+    e.preventDefault();
+    setDragOver(false);
+    if (!matter) return;
+    setPendingUpload(e.dataTransfer.files);
+    navigate(`/app/vault?matter=${encodeURIComponent(matter.short_code ?? matter.id)}&view=files`);
+  };
+
   const enterDiscovery = () => {
     if (!matter) return;
     const matterArg = matter.short_code ?? matter.id;
@@ -194,9 +227,22 @@ export default function MatterspaceView() {
         persistKey={matter ? `cs.cover.matter.${matter.id}` : undefined}
       />
 
-      <div ref={cardRef} className={`max-w-5xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] ${
-        isMobile ? 'px-4 py-6 my-4' : 'px-8 py-8 my-8 cursor-grab select-none'
-      }`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+      <div
+        ref={cardRef}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); setDragOver(true); }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+        }}
+        onDrop={handleCardDrop}
+        className={`max-w-5xl mx-auto rounded-xl backdrop-blur-[30px] border transition-colors ${
+          dragOver ? 'border-[#e8b84a]/70' : 'border-[rgba(255,255,255,0.06)]'
+        } ${
+          isMobile ? 'px-4 py-6 my-4' : 'px-8 py-8 my-8 cursor-grab select-none'
+        }`}
+        style={{ backgroundColor: dragOver ? 'rgba(14,13,8,0.85)' : 'rgba(8,8,14,0.8)' }}
+      >
         {/* Close + drag handle + fullscreen — desktop only; on a phone the
             card flows in place (same treatment as the Dashboard card). */}
         <div className={`items-center justify-between mb-4 -mt-1 ${isMobile ? 'hidden' : 'flex'}`}>
@@ -256,7 +302,23 @@ export default function MatterspaceView() {
             {loadError && <p className="text-sm text-red-300">{loadError}</p>}
           </div>
           {matter && (
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+              <button
+                onClick={() => promptUpload(matter.short_code ?? matter.id)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a] hover:bg-[#f0c65e] text-[#14120a] text-[13px] font-semibold transition-colors"
+                title="Pick files to upload to this matter — or just drop them anywhere on this card"
+              >
+                <Upload size={15} strokeWidth={2} />
+                Upload
+              </button>
+              <button
+                onClick={enterVault}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
+                title="This matter's documents — opens the Vault file browser"
+              >
+                <DoorOpen size={15} strokeWidth={1.75} />
+                Documents
+              </button>
               <button
                 onClick={enterDiscovery}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
@@ -264,14 +326,6 @@ export default function MatterspaceView() {
               >
                 <Stamp size={15} strokeWidth={1.75} />
                 Discovery
-              </button>
-              <button
-                onClick={enterVault}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
-                title="Open this matter's Vault"
-              >
-                <DoorOpen size={15} strokeWidth={1.75} />
-                Enter Vault
               </button>
             </div>
           )}
@@ -302,15 +356,33 @@ export default function MatterspaceView() {
             {subMatters.length > 0 ? (
               <div className="rounded-lg border border-[rgba(255,255,255,0.18)] bg-[rgba(22,22,34,0.85)] backdrop-blur-[20px] overflow-hidden divide-y divide-[rgba(255,255,255,0.06)]">
                 {subMatters.map((sub) => (
-                  <button
+                  <div
                     key={sub.id}
-                    onClick={() => navigate(`/app/matterspace/${sub.id}`)}
-                    className="flex items-center gap-2.5 w-full px-4 py-2.5 text-left hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
+                    className="flex items-center gap-2.5 w-full pl-4 pr-2 hover:bg-[rgba(255,255,255,0.04)] transition-colors group"
                   >
-                    <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
-                    <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{sub.name}</span>
-                    <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors" strokeWidth={2} />
-                  </button>
+                    <button
+                      onClick={() => navigate(`/app/matterspace/${sub.id}`)}
+                      className="flex items-center gap-2.5 flex-1 min-w-0 py-2.5 text-left"
+                    >
+                      <Folder size={14} className="text-[#d4a054]" strokeWidth={1.75} />
+                      <span className="text-[13px] text-[#f5f1e8] truncate flex-1">{sub.name}</span>
+                    </button>
+                    <button
+                      onClick={() => promptUpload(sub.id)}
+                      className="p-1.5 rounded-md text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 transition-all"
+                      title={`Upload documents to ${sub.name}`}
+                    >
+                      <Upload size={13} strokeWidth={2} />
+                    </button>
+                    <button
+                      onClick={() => navigate(`/app/matterspace/${sub.id}`)}
+                      className="p-1.5 text-white/30 group-hover:text-[#e8b84a] transition-colors"
+                      title={`Open ${sub.name}`}
+                      tabIndex={-1}
+                    >
+                      <ChevronRight size={13} strokeWidth={2} />
+                    </button>
+                  </div>
                 ))}
               </div>
             ) : (
@@ -361,6 +433,17 @@ export default function MatterspaceView() {
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>
+
+      {/* Shared picker for the Upload button and every sub-matter row.
+          multiple + no accept filter: the vault takes anything (zip included)
+          and the ingest pipeline decides how each file is handled. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleFilesPicked}
+      />
 
       {newMatterContext && (
         <NewMatterModal
