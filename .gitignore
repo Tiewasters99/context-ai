@@ -35,3 +35,6 @@ dist-ssr
 screenplays/
 drafts/
 books/
+
+# bulk-import ledgers (local run state, per-machine)
+.import-state/

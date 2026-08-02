@@ -61,6 +61,24 @@ const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
 const BUCKET = 'discovery-files';
 const POLL_MS = 5000;
 
+// Liveness. Migration 044 lets claim_discovery_job reclaim a job whose worker
+// stopped heartbeating for 5 minutes — which is only safe if a *living* worker
+// actually heartbeats. Beat every 60s: frequent enough that the reaper never
+// mistakes a long OCR pass for a corpse, rare enough to be free.
+const HEARTBEAT_MS = 60_000;
+
+// Watchdog. The queue is served by this one loop, one job at a time, so a job
+// that never returns does not just lose itself — it stops every other matter's
+// uploads behind it. That is the cross-matter stall: a wedged Gemini stream on
+// one file froze intake for the whole practice. Nothing legitimate runs this
+// long, so past the cap we stop trusting the process.
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MINUTES ?? 120) * 60_000;
+
+// How often the idle loop sweeps for documents the queue lost track of
+// entirely (killed serverless function → no job row at all → nothing to reap).
+const RECOVER_EVERY_MS = 15 * 60_000;
+const RECOVER_IDLE_MINUTES = 15;
+
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -73,21 +91,34 @@ if (args.intake) {
 }
 
 log(`Discovery worker ${WORKER_ID} started (poll ${POLL_MS}ms${args.once ? ', --once' : ''})`);
+let lastRecoverAt = 0;
+
 for (;;) {
   const job = await claimJob();
   if (!job) {
     if (args.once) break;
+    await recoverStrandedIfDue();
     await sleep(POLL_MS);
     continue;
   }
   log(`[job ${job.id}] ${job.job_type} (production ${job.production_id ?? '—'})`);
   try {
-    await dispatch(job);
+    await withHeartbeat(job, () => withWatchdog(job, dispatch(job)));
     await supabase.from('processing_jobs')
       .update({ status: 'done', progress: 100, finished_at: new Date().toISOString() })
       .eq('id', job.id);
     log(`[job ${job.id}] done`);
   } catch (err) {
+    if (err?.isWatchdog) {
+      // Deliberately do NOT mark the job failed here. The work is still running
+      // somewhere in this process and we cannot cancel it; writing passages
+      // after a requeue would duplicate them. Stop the process instead. Fly
+      // restarts us, and 044's reaper reclaims the abandoned claim under the
+      // job's own attempt budget — so a genuinely poisonous file fails loudly
+      // after max_attempts instead of wedging the queue forever.
+      log(`[job ${job.id}] WATCHDOG: no completion after ${JOB_TIMEOUT_MS / 60_000}m — restarting worker so the claim can be reclaimed`);
+      process.exit(1);
+    }
     log(`[job ${job.id}] ERROR: ${err.message}`);
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
@@ -123,10 +154,61 @@ async function claimJob() {
   return Array.isArray(data) ? data[0] ?? null : data ?? null;
 }
 
+// Visible progress is also proof of life, so fold the heartbeat into it. The
+// timer below is the guarantee; this just means a job reporting steadily is
+// never one poll away from looking dead.
 async function progress(job, pct, note) {
   await supabase.from('processing_jobs')
-    .update({ progress: Math.min(99, Math.round(pct)), progress_note: note ?? null })
+    .update({
+      progress: Math.min(99, Math.round(pct)),
+      progress_note: note ?? null,
+      heartbeat_at: new Date().toISOString(),
+    })
     .eq('id', job.id);
+}
+
+// Beat for as long as the job runs, and stop the moment it settles either way.
+// A failed beat is logged, not thrown: losing one beat to a blip should not
+// fail a job that is otherwise working, and 5 minutes is five beats of slack.
+async function withHeartbeat(job, run) {
+  const timer = setInterval(() => {
+    supabase.rpc('heartbeat_job', { p_job: job.id })
+      .then(({ error }) => { if (error) log(`[job ${job.id}] heartbeat failed: ${error.message}`); });
+  }, HEARTBEAT_MS);
+  timer.unref?.();
+  try {
+    return await run();
+  } finally {
+    clearInterval(timer);
+  }
+}
+
+// A losing race against the clock. The work is not cancellable — the caller's
+// job is to stop the process, not to pretend this promise went away.
+function withWatchdog(job, work) {
+  let timer;
+  const expiry = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`job exceeded ${JOB_TIMEOUT_MS / 60_000} minutes`);
+      err.isWatchdog = true;
+      reject(err);
+    }, JOB_TIMEOUT_MS);
+    timer.unref?.();
+  });
+  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+}
+
+// Documents stranded with no job row at all — the killed-serverless-function
+// case, which no amount of reaping finds because there is nothing to reap.
+// Runs only while idle, so it never competes with real work.
+async function recoverStrandedIfDue() {
+  if (Date.now() - lastRecoverAt < RECOVER_EVERY_MS) return;
+  lastRecoverAt = Date.now();
+  const { data, error } = await supabase.rpc('recover_stranded_documents', {
+    p_idle_minutes: RECOVER_IDLE_MINUTES,
+  });
+  if (error) { log(`recover_stranded_documents failed: ${error.message}`); return; }
+  if (data) log(`recovered ${data} stranded document(s) back into the queue`);
 }
 
 // ---------------------------------------------------------------------------
