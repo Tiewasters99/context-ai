@@ -291,7 +291,9 @@ export default function TableView() {
               contentEditable
               suppressContentEditableWarning
               onBlur={handleTitleBlur}
-              className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled_Table'] empty:before:text-white/30"
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); } }}
+              title="Click to rename this table"
+              className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.06)] transition-colors cursor-text empty:before:content-['Untitled_Table'] empty:before:text-white/30"
             />
             <p className="text-[11px] text-white/30 mb-6">
               {saving ? 'Saving…' : `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`}

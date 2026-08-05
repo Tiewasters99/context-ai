@@ -150,7 +150,11 @@ export default function PageView() {
                 contentEditable={!isLocked}
                 suppressContentEditableWarning
                 onBlur={handleTitleBlur}
-                className="text-3xl font-bold text-[#f5f2ed] outline-none mb-6 empty:before:content-['Untitled'] empty:before:text-white/30"
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); } }}
+                title={isLocked ? 'Unlock the page to rename it' : 'Click to rename this page'}
+                className={`text-3xl font-bold text-[#f5f2ed] outline-none mb-6 rounded px-1 -mx-1 transition-colors empty:before:content-['Untitled'] empty:before:text-white/30 ${
+                  isLocked ? '' : 'hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.06)] cursor-text'
+                }`}
                 data-placeholder="Untitled"
               />
               <RichTextEditor

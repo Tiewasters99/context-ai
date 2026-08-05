@@ -59,6 +59,10 @@ export function useDraggableResizable(storageKey?: string) {
     card.style.margin = '0';
     card.style.zIndex = '30';
     card.style.maxWidth = 'none';
+    // A fixed card leaves the document flow, so the page scrollbar can no
+    // longer reach its content — cap it to the viewport and scroll inside.
+    card.style.maxHeight = `calc(100vh - ${Math.max(rect.top, 0) + 12}px)`;
+    card.style.overflowY = 'auto';
     card.style.cursor = 'default';
     isPinned.current = true;
     setPinned(true);
@@ -95,11 +99,23 @@ export function useDraggableResizable(storageKey?: string) {
     // prior desktop session restored from localStorage) applied so the
     // card returns to normal flow, and bind no drag/resize listeners.
     if (isMobile) {
-      for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY'] as const) {
+      for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'maxHeight', 'cursor', 'overflowY'] as const) {
         card.style[prop] = '';
       }
       return;
     }
+
+    // Once a card is position:fixed it leaves the document flow, so the
+    // page's own scrollbar can never reach content below the fold — a
+    // dragged card with a long body (e.g. a matter's Pages tab) was simply
+    // unscrollable. Every path that fixes a card must therefore cap its
+    // height to the viewport and let it scroll internally.
+    const capToViewport = () => {
+      if (card.style.position !== 'fixed') return;
+      const top = parseFloat(card.style.top) || 0;
+      card.style.maxHeight = `calc(100vh - ${Math.max(top, 0) + 12}px)`;
+      card.style.overflowY = 'auto';
+    };
 
     // Restore last-known position from a prior session. Position is
     // applied even when the card was left unpinned so users come back to
@@ -112,11 +128,12 @@ export function useDraggableResizable(storageKey?: string) {
       if (saved.width) card.style.width = saved.width;
       // A restored explicit height must scroll its overflow, or content
       // spills past the card edge (the bug: text escapes a shortened card).
-      if (saved.height) { card.style.height = saved.height; card.style.overflowY = 'auto'; }
+      if (saved.height) card.style.height = saved.height;
       card.style.margin = '0';
       card.style.zIndex = '30';
       card.style.maxWidth = 'none';
       card.style.cursor = saved.pinned ? 'default' : 'grab';
+      capToViewport();
       if (saved.pinned) {
         isPinned.current = true;
         setPinned(true);
@@ -161,6 +178,7 @@ export function useDraggableResizable(storageKey?: string) {
       card.style.margin = '0';
       card.style.zIndex = '30';
       card.style.maxWidth = 'none';
+      capToViewport();
     };
 
     const isInteractive = (t: HTMLElement) =>
@@ -206,6 +224,7 @@ export function useDraggableResizable(storageKey?: string) {
       if (isDragging) {
         card.style.left = (origX + e.clientX - startX) + 'px';
         card.style.top = (origY + e.clientY - startY) + 'px';
+        capToViewport(); // the cap depends on top — keep it live while dragging
       } else if (isResizing) {
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
@@ -213,6 +232,7 @@ export function useDraggableResizable(storageKey?: string) {
         if (resizeEdge.includes('w')) { card.style.width = Math.max(300, origW - dx) + 'px'; card.style.left = (origX + dx) + 'px'; }
         if (resizeEdge.includes('s')) card.style.height = Math.max(200, origH + dy) + 'px';
         if (resizeEdge.includes('n')) { card.style.height = Math.max(200, origH - dy) + 'px'; card.style.top = (origY + dy) + 'px'; }
+        capToViewport();
       } else if (!isFullscreen.current && !isPinned.current) {
         const edge = getEdge(e);
         card.style.cursor = edge ? cursorMap[edge] : 'grab';
@@ -289,20 +309,32 @@ export function useDraggableResizable(storageKey?: string) {
       card.style.height = '100vh';
       card.style.margin = '0';
       card.style.maxWidth = 'none';
+      card.style.maxHeight = 'none';
       card.style.zIndex = '40';
       card.style.borderRadius = '0';
       card.style.cursor = 'default';
       card.style.overflowY = 'auto';
       isFullscreen.current = true;
     } else {
-      if (savedPos.current) {
-        card.style.left = savedPos.current.left;
-        card.style.top = savedPos.current.top;
-        card.style.width = savedPos.current.width;
-        card.style.height = savedPos.current.height;
+      const sp = savedPos.current;
+      if (sp && (sp.left || sp.top)) {
+        card.style.left = sp.left;
+        card.style.top = sp.top;
+        card.style.width = sp.width;
+        card.style.height = sp.height;
+        // Still fixed — re-cap to the viewport so a long body scrolls
+        // inside the card instead of running unreachable past the fold.
+        const top = parseFloat(sp.top) || 0;
+        card.style.maxHeight = `calc(100vh - ${Math.max(top, 0) + 12}px)`;
+        card.style.overflowY = 'auto';
+      } else {
+        // The card lived in normal document flow before fullscreen —
+        // return it there. Leaving position:fixed here stranded the card
+        // out of flow with no way to scroll its content.
+        for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'maxHeight', 'overflowY'] as const) {
+          card.style[prop] = '';
+        }
       }
-      // Keep scrolling only if we're returning to an explicitly-sized card.
-      card.style.overflowY = savedPos.current?.height ? 'auto' : '';
       card.style.borderRadius = '';
       card.style.cursor = isPinned.current ? 'default' : 'grab';
       isFullscreen.current = false;

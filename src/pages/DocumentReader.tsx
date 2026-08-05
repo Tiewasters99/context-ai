@@ -10,6 +10,7 @@ import {
   X,
   Search,
   PanelLeft,
+  RotateCw,
   Scan,
   Maximize,
   Minimize,
@@ -108,6 +109,10 @@ export default function DocumentReader() {
   // Default on; `renderedScale` is the scale the last render actually used.
   const [fitPage, setFitPage] = useState(true);
   const [renderedScale, setRenderedScale] = useState(1.5);
+  // User rotation (PDF only), 0/90/180/270, applied on top of the page's own
+  // /Rotate. Rescue control for upside-down or sideways scans; persisted
+  // per document.
+  const [rotation, setRotation] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Bumped whenever the content pane resizes, to re-fit the page.
   const [containerTick, setContainerTick] = useState(0);
@@ -136,6 +141,13 @@ export default function DocumentReader() {
   } | null>(null);
 
   const pdfDocRef = useRef<unknown>(null);
+  // The in-flight pdfjs render task. Two render() calls overlapping on one
+  // canvas corrupt each other: the second's canvas.width reset wipes the
+  // first's transform mid-flight, and its remaining ops paint in raw PDF
+  // coordinates (y-up on a y-down canvas) — the page comes out upside down.
+  // On load this effect fires several times back-to-back (ready → zoom
+  // restore → resize tick), so the race was routine, not exotic.
+  const renderTaskRef = useRef<{ promise: Promise<void>; cancel(): void } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -224,6 +236,8 @@ export default function DocumentReader() {
     setOutline(null);
     setAnnotations([]);
     setSelectionMenu(null);
+    const savedRot = parseInt(localStorage.getItem(`ctx_reader_rot_${id}`) ?? '0', 10);
+    setRotation(savedRot === 90 || savedRot === 180 || savedRot === 270 ? savedRot : 0);
 
     void (async () => {
       const { data, error } = await supabase
@@ -336,11 +350,16 @@ export default function DocumentReader() {
     void (async () => {
       try {
         const pdfPage = await pdf.getPage(page) as {
-          getViewport(opts: { scale: number }): { width: number; height: number };
-          render(opts: unknown): { promise: Promise<void> };
+          rotate: number;
+          getViewport(opts: { scale: number; rotation?: number }): { width: number; height: number };
+          render(opts: unknown): { promise: Promise<void>; cancel(): void };
           streamTextContent(): ReadableStream;
         };
         if (cancelled) return;
+
+        // pdfjs's `rotation` REPLACES the page's own /Rotate rather than
+        // adding to it, so fold the two together here.
+        const totalRotation = (((pdfPage.rotate || 0) + rotation) % 360 + 360) % 360;
 
         // Compute the render scale. In fit-page mode, scale the page so
         // the entire page is visible at once inside the content pane —
@@ -350,7 +369,7 @@ export default function DocumentReader() {
         if (fitPage) {
           const pane = contentRef.current;
           if (pane && pane.clientWidth > 0 && pane.clientHeight > 0) {
-            const natural = pdfPage.getViewport({ scale: 1 });
+            const natural = pdfPage.getViewport({ scale: 1, rotation: totalRotation });
             const PAD = 24; // breathing room around the page
             const fit = Math.min(
               (pane.clientWidth - PAD * 2) / natural.width,
@@ -361,7 +380,11 @@ export default function DocumentReader() {
         }
         setRenderedScale(scale);
 
-        const viewport = pdfPage.getViewport({ scale });
+        // Cancel any render still in flight before touching the canvas —
+        // see renderTaskRef.
+        renderTaskRef.current?.cancel();
+
+        const viewport = pdfPage.getViewport({ scale, rotation: totalRotation });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         canvas.style.width = `${viewport.width}px`;
@@ -380,7 +403,13 @@ export default function DocumentReader() {
           canvasContext: ctx,
           viewport,
         };
-        await pdfPage.render(renderOpts).promise;
+        const task = pdfPage.render(renderOpts);
+        renderTaskRef.current = task;
+        try {
+          await task.promise;
+        } finally {
+          if (renderTaskRef.current === task) renderTaskRef.current = null;
+        }
         if (cancelled) return;
 
         textLayerContainer.innerHTML = '';
@@ -418,9 +447,10 @@ export default function DocumentReader() {
 
     return () => {
       cancelled = true;
+      renderTaskRef.current?.cancel();
       if (textLayer) try { textLayer.cancel(); } catch { /* noop */ }
     };
-  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx]);
+  }, [page, zoom, fitPage, rotation, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx]);
 
   const goPrev = useCallback(() => setPage((p) => Math.max(1, p - 1)), []);
   const goNext = useCallback(
@@ -552,44 +582,57 @@ export default function DocumentReader() {
     return () => { cancelled = true; };
   }, [loadState, fileKind, id]);
 
-  // Render the thumbnail strip sequentially. Each page rendered to an
-  // offscreen canvas at low scale, captured as a data URL, and added to
-  // the thumbnails state so the sidebar can show it.
+  // Thumbnails render ON DEMAND, not upfront. The old sequential loop
+  // rendered every page at load — on a 600-page docket that's tens of
+  // seconds of solid main-thread work (render + sync toDataURL + a full
+  // list re-render per page), which froze the sidebar's scrolling
+  // entirely. Now the sidebar asks for a page's thumbnail only when its
+  // placeholder nears the viewport. `thumbGen` guards against a slow
+  // render from a previous document landing in the current one's strip.
+  const thumbGenRef = useRef(0);
+  const thumbRequestedRef = useRef<Set<number>>(new Set());
   useEffect(() => {
     if (loadState !== 'ready' || fileKind !== 'pdf') return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const pdf = pdfDocRef.current as any;
     if (!pdf) return;
-    const N: number = pdf.numPages;
-    setThumbnails(new Array(N).fill(null));
+    thumbGenRef.current += 1;
+    thumbRequestedRef.current = new Set();
+    setThumbnails(new Array(pdf.numPages).fill(null));
+  }, [loadState, fileKind, id]);
 
-    let cancelled = false;
+  const requestThumbnail = useCallback((p: number) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const pdf = pdfDocRef.current as any;
+    if (!pdf || p < 1 || p > pdf.numPages) return;
+    if (thumbRequestedRef.current.has(p)) return;
+    thumbRequestedRef.current.add(p);
+    const gen = thumbGenRef.current;
     void (async () => {
-      for (let p = 1; p <= N; p++) {
-        if (cancelled) return;
-        try {
-          const pdfPage = await pdf.getPage(p);
-          const viewport = pdfPage.getViewport({ scale: 0.18 });
-          const off = document.createElement('canvas');
-          off.width = viewport.width;
-          off.height = viewport.height;
-          const ctx = off.getContext('2d');
-          if (!ctx) continue;
-          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-          if (cancelled) return;
-          const dataUrl = off.toDataURL('image/png');
-          setThumbnails((prev) => {
-            const next = prev.slice();
-            next[p - 1] = dataUrl;
-            return next;
-          });
-        } catch {
-          // Skip this thumbnail; sidebar will show "Rendering…" until eventually rerendered.
-        }
+      try {
+        const pdfPage = await pdf.getPage(p);
+        // Thumbnails keep the page's inherent orientation — user rotation
+        // only affects the main canvas.
+        const viewport = pdfPage.getViewport({ scale: 0.18 });
+        const off = document.createElement('canvas');
+        off.width = viewport.width;
+        off.height = viewport.height;
+        const ctx = off.getContext('2d');
+        if (!ctx) return;
+        await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+        if (thumbGenRef.current !== gen) return;
+        const dataUrl = off.toDataURL('image/png');
+        setThumbnails((prev) => {
+          if (p - 1 >= prev.length) return prev;
+          const next = prev.slice();
+          next[p - 1] = dataUrl;
+          return next;
+        });
+      } catch {
+        // Leave the placeholder; a retry happens only if the doc reloads.
       }
     })();
-    return () => { cancelled = true; };
-  }, [loadState, fileKind, id]);
+  }, []);
 
   // Load annotations once per document.
   useEffect(() => {
@@ -931,15 +974,30 @@ export default function DocumentReader() {
             <ZoomIn size={15} />
           </button>
           {fileKind === 'pdf' && (
-            <button
-              onClick={() => setFitPage((v) => !v)}
-              className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
-                fitPage ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
-              }`}
-              title={fitPage ? 'Fit page is on — whole page visible' : 'Fit whole page to screen'}
-            >
-              <Scan size={15} />
-            </button>
+            <>
+              <button
+                onClick={() => setFitPage((v) => !v)}
+                className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+                  fitPage ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+                }`}
+                title={fitPage ? 'Fit page is on — whole page visible' : 'Fit whole page to screen'}
+              >
+                <Scan size={15} />
+              </button>
+              <button
+                onClick={() => {
+                  const next = (rotation + 90) % 360;
+                  setRotation(next);
+                  if (id) localStorage.setItem(`ctx_reader_rot_${id}`, String(next));
+                }}
+                className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+                  rotation !== 0 ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+                }`}
+                title={rotation === 0 ? 'Rotate page 90°' : `Rotated ${rotation}° — click to keep rotating`}
+              >
+                <RotateCw size={15} />
+              </button>
+            </>
           )}
           <button
             onClick={toggleFullscreen}
@@ -1022,6 +1080,7 @@ export default function DocumentReader() {
             outline={outline}
             onJumpPage={(p) => setPage(p)}
             onJumpDest={(d) => void jumpDest(d)}
+            onNeedThumb={requestThumbnail}
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">
