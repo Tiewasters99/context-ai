@@ -1,33 +1,34 @@
-﻿-- 046: The Courtroom â€” AI mock-jury rehearsal (Phase 1: Quick Panel).
+-- 046: The Courtroom — AI mock-jury rehearsal (Phase 1: Quick Panel).
 --
--- Spec: docs/MOCK_TRIAL_SPEC_2026-08-07.md (Â§8 data model). Seven tables, all
--- matter-scoped. Everything stays in the matter (spec Â§2.4): inputs and
+-- Spec: docs/MOCK_TRIAL_SPEC_2026-08-07.md (§8 data model). Seven tables, all
+-- matter-scoped. Everything stays in the matter (spec §2.4): inputs and
 -- outputs are rows under existing RLS, and the Rehearsal Report is ALSO filed
 -- into the matter as a real document (mock_trial_reports.document_id).
 --
---   * mock_trials            â€” one rehearsal session: venue mix, sampler seed,
+--   * mock_trials            — one rehearsal session: venue mix, sampler seed,
 --                              model, status, and per-session usage metering
---                              (spec Â§12.2: build meters per-session cost).
---   * mock_trial_jurors      â€” the empaneled panel; profile jsonb is the
---                              two-layer juror model of spec Â§4 exactly.
---   * mock_trial_segments    â€” units of advocacy (opening/direct/cross/closing/
+--                              (spec §12.2: build meters per-session cost).
+--   * mock_trial_jurors      — the empaneled panel; profile jsonb is the
+--                              two-layer juror model of spec §4 exactly.
+--   * mock_trial_segments    — units of advocacy (opening/direct/cross/closing/
 --                              exhibit), tagged ours|theirs.
---   * mock_trial_events      â€” objections/rulings/strikes are Phase 2, but the
+--   * mock_trial_events      — objections/rulings/strikes are Phase 2, but the
 --                              table ships now for schema stability; Phase 1
 --                              writes deliberation turns as type 'note'.
---   * mock_trial_reactions   â€” per-juror per-segment private reactions.
---   * mock_trial_ballots     â€” leaning + conviction(1-7) + reasons, per round.
---   * mock_trial_reports     â€” the Rehearsal Report markdown + the document it
+--   * mock_trial_reactions   — per-juror per-segment private reactions.
+--   * mock_trial_ballots     — leaning + conviction(1-7) + reasons, per round.
+--   * mock_trial_reports     — the Rehearsal Report markdown + the document it
 --                              was filed as.
 --
 -- RLS follows the migration-036/030/022 pattern: one SECURITY INVOKER wrapper
--- per feature (_ctrm_matter_access) delegating to _mtspc_select_check â€” never
+-- per feature (_ctrm_matter_access) delegating to _mtspc_select_check — never
 -- call SECURITY DEFINER helpers directly from policy expressions.
 --
--- Numbered 045 (not 042): 042/043 are applied in production (knowledge map)
--- and 044 is pending on fix/ingestion-unified. â›” Eden applies migrations.
+-- Numbered 046: 042/043 are applied in production (knowledge map), and
+-- fix/ingestion-unified carries 044 AND 045 (enum-cast fix), both pending.
+-- Independent of 044/045 — safe to apply in either order. ⛔ Eden applies.
 --
--- Apply order: after 041 (and after 042-044 if/when those land â€” no
+-- Apply order: after 041 (and after 042-044 if/when those land — no
 -- dependencies on them).
 
 -- ============================================================================
@@ -37,19 +38,19 @@
 create table public.mock_trials (
   id uuid primary key default gen_random_uuid(),
   matterspace_id uuid not null references public.matterspaces(id) on delete cascade,
-  -- Pitch-agnostic: names the rehearsal, not the product ("Anlauf v. UKC â€”
+  -- Pitch-agnostic: names the rehearsal, not the product ("Anlauf v. UKC —
   -- opening + cross rehearsal").
   title text not null,
   mode text not null default 'quick' check (mode in ('quick', 'full')),
   status text not null default 'empanel'
     check (status in ('empanel', 'segments', 'running', 'complete', 'error')),
-  -- Manual venue-mix sliders (spec Â§12.3) + panel size. The deterministic
+  -- Manual venue-mix sliders (spec §12.3) + panel size. The deterministic
   -- sampler input; same seed + same mix = same panel.
   venue_mix jsonb not null default '{}'::jsonb,
   seed integer not null default 0,
   model_id text not null default 'claude-fable-5',
   -- Token/cost metering accumulated per session (estimates are labeled as
-  -- estimates inside the blob). Feeds the pricing math of spec Â§12.2.
+  -- estimates inside the blob). Feeds the pricing math of spec §12.2.
   usage jsonb not null default '{}'::jsonb,
   created_by uuid references public.profiles(id),
   created_at timestamptz not null default now(),
@@ -67,7 +68,7 @@ create table public.mock_trial_jurors (
   trial_id uuid not null references public.mock_trials(id) on delete cascade,
   matterspace_id uuid not null references public.matterspaces(id) on delete cascade,
   seat integer not null,
-  -- The spec-Â§4 juror object: composition layer (who is in the box) and
+  -- The spec-§4 juror object: composition layer (who is in the box) and
   -- reasoning layer (why they decide). Every field is lawyer-editable before
   -- empanelment; this row stores the approved version.
   profile jsonb not null,
@@ -121,7 +122,7 @@ create table public.mock_trial_reactions (
   juror_id uuid not null references public.mock_trial_jurors(id) on delete cascade,
   segment_id uuid not null references public.mock_trial_segments(id) on delete cascade,
   -- Structured private reaction: salience list (3-5 moments w/ record cites),
-  -- confusion points, credibility impressions, one-line gut response (Â§5).
+  -- confusion points, credibility impressions, one-line gut response (§5).
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   unique (juror_id, segment_id)
@@ -135,7 +136,7 @@ create table public.mock_trial_ballots (
   trial_id uuid not null references public.mock_trials(id) on delete cascade,
   matterspace_id uuid not null references public.matterspaces(id) on delete cascade,
   juror_id uuid not null references public.mock_trial_jurors(id) on delete cascade,
-  -- Round 0 is the secret first ballot cast before any discussion (Â§6.1).
+  -- Round 0 is the secret first ballot cast before any discussion (§6.1).
   round integer not null,
   leaning text not null check (leaning in ('ours', 'theirs', 'undecided')),
   conviction integer not null check (conviction between 1 and 7),
@@ -153,7 +154,7 @@ create table public.mock_trial_reports (
   trial_id uuid not null references public.mock_trials(id) on delete cascade,
   matterspace_id uuid not null references public.matterspaces(id) on delete cascade,
   -- The report is ALSO filed into the matter through the normal upload path so
-  -- it becomes searchable record (Â§9); this links the resulting document.
+  -- it becomes searchable record (§9); this links the resulting document.
   document_id uuid references public.documents(id) on delete set null,
   markdown text not null,
   created_at timestamptz not null default now(),
@@ -163,7 +164,7 @@ create table public.mock_trial_reports (
 create index mock_trial_reports_matter_idx on public.mock_trial_reports (matterspace_id);
 
 -- ============================================================================
--- RLS â€” single SECURITY INVOKER access wrapper (migration-036/030/022 pattern)
+-- RLS — single SECURITY INVOKER access wrapper (migration-036/030/022 pattern)
 -- ============================================================================
 
 create or replace function public._ctrm_matter_access(p_matter uuid)
