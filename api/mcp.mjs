@@ -218,7 +218,7 @@ export default async function handler(req, res) {
     const sb = userScopedClient(user_id);
 
     const server = new Server(
-      { name: 'contextspaces-retrieval', version: '0.3.0' },
+      { name: 'contextspaces-retrieval', version: '0.4.0' },
       {
         capabilities: { tools: {} },
         instructions:
@@ -229,7 +229,12 @@ export default async function handler(req, res) {
           'streaming URL (supports HTTP Range). When a user asks you to watch ' +
           'or analyze a video stored in Contextspaces, use get_media and fetch ' +
           'the URL yourself; do not report that video is unavailable and do ' +
-          'not ask for a local file path.',
+          'not ask for a local file path. You can also ORGANIZE the ' +
+          'workspace: create_matter creates matters, sub-matters, and folders ' +
+          '(all the same container), and move_document files ' +
+          'already-stored documents into them — so "make an Engagement ' +
+          'Letters folder in Admin and put the drafts in it" is create_matter ' +
+          'followed by move_document, no manual steps needed.',
       }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
