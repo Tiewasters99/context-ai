@@ -1,6 +1,6 @@
-// The Courtroom — persistence (migration 045). Plain Supabase under the
+﻿// The Courtroom â€” persistence (migration 046). Plain Supabase under the
 // matter's existing RLS; every row carries matterspace_id so the policy
-// wrapper never joins. Everything stays in the matter (spec §2.4).
+// wrapper never joins. Everything stays in the matter (spec Â§2.4).
 
 import { supabase } from '@/lib/supabase';
 import { persistVaultFile, resolveMatter } from '@/lib/vault-persist';
@@ -258,7 +258,7 @@ export async function getReport(
 /**
  * File the Rehearsal Report into the matter as a real document through the
  * normal Vault upload path (documents row + storage + ingest), so it becomes
- * searchable record like everything else (spec §9). Returns the document id,
+ * searchable record like everything else (spec Â§9). Returns the document id,
  * or null if the matter could not be resolved.
  */
 export async function fileReportToMatter(
@@ -270,7 +270,7 @@ export async function fileReportToMatter(
   const safeTitle = trial.title.replace(/[\\/:*?"<>|]/g, '-');
   const file = new File(
     [markdown],
-    `Rehearsal Report — ${safeTitle}.md`,
+    `Rehearsal Report â€” ${safeTitle}.md`,
     { type: 'text/markdown' },
   );
   const { documentId } = await persistVaultFile(matter, file);
