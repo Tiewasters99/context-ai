@@ -17,6 +17,13 @@ interface Product {
 
 const PRODUCTS: Product[] = [
   {
+    name: 'The Courtroom',
+    tagline: 'Perform your case before a panel of AI jurors drawn from your venue, then read what the performance did — what landed, what confused, who moved. A rehearsal instrument, not an oracle.',
+    accent: '#c9803a',
+    to: '/app/courtroom',
+    status: 'New',
+  },
+  {
     name: 'Bucketizer',
     tagline: 'Your case theory as a living tree — every document classified against the elements you must prove. AI-proposed, attorney-confirmed.',
     accent: '#34d399',
