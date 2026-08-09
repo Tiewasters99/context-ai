@@ -39,11 +39,11 @@ scene.setPanel(NAMES.map((name, i) => ({
   occupation: ['ICU nurse', 'electrician', 'bookkeeper', 'line cook', 'claims adjuster', 'teacher'][i % 6],
 })));
 
-// Portrait trial (Eden's Midjourney set): the two portraits across all
-// twelve seats — odd seats the front-facing woman, even seats the man —
-// so faces are visible from every view.
+// Portrait trial (Eden's Midjourney set): three waist-up, front-facing
+// figures cycled across the twelve desks. (The tight B&W close-up is out —
+// a card needs the figure from the waist up, not a face crop.)
 for (let s = 1; s <= 12; s++) {
-  scene.setJurorPortrait(s, s % 2 ? '/juror-1.png' : '/juror-2.png');
+  scene.setJurorPortrait(s, `/figure-${((s - 1) % 3) + 1}.png`);
 }
 
 // View buttons for manual inspection.
