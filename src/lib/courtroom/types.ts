@@ -170,6 +170,98 @@ export interface Ballot {
   reasons: BallotReason[];
 }
 
+/* ================= Objections / rulings / strikes (§5, Phase 2) =========== */
+
+export type ObjectionGround =
+  | 'hearsay'            // FRE 802 — out-of-court statement offered for its truth
+  | 'characterization'   // argumentative / assumes facts — FRE 611(a)
+  | 'speculation'        // state of mind without foundation — FRE 602/701
+  | 'prejudice';         // probative value substantially outweighed — FRE 403
+
+/** A deterministically nominated span the opposing-counsel agent reviews.
+ *  Paragraph granularity: span = one ¶ of one segment. */
+export interface CandidateSpan {
+  segment_id: string;
+  /** 1-based paragraph number — matches the "¶n" locators jurors cite. */
+  para: number;
+  tag: ObjectionGround;
+  text: string;
+}
+
+/** The opposing-counsel agent's decision to stand and object. */
+export interface Objection {
+  segment_id: string;
+  para: number;
+  ground: ObjectionGround;
+  basis: string; // one sentence, spoken in court
+}
+
+/** The judge's ruling on one objection (FRE-grounded, one paragraph). */
+export interface Ruling {
+  segment_id: string;
+  para: number;
+  ground: ObjectionGround;
+  ruling: 'sustained' | 'overruled';
+  explanation: string;
+  /** Present iff sustained — the instruction read to the jury. */
+  disregard_instruction?: string;
+}
+
+/** A sustained objection: the ¶ is stricken but STAYS in juror memory,
+ *  flagged with the instruction (spec §5 — the signature mechanic). */
+export interface Strike {
+  segment_id: string;
+  para: number;
+  ground: ObjectionGround;
+  instruction: string;
+  /** The stricken paragraph's text (for leakage matching + the report). */
+  text: string;
+}
+
+export interface TrialProcedure {
+  candidates: CandidateSpan[];
+  objections: Objection[];
+  rulings: Ruling[];
+  strikes: Strike[];
+}
+
+/* ===================== Leakage & Twin Panel (§5, Phase 2) ================= */
+
+/** One place stricken material resurfaced (or was policed) after the strike. */
+export interface LeakageSighting {
+  seat: number;
+  juror_id: string;
+  round: number;
+  where: 'speech' | 'ballot';
+  excerpt: string;
+}
+
+export interface LeakageFinding {
+  strike: Strike;
+  /** e.g. "Seg 1 ¶4" — the locator jurors would cite. */
+  locator: string;
+  resurfaced: LeakageSighting[];
+  policed: LeakageSighting[];
+  /** Jurors whose FINAL ballot reasons still lean on the stricken span. */
+  in_final_ballots: LeakageSighting[];
+}
+
+/** Twin Panel: the same jurors run against a record that never contained the
+ *  stricken material. The delta is the measured cost of the moment. */
+export interface TwinDeltaRow {
+  juror_id: string;
+  seat: number;
+  main: { leaning: Leaning; conviction: number };
+  twin: { leaning: Leaning; conviction: number };
+}
+
+export interface TwinResult {
+  deliberation: DeliberationResult;
+  delta: TwinDeltaRow[];
+  main_tally: { ours: number; theirs: number; undecided: number };
+  twin_tally: { ours: number; theirs: number; undecided: number };
+}
+
 /* ========================== Deliberation (§6) ============================= */
 
 export interface DeliberationTurn {
@@ -204,6 +296,10 @@ export interface DeliberationResult {
 export interface SessionResult {
   reactions: Reaction[];
   deliberation: DeliberationResult;
+  /** Present in full mode (Phase 2). */
+  procedure?: TrialProcedure;
+  leakage?: LeakageFinding[];
+  twin?: TwinResult;
 }
 
 /* ============================ Metering ==================================== */
@@ -234,11 +330,15 @@ export interface UsageRecord {
 /* ========================= Engine ports (DI seam) ========================= */
 
 export interface ProgressEvent {
-  stage: 'reactions' | 'first_ballot' | 'deliberation' | 'reballot' | 'report';
+  stage:
+    | 'reactions' | 'first_ballot' | 'deliberation' | 'reballot' | 'report'
+    | 'objections' | 'ruling' | 'twin';
   detail: string;
   /** Seat currently speaking/reacting, when applicable. */
   seat?: number;
   round?: number;
+  /** Set on every event of the Twin Panel pass. */
+  twin?: boolean;
 }
 
 export interface StructuredCall {
@@ -274,6 +374,8 @@ export interface EnginePorts {
   saveReaction?: (r: Reaction) => Promise<void>;
   saveBallot?: (b: Ballot) => Promise<void>;
   saveTurn?: (t: DeliberationTurn) => Promise<void>;
+  /** Full mode: objection/ruling/strike events (mock_trial_events). */
+  saveEvent?: (e: Objection | Ruling | Strike, type: 'objection' | 'ruling' | 'strike') => Promise<void>;
   /** Kill switch: checked before every juror turn; aborting throws SessionAborted. */
   signal?: AbortSignal;
 }
@@ -290,4 +392,9 @@ export interface ReportInput {
   deliberation: DeliberationResult;
   usage: UsageRecord | null;
   generatedAt: string; // ISO date
+  /** Full Trial (Phase 2) inputs — §5 of the report. */
+  mode?: TrialMode;
+  procedure?: TrialProcedure;
+  leakage?: LeakageFinding[];
+  twin?: TwinResult;
 }

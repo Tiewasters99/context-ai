@@ -20,13 +20,14 @@
 import type {
   Ballot, BallotReason, ConfusionPoint, CredibilityImpression,
   DeliberationResult, DeliberationTurn, EnginePorts, JurorProfile, Leaning,
-  Reaction, RoundRecord, SalienceItem, Segment, SessionResult,
+  Reaction, RoundRecord, SalienceItem, Segment, SessionResult, TrialMode,
 } from './types.ts';
 import {
   BALLOT_SCHEMA, REACTION_SCHEMA, buildJurorPrompt, caseDigest, computeSplit,
   deliberationRecord, firstBallotTask, foremanTask, reactionTask, reballotTask,
   renderOwnReactions, speakerTask, JUROR_SYSTEM,
 } from './prompts.ts';
+import { computeTwinDelta, measureLeakage, runProcedure } from './procedure.ts';
 
 export const MAX_ROUNDS = 5;
 export const MAX_SPEAKERS_PER_ROUND = 4;
@@ -53,6 +54,10 @@ export interface EngineInput {
   jurors: JurorProfile[];
   segments: Segment[];
   maxRounds?: number;
+  /** 'full' runs {OBJECTION → RULING → STRIKE} + leakage (§5, Phase 2). */
+  mode?: TrialMode;
+  /** Full mode only: also run the clean-room Twin Panel (doubles juror cost). */
+  twinPanel?: boolean;
 }
 
 /* ========================= Deterministic selectors ======================== */
@@ -177,12 +182,31 @@ function normalizeReaction(jurorId: string, segmentId: string, raw: unknown): Re
   };
 }
 
-/* ============================== The session =============================== */
+/* ============================ The panel pass ============================== */
 
-export async function runSession(input: EngineInput, ports: EnginePorts): Promise<SessionResult> {
-  const { trialTitle, jurors, segments } = input;
-  const maxRounds = input.maxRounds ?? MAX_ROUNDS;
-  const digest = caseDigest(trialTitle, segments);
+interface PanelPassOptions {
+  /** Twin Panel pass: 'twin_' stage names, twin-flagged progress, no saves. */
+  twin?: boolean;
+}
+
+/**
+ * One complete panel run — reactions, secret first ballot, deliberation —
+ * against a given rendering of the record. The main panel and the Twin Panel
+ * are the same pass over different digests; the twin persists nothing (its
+ * ballots would collide with the main panel's rows) and prefixes its stage
+ * names so metering and mocks can tell the passes apart.
+ */
+async function runPanelPass(
+  digest: string,
+  jurors: JurorProfile[],
+  segments: Segment[],
+  maxRounds: number,
+  ports: EnginePorts,
+  opts: PanelPassOptions = {},
+): Promise<{ reactions: Reaction[]; deliberation: DeliberationResult }> {
+  const twin = opts.twin === true;
+  const pre = twin ? 'twin_' : '';
+  const who = twin ? 'Twin Panel — ' : '';
   const ordered = [...segments].sort((a, b) => a.position - b.position);
   const checkAbort = () => { if (ports.signal?.aborted) throw new SessionAborted(); };
 
@@ -194,11 +218,12 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       checkAbort();
       ports.onProgress?.({
         stage: 'reactions',
-        detail: `${juror.display_name} (seat ${juror.seat}) is reacting to Seg ${seg.position + 1} (${seg.kind})`,
+        detail: `${who}${juror.display_name} (seat ${juror.seat}) is reacting to Seg ${seg.position + 1} (${seg.kind})`,
         seat: juror.seat,
+        ...(twin ? { twin } : {}),
       });
       const raw = await ports.structured<unknown>({
-        stage: 'reaction',
+        stage: `${pre}reaction`,
         jurorId: juror.id,
         system: JUROR_SYSTEM,
         prompt: buildJurorPrompt(digest, juror, reactionTask(seg)),
@@ -212,7 +237,7 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       const mine = reactionsByJuror.get(juror.id) ?? [];
       mine.push(reaction);
       reactionsByJuror.set(juror.id, mine);
-      await ports.saveReaction?.(reaction);
+      if (!twin) await ports.saveReaction?.(reaction);
     }
   }
 
@@ -226,12 +251,13 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       checkAbort();
       ports.onProgress?.({
         stage: round === 0 ? 'first_ballot' : 'reballot',
-        detail: `${juror.display_name} (seat ${juror.seat}) is casting a ballot`,
+        detail: `${who}${juror.display_name} (seat ${juror.seat}) is casting a ballot`,
         seat: juror.seat,
         round,
+        ...(twin ? { twin } : {}),
       });
       const raw = await ports.structured<unknown>({
-        stage: round === 0 ? 'first_ballot' : 'reballot',
+        stage: `${pre}${round === 0 ? 'first_ballot' : 'reballot'}`,
         jurorId: juror.id,
         system: JUROR_SYSTEM,
         prompt: buildJurorPrompt(shared, juror, notesOf(juror) + '\n\n' + task),
@@ -242,7 +268,7 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       });
       const ballot = normalizeBallot(juror.id, round, raw);
       ballots.push(ballot);
-      await ports.saveBallot?.(ballot);
+      if (!twin) await ports.saveBallot?.(ballot);
     }
     return ballots;
   };
@@ -269,13 +295,14 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       checkAbort();
       ports.onProgress?.({
         stage: 'deliberation',
-        detail: `${juror.display_name} (seat ${juror.seat}) has the floor`,
+        detail: `${who}${juror.display_name} (seat ${juror.seat}) has the floor`,
         seat: juror.seat,
         round,
+        ...(twin ? { twin } : {}),
       });
       const shared = digest + deliberationRecord([...allTurns, ...roundTurns]);
       const speech = await ports.speech({
-        stage: role === 'foreman' ? 'foreman' : 'deliberation',
+        stage: `${pre}${role === 'foreman' ? 'foreman' : 'deliberation'}`,
         jurorId: juror.id,
         system: JUROR_SYSTEM,
         prompt: buildJurorPrompt(shared, juror, notesOf(juror) + '\n\n' + task),
@@ -286,7 +313,7 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
         responding_to: respondingTo, speech: speech.trim(),
       };
       roundTurns.push(turn);
-      await ports.saveTurn?.(turn);
+      if (!twin) await ports.saveTurn?.(turn);
       return turn;
     };
 
@@ -332,6 +359,60 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       total_movement: totalMovement,
       foreman_juror_id: foreman.id,
     },
+  };
+}
+
+/* ============================== The session =============================== */
+
+export async function runSession(input: EngineInput, ports: EnginePorts): Promise<SessionResult> {
+  const { trialTitle, jurors, segments } = input;
+  const maxRounds = input.maxRounds ?? MAX_ROUNDS;
+  const full = input.mode === 'full';
+  const checkAbort = () => { if (ports.signal?.aborted) throw new SessionAborted(); };
+
+  /* ---- Full mode, phase 0: {OBJECTION → RULING → STRIKE}* (§5). ---- */
+  const procedure = full ? await runProcedure(segments, ports, checkAbort) : undefined;
+  const strikes = procedure?.strikes ?? [];
+
+  // The main panel's record: stricken ¶s stay, flagged with the instruction —
+  // jurors heard the words (the signature mechanic).
+  const digest = caseDigest(
+    trialTitle,
+    segments,
+    strikes.length ? { strikes, mode: 'annotate' } : undefined,
+  );
+  const main = await runPanelPass(digest, jurors, segments, maxRounds, ports);
+
+  /* ---- Full mode: leakage measurement (deterministic). ---- */
+  const allTurns = main.deliberation.rounds.flatMap((r) => r.turns);
+  const finals = main.deliberation.rounds.length
+    ? main.deliberation.rounds[main.deliberation.rounds.length - 1].ballots
+    : main.deliberation.firstBallots;
+  const leakage = full
+    ? measureLeakage(strikes, segments, allTurns, finals, jurors)
+    : undefined;
+
+  /* ---- Twin Panel (opt-in; only meaningful when something was struck). ---- */
+  let twin: SessionResult['twin'];
+  if (full && input.twinPanel && strikes.length > 0) {
+    ports.onProgress?.({
+      stage: 'twin',
+      detail: 'Empaneling the Twin Panel — the same twelve, minus the stricken material',
+      twin: true,
+    });
+    const cleanDigest = caseDigest(trialTitle, segments, { strikes, mode: 'omit' });
+    const twinPass = await runPanelPass(
+      cleanDigest, jurors, segments, maxRounds, ports, { twin: true },
+    );
+    twin = computeTwinDelta(main.deliberation, twinPass.deliberation, jurors);
+  }
+
+  return {
+    reactions: main.reactions,
+    deliberation: main.deliberation,
+    ...(procedure ? { procedure } : {}),
+    ...(leakage ? { leakage } : {}),
+    ...(twin ? { twin } : {}),
   };
 }
 

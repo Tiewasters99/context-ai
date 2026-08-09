@@ -16,10 +16,15 @@
 //   4. FLATNESS ALARM — a zero-movement suite fails the build; a flat control
 //      run must trip the runtime alarm; kill switch (ports.signal) throws
 //      SessionAborted on the next juror turn; all-undecided majority edge case
-//   5. demographic-keying scan — regex over prompt templates, every prompt
+//   5. FULL TRIAL (Phase 2) — deterministic span nomination; scripted
+//      objection → sustained ruling → strike; the main record keeps the
+//      stricken ¶ flagged with the instruction while the twin record omits
+//      it (¶ numbering unshifted); leakage detection separates resurfacing
+//      from policing from final-ballot reliance; Twin Panel delta; report §5
+//   6. demographic-keying scan — regex over prompt templates, every prompt
 //      the engine actually built, every output, and the reports
-//   6. prompt-cache ordering — [shared record][boundary][persona][task]
-//   7. report composition — §9 sections, disclaimers, resolvable cites
+//   7. prompt-cache ordering — [shared record][boundary][persona][task]
+//   8. report composition — §9 sections, disclaimers, resolvable cites
 //
 // Golden scenarios: PI, contract, and LABIB_STERIS_PLACEHOLDER (authored
 // generic antitrust facts; Eden supplies the anonymized Labib/Steris record
@@ -318,6 +323,210 @@ console.log('\n— Kill switch (SessionAborted) and majority edge cases —');
   check("a single decided ballot still yields that side as the emerging majority", emergingMajority(oneVote) === 'ours');
 }
 
+/* ============ 5 (Phase 2): Full Trial — strike, leakage, twin ============= */
+
+console.log('\n— Full Trial: objection → ruling → strike → leakage → Twin Panel (§5) —');
+{
+  const { nominateSpans } = await import(`file://${lib('procedure.ts')}`);
+  const fixture = fixtures[1]; // the contract dispute
+
+  // Deterministic nomination: the closing's "bet that went bad" is the one
+  // characterization on this record; the opening offers nothing objectionable.
+  // ¶1 "a bet that went bad" → characterization; ¶2 "the words they wrote" →
+  // hearsay-shaped. Nomination is deliberately coarse — counsel (scripted
+  // below) stands on ¶1 only, exercising the decline-the-loser path for ¶2.
+  const spans = nominateSpans(fixture.segments[2]);
+  check('nomination flags both closing ¶s (¶1 characterization, ¶2 hearsay-shaped)',
+    spans.length === 2 &&
+    spans[0].para === 1 && spans[0].tag === 'characterization' &&
+    spans[1].para === 2 && spans[1].tag === 'hearsay',
+    JSON.stringify(spans.map((s) => [s.para, s.tag])));
+  check('nomination leaves the clean opening alone (Seg 1: no candidates)',
+    nominateSpans(fixture.segments[0]).length === 0,
+    JSON.stringify(nominateSpans(fixture.segments[0]).map((s) => [s.para, s.tag])));
+
+  // Full session: scripted opposing counsel + judge; twin ballots differ only
+  // in seat 4, which flips sides when it never hears the stricken line.
+  const INSTRUCTION =
+    'You will disregard counsel\'s characterization of the defendant\'s decision as a bet that went bad; you may consider the evidence of what the defendant did.';
+  const twinBallots = structuredClone(fixture.ballots);
+  twinBallots[4] = { 0: ['ours', 4], 1: ['theirs', 3] };
+
+  const capture = { prompts: [], outputs: [], reports: [] };
+  allCaptures.push(capture); // demographic scan covers the procedure prompts too
+  const panel = samplePanel(
+    structuredClone((await import(`file://${lib('sampler.ts')}`)).DEFAULT_VENUE_MIX),
+    fixture.seed,
+    fixture.panelSize,
+  );
+  const base = makeMockPorts(fixture, capture);
+  const twinBase = makeMockPorts({ ...fixture, ballots: twinBallots }, capture);
+  const strip = (call) => ({ ...call, stage: call.stage.replace(/^twin_/, '') });
+
+  let deliberationTurnsSeen = 0;
+  const ports = {
+    structured: async (call) => {
+      if (call.stage === 'objection') {
+        capture.prompts.push(call);
+        const out = {
+          objections: [{
+            para: 1,
+            ground: 'characterization',
+            basis: 'Objection, Your Honor — counsel is testifying. "A bet that went bad" is argument dressed as evidence.',
+          }],
+        };
+        capture.outputs.push(JSON.stringify(out));
+        return out;
+      }
+      if (call.stage === 'ruling') {
+        capture.prompts.push(call);
+        const out = {
+          ruling: 'sustained',
+          explanation: 'Sustained. Counsel may argue the inferences the evidence supports, but "a bet that went bad" characterizes the defendant\'s judgment rather than the record; under Rule 611(a) the Court confines closing to the evidence and fair inference.',
+          disregard_instruction: INSTRUCTION,
+        };
+        capture.outputs.push(JSON.stringify(out));
+        return out;
+      }
+      if (call.stage.startsWith('twin_')) return twinBase.structured(strip(call));
+      const out = await base.structured(call);
+      // Ballot-leakage plant: seat 4's re-ballots keep leaning on the
+      // stricken line despite the instruction.
+      if (call.stage === 'reballot' && call.jurorId === 'seat-4') {
+        out.reasons[0] = {
+          reason: 'That bet-that-went-bad framing is still how I read Section 14, whatever the ruling was.',
+          quote: 'a bet that went bad',
+          locator: 'Seg 3 ¶1',
+        };
+      }
+      return out;
+    },
+    speech: async (call) => {
+      if (call.stage.startsWith('twin_')) return twinBase.speech(strip(call));
+      if (call.stage === 'deliberation') {
+        deliberationTurnsSeen += 1;
+        // First speaker resurfaces the stricken moment; second polices it.
+        if (deliberationTurnsSeen === 1) {
+          capture.prompts.push(call);
+          const text = 'Say what you want about the ruling — counsel had it right. It was a bet that went bad [Seg 3 ¶1], and Section 14 does not rescue a bad bet. The hedge was on the table in 2023 and they passed.';
+          capture.outputs.push(text);
+          return text;
+        }
+        if (deliberationTurnsSeen === 2) {
+          capture.prompts.push(call);
+          const text = 'Hold on — we were told to disregard the "bet that went bad" line, so set it aside. Rule on what is left: the certified-mail clause was theirs [Seg 3 ¶2] and they did not follow it.';
+          capture.outputs.push(text);
+          return text;
+        }
+      }
+      return base.speech(call);
+    },
+    onProgress: () => {},
+  };
+
+  const res = await runSession(
+    {
+      trialTitle: fixture.trialTitle,
+      jurors: panel,
+      segments: fixture.segments,
+      mode: 'full',
+      twinPanel: true,
+    },
+    ports,
+  );
+
+  /* ---- The procedure ---- */
+  check('opposing counsel reviewed only OUR segments (1 objection on this record)',
+    res.procedure?.objections.length === 1 && res.procedure.objections[0].para === 1);
+  check('the Court ruled once, sustained, with a disregard instruction',
+    res.procedure?.rulings.length === 1 &&
+    res.procedure.rulings[0].ruling === 'sustained' &&
+    res.procedure.rulings[0].disregard_instruction === INSTRUCTION);
+  check('a sustained ruling produced exactly one strike carrying the ¶ text',
+    res.procedure?.strikes.length === 1 &&
+    res.procedure.strikes[0].para === 1 &&
+    res.procedure.strikes[0].text.includes('bet that went bad') &&
+    res.procedure.strikes[0].instruction === INSTRUCTION);
+
+  /* ---- The two records ---- */
+  const mainReaction = capture.prompts.find(
+    (p) => p.stage === 'reaction' && p.prompt.includes('[Seg 3 (closing, ours)]\n¶1 [STRICKEN'),
+  );
+  check('main panel record keeps the stricken ¶, flagged with the instruction (they heard it)',
+    Boolean(mainReaction) &&
+    mainReaction.prompt.includes(INSTRUCTION) &&
+    mainReaction.prompt.includes('bet that went bad'));
+  const twinReaction = capture.prompts.find(
+    (p) => p.stage === 'reaction' && p.prompt.includes('[Seg 3 (closing, ours)]\n¶2 '),
+  );
+  check('twin record omits the stricken ¶ entirely, with ¶ numbering unshifted',
+    Boolean(twinReaction) &&
+    !twinReaction.prompt.includes('bet that went bad') &&
+    !twinReaction.prompt.includes('STRICKEN') &&
+    twinReaction.prompt.includes('¶2 The certified-mail clause'));
+
+  /* ---- Leakage measurement ---- */
+  const r1 = res.deliberation.rounds[0].turns.filter((t) => t.role === 'speaker');
+  const finding = res.leakage?.[0];
+  check('leakage: the resurfacing turn is detected (and only that turn)',
+    Boolean(finding) &&
+    finding.resurfaced.length === 1 &&
+    finding.resurfaced[0].seat === r1[0].seat &&
+    finding.resurfaced[0].round === 1,
+    JSON.stringify(finding?.resurfaced.map((s) => [s.seat, s.round])));
+  check('leakage: the policing turn is detected as policing, not leakage',
+    Boolean(finding) &&
+    finding.policed.length === 1 &&
+    finding.policed[0].seat === r1[1].seat);
+  check('leakage: seat 4\'s final ballot still leans on the stricken span',
+    Boolean(finding) &&
+    finding.in_final_ballots.length === 1 &&
+    finding.in_final_ballots[0].seat === 4);
+
+  /* ---- Twin Panel delta ---- */
+  check('twin panel deliberated separately (its own rounds, its own stop)',
+    res.twin?.deliberation.rounds.length === 3 && res.twin.deliberation.stop_reason === 'hung',
+    `got ${res.twin?.deliberation.rounds.length} rounds, ${res.twin?.deliberation.stop_reason}`);
+  check('twin delta prices the moment: 7-5 with it, 6-6 without it',
+    deepEqual(res.twin?.main_tally, { ours: 7, theirs: 5, undecided: 0 }) &&
+    deepEqual(res.twin?.twin_tally, { ours: 6, theirs: 6, undecided: 0 }));
+  const moved = res.twin?.delta.filter((d) => d.main.leaning !== d.twin.leaning) ?? [];
+  check('twin delta names seat 4 as the juror the stricken moment moved',
+    moved.length === 1 && moved[0].seat === 4 &&
+    moved[0].main.leaning === 'ours' && moved[0].twin.leaning === 'theirs');
+
+  /* ---- Report §5 ---- */
+  const md = await composeReport({
+    trialTitle: fixture.trialTitle,
+    matterName: 'Eval Matter',
+    modelName: 'Mock Panel',
+    panel,
+    segments: fixture.segments,
+    reactions: res.reactions,
+    deliberation: res.deliberation,
+    usage: null,
+    generatedAt: 'August 9, 2026',
+    mode: 'full',
+    procedure: res.procedure,
+    leakage: res.leakage,
+    twin: res.twin,
+  }, ports);
+  capture.reports.push(md);
+  check('report header says Full Trial', md.includes('Full Trial, panel of 12'));
+  const s5 = md.slice(md.indexOf('## 5. Strike & leakage panel'), md.indexOf('## 6.'));
+  check('report §5 renders the ruling, the instruction, and the stricken span',
+    s5.includes('SUSTAINED') && s5.includes(INSTRUCTION) && s5.includes('Stricken — Seg 3 ¶1'));
+  check('report §5 renders leakage, policing, and final-ballot reliance',
+    s5.includes('resurfaced in deliberation') &&
+    s5.includes('reminded the room') &&
+    s5.includes('still lean'));
+  check('report §5 renders the Twin Panel delta table and the moved juror',
+    s5.includes('| Twin (never heard it) | 6 | 6 | 0 |') &&
+    s5.includes('seat 4 (ours 3/7 → theirs 3/7)'));
+  check('full-trial report still contains no verdict-probability language',
+    !/\b(probability|likelihood|odds|win rate|% chance|chance of (winning|prevailing))\b/i.test(md));
+}
+
 /* ======================= 7 (early): report composition ==================== */
 
 console.log('\n— Report composition (§9) —');
@@ -425,7 +634,9 @@ console.log('\n— Demographic-keying scan (§2.3 rail) —');
 
 console.log('\n— Prompt-cache ordering (§7) —');
 {
-  const jurorPrompts = allCaptures.flatMap((c) => c.prompts).filter((p) => p.stage !== 'report');
+  // Juror prompts only: opposing counsel, the judge, and report synthesis are
+  // not panel calls and deliberately do not share the juror prefix shape.
+  const jurorPrompts = allCaptures.flatMap((c) => c.prompts).filter((p) => p.jurorId);
   const ordered = jurorPrompts.every((p) => {
     const b = p.prompt.indexOf(CACHE_BOUNDARY);
     const record = p.prompt.indexOf('REHEARSAL RECORD');

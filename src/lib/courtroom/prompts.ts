@@ -18,7 +18,8 @@
 // harness regex-scans prompts and outputs for exactly that shape.
 
 import type {
-  Ballot, DeliberationTurn, JurorProfile, Reaction, Segment,
+  Ballot, CandidateSpan, DeliberationTurn, JurorProfile, Objection, Reaction,
+  Segment, Strike,
 } from './types.ts';
 
 /* ========================== Exported constants ============================ */
@@ -54,25 +55,67 @@ export function paragraphize(transcript: string): string[] {
     .filter((p) => p.length > 0);
 }
 
-function renderSegment(seg: Segment): string {
+/**
+ * How stricken material reaches jurors (spec §5, the signature mechanic):
+ *   'annotate' — the ¶ stays in the record, flagged with the Court's
+ *                disregard instruction. Jurors HEARD it; they cannot unhear
+ *                it. This is the main panel's record.
+ *   'omit'     — the ¶ is absent entirely; the remaining ¶ numbers do NOT
+ *                shift, so locators stay aligned across panels. This is the
+ *                Twin Panel's clean-room record.
+ */
+export interface DigestProcedure {
+  strikes: Strike[];
+  mode: 'annotate' | 'omit';
+}
+
+function renderSegment(seg: Segment, procedure?: DigestProcedure): string {
   const paras = paragraphize(seg.transcript);
-  const body = paras.map((p, i) => `¶${i + 1} ${p}`).join('\n');
+  const struck = new Map(
+    (procedure?.strikes ?? [])
+      .filter((s) => s.segment_id === seg.id)
+      .map((s) => [s.para, s]),
+  );
+  const body = paras
+    .map((p, i) => {
+      const strike = struck.get(i + 1);
+      if (!strike) return `¶${i + 1} ${p}`;
+      if (procedure?.mode === 'omit') return null; // twin never heard it
+      return `¶${i + 1} [STRICKEN — objection (${strike.ground}) SUSTAINED. `
+        + `The Court instructed: "${strike.instruction}"] ${p}`;
+    })
+    .filter((line): line is string => line !== null)
+    .join('\n');
   return `[${segmentLabel(seg)}]\n${body}`;
 }
 
 /* ========================= Shared prefix builders ========================= */
 
 /** The shared case digest + transcript-so-far. Identical for every juror. */
-export function caseDigest(trialTitle: string, segments: Segment[]): string {
+export function caseDigest(
+  trialTitle: string,
+  segments: Segment[],
+  procedure?: DigestProcedure,
+): string {
   const ordered = [...segments].sort((a, b) => a.position - b.position);
+  const hasAnnotations =
+    procedure?.mode === 'annotate' && procedure.strikes.length > 0;
   return [
     `REHEARSAL RECORD — ${trialTitle}`,
     '',
     'What follows is the courtroom record you have heard so far, presented segment by',
     'segment. "ours" marks counsel presenting to you; "theirs" marks the opposing side',
     '(counsel may perform both). Cite this record by locator, e.g. "Seg 1 ¶3".',
+    ...(hasAnnotations
+      ? [
+          '',
+          'Some passages are marked STRICKEN: an objection was sustained after you heard the',
+          'words, and the Court instructed you to disregard them. They remain printed only',
+          'because you heard them; they are not evidence.',
+        ]
+      : []),
     '',
-    ordered.map(renderSegment).join('\n\n'),
+    ordered.map((s) => renderSegment(s, procedure)).join('\n\n'),
   ].join('\n');
 }
 
@@ -285,6 +328,91 @@ export function speakerTask(respondingTo: string, round: number): string {
   ].join('\n');
 }
 
+/* ============== Opposing counsel & the judge (§5, Phase 2) ================ */
+
+export const OPPOSING_SYSTEM = [
+  'You are opposing trial counsel in a mock-trial rehearsal. Your job in this task is',
+  'narrow: decide whether to stand and object to specific passages of the presenting',
+  'lawyer\'s advocacy, exactly as you would before a real jury. You are a good trial',
+  'lawyer: you do not object to ordinary vigorous advocacy, you do not burn credibility',
+  'on losers, and you never object without a stated ground. Objecting to nothing is',
+  'often the right call.',
+].join('\n');
+
+export function opposingTask(seg: Segment, candidates: CandidateSpan[]): string {
+  const paras = paragraphize(seg.transcript);
+  return [
+    `TASK — REVIEW ${segmentLabel(seg)} FOR OBJECTIONS.`,
+    '',
+    'The segment as delivered:',
+    ...paras.map((p, i) => `¶${i + 1} ${p}`),
+    '',
+    'Passages flagged for your review (you may only object to these ¶s):',
+    ...candidates.map((c) => `- ¶${c.para} — flagged as possibly ${c.tag}`),
+    '',
+    'Decide which flagged passages, if any, merit standing up (0-2 objections; grounds:',
+    'hearsay, characterization, speculation, prejudice). For each, give the one sentence',
+    'you would actually say to the Court ("Objection, Your Honor — ..."). If nothing is',
+    'worth an objection, return an empty list.',
+  ].join('\n');
+}
+
+export const OBJECTION_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    objections: {
+      type: 'array', maxItems: 2,
+      items: {
+        type: 'object',
+        properties: {
+          para: { type: 'integer', description: 'The ¶ number objected to' },
+          ground: { type: 'string', enum: ['hearsay', 'characterization', 'speculation', 'prejudice'] },
+          basis: { type: 'string', description: 'The sentence spoken to the Court' },
+        },
+        required: ['para', 'ground', 'basis'],
+      },
+    },
+  },
+  required: ['objections'],
+};
+
+/** Moot Bench lineage: a composed federal judge, FRE-grounded, no coaching. */
+export const JUDGE_SYSTEM = [
+  'You are the presiding judge in a mock-trial rehearsal, in the manner of a seasoned',
+  'federal district judge. You rule on objections crisply and explain each ruling in one',
+  'paragraph grounded in the Federal Rules of Evidence as applied to THIS passage — no',
+  'treatise recitals, no coaching of either side. When you sustain an objection you give',
+  'the curative instruction you would actually read to the jury, in the second person',
+  'plural ("You will disregard...").',
+].join('\n');
+
+export function judgeTask(seg: Segment, objection: Objection, paraText: string): string {
+  return [
+    `TASK — RULE ON A PENDING OBJECTION.`,
+    '',
+    `In ${segmentLabel(seg)}, counsel said (¶${objection.para}):`,
+    `"${paraText}"`,
+    '',
+    `Opposing counsel objects — ground: ${objection.ground}. As stated: "${objection.basis}"`,
+    '',
+    'Rule sustained or overruled with your one-paragraph explanation. If sustained,',
+    'provide the disregard instruction you would read to the jury.',
+  ].join('\n');
+}
+
+export const RULING_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    ruling: { type: 'string', enum: ['sustained', 'overruled'] },
+    explanation: { type: 'string', description: 'One paragraph, FRE-grounded, applied to this passage' },
+    disregard_instruction: {
+      type: 'string',
+      description: 'Required when sustained: the curative instruction read to the jury',
+    },
+  },
+  required: ['ruling', 'explanation'],
+};
+
 /* ===================== Report synthesis (prose only) ====================== */
 
 export const REPORT_SYSTEM = [
@@ -302,7 +430,7 @@ export const REPORT_SYSTEM = [
  * model only at the judgment point).
  */
 export function reportSynthesisTask(
-  section: 'what_landed' | 'what_confused' | 'pushback',
+  section: 'what_landed' | 'what_confused' | 'pushback' | 'strike_leakage',
   dataDigest: string,
 ): string {
   const intro: Record<typeof section, string> = {
@@ -312,6 +440,8 @@ export function reportSynthesisTask(
       'Below are the confusion points jurors recorded, with transcript locations. Write ONE tight paragraph (3-5 sentences) telling counsel what confused this panel and which sentence to rewrite first, keyed to the cites.',
     pushback:
       'Below are the panel\'s resistance points grouped by attitude cluster, quoted in the jurors\' own words. Write ONE tight paragraph (3-5 sentences) mapping where the resistance lives and what it responds to. Refer to clusters by their attitude labels only.',
+    strike_leakage:
+      'Below are the stricken passages with the measured leakage data (who resurfaced each stricken moment in deliberation, who policed the instruction, whose final ballots still leaned on it, and the Twin Panel delta if one ran). Write ONE tight paragraph (3-5 sentences) telling counsel what the objections actually cost or saved — did the instruction hold, and what did the moment that could not be cured actually move? Never suggest the strike data predicts a verdict.',
   };
   return [intro[section], '', dataDigest].join('\n');
 }

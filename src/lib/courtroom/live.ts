@@ -14,6 +14,16 @@ import type { EnginePorts, SpeechCall, StructuredCall, UsageRecord } from './typ
 export const DEFAULT_JUROR_MODEL = 'claude-fable-5';
 export const ECONOMY_JUROR_MODEL = 'claude-opus-4-8';
 export const FALLBACK_MODEL = 'claude-opus-4-8';
+/** Objection-spotting is pattern work (spec §7) — opposing counsel runs on
+ *  the economy model regardless of the panel model. The judge stays on the
+ *  panel model (Moot Bench lineage). */
+export const OPPOSING_COUNSEL_MODEL = 'claude-opus-4-8';
+
+/** Stage → serving model. The engine never names models (house rule); the
+ *  live layer routes by the stage names the engine already emits. */
+function modelForStage(stage: string, panelModel: string): string {
+  return stage === 'objection' ? OPPOSING_COUNSEL_MODEL : panelModel;
+}
 
 export interface LivePortsOptions {
   modelId: string;
@@ -23,6 +33,7 @@ export interface LivePortsOptions {
   saveReaction?: EnginePorts['saveReaction'];
   saveBallot?: EnginePorts['saveBallot'];
   saveTurn?: EnginePorts['saveTurn'];
+  saveEvent?: EnginePorts['saveEvent'];
   /** Called after each metered call so the UI can persist usage as it grows. */
   onUsage?: (usage: UsageRecord) => void;
 }
@@ -61,6 +72,7 @@ export function makeLivePorts(opts: LivePortsOptions): EnginePorts {
   };
 
   const structured = async <T>(call: StructuredCall): Promise<T> => {
+    const primary = modelForStage(call.stage, modelId);
     const attempt = async (m: string): Promise<T> => {
       const result = await generateStructured<T>({
         modelId: m,
@@ -76,9 +88,9 @@ export function makeLivePorts(opts: LivePortsOptions): EnginePorts {
       return result;
     };
     try {
-      return await attempt(modelId);
+      return await attempt(primary);
     } catch (err) {
-      if (signal?.aborted || modelId === FALLBACK_MODEL) throw err;
+      if (signal?.aborted || primary === FALLBACK_MODEL) throw err;
       // Refusal/failure fallback: one retry on Opus 4.8 (spec §7).
       return attempt(FALLBACK_MODEL);
     }
@@ -106,5 +118,6 @@ export function makeLivePorts(opts: LivePortsOptions): EnginePorts {
     saveReaction: opts.saveReaction,
     saveBallot: opts.saveBallot,
     saveTurn: opts.saveTurn,
+    saveEvent: opts.saveEvent,
   };
 }

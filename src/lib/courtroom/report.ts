@@ -13,7 +13,8 @@
 // about evidence carries its locator (deposition-fidelity culture).
 
 import type {
-  Ballot, DeliberationResult, EnginePorts, JurorProfile, Reaction, ReportInput,
+  Ballot, DeliberationResult, EnginePorts, JurorProfile, LeakageFinding,
+  LeakageSighting, Reaction, ReportInput, Ruling, Segment, TwinResult,
 } from './types.ts';
 import {
   CALIBRATION_DISCLAIMER, NOT_FOR_JURY_SELECTION, REPORT_SYSTEM,
@@ -127,6 +128,91 @@ const LEANING_LABEL: Record<string, string> = {
   ours: 'with us', theirs: 'against us', undecided: 'undecided',
 };
 
+/* ================== §5 — Strike & leakage panel (Phase 2) ================= */
+
+function seatList(sightings: LeakageSighting[]): string {
+  const seats = [...new Set(sightings.map((s) => s.seat))].sort((a, b) => a - b);
+  return seats.length ? `seat${seats.length > 1 ? 's' : ''} ${seats.join(', ')}` : '';
+}
+
+function locOf(segments: Segment[], segmentId: string, para: number): string {
+  const seg = segments.find((s) => s.id === segmentId);
+  return `Seg ${(seg?.position ?? 0) + 1} ¶${para}`;
+}
+
+const trunc = (s: string, n = 160) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+/**
+ * §5 body: rulings as delivered, then per-strike leakage measurement, then
+ * the Twin Panel delta. All deterministic; the synthesis paragraph is added
+ * by the composer above it.
+ */
+export function renderStrikePanel(
+  segments: Segment[],
+  rulings: Ruling[],
+  leakage: LeakageFinding[],
+  twin: TwinResult | undefined,
+): string {
+  if (rulings.length === 0) {
+    return '_Opposing counsel reviewed the record and stood on no objections. Nothing was struck; there is no leakage to measure._';
+  }
+
+  const rulingLines = rulings.map((r) => {
+    const loc = locOf(segments, r.segment_id, r.para);
+    const head = `- **${loc} — ${r.ground}: ${r.ruling.toUpperCase()}.**`;
+    const explanation = r.explanation ? ` The Court: “${trunc(r.explanation, 300)}”` : '';
+    const instruction = r.disregard_instruction ? ` Instruction to the jury: “${r.disregard_instruction}”` : '';
+    return head + explanation + instruction;
+  }).join('\n');
+
+  const leakageBlocks = leakage.map((f) => {
+    const lines: string[] = [
+      `**Stricken — ${f.locator} (${f.strike.ground}):** “${trunc(f.strike.text)}”`,
+    ];
+    lines.push(
+      f.resurfaced.length
+        ? `- Leakage: the stricken moment resurfaced in deliberation — ${seatList(f.resurfaced)} (round${f.resurfaced.length > 1 ? 's' : ''} ${[...new Set(f.resurfaced.map((s) => s.round))].sort().join(', ')}) — despite the instruction.`
+        : '- Leakage: none in deliberation — no juror touched the stricken material on the floor.',
+    );
+    if (f.policed.length) {
+      lines.push(`- Policing: ${seatList(f.policed)} reminded the room of the Court's instruction.`);
+    }
+    lines.push(
+      f.in_final_ballots.length
+        ? `- Final ballots: ${seatList(f.in_final_ballots)} still lean${f.in_final_ballots.length === 1 ? 's' : ''} on the stricken moment in their stated reasons. The instruction did not cure it.`
+        : '- Final ballots: the stricken moment appears in no final ballot reason. The instruction held where it counts.',
+    );
+    return lines.join('\n');
+  }).join('\n\n');
+
+  const twinBlock = twin
+    ? [
+        '**Twin Panel (clean room).** The same twelve jurors, run against a record that never',
+        'contained the stricken material:',
+        '',
+        '| Panel | With us | Against us | Undecided |',
+        '|---|---|---|---|',
+        `| Main (heard it, told to disregard) | ${twin.main_tally.ours} | ${twin.main_tally.theirs} | ${twin.main_tally.undecided} |`,
+        `| Twin (never heard it) | ${twin.twin_tally.ours} | ${twin.twin_tally.theirs} | ${twin.twin_tally.undecided} |`,
+        '',
+        (() => {
+          const moved = twin.delta.filter(
+            (d) => d.main.leaning !== d.twin.leaning || d.main.conviction !== d.twin.conviction,
+          );
+          return moved.length
+            ? 'Jurors who ended somewhere different: ' + moved
+                .map((d) => `seat ${d.seat} (${d.main.leaning} ${d.main.conviction}/7 → ${d.twin.leaning} ${d.twin.conviction}/7)`)
+                .join('; ') + '. That difference is the measured cost of the moment the objection could not cure.'
+            : 'Every juror ended in the same place on both panels — on this record, the stricken material priced at zero.';
+        })(),
+      ].join('\n')
+    : leakage.length
+      ? '_Twin Panel not run this session. Enable it to measure what the stricken material actually cost: the same panel, minus the moment._'
+      : '';
+
+  return [rulingLines, '', leakageBlocks, '', twinBlock].filter(Boolean).join('\n');
+}
+
 /* ============================ Markdown assembly =========================== */
 
 function tallyLine(ballots: Ballot[]): string {
@@ -155,7 +241,7 @@ export async function composeReport(
   const finals = finalBallots(deliberation);
 
   const synth = async (
-    section: 'what_landed' | 'what_confused' | 'pushback',
+    section: 'what_landed' | 'what_confused' | 'pushback' | 'strike_leakage',
     digest: string,
   ): Promise<string> => {
     ports.onProgress?.({ stage: 'report', detail: `Drafting the ${section.replace(/_/g, ' ')} narrative` });
@@ -237,6 +323,26 @@ export async function composeReport(
     max_rounds: 'the round limit was reached',
   };
 
+  /* ---- 5. Strike & leakage panel (Phase 2) ---- */
+  const isFull = input.mode === 'full';
+  const rulings = input.procedure?.rulings ?? [];
+  const leakage = input.leakage ?? [];
+  const strikeBody = isFull
+    ? renderStrikePanel(input.segments, rulings, leakage, input.twin)
+    : '_Ships with Full Trial — objections, rulings, disregard instructions, and the Twin Panel delta._';
+  const strikeDigest = leakage.length
+    ? leakage.map((f) => [
+        `Stricken ${f.locator} (${f.strike.ground}): "${f.strike.text}"`,
+        `  resurfaced: ${f.resurfaced.length ? seatList(f.resurfaced) : 'none'}`,
+        `  policed: ${f.policed.length ? seatList(f.policed) : 'none'}`,
+        `  in final ballots: ${f.in_final_ballots.length ? seatList(f.in_final_ballots) : 'none'}`,
+      ].join('\n')).join('\n')
+      + (input.twin
+        ? `\nTwin Panel tallies — main: ${input.twin.main_tally.ours}/${input.twin.main_tally.theirs}/${input.twin.main_tally.undecided} (ours/theirs/undecided); twin: ${input.twin.twin_tally.ours}/${input.twin.twin_tally.theirs}/${input.twin.twin_tally.undecided}.`
+        : '\nTwin Panel: not run.')
+    : '';
+  const strikeProse = isFull && strikeDigest ? await synth('strike_leakage', strikeDigest) : '';
+
   /* ---- 6. Ballots ---- */
   const ballotBlocks = finals.map((b) => {
     const j = panel.find((x) => x.id === b.juror_id);
@@ -250,7 +356,7 @@ export async function composeReport(
   return [
     `# Rehearsal Report — ${input.trialTitle}`,
     '',
-    `${input.matterName} · ${input.generatedAt} · Quick Panel of ${panel.length} · panel model: ${input.modelName}`,
+    `${input.matterName} · ${input.generatedAt} · ${input.mode === 'full' ? 'Full Trial' : 'Quick Panel'}, panel of ${panel.length} · panel model: ${input.modelName}`,
     '',
     `> ${NOT_FOR_JURY_SELECTION}`,
     '',
@@ -286,7 +392,8 @@ export async function composeReport(
     '',
     '## 5. Strike & leakage panel',
     '',
-    '_Ships with Full Trial (Phase 2) — objections, rulings, disregard instructions, and the Twin Panel delta._',
+    ...(strikeProse ? [strikeProse, ''] : []),
+    strikeBody,
     '',
     '## 6. This panel\'s ballots',
     '',

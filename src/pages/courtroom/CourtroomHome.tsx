@@ -9,7 +9,7 @@ import { DEFAULT_JUROR_MODEL, ECONOMY_JUROR_MODEL } from '@/lib/courtroom/live.t
 import { createTrial, deleteTrial, listTrials, saveJurors, type TrialListRow } from '@/lib/courtroom/persist.ts';
 import { samplePanel } from '@/lib/courtroom/sampler.ts';
 import { formatUsage } from '@/lib/courtroom/meter.ts';
-import type { PanelSize, UsageRecord, VenueMix } from '@/lib/courtroom/types.ts';
+import type { PanelSize, TrialMode, UsageRecord, VenueMix } from '@/lib/courtroom/types.ts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 // The Courtroom — a rehearsal instrument, not an oracle (spec §1). This is
@@ -88,6 +88,7 @@ export default function CourtroomHome() {
   const [matterId, setMatterId] = useState('');
   const [modelId, setModelId] = useState<string>(DEFAULT_JUROR_MODEL);
   const [panelSize, setPanelSize] = useState<PanelSize>(12);
+  const [mode, setMode] = useState<TrialMode>('quick');
   const [mix, setMix] = useState<VenueMix>(() => structuredClone(DEFAULT_VENUE_MIX));
   const [mixOpen, setMixOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -114,6 +115,7 @@ export default function CourtroomHome() {
         modelId,
         venueMix: { ...mix, panel_size: panelSize },
         seed,
+        mode,
       });
       // Same seed + same mix ⇒ this exact panel is reproducible from the row.
       await saveJurors(trial, samplePanel(mix, seed, panelSize));
@@ -205,6 +207,38 @@ export default function CourtroomHome() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Session type — Quick Panel or the full adversarial procedure. */}
+          <div>
+            <FieldLabel htmlFor="ct-mode">Session type</FieldLabel>
+            <div id="ct-mode" className="flex gap-3" role="radiogroup" aria-label="Session type">
+              {([
+                ['quick', 'Quick Panel', 'Reactions, deliberation, report'],
+                ['full', 'Full Trial', 'Adds objections, rulings, and strike-leakage measurement'],
+              ] as [TrialMode, string, string][]).map(([m, label, hint]) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === m}
+                  onClick={() => setMode(m)}
+                  title={hint}
+                  className={`px-4 py-2 rounded-md border text-[13px] transition-colors ${
+                    mode === m
+                      ? 'border-[#d4a054] text-[#e8b84a] bg-[rgba(212,160,84,0.06)]'
+                      : 'border-[rgba(255,255,255,0.12)] text-white/60 hover:border-[rgba(255,255,255,0.3)]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-white/30 mt-1">
+              {mode === 'full'
+                ? 'Opposing counsel objects to your advocacy; the Court rules; sustained strikes stay in juror memory — the session measures whether the disregard instruction actually held.'
+                : 'The panel hears the record as delivered, deliberates, and reports.'}
+            </p>
           </div>
 
           {/* Venue mix — manual sliders v1 (census presets later). */}

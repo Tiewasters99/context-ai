@@ -5,8 +5,9 @@
 import { supabase } from '@/lib/supabase';
 import { persistVaultFile, resolveMatter } from '@/lib/vault-persist';
 import type {
-  Ballot, DeliberationTurn, JurorProfile, MockTrial, PanelSize, Reaction,
-  Segment, SegmentKind, Side, TrialStatus, UsageRecord, VenueMix,
+  Ballot, DeliberationTurn, JurorProfile, MockTrial, Objection, PanelSize,
+  Reaction, Ruling, Segment, SegmentKind, Side, Strike, TrialMode, TrialStatus,
+  UsageRecord, VenueMix,
 } from './types.ts';
 
 export interface TrialListRow extends MockTrial {
@@ -40,6 +41,7 @@ export async function createTrial(input: {
   modelId: string;
   venueMix: VenueMix & { panel_size: PanelSize };
   seed: number;
+  mode?: TrialMode;
 }): Promise<TrialListRow> {
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
@@ -52,6 +54,7 @@ export async function createTrial(input: {
       model_id: input.modelId,
       venue_mix: input.venueMix,
       seed: input.seed,
+      mode: input.mode ?? 'quick',
       created_by: userId,
     })
     .select(TRIAL_SELECT)
@@ -201,6 +204,27 @@ export async function saveBallot(
     conviction: b.conviction,
     reasons: b.reasons,
   }, { onConflict: 'juror_id,round' });
+  if (error) throw new Error(error.message);
+}
+
+/** Objections, rulings, and strikes (Full Trial) land in mock_trial_events
+ *  with the ¶ number on the span columns (paragraph granularity). */
+export async function saveProcedureEvent(
+  trial: Pick<MockTrial, 'id' | 'matterspace_id'>,
+  e: Objection | Ruling | Strike,
+  type: 'objection' | 'ruling' | 'strike',
+): Promise<void> {
+  const actor = type === 'objection' ? 'opposing_counsel' : 'judge';
+  const { error } = await supabase.from('mock_trial_events').insert({
+    trial_id: trial.id,
+    matterspace_id: trial.matterspace_id,
+    segment_id: e.segment_id,
+    type,
+    actor,
+    payload: e,
+    span_start: e.para,
+    span_end: e.para,
+  });
   if (error) throw new Error(error.message);
 }
 

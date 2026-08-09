@@ -11,11 +11,13 @@ import { newUsage, formatUsage } from '@/lib/courtroom/meter.ts';
 import { NOT_FOR_JURY_SELECTION, computeSplit } from '@/lib/courtroom/prompts.ts';
 import {
   clearSessionData, deleteJurors, fileReportToMatter, getReport, getTrial,
-  listJurors, listSegments, saveBallot, saveJurors, saveReaction, saveReport,
-  saveTurn, updateTrial, updateTrialSeed, type TrialListRow,
+  listJurors, listSegments, saveBallot, saveJurors, saveProcedureEvent,
+  saveReaction, saveReport, saveTurn, updateTrial, updateTrialSeed,
+  type TrialListRow,
 } from '@/lib/courtroom/persist.ts';
 import type {
-  Ballot, DeliberationTurn, JurorProfile, ProgressEvent, Segment, UsageRecord,
+  Ballot, DeliberationTurn, JurorProfile, ProgressEvent, Ruling, Segment,
+  UsageRecord,
 } from '@/lib/courtroom/types.ts';
 import PanelSheet from './PanelSheet';
 import SegmentComposer from './SegmentComposer';
@@ -40,6 +42,10 @@ export default function TrialRoom() {
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [liveTurns, setLiveTurns] = useState<DeliberationTurn[]>([]);
   const [liveBallots, setLiveBallots] = useState<Ballot[]>([]);
+  const [liveRulings, setLiveRulings] = useState<Ruling[]>([]);
+  // Twin Panel is a per-run choice, not a stored setting (spec §12.4: opt-in —
+  // it doubles juror cost).
+  const [twinPanel, setTwinPanel] = useState(false);
   const runLock = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -139,6 +145,7 @@ export default function TrialRoom() {
     setError('');
     setLiveTurns([]);
     setLiveBallots([]);
+    setLiveRulings([]);
     try {
       await clearSessionData(trial.id);
       await updateTrial(trial.id, { status: 'running' });
@@ -159,6 +166,10 @@ export default function TrialRoom() {
           setLiveTurns((prev) => [...prev, t]);
           await saveTurn(trial, t);
         },
+        saveEvent: async (e, type) => {
+          if (type === 'ruling') setLiveRulings((prev) => [...prev, e as Ruling]);
+          await saveProcedureEvent(trial, e, type);
+        },
         onUsage: (u) => {
           usageCounter += 1;
           if (usageCounter % 12 === 0) void updateTrial(trial.id, { usage: u });
@@ -166,7 +177,7 @@ export default function TrialRoom() {
       });
 
       const result = await runSession(
-        { trialTitle: trial.title, jurors, segments },
+        { trialTitle: trial.title, jurors, segments, mode: trial.mode, twinPanel },
         { ...ports, signal: abortRef.current.signal },
       );
 
@@ -181,6 +192,10 @@ export default function TrialRoom() {
         deliberation: result.deliberation,
         usage,
         generatedAt: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+        mode: trial.mode,
+        procedure: result.procedure,
+        leakage: result.leakage,
+        twin: result.twin,
       }, ports);
 
       // Runtime flatness alarm (§6.6): flat deliberation is a defect —
@@ -268,13 +283,38 @@ export default function TrialRoom() {
 
       {/* Stage: build the record */}
       {trial.status === 'segments' && (
-        <SegmentComposer
-          trial={trial}
-          segments={segments}
-          onSegmentsChanged={setSegments}
-          onBegin={() => void run()}
-          busy={running}
-        />
+        <>
+          {trial.mode === 'full' && (
+            <div className="rounded-lg border border-[rgba(212,160,84,0.25)] bg-[rgba(212,160,84,0.04)] px-5 py-4 mb-5">
+              <p className="text-[11px] uppercase tracking-wider text-[#d4a054] mb-2">Full Trial</p>
+              <p className="text-[12.5px] text-white/60 leading-relaxed mb-3">
+                Opposing counsel will review your advocacy and object; the Court rules. Sustained
+                strikes stay in the panel's memory with the disregard instruction — the report
+                measures whether the instruction held.
+              </p>
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={twinPanel}
+                  onChange={(e) => setTwinPanel(e.target.checked)}
+                  className="mt-0.5 accent-[#d4a054]"
+                />
+                <span className="text-[12.5px] text-white/75 leading-relaxed">
+                  <span className="font-medium text-white/90">Twin Panel</span> — also run the same
+                  twelve against a record that never contained the stricken material, so the report
+                  prices the moment the objection couldn't cure. <span className="text-white/45">Doubles juror cost.</span>
+                </span>
+              </label>
+            </div>
+          )}
+          <SegmentComposer
+            trial={trial}
+            segments={segments}
+            onSegmentsChanged={setSegments}
+            onBegin={() => void run()}
+            busy={running}
+          />
+        </>
       )}
 
       {/* Stage: interrupted run (tab closed mid-session) */}
@@ -300,6 +340,8 @@ export default function TrialRoom() {
           progress={progress}
           turns={liveTurns}
           ballots={liveBallots}
+          rulings={liveRulings}
+          segments={segments}
           jurorName={jurorName}
           stopping={stopping}
           onStop={stopSession}
@@ -336,16 +378,22 @@ export default function TrialRoom() {
 /* ========================== Live session surface ========================== */
 
 function SessionLive({
-  jurors, progress, turns, ballots, jurorName, stopping, onStop,
+  jurors, progress, turns, ballots, rulings, segments, jurorName, stopping, onStop,
 }: {
   jurors: JurorProfile[];
   progress: ProgressEvent | null;
   turns: DeliberationTurn[];
   ballots: Ballot[];
+  rulings: Ruling[];
+  segments: Segment[];
   jurorName: (id: string) => string;
   stopping: boolean;
   onStop: () => void;
 }) {
+  const segPosition = useMemo(
+    () => new Map(segments.map((s) => [s.id, s.position + 1])),
+    [segments],
+  );
   const rounds = useMemo(() => {
     const byRound = new Map<number, Ballot[]>();
     for (const b of ballots) {
@@ -381,6 +429,30 @@ function SessionLive({
           ))}
         </div>
       </div>
+
+      {/* Objections & rulings (Full Trial) */}
+      {rulings.length > 0 && (
+        <div className="rounded-lg border border-[rgba(255,255,255,0.08)] px-5 py-4 mb-5" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+          <h3 className="text-[11px] uppercase tracking-wider text-white/50 mb-2.5">Objections &amp; rulings</h3>
+          <ol className="space-y-1.5">
+            {rulings.map((r, i) => (
+              <li key={i} className="text-[12.5px] text-white/75 leading-relaxed">
+                <span className="text-white/45">Seg {segPosition.get(r.segment_id) ?? '?'} ¶{r.para}</span>
+                <span className="mx-2 text-white/25">—</span>
+                {r.ground}:{' '}
+                <span className={r.ruling === 'sustained' ? 'text-[#e0a9a9]' : 'text-[#8fd4a0]'}>
+                  {r.ruling.toUpperCase()}
+                </span>
+                {r.ruling === 'sustained' && r.disregard_instruction && (
+                  <span className="block text-[11.5px] text-white/40 mt-0.5 pl-4 border-l border-[rgba(212,160,84,0.25)] ml-1">
+                    “{r.disregard_instruction}”
+                  </span>
+                )}
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
 
       {/* Ballot board */}
       {rounds.length > 0 && (
