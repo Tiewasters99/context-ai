@@ -22,6 +22,7 @@ import type {
 import PanelSheet from './PanelSheet';
 import SegmentComposer from './SegmentComposer';
 import ReportView from './ReportView';
+import CourtroomStageView from './CourtroomStageView';
 
 // The trial room — one linear, lawyerly flow (spec §11 Phase 1):
 //   panel sheet → the record → the session, live → the Rehearsal Report.
@@ -46,6 +47,8 @@ export default function TrialRoom() {
   // Twin Panel is a per-run choice, not a stored setting (spec §12.4: opt-in —
   // it doubles juror cost).
   const [twinPanel, setTwinPanel] = useState(false);
+  // The room (Phase 3): always up during a session; a quiet door otherwise.
+  const [roomOpen, setRoomOpen] = useState(false);
   const runLock = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -269,6 +272,29 @@ export default function TrialRoom() {
       </header>
 
       {error && <div className="mb-5"><Notice>{error}</Notice></div>}
+
+      {/* The room (Phase 3): live during a session; openable any other time
+          the panel is seated. The report remains the record — the room is
+          where you feel the panel. */}
+      {(running || roomOpen) && jurors.length > 0 && (
+        <CourtroomStageView
+          jurors={jurors}
+          progress={running ? progress : null}
+          ballots={liveBallots}
+          rulings={liveRulings}
+        />
+      )}
+      {!running && jurors.length > 0 && trial.status !== 'empanel' && (
+        <div className="mb-5 -mt-1">
+          <button
+            type="button"
+            onClick={() => setRoomOpen((v) => !v)}
+            className="text-[11px] uppercase tracking-[0.14em] text-[#d4a054]/80 hover:text-[#e8b84a] transition-colors"
+          >
+            {roomOpen ? '— Close the courtroom' : '+ Step into the courtroom'}
+          </button>
+        </div>
+      )}
 
       {/* Stage: approve the panel */}
       {trial.status === 'empanel' && (
