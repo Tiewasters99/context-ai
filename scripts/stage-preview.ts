@@ -39,11 +39,12 @@ scene.setPanel(NAMES.map((name, i) => ({
   occupation: ['ICU nurse', 'electrician', 'bookkeeper', 'line cook', 'claims adjuster', 'teacher'][i % 6],
 })));
 
-// Portrait trial (Eden's Midjourney set): three waist-up, front-facing
-// figures cycled across the twelve desks. (The tight B&W close-up is out —
-// a card needs the figure from the waist up, not a face crop.)
+// The venire (Eden's Midjourney set, 08-09): twelve seats, eleven distinct
+// people — electrician, elegant Asian woman, college man, Latina housewife,
+// Black professional, redhead A, college woman (sepia), Indian man, Puerto
+// Rican woman, seated brunette, college woman (curly), redhead B.
 for (let s = 1; s <= 12; s++) {
-  scene.setJurorPortrait(s, `/figure-${((s - 1) % 3) + 1}.png`);
+  scene.setJurorPortrait(s, `/venire-${s}.png`);
 }
 
 // View buttons for manual inspection.
