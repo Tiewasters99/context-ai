@@ -31,6 +31,23 @@ import {
 export const MAX_ROUNDS = 5;
 export const MAX_SPEAKERS_PER_ROUND = 4;
 
+/** Thrown when ports.signal aborts mid-session. The UI treats it as a clean
+ *  stop (back to the record stage), never as an error. */
+export class SessionAborted extends Error {
+  constructor() { super('Session stopped by the user.'); this.name = 'SessionAborted'; }
+}
+
+/**
+ * Per-round "flat" tolerance (§6.5). Model re-ballots wobble conviction by
+ * ±1 without meaning anything; demanding EXACTLY zero movement meant an
+ * all-undecided panel never registered as hung and always ran to MAX_ROUNDS.
+ * A round is flat when nobody changed leaning AND total conviction wobble is
+ * within noise for the panel size. Two consecutive flat rounds ⇒ hung.
+ */
+export function flatMovementThreshold(panelSize: number): number {
+  return Math.max(1, Math.floor(panelSize / 4));
+}
+
 export interface EngineInput {
   trialTitle: string;
   jurors: JurorProfile[];
@@ -53,9 +70,12 @@ export function chooseForeman(jurors: JurorProfile[]): JurorProfile {
   })[0];
 }
 
-/** The leaning currently held by the most jurors ('undecided' never wins). */
+/** The leaning currently held by the most jurors. 'undecided' wins only when
+ *  NOBODY has picked a side — otherwise an all-undecided panel gets a phantom
+ *  'ours' majority that marks all twelve as "conflicted" with it. */
 export function emergingMajority(ballots: Ballot[]): Leaning {
   const split = computeSplit(ballots);
+  if (split.ours === 0 && split.theirs === 0) return 'undecided';
   return split.theirs > split.ours ? 'theirs' : 'ours';
 }
 
@@ -92,18 +112,21 @@ export function speakingOrder(
 export function computeMovement(
   prev: Ballot[],
   next: Ballot[],
-): { total: number; byJuror: Record<string, number> } {
+): { total: number; byJuror: Record<string, number>; leaningChanges: number } {
   const prevOf = new Map(prev.map((b) => [b.juror_id, b]));
   const byJuror: Record<string, number> = {};
   let total = 0;
+  let leaningChanges = 0;
   for (const b of next) {
     const p = prevOf.get(b.juror_id);
     if (!p) continue;
-    const m = Math.abs(b.conviction - p.conviction) + (b.leaning !== p.leaning ? 2 : 0);
+    const changed = b.leaning !== p.leaning;
+    if (changed) leaningChanges += 1;
+    const m = Math.abs(b.conviction - p.conviction) + (changed ? 2 : 0);
     byJuror[b.juror_id] = m;
     total += m;
   }
-  return { total, byJuror };
+  return { total, byJuror, leaningChanges };
 }
 
 export function isUnanimous(ballots: Ballot[]): boolean {
@@ -161,12 +184,14 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
   const maxRounds = input.maxRounds ?? MAX_ROUNDS;
   const digest = caseDigest(trialTitle, segments);
   const ordered = [...segments].sort((a, b) => a.position - b.position);
+  const checkAbort = () => { if (ports.signal?.aborted) throw new SessionAborted(); };
 
   /* ---- Phase 1: per-segment private reactions, every juror (§5). ---- */
   const reactions: Reaction[] = [];
   const reactionsByJuror = new Map<string, Reaction[]>();
   for (const seg of ordered) {
     for (const juror of jurors) {
+      checkAbort();
       ports.onProgress?.({
         stage: 'reactions',
         detail: `${juror.display_name} (seat ${juror.seat}) is reacting to Seg ${seg.position + 1} (${seg.kind})`,
@@ -198,6 +223,7 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
     const shared = digest + deliberationRecord(turnsSoFar);
     const ballots: Ballot[] = [];
     for (const juror of jurors) {
+      checkAbort();
       ports.onProgress?.({
         stage: round === 0 ? 'first_ballot' : 'reballot',
         detail: `${juror.display_name} (seat ${juror.seat}) is casting a ballot`,
@@ -240,6 +266,7 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
       respondingTo: string | null,
       task: string,
     ) => {
+      checkAbort();
       ports.onProgress?.({
         stage: 'deliberation',
         detail: `${juror.display_name} (seat ${juror.seat}) has the floor`,
@@ -285,7 +312,11 @@ export async function runSession(input: EngineInput, ports: EnginePorts): Promis
     prevBallots = ballots;
 
     if (isUnanimous(ballots)) { stop = 'unanimous'; break; }
-    zeroMovementStreak = movement.total === 0 ? zeroMovementStreak + 1 : 0;
+    // Noise-tolerant hung detection: a round is flat when nobody changed
+    // leaning and conviction wobble stayed within panel-size noise.
+    const flat = movement.leaningChanges === 0
+      && movement.total <= flatMovementThreshold(jurors.length);
+    zeroMovementStreak = flat ? zeroMovementStreak + 1 : 0;
     if (zeroMovementStreak >= 2) { stop = 'hung'; break; }
   }
 

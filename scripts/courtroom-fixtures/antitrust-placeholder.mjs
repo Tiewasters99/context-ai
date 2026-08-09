@@ -45,7 +45,7 @@ export default {
     3: { 0: ['ours', 5] },
     4: { 0: ['ours', 4] },
     5: { 0: ['ours', 6] },
-    6: { 0: ['ours', 3] },
+    6: { 0: ['ours', 3], 4: ['theirs', 3] },
     7: { 0: ['theirs', 5] },
     8: { 0: ['theirs', 6] },
     9: { 0: ['theirs', 4] },
@@ -53,8 +53,10 @@ export default {
     11: { 0: ['theirs', 4], 3: ['theirs', 5] },
     12: { 0: ['undecided', 2], 2: ['theirs', 3] },
   },
-  // Seat 1 oscillates every round; seat 12 breaks undecided in round 2; seat
-  // 11 hardens in round 3 — movement every round, never unanimous, so the
-  // panel runs the full 5 rounds.
-  expect: { stop: 'max_rounds', rounds: 5, movement: 9 },
+  // Seat 1 oscillates every round (±1 conviction — noise under the flat
+  // threshold); seat 12 breaks undecided in round 2; seat 11 hardens in round
+  // 3; seat 6 flips sides in round 4. Leaning changes keep rounds 2 and 4
+  // non-flat, so no two consecutive flat rounds occur and the panel runs the
+  // full 5 rounds.
+  expect: { stop: 'max_rounds', rounds: 5, movement: 11 },
 };

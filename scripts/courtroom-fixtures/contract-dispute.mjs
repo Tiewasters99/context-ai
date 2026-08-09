@@ -46,7 +46,8 @@ export default {
     11: { 0: ['theirs', 5] },
     12: { 0: ['theirs', 4] },
   },
-  // Round 1 moves one conviction point (seat 4); rounds 2 and 3 are frozen —
-  // two consecutive zero-movement rounds hang the panel.
-  expect: { stop: 'hung', rounds: 3, movement: 1 },
+  // Round 1 moves one conviction point (seat 4) with no leaning change —
+  // within the flat threshold, so it counts as a flat round; round 2 is frozen.
+  // Two consecutive flat rounds hang the panel.
+  expect: { stop: 'hung', rounds: 2, movement: 1 },
 };

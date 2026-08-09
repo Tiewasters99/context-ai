@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, Square } from 'lucide-react';
 import { findModel } from '@/lib/llm';
 import { GoldButton, QuietButton, Working, Notice } from '@/components/mediation/ui';
 import { samplePanel } from '@/lib/courtroom/sampler.ts';
-import { runSession, flatnessAlarm } from '@/lib/courtroom/engine.ts';
+import { runSession, flatnessAlarm, MAX_ROUNDS, SessionAborted } from '@/lib/courtroom/engine.ts';
 import { composeReport } from '@/lib/courtroom/report.ts';
 import { makeLivePorts } from '@/lib/courtroom/live.ts';
 import { newUsage, formatUsage } from '@/lib/courtroom/meter.ts';
@@ -36,10 +36,12 @@ export default function TrialRoom() {
 
   // Live session state
   const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   const [liveTurns, setLiveTurns] = useState<DeliberationTurn[]>([]);
   const [liveBallots, setLiveBallots] = useState<Ballot[]>([]);
   const runLock = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -97,10 +99,43 @@ export default function TrialRoom() {
 
   /* ----------------------------- The session -------------------------- */
 
+  /** Kill switch: takes effect before the next juror turn (the model call in
+   *  flight still finishes — a few seconds, not another round). */
+  const stopSession = () => {
+    setStopping(true);
+    abortRef.current?.abort();
+  };
+
+  /** Start over: discard this run's reactions, ballots, deliberation, and
+   *  report; keep the panel and the record; return to the record stage. */
+  const startOver = async () => {
+    if (!trial) return;
+    if (!window.confirm(
+      'Start over? This discards the current run — reactions, ballots, deliberation, and report. Your panel and your record stay.',
+    )) return;
+    if (running) stopSession();
+    setBusy(true);
+    setError('');
+    try {
+      await clearSessionData(trial.id);
+      await updateTrial(trial.id, { status: 'segments' });
+      setReport(null);
+      setLiveTurns([]);
+      setLiveBallots([]);
+      setTrial((t) => (t ? { ...t, status: 'segments' } : t));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not reset the session.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const run = async () => {
     if (!trial || runLock.current || jurors.length === 0 || segments.length === 0) return;
     runLock.current = true;
     setRunning(true);
+    setStopping(false);
+    abortRef.current = new AbortController();
     setError('');
     setLiveTurns([]);
     setLiveBallots([]);
@@ -132,7 +167,7 @@ export default function TrialRoom() {
 
       const result = await runSession(
         { trialTitle: trial.title, jurors, segments },
-        ports,
+        { ...ports, signal: abortRef.current.signal },
       );
 
       setProgress({ stage: 'report', detail: 'Writing the Rehearsal Report' });
@@ -164,12 +199,21 @@ export default function TrialRoom() {
       setReport({ markdown, document_id: documentId });
       setTrial((t) => (t ? { ...t, status: 'complete', usage } : t));
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'The session failed.');
-      await updateTrial(trial.id, { status: 'error' }).catch(() => undefined);
-      setTrial((t) => (t ? { ...t, status: 'error' } : t));
+      if (e instanceof SessionAborted) {
+        // Clean stop, not an error: back to the record, run data discarded on
+        // the next run's clearSessionData.
+        await updateTrial(trial.id, { status: 'segments' }).catch(() => undefined);
+        setTrial((t) => (t ? { ...t, status: 'segments' } : t));
+      } else {
+        setError(e instanceof Error ? e.message : 'The session failed.');
+        await updateTrial(trial.id, { status: 'error' }).catch(() => undefined);
+        setTrial((t) => (t ? { ...t, status: 'error' } : t));
+      }
     } finally {
       runLock.current = false;
       setRunning(false);
+      setStopping(false);
+      abortRef.current = null;
       setProgress(null);
     }
   };
@@ -238,9 +282,14 @@ export default function TrialRoom() {
         <div className="rounded-lg border border-[rgba(212,160,84,0.25)] bg-[rgba(212,160,84,0.04)] px-5 py-5 mb-6">
           <p className="text-[13px] text-white/70 leading-relaxed mb-4">
             This session was interrupted before the panel finished. Restart it — the panel will
-            react, ballot, and deliberate from the top.
+            react, ballot, and deliberate from the top — or start over to go back to your record.
           </p>
-          <GoldButton onClick={() => void run()}><RotateCcw size={14} /> Restart the session</GoldButton>
+          <div className="flex flex-wrap gap-3">
+            <GoldButton onClick={() => void run()}><RotateCcw size={14} /> Restart the session</GoldButton>
+            <QuietButton onClick={() => void startOver()} disabled={busy}>
+              <Square size={13} /> Start over
+            </QuietButton>
+          </div>
         </div>
       )}
 
@@ -252,6 +301,8 @@ export default function TrialRoom() {
           turns={liveTurns}
           ballots={liveBallots}
           jurorName={jurorName}
+          stopping={stopping}
+          onStop={stopSession}
         />
       )}
 
@@ -259,17 +310,23 @@ export default function TrialRoom() {
       {trial.status === 'complete' && report && !running && (
         <>
           <ReportView markdown={report.markdown} documentId={report.document_id} trialTitle={trial.title} />
-          <div className="mt-6">
+          <div className="mt-6 flex flex-wrap gap-3">
             <QuietButton onClick={() => void run()}>
               <RotateCcw size={13} /> Run the session again (replaces this report)
+            </QuietButton>
+            <QuietButton onClick={() => void startOver()} disabled={busy}>
+              <Square size={13} /> Start over — edit the record first
             </QuietButton>
           </div>
         </>
       )}
 
       {trial.status === 'error' && !running && (
-        <div className="mt-2">
+        <div className="mt-2 flex flex-wrap gap-3">
           <GoldButton onClick={() => void run()}><RotateCcw size={14} /> Run the session again</GoldButton>
+          <QuietButton onClick={() => void startOver()} disabled={busy}>
+            <Square size={13} /> Start over
+          </QuietButton>
         </div>
       )}
     </div>
@@ -279,13 +336,15 @@ export default function TrialRoom() {
 /* ========================== Live session surface ========================== */
 
 function SessionLive({
-  jurors, progress, turns, ballots, jurorName,
+  jurors, progress, turns, ballots, jurorName, stopping, onStop,
 }: {
   jurors: JurorProfile[];
   progress: ProgressEvent | null;
   turns: DeliberationTurn[];
   ballots: Ballot[];
   jurorName: (id: string) => string;
+  stopping: boolean;
+  onStop: () => void;
 }) {
   const rounds = useMemo(() => {
     const byRound = new Map<number, Ballot[]>();
@@ -301,7 +360,15 @@ function SessionLive({
     <section aria-label="Session in progress">
       {/* Who has the floor */}
       <div className="rounded-lg border border-[rgba(212,160,84,0.25)] bg-[rgba(212,160,84,0.04)] px-5 py-4 mb-5">
-        <Working>{progress?.detail ?? 'The panel is settling in…'}</Working>
+        <div className="flex items-start justify-between gap-4">
+          <Working>
+            {(progress?.round ? `Round ${progress.round} of ${MAX_ROUNDS} — ` : '')
+              + (progress?.detail ?? 'The panel is settling in…')}
+          </Working>
+          <QuietButton onClick={onStop} disabled={stopping}>
+            <Square size={12} /> {stopping ? 'Stopping after this juror…' : 'Stop session'}
+          </QuietButton>
+        </div>
         <div className="flex gap-1.5 mt-3" aria-hidden>
           {jurors.map((j) => (
             <span

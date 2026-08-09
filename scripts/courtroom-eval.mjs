@@ -14,7 +14,8 @@
 //      stop conditions (unanimous / hung / max_rounds) with the exact
 //      movement metric
 //   4. FLATNESS ALARM — a zero-movement suite fails the build; a flat control
-//      run must trip the runtime alarm
+//      run must trip the runtime alarm; kill switch (ports.signal) throws
+//      SessionAborted on the next juror turn; all-undecided majority edge case
 //   5. demographic-keying scan — regex over prompt templates, every prompt
 //      the engine actually built, every output, and the reports
 //   6. prompt-cache ordering — [shared record][boundary][persona][task]
@@ -37,7 +38,7 @@ if (!process.argv.includes('--mock')) {
 }
 
 const { samplePanel } = await import(`file://${lib('sampler.ts')}`);
-const { runSession, flatnessAlarm, computeMovement } = await import(`file://${lib('engine.ts')}`);
+const { runSession, flatnessAlarm, computeMovement, emergingMajority, SessionAborted } = await import(`file://${lib('engine.ts')}`);
 const { composeReport } = await import(`file://${lib('report.ts')}`);
 const prompts = await import(`file://${lib('prompts.ts')}`);
 const { CACHE_BOUNDARY, CALIBRATION_DISCLAIMER, NOT_FOR_JURY_SELECTION, paragraphize } = prompts;
@@ -270,6 +271,51 @@ console.log('\n— Flatness alarm —');
   check('flat control run: zero movement detected', flat.deliberation.total_movement === 0);
   check('flat control run: runtime flatness alarm trips', flatnessAlarm(flat) !== null);
   check('golden scenarios: runtime alarm stays quiet', sessionResults.every((s) => flatnessAlarm(s.result) === null));
+}
+
+/* ================== 4b: kill switch + majority edge cases ================= */
+
+console.log('\n— Kill switch (SessionAborted) and majority edge cases —');
+{
+  // Abort mid-session: stop the signal after the 10th juror call (still inside
+  // the reaction phase — a full contract run makes 36 reaction calls alone) and
+  // the engine must throw SessionAborted before the next juror speaks.
+  const fixture = fixtures[1];
+  const capture = { prompts: [], outputs: [], reports: [] };
+  const panel = samplePanel(
+    structuredClone((await import(`file://${lib('sampler.ts')}`)).DEFAULT_VENUE_MIX),
+    fixture.seed,
+    fixture.panelSize,
+  );
+  const ports = makeMockPorts(fixture, capture);
+  const controller = new AbortController();
+  const inner = ports.structured;
+  ports.structured = async (call) => {
+    const out = await inner(call);
+    if (capture.prompts.length >= 10) controller.abort();
+    return out;
+  };
+  ports.signal = controller.signal;
+  let thrown = null;
+  try {
+    await runSession(
+      { trialTitle: fixture.trialTitle, jurors: panel, segments: fixture.segments },
+      ports,
+    );
+  } catch (e) {
+    thrown = e;
+  }
+  check('aborting the signal mid-session throws SessionAborted', thrown instanceof SessionAborted, `got ${thrown?.name ?? 'no error'}`);
+  check('abort takes effect on the next juror turn (one call after the abort, not a full round)',
+    capture.prompts.length === 10, `got ${capture.prompts.length} calls`);
+
+  // emergingMajority: an all-undecided panel has NO emerging majority — it must
+  // not manufacture a phantom 'ours' majority that marks everyone conflicted.
+  const undecided = (id) => ({ juror_id: id, round: 0, leaning: 'undecided', conviction: 2, reasons: [] });
+  const allUndecided = Array.from({ length: 12 }, (_, i) => undecided(`seat-${i + 1}`));
+  check("all-undecided panel: emerging majority is 'undecided'", emergingMajority(allUndecided) === 'undecided');
+  const oneVote = [...allUndecided.slice(0, 11), { ...undecided('seat-12'), leaning: 'ours' }];
+  check("a single decided ballot still yields that side as the emerging majority", emergingMajority(oneVote) === 'ours');
 }
 
 /* ======================= 7 (early): report composition ==================== */

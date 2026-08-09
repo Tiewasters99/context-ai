@@ -274,6 +274,8 @@ export interface EnginePorts {
   saveReaction?: (r: Reaction) => Promise<void>;
   saveBallot?: (b: Ballot) => Promise<void>;
   saveTurn?: (t: DeliberationTurn) => Promise<void>;
+  /** Kill switch: checked before every juror turn; aborting throws SessionAborted. */
+  signal?: AbortSignal;
 }
 
 /* ============================ Report (§9) ================================= */
