@@ -46,6 +46,7 @@ scene.setPanel(NAMES.map((name, i) => ({
 for (let s = 1; s <= 12; s++) {
   scene.setJurorPortrait(s, `/venire-${s}.png`);
 }
+scene.setJudgePortrait('/judge.png'); // silently absent until Eden's judge lands
 
 // View buttons for manual inspection.
 for (const [v, label] of [['lectern', 'Lectern'], ['box', 'Box'], ['juryroom', 'Jury Room']] as const) {

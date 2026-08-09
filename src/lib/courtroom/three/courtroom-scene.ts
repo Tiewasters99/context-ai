@@ -53,8 +53,11 @@ export interface CourtroomSceneApi {
   setBallotBoard(rounds: BallotBoardRound[]): void;
   /** The gavel comes down; the well flashes once (gold = overruled, red = sustained). */
   flashRuling(kind: 'sustained' | 'overruled'): void;
-  /** Portrait slot for Eden's Midjourney set; statuary face until then. */
+  /** Portrait slot for Eden's Midjourney set; silhouette card until then.
+   *  Seats the figure in the box AND at the deliberation table next door. */
   setJurorPortrait(seat: number, url: string): void;
+  /** The judge takes the bench (waist-up card; the capsule stands down). */
+  setJudgePortrait(url: string): void;
 }
 
 export interface CourtroomSceneOptions {
@@ -145,25 +148,6 @@ function sealTexture(): THREE.CanvasTexture {
   });
 }
 
-/** The statuary face — uniform bronze, waiting for a portrait. */
-function statuaryFaceTexture(): THREE.CanvasTexture {
-  return canvasTexture(64, 64, (ctx) => {
-    // Stays close to the head bronze (0x8a6a4f) so the cap seam is a
-    // suggestion, not a helmet line.
-    const g = ctx.createRadialGradient(32, 26, 6, 32, 32, 34);
-    g.addColorStop(0, '#93704f');
-    g.addColorStop(0.75, '#8a6a4f');
-    g.addColorStop(1, '#7d5f47');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 64, 64);
-    // The faintest suggestion of features — sculpture, not likeness.
-    ctx.fillStyle = 'rgba(0,0,0,0.14)';
-    ctx.beginPath(); ctx.ellipse(22, 27, 4.5, 2.6, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(42, 27, 4.5, 2.6, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.ellipse(32, 46, 7, 2.2, 0, 0, Math.PI * 2); ctx.fill();
-  });
-}
-
 /**
  * Default card for a juror desk before a portrait lands: a dignified seated
  * silhouette in the seat's suit hue — same figure twelve times (the rail:
@@ -192,6 +176,50 @@ function silhouetteCardTexture(seatIndex: number): THREE.CanvasTexture {
     ctx.fillStyle = fade;
     ctx.fillRect(0, 0, 192, 256);
   });
+}
+
+/**
+ * Feather a loaded portrait into a card texture: cover-fit into 3:4, fade
+ * the sides and top; the bottom fades too when nothing (desk, bench) hides
+ * it. One helper for the box, the jury room, and the bench.
+ */
+function makeCardTexture(img: HTMLImageElement, opts: { fadeBottom: boolean }): THREE.CanvasTexture {
+  const W = 384, H = 512;
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d')!;
+  const srcAspect = img.width / img.height;
+  const dstAspect = W / H;
+  let sw = img.width, sh = img.height, sx = 0, sy = 0;
+  if (srcAspect > dstAspect) {
+    sw = img.height * dstAspect;
+    sx = (img.width - sw) / 2;
+  } else {
+    sh = img.width / dstAspect;
+    sy = (img.height - sh) / 4; // favor the head, not the belt
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
+  ctx.globalCompositeOperation = 'destination-in';
+  const sideFade = ctx.createLinearGradient(0, 0, W, 0);
+  sideFade.addColorStop(0, 'rgba(0,0,0,0)');
+  sideFade.addColorStop(0.22, 'rgba(0,0,0,1)');
+  sideFade.addColorStop(0.78, 'rgba(0,0,0,1)');
+  sideFade.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = sideFade;
+  ctx.fillRect(0, 0, W, H);
+  const topFade = ctx.createLinearGradient(0, 0, 0, H);
+  topFade.addColorStop(0, 'rgba(0,0,0,0)');
+  topFade.addColorStop(0.07, 'rgba(0,0,0,1)');
+  if (opts.fadeBottom) {
+    topFade.addColorStop(0.86, 'rgba(0,0,0,1)');
+    topFade.addColorStop(1, 'rgba(0,0,0,0)');
+  }
+  ctx.fillStyle = topFade;
+  ctx.fillRect(0, 0, W, H);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace; // photos arrive sRGB
+  return tex;
 }
 
 /** US flag, low-poly aesthetic: stripes + canton with a dot field. */
@@ -349,7 +377,7 @@ function jurorDeskUnit(seat: number): THREE.Group {
   g.add(tap);
 
   const phase = seat * 2.3;
-  const state = { pulseT: -10, targetLean: 0, lean: 0 };
+  const state = { pulseT: -10 };
   g.userData.jurorState = state;
   g.userData.animate = (t: number) => {
     // The only motion is light: the monitor's picture changes.
@@ -368,82 +396,58 @@ function jurorDeskUnit(seat: number): THREE.Group {
 }
 
 /**
- * One member of the panel — the same dignified figure twelve times over.
- * Torso capsule, head sphere with the face plane (portrait slot), suit hue
- * by seat index. Breathes; shifts in the chair on a private phase; leans in
- * when reacting. (The jury room next door still seats these; the box now
- * uses jurorDeskUnit.)
+ * A seat at the deliberation table: the chair, and the juror on a card —
+ * the same waist-up figure as the box (silhouette until the portrait
+ * lands, bottom feathered since no desk hides it here). The card
+ * billboards on Y toward the camera so every juror reads from the door,
+ * from the board, from anywhere; the figure itself holds still.
  */
-function jurorFigure(seat: number, faceTex: THREE.CanvasTexture): THREE.Group {
+function roomSeatUnit(seat: number, chairYaw: number, camera: THREE.Camera): THREE.Group {
   const g = new THREE.Group();
-  const suit = SUITS[(seat - 1) % SUITS.length];
 
-  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.21, 0.36, 4, 10), suit);
-  torso.position.y = 0.86;
-  torso.castShadow = true;
-  g.add(torso);
+  const c = chair(mat.leather);
+  c.rotation.y = chairYaw + Math.PI; // chair back away from the table
+  g.add(c);
 
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.15, 14, 12), mat.bronze);
-  head.position.y = 1.32;
-  head.castShadow = true;
-  g.add(head);
-
-  // The face is a spherical CAP riding on the head (a child, so idle
-  // head-turns carry it) — a face painted on the figure, never a flat disc
-  // whose rim halos out of the sphere. Cap centered on local +z.
-  const CAP = 0.8; // half-angle, radians
-  const face = new THREE.Mesh(
-    new THREE.SphereGeometry(
-      0.153, 16, 14,
-      Math.PI / 2 - CAP, CAP * 2,
-      Math.PI / 2 - CAP, CAP * 2,
-    ),
-    // Same light response as the bronze skull, so the cap seam vanishes
-    // until a portrait replaces the map.
-    new THREE.MeshStandardMaterial({ map: faceTex, roughness: 0.55, metalness: 0.25 }),
+  const card = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.92, 1.22),
+    new THREE.MeshStandardMaterial({
+      map: silhouetteCardTexture(seat - 1), transparent: true, roughness: 0.9,
+      color: 0xe8d8be,
+    }),
   );
-  face.userData.isFace = true; // setJurorPortrait finds this
-  head.add(face);
+  card.position.set(0, 1.02, 0);
+  card.userData.isCard = true;
+  g.add(card);
 
-  for (const side of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.3, 3, 8), suit);
-    arm.position.set(side * 0.27, 0.86, 0.05);
-    arm.rotation.z = side * 0.28;
-    g.add(arm);
-  }
-
-  // Reaction ring, dark until the ripple.
+  // Reaction ring on the floor, dark until the ripple.
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.3, 0.4, 28),
     new THREE.MeshBasicMaterial({ color: 0xe8b84a, transparent: true, opacity: 0 }),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.02;
-  ring.userData.isRing = true;
   ring.raycast = () => {};
   g.add(ring);
 
   // Generous invisible tap target — phone fingers are wide.
   const tap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.6, 6, 6),
+    new THREE.BoxGeometry(1.0, 2.0, 1.0),
     new THREE.MeshBasicMaterial({ visible: false }),
   );
   tap.position.y = 1.0;
   g.add(tap);
 
-  const phase = seat * 1.7; // private rhythm per seat — never metronomic
-  const state = { lean: 0, targetLean: 0, pulseT: -10, hasPortrait: false };
+  const worldPos = new THREE.Vector3();
+  const state = { pulseT: -10 };
   g.userData.jurorState = state;
   g.userData.animate = (t: number) => {
-    // Breathing and small shifts of a person made to sit too long.
-    torso.scale.y = 1 + Math.sin(t * 1.1 + phase) * 0.012;
-    g.rotation.y = g.userData.baseYaw + Math.sin(t * 0.21 + phase) * 0.05 + state.lean * 0.1;
-    // A portrait face holds still (Eden's rule); statuary may glance about.
-    head.rotation.y = state.hasPortrait ? 0 : Math.sin(t * 0.34 + phase * 2.1) * 0.28;
-    // Lean-in eases toward its target (set by the ripple).
-    state.lean += (state.targetLean - state.lean) * 0.08;
-    g.rotation.x = -state.lean * 0.16;
-    // The pulse ring blooms and fades over ~1.6s.
+    // Y-billboard: the card turns to the viewer; the figure holds still.
+    card.getWorldPosition(worldPos);
+    card.rotation.y = Math.atan2(
+      camera.position.x - worldPos.x,
+      camera.position.z - worldPos.z,
+    );
     const dt = t - state.pulseT;
     const ringMat = ring.material as THREE.MeshBasicMaterial;
     if (dt < 1.6) {
@@ -453,7 +457,6 @@ function jurorFigure(seat: number, faceTex: THREE.CanvasTexture): THREE.Group {
       ringMat.opacity = 0;
     }
   };
-  g.userData.baseYaw = 0;
   return g;
 }
 
@@ -615,6 +618,17 @@ export function createCourtroomScene(
   };
   benchG.add(judge);
 
+  // The judge's portrait card — empty until setJudgePortrait; the capsule
+  // judge stands down when the real one takes the bench. Bottom sits flush
+  // with the bench top, so no feather needed there.
+  const judgeCard = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.98, 1.3),
+    new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.9, color: 0xe8d8be }),
+  );
+  judgeCard.position.set(0.4, 2.28, -11.15);
+  judgeCard.visible = false;
+  benchG.add(judgeCard);
+
   // The gavel, at rest until a ruling.
   const gavel = new THREE.Group();
   const gHead = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.24, 10), mat.oak);
@@ -741,7 +755,6 @@ export function createCourtroomScene(
   boxG.add(box(0.14, 1.05, 8.6, mat.oak, 6.15, 0.52, -5.2));         // box rail
   boxG.add(box(0.14, 0.06, 8.6, mat.brass, 6.15, 1.07, -5.2));       // brass cap
 
-  const faceTex = statuaryFaceTexture();
   const boxJurors = new Map<number, THREE.Group>();
   const roomJurors = new Map<number, THREE.Group>();
   const seatData = new Map<number, PanelSeat>();
@@ -899,21 +912,15 @@ export function createCourtroomScene(
   for (let i = 0; i < 12; i++) {
     const [x, , z] = jrSeatPos(i);
     const seatNo = i + 1;
-    const c = chair(mat.leather);
-    c.position.set(x, 0, z);
     const yaw = i === 0 ? -Math.PI / 2 : i === 11 ? Math.PI / 2 : (z < 0 ? Math.PI : 0);
-    c.rotation.y = yaw + Math.PI; // chair backs face away from the table
-    jr.add(c);
-    const j = jurorFigure(seatNo, faceTex);
-    j.position.set(x, 0, z);
-    j.rotation.y = yaw;
-    j.userData.baseYaw = yaw;
-    j.userData.onTap = () => {
+    const unit = roomSeatUnit(seatNo, yaw, stage.camera);
+    unit.position.set(x, 0, z);
+    unit.userData.onTap = () => {
       const data = seatData.get(seatNo);
       if (data) opts.onSeatTap?.(data);
     };
-    roomJurors.set(seatNo, j);
-    jr.add(j);
+    roomJurors.set(seatNo, unit);
+    jr.add(unit);
   }
 
   // The ballot board — chalk on slate, redrawn as the count moves.
@@ -958,23 +965,12 @@ export function createCourtroomScene(
 
   /* ------------------------------ The API ------------------------------- */
 
-  let activeSeat: number | null = null;
-
   const setActiveSeat = (seat: number | null) => {
-    if (activeSeat !== null && activeSeat !== seat) {
-      for (const map of [boxJurors, roomJurors]) {
-        const prev = map.get(activeSeat);
-        if (prev) prev.userData.jurorState.targetLean = 0;
-      }
-    }
-    activeSeat = seat;
     if (seat === null) return;
     const t = performance.now() / 1000;
     for (const map of [boxJurors, roomJurors]) {
       const j = map.get(seat);
-      if (!j) continue;
-      j.userData.jurorState.targetLean = 1;
-      j.userData.jurorState.pulseT = t;
+      if (j) j.userData.jurorState.pulseT = t;
     }
   };
 
@@ -985,13 +981,9 @@ export function createCourtroomScene(
       for (const p of panel) seatData.set(p.seat, p);
     },
     setActiveSeat,
-    setPhase(phase) {
-      // The panel's posture follows the session: everyone straightens for
-      // ballots; the box empties of attention during deliberation next door.
-      const boxLean = phase === 'reactions' ? 0 : phase === 'ballots' ? -0.35 : 0;
-      for (const j of boxJurors.values()) {
-        if (j.userData.jurorState.targetLean !== 1) j.userData.jurorState.targetLean = boxLean;
-      }
+    setPhase() {
+      // Posture no longer animates (the figures hold still); the phase hook
+      // stays for future staging (lighting shifts, the room's attention).
     },
     setBallotBoard(rounds) {
       drawBallotBoard(boardCanvas.getContext('2d')!, rounds);
@@ -1006,86 +998,30 @@ export function createCourtroomScene(
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        /* --- The box: the waist-up figure on the desk card. Sides and top
-               feather away; the bottom stays solid behind the desk. --- */
-        {
-          const W = 384, H = 512;
-          const c = document.createElement('canvas');
-          c.width = W;
-          c.height = H;
-          const ctx = c.getContext('2d')!;
-          // Cover-fit the source into the card's 3:4.
-          const srcAspect = img.width / img.height;
-          const dstAspect = W / H;
-          let sw = img.width, sh = img.height, sx = 0, sy = 0;
-          if (srcAspect > dstAspect) {
-            sw = img.height * dstAspect;
-            sx = (img.width - sw) / 2;
-          } else {
-            sh = img.width / dstAspect;
-            sy = (img.height - sh) / 4; // favor the head, not the belt
-          }
-          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, W, H);
-          ctx.globalCompositeOperation = 'destination-in';
-          const sideFade = ctx.createLinearGradient(0, 0, W, 0);
-          sideFade.addColorStop(0, 'rgba(0,0,0,0)');
-          sideFade.addColorStop(0.22, 'rgba(0,0,0,1)');
-          sideFade.addColorStop(0.78, 'rgba(0,0,0,1)');
-          sideFade.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = sideFade;
-          ctx.fillRect(0, 0, W, H);
-          const topFade = ctx.createLinearGradient(0, 0, 0, H);
-          topFade.addColorStop(0, 'rgba(0,0,0,0)');
-          topFade.addColorStop(0.07, 'rgba(0,0,0,1)');
-          ctx.fillStyle = topFade;
-          ctx.fillRect(0, 0, W, H);
-          const tex = new THREE.CanvasTexture(c);
-          tex.colorSpace = THREE.SRGBColorSpace;
-          boxJurors.get(seat)?.traverse((o) => {
+        // The box: desk hides the bottom. The table next door hides nothing.
+        const applyTo = (unit: THREE.Group | undefined, tex: THREE.CanvasTexture) => {
+          unit?.traverse((o) => {
             if (o.userData.isCard) {
               const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
               m.map = tex;
               m.needsUpdate = true;
             }
           });
-        }
-
-        /* --- The jury room: the face, feathered radially onto the head;
-               a portrait face holds still. --- */
-        {
-          const S = 256;
-          const c = document.createElement('canvas');
-          c.width = S;
-          c.height = S;
-          const ctx = c.getContext('2d')!;
-          // The face lives in the upper middle of a waist-up shot.
-          const side = Math.min(img.width, img.height) * 0.5;
-          ctx.drawImage(
-            img,
-            (img.width - side) / 2, img.height * 0.04, side, side,
-            0, 0, S, S,
-          );
-          const mask = ctx.createRadialGradient(S / 2, S / 2, S * 0.30, S / 2, S / 2, S * 0.48);
-          mask.addColorStop(0, 'rgba(0,0,0,1)');
-          mask.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.globalCompositeOperation = 'destination-in';
-          ctx.fillStyle = mask;
-          ctx.fillRect(0, 0, S, S);
-          const tex = new THREE.CanvasTexture(c);
-          tex.colorSpace = THREE.SRGBColorSpace;
-          const j = roomJurors.get(seat);
-          if (j) {
-            j.userData.jurorState.hasPortrait = true;
-            j.traverse((o) => {
-              if (o.userData.isFace) {
-                const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
-                m.map = tex;
-                m.transparent = true;
-                m.needsUpdate = true;
-              }
-            });
-          }
-        }
+        };
+        applyTo(boxJurors.get(seat), makeCardTexture(img, { fadeBottom: false }));
+        applyTo(roomJurors.get(seat), makeCardTexture(img, { fadeBottom: true }));
+      };
+      img.src = url;
+    },
+    setJudgePortrait(url) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const m = judgeCard.material as THREE.MeshStandardMaterial;
+        m.map = makeCardTexture(img, { fadeBottom: false });
+        m.needsUpdate = true;
+        judgeCard.visible = true;
+        judge.visible = false; // the capsule stands down
       };
       img.src = url;
     },

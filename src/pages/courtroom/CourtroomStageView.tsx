@@ -91,6 +91,9 @@ export default function CourtroomStageView({
     for (let s = 1; s <= 12; s++) {
       scene.setJurorPortrait(s, `/courtroom/venire-${s}.png`);
     }
+    // The judge takes the bench when the portrait exists; the capsule
+    // presides until then.
+    scene.setJudgePortrait('/courtroom/judge.png');
     return () => {
       stage.dispose();
       stageRef.current = null;
