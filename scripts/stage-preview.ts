@@ -39,9 +39,12 @@ scene.setPanel(NAMES.map((name, i) => ({
   occupation: ['ICU nurse', 'electrician', 'bookkeeper', 'line cook', 'claims adjuster', 'teacher'][i % 6],
 })));
 
-// Portrait trial (Eden's Midjourney set): seat 1 front-facing, seat 2 profile.
-scene.setJurorPortrait(1, '/juror-1.png');
-scene.setJurorPortrait(2, '/juror-2.png');
+// Portrait trial (Eden's Midjourney set): the two portraits across all
+// twelve seats — odd seats the front-facing woman, even seats the man —
+// so faces are visible from every view.
+for (let s = 1; s <= 12; s++) {
+  scene.setJurorPortrait(s, s % 2 ? '/juror-1.png' : '/juror-2.png');
+}
 
 // View buttons for manual inspection.
 for (const [v, label] of [['lectern', 'Lectern'], ['box', 'Box'], ['juryroom', 'Jury Room']] as const) {
@@ -56,8 +59,11 @@ for (const [v, label] of [['lectern', 'Lectern'], ['box', 'Box'], ['juryroom', '
 async function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 const hold = new URLSearchParams(location.search).get('hold') as
-  | 'lectern' | 'box' | 'juryroom' | null;
-if (hold && scene.views[hold]) {
+  | 'lectern' | 'box' | 'juryroom' | 'closeup' | null;
+if (hold === 'closeup') {
+  // Right at the box rail, eye to eye with the front row.
+  stage.setView({ position: [5.4, 1.5, -5.0], target: [8.2, 1.25, -5.2] });
+} else if (hold && scene.views[hold]) {
   stage.setView(scene.views[hold]);
   scene.setBallotBoard([{ label: 'Secret', ours: 5, theirs: 4, undecided: 3 }]);
 }

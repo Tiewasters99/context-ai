@@ -892,19 +892,44 @@ export function createCourtroomScene(
       rulingLight.color.set(kind === 'sustained' ? 0xff8866 : 0xe8b84a);
     },
     setJurorPortrait(seat, url) {
-      new THREE.TextureLoader().load(url, (tex) => {
+      // The portrait is feathered through a radial vignette so it blends
+      // into the bronze head — a face, not a photograph pasted on a doll.
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const S = 256;
+        const c = document.createElement('canvas');
+        c.width = S;
+        c.height = S;
+        const ctx = c.getContext('2d')!;
+        const side = Math.min(img.width, img.height);
+        ctx.drawImage(
+          img,
+          (img.width - side) / 2, (img.height - side) / 2, side, side,
+          0, 0, S, S,
+        );
+        const mask = ctx.createRadialGradient(S / 2, S / 2, S * 0.30, S / 2, S / 2, S * 0.48);
+        mask.addColorStop(0, 'rgba(0,0,0,1)');
+        mask.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.globalCompositeOperation = 'destination-in';
+        ctx.fillStyle = mask;
+        ctx.fillRect(0, 0, S, S);
+        const tex = new THREE.CanvasTexture(c);
         tex.colorSpace = THREE.SRGBColorSpace; // photos arrive sRGB
         for (const map of [boxJurors, roomJurors]) {
           const j = map.get(seat);
           if (!j) continue;
           j.traverse((o) => {
             if (o.userData.isFace) {
-              ((o as THREE.Mesh).material as THREE.MeshStandardMaterial).map = tex;
-              ((o as THREE.Mesh).material as THREE.MeshStandardMaterial).needsUpdate = true;
+              const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+              m.map = tex;
+              m.transparent = true; // faded rim shows the bronze beneath
+              m.needsUpdate = true;
             }
           });
         }
-      });
+      };
+      img.src = url;
     },
   };
 }
