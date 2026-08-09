@@ -58,10 +58,17 @@ export interface CourtroomSceneApi {
   setJurorPortrait(seat: number, url: string): void;
   /** The judge takes the bench (waist-up card; the capsule stands down). */
   setJudgePortrait(url: string): void;
+  /** A close-up staged view of one juror, in whichever room was tapped. */
+  seatCloseup(seat: number, room: SceneRoom): StageView | null;
+  /** A close-up staged view of the bench. */
+  judgeCloseup(): StageView;
 }
 
+export type SceneRoom = 'box' | 'juryroom';
+
 export interface CourtroomSceneOptions {
-  onSeatTap?: (seat: PanelSeat) => void;
+  onSeatTap?: (seat: number, room: SceneRoom) => void;
+  onJudgeTap?: () => void;
 }
 
 /* ========================= Materials (shared once) ======================== */
@@ -638,6 +645,15 @@ export function createCourtroomScene(
   };
   benchG.add(benchLamp);
 
+  // Approach the bench: a generous tap target over judge and card.
+  const judgeTap = new THREE.Mesh(
+    new THREE.BoxGeometry(1.6, 1.8, 1.4),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  judgeTap.position.set(0.4, 2.3, -11.0);
+  judgeTap.userData.onTap = () => opts.onJudgeTap?.();
+  benchG.add(judgeTap);
+
   // The gavel, at rest until a ruling.
   const gavel = new THREE.Group();
   const gHead = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.24, 10), mat.oak);
@@ -778,10 +794,7 @@ export function createCourtroomScene(
 
     const unit = jurorDeskUnit(seatNo);
     unit.position.set(x, y, z);
-    unit.userData.onTap = () => {
-      const data = seatData.get(seatNo);
-      if (data) opts.onSeatTap?.(data);
-    };
+    unit.userData.onTap = () => opts.onSeatTap?.(seatNo, 'box');
     boxJurors.set(seatNo, unit);
     boxG.add(unit);
   }
@@ -924,10 +937,7 @@ export function createCourtroomScene(
     const yaw = i === 0 ? -Math.PI / 2 : i === 11 ? Math.PI / 2 : (z < 0 ? Math.PI : 0);
     const unit = roomSeatUnit(seatNo, yaw, stage.camera);
     unit.position.set(x, 0, z);
-    unit.userData.onTap = () => {
-      const data = seatData.get(seatNo);
-      if (data) opts.onSeatTap?.(data);
-    };
+    unit.userData.onTap = () => opts.onSeatTap?.(seatNo, 'juryroom');
     roomJurors.set(seatNo, unit);
     jr.add(unit);
   }
@@ -1033,6 +1043,27 @@ export function createCourtroomScene(
         judge.visible = false; // the capsule stands down
       };
       img.src = url;
+    },
+    seatCloseup(seat, room) {
+      const unit = (room === 'box' ? boxJurors : roomJurors).get(seat);
+      if (!unit) return null;
+      const p = new THREE.Vector3();
+      unit.getWorldPosition(p);
+      if (room === 'box') {
+        // Approach from the well — the figures face it.
+        return {
+          position: [p.x - 1.9, p.y + 1.55, p.z + 0.35],
+          target: [p.x + 0.1, p.y + 1.15, p.z],
+        };
+      }
+      // The jury room: step in from the door side; the card turns to meet you.
+      return {
+        position: [p.x + 1.4, 1.75, p.z + 1.5],
+        target: [p.x, 1.1, p.z],
+      };
+    },
+    judgeCloseup() {
+      return { position: [0.4, 2.55, -8.3], target: [0.4, 2.25, -11.15] };
     },
   };
 }

@@ -13,6 +13,7 @@
 
 import { CourtroomStage } from '../src/lib/courtroom/three/stage.ts';
 import { createCourtroomScene } from '../src/lib/courtroom/three/courtroom-scene.ts';
+import { VENIRE_BIOS, JUDGE_BIO } from '../src/lib/courtroom/three/venire-bios.ts';
 
 const container = document.getElementById('room');
 if (!container) throw new Error('No #room container');
@@ -20,12 +21,23 @@ if (!container) throw new Error('No #room container');
 const stage = new CourtroomStage(container);
 if (!stage.isInitialized) throw new Error('WebGL unavailable');
 
+function showChip(html: string) {
+  const chip = document.getElementById('chip')!;
+  chip.innerHTML = html;
+  chip.style.display = 'block';
+  setTimeout(() => { chip.style.display = 'none'; }, 6000);
+}
+
 const scene = createCourtroomScene(stage, {
-  onSeatTap: (seat) => {
-    const chip = document.getElementById('chip')!;
-    chip.textContent = `${seat.name} · seat ${seat.seat} — ${seat.occupation ?? ''}`;
-    chip.style.display = 'block';
-    setTimeout(() => { chip.style.display = 'none'; }, 2500);
+  onSeatTap: (seat, room) => {
+    const view = scene.seatCloseup(seat, room);
+    if (view) stage.flyTo(view, 900);
+    const b = VENIRE_BIOS[seat];
+    if (b) showChip(`<b>${b.name}</b> · seat ${seat}<br><i>${b.tagline}</i><br>${b.bio}`);
+  },
+  onJudgeTap: () => {
+    stage.flyTo(scene.judgeCloseup(), 900);
+    showChip(`<b>${JUDGE_BIO.name}</b><br><i>${JUDGE_BIO.tagline}</i><br>${JUDGE_BIO.paragraphs.join('<br>')}`);
   },
 });
 

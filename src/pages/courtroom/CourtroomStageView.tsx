@@ -14,8 +14,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CourtroomStage } from '@/lib/courtroom/three/stage.ts';
 import {
   createCourtroomScene,
-  type CourtroomSceneApi, type PanelSeat, type ScenePhase,
+  type CourtroomSceneApi, type ScenePhase,
 } from '@/lib/courtroom/three/courtroom-scene.ts';
+import { VENIRE_BIOS, JUDGE_BIO } from '@/lib/courtroom/three/venire-bios.ts';
 import { computeSplit } from '@/lib/courtroom/prompts.ts';
 import type { Ballot, JurorProfile, ProgressEvent, Ruling } from '@/lib/courtroom/types.ts';
 
@@ -68,8 +69,9 @@ export default function CourtroomStageView({
   const sceneRef = useRef<CourtroomSceneApi | null>(null);
   const autoViewRef = useRef<ViewName>('lectern');
   const rulingsSeen = useRef(0);
+  const returnViewRef = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   const [webgl, setWebgl] = useState(true);
-  const [chip, setChip] = useState<PanelSeat | null>(null);
+  const [focus, setFocus] = useState<{ kind: 'juror'; seat: number } | { kind: 'judge' } | null>(null);
 
   /* ---- Mount / dispose ---- */
   useEffect(() => {
@@ -81,7 +83,28 @@ export default function CourtroomStageView({
       return;
     }
     stageRef.current = stage;
-    const scene = createCourtroomScene(stage, { onSeatTap: setChip });
+    // Tap a figure → step close and meet them (bio overlay); tap again to
+    // step back to wherever the camera was.
+    const rememberReturn = () => {
+      returnViewRef.current = {
+        position: stage.camera.position.toArray() as [number, number, number],
+        target: (stage.controls?.target.toArray() ?? [0, 0, 0]) as [number, number, number],
+      };
+    };
+    const scene = createCourtroomScene(stage, {
+      onSeatTap: (seat, room) => {
+        const view = sceneRef.current?.seatCloseup(seat, room);
+        if (!view) return;
+        rememberReturn();
+        stage.flyTo(view, 900);
+        setFocus({ kind: 'juror', seat });
+      },
+      onJudgeTap: () => {
+        rememberReturn();
+        stage.flyTo(sceneRef.current!.judgeCloseup(), 900);
+        setFocus({ kind: 'judge' });
+      },
+    });
     sceneRef.current = scene;
     // The house venire (Eden's Midjourney set, public/courtroom): twelve
     // waist-up figures behind the desks. Purely presence — no visual is
@@ -165,8 +188,19 @@ export default function CourtroomStageView({
   const goTo = (v: ViewName) => {
     const scene = sceneRef.current;
     const stage = stageRef.current;
-    if (scene && stage) stage.flyTo(scene.views[v]);
+    if (scene && stage) {
+      setFocus(null);
+      stage.flyTo(scene.views[v]);
+    }
   };
+
+  const stepBack = () => {
+    const stage = stageRef.current;
+    if (stage && returnViewRef.current) stage.flyTo(returnViewRef.current, 900);
+    setFocus(null);
+  };
+
+  const bio = focus?.kind === 'juror' ? VENIRE_BIOS[focus.seat] : null;
 
   return (
     <div className="relative rounded-lg overflow-hidden border border-[rgba(212,160,84,0.25)] mb-5">
@@ -186,20 +220,39 @@ export default function CourtroomStageView({
         ))}
       </div>
 
-      {/* Seat chip — tap a juror, meet a juror */}
-      {chip && (
-        <button
-          type="button"
-          onClick={() => setChip(null)}
-          className="absolute top-3 left-3 max-w-[75%] text-left rounded-md border border-[rgba(212,160,84,0.4)] bg-[rgba(8,8,14,0.88)] px-3.5 py-2.5"
-        >
-          <span className="block text-[12.5px] text-white font-medium">
-            {chip.name} <span className="text-white/40">· seat {chip.seat}</span>
-          </span>
-          {chip.occupation && (
-            <span className="block text-[11.5px] text-white/55 mt-0.5">{chip.occupation}</span>
+      {/* Meet the juror / the Court — voir-dire notes for the figure in
+          front of you. Display texture only: none of this ever enters a
+          juror prompt (the §2.3 rail). */}
+      {focus && (
+        <div className="absolute top-3 right-3 w-[290px] max-w-[80%] rounded-lg border border-[rgba(212,160,84,0.4)] bg-[rgba(8,8,14,0.92)] px-4 py-3.5">
+          {focus.kind === 'juror' && bio && (
+            <>
+              <p className="text-[14px] text-white font-medium" style={{ fontFamily: '"Playfair Display Variable", serif' }}>
+                {bio.name} <span className="text-white/35 text-[11px] font-normal">· seat {focus.seat}</span>
+              </p>
+              <p className="text-[11px] uppercase tracking-wider text-[#d4a054] mt-0.5">{bio.tagline}</p>
+              <p className="text-[12px] text-white/70 leading-relaxed mt-2">{bio.bio}</p>
+            </>
           )}
-        </button>
+          {focus.kind === 'judge' && (
+            <>
+              <p className="text-[14px] text-white font-medium" style={{ fontFamily: '"Playfair Display Variable", serif' }}>
+                {JUDGE_BIO.name}
+              </p>
+              <p className="text-[11px] uppercase tracking-wider text-[#d4a054] mt-0.5">{JUDGE_BIO.tagline}</p>
+              {JUDGE_BIO.paragraphs.map((p, i) => (
+                <p key={i} className="text-[12px] text-white/70 leading-relaxed mt-2">{p}</p>
+              ))}
+            </>
+          )}
+          <button
+            type="button"
+            onClick={stepBack}
+            className="mt-3 text-[11px] uppercase tracking-wider text-[#e8b84a] hover:text-white transition-colors"
+          >
+            ← Step back
+          </button>
+        </div>
       )}
     </div>
   );
