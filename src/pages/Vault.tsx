@@ -1,8 +1,9 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { X, Upload, FileText, Bot, FolderOpen, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus } from 'lucide-react';
+import { X, Upload, FileText, Bot, FolderOpen, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus, FlaskConical } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
 import AIWorkbench from '@/components/vault/AIWorkbench';
+import SandboxPanel from '@/components/vault/SandboxPanel';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import DocumentEditor from '@/components/vault/DocumentEditor';
 import GeneratedDocsPanel from '@/components/vault/GeneratedDocsPanel';
@@ -32,12 +33,13 @@ import { useIsMobile } from '@/hooks/useIsMobile';
 // 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
 // case — they highlighted, then silently showed Home. They return to the menu
 // when the views actually exist.
-type VaultView = 'home' | 'import' | 'workbench' | 'citecheck' | 'files' | 'generated';
+type VaultView = 'home' | 'import' | 'workbench' | 'sandbox' | 'citecheck' | 'files' | 'generated';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
   { icon: Upload, label: 'Import/Display Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
   { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
+  { icon: FlaskConical, label: 'Sandbox', description: 'Stage working copies, combine exhibits into one PDF', view: 'sandbox' },
   { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
 ];
@@ -576,6 +578,8 @@ export default function Vault() {
         }} />;
       case 'workbench':
         return <AIWorkbench vaultFiles={vaultFiles} onSaveToVault={addGeneratedDoc} />;
+      case 'sandbox':
+        return <SandboxPanel />;
       case 'citecheck':
         return (
           <div className="flex-1 overflow-y-auto px-8 py-8">
