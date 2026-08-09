@@ -11,6 +11,7 @@ These are presence, not identity: no visual is keyed to any juror's profile
 
 | Seat | Figure | Source stem |
 |---|---|---|
+| Bench | The judge — late forties, black robes, wood paneling | `a_female_judge_late_fourties_in_black_robes_seate_e64d6fea…_0` |
 | 1 | Electrician, cap and coveralls | `an_electrician_seated_…_309de486…_0` |
 | 2 | Elegant Asian woman | `An_asian_woman_elegant_mid_30s_…_07e60c00…_0` |
 | 3 | Retired accountant, round glasses | `a_retired_accountant_…_9d54e190…_1` |

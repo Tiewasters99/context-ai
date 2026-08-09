@@ -629,6 +629,15 @@ export function createCourtroomScene(
   judgeCard.visible = false;
   benchG.add(judgeCard);
 
+  // The bench lamp — the wall of the law shades the bench from the west
+  // windows; the Court supplies her own light, same mains hum as counsel's.
+  const benchLamp = new THREE.PointLight(0xffe2a8, 0.85, 5);
+  benchLamp.position.set(0.4, 2.7, -10.3);
+  benchLamp.userData.animate = (t: number) => {
+    benchLamp.intensity = 0.85 + Math.sin(t * 12.7) * 0.015;
+  };
+  benchG.add(benchLamp);
+
   // The gavel, at rest until a ruling.
   const gavel = new THREE.Group();
   const gHead = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.24, 10), mat.oak);
