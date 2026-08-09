@@ -81,7 +81,16 @@ export default function CourtroomStageView({
       return;
     }
     stageRef.current = stage;
-    sceneRef.current = createCourtroomScene(stage, { onSeatTap: setChip });
+    const scene = createCourtroomScene(stage, { onSeatTap: setChip });
+    sceneRef.current = scene;
+    // The house venire (Eden's Midjourney set, public/courtroom): twelve
+    // waist-up figures behind the desks. Purely presence — no visual is
+    // keyed to any juror's profile (the §2.3 rail). A missing file simply
+    // leaves that seat's silhouette. Per-matter portrait upload can
+    // replace these later.
+    for (let s = 1; s <= 12; s++) {
+      scene.setJurorPortrait(s, `/courtroom/venire-${s}.png`);
+    }
     return () => {
       stage.dispose();
       stageRef.current = null;
