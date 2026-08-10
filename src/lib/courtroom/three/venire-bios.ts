@@ -81,6 +81,70 @@ export const VENIRE_BIOS: Record<number, VenireBio> = {
   },
 };
 
+/** Panel B — the second venire (keyed to public/courtroom/venire2-N.png). */
+export const VENIRE2_BIOS: Record<number, VenireBio> = {
+  1: {
+    name: 'Gus Palowski',
+    tagline: 'Master plumber, 51',
+    bio: 'Thirty years of fixing what the last guy botched. Came in off a job, washed up, and still has the pencils in his bib. Was stiffed by a general contractor once — filed the lien, got paid, never forgot it.',
+  },
+  2: {
+    name: 'Dorothy Bell',
+    tagline: 'Retired fourth-grade teacher, 67',
+    bio: 'Thirty-one Septembers in the same classroom. Has heard every excuse a human being can invent and graded it. Kind eyes, immovable standards; keeps her word and expects yours.',
+  },
+  3: {
+    name: 'Frank DiSalvo',
+    tagline: 'Retired insurance adjuster, 73',
+    bio: 'Spent four decades pricing other people\'s disasters and finding the padding in the claim. Arms crossed before the first witness. The hardest sell in either panel — and the most valuable when he moves.',
+  },
+  4: {
+    name: 'Amara Wells',
+    tagline: 'Marketing manager, 33',
+    bio: 'Runs campaigns for a consumer brand; reads a room in a glance and a deck in a minute. Impatient with padding, allergic to jargon. Decides fast and holds it loosely until the numbers land.',
+  },
+  5: {
+    name: 'Esteban Ruiz',
+    tagline: 'Landscaping crew owner, 46',
+    bio: 'Built a four-truck operation from one mower. The tattoos are old; the patience is new. Judges people by how they treat a crew in August. Quiet through the noise, decisive at the end.',
+  },
+  6: {
+    name: 'Nora Sheehan',
+    tagline: 'Bank branch manager, 44',
+    bio: 'Approves loans all day, which means she says no all day and sleeps fine. Reads contracts before signing hotel wifi terms. Believes most disputes are two people who skipped the paperwork.',
+  },
+  7: {
+    name: 'Danny Song',
+    tagline: 'IT support specialist, 29',
+    bio: 'Closes forty tickets a week and knows the difference between a system problem and a user problem. Precise, skeptical of confident people, comfortable saying "that\'s not what the log shows."',
+  },
+  8: {
+    name: 'Walt Jessup',
+    tagline: 'Retired charter-boat captain, 77',
+    bio: 'Ran fishing charters out of the Gulf for forty years; the jacket has seen weather. Distrusts institutions, likes people, tells sea stories until the foreman clears his throat. Votes his gut and defends it.',
+  },
+  9: {
+    name: 'Claire Fontaine',
+    tagline: 'Hotel events manager, 38',
+    bio: 'Handles four hundred weddings\' worth of other people\'s emergencies with a level voice. Notices who apologizes and who explains. Composure is her profession; she rates witnesses on theirs.',
+  },
+  10: {
+    name: 'Ari Beaumont',
+    tagline: 'Junior architect, 27',
+    bio: 'Draws load-bearing walls for a living and thinks arguments have them too. Quietly relentless about foundations — if the premise doesn\'t hold, the flourish doesn\'t matter. Dresses better than the partners.',
+  },
+  11: {
+    name: 'Peggy Ostrowski',
+    tagline: 'Retired school-cafeteria manager, 78',
+    bio: 'Fed twelve hundred children a day on a budget that never once balanced itself. Folded hands, sensible boots, no hurry left in her. Waits everyone out, then says the thing the room was avoiding.',
+  },
+  12: {
+    name: 'Maya Castellano',
+    tagline: 'Nursing student, 25',
+    bio: 'Second-year nursing student who works intake shifts at a clinic. Has watched people at their worst and stayed kind about it. Takes the instructions seriously; expects everyone else to as well.',
+  },
+};
+
 export interface JudgeBio {
   name: string;
   tagline: string;

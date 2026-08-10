@@ -7,6 +7,7 @@ import { DEFAULT_VENUE_MIX } from '@/lib/courtroom/sampler.ts';
 import { NOT_FOR_JURY_SELECTION } from '@/lib/courtroom/prompts.ts';
 import { DEFAULT_JUROR_MODEL, ECONOMY_JUROR_MODEL } from '@/lib/courtroom/live.ts';
 import { createTrial, deleteTrial, listTrials, saveJurors, type TrialListRow } from '@/lib/courtroom/persist.ts';
+import { HOUSE_PANELS } from '@/lib/courtroom/house-panel.ts';
 import { samplePanel } from '@/lib/courtroom/sampler.ts';
 import { formatUsage } from '@/lib/courtroom/meter.ts';
 import type { PanelSize, TrialMode, UsageRecord, VenueMix } from '@/lib/courtroom/types.ts';
@@ -89,6 +90,7 @@ export default function CourtroomHome() {
   const [modelId, setModelId] = useState<string>(DEFAULT_JUROR_MODEL);
   const [panelSize, setPanelSize] = useState<PanelSize>(12);
   const [mode, setMode] = useState<TrialMode>('quick');
+  const [panelSource, setPanelSource] = useState<'sampled' | 'A' | 'B'>('A');
   const [mix, setMix] = useState<VenueMix>(() => structuredClone(DEFAULT_VENUE_MIX));
   const [mixOpen, setMixOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -109,16 +111,26 @@ export default function CourtroomHome() {
     setFormError('');
     try {
       const seed = Math.floor(Math.random() * 2 ** 31);
+      const house = panelSource === 'sampled' ? undefined : panelSource;
       const trial = await createTrial({
         matterspaceId: matterId,
         title: clean,
         modelId,
-        venueMix: { ...mix, panel_size: panelSize },
+        venueMix: {
+          ...mix,
+          panel_size: house ? 12 : panelSize,
+          ...(house ? { house_panel: house } : {}),
+        },
         seed,
         mode,
       });
-      // Same seed + same mix ⇒ this exact panel is reproducible from the row.
-      await saveJurors(trial, samplePanel(mix, seed, panelSize));
+      // House panels seat the named venire — real authored personalities,
+      // the same faces as the room. Sampled panels are reproducible from
+      // seed + mix.
+      await saveJurors(
+        trial,
+        house ? HOUSE_PANELS[house] : samplePanel(mix, seed, panelSize),
+      );
       navigate(`/app/courtroom/${trial.id}`);
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'The trial could not be created.');
@@ -207,6 +219,39 @@ export default function CourtroomHome() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* The panel itself — a named house venire, or sampled from the mix. */}
+          <div>
+            <FieldLabel htmlFor="ct-panel">The venire</FieldLabel>
+            <div id="ct-panel" className="flex flex-wrap gap-3" role="radiogroup" aria-label="Panel source">
+              {([
+                ['A', 'House Panel A', 'The twelve from the box — Boone, Berkowitz, Ortiz, Pierce…'],
+                ['B', 'House Panel B', 'The second twelve — Palowski, DiSalvo, Bell, Jessup…'],
+                ['sampled', 'Sample from venue mix', 'Generated jurors from the sliders below'],
+              ] as ['sampled' | 'A' | 'B', string, string][]).map(([v, label, hint]) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={panelSource === v}
+                  onClick={() => setPanelSource(v)}
+                  title={hint}
+                  className={`px-4 py-2 rounded-md border text-[13px] transition-colors ${
+                    panelSource === v
+                      ? 'border-[#d4a054] text-[#e8b84a] bg-[rgba(212,160,84,0.06)]'
+                      : 'border-[rgba(255,255,255,0.12)] text-white/60 hover:border-[rgba(255,255,255,0.3)]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-white/30 mt-1">
+              {panelSource === 'sampled'
+                ? 'Twelve (or six) generated jurors, reproducible from the venue-mix sliders.'
+                : 'The named venire with authored personalities — the same people you meet in the room, deliberating in character.'}
+            </p>
           </div>
 
           {/* Session type — Quick Panel or the full adversarial procedure. */}

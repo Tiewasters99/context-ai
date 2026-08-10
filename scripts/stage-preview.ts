@@ -52,12 +52,10 @@ scene.setPanel(NAMES.map((name, i) => ({
   occupation: ['ICU nurse', 'electrician', 'bookkeeper', 'line cook', 'claims adjuster', 'teacher'][i % 6],
 })));
 
-// The venire (Eden's Midjourney set, 08-09): twelve seats, eleven distinct
-// people — electrician, elegant Asian woman, college man, Latina housewife,
-// Black professional, redhead A, college woman (sepia), Indian man, Puerto
-// Rican woman, seated brunette, college woman (curly), redhead B.
+// The venire: House Panel A by default; ?panel=B seats the second twelve.
+const panelSet = new URLSearchParams(location.search).get('panel') === 'B' ? 'venire2' : 'venire';
 for (let s = 1; s <= 12; s++) {
-  scene.setJurorPortrait(s, `/venire-${s}.png`);
+  scene.setJurorPortrait(s, `/${panelSet}-${s}.png`);
 }
 scene.setJudgePortrait('/judge.png'); // silently absent until Eden's judge lands
 scene.setCounselPortrait('lead', '/counsel-lead.png');

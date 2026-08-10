@@ -16,7 +16,7 @@ import {
   createCourtroomScene,
   type CourtroomSceneApi, type ScenePhase,
 } from '@/lib/courtroom/three/courtroom-scene.ts';
-import { VENIRE_BIOS, JUDGE_BIO } from '@/lib/courtroom/three/venire-bios.ts';
+import { VENIRE_BIOS, VENIRE2_BIOS, JUDGE_BIO } from '@/lib/courtroom/three/venire-bios.ts';
 import { computeSplit } from '@/lib/courtroom/prompts.ts';
 import type { Ballot, JurorProfile, ProgressEvent, Ruling } from '@/lib/courtroom/types.ts';
 
@@ -57,13 +57,17 @@ function phaseForStage(stage: ProgressEvent['stage'] | undefined): ScenePhase {
 }
 
 export default function CourtroomStageView({
-  jurors, progress, ballots, rulings,
+  jurors, progress, ballots, rulings, panel = 'A',
 }: {
   jurors: JurorProfile[];
   progress: ProgressEvent | null;
   ballots: Ballot[];
   rulings: Ruling[];
+  /** Which house venire's faces and bios dress the room. */
+  panel?: 'A' | 'B';
 }) {
+  const portraitPrefix = panel === 'B' ? 'venire2' : 'venire';
+  const bios = panel === 'B' ? VENIRE2_BIOS : VENIRE_BIOS;
   const mountRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<CourtroomStage | null>(null);
   const sceneRef = useRef<CourtroomSceneApi | null>(null);
@@ -112,7 +116,7 @@ export default function CourtroomStageView({
     // leaves that seat's silhouette. Per-matter portrait upload can
     // replace these later.
     for (let s = 1; s <= 12; s++) {
-      scene.setJurorPortrait(s, `/courtroom/venire-${s}.png`);
+      scene.setJurorPortrait(s, `/courtroom/${portraitPrefix}-${s}.png`);
     }
     // The judge takes the bench when the portrait exists; the capsule
     // presides until then.
@@ -204,7 +208,7 @@ export default function CourtroomStageView({
     setFocus(null);
   };
 
-  const bio = focus?.kind === 'juror' ? VENIRE_BIOS[focus.seat] : null;
+  const bio = focus?.kind === 'juror' ? bios[focus.seat] : null;
 
   return (
     <div className="relative rounded-lg overflow-hidden border border-[rgba(212,160,84,0.25)] mb-5">

@@ -99,7 +99,10 @@ export interface MockTrial {
   title: string;
   mode: TrialMode;
   status: TrialStatus;
-  venue_mix: VenueMix & { panel_size: PanelSize };
+  /** house_panel marks a trial empaneled from a named house venire (A/B)
+   *  rather than sampled from the mix; the 3D room keys portraits and
+   *  bios off it. */
+  venue_mix: VenueMix & { panel_size: PanelSize; house_panel?: 'A' | 'B' };
   seed: number;
   model_id: string;
   usage: UsageRecord | Record<string, never>;

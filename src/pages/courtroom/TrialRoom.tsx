@@ -282,6 +282,7 @@ export default function TrialRoom() {
           progress={running ? progress : null}
           ballots={liveBallots}
           rulings={liveRulings}
+          panel={trial.venue_mix.house_panel ?? 'A'}
         />
       )}
       {!running && jurors.length > 0 && trial.status !== 'empanel' && (

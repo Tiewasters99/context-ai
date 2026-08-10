@@ -28,6 +28,28 @@ These are presence, not identity: no visual is keyed to any juror's profile
 | 11 | Black professional woman, B&W | `an_attractive_black_professional_woman_…_ec81c2e1…_3` |
 | 12 | College man | `a_young_man_…college_look_…_572ba6c8…_0` |
 
+## Panel B (`venire2-N.png`)
+
+| Seat | Figure | Source stem |
+|---|---|---|
+| 1 | Gus Palowski — plumber, overalls | `a_middle_aged_white_plumber_off_work_…_1c3a6d0f…_0` |
+| 2 | Dorothy Bell — retired teacher | `an_older_black_woman_retired_teacher_…_e2d29aef…_2` |
+| 3 | Frank DiSalvo — retired adjuster, arms crossed | `an_elderly_man_retiree_from_Florida_…_30294a79…_3` |
+| 4 | Amara Wells — marketing manager | `an_attractive_black_professional_woman_…_d352f041…_0` |
+| 5 | Esteban Ruiz — landscaper in the foliage | `A_latino_landscaper_…_24fc83aa…_2` |
+| 6 | Nora Sheehan — bank manager (redhead, navy) | `Show_the_reference_figure_…_20631f64…_1` (left panel) |
+| 7 | Danny Song — IT specialist | `An_Asian_IT_specialist_…_8caac7c4…_1` |
+| 8 | Walt Jessup — charter captain, leather jacket | `an_elderly_man_retiree_from_Florida_…_4b5b5893…_1` |
+| 9 | Claire Fontaine — events manager (seated brunette) | `Show_the_reference_figure_…_20631f64…_3` |
+| 10 | Ari Beaumont — junior architect | `a_young_professional_gender_ethnic_fluid_person_…_6c8d3585…_0` |
+| 11 | Peggy Ostrowski — retired cafeteria manager | `an_elderly_retiree_from_Florida_…_a8e76417…_0` |
+| 12 | Maya Castellano — nursing student (curly college) | `a_young_woman_…college_look_…_74ed66a3…_0` |
+
+Both panels are also REASONING agents: `src/lib/courtroom/house-panel.ts`
+gives every figure an authored attitude profile, so a trial can empanel
+House Panel A or B and these people deliberate in character. Personality is
+the sanctioned engine (spec §4); demographics still condition nothing.
+
 Format rules learned the hard way: **seated, front-facing, waist-up or
 wider** (a head more than ~⅓ of frame height becomes a giant disembodied
 face on the card); dark painterly backdrops melt into the room. Recrop with
