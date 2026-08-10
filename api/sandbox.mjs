@@ -17,8 +17,8 @@ import { callTool, timeoutFetch } from '../lib/mcp-core.mjs';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 
-// Only the workspace-organization / document-task surface — retrieval stays
-// on its existing client-side paths.
+// The workspace-organization / document-task surface, plus hybrid content
+// search (which needs the server-held embedding key the client can't have).
 const ALLOWED_ACTIONS = new Set([
   'send_to_sandbox',
   'copy_document',
@@ -26,6 +26,10 @@ const ALLOWED_ACTIONS = new Set([
   'file_document',
   'create_matter',
   'move_document',
+  'edit_pdf',
+  'create_deck',
+  'create_chart',
+  'search',
 ]);
 
 export default async function handler(req, res) {

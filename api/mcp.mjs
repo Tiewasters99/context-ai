@@ -218,7 +218,7 @@ export default async function handler(req, res) {
     const sb = userScopedClient(user_id);
 
     const server = new Server(
-      { name: 'contextspaces-retrieval', version: '0.5.0' },
+      { name: 'contextspaces-retrieval', version: '0.6.0' },
       {
         capabilities: { tools: {} },
         instructions:
@@ -239,7 +239,12 @@ export default async function handler(req, res) {
           'workspace): send_to_sandbox copies documents into per-matter ' +
           'mini-boxes so originals stay filed, and assemble_documents merges ' +
           'stored PDFs into one filed PDF with a download link — the right ' +
-          'flow for "combine these exhibits into a single PDF for filing".',
+          'flow for "combine these exhibits into a single PDF for filing". ' +
+          'DOCUMENT TASKS: edit_pdf reorders/deletes/rotates pages into a ' +
+          'new copy; create_deck builds a filed .pptx (you author the ' +
+          'slides — bullets, tables, native charts, notes); create_chart ' +
+          'renders an SVG chart from data you extracted. search works ' +
+          'matter-scoped or, with matter omitted, across every matter at once.',
       }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({

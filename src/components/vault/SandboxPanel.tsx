@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine } from 'lucide-react';
+import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useServerspaces, useServerspacesRefresh, type Serverspace } from '@/hooks/useServerspaces';
 import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument } from '@/lib/vault-persist';
+import { sandboxApi } from '@/lib/sandbox-api';
+import PdfPageEditor from './PdfPageEditor';
+import DeckComposerModal from './DeckComposerModal';
 
 // The Sandbox: the AI Workbench's scratch workspace. One serverspace named
 // "Sandbox" per account, subdivided into mini-boxes (matters) so materials
@@ -30,19 +33,6 @@ interface PickerDoc {
 const isPdf = (d: SandboxDoc) =>
   (d.source_filename ?? '').toLowerCase().endsWith('.pdf');
 
-async function sandboxApi(action: string, args: Record<string, unknown>) {
-  const session = (await supabase.auth.getSession()).data.session;
-  if (!session) throw new Error('not authenticated');
-  const res = await fetch('/api/sandbox', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${session.access_token}` },
-    body: JSON.stringify({ action, args }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body?.error || `sandbox api: HTTP ${res.status}`);
-  return body;
-}
-
 export default function SandboxPanel() {
   const { data: serverspaces = [], isLoading } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
@@ -67,6 +57,8 @@ export default function SandboxPanel() {
   const [showCombineName, setShowCombineName] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [dropHover, setDropHover] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<SandboxDoc | null>(null);
+  const [showDeckComposer, setShowDeckComposer] = useState(false);
 
   const loadDocs = useCallback(async (boxId: string) => {
     setDocsLoading(true);
@@ -103,7 +95,7 @@ export default function SandboxPanel() {
     setError(null);
     setResult(null);
     try {
-      const out = await sandboxApi('assemble_documents', {
+      const out = await sandboxApi<{ page_count: number; download_url?: string | null }>('assemble_documents', {
         matter: selectedBox.id,
         document_ids: selection,
         filename,
@@ -180,7 +172,7 @@ export default function SandboxPanel() {
     setBusy('newbox');
     setError(null);
     try {
-      const out = await sandboxApi('create_matter', { name, serverspace: 'Sandbox' });
+      const out = await sandboxApi<{ matter: { id: string } }>('create_matter', { name, serverspace: 'Sandbox' });
       await refreshServerspaces();
       setSelectedBoxId(out.matter.id);
     } catch (e) {
@@ -290,14 +282,24 @@ export default function SandboxPanel() {
                   <button onClick={() => setShowCombineName(false)} className="p-2 rounded-lg hover:bg-[rgba(255,255,255,0.06)] text-white/50"><X size={13} /></button>
                 </>
               ) : (
-                <button
-                  onClick={() => setShowCombineName(true)}
-                  disabled={!canCombine || busy !== null}
-                  title={canCombine ? 'Merge the selected PDFs, in the order selected' : 'Select at least 2 PDF documents (numbered in merge order)'}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[rgba(232,184,74,0.14)] hover:bg-[rgba(232,184,74,0.22)] text-[#e8b84a] text-[12px] font-semibold transition-colors disabled:opacity-35"
-                >
-                  <Combine size={14} /> Combine into PDF{selection.length > 0 ? ` (${selection.length})` : ''}
-                </button>
+                <>
+                  <button
+                    onClick={() => setShowDeckComposer(true)}
+                    disabled={docs.length === 0 || busy !== null}
+                    title="Draft a PowerPoint deck from documents in this box"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[rgba(255,255,255,0.07)] hover:bg-[rgba(255,255,255,0.12)] text-white/85 text-[12px] font-semibold transition-colors disabled:opacity-35"
+                  >
+                    <Presentation size={14} /> Deck
+                  </button>
+                  <button
+                    onClick={() => setShowCombineName(true)}
+                    disabled={!canCombine || busy !== null}
+                    title={canCombine ? 'Merge the selected PDFs, in the order selected' : 'Select at least 2 PDF documents (numbered in merge order)'}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[rgba(232,184,74,0.14)] hover:bg-[rgba(232,184,74,0.22)] text-[#e8b84a] text-[12px] font-semibold transition-colors disabled:opacity-35"
+                  >
+                    <Combine size={14} /> Combine into PDF{selection.length > 0 ? ` (${selection.length})` : ''}
+                  </button>
+                </>
               )}
             </div>
           )}
@@ -364,6 +366,15 @@ export default function SandboxPanel() {
                         {d.processing_status !== 'ready' ? ` · ${d.processing_status}` : ''}
                       </span>
                     </div>
+                    {isPdf(d) && (
+                      <button
+                        onClick={() => setEditingDoc(d)}
+                        title="Edit pages — reorder, rotate, delete into a new copy"
+                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded hover:bg-[rgba(255,255,255,0.08)] text-white/40 hover:text-[#e8b84a] transition-all"
+                      >
+                        <Scissors size={13} />
+                      </button>
+                    )}
                     <button
                       onClick={() => handleRemove(d)}
                       disabled={busy === `rm-${d.id}`}
@@ -385,6 +396,30 @@ export default function SandboxPanel() {
           serverspaces={serverspaces.filter((s) => s.id !== sandbox?.id)}
           onClose={() => setShowPicker(false)}
           onSent={afterSend}
+        />
+      )}
+
+      {editingDoc && (
+        <PdfPageEditor
+          doc={editingDoc}
+          onClose={() => setEditingDoc(null)}
+          onSaved={async ({ filename, downloadUrl }) => {
+            setResult({ text: `Saved edited copy "${filename}" in this box.`, url: downloadUrl });
+            if (selectedBox) await loadDocs(selectedBox.id);
+          }}
+        />
+      )}
+
+      {showDeckComposer && selectedBox && (
+        <DeckComposerModal
+          box={{ id: selectedBox.id, name: selectedBox.name }}
+          docs={docs.map((d) => ({ id: d.id, title: d.title }))}
+          preselectedIds={selection}
+          onClose={() => setShowDeckComposer(false)}
+          onCreated={async ({ filename, downloadUrl }) => {
+            setResult({ text: `Deck "${filename}" created and filed in this box.`, url: downloadUrl });
+            if (selectedBox) await loadDocs(selectedBox.id);
+          }}
         />
       )}
     </div>
@@ -440,7 +475,7 @@ function AddFromMatterModal({
     setSending(true);
     setError(null);
     try {
-      const out = await sandboxApi('send_to_sandbox', { document_ids: [...checked] });
+      const out = await sandboxApi<{ boxes?: { box?: { id: string } }[] }>('send_to_sandbox', { document_ids: [...checked] });
       const boxId: string | undefined = out?.boxes?.[0]?.box?.id;
       onSent(boxId);
       onClose();

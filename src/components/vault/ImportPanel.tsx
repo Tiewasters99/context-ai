@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
+import ContentSearch from './ContentSearch';
 
 interface ImportPanelProps {
   files: VaultFile[];
@@ -10,6 +11,8 @@ interface ImportPanelProps {
   onRetryFile?: (id: string) => void;
   /** Open a file in the document reader/editor. */
   onOpenFile?: (file: VaultFile) => void;
+  /** Persistent mode: scope content search to this matter tree. */
+  matterId?: string;
 }
 
 const statusIcon = {
@@ -44,7 +47,7 @@ function friendlyIngestError(msg: string): string {
   return msg;
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, matterId }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -275,6 +278,10 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
         <input ref={fileInputRef} type="file" multiple onChange={handleFileUpload} className="hidden" />
         {/* @ts-expect-error webkitdirectory is non-standard */}
         <input ref={folderInputRef} type="file" webkitdirectory="" multiple onChange={handleFileUpload} className="hidden" />
+
+        {/* Real content search (hybrid semantic+keyword over the corpus) —
+            distinct from the filename filter below the file-list header. */}
+        <ContentSearch matterId={matterId} />
 
         {files.length > 0 && (
           <div className="mt-6">

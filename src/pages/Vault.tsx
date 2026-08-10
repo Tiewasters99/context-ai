@@ -559,7 +559,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF or DOCX opens in the
           // full-screen DocumentReader (pages, search, annotations). The
           // inline DocumentEditor modal handles text-editable formats
