@@ -783,6 +783,15 @@ export function createCourtroomScene(
       opposing: [1.9, 0, -2.45],   // their table
     };
     const LECTERN_POS: [number, number, number] = [0.15, 0, -0.7];
+    // Counsel face the bench — courtroom staging, not camera-pleasing.
+    // Quartered slightly toward the well so they read from the gallery and
+    // the box; the cards are double-sided so no view loses them.
+    const SLOT_YAW: Record<CounselSlot, number> = {
+      lead: Math.PI + 0.35,
+      second: Math.PI + 0.35,
+      opposing: Math.PI - 0.35,
+    };
+    const LECTERN_YAW = Math.PI; // square to the bench when she argues
     const slots: CounselSlot[] = ['lead', 'second', 'opposing'];
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
@@ -792,26 +801,24 @@ export function createCourtroomScene(
         new THREE.PlaneGeometry(0.92, 1.22),
         new THREE.MeshStandardMaterial({
           map: sil, transparent: true, roughness: 0.9, color: 0xe8d8be,
+          side: THREE.DoubleSide,
         }),
       );
       card.position.set(0, 1.02, 0);
+      card.rotation.y = SLOT_YAW[slot];
       card.userData.isCard = true;
       card.userData.alphaCanvas = sil.image;
       g.add(card);
       g.position.set(...SLOT_POS[slot]);
 
-      const worldPos = new THREE.Vector3();
-      // Stateless motion: every frame eases toward the goal, so a changed
+      // Stateless motion: every frame eases toward the goals, so a changed
       // goal simply becomes a walk — no clocks, no windows.
       const goal = new THREE.Vector3(...SLOT_POS[slot]);
+      let goalYaw = SLOT_YAW[slot];
       let standing = false;
       g.userData.animate = () => {
-        card.getWorldPosition(worldPos);
-        card.rotation.y = Math.atan2(
-          stage.camera.position.x - worldPos.x,
-          stage.camera.position.z - worldPos.z,
-        );
         g.position.lerp(goal, 0.05);
+        card.rotation.y += (goalYaw - card.rotation.y) * 0.05;
         // She stands taller at the lectern than in the chair.
         card.position.y += ((standing ? 1.3 : 1.02) - card.position.y) * 0.05;
       };
@@ -820,6 +827,7 @@ export function createCourtroomScene(
         g.userData.onTap = () => {
           atLectern = !atLectern;
           goal.set(...(atLectern ? LECTERN_POS : SLOT_POS.lead));
+          goalYaw = atLectern ? LECTERN_YAW : SLOT_YAW.lead;
           standing = atLectern;
         };
       }

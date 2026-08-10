@@ -47,6 +47,10 @@ export class CourtroomStage {
     start: number; duration: number;
   } | null = null;
   private pointerDown: { x: number; y: number; t: number } | null = null;
+  private keys = new Set<string>();
+  private lastFrameT = performance.now();
+  private onKeyDownBound = (e: KeyboardEvent) => this.onKey(e, true);
+  private onKeyUpBound = (e: KeyboardEvent) => this.onKey(e, false);
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -87,9 +91,22 @@ export class CourtroomStage {
       this.onTap(e);
     });
     window.addEventListener('resize', this.onResizeBound);
+    // WASD: walk the room (W/S dolly, A/D strafe), camera-relative on the
+    // floor plane. Held keys apply in the frame loop.
+    window.addEventListener('keydown', this.onKeyDownBound);
+    window.addEventListener('keyup', this.onKeyUpBound);
 
     this.isInitialized = true;
     this.loop();
+  }
+
+  private onKey(e: KeyboardEvent, down: boolean): void {
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    const k = e.key.toLowerCase();
+    if (k !== 'w' && k !== 'a' && k !== 's' && k !== 'd') return;
+    if (down) this.keys.add(k);
+    else this.keys.delete(k);
   }
 
   /** Register content. Objects with userData.animate join the frame loop
@@ -183,6 +200,30 @@ export class CourtroomStage {
     if (this.disposed) return;
     this.rafId = requestAnimationFrame(() => this.loop());
 
+    const now = performance.now();
+    const dt = Math.min((now - this.lastFrameT) / 1000, 0.1);
+    this.lastFrameT = now;
+
+    // WASD walk: camera-relative on the floor plane; the orbit target comes
+    // along so the view direction holds.
+    if (this.keys.size && this.controls && !this.flight) {
+      const fwd = new THREE.Vector3();
+      this.camera.getWorldDirection(fwd);
+      fwd.y = 0;
+      fwd.normalize();
+      const right = new THREE.Vector3(fwd.z, 0, -fwd.x).negate();
+      const step = new THREE.Vector3();
+      if (this.keys.has('w')) step.add(fwd);
+      if (this.keys.has('s')) step.sub(fwd);
+      if (this.keys.has('d')) step.add(right);
+      if (this.keys.has('a')) step.sub(right);
+      if (step.lengthSq() > 0) {
+        step.normalize().multiplyScalar(3.5 * dt);
+        this.camera.position.add(step);
+        this.controls.target.add(step);
+      }
+    }
+
     if (this.flight && this.controls) {
       const f = this.flight;
       const raw = Math.min(1, (performance.now() - f.start) / f.duration);
@@ -202,6 +243,8 @@ export class CourtroomStage {
     this.disposed = true;
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     window.removeEventListener('resize', this.onResizeBound);
+    window.removeEventListener('keydown', this.onKeyDownBound);
+    window.removeEventListener('keyup', this.onKeyUpBound);
     this.controls?.dispose();
     if (this.renderer) {
       this.renderer.dispose();
