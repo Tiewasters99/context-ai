@@ -153,6 +153,12 @@ export default function Vault() {
         setMatter(m);
         setMatterError(null);
       }
+    }).catch((err) => {
+      // Transient failure (session refresh, network) — say so instead of
+      // pretending the matter doesn't exist.
+      if (cancelled) return;
+      setMatter(null);
+      setMatterError(`Couldn't load "${matterKey}" — ${err instanceof Error ? err.message : 'network error'}. Reload to retry.`);
     });
     return () => { cancelled = true; };
   }, [matterKey]);
@@ -208,8 +214,15 @@ export default function Vault() {
       });
     }
     if (matter && matterScope) {
-      const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
-      setVaultFiles(refreshed);
+      try {
+        const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
+        setVaultFiles(refreshed);
+      } catch (err) {
+        setVaultNotice({
+          kind: 'err',
+          text: `Refresh after move failed (${err instanceof Error ? err.message : 'network error'}) — reload to see the current list.`,
+        });
+      }
     }
   }, [matter, matterScope]);
 
@@ -219,6 +232,7 @@ export default function Vault() {
     let cancelled = false;
     listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById).then((files) => {
       if (cancelled) return;
+      setVaultNotice(null);
       setVaultFiles(files);
       // Resume polling for any docs that are still mid-pipeline.
       for (const f of files) {
@@ -230,6 +244,14 @@ export default function Vault() {
           );
         }
       }
+    }).catch((err) => {
+      // NEVER render a failed load as an empty folder — the documents are
+      // still there; the query failed. Keep whatever list we had and say so.
+      if (cancelled) return;
+      setVaultNotice({
+        kind: 'err',
+        text: `Couldn't load this matter's documents (${err instanceof Error ? err.message : 'network error'}). Switch matters or reload to retry.`,
+      });
     });
     const cleanups: (() => void)[] = [];
     return () => {

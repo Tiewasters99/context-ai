@@ -55,6 +55,10 @@ export default function DiscoveryHome() {
       }
       setMatter(m);
       ensurePresetTagDefs(m.id).catch((e) => console.error('seed preset tags:', e));
+    }).catch((err) => {
+      if (cancelled) return;
+      setMatterError(`Couldn't load "${matterKey}" — ${err instanceof Error ? err.message : 'network error'}. Reload to retry.`);
+      setLoading(false);
     });
     return () => { cancelled = true; };
   }, [matterKey]);

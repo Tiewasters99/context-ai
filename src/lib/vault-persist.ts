@@ -27,13 +27,48 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // -----------------------------------------------------------------------------
 // Resolve the URL's matter param (short_code or UUID) to {id, name, short_code}
 // -----------------------------------------------------------------------------
+
+// Transient query failures — most commonly an expired session token being
+// refreshed right as the app opens, sometimes a network blip — used to be
+// swallowed here and returned as empty/null, which rendered a perfectly
+// healthy matter as an EMPTY FOLDER with no error and no retry (reported
+// 2026-08-10: "Blue Book / Robert Frost not showing up"). Retry briefly,
+// then THROW so callers show a real error instead of a convincing blank.
+async function withRetries<T>(
+  label: string,
+  run: () => PromiseLike<{ data: T | null; error: { message: string } | null }>,
+): Promise<T | null> {
+  let lastMsg = 'unknown error';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 600 * attempt));
+    const { data, error } = await run();
+    if (!error) return data;
+    lastMsg = error.message;
+    console.error(`${label} (attempt ${attempt + 1}/3):`, error.message);
+  }
+  throw new Error(`${label}: ${lastMsg}`);
+}
+
+type MatterRow = {
+  id: string;
+  name: string;
+  short_code: string | null;
+  cover_url: string | null;
+  serverspace_id: string;
+  parent_matterspace_id: string | null;
+  serverspace: { name: string } | null;
+};
+
 export async function resolveMatter(key: string): Promise<MatterRef | null> {
   // Pull the serverspace name in the same round-trip so the Vault can
   // render a breadcrumb without a second query.
   const sel = 'id, name, short_code, cover_url, serverspace_id, parent_matterspace_id, serverspace:serverspaces(name)';
-  const { data } = UUID_RE.test(key)
-    ? await supabase.from('matterspaces').select(sel).eq('id', key).maybeSingle()
-    : await supabase.from('matterspaces').select(sel).eq('short_code', key).maybeSingle();
+  const data = await withRetries<MatterRow>('resolve matter', () =>
+    (UUID_RE.test(key)
+      ? supabase.from('matterspaces').select(sel).eq('id', key).maybeSingle()
+      : supabase.from('matterspaces').select(sel).eq('short_code', key).maybeSingle()
+    ) as unknown as PromiseLike<{ data: MatterRow | null; error: { message: string } | null }>,
+  );
   if (!data) return null;
   // Supabase types the joined serverspace as an object | null on a non-array FK.
   const serverspace = (data as unknown as { serverspace: { name: string } | null }).serverspace;
@@ -53,15 +88,13 @@ export async function resolveMatter(key: string): Promise<MatterRef | null> {
 // Hydrate the file list for a matter from the documents table.
 // -----------------------------------------------------------------------------
 export async function listMatterDocuments(matterspaceId: string): Promise<VaultFile[]> {
-  const { data, error } = await supabase
-    .from('documents')
-    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
-    .eq('matterspace_id', matterspaceId)
-    .order('created_at', { ascending: false });
-  if (error) {
-    console.error('listMatterDocuments:', error.message);
-    return [];
-  }
+  const data = await withRetries('list documents', () =>
+    supabase
+      .from('documents')
+      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
+      .eq('matterspace_id', matterspaceId)
+      .order('created_at', { ascending: false }),
+  );
   return (data || []).map((d) => documentToVaultFile(d));
 }
 
@@ -72,15 +105,13 @@ export async function listMatterDocumentsRecursive(
   nameById: Map<string, string>,
 ): Promise<VaultFile[]> {
   if (matterIds.length === 0) return [];
-  const { data, error } = await supabase
-    .from('documents')
-    .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
-    .in('matterspace_id', matterIds)
-    .order('created_at', { ascending: false });
-  if (error) {
-    console.error('listMatterDocumentsRecursive:', error.message);
-    return [];
-  }
+  const data = await withRetries('list documents', () =>
+    supabase
+      .from('documents')
+      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
+      .in('matterspace_id', matterIds)
+      .order('created_at', { ascending: false }),
+  );
   return (data || []).map((d) => documentToVaultFile(d, nameById.get(d.matterspace_id)));
 }
 

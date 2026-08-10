@@ -131,7 +131,8 @@ export default function Dashboard() {
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>
         </div>
-        <h1 className="text-[22px] font-semibold text-[#f5f2ed]">
+        <h1 className="text-[22px] font-semibold text-[#f5f2ed] flex items-center gap-2.5">
+          <DoorOpen size={21} className="text-[#e8b84a] shrink-0" strokeWidth={1.75} />
           Welcome back, {displayName}
         </h1>
         <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium truncate">
@@ -142,13 +143,6 @@ export default function Dashboard() {
         {!isMobile && (
           <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
         )}
-
-        {/* The Practice Docket — every working thread, one linear sheet,
-            deadline-first. The first thing a working lawyer sees. */}
-        <section className="mt-8">
-          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Docket</h2>
-          <PracticeDocket />
-        </section>
 
         {/* The Door — entrance to the Vault, anchored at the heart of the card */}
         <button
@@ -256,6 +250,15 @@ export default function Dashboard() {
               );
             })}
           </div>
+        </section>
+
+        {/* The Practice Docket — every working thread, one linear sheet,
+            deadline-first. Sits BELOW Serverspaces by explicit request
+            (2026-08-10, repeated): navigation first, then the working
+            sheet. Do not move it back above without asking. */}
+        <section className="mt-8">
+          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Docket</h2>
+          <PracticeDocket />
         </section>
 
         {/* Quick Actions */}
