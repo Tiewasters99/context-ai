@@ -47,6 +47,7 @@ export class CourtroomStage {
     start: number; duration: number;
   } | null = null;
   private pointerDown: { x: number; y: number; t: number } | null = null;
+  private dragging: THREE.Object3D | null = null;
   private keys = new Set<string>();
   private lastFrameT = performance.now();
   private onKeyDownBound = (e: KeyboardEvent) => this.onKey(e, true);
@@ -77,12 +78,29 @@ export class CourtroomStage {
     this.controls.minDistance = 2.5;
     this.controls.maxDistance = 38;
 
-    // Tap = pointerdown/up pair that barely moved (don't fire on orbit drags).
+    // Tap = pointerdown/up pair that barely moved (don't fire on orbit
+    // drags). Draggable objects capture the pointer instead: the raycast on
+    // pointerdown checks for a userData.draggable ancestor, and while one is
+    // held, moves slide it along the floor plane and the orbit is paused.
     const el = this.renderer.domElement;
     el.addEventListener('pointerdown', (e) => {
       this.pointerDown = { x: e.clientX, y: e.clientY, t: performance.now() };
+      const draggable = this.pick(e, (o) => o.userData.draggable === true);
+      if (draggable && this.controls) {
+        this.dragging = draggable;
+        this.controls.enabled = false;
+      }
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!this.dragging) return;
+      const p = this.floorPoint(e);
+      if (p) this.dragging.userData.onDrag?.(p);
     });
     el.addEventListener('pointerup', (e) => {
+      if (this.dragging && this.controls) {
+        this.dragging = null;
+        this.controls.enabled = true;
+      }
       const d = this.pointerDown;
       this.pointerDown = null;
       if (!d) return;
@@ -146,18 +164,46 @@ export class CourtroomStage {
     };
   }
 
-  private onTap(e: PointerEvent): void {
+  /** Aim the shared raycaster through a pointer event, matrices fresh
+   *  (stale matrices are not worth debugging twice). */
+  private aim(e: PointerEvent): void {
     if (!this.renderer) return;
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-    // Taps are rare; stale matrices are not worth debugging twice. Force
-    // camera AND scene current before casting (controls/damping and lazy
-    // matrix composition both bite otherwise).
     this.controls?.update();
     this.camera.updateMatrixWorld(true);
     this.scene.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.pointer, this.camera);
+  }
+
+  /** First hit whose ancestor chain satisfies the predicate; returns that
+   *  ancestor. Ignores card alpha (used for grabbing solid props). */
+  private pick(e: PointerEvent, want: (o: THREE.Object3D) => boolean): THREE.Object3D | null {
+    this.aim(e);
+    for (const hit of this.raycaster.intersectObjects(this.scene.children, true)) {
+      let obj: THREE.Object3D | null = hit.object;
+      while (obj) {
+        if (want(obj)) return obj;
+        obj = obj.parent;
+      }
+    }
+    return null;
+  }
+
+  /** Where the pointer's ray meets the floor plane (y = 0). */
+  private floorPoint(e: PointerEvent): THREE.Vector3 | null {
+    this.aim(e);
+    const { origin, direction } = this.raycaster.ray;
+    if (Math.abs(direction.y) < 1e-6) return null;
+    const t = -origin.y / direction.y;
+    if (t <= 0) return null;
+    return origin.clone().addScaledVector(direction, t);
+  }
+
+  private onTap(e: PointerEvent): void {
+    if (!this.renderer) return;
+    this.aim(e);
     const hits = this.raycaster.intersectObjects(this.scene.children, true);
     // The tap belongs to what the viewer SEES. Walk the hits nearest-first;
     // a hit on the transparent feathered edge of a card passes through to

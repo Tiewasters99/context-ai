@@ -78,19 +78,21 @@ export interface CourtroomSceneOptions {
 
 /* ========================= Materials (shared once) ======================== */
 
-const OAK = 0x6b4a2c;
-const OAK_DARK = 0x4e3520;
-const PLASTER = 0x8d7f6a;
-const LEATHER = 0x3c2f24;
+// Rich, polished oak — honey wood with a sheen, warm cream above the
+// wainscot, deep russet underfoot. Not dirty brown; a room with money in it.
+const OAK = 0x8a5a2e;
+const OAK_DARK = 0x63401f;
+const PLASTER = 0xa4906e;
+const LEATHER = 0x46332a;
 const BRASS = 0xb08d3e;
-const CARPET = 0x4a3226;
+const CARPET = 0x532e1a;
 
 const mat = {
-  oak: new THREE.MeshStandardMaterial({ color: OAK, roughness: 0.62, metalness: 0.04 }),
-  oakDark: new THREE.MeshStandardMaterial({ color: OAK_DARK, roughness: 0.58, metalness: 0.05 }),
+  oak: new THREE.MeshStandardMaterial({ color: OAK, roughness: 0.45, metalness: 0.08 }),
+  oakDark: new THREE.MeshStandardMaterial({ color: OAK_DARK, roughness: 0.42, metalness: 0.08 }),
   plaster: new THREE.MeshStandardMaterial({ color: PLASTER, roughness: 0.92 }),
   carpet: new THREE.MeshStandardMaterial({ color: CARPET, roughness: 0.98 }),
-  leather: new THREE.MeshStandardMaterial({ color: LEATHER, roughness: 0.72 }),
+  leather: new THREE.MeshStandardMaterial({ color: LEATHER, roughness: 0.68 }),
   brass: new THREE.MeshStandardMaterial({ color: BRASS, roughness: 0.32, metalness: 0.75 }),
   robe: new THREE.MeshStandardMaterial({ color: 0x14141c, roughness: 0.85 }),
   bronze: new THREE.MeshStandardMaterial({ color: 0x8a6a4f, roughness: 0.55, metalness: 0.25 }),
@@ -232,6 +234,67 @@ function makeCardTexture(img: HTMLImageElement, opts: { fadeBottom: boolean }): 
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace; // photos arrive sRGB
   return tex;
+}
+
+/** The reverse of a figure card: the same alpha shape, near-black — the
+ *  back of a person, not a mirrored front. */
+function backTexture(cardCanvas: HTMLCanvasElement): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = cardCanvas.width;
+  c.height = cardCanvas.height;
+  const ctx = c.getContext('2d')!;
+  // Mirror so the silhouette's outline matches the front when seen from behind.
+  ctx.translate(c.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(cardCanvas, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-atop';
+  ctx.fillStyle = 'rgba(24, 18, 13, 0.93)';
+  ctx.fillRect(0, 0, c.width, c.height);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** Rich oak paneling: planks, grain, and a raised frame — the room's wood. */
+function panelTexture(): THREE.CanvasTexture {
+  const tex = canvasTexture(256, 256, (ctx) => {
+    ctx.fillStyle = '#6e4322';
+    ctx.fillRect(0, 0, 256, 256);
+    // Grain: long vertical strokes in varied warm tones.
+    for (let i = 0; i < 90; i++) {
+      const x = (i * 47) % 256;
+      const warm = 30 + ((i * 13) % 50);
+      ctx.strokeStyle = `rgba(${60 + warm}, ${30 + warm * 0.55}, ${12 + warm * 0.3}, 0.25)`;
+      ctx.lineWidth = 1 + (i % 3);
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.bezierCurveTo(x + 4, 80, x - 4, 170, x + 2, 256);
+      ctx.stroke();
+    }
+    // Raised panel frame: light top/left, dark bottom/right.
+    ctx.strokeStyle = 'rgba(255, 214, 150, 0.28)';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(10, 10, 236, 236);
+    ctx.strokeStyle = 'rgba(20, 10, 4, 0.45)';
+    ctx.strokeRect(16, 16, 224, 224);
+  });
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(6, 2); // panel rows across the long runs
+  return tex;
+}
+
+/** A soft round dust mote — Points render square without a sprite. */
+function moteTexture(): THREE.CanvasTexture {
+  return canvasTexture(32, 32, (ctx) => {
+    const g = ctx.createRadialGradient(16, 16, 1, 16, 16, 15);
+    g.addColorStop(0, 'rgba(255, 236, 200, 1)');
+    g.addColorStop(0.5, 'rgba(255, 236, 200, 0.35)');
+    g.addColorStop(1, 'rgba(255, 236, 200, 0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 32, 32);
+  });
 }
 
 /** US flag, low-poly aesthetic: stripes + canton with a dot field. */
@@ -497,6 +560,10 @@ export function createCourtroomScene(
   scene.add(fill);
 
   /* ---- The room shell: floor, walls, wainscot, coffered ceiling. ---- */
+  // Paneled wood for the big wooden planes — the room's richness.
+  const panelMat = new THREE.MeshStandardMaterial({
+    map: panelTexture(), color: 0xd8ba92, roughness: 0.4, metalness: 0.06,
+  });
   const room = new THREE.Group();
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 26), mat.carpet);
@@ -522,7 +589,7 @@ export function createCourtroomScene(
     wall.rotation.y = ry;
     wall.receiveShadow = true;
     room.add(wall);
-    const wainscot = box(w, 2.1, 0.34, mat.oakDark, x, 1.05, z);
+    const wainscot = box(w, 2.1, 0.34, panelMat, x, 1.05, z);
     wainscot.rotation.y = ry;
     room.add(wainscot);
   }
@@ -539,6 +606,7 @@ export function createCourtroomScene(
 
   // West windows: three tall arched frames, glass that never eats a tap,
   // and the amber shafts with dust drifting through them.
+  const moteTex = moteTexture();
   const glassMat = new THREE.MeshStandardMaterial({
     color: 0xffd9a0, transparent: true, opacity: 0.35, emissive: 0xcf9a50, emissiveIntensity: 0.5,
   });
@@ -578,7 +646,8 @@ export function createCourtroomScene(
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const dust = new THREE.Points(geo, new THREE.PointsMaterial({
-      color: 0xffe0b0, size: 0.035, transparent: true, opacity: 0.65, depthWrite: false,
+      color: 0xffe0b0, size: 0.055, transparent: true, opacity: 0.5, depthWrite: false,
+      map: moteTex, // round motes — bare Points render as squares
     }));
     dust.raycast = () => {};
     dust.userData.animate = (t: number) => {
@@ -598,11 +667,11 @@ export function createCourtroomScene(
 
   /* ---- The bench (north wall) — the seat of the room's gravity. ---- */
   const benchG = new THREE.Group();
-  benchG.add(box(7.4, 1.5, 1.9, mat.oakDark, 0, 0.75, -10.6));
+  benchG.add(box(7.4, 1.5, 1.9, panelMat, 0, 0.75, -10.6));
   benchG.add(box(7.8, 0.14, 2.2, mat.oak, 0, 1.56, -10.6));           // top
   benchG.add(box(7.4, 0.5, 0.16, mat.oak, 0, 1.85, -11.5));           // modesty rail
   // The wall of the law behind it, with the seal.
-  benchG.add(box(8.6, 4.6, 0.2, mat.oakDark, 0, 3.6, -12.7));
+  benchG.add(box(8.6, 4.6, 0.2, panelMat, 0, 3.6, -12.7));
   const seal = new THREE.Mesh(
     new THREE.CircleGeometry(1.05, 40),
     new THREE.MeshStandardMaterial({ map: sealTexture(), transparent: true, roughness: 0.6 }),
@@ -760,15 +829,27 @@ export function createCourtroomScene(
     wellG.add(table);
   }
 
-  // The lectern — your place — facing the box.
+  // The lectern — your place — in the well AHEAD of counsel tables, facing
+  // the bench. Grab it and slide it anywhere in the well (counsel follows
+  // if she's mid-argument).
+  let onLecternMoved: (() => void) | null = null;
   const lectern = new THREE.Group();
   lectern.add(box(0.9, 1.16, 0.6, mat.oakDark, 0, 0.58, 0));
   const slope = box(0.94, 0.08, 0.66, mat.oak, 0, 1.2, 0);
   slope.rotation.x = -0.24;
   lectern.add(slope);
   lectern.add(box(0.4, 0.02, 0.3, mat.paper, 0, 1.26, 0.02));
-  lectern.position.set(0, 0, -1.2);
-  lectern.rotation.y = -Math.PI / 2.6; // quartered toward the box
+  lectern.position.set(0, 0, -5.6);
+  lectern.rotation.y = -Math.PI / 9; // near-square to the bench, a breath toward the box
+  lectern.userData.draggable = true;
+  lectern.userData.onDrag = (p: THREE.Vector3) => {
+    lectern.position.set(
+      Math.max(-4.5, Math.min(4.5, p.x)),
+      0,
+      Math.max(-7.6, Math.min(-1.6, p.z)),
+    );
+    onLecternMoved?.();
+  };
   wellG.add(lectern);
 
   /* ---- Counsel at their tables. The lead answers a tap by walking to the
@@ -782,33 +863,43 @@ export function createCourtroomScene(
       second: [-1.9, 0, -2.45],    // our table, second chair
       opposing: [1.9, 0, -2.45],   // their table
     };
-    const LECTERN_POS: [number, number, number] = [0.15, 0, -0.7];
     // Counsel face the bench — courtroom staging, not camera-pleasing.
-    // Quartered slightly toward the well so they read from the gallery and
-    // the box; the cards are double-sided so no view loses them.
+    // Each figure is a TWO-FACED card: the portrait on the bench side, a
+    // dark back-silhouette on the gallery side, so from behind they read
+    // unambiguously as facing away, toward the judge.
     const SLOT_YAW: Record<CounselSlot, number> = {
       lead: Math.PI + 0.35,
       second: Math.PI + 0.35,
       opposing: Math.PI - 0.35,
     };
     const LECTERN_YAW = Math.PI; // square to the bench when she argues
+    // She stands just behind wherever the lectern is right now.
+    const lecternStand = () =>
+      new THREE.Vector3(lectern.position.x + 0.15, 0, lectern.position.z + 0.6);
     const slots: CounselSlot[] = ['lead', 'second', 'opposing'];
     for (let i = 0; i < slots.length; i++) {
       const slot = slots[i];
       const g = new THREE.Group();
       const sil = silhouetteCardTexture(i + 3);
-      const card = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.92, 1.22),
-        new THREE.MeshStandardMaterial({
-          map: sil, transparent: true, roughness: 0.9, color: 0xe8d8be,
-          side: THREE.DoubleSide,
-        }),
-      );
-      card.position.set(0, 1.02, 0);
-      card.rotation.y = SLOT_YAW[slot];
-      card.userData.isCard = true;
-      card.userData.alphaCanvas = sil.image;
-      g.add(card);
+      const geo = new THREE.PlaneGeometry(0.92, 1.22);
+      const front = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        map: sil, transparent: true, roughness: 0.9, color: 0xe8d8be,
+      }));
+      front.position.z = 0.006;
+      front.userData.isCard = true;
+      front.userData.alphaCanvas = sil.image;
+      const back = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+        map: backTexture(sil.image as HTMLCanvasElement), transparent: true, roughness: 0.95,
+      }));
+      back.rotation.y = Math.PI;
+      back.position.z = -0.006;
+      back.userData.isCardBack = true;
+      back.userData.alphaCanvas = sil.image;
+      const cardG = new THREE.Group();
+      cardG.add(front, back);
+      cardG.position.set(0, 1.02, 0);
+      cardG.rotation.y = SLOT_YAW[slot];
+      g.add(cardG);
       g.position.set(...SLOT_POS[slot]);
 
       // Stateless motion: every frame eases toward the goals, so a changed
@@ -818,17 +909,21 @@ export function createCourtroomScene(
       let standing = false;
       g.userData.animate = () => {
         g.position.lerp(goal, 0.05);
-        card.rotation.y += (goalYaw - card.rotation.y) * 0.05;
+        cardG.rotation.y += (goalYaw - cardG.rotation.y) * 0.05;
         // She stands taller at the lectern than in the chair.
-        card.position.y += ((standing ? 1.3 : 1.02) - card.position.y) * 0.05;
+        cardG.position.y += ((standing ? 1.3 : 1.02) - cardG.position.y) * 0.05;
       };
       if (slot === 'lead') {
         let atLectern = false;
         g.userData.onTap = () => {
           atLectern = !atLectern;
-          goal.set(...(atLectern ? LECTERN_POS : SLOT_POS.lead));
+          if (atLectern) goal.copy(lecternStand());
+          else goal.set(...SLOT_POS.lead);
           goalYaw = atLectern ? LECTERN_YAW : SLOT_YAW.lead;
           standing = atLectern;
+        };
+        onLecternMoved = () => {
+          if (atLectern) goal.copy(lecternStand());
         };
       }
       counsel.set(slot, g);
@@ -1038,9 +1133,10 @@ export function createCourtroomScene(
 
   /* ---- Staged views (the opening shot is the lectern's). ---- */
   const views: CourtroomSceneApi['views'] = {
-    // From behind the lectern: the box front-right, the bench front-left —
-    // the advocate's actual field of view at 4:40 in the afternoon.
-    lectern: { position: [-1.6, 1.9, 1.6], target: [4.4, 1.3, -6.4] },
+    // From behind the lectern — now up in the well, ahead of counsel — the
+    // box front-right, the bench front-left: the advocate's actual field of
+    // view at 4:40 in the afternoon.
+    lectern: { position: [-1.4, 1.95, -3.0], target: [4.6, 1.35, -8.2] },
     // Close on the box: watch the ripple move seat to seat.
     box: { position: [2.6, 1.7, -4.9], target: [8.4, 1.1, -5.2] },
     // The jury room, from the door.
@@ -1118,10 +1214,16 @@ export function createCourtroomScene(
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         const tex = makeCardTexture(img, { fadeBottom: true });
+        const backTex = backTexture(tex.image as HTMLCanvasElement);
         counsel.get(slot)?.traverse((o) => {
           if (o.userData.isCard) {
             const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
             m.map = tex;
+            m.needsUpdate = true;
+            o.userData.alphaCanvas = tex.image;
+          } else if (o.userData.isCardBack) {
+            const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+            m.map = backTex;
             m.needsUpdate = true;
             o.userData.alphaCanvas = tex.image;
           }
