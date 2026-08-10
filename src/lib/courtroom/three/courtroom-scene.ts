@@ -58,11 +58,16 @@ export interface CourtroomSceneApi {
   setJurorPortrait(seat: number, url: string): void;
   /** The judge takes the bench (waist-up card; the capsule stands down). */
   setJudgePortrait(url: string): void;
+  /** Counsel take their tables. Tapping the lead walks her to the lectern
+   *  (and back). */
+  setCounselPortrait(slot: CounselSlot, url: string): void;
   /** A close-up staged view of one juror, in whichever room was tapped. */
   seatCloseup(seat: number, room: SceneRoom): StageView | null;
   /** A close-up staged view of the bench. */
   judgeCloseup(): StageView;
 }
+
+export type CounselSlot = 'lead' | 'second' | 'opposing';
 
 export type SceneRoom = 'box' | 'juryroom';
 
@@ -352,10 +357,11 @@ function jurorDeskUnit(seat: number): THREE.Group {
   g.add(mon);
 
   // The juror: a still, waist-up figure rising from behind the desk.
+  const sil = silhouetteCardTexture(seat - 1);
   const card = new THREE.Mesh(
     new THREE.PlaneGeometry(0.92, 1.22),
     new THREE.MeshStandardMaterial({
-      map: silhouetteCardTexture(seat - 1), transparent: true, roughness: 0.9,
+      map: sil, transparent: true, roughness: 0.9,
       // Warm multiply so studio-lit portraits sit in the room's amber.
       color: 0xe8d8be,
     }),
@@ -363,6 +369,7 @@ function jurorDeskUnit(seat: number): THREE.Group {
   card.position.set(0.12, 1.18, 0);
   card.rotation.y = -Math.PI / 2; // facing the well
   card.userData.isCard = true;
+  card.userData.alphaCanvas = sil.image; // alpha-aware picking (stage.onTap)
   g.add(card);
 
   // Reaction ring on the desk, dark until the ripple.
@@ -375,13 +382,9 @@ function jurorDeskUnit(seat: number): THREE.Group {
   ring.raycast = () => {};
   g.add(ring);
 
-  // Generous invisible tap target over desk + figure.
-  const tap = new THREE.Mesh(
-    new THREE.BoxGeometry(1.1, 2.0, 1.1),
-    new THREE.MeshBasicMaterial({ visible: false }),
-  );
-  tap.position.set(-0.1, 1.0, 0);
-  g.add(tap);
+  // No invisible tap pad: an oversized box in a tiered jury box eats rays
+  // meant for the row behind it. The card, desk, and monitor — all children
+  // of this group — are the tap surface, and they're generous enough.
 
   const phase = seat * 2.3;
   const state = { pulseT: -10 };
@@ -416,15 +419,17 @@ function roomSeatUnit(seat: number, chairYaw: number, camera: THREE.Camera): THR
   c.rotation.y = chairYaw + Math.PI; // chair back away from the table
   g.add(c);
 
+  const sil = silhouetteCardTexture(seat - 1);
   const card = new THREE.Mesh(
     new THREE.PlaneGeometry(0.92, 1.22),
     new THREE.MeshStandardMaterial({
-      map: silhouetteCardTexture(seat - 1), transparent: true, roughness: 0.9,
+      map: sil, transparent: true, roughness: 0.9,
       color: 0xe8d8be,
     }),
   );
   card.position.set(0, 1.02, 0);
   card.userData.isCard = true;
+  card.userData.alphaCanvas = sil.image; // alpha-aware picking (stage.onTap)
   g.add(card);
 
   // Reaction ring on the floor, dark until the ripple.
@@ -437,13 +442,9 @@ function roomSeatUnit(seat: number, chairYaw: number, camera: THREE.Camera): THR
   ring.raycast = () => {};
   g.add(ring);
 
-  // Generous invisible tap target — phone fingers are wide.
-  const tap = new THREE.Mesh(
-    new THREE.BoxGeometry(1.0, 2.0, 1.0),
-    new THREE.MeshBasicMaterial({ visible: false }),
-  );
-  tap.position.y = 1.0;
-  g.add(tap);
+  // No invisible tap pad here either: at 1.05m seat spacing an oversized
+  // box overlaps the neighbors and claims their taps. The card and chair
+  // are the tap surface.
 
   const worldPos = new THREE.Vector3();
   const state = { pulseT: -10 };
@@ -770,6 +771,63 @@ export function createCourtroomScene(
   lectern.rotation.y = -Math.PI / 2.6; // quartered toward the box
   wellG.add(lectern);
 
+  /* ---- Counsel at their tables. The lead answers a tap by walking to the
+         lectern — the room's one figure who moves, because arguing is her
+         job. Cards billboard (the well is seen from every side) and the
+         figures themselves hold still. ---- */
+  const counsel = new Map<CounselSlot, THREE.Group>();
+  {
+    const SLOT_POS: Record<CounselSlot, [number, number, number]> = {
+      lead: [-3.3, 0, -2.45],      // our table, first chair
+      second: [-1.9, 0, -2.45],    // our table, second chair
+      opposing: [1.9, 0, -2.45],   // their table
+    };
+    const LECTERN_POS: [number, number, number] = [0.15, 0, -0.7];
+    const slots: CounselSlot[] = ['lead', 'second', 'opposing'];
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      const g = new THREE.Group();
+      const sil = silhouetteCardTexture(i + 3);
+      const card = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.92, 1.22),
+        new THREE.MeshStandardMaterial({
+          map: sil, transparent: true, roughness: 0.9, color: 0xe8d8be,
+        }),
+      );
+      card.position.set(0, 1.02, 0);
+      card.userData.isCard = true;
+      card.userData.alphaCanvas = sil.image;
+      g.add(card);
+      g.position.set(...SLOT_POS[slot]);
+
+      const worldPos = new THREE.Vector3();
+      // Stateless motion: every frame eases toward the goal, so a changed
+      // goal simply becomes a walk — no clocks, no windows.
+      const goal = new THREE.Vector3(...SLOT_POS[slot]);
+      let standing = false;
+      g.userData.animate = () => {
+        card.getWorldPosition(worldPos);
+        card.rotation.y = Math.atan2(
+          stage.camera.position.x - worldPos.x,
+          stage.camera.position.z - worldPos.z,
+        );
+        g.position.lerp(goal, 0.05);
+        // She stands taller at the lectern than in the chair.
+        card.position.y += ((standing ? 1.3 : 1.02) - card.position.y) * 0.05;
+      };
+      if (slot === 'lead') {
+        let atLectern = false;
+        g.userData.onTap = () => {
+          atLectern = !atLectern;
+          goal.set(...(atLectern ? LECTERN_POS : SLOT_POS.lead));
+          standing = atLectern;
+        };
+      }
+      counsel.set(slot, g);
+      wellG.add(g);
+    }
+  }
+
   scene.add(wellG);
   stage.add(wellG);
 
@@ -1024,6 +1082,7 @@ export function createCourtroomScene(
               const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
               m.map = tex;
               m.needsUpdate = true;
+              o.userData.alphaCanvas = tex.image; // keep picking honest
             }
           });
         };
@@ -1037,10 +1096,28 @@ export function createCourtroomScene(
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         const m = judgeCard.material as THREE.MeshStandardMaterial;
-        m.map = makeCardTexture(img, { fadeBottom: false });
+        const tex = makeCardTexture(img, { fadeBottom: false });
+        m.map = tex;
         m.needsUpdate = true;
+        judgeCard.userData.alphaCanvas = tex.image;
         judgeCard.visible = true;
         judge.visible = false; // the capsule stands down
+      };
+      img.src = url;
+    },
+    setCounselPortrait(slot, url) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const tex = makeCardTexture(img, { fadeBottom: true });
+        counsel.get(slot)?.traverse((o) => {
+          if (o.userData.isCard) {
+            const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
+            m.map = tex;
+            m.needsUpdate = true;
+            o.userData.alphaCanvas = tex.image;
+          }
+        });
       };
       img.src = url;
     },

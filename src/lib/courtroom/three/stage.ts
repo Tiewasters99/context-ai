@@ -134,17 +134,39 @@ export class CourtroomStage {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    // Taps are rare; stale matrices are not worth debugging twice. Force
+    // camera AND scene current before casting (controls/damping and lazy
+    // matrix composition both bite otherwise).
+    this.controls?.update();
+    this.camera.updateMatrixWorld(true);
+    this.scene.updateMatrixWorld(true);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects(this.scene.children, true);
-    if (!hits.length) return;
-    // Walk up from the hit mesh so a tap on a child reaches its group.
-    let obj: THREE.Object3D | null = hits[0].object;
-    while (obj) {
-      if (typeof obj.userData.onTap === 'function') {
-        obj.userData.onTap(obj.userData);
-        return;
+    // The tap belongs to what the viewer SEES. Walk the hits nearest-first;
+    // a hit on the transparent feathered edge of a card passes through to
+    // whatever is visible behind it (alpha sampled from the card's canvas),
+    // and hits with no tappable ancestor (walls, floor) don't block ones
+    // further along the ray.
+    for (const hit of hits) {
+      const mesh = hit.object;
+      const alphaCanvas = mesh.userData.alphaCanvas as HTMLCanvasElement | undefined;
+      if (alphaCanvas && hit.uv) {
+        const ctx = alphaCanvas.getContext('2d')!;
+        const px = ctx.getImageData(
+          Math.min(alphaCanvas.width - 1, Math.max(0, Math.floor(hit.uv.x * alphaCanvas.width))),
+          Math.min(alphaCanvas.height - 1, Math.max(0, Math.floor((1 - hit.uv.y) * alphaCanvas.height))),
+          1, 1,
+        ).data;
+        if (px[3] < 90) continue; // see-through here — not this figure
       }
-      obj = obj.parent;
+      let obj: THREE.Object3D | null = mesh;
+      while (obj) {
+        if (typeof obj.userData.onTap === 'function') {
+          obj.userData.onTap(obj.userData);
+          return;
+        }
+        obj = obj.parent;
+      }
     }
   }
 

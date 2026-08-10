@@ -12,6 +12,9 @@ These are presence, not identity: no visual is keyed to any juror's profile
 | Seat | Figure | Source stem |
 |---|---|---|
 | Bench | The judge — late forties, black robes, wood paneling | `a_female_judge_late_fourties_in_black_robes_seate_e64d6fea…_0` |
+| Counsel (lead) | The lawyer — she sits at our table; tap her and she takes the lectern | `A_lawyer_standing_at_the_lectern_shot_by_Annie_Li_342fda38…_0` |
+| Counsel (second) | Second chair, orange tie | `a_male_lawyer_at_the_counsel_table_shot_by_annie__2723ec0d…_3` |
+| Counsel (opposing) | Opposing lead, red leather chair | `a_male_lawyer_at_counsel_table_shot_by_Annie_Lieb_00d31f35…_2` |
 | 1 | Electrician, cap and coveralls | `an_electrician_seated_…_309de486…_0` |
 | 2 | Elegant Asian woman | `An_asian_woman_elegant_mid_30s_…_07e60c00…_0` |
 | 3 | Retired accountant, round glasses | `a_retired_accountant_…_9d54e190…_1` |

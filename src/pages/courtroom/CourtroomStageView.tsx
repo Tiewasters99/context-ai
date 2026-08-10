@@ -117,6 +117,10 @@ export default function CourtroomStageView({
     // The judge takes the bench when the portrait exists; the capsule
     // presides until then.
     scene.setJudgePortrait('/courtroom/judge.png');
+    // Counsel take their tables (tap the lead: she walks to the lectern).
+    scene.setCounselPortrait('lead', '/courtroom/counsel-lead.png');
+    scene.setCounselPortrait('second', '/courtroom/counsel-second.png');
+    scene.setCounselPortrait('opposing', '/courtroom/counsel-opposing.png');
     return () => {
       stage.dispose();
       stageRef.current = null;

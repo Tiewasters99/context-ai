@@ -11,6 +11,7 @@
 //   <div id="room" style="position:fixed;inset:0"></div>
 //   <script src="stage-preview.js"></script>
 
+import { Vector3 } from 'three';
 import { CourtroomStage } from '../src/lib/courtroom/three/stage.ts';
 import { createCourtroomScene } from '../src/lib/courtroom/three/courtroom-scene.ts';
 import { VENIRE_BIOS, JUDGE_BIO } from '../src/lib/courtroom/three/venire-bios.ts';
@@ -59,6 +60,9 @@ for (let s = 1; s <= 12; s++) {
   scene.setJurorPortrait(s, `/venire-${s}.png`);
 }
 scene.setJudgePortrait('/judge.png'); // silently absent until Eden's judge lands
+scene.setCounselPortrait('lead', '/counsel-lead.png');
+scene.setCounselPortrait('second', '/counsel-second.png');
+scene.setCounselPortrait('opposing', '/counsel-opposing.png');
 
 // View buttons for manual inspection.
 for (const [v, label] of [['lectern', 'Lectern'], ['box', 'Box'], ['juryroom', 'Jury Room']] as const) {
@@ -134,3 +138,41 @@ async function script(): Promise<void> {
 }
 
 if (!hold) void script();
+
+// ?raytest=<seat|judge> — project the figure's real position to screen and
+// dispatch a synthetic tap through the ACTUAL raycast path (no guessed
+// pixels). Verifies picking end to end, including the alpha pass-through.
+const rayTest = new URLSearchParams(location.search).get('raytest');
+if (rayTest) {
+  // Aim the camera straight at the figure (its own closeup view), then tap
+  // dead center of the canvas: no projection math, just the real pipeline —
+  // raycast, alpha pass-through, ancestor walk, handler.
+  setTimeout(() => {
+    const view = rayTest === 'judge'
+      ? scene.judgeCloseup()
+      : rayTest === 'lead'
+        ? { position: [-4.7, 1.6, -0.9] as [number, number, number], target: [-3.3, 1.1, -2.45] as [number, number, number] }
+        : scene.seatCloseup(Number(rayTest), 'box');
+    if (!view) return;
+    stage.setView(view);
+    setTimeout(() => {
+      const canvas = container!.querySelector('canvas')!;
+      const rect = canvas.getBoundingClientRect();
+      let cx = rect.left + rect.width / 2;
+      let cy = rect.top + rect.height / 2;
+      if (rayTest === 'lead') {
+        // Aim precisely at her face; the camera matrix must be current
+        // before projecting (the same staleness that broke picking).
+        stage.camera.updateMatrixWorld(true);
+        const p = new Vector3(-3.3, 1.32, -2.45).project(stage.camera);
+        cx = rect.left + ((p.x + 1) / 2) * rect.width;
+        cy = rect.top + (1 - (p.y + 1) / 2) * rect.height;
+      }
+      for (const type of ['pointerdown', 'pointerup'] as const) {
+        canvas.dispatchEvent(new PointerEvent(type, {
+          clientX: cx, clientY: cy, bubbles: true, pointerId: 1,
+        }));
+      }
+    }, 600);
+  }, 1200);
+}
