@@ -30,6 +30,9 @@ function showChip(html: string) {
   setTimeout(() => { chip.style.display = 'none'; }, 6000);
 }
 
+// Typing or offering an exhibit takes the room over from the demo loop.
+let manual = false;
+
 const scene = createCourtroomScene(stage, {
   onSeatTap: (seat, room) => {
     const view = scene.seatCloseup(seat, room);
@@ -47,12 +50,61 @@ const scene = createCourtroomScene(stage, {
   },
   onExhibitTap: () => {
     stage.flyTo(scene.exhibitCloseup(), 900);
-    showChip('<b>The evidence screen</b><br><i>setExhibit(url, label) — fed from the Contextspaces matter.</i>');
+    showChip('<b>The evidence screen</b><br><i>Offer an exhibit, then click the screen to publish it.</i>');
   },
   onCounselTap: (slot) => {
     showChip(`<b>Counsel (${slot})</b><br><i>Tap sends them to the lectern; tap again, back to the table.</i>`);
   },
+  // Tap the argument bubble → its text lands in the bar to be extended.
+  onSpeechTap: (speaker, text) => {
+    manual = true;
+    const input = document.getElementById('argueinput') as HTMLInputElement;
+    input.value = text + ' ';
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    showChip(`<b>Editing ${speaker}</b><br><i>Add to the line, then press Enter.</i>`);
+  },
 });
+
+/* ---- The argue bar: type as the lectern speaker; for now text, voice
+       later (mic / phone / Connect all land in the same say() seam). ---- */
+{
+  const input = document.getElementById('argueinput') as HTMLInputElement;
+  const speak = () => {
+    const text = input.value.trim();
+    if (!text) return;
+    manual = true;
+    let occ = scene.atLectern();
+    if (!occ) {
+      scene.counselToLectern('lead');
+      occ = 'lead';
+    }
+    scene.say(occ, text, 9999); // holds until replaced or edited
+    input.value = '';
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') speak();
+  });
+  document.getElementById('arguesay')!.addEventListener('click', speak);
+  // Offer an exhibit: the publication colloquy, then the screen arms and
+  // waits for the click that publishes it.
+  document.getElementById('offerx')!.addEventListener('click', async () => {
+    manual = true;
+    let occ = scene.atLectern();
+    if (!occ) {
+      scene.counselToLectern('lead');
+      occ = 'lead';
+    }
+    scene.say(occ, 'Your Honor, I would like to publish to the jury PX-4, which has been admitted as a full exhibit.');
+    await sleep(3600);
+    scene.say('judge', 'Any objection?');
+    await sleep(2200);
+    scene.say('opposing', 'No objection, Your Honor.');
+    await sleep(2000);
+    scene.armExhibit('/exhibit-demo.png', 'PX-4 · Skyline photograph, August 2024');
+    showChip('<b>PX-4 armed.</b><br><i>Move to the screen and click it to publish to the jury.</i>');
+  });
+}
 
 // Debug hooks for the dev harness only — the console can interrogate the room.
 (window as unknown as Record<string, unknown>).__stage = stage;
@@ -77,8 +129,8 @@ scene.setJudgePortrait('/judge.png');
 
 // View buttons for manual inspection.
 for (const [v, label] of [
-  ['lectern', 'Lectern'], ['box', 'Box'], ['witness', 'Stand'],
-  ['screen', 'Screen'], ['juryroom', 'Jury Room'],
+  ['lectern', 'Lectern'], ['counsel', 'Counsel Table'], ['box', 'Box'],
+  ['witness', 'Stand'], ['screen', 'Screen'], ['juryroom', 'Jury Room'],
 ] as const) {
   const b = document.createElement('button');
   b.textContent = label;
@@ -87,11 +139,16 @@ for (const [v, label] of [
   document.getElementById('views')!.appendChild(b);
 }
 
-/* ---- The scripted session, looping. ?hold=<view> freezes for inspection. */
+/* ---- The scripted session, looping. ?hold=<view> freezes for inspection.
+       Any manual act (typing, offering, editing a bubble) stops the demo. */
 async function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+async function step(ms: number): Promise<void> {
+  await sleep(ms);
+  if (manual) throw new Error('manual-takeover');
+}
 
 const hold = new URLSearchParams(location.search).get('hold') as
-  | 'lectern' | 'box' | 'juryroom' | 'witness' | 'screen' | 'closeup' | null;
+  | 'lectern' | 'box' | 'juryroom' | 'witness' | 'screen' | 'counsel' | 'closeup' | null;
 if (hold === 'closeup') {
   // Right at the box rail, eye to eye with the front row.
   stage.setView({ position: [5.4, 1.5, -5.0], target: [8.2, 1.25, -5.2] });
@@ -111,71 +168,83 @@ async function script(): Promise<void> {
     scene.setExhibit(null);
     scene.setPhase('presenting');
     scene.counselToLectern('lead');
-    await sleep(2600);
+    await step(2600);
     scene.say('lead', 'May it please the Court. By the end of this afternoon you will know exactly where the money went — and exactly when they knew.');
-    await sleep(5400);
+    await step(5400);
 
-    // The record goes up on the screen.
-    scene.setExhibit('/exhibit-demo.png', 'PX-4 · Skyline photograph, August 2024');
-    scene.say('lead', 'We publish Plaintiff’s Exhibit 4.');
+    // The publication colloquy: offered, unopposed, ARMED — then the click
+    // on the screen publishes it (here the demo clicks for you).
+    scene.say('lead', 'Your Honor, I would like to publish to the jury PX-4, which has been admitted as a full exhibit.');
+    await step(3800);
+    scene.say('judge', 'Any objection?');
+    await step(2200);
+    scene.say('opposing', 'No objection, Your Honor.');
+    await step(2200);
+    scene.armExhibit('/exhibit-demo.png', 'PX-4 · Skyline photograph, August 2024');
     stage.flyTo(scene.views.screen);
-    await sleep(4800);
+    await step(2400);
+    scene.setExhibit('/exhibit-demo.png', 'PX-4 · Skyline photograph, August 2024'); // the click
+    await step(3600);
 
     // An objection lands: gavel, ruling, the well flashes.
-    scene.say('opposing', 'Objection — lack of foundation.');
-    await sleep(1800);
+    scene.say('opposing', 'Objection — counsel is testifying about the photograph.');
+    await step(1800);
     scene.flashRuling('sustained');
-    scene.say('judge', 'Sustained. Lay your foundation, counsel.');
-    await sleep(3400);
+    scene.say('judge', 'Sustained. Ask your questions through the witness.');
+    await step(3400);
 
     // The witness takes the stand.
     scene.setWitnessPortrait('/witness-demo.png');
     stage.flyTo(scene.views.witness);
     scene.say('lead', 'Ms. Alvarez — tell the jury what you could see from your office window that morning.');
-    await sleep(4600);
+    await step(4600);
     scene.say('witness', 'The crane had been moving all night. By six in the morning, so had the money.');
-    await sleep(4600);
+    await step(4600);
 
     // Reactions ripple through the box, seat by seat.
     stage.flyTo(scene.views.box);
     scene.setPhase('reactions');
     for (let s = 1; s <= 12; s++) {
       scene.setActiveSeat(s);
-      await sleep(650);
+      await step(650);
     }
     scene.setActiveSeat(null);
 
     // The secret ballot.
     scene.setPhase('ballots');
     scene.setBallotBoard([{ label: 'Secret', ours: 5, theirs: 4, undecided: 3 }]);
-    await sleep(2000);
+    await step(2000);
 
     // Deliberation, next door. The well empties behind them.
     scene.counselToLectern(null);
     stage.flyTo(scene.views.juryroom);
     scene.setPhase('deliberation');
-    await sleep(1600);
+    await step(1600);
     scene.say('room-3', 'The photograph is the whole case. You can’t argue with the light.');
     for (const [seat, wait] of [[3, 1800], [10, 1800], [7, 1500], [1, 1500]] as const) {
       scene.setActiveSeat(seat);
-      await sleep(wait);
+      await step(wait);
     }
     scene.setBallotBoard([
       { label: 'Secret', ours: 5, theirs: 4, undecided: 3 },
       { label: 'Round 1', ours: 7, theirs: 4, undecided: 1 },
     ]);
-    await sleep(2400);
+    await step(2400);
     scene.setBallotBoard([
       { label: 'Secret', ours: 5, theirs: 4, undecided: 3 },
       { label: 'Round 1', ours: 7, theirs: 4, undecided: 1 },
       { label: 'Round 2', ours: 9, theirs: 3, undecided: 0 },
     ]);
     scene.setActiveSeat(null);
-    await sleep(3200);
+    await step(3200);
   }
 }
 
-if (!hold) void script();
+if (!hold) {
+  script().catch(() => {
+    // Manual takeover: the demo yields the room. Reload to restart the loop.
+  });
+}
 
 // ?raytest=<seat|judge|lead> — aim the camera at the figure, then tap dead
 // center of the canvas through the ACTUAL raycast path (raycast, alpha

@@ -50,7 +50,7 @@ export interface BallotBoardRound {
 }
 
 export interface CourtroomSceneApi {
-  views: Record<'lectern' | 'box' | 'juryroom' | 'witness' | 'screen', StageView>;
+  views: Record<'lectern' | 'box' | 'juryroom' | 'witness' | 'screen' | 'counsel', StageView>;
   setPanel(panel: PanelSeat[]): void;
   /** Ripple: the named seat leans in and its floor ring pulses. */
   setActiveSeat(seat: number | null): void;
@@ -69,10 +69,16 @@ export interface CourtroomSceneApi {
   /** The evidence screen: an exhibit image and its label, straight from the
    *  matter. null and the screen goes dark. */
   setExhibit(url: string | null, label?: string): void;
+  /** Arm an exhibit for publication: the screen shows a gold ready light and
+   *  the NEXT tap on the screen publishes it (the courtroom move — counsel
+   *  walks the cursor to the screen and clicks). null disarms. */
+  armExhibit(url: string | null, label?: string): void;
   /** Send a counsel figure to the lectern to argue; any prior occupant walks
    *  back to their chair. null clears the lectern. Tapping a figure does
    *  the same thing. */
   counselToLectern(slot: CounselSlot | null): void;
+  /** Who holds the lectern right now. */
+  atLectern(): CounselSlot | null;
   /** A speech bubble over the speaker — argument as text in the room.
    *  Replaces the speaker's previous line; hold defaults by length. */
   say(speaker: SpeakerId, text: string, holdSeconds?: number): void;
@@ -101,6 +107,10 @@ export interface CourtroomSceneOptions {
   onWitnessTap?: () => void;
   onExhibitTap?: () => void;
   onCounselTap?: (slot: CounselSlot) => void;
+  /** Tap a speech bubble: the caller gets the speaker and the current text
+   *  (the seam for "add to what I was saying"). When absent, bubbles stay
+   *  tap-transparent. */
+  onSpeechTap?: (speaker: SpeakerId, text: string) => void;
 }
 
 /* ========================= Materials (shared once) ======================== */
@@ -958,6 +968,11 @@ export function createCourtroomScene(
   lectern.add(box(0.4, 0.02, 0.3, mat.paper, 0, 1.26, 0.02));
   lectern.position.set(0, 0, -5.6);
   lectern.rotation.y = -Math.PI / 9; // near-square to the bench, a breath toward the box
+  // The argument bubble hangs HERE, fixed above the lectern, not over the
+  // speaker's head — a still point while they lean and gesture.
+  const lecternSpeechAnchor = new THREE.Object3D();
+  lecternSpeechAnchor.position.set(0.1, 2.3, 0.5);
+  lectern.add(lecternSpeechAnchor);
   lectern.userData.draggable = true;
   lectern.userData.onDrag = (p: THREE.Vector3) => {
     lectern.position.set(
@@ -1073,22 +1088,30 @@ export function createCourtroomScene(
   exhibitCanvas.width = EXHIBIT_W;
   exhibitCanvas.height = EXHIBIT_H;
   const exhibitCtx = exhibitCanvas.getContext('2d')!;
-  const drawExhibitScreen = (img: HTMLImageElement | null, label?: string) => {
+  const drawExhibitScreen = (img: HTMLImageElement | null, label?: string, armed = false) => {
     exhibitCtx.clearRect(0, 0, EXHIBIT_W, EXHIBIT_H);
     exhibitCtx.fillStyle = '#0b0d0e';
     exhibitCtx.fillRect(0, 0, EXHIBIT_W, EXHIBIT_H);
     if (!img) {
-      // Dark glass: a faint window reflection and a standby light.
+      // Dark glass: a faint window reflection and a standby light — red at
+      // rest, gold when an exhibit is armed and the screen waits for the
+      // click that publishes it.
       const streak = exhibitCtx.createLinearGradient(0, EXHIBIT_H, EXHIBIT_W * 0.7, 0);
       streak.addColorStop(0, 'rgba(255, 220, 170, 0)');
       streak.addColorStop(0.5, 'rgba(255, 220, 170, 0.05)');
       streak.addColorStop(1, 'rgba(255, 220, 170, 0)');
       exhibitCtx.fillStyle = streak;
       exhibitCtx.fillRect(0, 0, EXHIBIT_W, EXHIBIT_H);
-      exhibitCtx.fillStyle = 'rgba(180, 60, 50, 0.9)';
+      exhibitCtx.fillStyle = armed ? 'rgba(232, 184, 74, 0.95)' : 'rgba(180, 60, 50, 0.9)';
       exhibitCtx.beginPath();
-      exhibitCtx.arc(EXHIBIT_W - 26, EXHIBIT_H - 22, 5, 0, Math.PI * 2);
+      exhibitCtx.arc(EXHIBIT_W - 26, EXHIBIT_H - 22, armed ? 7 : 5, 0, Math.PI * 2);
       exhibitCtx.fill();
+      if (armed) {
+        exhibitCtx.fillStyle = 'rgba(232, 184, 74, 0.75)';
+        exhibitCtx.font = '22px Georgia, serif';
+        exhibitCtx.textBaseline = 'middle';
+        exhibitCtx.fillText('Ready to publish — click the screen', 22, EXHIBIT_H - 22);
+      }
       return;
     }
     // Contain-fit, letterboxed on the dark glass.
@@ -1135,12 +1158,33 @@ export function createCourtroomScene(
     }
   };
   screenG.add(screenLight);
+  // Publication is a courtroom act: armExhibit stages the exhibit, and the
+  // NEXT click on the screen publishes it (the cursor walk is the theater).
+  let pendingExhibit: { url: string; label?: string } | null = null;
+  const applyExhibit = (url: string, label?: string) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      exhibitState.active = true;
+      drawExhibitScreen(img, label);
+      exhibitTex.needsUpdate = true;
+      for (const m of juryMonitors) m.emissive.set(0xa8c4e0);
+    };
+    img.src = url;
+  };
   const screenTap = new THREE.Mesh(
     new THREE.BoxGeometry(3.7, 2.6, 0.5),
     new THREE.MeshBasicMaterial({ visible: false }),
   );
   screenTap.position.set(0, 2.1, 0.15);
-  screenTap.userData.onTap = () => opts.onExhibitTap?.();
+  screenTap.userData.onTap = () => {
+    if (pendingExhibit) {
+      applyExhibit(pendingExhibit.url, pendingExhibit.label);
+      pendingExhibit = null;
+      return;
+    }
+    opts.onExhibitTap?.();
+  };
   screenG.add(screenTap);
   screenG.position.set(-6.6, 0, -9.0);
   screenG.rotation.y = 1.32; // angled across the well at the box
@@ -1315,18 +1359,30 @@ export function createCourtroomScene(
     off: number;
     t0: number;
     hold: number;
+    text: string;
+    smoothed: THREE.Vector3 | null;
   }
   const bubbles = new Map<string, BubbleEntry>();
   const bubbleLayer = new THREE.Group();
   const bubbleWorld = new THREE.Vector3();
   bubbleLayer.userData.animate = (t: number) => {
     for (const [id, b] of bubbles) {
+      // A bubble is a caption, not a balloon on a string: its position and
+      // facing EASE toward their targets, so camera damping and a speaker's
+      // lean never make it bounce.
       b.anchor.getWorldPosition(bubbleWorld);
-      b.mesh.position.set(bubbleWorld.x, bubbleWorld.y + b.off, bubbleWorld.z);
-      b.mesh.rotation.y = Math.atan2(
-        stage.camera.position.x - bubbleWorld.x,
-        stage.camera.position.z - bubbleWorld.z,
+      bubbleWorld.y += b.off;
+      if (!b.smoothed) b.smoothed = bubbleWorld.clone();
+      else b.smoothed.lerp(bubbleWorld, 0.06);
+      b.mesh.position.copy(b.smoothed);
+      const wantYaw = Math.atan2(
+        stage.camera.position.x - b.smoothed.x,
+        stage.camera.position.z - b.smoothed.z,
       );
+      let dYaw = wantYaw - b.mesh.rotation.y;
+      while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+      while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+      b.mesh.rotation.y += dYaw * 0.06;
       const dt = t - b.t0;
       const a = dt < 0.3 ? dt / 0.3 : dt > b.hold - 0.5 ? Math.max(0, (b.hold - dt) / 0.5) : 1;
       b.matB.opacity = a;
@@ -1363,6 +1419,9 @@ export function createCourtroomScene(
       const u = roomJurors.get(Number(speaker.slice(5)));
       return u ? { obj: u, off: 2.15 } : null;
     }
+    // The lectern occupant's words hang at the lectern — a fixed point (it
+    // rides along only if the lectern itself is dragged).
+    if (speaker === lecternOccupant) return { obj: lecternSpeechAnchor, off: 0 };
     const f = counselFigs[speaker as CounselSlot];
     return f ? { obj: f.head, off: 0.32 } : null;
   };
@@ -1392,6 +1451,8 @@ export function createCourtroomScene(
     witness: { position: [2.5, 1.85, -7.2], target: [4.6, 1.6, -9.4] },
     // The screen, from its axis — what the jury sees.
     screen: { position: [-2.7, 2.0, -8.0], target: [-6.6, 2.1, -9.0] },
+    // Both counsel tables from the bar — the working shot of the well.
+    counsel: { position: [0, 2.1, 0.9], target: [0, 1.0, -3.2] },
   };
   stage.setView(views.lectern);
 
@@ -1480,22 +1541,23 @@ export function createCourtroomScene(
     setExhibit(url, label) {
       if (!url) {
         exhibitState.active = false;
+        pendingExhibit = null;
         drawExhibitScreen(null);
         exhibitTex.needsUpdate = true;
         for (const m of juryMonitors) m.emissive.set(0x8fa8c0);
         return;
       }
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => {
-        exhibitState.active = true;
-        drawExhibitScreen(img, label);
+      applyExhibit(url, label);
+    },
+    armExhibit(url, label) {
+      pendingExhibit = url ? { url, label } : null;
+      if (!exhibitState.active) {
+        drawExhibitScreen(null, undefined, pendingExhibit !== null);
         exhibitTex.needsUpdate = true;
-        for (const m of juryMonitors) m.emissive.set(0xa8c4e0);
-      };
-      img.src = url;
+      }
     },
     counselToLectern,
+    atLectern: () => lecternOccupant,
     say(speaker, text, holdSeconds) {
       const a = speechAnchor(speaker);
       if (!a || !text.trim()) return;
@@ -1506,8 +1568,22 @@ export function createCourtroomScene(
       });
       const w = 1.5;
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, w * aspect), matB);
-      mesh.raycast = () => {}; // bubbles never eat taps
+      if (opts.onSpeechTap) {
+        mesh.userData.onTap = () => {
+          const b = bubbles.get(speaker);
+          if (b) opts.onSpeechTap?.(speaker, b.text);
+        };
+      } else {
+        mesh.raycast = () => {}; // without a handler, bubbles never eat taps
+      }
       mesh.renderOrder = 5;
+      // Face the camera from the first frame — no swing-in.
+      const first = new THREE.Vector3();
+      a.obj.getWorldPosition(first);
+      mesh.rotation.y = Math.atan2(
+        stage.camera.position.x - first.x,
+        stage.camera.position.z - first.z,
+      );
       bubbleLayer.add(mesh);
       const wordCount = text.split(/\s+/).length;
       bubbles.set(speaker, {
@@ -1517,6 +1593,8 @@ export function createCourtroomScene(
         off: a.off + (w * aspect) / 2,
         t0: performance.now() / 1000,
         hold: holdSeconds ?? Math.min(14, Math.max(3.5, 2.5 + wordCount * 0.32)),
+        text,
+        smoothed: null,
       });
     },
     clearSpeech(speaker) {

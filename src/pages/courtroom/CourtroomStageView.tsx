@@ -20,10 +20,11 @@ import { VENIRE_BIOS, VENIRE2_BIOS, JUDGE_BIO } from '@/lib/courtroom/three/veni
 import { computeSplit } from '@/lib/courtroom/prompts.ts';
 import type { Ballot, JurorProfile, ProgressEvent, Ruling } from '@/lib/courtroom/types.ts';
 
-type ViewName = 'lectern' | 'box' | 'juryroom' | 'witness' | 'screen';
+type ViewName = 'lectern' | 'box' | 'juryroom' | 'witness' | 'screen' | 'counsel';
 
 const VIEW_LABELS: [ViewName, string][] = [
   ['lectern', 'The Lectern'],
+  ['counsel', 'Counsel Table'],
   ['box', 'The Box'],
   ['witness', 'The Stand'],
   ['screen', 'The Screen'],
