@@ -9,6 +9,7 @@ import type {
   Reaction, Ruling, Segment, SegmentKind, Side, Strike, TrialMode, TrialStatus,
   UsageRecord, VenueMix,
 } from './types.ts';
+import type { ExhibitConfigEvent, ExhibitEventRow, ExhibitSessionEvent } from './exhibits.ts';
 
 export interface TrialListRow extends MockTrial {
   matterspace: { name: string } | null;
@@ -243,12 +244,67 @@ export async function saveTurn(
   if (error) throw new Error(error.message);
 }
 
-/** Wipe a half-finished session so an interrupted run can restart cleanly. */
+/** Wipe a half-finished session so an interrupted run can restart cleanly.
+ *  Exhibit CONFIG events (actor 'exhibit': registrations, the witness) are
+ *  trial configuration, not session data — they survive the wipe. Session
+ *  publication events (actor 'exhibit_session') go with everything else. */
 export async function clearSessionData(trialId: string): Promise<void> {
-  for (const table of ['mock_trial_reactions', 'mock_trial_ballots', 'mock_trial_events', 'mock_trial_reports']) {
+  for (const table of ['mock_trial_reactions', 'mock_trial_ballots', 'mock_trial_reports']) {
     const { error } = await supabase.from(table).delete().eq('trial_id', trialId);
     if (error) throw new Error(error.message);
   }
+  const { error } = await supabase
+    .from('mock_trial_events')
+    .delete()
+    .eq('trial_id', trialId)
+    .neq('actor', 'exhibit');
+  if (error) throw new Error(error.message);
+}
+
+/* ================================ Exhibits ================================ */
+
+/** Config events: registrations, edits, the witness. Survive session wipes. */
+export async function saveExhibitConfigEvent(
+  trial: Pick<MockTrial, 'id' | 'matterspace_id'>,
+  payload: ExhibitConfigEvent,
+): Promise<void> {
+  const { error } = await supabase.from('mock_trial_events').insert({
+    trial_id: trial.id,
+    matterspace_id: trial.matterspace_id,
+    type: 'note', // the table's type CHECK predates exhibits; actor carries the kind
+    actor: 'exhibit',
+    payload,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** A publication — session data, wiped with the run it happened in. */
+export async function saveExhibitPublication(
+  trial: Pick<MockTrial, 'id' | 'matterspace_id'>,
+  payload: ExhibitSessionEvent,
+  segmentId: string | null,
+): Promise<void> {
+  const { error } = await supabase.from('mock_trial_events').insert({
+    trial_id: trial.id,
+    matterspace_id: trial.matterspace_id,
+    segment_id: segmentId,
+    type: 'note',
+    actor: 'exhibit_session',
+    payload,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** All exhibit events in insertion order — the fold's input. */
+export async function listExhibitEvents(trialId: string): Promise<ExhibitEventRow[]> {
+  const { data, error } = await supabase
+    .from('mock_trial_events')
+    .select('actor, payload')
+    .eq('trial_id', trialId)
+    .in('actor', ['exhibit', 'exhibit_session'])
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ExhibitEventRow[];
 }
 
 /* ================================ Report ================================== */

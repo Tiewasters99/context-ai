@@ -658,6 +658,64 @@ console.log('\n— Prompt-cache ordering (§7) —');
     firstSegPrompts.length > 0 && firstSegPrompts.every((x) => x === firstSegPrompts[0]));
 }
 
+/* ==================== Exhibits from the matter (spec §2) ================== */
+// Deterministic machinery only: the fold, side-keyed numbering, the CANNED
+// pre-admitted colloquy (Eden 2026-08-11: never an objection), the record
+// transcript jurors cite, and the objection mill's exhibit exemption.
+{
+  const ex = await import(`file://${lib('exhibits.ts')}`);
+
+  const px = {
+    key: 'k1', exhibit_no: 'PX-4', doc_id: 'd1', doc_name: 'skyline.pdf',
+    page: 3, title: 'Skyline photograph, August 2024', side: 'ours', status: 'pre_admitted',
+  };
+  const fold = ex.foldExhibits([
+    { actor: 'exhibit', payload: { event: 'registered', exhibit: px } },
+    { actor: 'exhibit', payload: { event: 'registered', exhibit: { ...px, key: 'k2', exhibit_no: 'DX-1', side: 'theirs' } } },
+    { actor: 'exhibit', payload: { event: 'updated', exhibit: { ...px, title: 'Skyline, corrected' } } },
+    { actor: 'exhibit', payload: { event: 'removed', key: 'k2' } },
+    { actor: 'exhibit', payload: { event: 'witness_seated', witness: { name: 'M. Alvarez', doc_id: 'img1' } } },
+    { actor: 'exhibit_session', payload: { event: 'published', key: 'k1', exhibit_no: 'PX-4' } },
+  ]);
+  check('exhibit fold: register/update/remove/witness/publish replay to current state',
+    fold.exhibits.length === 1 && fold.exhibits[0].title === 'Skyline, corrected' &&
+    fold.witness?.name === 'M. Alvarez' && fold.publishedKeys.has('k1') && !fold.publishedKeys.has('k2'),
+    JSON.stringify({ n: fold.exhibits.length, w: fold.witness, pub: [...fold.publishedKeys] }));
+
+  check('exhibit numbering: PX/DX count independently per side',
+    ex.nextExhibitNo([px], 'ours') === 'PX-5' && ex.nextExhibitNo([px], 'theirs') === 'DX-1');
+
+  const colloquy = ex.publishColloquy(px);
+  check('pre-admitted colloquy is fully canned and unopposed',
+    colloquy.counsel.includes('PX-4') && colloquy.counsel.includes('admitted as a full exhibit') &&
+    colloquy.judge === 'Any objection?' && colloquy.opposing === 'No objection, Your Honor.');
+
+  const transcript = ex.exhibitSegmentTranscript(px, ex.exhibitExcerpt('The crane  had been\n\nmoving all night. '.repeat(40)));
+  check('exhibit segment transcript: one ¶, cites as PX-n, excerpt capped',
+    transcript.startsWith('[PX-4 PUBLISHED TO THE JURY') && !transcript.includes('\n') &&
+    transcript.length < 600, `${transcript.length} chars`);
+
+  // Admitted evidence never enters the objection mill — even when its text
+  // would trip a nomination regex. Behavioral: an exhibit-only record must
+  // produce zero opposing-counsel calls; the same text as an opening must
+  // produce at least one.
+  const { runProcedure } = await import(`file://${lib('procedure.ts')}`);
+  const baity = 'He told me the company knew. Clearly they never cared about anyone.';
+  const asExhibit = { id: 's1', kind: 'exhibit', side: 'ours', transcript: baity, position: 0 };
+  const asOpening = { id: 's2', kind: 'opening', side: 'ours', transcript: baity, position: 1 };
+  const calls = [];
+  const mockPorts = {
+    structured: async (call) => { calls.push(call.stage); return { objections: [] }; },
+    speech: async () => '',
+  };
+  await runProcedure([asExhibit], mockPorts, () => {});
+  const exhibitCalls = calls.length;
+  await runProcedure([asOpening], mockPorts, () => {});
+  check('objection mill: exhibit segments exempt, the same text as advocacy is reviewed',
+    exhibitCalls === 0 && calls.length > 0,
+    `exhibit calls ${exhibitCalls}, opening calls ${calls.length}`);
+}
+
 /* ================================ Summary ================================= */
 
 const failed = results.filter((r) => !r.pass);

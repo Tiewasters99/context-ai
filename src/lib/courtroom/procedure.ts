@@ -90,6 +90,10 @@ export async function runProcedure(
 
   for (const seg of ordered) {
     if (seg.side !== 'ours') continue; // §5: opposing counsel reviews OUR advocacy
+    // Admitted evidence is not counsel's characterization: exhibit segments
+    // enter the record through the publication colloquy (pre-admitted =
+    // canned, never objected — Eden 2026-08-11), not the objection mill.
+    if (seg.kind === 'exhibit') continue;
     const candidates = nominateSpans(seg);
     run.candidates.push(...candidates);
     if (candidates.length === 0) continue;

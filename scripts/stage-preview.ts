@@ -86,6 +86,65 @@ const scene = createCourtroomScene(stage, {
     if (e.key === 'Enter') speak();
   });
   document.getElementById('arguesay')!.addEventListener('click', speak);
+
+  // The mic (spec §3.2 v1): Web Speech API push-to-talk. Interim results
+  // stream into the lectern bubble live — the room captions the lawyer as
+  // they speak; finalized text lands in the bar to be edited or said.
+  const micBtn = document.getElementById('arguemic') as HTMLButtonElement;
+  const SR = (window as unknown as Record<string, unknown>).webkitSpeechRecognition
+    ?? (window as unknown as Record<string, unknown>).SpeechRecognition;
+  if (!SR) {
+    micBtn.style.display = 'none'; // browser without Web Speech
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let rec: any = null;
+    let dictated = '';
+    const setLive = (live: boolean) => {
+      micBtn.style.background = live ? '#d4a054' : '#1a1410';
+      micBtn.style.color = live ? '#1a1410' : '#e8b84a';
+      micBtn.textContent = live ? '■' : '🎤';
+    };
+    micBtn.addEventListener('click', () => {
+      if (rec) {
+        rec.stop();
+        return;
+      }
+      manual = true;
+      let occ = scene.atLectern();
+      if (!occ) {
+        scene.counselToLectern('lead');
+        occ = 'lead';
+      }
+      const speaker = occ;
+      dictated = input.value.trim() ? `${input.value.trim()} ` : '';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rec = new (SR as any)();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rec.onresult = (e: any) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          if (r.isFinal) dictated += `${String(r[0].transcript).trim()} `;
+          else interim += r[0].transcript;
+        }
+        const line = (dictated + interim).trim();
+        if (line) scene.say(speaker, line, 9999);
+        input.value = dictated.trimEnd();
+      };
+      rec.onend = () => {
+        rec = null;
+        setLive(false);
+        input.value = dictated.trimEnd();
+        input.focus();
+      };
+      rec.onerror = () => { /* onend follows and resets */ };
+      setLive(true);
+      rec.start();
+    });
+  }
   // Offer an exhibit: the publication colloquy, then the screen arms and
   // waits for the click that publishes it.
   document.getElementById('offerx')!.addEventListener('click', async () => {

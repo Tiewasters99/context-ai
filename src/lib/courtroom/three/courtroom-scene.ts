@@ -106,6 +106,9 @@ export interface CourtroomSceneOptions {
   onJudgeTap?: () => void;
   onWitnessTap?: () => void;
   onExhibitTap?: () => void;
+  /** An ARMED exhibit was published by the click on the screen — the moment
+   *  the app writes the record (segment + publication event). */
+  onExhibitPublished?: () => void;
   onCounselTap?: (slot: CounselSlot) => void;
   /** Tap a speech bubble: the caller gets the speaker and the current text
    *  (the seam for "add to what I was saying"). When absent, bubbles stay
@@ -1181,6 +1184,7 @@ export function createCourtroomScene(
     if (pendingExhibit) {
       applyExhibit(pendingExhibit.url, pendingExhibit.label);
       pendingExhibit = null;
+      opts.onExhibitPublished?.();
       return;
     }
     opts.onExhibitTap?.();

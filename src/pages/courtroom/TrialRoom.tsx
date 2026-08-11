@@ -10,11 +10,23 @@ import { makeLivePorts } from '@/lib/courtroom/live.ts';
 import { newUsage, formatUsage } from '@/lib/courtroom/meter.ts';
 import { NOT_FOR_JURY_SELECTION, computeSplit } from '@/lib/courtroom/prompts.ts';
 import {
-  clearSessionData, deleteJurors, fileReportToMatter, getReport, getTrial,
-  listJurors, listSegments, saveBallot, saveJurors, saveProcedureEvent,
+  addSegment, clearSessionData, deleteJurors, fileReportToMatter, getReport,
+  getTrial, listExhibitEvents, listJurors, listSegments, saveBallot,
+  saveExhibitPublication, saveJurors, saveProcedureEvent,
   saveReaction, saveReport, saveTurn, updateTrial, updateTrialSeed,
   type TrialListRow,
 } from '@/lib/courtroom/persist.ts';
+import {
+  exhibitExcerpt, exhibitLabel, exhibitSegmentTranscript, foldExhibits,
+  publishColloquy, type ExhibitFold, type TrialExhibit,
+} from '@/lib/courtroom/exhibits.ts';
+import { isImageDoc, renderExhibitDataUrl } from '@/lib/courtroom/exhibit-render.ts';
+import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
+import { listMatterDocumentsRecursive } from '@/lib/vault-persist';
+import { useServerspaces } from '@/hooks/useServerspaces';
+import { collectDescendantIds } from '@/components/matter/DeleteMatterModal';
+import type { VaultFile } from '@/lib/vault-types';
+import type { CourtroomSceneApi } from '@/lib/courtroom/three/courtroom-scene.ts';
 import type {
   Ballot, DeliberationTurn, JurorProfile, ProgressEvent, Ruling, Segment,
   UsageRecord,
@@ -23,6 +35,7 @@ import PanelSheet from './PanelSheet';
 import SegmentComposer from './SegmentComposer';
 import ReportView from './ReportView';
 import CourtroomStageView from './CourtroomStageView';
+import ExhibitsPanel from './ExhibitsPanel';
 
 // The trial room — one linear, lawyerly flow (spec §11 Phase 1):
 //   panel sheet → the record → the session, live → the Rehearsal Report.
@@ -52,15 +65,50 @@ export default function TrialRoom() {
   const runLock = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Exhibits (spec §2): the fold of the trial's exhibit events, the matter's
+  // documents, and the in-flight publication (theater ends at the click).
+  const [exhibitFold, setExhibitFold] = useState<ExhibitFold>({
+    exhibits: [], witness: null, publishedKeys: new Set(),
+  });
+  const [docs, setDocs] = useState<VaultFile[] | null>(null);
+  const [publishingKey, setPublishingKey] = useState<string | null>(null);
+  const sceneApiRef = useRef<CourtroomSceneApi | null>(null);
+  const pendingPublishRef = useRef<{ exhibit: TrialExhibit; excerpt: string } | null>(null);
+  const segmentsRef = useRef<Segment[]>([]);
+  segmentsRef.current = segments;
+
   useEffect(() => {
     if (!id) return;
-    Promise.all([getTrial(id), listJurors(id), listSegments(id), getReport(id)])
-      .then(([t, j, s, r]) => {
+    Promise.all([getTrial(id), listJurors(id), listSegments(id), getReport(id), listExhibitEvents(id)])
+      .then(([t, j, s, r, ev]) => {
         if (!t) { setLoadError('Rehearsal not found.'); return; }
         setTrial(t); setJurors(j); setSegments(s); setReport(r);
+        setExhibitFold(foldExhibits(ev));
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : 'Could not open the rehearsal.'));
   }, [id]);
+
+  const reloadExhibits = useCallback(() => {
+    if (!id) return;
+    listExhibitEvents(id)
+      .then((ev) => setExhibitFold(foldExhibits(ev)))
+      .catch(() => {});
+  }, [id]);
+
+  // The matter's documents — the exhibit drawer's source (and the witness's).
+  const { data: serverspaces = [] } = useServerspaces();
+  useEffect(() => {
+    if (!trial) return;
+    let cancelled = false;
+    const ids = collectDescendantIds(serverspaces, trial.matterspace_id);
+    const nameById = new Map(
+      serverspaces.flatMap((sv) => sv.matterspaces.map((m) => [m.id, m.name] as const)),
+    );
+    listMatterDocumentsRecursive(ids.length ? ids : [trial.matterspace_id], nameById)
+      .then((d) => { if (!cancelled) setDocs(d); })
+      .catch(() => { if (!cancelled) setDocs([]); });
+    return () => { cancelled = true; };
+  }, [trial, serverspaces]);
 
   const jurorName = useMemo(() => {
     const m = new Map(jurors.map((j) => [j.id, `${j.display_name} (seat ${j.seat})`]));
@@ -105,6 +153,94 @@ export default function TrialRoom() {
   const onJurorSaved = useCallback((j: JurorProfile) => {
     setJurors((prev) => prev.map((x) => (x.id === j.id ? j : x)));
   }, []);
+
+  /* ----------------------------- Exhibits ------------------------------ */
+
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** The record's side of a publication: an 'exhibit' SEGMENT (jurors react
+   *  to it and cite PX-n natively) plus the session publication event. */
+  const finalizePublication = useCallback(async (exhibit: TrialExhibit, excerpt: string) => {
+    if (!trial) return;
+    try {
+      const seg = await addSegment(trial, {
+        kind: 'exhibit',
+        side: exhibit.side,
+        transcript: exhibitSegmentTranscript(exhibit, excerpt),
+        position: segmentsRef.current.length,
+        sourceDocumentId: exhibit.doc_id,
+      });
+      setSegments((prev) => [...prev, seg]);
+      await saveExhibitPublication(
+        trial,
+        { event: 'published', key: exhibit.key, exhibit_no: exhibit.exhibit_no },
+        seg.id,
+      );
+      reloadExhibits();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The publication could not be recorded.');
+    }
+  }, [trial, reloadExhibits]);
+
+  /** The armed exhibit was clicked up on the screen — write the record. */
+  const onExhibitPublished = useCallback(() => {
+    const pending = pendingPublishRef.current;
+    pendingPublishRef.current = null;
+    if (pending) void finalizePublication(pending.exhibit, pending.excerpt);
+  }, [finalizePublication]);
+
+  /** Publish a pre-admitted/admitted exhibit: render the page, run the canned
+   *  colloquy in the room (Eden 2026-08-11: never an objection), arm the
+   *  screen, and let the click publish. Without the room, publish directly. */
+  const publishExhibit = useCallback(async (exhibit: TrialExhibit, doc: VaultFile) => {
+    if (!trial || publishingKey) return;
+    setPublishingKey(exhibit.key);
+    setError('');
+    try {
+      const excerpt = isImageDoc(doc.name)
+        ? ''
+        : exhibitExcerpt((await loadCorpusDocumentText(exhibit.doc_id)).text);
+      const dataUrl = await renderExhibitDataUrl(doc, exhibit.page);
+      const api = sceneApiRef.current;
+      if (api) {
+        const c = publishColloquy(exhibit);
+        if (!api.atLectern()) api.counselToLectern('lead');
+        api.say(api.atLectern() ?? 'lead', c.counsel);
+        await sleep(3600);
+        api.say('judge', c.judge!);
+        await sleep(2200);
+        api.say('opposing', c.opposing!);
+        await sleep(2000);
+        pendingPublishRef.current = { exhibit, excerpt };
+        api.armExhibit(dataUrl, exhibitLabel(exhibit));
+      } else {
+        await finalizePublication(exhibit, excerpt);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The exhibit could not be published.');
+    } finally {
+      setPublishingKey(null);
+    }
+  }, [trial, publishingKey, finalizePublication]);
+
+  // The witness on the stand follows the fold: seat the portrait when the
+  // room is up, clear it when the stand empties.
+  useEffect(() => {
+    const api = sceneApiRef.current;
+    if (!api) return;
+    const w = exhibitFold.witness;
+    if (!w?.doc_id) {
+      api.setWitnessPortrait(null);
+      return;
+    }
+    const doc = (docs ?? []).find((d) => d.id === w.doc_id);
+    if (!doc) return;
+    let cancelled = false;
+    renderExhibitDataUrl(doc, null)
+      .then((url) => { if (!cancelled) sceneApiRef.current?.setWitnessPortrait(url); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [exhibitFold.witness, docs, roomOpen, running]);
 
   /* ----------------------------- The session -------------------------- */
 
@@ -283,6 +419,8 @@ export default function TrialRoom() {
           ballots={liveBallots}
           rulings={liveRulings}
           panel={trial.venue_mix.house_panel ?? 'A'}
+          sceneApiRef={sceneApiRef}
+          onExhibitPublished={onExhibitPublished}
         />
       )}
       {!running && jurors.length > 0 && trial.status !== 'empanel' && (
@@ -334,6 +472,17 @@ export default function TrialRoom() {
               </label>
             </div>
           )}
+          <ExhibitsPanel
+            trial={trial}
+            docs={docs}
+            exhibits={exhibitFold.exhibits}
+            witness={exhibitFold.witness}
+            publishedKeys={exhibitFold.publishedKeys}
+            onChanged={reloadExhibits}
+            onPublish={(ex, doc) => void publishExhibit(ex, doc)}
+            publishingKey={publishingKey}
+            theater={roomOpen}
+          />
           <SegmentComposer
             trial={trial}
             segments={segments}
@@ -342,6 +491,22 @@ export default function TrialRoom() {
             busy={running}
           />
         </>
+      )}
+
+      {/* The drawer also rides along whenever the room is open outside the
+          record stage — publishing from the well is the point. */}
+      {roomOpen && !running && trial.status !== 'segments' && trial.status !== 'empanel' && (
+        <ExhibitsPanel
+          trial={trial}
+          docs={docs}
+          exhibits={exhibitFold.exhibits}
+          witness={exhibitFold.witness}
+          publishedKeys={exhibitFold.publishedKeys}
+          onChanged={reloadExhibits}
+          onPublish={(ex, doc) => void publishExhibit(ex, doc)}
+          publishingKey={publishingKey}
+          theater
+        />
       )}
 
       {/* Stage: interrupted run (tab closed mid-session) */}

@@ -10,7 +10,7 @@
 // If WebGL is unavailable the stage reports isInitialized === false and this
 // component renders nothing: the 2D surfaces remain the record.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { CourtroomStage } from '@/lib/courtroom/three/stage.ts';
 import {
   createCourtroomScene,
@@ -60,7 +60,7 @@ function phaseForStage(stage: ProgressEvent['stage'] | undefined): ScenePhase {
 }
 
 export default function CourtroomStageView({
-  jurors, progress, ballots, rulings, panel = 'A',
+  jurors, progress, ballots, rulings, panel = 'A', sceneApiRef, onExhibitPublished,
 }: {
   jurors: JurorProfile[];
   progress: ProgressEvent | null;
@@ -68,6 +68,12 @@ export default function CourtroomStageView({
   rulings: Ruling[];
   /** Which house venire's faces and bios dress the room. */
   panel?: 'A' | 'B';
+  /** Filled with the live scene API while the room is mounted (null after
+   *  unmount) — the seam TrialRoom uses for exhibits, speech, and the
+   *  witness. */
+  sceneApiRef?: MutableRefObject<CourtroomSceneApi | null>;
+  /** An armed exhibit was published by the click on the screen. */
+  onExhibitPublished?: () => void;
 }) {
   const portraitPrefix = panel === 'B' ? 'venire2' : 'venire';
   const bios = panel === 'B' ? VENIRE2_BIOS : VENIRE_BIOS;
@@ -79,6 +85,11 @@ export default function CourtroomStageView({
   const returnViewRef = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   const [webgl, setWebgl] = useState(true);
   const [focus, setFocus] = useState<{ kind: 'juror'; seat: number } | { kind: 'judge' } | null>(null);
+
+  // The publish callback can change between renders; the scene closure reads
+  // the latest through a ref.
+  const onExhibitPublishedRef = useRef(onExhibitPublished);
+  onExhibitPublishedRef.current = onExhibitPublished;
 
   /* ---- Mount / dispose ---- */
   useEffect(() => {
@@ -111,8 +122,10 @@ export default function CourtroomStageView({
         stage.flyTo(sceneRef.current!.judgeCloseup(), 900);
         setFocus({ kind: 'judge' });
       },
+      onExhibitPublished: () => onExhibitPublishedRef.current?.(),
     });
     sceneRef.current = scene;
+    if (sceneApiRef) sceneApiRef.current = scene;
     // The house venire (Eden's Midjourney set, public/courtroom): twelve
     // waist-up figures behind the desks. Purely presence — no visual is
     // keyed to any juror's profile (the §2.3 rail). A missing file simply
@@ -129,6 +142,7 @@ export default function CourtroomStageView({
       stage.dispose();
       stageRef.current = null;
       sceneRef.current = null;
+      if (sceneApiRef) sceneApiRef.current = null;
     };
   }, []);
 
