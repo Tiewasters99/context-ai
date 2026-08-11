@@ -45,6 +45,22 @@ These are presence, not identity: no visual is keyed to any juror's profile
 | 11 | Peggy Ostrowski — retired cafeteria manager | `an_elderly_retiree_from_Florida_…_a8e76417…_0` |
 | 12 | Maya Castellano — nursing student (curly college) | `a_young_woman_…college_look_…_74ed66a3…_0` |
 
+## The witness stand
+
+Witnesses are per-matter: the stand takes any waist-up portrait via
+`setWitnessPortrait(url)` (null empties the chair). One committed demo card:
+
+| Figure | Source stem |
+|---|---|
+| Demo witness (`witness-demo.png`) — silver-haired woman, hands folded | `a_female_judge_late_fourties_in_black_robes_seate_b8ebd6df…_3` (the unused judge alternate; her robe reads as a dark garment off the bench) |
+
+## Counsel (no cards)
+
+Counsel are SCULPTED figures as of the figures.ts build — modeled low-poly
+people, two per table, styled by slot only. The old `counsel-*.png` cards are
+retired from the scene (files kept for reference). Per-matter avatar dressing
+is a future path.
+
 Both panels are also REASONING agents: `src/lib/courtroom/house-panel.ts`
 gives every figure an authored attitude profile, so a trial can empanel
 House Panel A or B and these people deliberate in character. Personality is

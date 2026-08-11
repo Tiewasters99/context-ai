@@ -20,11 +20,13 @@ import { VENIRE_BIOS, VENIRE2_BIOS, JUDGE_BIO } from '@/lib/courtroom/three/veni
 import { computeSplit } from '@/lib/courtroom/prompts.ts';
 import type { Ballot, JurorProfile, ProgressEvent, Ruling } from '@/lib/courtroom/types.ts';
 
-type ViewName = 'lectern' | 'box' | 'juryroom';
+type ViewName = 'lectern' | 'box' | 'juryroom' | 'witness' | 'screen';
 
 const VIEW_LABELS: [ViewName, string][] = [
   ['lectern', 'The Lectern'],
   ['box', 'The Box'],
+  ['witness', 'The Stand'],
+  ['screen', 'The Screen'],
   ['juryroom', 'The Jury Room'],
 ];
 
@@ -119,12 +121,9 @@ export default function CourtroomStageView({
       scene.setJurorPortrait(s, `/courtroom/${portraitPrefix}-${s}.png`);
     }
     // The judge takes the bench when the portrait exists; the capsule
-    // presides until then.
+    // presides until then. Counsel need no portraits — they are sculpted
+    // figures now (tap one: they take the lectern).
     scene.setJudgePortrait('/courtroom/judge.png');
-    // Counsel take their tables (tap the lead: she walks to the lectern).
-    scene.setCounselPortrait('lead', '/courtroom/counsel-lead.png');
-    scene.setCounselPortrait('second', '/courtroom/counsel-second.png');
-    scene.setCounselPortrait('opposing', '/courtroom/counsel-opposing.png');
     return () => {
       stage.dispose();
       stageRef.current = null;

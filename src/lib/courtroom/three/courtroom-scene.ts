@@ -17,14 +17,19 @@
 // invisible tap targets, and three staged views — the lectern, the box, and
 // the jury room next door — wired to live session state through a small API.
 //
-// THE RAIL CARRIES INTO 3D: every avatar is the same dignified statuary
-// figure. Suit hue varies by SEAT INDEX through a fixed palette; faces are
-// uniform bronze until a portrait is set via setJurorPortrait(seat, url)
-// (Eden's Midjourney set, when it lands). No composition field touches any
-// visual.
+// THE RAIL CARRIES INTO 3D: jurors and the witness are portrait cards whose
+// images arrive only via setJurorPortrait/setWitnessPortrait (Eden's
+// Midjourney sets, or per-matter uploads). The people of the well — counsel,
+// the reporter, the watcher — are sculpted low-poly figures (figures.ts)
+// styled by SLOT only. No composition field touches any visual.
+//
+// The room also carries the record: a big evidence screen angled at the box
+// (setExhibit feeds it from the matter), and speech bubbles (say) so argument
+// arrives as text over whoever is speaking.
 
 import * as THREE from 'three';
 import type { CourtroomStage, StageView } from './stage.ts';
+import { makeFigure, type FigureApi, type FigureStyle } from './figures.ts';
 
 /* ============================== Public API ================================ */
 
@@ -45,7 +50,7 @@ export interface BallotBoardRound {
 }
 
 export interface CourtroomSceneApi {
-  views: Record<'lectern' | 'box' | 'juryroom', StageView>;
+  views: Record<'lectern' | 'box' | 'juryroom' | 'witness' | 'screen', StageView>;
   setPanel(panel: PanelSeat[]): void;
   /** Ripple: the named seat leans in and its floor ring pulses. */
   setActiveSeat(seat: number | null): void;
@@ -58,22 +63,44 @@ export interface CourtroomSceneApi {
   setJurorPortrait(seat: number, url: string): void;
   /** The judge takes the bench (waist-up card; the capsule stands down). */
   setJudgePortrait(url: string): void;
-  /** Counsel take their tables. Tapping the lead walks her to the lectern
-   *  (and back). */
-  setCounselPortrait(slot: CounselSlot, url: string): void;
+  /** The witness takes the stand — a waist-up card behind the rail (the
+   *  card trick holds there, like the box). null clears the stand. */
+  setWitnessPortrait(url: string | null): void;
+  /** The evidence screen: an exhibit image and its label, straight from the
+   *  matter. null and the screen goes dark. */
+  setExhibit(url: string | null, label?: string): void;
+  /** Send a counsel figure to the lectern to argue; any prior occupant walks
+   *  back to their chair. null clears the lectern. Tapping a figure does
+   *  the same thing. */
+  counselToLectern(slot: CounselSlot | null): void;
+  /** A speech bubble over the speaker — argument as text in the room.
+   *  Replaces the speaker's previous line; hold defaults by length. */
+  say(speaker: SpeakerId, text: string, holdSeconds?: number): void;
+  clearSpeech(speaker?: SpeakerId): void;
   /** A close-up staged view of one juror, in whichever room was tapped. */
   seatCloseup(seat: number, room: SceneRoom): StageView | null;
   /** A close-up staged view of the bench. */
   judgeCloseup(): StageView;
+  /** A close-up staged view of the witness stand. */
+  witnessCloseup(): StageView;
+  /** A close-up staged view of the evidence screen. */
+  exhibitCloseup(): StageView;
 }
 
-export type CounselSlot = 'lead' | 'second' | 'opposing';
+export type CounselSlot = 'lead' | 'second' | 'opposing' | 'opposingSecond';
+
+export type SpeakerId =
+  | CounselSlot | 'judge' | 'witness'
+  | `seat-${number}` | `room-${number}`;
 
 export type SceneRoom = 'box' | 'juryroom';
 
 export interface CourtroomSceneOptions {
   onSeatTap?: (seat: number, room: SceneRoom) => void;
   onJudgeTap?: () => void;
+  onWitnessTap?: () => void;
+  onExhibitTap?: () => void;
+  onCounselTap?: (slot: CounselSlot) => void;
 }
 
 /* ========================= Materials (shared once) ======================== */
@@ -98,11 +125,6 @@ const mat = {
   bronze: new THREE.MeshStandardMaterial({ color: 0x8a6a4f, roughness: 0.55, metalness: 0.25 }),
   paper: new THREE.MeshStandardMaterial({ color: 0xd8cdb4, roughness: 0.95 }),
 };
-
-/** Suit palette — SEAT INDEX ONLY (the rail: nothing about a juror's profile
- *  drives a visual). Muted courtroom wool. */
-const SUITS = [0x3a4354, 0x4a3f36, 0x37473c, 0x50434f, 0x3e4a5c, 0x554636]
-  .map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 }));
 
 /* ============================ Canvas textures ============================= */
 
@@ -236,24 +258,68 @@ function makeCardTexture(img: HTMLImageElement, opts: { fadeBottom: boolean }): 
   return tex;
 }
 
-/** The reverse of a figure card: the same alpha shape, near-black — the
- *  back of a person, not a mirrored front. */
-function backTexture(cardCanvas: HTMLCanvasElement): THREE.CanvasTexture {
+/** A speech bubble: parchment, oak border, a tail pointing down at the
+ *  speaker. Text wraps; long argument gets an ellipsis (the transcript is
+ *  the record — the bubble is the moment). Returns height/width. */
+function speechTexture(text: string): { tex: THREE.CanvasTexture; aspect: number } {
+  const W = 512, PAD = 28, LINE = 37, TAIL = 26, MAX_LINES = 7;
   const c = document.createElement('canvas');
-  c.width = cardCanvas.width;
-  c.height = cardCanvas.height;
-  const ctx = c.getContext('2d')!;
-  // Mirror so the silhouette's outline matches the front when seen from behind.
-  ctx.translate(c.width, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(cardCanvas, 0, 0);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.globalCompositeOperation = 'source-atop';
-  ctx.fillStyle = 'rgba(24, 18, 13, 0.93)';
-  ctx.fillRect(0, 0, c.width, c.height);
+  c.width = W;
+  c.height = 64; // provisional; measure first, size after
+  let ctx = c.getContext('2d')!;
+  ctx.font = '28px Georgia, serif';
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    const trial = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(trial).width > W - PAD * 2 && cur) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = trial;
+    }
+  }
+  if (cur) lines.push(cur);
+  if (lines.length > MAX_LINES) {
+    lines.length = MAX_LINES;
+    lines[MAX_LINES - 1] += ' …';
+  }
+  const H = PAD * 2 + lines.length * LINE + TAIL;
+  c.height = H; // resizing clears the canvas AND its state
+  ctx = c.getContext('2d')!;
+  ctx.font = '28px Georgia, serif';
+  // The bubble.
+  const r = 20, bh = H - TAIL;
+  ctx.beginPath();
+  ctx.moveTo(r, 0);
+  ctx.lineTo(W - r, 0); ctx.arcTo(W, 0, W, r, r);
+  ctx.lineTo(W, bh - r); ctx.arcTo(W, bh, W - r, bh, r);
+  ctx.lineTo(r, bh); ctx.arcTo(0, bh, 0, bh - r, r);
+  ctx.lineTo(0, r); ctx.arcTo(0, 0, r, 0, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(242, 234, 216, 0.97)';
+  ctx.fill();
+  ctx.strokeStyle = '#6e4322';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  // The tail, down toward the speaker.
+  ctx.beginPath();
+  ctx.moveTo(W * 0.42 - 18, bh - 2);
+  ctx.lineTo(W * 0.42 + 18, bh - 2);
+  ctx.lineTo(W * 0.42 - 2, H - 2);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(242, 234, 216, 0.97)';
+  ctx.fill();
+  ctx.strokeStyle = '#6e4322';
+  ctx.stroke();
+  // The line itself.
+  ctx.fillStyle = '#241a10';
+  ctx.textBaseline = 'alphabetic';
+  lines.forEach((line, i) => ctx.fillText(line, PAD, PAD + 22 + i * LINE));
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  return { tex, aspect: H / W };
 }
 
 /** Rich oak paneling: planks, grain, and a raised frame — the room's wood. */
@@ -412,6 +478,7 @@ function jurorDeskUnit(seat: number): THREE.Group {
   screen.position.set(0.026, 0, 0);
   screen.rotation.y = Math.PI / 2;
   screen.rotation.z = -0.12; // tipped up toward the juror
+  screen.userData.isJuryMonitor = true; // the exhibit feed reaches these
   mon.add(screen);
   const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.026, 0.1, 6), mat.robe);
   stand.position.set(0, -0.14, 0);
@@ -715,6 +782,11 @@ export function createCourtroomScene(
   };
   benchG.add(benchLamp);
 
+  // Where the Court's words appear.
+  const judgeSpeechAnchor = new THREE.Object3D();
+  judgeSpeechAnchor.position.set(0.4, 3.25, -10.9);
+  benchG.add(judgeSpeechAnchor);
+
   // Approach the bench: a generous tap target over judge and card.
   const judgeTap = new THREE.Mesh(
     new THREE.BoxGeometry(1.6, 1.8, 1.4),
@@ -774,9 +846,52 @@ export function createCourtroomScene(
   /* ---- The well: witness stand, clerk, reporter, counsel, lectern. ---- */
   const wellG = new THREE.Group();
 
-  // Witness stand, jury side of the bench.
-  wellG.add(box(1.7, 1.1, 1.5, mat.oakDark, 4.6, 0.55, -9.4));
-  wellG.add(box(1.9, 0.1, 1.7, mat.oak, 4.6, 1.14, -9.4));
+  // The witness stand, jury side of the bench: a paneled box with a rail,
+  // a chair that sits empty between witnesses, and a microphone leaning in.
+  // The witness is a waist-up portrait card behind the rail — the same card
+  // trick as the box, because the rail hides the seam. setWitnessPortrait
+  // seats them; null and the chair is empty again.
+  const witnessG = new THREE.Group();
+  witnessG.add(box(1.7, 0.3, 1.5, mat.oakDark, 0, 0.15, 0));            // platform
+  witnessG.add(box(1.7, 0.95, 0.14, panelMat, 0, 0.7, 0.68));           // front panel
+  witnessG.add(box(0.14, 0.95, 1.5, panelMat, -0.78, 0.7, 0));          // well-side panel
+  witnessG.add(box(1.9, 0.09, 0.24, mat.oak, 0, 1.22, 0.68));           // front rail
+  witnessG.add(box(0.24, 0.09, 1.7, mat.oak, -0.78, 1.22, 0));          // side rail
+  witnessG.add(box(1.9, 0.03, 0.05, mat.brass, 0, 1.28, 0.58));         // brass lip
+  const wChair = chair(mat.leather);
+  wChair.position.set(0.12, 0.3, -0.28);
+  wChair.rotation.y = -0.3; // angled a breath toward counsel
+  witnessG.add(wChair);
+  const mic = new THREE.Group();
+  const micStem = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.28, 6), mat.brass);
+  micStem.position.y = 0.12;
+  const micHead = new THREE.Mesh(new THREE.SphereGeometry(0.032, 8, 8), mat.robe);
+  micHead.position.y = 0.27;
+  mic.add(micStem, micHead);
+  mic.position.set(-0.5, 1.24, 0.5);
+  mic.rotation.set(-0.35, 0, 0.4); // leaning toward the chair
+  witnessG.add(mic);
+  const witnessCard = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.92, 1.22),
+    new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.9, color: 0xe8d8be }),
+  );
+  witnessCard.position.set(0.05, 1.72, -0.12);
+  witnessCard.rotation.y = -0.7; // facing the well and the lectern
+  witnessCard.visible = false;
+  witnessCard.userData.isCard = true;
+  witnessG.add(witnessCard);
+  const witnessTap = new THREE.Mesh(
+    new THREE.BoxGeometry(1.4, 1.7, 0.9),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  witnessTap.position.set(0.05, 1.6, -0.1);
+  witnessTap.userData.onTap = () => opts.onWitnessTap?.();
+  witnessG.add(witnessTap);
+  const witnessSpeechAnchor = new THREE.Object3D();
+  witnessSpeechAnchor.position.set(0.05, 2.45, -0.1);
+  witnessG.add(witnessSpeechAnchor);
+  witnessG.position.set(4.6, 0, -9.4);
+  wellG.add(witnessG);
 
   // Clerk's desk and the court reporter, who never stops.
   wellG.add(box(2.2, 0.95, 1.1, mat.oakDark, -3.4, 0.48, -8.9));
@@ -784,17 +899,19 @@ export function createCourtroomScene(
   reporterG.add(box(1.1, 0.78, 0.8, mat.oakDark, 0, 0.39, 0));
   const steno = box(0.34, 0.16, 0.26, mat.leather, 0, 0.92, 0.12);
   reporterG.add(steno);
-  const reporter = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.3, 4, 8), SUITS[2]);
-  reporter.position.set(0, 0.95, -0.62);
-  reporterG.add(reporter);
-  const repHead = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), mat.bronze);
-  repHead.position.set(0, 1.38, -0.62);
-  reporterG.add(repHead);
+  const reporterFig = makeFigure({
+    suit: 0x37473c, skin: 0xb98a68, hair: 0x3a2e26, hairStyle: 'bun', scale: 0.96,
+  });
+  reporterFig.place(new THREE.Vector3(0, 0, -0.62), 0, 'seated');
+  reporterG.add(reporterFig.group);
+  const repChair = chair(mat.leather);
+  repChair.position.set(0, 0, -0.62);
+  reporterG.add(repChair);
   reporterG.position.set(2.1, 0, -8.6);
   reporterG.userData.animate = (t: number) => {
     // The smallest motion in the room and the most constant: the keys.
     steno.position.y = 0.92 + Math.abs(Math.sin(t * 7.3)) * 0.008;
-    repHead.rotation.x = Math.sin(t * 0.8) * 0.06;
+    reporterFig.head.rotation.x = Math.sin(t * 0.8) * 0.06;
   };
   wellG.add(reporterG);
 
@@ -852,83 +969,59 @@ export function createCourtroomScene(
   };
   wellG.add(lectern);
 
-  /* ---- Counsel at their tables. The lead answers a tap by walking to the
-         lectern — the room's one figure who moves, because arguing is her
-         job. Cards billboard (the well is seen from every side) and the
-         figures themselves hold still. ---- */
-  const counsel = new Map<CounselSlot, THREE.Group>();
-  {
-    const SLOT_POS: Record<CounselSlot, [number, number, number]> = {
-      lead: [-3.3, 0, -2.45],      // our table, first chair
-      second: [-1.9, 0, -2.45],    // our table, second chair
-      opposing: [1.9, 0, -2.45],   // their table
-    };
-    // Counsel face the bench — courtroom staging, not camera-pleasing.
-    // Each figure is a TWO-FACED card: the portrait on the bench side, a
-    // dark back-silhouette on the gallery side, so from behind they read
-    // unambiguously as facing away, toward the judge.
-    const SLOT_YAW: Record<CounselSlot, number> = {
-      lead: Math.PI + 0.35,
-      second: Math.PI + 0.35,
-      opposing: Math.PI - 0.35,
-    };
-    const LECTERN_YAW = Math.PI; // square to the bench when she argues
-    // She stands just behind wherever the lectern is right now.
-    const lecternStand = () =>
-      new THREE.Vector3(lectern.position.x + 0.15, 0, lectern.position.z + 0.6);
-    const slots: CounselSlot[] = ['lead', 'second', 'opposing'];
-    for (let i = 0; i < slots.length; i++) {
-      const slot = slots[i];
-      const g = new THREE.Group();
-      const sil = silhouetteCardTexture(i + 3);
-      const geo = new THREE.PlaneGeometry(0.92, 1.22);
-      const front = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-        map: sil, transparent: true, roughness: 0.9, color: 0xe8d8be,
-      }));
-      front.position.z = 0.006;
-      front.userData.isCard = true;
-      front.userData.alphaCanvas = sil.image;
-      const back = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-        map: backTexture(sil.image as HTMLCanvasElement), transparent: true, roughness: 0.95,
-      }));
-      back.rotation.y = Math.PI;
-      back.position.z = -0.006;
-      back.userData.isCardBack = true;
-      back.userData.alphaCanvas = sil.image;
-      const cardG = new THREE.Group();
-      cardG.add(front, back);
-      cardG.position.set(0, 1.02, 0);
-      cardG.rotation.y = SLOT_YAW[slot];
-      g.add(cardG);
-      g.position.set(...SLOT_POS[slot]);
-
-      // Stateless motion: every frame eases toward the goals, so a changed
-      // goal simply becomes a walk — no clocks, no windows.
-      const goal = new THREE.Vector3(...SLOT_POS[slot]);
-      let goalYaw = SLOT_YAW[slot];
-      let standing = false;
-      g.userData.animate = () => {
-        g.position.lerp(goal, 0.05);
-        cardG.rotation.y += (goalYaw - cardG.rotation.y) * 0.05;
-        // She stands taller at the lectern than in the chair.
-        cardG.position.y += ((standing ? 1.3 : 1.02) - cardG.position.y) * 0.05;
-      };
-      if (slot === 'lead') {
-        let atLectern = false;
-        g.userData.onTap = () => {
-          atLectern = !atLectern;
-          if (atLectern) goal.copy(lecternStand());
-          else goal.set(...SLOT_POS.lead);
-          goalYaw = atLectern ? LECTERN_YAW : SLOT_YAW.lead;
-          standing = atLectern;
-        };
-        onLecternMoved = () => {
-          if (atLectern) goal.copy(lecternStand());
-        };
-      }
-      counsel.set(slot, g);
-      wellG.add(g);
+  /* ---- Counsel in the well: sculpted figures, two per table. These are
+         the room's movers, so they are modeled, not cards — a card seen
+         edge-on in the open well breaks the place. Styles key to the SLOT
+         (presence, not identity; a per-matter avatar can dress them later).
+         Tap a figure and they take the lectern to argue; tap again — or
+         send another — and they walk back to their chair. Walks route
+         through the aisle between the tables, never through the furniture. ---- */
+  const COUNSEL_STYLES: Record<CounselSlot, FigureStyle> = {
+    lead: { suit: 0x2e3644, skin: 0xc99a76, hair: 0x2b2118, hairStyle: 'bun', scale: 0.97 },
+    second: { suit: 0x4a4036, skin: 0x8a5c3c, hair: 0x181310, hairStyle: 'crop', tie: 0xc2571f },
+    opposing: { suit: 0x3c4348, skin: 0xe0b48e, hair: 0xb8b4a8, hairStyle: 'part', tie: 0x7c2430, scale: 1.02 },
+    opposingSecond: { suit: 0x44462f, skin: 0x6b4530, hair: 0x120f0c, hairStyle: 'short', tie: 0x2c3a5e, scale: 0.98 },
+  };
+  const COUNSEL_HOME: Record<CounselSlot, { pos: THREE.Vector3; yaw: number }> = {
+    lead: { pos: new THREE.Vector3(-3.3, 0, -2.45), yaw: Math.PI + 0.12 },
+    second: { pos: new THREE.Vector3(-1.9, 0, -2.45), yaw: Math.PI + 0.08 },
+    opposing: { pos: new THREE.Vector3(1.9, 0, -2.45), yaw: Math.PI - 0.08 },
+    opposingSecond: { pos: new THREE.Vector3(3.3, 0, -2.45), yaw: Math.PI - 0.12 },
+  };
+  // They stand just behind wherever the lectern is right now.
+  const lecternStand = () =>
+    new THREE.Vector3(lectern.position.x + 0.15, 0, lectern.position.z + 0.62);
+  // The aisle between the tables — every walk passes through it.
+  const aisleFor = (slot: CounselSlot) =>
+    new THREE.Vector3(slot.startsWith('opposing') ? 0.75 : -0.75, 0, -2.5);
+  const counselFigs = {} as Record<CounselSlot, FigureApi>;
+  let lecternOccupant: CounselSlot | null = null;
+  const counselToLectern = (slot: CounselSlot | null) => {
+    if (lecternOccupant && lecternOccupant !== slot) {
+      const leaving = lecternOccupant;
+      const home = COUNSEL_HOME[leaving];
+      counselFigs[leaving].walkTo([aisleFor(leaving), home.pos], home.yaw, 'seated');
+      lecternOccupant = null;
     }
+    if (slot && lecternOccupant !== slot) {
+      counselFigs[slot].walkTo([aisleFor(slot), lecternStand()], Math.PI, 'lectern');
+      lecternOccupant = slot;
+    }
+  };
+  onLecternMoved = () => {
+    if (lecternOccupant) counselFigs[lecternOccupant].walkTo([lecternStand()], Math.PI, 'lectern');
+  };
+  for (const slot of Object.keys(COUNSEL_STYLES) as CounselSlot[]) {
+    const fig = makeFigure(COUNSEL_STYLES[slot]);
+    fig.group.name = `counsel-${slot}`;
+    const home = COUNSEL_HOME[slot];
+    fig.place(home.pos, home.yaw, 'seated');
+    fig.group.userData.onTap = () => {
+      counselToLectern(lecternOccupant === slot ? null : slot);
+      opts.onCounselTap?.(slot);
+    };
+    counselFigs[slot] = fig;
+    wellG.add(fig.group);
   }
 
   scene.add(wellG);
@@ -962,6 +1055,98 @@ export function createCourtroomScene(
   scene.add(boxG);
   stage.add(boxG);
 
+  // The jurors' desk monitors carry the evidence feed: cool document light
+  // when an exhibit is up, idle warm glow when the screen is dark.
+  const juryMonitors: THREE.MeshStandardMaterial[] = [];
+  boxG.traverse((o) => {
+    if (o.userData.isJuryMonitor) {
+      juryMonitors.push((o as THREE.Mesh).material as THREE.MeshStandardMaterial);
+    }
+  });
+
+  /* ---- The evidence screen: the record, published to the jury. A framed
+         display on an oak stand in the northwest corner, angled across the
+         well at the box (the judge reads it obliquely, the way judges do).
+         setExhibit puts a matter exhibit on it; dark glass otherwise. ---- */
+  const EXHIBIT_W = 1024, EXHIBIT_H = 640;
+  const exhibitCanvas = document.createElement('canvas');
+  exhibitCanvas.width = EXHIBIT_W;
+  exhibitCanvas.height = EXHIBIT_H;
+  const exhibitCtx = exhibitCanvas.getContext('2d')!;
+  const drawExhibitScreen = (img: HTMLImageElement | null, label?: string) => {
+    exhibitCtx.clearRect(0, 0, EXHIBIT_W, EXHIBIT_H);
+    exhibitCtx.fillStyle = '#0b0d0e';
+    exhibitCtx.fillRect(0, 0, EXHIBIT_W, EXHIBIT_H);
+    if (!img) {
+      // Dark glass: a faint window reflection and a standby light.
+      const streak = exhibitCtx.createLinearGradient(0, EXHIBIT_H, EXHIBIT_W * 0.7, 0);
+      streak.addColorStop(0, 'rgba(255, 220, 170, 0)');
+      streak.addColorStop(0.5, 'rgba(255, 220, 170, 0.05)');
+      streak.addColorStop(1, 'rgba(255, 220, 170, 0)');
+      exhibitCtx.fillStyle = streak;
+      exhibitCtx.fillRect(0, 0, EXHIBIT_W, EXHIBIT_H);
+      exhibitCtx.fillStyle = 'rgba(180, 60, 50, 0.9)';
+      exhibitCtx.beginPath();
+      exhibitCtx.arc(EXHIBIT_W - 26, EXHIBIT_H - 22, 5, 0, Math.PI * 2);
+      exhibitCtx.fill();
+      return;
+    }
+    // Contain-fit, letterboxed on the dark glass.
+    const scale = Math.min(EXHIBIT_W / img.width, (EXHIBIT_H - 56) / img.height);
+    const dw = img.width * scale, dh = img.height * scale;
+    exhibitCtx.drawImage(img, (EXHIBIT_W - dw) / 2, (EXHIBIT_H - 56 - dh) / 2, dw, dh);
+    // The label bar — exhibit number and name, the way the record knows it.
+    exhibitCtx.fillStyle = 'rgba(10, 10, 12, 0.88)';
+    exhibitCtx.fillRect(0, EXHIBIT_H - 56, EXHIBIT_W, 56);
+    exhibitCtx.fillStyle = '#c9a44a';
+    exhibitCtx.font = '26px Georgia, serif';
+    exhibitCtx.textBaseline = 'middle';
+    exhibitCtx.fillText(label ?? 'Exhibit', 22, EXHIBIT_H - 28);
+  };
+  drawExhibitScreen(null);
+  const exhibitTex = new THREE.CanvasTexture(exhibitCanvas);
+  exhibitTex.colorSpace = THREE.SRGBColorSpace;
+  const screenG = new THREE.Group();
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0x1c1a17, roughness: 0.4, metalness: 0.3 });
+  for (const sx of [-1.35, 1.35]) {
+    screenG.add(box(0.1, 1.1, 0.1, mat.oakDark, sx, 0.55, 0));
+    screenG.add(box(0.5, 0.06, 0.42, mat.oakDark, sx, 0.03, 0));
+  }
+  screenG.add(box(3.0, 0.08, 0.09, mat.oakDark, 0, 1.06, 0));
+  screenG.add(box(3.56, 2.28, 0.12, frameMat, 0, 2.14, 0));
+  const exhibitScreen = new THREE.Mesh(
+    new THREE.PlaneGeometry(3.32, 2.075),
+    new THREE.MeshStandardMaterial({
+      color: 0x000000, emissive: 0xffffff, emissiveMap: exhibitTex,
+      emissiveIntensity: 0.85, roughness: 0.35,
+    }),
+  );
+  exhibitScreen.position.set(0, 2.14, 0.07);
+  screenG.add(exhibitScreen);
+  // The screen lights its corner of the well when the record is up.
+  const exhibitState = { active: false };
+  const screenLight = new THREE.PointLight(0xcfe0f0, 0, 8);
+  screenLight.position.set(0, 2.1, 1.3);
+  screenLight.userData.animate = (t: number) => {
+    const target = exhibitState.active ? 0.5 : 0;
+    screenLight.intensity += (target - screenLight.intensity) * 0.06;
+    if (screenLight.intensity > 0.05) {
+      screenLight.intensity += Math.sin(t * 14.3) * 0.006; // raster hum
+    }
+  };
+  screenG.add(screenLight);
+  const screenTap = new THREE.Mesh(
+    new THREE.BoxGeometry(3.7, 2.6, 0.5),
+    new THREE.MeshBasicMaterial({ visible: false }),
+  );
+  screenTap.position.set(0, 2.1, 0.15);
+  screenTap.userData.onTap = () => opts.onExhibitTap?.();
+  screenG.add(screenTap);
+  screenG.position.set(-6.6, 0, -9.0);
+  screenG.rotation.y = 1.32; // angled across the well at the box
+  scene.add(screenG);
+  stage.add(screenG);
+
   /* ---- The bar, the gallery, and the clock that reads 4:40. ---- */
   const southG = new THREE.Group();
   southG.add(box(15, 0.08, 0.12, mat.oak, 0, 0.95, 2.2));
@@ -986,14 +1171,14 @@ export function createCourtroomScene(
     }
   }
   // One person in the gallery, back row, watching. Someone always is.
-  const watcher = new THREE.Mesh(new THREE.CapsuleGeometry(0.19, 0.32, 4, 8), SUITS[4]);
-  watcher.position.set(-4.3, 0.95, 8.0);
-  const watcherHead = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), mat.bronze);
-  watcherHead.position.set(-4.3, 1.4, 8.0);
+  const watcherFig = makeFigure({
+    suit: 0x3e4a5c, skin: 0x9a6a4a, hair: 0x241d16, hairStyle: 'short',
+  });
+  watcherFig.place(new THREE.Vector3(-4.3, 0, 8.0), Math.PI, 'seated');
   const watcherG = new THREE.Group();
-  watcherG.add(watcher, watcherHead);
+  watcherG.add(watcherFig.group);
   watcherG.userData.animate = (t: number) => {
-    watcherHead.rotation.y = Math.sin(t * 0.13) * 0.4 - 0.2;
+    watcherFig.head.rotation.y = Math.sin(t * 0.13) * 0.4 - 0.2;
   };
   southG.add(watcherG);
 
@@ -1120,6 +1305,68 @@ export function createCourtroomScene(
   scene.add(jr);
   stage.add(jr);
 
+  /* ---- Speech: parchment bubbles over whoever is speaking. One persistent
+         layer animates every live bubble (billboard, fade, expire) — no
+         per-bubble registration, no leaks. ---- */
+  interface BubbleEntry {
+    mesh: THREE.Mesh;
+    matB: THREE.MeshBasicMaterial;
+    anchor: THREE.Object3D;
+    off: number;
+    t0: number;
+    hold: number;
+  }
+  const bubbles = new Map<string, BubbleEntry>();
+  const bubbleLayer = new THREE.Group();
+  const bubbleWorld = new THREE.Vector3();
+  bubbleLayer.userData.animate = (t: number) => {
+    for (const [id, b] of bubbles) {
+      b.anchor.getWorldPosition(bubbleWorld);
+      b.mesh.position.set(bubbleWorld.x, bubbleWorld.y + b.off, bubbleWorld.z);
+      b.mesh.rotation.y = Math.atan2(
+        stage.camera.position.x - bubbleWorld.x,
+        stage.camera.position.z - bubbleWorld.z,
+      );
+      const dt = t - b.t0;
+      const a = dt < 0.3 ? dt / 0.3 : dt > b.hold - 0.5 ? Math.max(0, (b.hold - dt) / 0.5) : 1;
+      b.matB.opacity = a;
+      if (dt > b.hold) {
+        bubbleLayer.remove(b.mesh);
+        b.matB.map?.dispose();
+        b.matB.dispose();
+        b.mesh.geometry.dispose();
+        bubbles.delete(id);
+      }
+    }
+  };
+  scene.add(bubbleLayer);
+  stage.add(bubbleLayer);
+
+  const removeBubble = (id: string) => {
+    const b = bubbles.get(id);
+    if (!b) return;
+    bubbleLayer.remove(b.mesh);
+    b.matB.map?.dispose();
+    b.matB.dispose();
+    b.mesh.geometry.dispose();
+    bubbles.delete(id);
+  };
+
+  const speechAnchor = (speaker: SpeakerId): { obj: THREE.Object3D; off: number } | null => {
+    if (speaker === 'judge') return { obj: judgeSpeechAnchor, off: 0 };
+    if (speaker === 'witness') return { obj: witnessSpeechAnchor, off: 0 };
+    if (speaker.startsWith('seat-')) {
+      const u = boxJurors.get(Number(speaker.slice(5)));
+      return u ? { obj: u, off: 2.1 } : null;
+    }
+    if (speaker.startsWith('room-')) {
+      const u = roomJurors.get(Number(speaker.slice(5)));
+      return u ? { obj: u, off: 2.15 } : null;
+    }
+    const f = counselFigs[speaker as CounselSlot];
+    return f ? { obj: f.head, off: 0.32 } : null;
+  };
+
   /* ---- The ruling flash: a light in the well that answers the gavel. ---- */
   const rulingLight = new THREE.PointLight(0xffffff, 0, 12);
   rulingLight.position.set(0, 3.4, -6);
@@ -1141,6 +1388,10 @@ export function createCourtroomScene(
     box: { position: [2.6, 1.7, -4.9], target: [8.4, 1.1, -5.2] },
     // The jury room, from the door.
     juryroom: { position: [40 - 4.6, 2.3, 4.0], target: [40, 1.15, -0.6] },
+    // The stand, from counsel's side of the well.
+    witness: { position: [2.5, 1.85, -7.2], target: [4.6, 1.6, -9.4] },
+    // The screen, from its axis — what the jury sees.
+    screen: { position: [-2.7, 2.0, -8.0], target: [-6.6, 2.1, -9.0] },
   };
   stage.setView(views.lectern);
 
@@ -1209,27 +1460,68 @@ export function createCourtroomScene(
       };
       img.src = url;
     },
-    setCounselPortrait(slot, url) {
+    setWitnessPortrait(url) {
+      if (!url) {
+        witnessCard.visible = false;
+        return;
+      }
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
-        const tex = makeCardTexture(img, { fadeBottom: true });
-        const backTex = backTexture(tex.image as HTMLCanvasElement);
-        counsel.get(slot)?.traverse((o) => {
-          if (o.userData.isCard) {
-            const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
-            m.map = tex;
-            m.needsUpdate = true;
-            o.userData.alphaCanvas = tex.image;
-          } else if (o.userData.isCardBack) {
-            const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial;
-            m.map = backTex;
-            m.needsUpdate = true;
-            o.userData.alphaCanvas = tex.image;
-          }
-        });
+        const m = witnessCard.material as THREE.MeshStandardMaterial;
+        const tex = makeCardTexture(img, { fadeBottom: false });
+        m.map = tex;
+        m.needsUpdate = true;
+        witnessCard.userData.alphaCanvas = tex.image;
+        witnessCard.visible = true;
       };
       img.src = url;
+    },
+    setExhibit(url, label) {
+      if (!url) {
+        exhibitState.active = false;
+        drawExhibitScreen(null);
+        exhibitTex.needsUpdate = true;
+        for (const m of juryMonitors) m.emissive.set(0x8fa8c0);
+        return;
+      }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        exhibitState.active = true;
+        drawExhibitScreen(img, label);
+        exhibitTex.needsUpdate = true;
+        for (const m of juryMonitors) m.emissive.set(0xa8c4e0);
+      };
+      img.src = url;
+    },
+    counselToLectern,
+    say(speaker, text, holdSeconds) {
+      const a = speechAnchor(speaker);
+      if (!a || !text.trim()) return;
+      removeBubble(speaker);
+      const { tex, aspect } = speechTexture(text);
+      const matB = new THREE.MeshBasicMaterial({
+        map: tex, transparent: true, opacity: 0, depthWrite: false,
+      });
+      const w = 1.5;
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, w * aspect), matB);
+      mesh.raycast = () => {}; // bubbles never eat taps
+      mesh.renderOrder = 5;
+      bubbleLayer.add(mesh);
+      const wordCount = text.split(/\s+/).length;
+      bubbles.set(speaker, {
+        mesh,
+        matB,
+        anchor: a.obj,
+        off: a.off + (w * aspect) / 2,
+        t0: performance.now() / 1000,
+        hold: holdSeconds ?? Math.min(14, Math.max(3.5, 2.5 + wordCount * 0.32)),
+      });
+    },
+    clearSpeech(speaker) {
+      if (speaker) removeBubble(speaker);
+      else for (const id of [...bubbles.keys()]) removeBubble(id);
     },
     seatCloseup(seat, room) {
       const unit = (room === 'box' ? boxJurors : roomJurors).get(seat);
@@ -1251,6 +1543,12 @@ export function createCourtroomScene(
     },
     judgeCloseup() {
       return { position: [0.4, 2.55, -8.3], target: [0.4, 2.25, -11.15] };
+    },
+    witnessCloseup() {
+      return { position: [2.9, 2.0, -7.6], target: [4.65, 1.7, -9.5] };
+    },
+    exhibitCloseup() {
+      return { position: [-3.4, 2.05, -8.2], target: [-6.6, 2.1, -9.0] };
     },
   };
 }
