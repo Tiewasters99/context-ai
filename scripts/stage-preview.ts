@@ -33,6 +33,23 @@ function showChip(html: string) {
 // Typing or offering an exhibit takes the room over from the demo loop.
 let manual = false;
 
+// The last line counsel argued (bar or mic) — the Court answers it when you
+// click the judge. Preview = canned courtroom responses; the app wires the
+// real judge agent here (same machinery as the to-offer colloquy).
+let lastAddress: { text: string; t: number } | null = null;
+
+function judgeAnswer(text: string): string | null {
+  const t = text.toLowerCase();
+  const addressed = /your honor|the court|judge/.test(t) || t.trim().endsWith('?');
+  if (!addressed) return null;
+  if (/may i approach/.test(t)) return 'You may approach.';
+  if (/may i (appear|proceed|be heard|begin|continue|reserve)/.test(t)) return 'You may, counsel.';
+  if (/(may i|permission to) publish/.test(t)) return 'You may publish.';
+  if (/(leave of court|permission)/.test(t)) return 'Granted, counsel.';
+  if (t.trim().endsWith('?')) return 'You may, counsel.';
+  return 'Proceed, counsel.';
+}
+
 const scene = createCourtroomScene(stage, {
   onSeatTap: (seat, room) => {
     const view = scene.seatCloseup(seat, room);
@@ -41,6 +58,16 @@ const scene = createCourtroomScene(stage, {
     if (b) showChip(`<b>${b.name}</b> · seat ${seat}<br><i>${b.tagline}</i><br>${b.bio}`);
   },
   onJudgeTap: () => {
+    // Address the Court, then click her: she answers from the bench. With
+    // nothing pending, the tap is the usual closeup + bio.
+    const pending = lastAddress && Date.now() - lastAddress.t < 120000
+      ? judgeAnswer(lastAddress.text)
+      : null;
+    if (pending) {
+      scene.say('judge', pending);
+      lastAddress = null;
+      return;
+    }
     stage.flyTo(scene.judgeCloseup(), 900);
     showChip(`<b>${JUDGE_BIO.name}</b><br><i>${JUDGE_BIO.tagline}</i><br>${JUDGE_BIO.paragraphs.join('<br>')}`);
   },
@@ -80,6 +107,7 @@ const scene = createCourtroomScene(stage, {
       occ = 'lead';
     }
     scene.say(occ, text, 9999); // holds until replaced or edited
+    lastAddress = { text, t: Date.now() }; // the Court can answer it
     input.value = '';
   };
   input.addEventListener('keydown', (e) => {
@@ -132,6 +160,7 @@ const scene = createCourtroomScene(stage, {
         }
         const line = (dictated + interim).trim();
         if (line) scene.say(speaker, line, 9999);
+        if (dictated.trim()) lastAddress = { text: dictated.trim(), t: Date.now() };
         input.value = dictated.trimEnd();
       };
       rec.onend = () => {
