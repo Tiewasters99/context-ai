@@ -533,9 +533,12 @@ function jurorDeskUnit(seat: number): THREE.Group {
   const state = { pulseT: -10 };
   g.userData.jurorState = state;
   g.userData.animate = (t: number) => {
-    // The only motion is light: the monitor's picture changes.
-    (screen.material as THREE.MeshStandardMaterial).emissiveIntensity =
-      0.55 + Math.sin(t * 1.9 + phase) * 0.07 + Math.sin(t * 8.7 + phase * 3) * 0.03;
+    // The only motion is light: the monitor's picture changes. When the
+    // evidence feed is live the shared feed material owns the screen.
+    if (!screen.userData.feedLive) {
+      (screen.material as THREE.MeshStandardMaterial).emissiveIntensity =
+        0.55 + Math.sin(t * 1.9 + phase) * 0.07 + Math.sin(t * 8.7 + phase * 3) * 0.03;
+    }
     const dt = t - state.pulseT;
     const ringMat = ring.material as THREE.MeshBasicMaterial;
     if (dt < 1.6) {
@@ -1073,13 +1076,13 @@ export function createCourtroomScene(
   scene.add(boxG);
   stage.add(boxG);
 
-  // The jurors' desk monitors carry the evidence feed: cool document light
-  // when an exhibit is up, idle warm glow when the screen is dark.
-  const juryMonitors: THREE.MeshStandardMaterial[] = [];
+  // The jurors' desk monitors carry the evidence feed — the way a modern
+  // courtroom actually works: publish to the big screen and every juror
+  // monitor shows the same picture (one shared texture; the planes are the
+  // feed's own 16:10). Idle, they keep their soft glow.
+  const juryMonitors: THREE.Mesh[] = [];
   boxG.traverse((o) => {
-    if (o.userData.isJuryMonitor) {
-      juryMonitors.push((o as THREE.Mesh).material as THREE.MeshStandardMaterial);
-    }
+    if (o.userData.isJuryMonitor) juryMonitors.push(o as THREE.Mesh);
   });
 
   /* ---- The evidence screen: the record, published to the jury. A framed
@@ -1161,6 +1164,24 @@ export function createCourtroomScene(
     }
   };
   screenG.add(screenLight);
+  // The monitors' shared feed: same canvas texture as the big screen.
+  const monitorFeedMat = new THREE.MeshStandardMaterial({
+    color: 0x000000, emissive: 0xffffff, emissiveMap: exhibitTex,
+    emissiveIntensity: 0.7, roughness: 0.4,
+  });
+  const setMonitorsLive = (live: boolean) => {
+    for (const m of juryMonitors) {
+      if (live) {
+        if (!m.userData.idleMat) m.userData.idleMat = m.material;
+        m.material = monitorFeedMat;
+        m.userData.feedLive = true;
+      } else if (m.userData.idleMat) {
+        m.material = m.userData.idleMat as THREE.Material;
+        m.userData.feedLive = false;
+      }
+    }
+  };
+
   // Publication is a courtroom act: armExhibit stages the exhibit, and the
   // NEXT click on the screen publishes it (the cursor walk is the theater).
   let pendingExhibit: { url: string; label?: string } | null = null;
@@ -1171,7 +1192,7 @@ export function createCourtroomScene(
       exhibitState.active = true;
       drawExhibitScreen(img, label);
       exhibitTex.needsUpdate = true;
-      for (const m of juryMonitors) m.emissive.set(0xa8c4e0);
+      setMonitorsLive(true);
     };
     img.src = url;
   };
@@ -1548,7 +1569,7 @@ export function createCourtroomScene(
         pendingExhibit = null;
         drawExhibitScreen(null);
         exhibitTex.needsUpdate = true;
-        for (const m of juryMonitors) m.emissive.set(0x8fa8c0);
+        setMonitorsLive(false);
         return;
       }
       applyExhibit(url, label);
