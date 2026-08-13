@@ -3,6 +3,7 @@ import { X, Save, Loader2, FileText, Lock, CheckCircle, AlertCircle, Download } 
 import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
 import { downloadVaultDocument, saveVaultDocumentText } from '@/lib/vault-persist';
+import { supabase } from '@/lib/supabase';
 import { downloadBlob } from '@/lib/export-page';
 
 // File extensions we treat as plain text — these open in an editable textarea
@@ -64,12 +65,28 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
             // here — they predate in-app editing.
             throw new Error('Original file not available — re-upload it to view or edit.');
           }
-          const blob = await downloadVaultDocument(file.storagePath);
           if (typeEditable) {
+            const blob = await downloadVaultDocument(file.storagePath);
             text = await blob.text();
             editable = true;
           } else {
-            text = await extractText(new File([blob], file.name, { type: blob.type }));
+            // Prefer the server-indexed text — the same text search and
+            // connected agents see. The client-side extractor doesn't cover
+            // every format the server pipeline does (xlsx spreadsheets,
+            // pptx, epub, OCR'd scans), which used to open as a BLANK view
+            // ("spreadsheet not displaying", 2026-08-11).
+            const { data: passages } = await supabase
+              .from('passages')
+              .select('text')
+              .eq('document_id', file.id)
+              .eq('summary_level', 0)
+              .order('sequence_number', { ascending: true });
+            if (passages && passages.length > 0) {
+              text = passages.map((p) => p.text).join('\n\n');
+            } else {
+              const blob = await downloadVaultDocument(file.storagePath);
+              text = await extractText(new File([blob], file.name, { type: blob.type }));
+            }
             editable = false;
           }
         } else {
