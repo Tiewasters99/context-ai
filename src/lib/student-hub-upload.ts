@@ -502,7 +502,10 @@ function mergeSeams(sections: PlanSection[]): void {
     firstB.first = lastA.first;
     firstB.flagged = `continues from ${a.title}; merged`;
     a.items.pop();
-    if (a.items.length) a.items[a.items.length - 1].last = a.last = lastA.first - 1;
+    if (a.items.length) {
+      const prev = a.items[a.items.length - 1];
+      prev.last = a.last = Math.max(prev.first, lastA.first - 1);
+    }
     b.first = lastA.first;
   }
 }
