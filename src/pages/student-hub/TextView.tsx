@@ -220,9 +220,21 @@ export default function TextView() {
               </span>
             </button>
           ))}
-          <p style={{ fontFamily: T.sans, fontSize: 12, color: T.faint, marginTop: 18 }}>
-            Scan more chapters and books and they take their place here.
-          </p>
+          <Link
+            to="/app/student-hub/add"
+            style={{
+              display: 'flex', alignItems: 'baseline', gap: 12, width: '100%',
+              padding: '16px 4px', borderBottom: `1px solid ${T.rule}`, textDecoration: 'none',
+            }}
+          >
+            <span style={{ color: T.brass, fontFamily: T.serif, flexShrink: 0 }}>＋</span>
+            <span style={{ fontFamily: T.serif, fontSize: 18, fontStyle: 'italic', color: T.green }}>
+              Add a chapter
+            </span>
+            <span style={{ fontFamily: T.sans, fontSize: 12, color: T.faint }}>
+              scan it, hand over the pages, it takes its place here
+            </span>
+          </Link>
           <div style={{ marginTop: 18 }}>
             <Link
               to="/app/student-hub/shelf"

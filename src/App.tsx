@@ -27,6 +27,7 @@ import MootSession from '@/pages/moot/MootSession';
 import TextView from '@/pages/student-hub/TextView';
 import StudentHubHome from '@/pages/student-hub/StudentHubHome';
 import StudentHubSession from '@/pages/student-hub/StudentHubSession';
+import AddChapter from '@/pages/student-hub/AddChapter';
 import MeetingView from '@/pages/MeetingView';
 import ConnectLayout from '@/components/layout/ConnectLayout';
 import ConnectMeetings from '@/pages/connect/ConnectMeetings';
@@ -109,6 +110,7 @@ export default function App() {
               <Route path="moot-bench/:id" element={<MootSession />} />
               <Route path="student-hub" element={<TextView />} />
               <Route path="student-hub/shelf" element={<StudentHubHome />} />
+              <Route path="student-hub/add" element={<AddChapter />} />
               <Route path="student-hub/:id" element={<StudentHubSession />} />
               <Route path="mediation" element={<MediationCenter />} />
               <Route path="mediation/register" element={<MediationRegister />} />

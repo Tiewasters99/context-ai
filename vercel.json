@@ -10,6 +10,9 @@
     "api/ingest.mjs": {
       "maxDuration": 60
     },
+    "api/student-hub-ocr.mjs": {
+      "maxDuration": 120
+    },
     "api/legal-source.mjs": {
       "maxDuration": 60
     },

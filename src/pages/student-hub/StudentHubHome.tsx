@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { allModels } from '@/lib/llm';
 import {
   listSessions, createSession, deleteSession, extractCaption,
@@ -163,6 +163,15 @@ export default function StudentHubHome() {
             seat and let the professor start with the hairy hand.
           </p>
         )}
+
+        <p style={{ margin: '0 0 26px' }}>
+          <Link
+            to="/app/student-hub/add"
+            style={{ fontFamily: T.sans, fontSize: 12, color: T.green, textDecoration: 'none' }}
+          >
+            A whole chapter to add? Hand over the scanned pages →
+          </Link>
+        </p>
 
         {/* ---- Intake desk ---- */}
         <section>
