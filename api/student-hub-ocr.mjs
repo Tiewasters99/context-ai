@@ -89,10 +89,15 @@ export default async function handler(req, res) {
   const out = [];
   for (const p of pages) {
     const text = byPage.get(p.n) ?? '';
+    // No upsert: bucket RLS (038) has no UPDATE policy, so overwrites are
+    // denied. A sidecar that already exists (retried batch) is the same
+    // page's transcription — first write wins.
     const { error } = await sb.storage
       .from(BUCKET)
-      .upload(ocrTextPath(p.path), Buffer.from(text, 'utf8'), { contentType: 'text/plain', upsert: true });
-    if (error) return json(res, 500, { error: `persist failed: ${p.path}: ${error.message}` });
+      .upload(ocrTextPath(p.path), Buffer.from(text, 'utf8'), { contentType: 'text/plain' });
+    if (error && !/already exists/i.test(error.message)) {
+      return json(res, 500, { error: `persist failed: ${p.path}: ${error.message}` });
+    }
     out.push({ path: p.path, n: p.n, text });
   }
   return json(res, 200, { pages: out });

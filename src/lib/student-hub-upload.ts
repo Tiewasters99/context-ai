@@ -133,10 +133,12 @@ const pagePath = (prefix: string, n: number) => `${prefix}/page_${String(n).padS
 
 async function uploadOne(path: string, blob: Blob): Promise<void> {
   for (let attempt = 0; ; attempt++) {
+    // No upsert: bucket RLS (038) has no UPDATE policy, so overwrites are
+    // denied. A page that already exists is the same page — keep it.
     const { error } = await supabase.storage
       .from(SCAN_BUCKET)
-      .upload(path, blob, { contentType: 'image/jpeg', upsert: true });
-    if (!error) return;
+      .upload(path, blob, { contentType: 'image/jpeg' });
+    if (!error || /already exists/i.test(error.message)) return;
     if (attempt >= 2) throw new Error(`upload failed: ${path}: ${error.message}`);
     await sleep(1000 * (attempt + 1));
   }
