@@ -15,6 +15,7 @@ import {
   Minimize,
   Download,
   HardDrive,
+  StickyNote,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -26,13 +27,32 @@ import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import { useConnections } from '@/hooks/useConnections';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
+  addAnnotationLink,
+  annotationIsNote,
   createAnnotation,
   deleteAnnotation,
+  derivePageLine,
   listAnnotations,
+  listIncomingLinks,
+  updateAnnotation,
   type Annotation,
   type AnnotationColor,
+  type AnnotationLink,
+  type AnnotationVisibility,
   type FractionalRect,
+  type IncomingLink,
 } from '@/lib/document-annotations';
+import {
+  CrossRefRail,
+  NoteCard,
+  NoteComposer,
+  NotesRail,
+  NOTE_RAIL_W,
+  NOTE_RAIL_W_MOBILE,
+  RefCard,
+  type ComposerLink,
+} from '@/components/reader/Marginalia';
+import { useAuth } from '@/contexts/AuthContext';
 
 // pdfjs worker URL — same pattern as src/lib/extract.ts. Resolved at build
 // time by Vite from the installed pdfjs-dist package.
@@ -134,6 +154,19 @@ export default function DocumentReader() {
     rects: FractionalRect[];
     anchorText: string;
   } | null>(null);
+
+  // Marginalia state — the margin rails and their popovers. `incomingLinks`
+  // are cross-references: notes in OTHER documents whose links point here.
+  const { user } = useAuth();
+  const [noteComposer, setNoteComposer] = useState<{
+    x: number;
+    y: number;
+    rects: FractionalRect[];
+    anchorText: string;
+  } | null>(null);
+  const [openNote, setOpenNote] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [openRef, setOpenRef] = useState<{ link: IncomingLink; x: number; y: number } | null>(null);
+  const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
 
   const pdfDocRef = useRef<unknown>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -352,8 +385,13 @@ export default function DocumentReader() {
           if (pane && pane.clientWidth > 0 && pane.clientHeight > 0) {
             const natural = pdfPage.getViewport({ scale: 1 });
             const PAD = 24; // breathing room around the page
+            // The margin rails flank the page in-flow; subtract them so the
+            // page never overflows horizontally. On desktop the height
+            // constraint almost always wins anyway, so the page size is
+            // visually unchanged.
+            const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
             const fit = Math.min(
-              (pane.clientWidth - PAD * 2) / natural.width,
+              (pane.clientWidth - PAD * 2 - rails) / natural.width,
               (pane.clientHeight - PAD * 2) / natural.height,
             );
             scale = Math.max(0.1, Math.min(fit, 6));
@@ -420,7 +458,7 @@ export default function DocumentReader() {
       cancelled = true;
       if (textLayer) try { textLayer.cancel(); } catch { /* noop */ }
     };
-  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx]);
+  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx, isMobile]);
 
   const goPrev = useCallback(() => setPage((p) => Math.max(1, p - 1)), []);
   const goNext = useCallback(
@@ -591,15 +629,36 @@ export default function DocumentReader() {
     return () => { cancelled = true; };
   }, [loadState, fileKind, id]);
 
-  // Load annotations once per document.
+  // Load annotations + incoming cross-references once per document, and
+  // keep them live: margin notes are collaborative, so a teammate's note
+  // should appear without a reload (the matter_comments realtime pattern;
+  // RLS filters what each subscriber may see).
   useEffect(() => {
     if (!id || loadState !== 'ready' || fileKind !== 'pdf') return;
     let cancelled = false;
-    void (async () => {
-      const rows = await listAnnotations(id);
-      if (!cancelled) setAnnotations(rows);
-    })();
-    return () => { cancelled = true; };
+    const refresh = async () => {
+      const [rows, incoming] = await Promise.all([
+        listAnnotations(id),
+        listIncomingLinks(id),
+      ]);
+      if (!cancelled) {
+        setAnnotations(rows);
+        setIncomingLinks(incoming);
+      }
+    };
+    void refresh();
+    const channel = supabase
+      .channel(`doc-annotations-${id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'document_annotations', filter: `document_id=eq.${id}` },
+        () => { void refresh(); },
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
   }, [id, loadState, fileKind]);
 
   // Watch text-layer selections — when the user releases the mouse after
@@ -682,6 +741,55 @@ export default function DocumentReader() {
       setAnnotations((prev) => prev.filter((a) => a.id !== annId));
     }
   }, []);
+
+  // Save a margin note: derive page:line deterministically from the ingested
+  // passages (transcripts get real line numbers; everything else stays
+  // page-only — the verbatim quote in anchor_text is the ground truth),
+  // persist, then attach any document links.
+  const saveNote = useCallback(
+    async (args: { body: string; visibility: AnnotationVisibility; links: ComposerLink[] }) => {
+      if (!id || !noteComposer) return;
+      const derived = await derivePageLine(id, page, noteComposer.anchorText);
+      const ann = await createAnnotation({
+        documentId: id,
+        page,
+        color: 'gold',
+        rects: noteComposer.rects,
+        anchorText: noteComposer.anchorText,
+        note: args.body,
+        visibility: args.visibility,
+        lineStart: derived?.lineStart ?? null,
+        lineEnd: derived?.lineEnd ?? null,
+      });
+      if (ann) {
+        const savedLinks: AnnotationLink[] = [];
+        for (const l of args.links) {
+          const link = await addAnnotationLink({
+            annotationId: ann.id,
+            targetDocumentId: l.documentId,
+            targetPage: l.page,
+            label: l.title,
+          });
+          if (link) savedLinks.push(link);
+        }
+        setAnnotations((prev) => [...prev, { ...ann, links: savedLinks }]);
+      }
+      setNoteComposer(null);
+    },
+    [id, page, noteComposer],
+  );
+
+  const editNote = useCallback(
+    async (annId: string, body: string, visibility: AnnotationVisibility) => {
+      const ok = await updateAnnotation(annId, { note: body, visibility });
+      if (ok) {
+        setAnnotations((prev) =>
+          prev.map((a) => (a.id === annId ? { ...a, note: body, visibility } : a)),
+        );
+      }
+    },
+    [],
+  );
 
   const jumpDest = useCallback(async (dest: unknown) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1039,13 +1147,26 @@ export default function DocumentReader() {
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
             )}
             {loadState === 'ready' && fileKind === 'pdf' && (
-              <div className="relative">
-                <canvas ref={canvasRef} className="block shadow-2xl" />
-                <AnnotationsOverlay
-                  annotations={annotations.filter((a) => a.page === page)}
-                  onRemove={(annId) => void removeAnnotation(annId)}
+              <div className="flex flex-row items-stretch">
+                <CrossRefRail
+                  refs={incomingLinks.filter((r) => r.target_page === page)}
+                  isMobile={isMobile}
+                  onOpen={(link, a) => setOpenRef({ link, x: a.x, y: a.y })}
                 />
-                <div ref={textLayerRef} className="textLayer absolute inset-0" />
+                <div className="relative">
+                  <canvas ref={canvasRef} className="block shadow-2xl" />
+                  <AnnotationsOverlay
+                    annotations={annotations.filter((a) => a.page === page)}
+                    onRemove={(annId) => void removeAnnotation(annId)}
+                  />
+                  <div ref={textLayerRef} className="textLayer absolute inset-0" />
+                </div>
+                <NotesRail
+                  notes={annotations.filter((a) => a.page === page && annotationIsNote(a))}
+                  currentUserId={user?.id ?? null}
+                  isMobile={isMobile}
+                  onOpen={(n, a) => setOpenNote({ id: n.id, x: a.x, y: a.y })}
+                />
               </div>
             )}
             {loadState === 'ready' && fileKind === 'docx' && docHtml && (
@@ -1140,9 +1261,66 @@ export default function DocumentReader() {
           x={selectionMenu.x}
           y={selectionMenu.y}
           onPick={(c) => void saveAnnotation(c)}
+          onNote={() => {
+            setNoteComposer({
+              x: selectionMenu.x,
+              y: selectionMenu.y,
+              rects: selectionMenu.rects,
+              anchorText: selectionMenu.anchorText,
+            });
+            window.getSelection()?.removeAllRanges();
+            setSelectionMenu(null);
+          }}
           onCancel={() => {
             window.getSelection()?.removeAllRanges();
             setSelectionMenu(null);
+          }}
+        />
+      )}
+      {noteComposer && id && (
+        <NoteComposer
+          anchor={{ x: noteComposer.x, y: noteComposer.y }}
+          quote={noteComposer.anchorText}
+          matterId={doc?.matterspace_id ?? null}
+          currentDocumentId={id}
+          isMobile={isMobile}
+          onSave={(args) => void saveNote(args)}
+          onCancel={() => setNoteComposer(null)}
+        />
+      )}
+      {openNote && (() => {
+        const ann = annotations.find((a) => a.id === openNote.id);
+        if (!ann) return null;
+        return (
+          <NoteCard
+            note={ann}
+            anchor={{ x: openNote.x, y: openNote.y }}
+            isMobile={isMobile}
+            isAuthor={ann.user_id === user?.id}
+            onClose={() => setOpenNote(null)}
+            onDelete={() => {
+              void removeAnnotation(ann.id);
+              setOpenNote(null);
+            }}
+            onSaveEdit={(body, visibility) => void editNote(ann.id, body, visibility)}
+            onOpenLink={(l) =>
+              navigate(
+                `/app/document/${l.target_document_id}${l.target_page ? `?page=${l.target_page}` : ''}`,
+              )
+            }
+          />
+        );
+      })()}
+      {openRef && (
+        <RefCard
+          refLink={openRef.link}
+          anchor={{ x: openRef.x, y: openRef.y }}
+          isMobile={isMobile}
+          onClose={() => setOpenRef(null)}
+          onOpenSource={() => {
+            const a = openRef.link.annotation;
+            if (a) navigate(`/app/document/${a.document_id}?page=${a.page}`);
+            setOpenRef(null);
           }}
         />
       )}
@@ -1192,8 +1370,12 @@ function AnnotationsOverlay({
 }) {
   return (
     <div className="absolute inset-0 pointer-events-none">
-      {annotations.map((ann) =>
-        ann.rects.map((rect, i) => (
+      {annotations.map((ann) => {
+        // Margin notes anchor with a quiet dotted underline, not a color
+        // fill — the margin mark is the affordance; the page stays calm.
+        // They're managed from the note card, so no inline remove button.
+        const isNote = ann.note != null && ann.note.trim().length > 0;
+        return ann.rects.map((rect, i) => (
           <div
             key={`${ann.id}-${i}`}
             className="absolute group"
@@ -1202,13 +1384,14 @@ function AnnotationsOverlay({
               top: `${rect.y * 100}%`,
               width: `${rect.w * 100}%`,
               height: `${rect.h * 100}%`,
-              backgroundColor: ANNOTATION_FILL[ann.color],
+              backgroundColor: isNote ? 'transparent' : ANNOTATION_FILL[ann.color],
+              borderBottom: isNote ? '1.5px dotted rgba(212,160,84,0.6)' : undefined,
               borderRadius: '2px',
               pointerEvents: 'auto',
             }}
-            title={ann.anchor_text || undefined}
+            title={isNote ? ann.note ?? undefined : ann.anchor_text || undefined}
           >
-            {i === 0 && (
+            {i === 0 && !isNote && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRemove(ann.id); }}
                 className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-black/70 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
@@ -1218,8 +1401,8 @@ function AnnotationsOverlay({
               </button>
             )}
           </div>
-        )),
-      )}
+        ));
+      })}
     </div>
   );
 }
@@ -1228,11 +1411,13 @@ function SelectionMenu({
   x,
   y,
   onPick,
+  onNote,
   onCancel,
 }: {
   x: number;
   y: number;
   onPick: (color: AnnotationColor) => void;
+  onNote: () => void;
   onCancel: () => void;
 }) {
   const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
@@ -1253,6 +1438,14 @@ function SelectionMenu({
           title={`Highlight ${c}`}
         />
       ))}
+      <div className="w-px h-4 bg-white/15 mx-0.5" />
+      <button
+        onClick={onNote}
+        className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
+        title="Add a margin note"
+      >
+        <StickyNote size={14} />
+      </button>
       <div className="w-px h-4 bg-white/15 mx-0.5" />
       <button
         onClick={onCancel}
