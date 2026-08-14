@@ -677,15 +677,30 @@ export default function DocumentReader() {
       const layer = textLayerRef.current;
       if (!layer) return;
 
-      // Only show the popover when the selection is anchored inside the
-      // text layer (not random page chrome).
-      const anchorNode = sel.anchorNode;
-      if (!anchorNode || !layer.contains(anchorNode)) {
+      // Only act on selections that actually touch the page's text layer.
+      //
+      // Testing sel.anchorNode alone was wrong, and silently broke both
+      // highlighting and margin notes: a drag that begins a few pixels off a
+      // glyph — i.e. almost every real drag — anchors in whichever sibling
+      // element sits under the cursor at mousedown, usually the annotations
+      // overlay (`absolute inset-0`, same box as the text layer), and only
+      // *ends* inside the text layer. The old guard rejected that as "page
+      // chrome" and no popover ever appeared. Range.intersectsNode covers
+      // every direction the user can drag, including selections that start
+      // above the page and end below it.
+      if (sel.rangeCount === 0) {
         setSelectionMenu(null);
         return;
       }
-
       const range = sel.getRangeAt(0);
+      const touchesTextLayer =
+        layer.contains(sel.anchorNode) ||
+        layer.contains(sel.focusNode) ||
+        range.intersectsNode(layer);
+      if (!touchesTextLayer) {
+        setSelectionMenu(null);
+        return;
+      }
       const clientRects = Array.from(range.getClientRects()).filter(
         (r) => r.width > 0 && r.height > 0,
       );
