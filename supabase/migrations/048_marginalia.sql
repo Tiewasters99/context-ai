@@ -5,9 +5,11 @@
 -- page position (page + fractional rects + verbatim anchor_text, per
 -- migration 020), collapsed to a small mark in the margin.
 --
--- This migration extends document_annotations rather than adding a parallel
--- table — the anchoring machinery (page, rects, anchor_text) already exists
--- and is proven in the reader.
+-- This migration builds on document_annotations rather than adding a parallel
+-- table — the anchoring machinery (page, rects, anchor_text) is the same one
+-- the reader's highlights use. NOTE: that table was declared in migration 020
+-- but never applied to production, so this file creates it if absent (see the
+-- next section) before adding the marginalia columns.
 --
 --   * visibility: 'matter' (default — the document is common property),
 --     'private' (note to self; can be flipped to 'matter' later), and
@@ -36,7 +38,61 @@
 -- (the 42501 class of bug from migrations 022/047).
 
 -- ============================================================================
--- Columns
+-- Base table (from migration 020, which never reached production)
+--
+-- Verified 2026-08-14 against the live database: public.document_annotations
+-- did not exist, so 048's ALTER failed with 42P01. Migration 020 was written
+-- but never applied — the same live-DB-vs-migrations drift documented in
+-- migration 047's notes. Recreated here (idempotently) so this file applies
+-- cleanly to prod and to any dev DB that *does* have 020.
+--
+-- 020's four RLS policies are deliberately NOT recreated: they called the
+-- SECURITY DEFINER helper can_access_matter() directly from the policy
+-- expression, which is the latent 42501 bug class described in migration 022.
+-- The policies further down this file supersede them.
+--
+-- Rects are fractional bounding boxes (x, y, w, h ∈ [0,1]) relative to the
+-- page, so they scale to any zoom. anchor_text preserves the selected string.
+-- ============================================================================
+
+create table if not exists public.document_annotations (
+  id uuid primary key default uuid_generate_v4(),
+  document_id uuid references public.documents(id) on delete cascade not null,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  page int not null check (page >= 1),
+  color text not null default 'gold'
+    check (color in ('gold', 'green', 'pink', 'blue')),
+  note text,
+  anchor_text text,
+  rects jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_document_annotations_doc_page
+  on public.document_annotations(document_id, page);
+create index if not exists idx_document_annotations_user
+  on public.document_annotations(user_id);
+
+alter table public.document_annotations enable row level security;
+
+create or replace function public.set_document_annotations_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_document_annotations_updated_at on public.document_annotations;
+create trigger trg_document_annotations_updated_at
+  before update on public.document_annotations
+  for each row execute function public.set_document_annotations_updated_at();
+
+-- ============================================================================
+-- Marginalia columns
 -- ============================================================================
 
 alter table public.document_annotations
