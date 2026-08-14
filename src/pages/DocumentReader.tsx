@@ -169,6 +169,9 @@ export default function DocumentReader() {
   const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
 
   const pdfDocRef = useRef<unknown>(null);
+  // The in-flight pdfjs canvas render, so overlapping runs of the render
+  // effect can't collide on one canvas.
+  const renderTaskRef = useRef<{ cancel(): void } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -366,11 +369,18 @@ export default function DocumentReader() {
     let cancelled = false;
     let textLayer: { render(): Promise<unknown>; cancel(): void } | null = null;
 
+    // A render left over from a previous run of this effect is still holding
+    // the canvas; stop it before we touch anything.
+    if (renderTaskRef.current) {
+      try { renderTaskRef.current.cancel(); } catch { /* already settled */ }
+      renderTaskRef.current = null;
+    }
+
     void (async () => {
       try {
         const pdfPage = await pdf.getPage(page) as {
           getViewport(opts: { scale: number }): { width: number; height: number };
-          render(opts: unknown): { promise: Promise<void> };
+          render(opts: unknown): { promise: Promise<void>; cancel(): void };
           streamTextContent(): ReadableStream;
         };
         if (cancelled) return;
@@ -418,8 +428,20 @@ export default function DocumentReader() {
           canvasContext: ctx,
           viewport,
         };
-        await pdfPage.render(renderOpts).promise;
+        // Cancel any render still in flight on this canvas before starting
+        // another. pdfjs refuses to run two renders against one canvas
+        // ("Cannot use the same canvas during multiple render operations"),
+        // and this effect fires several times back-to-back on load — React
+        // dev-mode double-invokes it, and page/zoom/theme/resize all retrigger
+        // it. Without cancellation the second render throws into the silent
+        // catch below and the page stays permanently blank: canvas sized,
+        // nothing painted, no text layer, no error. Keeping the handle also
+        // lets cleanup abort a render whose effect run is already stale.
+        const task = pdfPage.render(renderOpts);
+        renderTaskRef.current = task;
+        await task.promise;
         if (cancelled) return;
+        renderTaskRef.current = null;
 
         textLayerContainer.innerHTML = '';
         textLayerContainer.style.width = `${viewport.width}px`;
@@ -456,6 +478,10 @@ export default function DocumentReader() {
 
     return () => {
       cancelled = true;
+      if (renderTaskRef.current) {
+        try { renderTaskRef.current.cancel(); } catch { /* already settled */ }
+        renderTaskRef.current = null;
+      }
       if (textLayer) try { textLayer.cancel(); } catch { /* noop */ }
     };
   }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx, isMobile]);
@@ -668,7 +694,7 @@ export default function DocumentReader() {
   useEffect(() => {
     if (loadState !== 'ready' || fileKind !== 'pdf') return;
 
-    function handleMouseUp() {
+    function captureSelection() {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         setSelectionMenu(null);
@@ -726,8 +752,50 @@ export default function DocumentReader() {
       });
     }
 
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
+    // Double-click that lands in a gap: snap to the nearest word.
+    //
+    // On scanned exhibits the OCR text layer is sparse and its spans often
+    // overlap, so a double-click aimed at a word frequently falls between
+    // spans. The browser then "selects" an empty line break — a live
+    // selection with no visible rectangles — and captureSelection correctly
+    // declines it, which reads to the user as a dead double-click on a word
+    // they can plainly see. Rather than loosen the rect test (an empty
+    // selection must never open the popover), find the nearest span and
+    // select the word within it closest to the click.
+    //
+    // Deliberately double-click only: snapping a single click would select a
+    // word every time the user clicked anywhere on the page, and clicking
+    // empty space has to stay a way to dismiss.
+    function handleDoubleClick(e: MouseEvent) {
+      const layer = textLayerRef.current;
+      if (!layer) return;
+
+      const box = layer.getBoundingClientRect();
+      if (
+        e.clientX < box.left || e.clientX > box.right ||
+        e.clientY < box.top || e.clientY > box.bottom
+      ) return;
+
+      // If the double-click already produced something selectable, the
+      // mouseup handler has it — don't second-guess the browser.
+      const sel = window.getSelection();
+      const alreadyUsable =
+        sel != null &&
+        sel.rangeCount > 0 &&
+        Array.from(sel.getRangeAt(0).getClientRects()).some(
+          (r) => r.width > 0 && r.height > 0,
+        );
+      if (alreadyUsable) return;
+
+      if (selectWordNearPoint(layer, e.clientX, e.clientY)) captureSelection();
+    }
+
+    document.addEventListener('mouseup', captureSelection);
+    document.addEventListener('dblclick', handleDoubleClick);
+    return () => {
+      document.removeEventListener('mouseup', captureSelection);
+      document.removeEventListener('dblclick', handleDoubleClick);
+    };
   }, [loadState, fileKind, page, zoom]);
 
   const saveAnnotation = useCallback(
@@ -1341,6 +1409,75 @@ export default function DocumentReader() {
       )}
     </div>
   );
+}
+
+// Distance from a point to a rectangle; 0 when the point is inside it.
+function distanceToRect(x: number, y: number, r: DOMRect): number {
+  const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+  const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+  return Math.hypot(dx, dy);
+}
+
+// Select the word nearest (x, y) in the text layer, and report whether one
+// was found. Used to rescue double-clicks that land between the sparse,
+// overlapping spans of an OCR'd page.
+//
+// The search radius is derived from the matched span's own height rather
+// than being a fixed pixel count, so it scales with zoom and with the
+// document's type size: a word roughly a line-and-a-half away is fair game,
+// anything further is treated as a click on blank paper.
+function selectWordNearPoint(layer: HTMLElement, x: number, y: number): boolean {
+  let bestNode: Text | null = null;
+  let bestDist = Infinity;
+  let bestHeight = 0;
+
+  for (const span of layer.querySelectorAll('span')) {
+    const node = span.firstChild;
+    // Leaf spans only — pdfjs wraps marked content in spans of spans, and
+    // emits <br> for line breaks.
+    if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+    const text = (node as Text).data;
+    if (!/\S/.test(text)) continue;
+    const rect = span.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    const dist = distanceToRect(x, y, rect);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestNode = node as Text;
+      bestHeight = rect.height;
+    }
+  }
+
+  if (!bestNode || bestDist > Math.max(12, bestHeight * 1.5)) return false;
+
+  // A pdfjs span can hold a whole run of text, so pick the word inside it
+  // closest to the click rather than selecting the entire run.
+  const text = bestNode.data;
+  const range = document.createRange();
+  let start = -1;
+  let end = -1;
+  let wordDist = Infinity;
+  for (const m of text.matchAll(/\S+/g)) {
+    const s = m.index;
+    const e = s + m[0].length;
+    range.setStart(bestNode, s);
+    range.setEnd(bestNode, e);
+    const d = distanceToRect(x, y, range.getBoundingClientRect());
+    if (d < wordDist) {
+      wordDist = d;
+      start = s;
+      end = e;
+    }
+  }
+  if (start < 0) return false;
+
+  range.setStart(bestNode, start);
+  range.setEnd(bestNode, end);
+  const sel = window.getSelection();
+  if (!sel) return false;
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
 }
 
 // Walk the rendered text-layer spans on the current page and tint any span
