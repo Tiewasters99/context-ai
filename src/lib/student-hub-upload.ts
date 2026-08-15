@@ -16,6 +16,7 @@
 import { supabase } from '@/lib/supabase';
 import { generateStructured } from '@/lib/llm';
 import { DEFAULT_MODEL_ID, SCAN_BUCKET } from '@/lib/student-hub';
+import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
 export interface StageProgress {
   stage: 'pages' | 'ocr' | 'map' | 'segment' | 'seed';
@@ -103,7 +104,10 @@ export async function* pdfPageBlobs(file: File): AsyncGenerator<{ blob: Blob; n:
     'pdfjs-dist/build/pdf.worker.min.mjs',
     import.meta.url,
   ).toString();
-  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  const pdf = await pdfjsLib.getDocument({
+    data: await file.arrayBuffer(),
+    ...PDFJS_DOC_PARAMS,
+  }).promise;
   try {
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);

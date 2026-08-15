@@ -15,10 +15,12 @@ import {
   Minimize,
   Download,
   HardDrive,
+  StickyNote,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
+import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
@@ -26,13 +28,32 @@ import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import { useConnections } from '@/hooks/useConnections';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
+  addAnnotationLink,
+  annotationIsNote,
   createAnnotation,
   deleteAnnotation,
+  derivePageLine,
   listAnnotations,
+  listIncomingLinks,
+  updateAnnotation,
   type Annotation,
   type AnnotationColor,
+  type AnnotationLink,
+  type AnnotationVisibility,
   type FractionalRect,
+  type IncomingLink,
 } from '@/lib/document-annotations';
+import {
+  CrossRefRail,
+  NoteCard,
+  NoteComposer,
+  NotesRail,
+  NOTE_RAIL_W,
+  NOTE_RAIL_W_MOBILE,
+  RefCard,
+  type ComposerLink,
+} from '@/components/reader/Marginalia';
+import { useAuth } from '@/contexts/AuthContext';
 
 // pdfjs worker URL — same pattern as src/lib/extract.ts. Resolved at build
 // time by Vite from the installed pdfjs-dist package.
@@ -135,7 +156,23 @@ export default function DocumentReader() {
     anchorText: string;
   } | null>(null);
 
+  // Marginalia state — the margin rails and their popovers. `incomingLinks`
+  // are cross-references: notes in OTHER documents whose links point here.
+  const { user } = useAuth();
+  const [noteComposer, setNoteComposer] = useState<{
+    x: number;
+    y: number;
+    rects: FractionalRect[];
+    anchorText: string;
+  } | null>(null);
+  const [openNote, setOpenNote] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [openRef, setOpenRef] = useState<{ link: IncomingLink; x: number; y: number } | null>(null);
+  const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
+
   const pdfDocRef = useRef<unknown>(null);
+  // The in-flight pdfjs canvas render, so overlapping runs of the render
+  // effect can't collide on one canvas.
+  const renderTaskRef = useRef<{ cancel(): void } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textLayerRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -276,7 +313,10 @@ export default function DocumentReader() {
         if (kind === 'pdf') {
           const pdfjsLib = await import('pdfjs-dist');
           pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const pdf = await pdfjsLib.getDocument({
+            data: arrayBuffer,
+            ...PDFJS_DOC_PARAMS,
+          }).promise;
           if (cancelled) return;
           pdfDocRef.current = pdf;
           setTotalPages(pdf.numPages);
@@ -333,11 +373,18 @@ export default function DocumentReader() {
     let cancelled = false;
     let textLayer: { render(): Promise<unknown>; cancel(): void } | null = null;
 
+    // A render left over from a previous run of this effect is still holding
+    // the canvas; stop it before we touch anything.
+    if (renderTaskRef.current) {
+      try { renderTaskRef.current.cancel(); } catch { /* already settled */ }
+      renderTaskRef.current = null;
+    }
+
     void (async () => {
       try {
         const pdfPage = await pdf.getPage(page) as {
           getViewport(opts: { scale: number }): { width: number; height: number };
-          render(opts: unknown): { promise: Promise<void> };
+          render(opts: unknown): { promise: Promise<void>; cancel(): void };
           streamTextContent(): ReadableStream;
         };
         if (cancelled) return;
@@ -352,8 +399,13 @@ export default function DocumentReader() {
           if (pane && pane.clientWidth > 0 && pane.clientHeight > 0) {
             const natural = pdfPage.getViewport({ scale: 1 });
             const PAD = 24; // breathing room around the page
+            // The margin rails flank the page in-flow; subtract them so the
+            // page never overflows horizontally. On desktop the height
+            // constraint almost always wins anyway, so the page size is
+            // visually unchanged.
+            const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
             const fit = Math.min(
-              (pane.clientWidth - PAD * 2) / natural.width,
+              (pane.clientWidth - PAD * 2 - rails) / natural.width,
               (pane.clientHeight - PAD * 2) / natural.height,
             );
             scale = Math.max(0.1, Math.min(fit, 6));
@@ -380,8 +432,20 @@ export default function DocumentReader() {
           canvasContext: ctx,
           viewport,
         };
-        await pdfPage.render(renderOpts).promise;
+        // Cancel any render still in flight on this canvas before starting
+        // another. pdfjs refuses to run two renders against one canvas
+        // ("Cannot use the same canvas during multiple render operations"),
+        // and this effect fires several times back-to-back on load — React
+        // dev-mode double-invokes it, and page/zoom/theme/resize all retrigger
+        // it. Without cancellation the second render throws into the silent
+        // catch below and the page stays permanently blank: canvas sized,
+        // nothing painted, no text layer, no error. Keeping the handle also
+        // lets cleanup abort a render whose effect run is already stale.
+        const task = pdfPage.render(renderOpts);
+        renderTaskRef.current = task;
+        await task.promise;
         if (cancelled) return;
+        renderTaskRef.current = null;
 
         textLayerContainer.innerHTML = '';
         textLayerContainer.style.width = `${viewport.width}px`;
@@ -418,9 +482,13 @@ export default function DocumentReader() {
 
     return () => {
       cancelled = true;
+      if (renderTaskRef.current) {
+        try { renderTaskRef.current.cancel(); } catch { /* already settled */ }
+        renderTaskRef.current = null;
+      }
       if (textLayer) try { textLayer.cancel(); } catch { /* noop */ }
     };
-  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx]);
+  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx, isMobile]);
 
   const goPrev = useCallback(() => setPage((p) => Math.max(1, p - 1)), []);
   const goNext = useCallback(
@@ -591,15 +659,36 @@ export default function DocumentReader() {
     return () => { cancelled = true; };
   }, [loadState, fileKind, id]);
 
-  // Load annotations once per document.
+  // Load annotations + incoming cross-references once per document, and
+  // keep them live: margin notes are collaborative, so a teammate's note
+  // should appear without a reload (the matter_comments realtime pattern;
+  // RLS filters what each subscriber may see).
   useEffect(() => {
     if (!id || loadState !== 'ready' || fileKind !== 'pdf') return;
     let cancelled = false;
-    void (async () => {
-      const rows = await listAnnotations(id);
-      if (!cancelled) setAnnotations(rows);
-    })();
-    return () => { cancelled = true; };
+    const refresh = async () => {
+      const [rows, incoming] = await Promise.all([
+        listAnnotations(id),
+        listIncomingLinks(id),
+      ]);
+      if (!cancelled) {
+        setAnnotations(rows);
+        setIncomingLinks(incoming);
+      }
+    };
+    void refresh();
+    const channel = supabase
+      .channel(`doc-annotations-${id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'document_annotations', filter: `document_id=eq.${id}` },
+        () => { void refresh(); },
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
   }, [id, loadState, fileKind]);
 
   // Watch text-layer selections — when the user releases the mouse after
@@ -609,7 +698,7 @@ export default function DocumentReader() {
   useEffect(() => {
     if (loadState !== 'ready' || fileKind !== 'pdf') return;
 
-    function handleMouseUp() {
+    function captureSelection() {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
         setSelectionMenu(null);
@@ -618,15 +707,30 @@ export default function DocumentReader() {
       const layer = textLayerRef.current;
       if (!layer) return;
 
-      // Only show the popover when the selection is anchored inside the
-      // text layer (not random page chrome).
-      const anchorNode = sel.anchorNode;
-      if (!anchorNode || !layer.contains(anchorNode)) {
+      // Only act on selections that actually touch the page's text layer.
+      //
+      // Testing sel.anchorNode alone was wrong, and silently broke both
+      // highlighting and margin notes: a drag that begins a few pixels off a
+      // glyph — i.e. almost every real drag — anchors in whichever sibling
+      // element sits under the cursor at mousedown, usually the annotations
+      // overlay (`absolute inset-0`, same box as the text layer), and only
+      // *ends* inside the text layer. The old guard rejected that as "page
+      // chrome" and no popover ever appeared. Range.intersectsNode covers
+      // every direction the user can drag, including selections that start
+      // above the page and end below it.
+      if (sel.rangeCount === 0) {
         setSelectionMenu(null);
         return;
       }
-
       const range = sel.getRangeAt(0);
+      const touchesTextLayer =
+        layer.contains(sel.anchorNode) ||
+        layer.contains(sel.focusNode) ||
+        range.intersectsNode(layer);
+      if (!touchesTextLayer) {
+        setSelectionMenu(null);
+        return;
+      }
       const clientRects = Array.from(range.getClientRects()).filter(
         (r) => r.width > 0 && r.height > 0,
       );
@@ -652,8 +756,50 @@ export default function DocumentReader() {
       });
     }
 
-    document.addEventListener('mouseup', handleMouseUp);
-    return () => document.removeEventListener('mouseup', handleMouseUp);
+    // Double-click that lands in a gap: snap to the nearest word.
+    //
+    // On scanned exhibits the OCR text layer is sparse and its spans often
+    // overlap, so a double-click aimed at a word frequently falls between
+    // spans. The browser then "selects" an empty line break — a live
+    // selection with no visible rectangles — and captureSelection correctly
+    // declines it, which reads to the user as a dead double-click on a word
+    // they can plainly see. Rather than loosen the rect test (an empty
+    // selection must never open the popover), find the nearest span and
+    // select the word within it closest to the click.
+    //
+    // Deliberately double-click only: snapping a single click would select a
+    // word every time the user clicked anywhere on the page, and clicking
+    // empty space has to stay a way to dismiss.
+    function handleDoubleClick(e: MouseEvent) {
+      const layer = textLayerRef.current;
+      if (!layer) return;
+
+      const box = layer.getBoundingClientRect();
+      if (
+        e.clientX < box.left || e.clientX > box.right ||
+        e.clientY < box.top || e.clientY > box.bottom
+      ) return;
+
+      // If the double-click already produced something selectable, the
+      // mouseup handler has it — don't second-guess the browser.
+      const sel = window.getSelection();
+      const alreadyUsable =
+        sel != null &&
+        sel.rangeCount > 0 &&
+        Array.from(sel.getRangeAt(0).getClientRects()).some(
+          (r) => r.width > 0 && r.height > 0,
+        );
+      if (alreadyUsable) return;
+
+      if (selectWordNearPoint(layer, e.clientX, e.clientY)) captureSelection();
+    }
+
+    document.addEventListener('mouseup', captureSelection);
+    document.addEventListener('dblclick', handleDoubleClick);
+    return () => {
+      document.removeEventListener('mouseup', captureSelection);
+      document.removeEventListener('dblclick', handleDoubleClick);
+    };
   }, [loadState, fileKind, page, zoom]);
 
   const saveAnnotation = useCallback(
@@ -682,6 +828,55 @@ export default function DocumentReader() {
       setAnnotations((prev) => prev.filter((a) => a.id !== annId));
     }
   }, []);
+
+  // Save a margin note: derive page:line deterministically from the ingested
+  // passages (transcripts get real line numbers; everything else stays
+  // page-only — the verbatim quote in anchor_text is the ground truth),
+  // persist, then attach any document links.
+  const saveNote = useCallback(
+    async (args: { body: string; visibility: AnnotationVisibility; links: ComposerLink[] }) => {
+      if (!id || !noteComposer) return;
+      const derived = await derivePageLine(id, page, noteComposer.anchorText);
+      const ann = await createAnnotation({
+        documentId: id,
+        page,
+        color: 'gold',
+        rects: noteComposer.rects,
+        anchorText: noteComposer.anchorText,
+        note: args.body,
+        visibility: args.visibility,
+        lineStart: derived?.lineStart ?? null,
+        lineEnd: derived?.lineEnd ?? null,
+      });
+      if (ann) {
+        const savedLinks: AnnotationLink[] = [];
+        for (const l of args.links) {
+          const link = await addAnnotationLink({
+            annotationId: ann.id,
+            targetDocumentId: l.documentId,
+            targetPage: l.page,
+            label: l.title,
+          });
+          if (link) savedLinks.push(link);
+        }
+        setAnnotations((prev) => [...prev, { ...ann, links: savedLinks }]);
+      }
+      setNoteComposer(null);
+    },
+    [id, page, noteComposer],
+  );
+
+  const editNote = useCallback(
+    async (annId: string, body: string, visibility: AnnotationVisibility) => {
+      const ok = await updateAnnotation(annId, { note: body, visibility });
+      if (ok) {
+        setAnnotations((prev) =>
+          prev.map((a) => (a.id === annId ? { ...a, note: body, visibility } : a)),
+        );
+      }
+    },
+    [],
+  );
 
   const jumpDest = useCallback(async (dest: unknown) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1039,13 +1234,26 @@ export default function DocumentReader() {
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
             )}
             {loadState === 'ready' && fileKind === 'pdf' && (
-              <div className="relative">
-                <canvas ref={canvasRef} className="block shadow-2xl" />
-                <AnnotationsOverlay
-                  annotations={annotations.filter((a) => a.page === page)}
-                  onRemove={(annId) => void removeAnnotation(annId)}
+              <div className="flex flex-row items-stretch">
+                <CrossRefRail
+                  refs={incomingLinks.filter((r) => r.target_page === page)}
+                  isMobile={isMobile}
+                  onOpen={(link, a) => setOpenRef({ link, x: a.x, y: a.y })}
                 />
-                <div ref={textLayerRef} className="textLayer absolute inset-0" />
+                <div className="relative">
+                  <canvas ref={canvasRef} className="block shadow-2xl" />
+                  <AnnotationsOverlay
+                    annotations={annotations.filter((a) => a.page === page)}
+                    onRemove={(annId) => void removeAnnotation(annId)}
+                  />
+                  <div ref={textLayerRef} className="textLayer absolute inset-0" />
+                </div>
+                <NotesRail
+                  notes={annotations.filter((a) => a.page === page && annotationIsNote(a))}
+                  currentUserId={user?.id ?? null}
+                  isMobile={isMobile}
+                  onOpen={(n, a) => setOpenNote({ id: n.id, x: a.x, y: a.y })}
+                />
               </div>
             )}
             {loadState === 'ready' && fileKind === 'docx' && docHtml && (
@@ -1140,14 +1348,140 @@ export default function DocumentReader() {
           x={selectionMenu.x}
           y={selectionMenu.y}
           onPick={(c) => void saveAnnotation(c)}
+          onNote={() => {
+            setNoteComposer({
+              x: selectionMenu.x,
+              y: selectionMenu.y,
+              rects: selectionMenu.rects,
+              anchorText: selectionMenu.anchorText,
+            });
+            window.getSelection()?.removeAllRanges();
+            setSelectionMenu(null);
+          }}
           onCancel={() => {
             window.getSelection()?.removeAllRanges();
             setSelectionMenu(null);
           }}
         />
       )}
+      {noteComposer && id && (
+        <NoteComposer
+          anchor={{ x: noteComposer.x, y: noteComposer.y }}
+          quote={noteComposer.anchorText}
+          matterId={doc?.matterspace_id ?? null}
+          currentDocumentId={id}
+          isMobile={isMobile}
+          onSave={(args) => void saveNote(args)}
+          onCancel={() => setNoteComposer(null)}
+        />
+      )}
+      {openNote && (() => {
+        const ann = annotations.find((a) => a.id === openNote.id);
+        if (!ann) return null;
+        return (
+          <NoteCard
+            note={ann}
+            anchor={{ x: openNote.x, y: openNote.y }}
+            isMobile={isMobile}
+            isAuthor={ann.user_id === user?.id}
+            onClose={() => setOpenNote(null)}
+            onDelete={() => {
+              void removeAnnotation(ann.id);
+              setOpenNote(null);
+            }}
+            onSaveEdit={(body, visibility) => void editNote(ann.id, body, visibility)}
+            onOpenLink={(l) =>
+              navigate(
+                `/app/document/${l.target_document_id}${l.target_page ? `?page=${l.target_page}` : ''}`,
+              )
+            }
+          />
+        );
+      })()}
+      {openRef && (
+        <RefCard
+          refLink={openRef.link}
+          anchor={{ x: openRef.x, y: openRef.y }}
+          isMobile={isMobile}
+          onClose={() => setOpenRef(null)}
+          onOpenSource={() => {
+            const a = openRef.link.annotation;
+            if (a) navigate(`/app/document/${a.document_id}?page=${a.page}`);
+            setOpenRef(null);
+          }}
+        />
+      )}
     </div>
   );
+}
+
+// Distance from a point to a rectangle; 0 when the point is inside it.
+function distanceToRect(x: number, y: number, r: DOMRect): number {
+  const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+  const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+  return Math.hypot(dx, dy);
+}
+
+// Select the word nearest (x, y) in the text layer, and report whether one
+// was found. Used to rescue double-clicks that land between the sparse,
+// overlapping spans of an OCR'd page.
+//
+// The search radius is derived from the matched span's own height rather
+// than being a fixed pixel count, so it scales with zoom and with the
+// document's type size: a word roughly a line-and-a-half away is fair game,
+// anything further is treated as a click on blank paper.
+function selectWordNearPoint(layer: HTMLElement, x: number, y: number): boolean {
+  let bestNode: Text | null = null;
+  let bestDist = Infinity;
+  let bestHeight = 0;
+
+  for (const span of layer.querySelectorAll('span')) {
+    const node = span.firstChild;
+    // Leaf spans only — pdfjs wraps marked content in spans of spans, and
+    // emits <br> for line breaks.
+    if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+    const text = (node as Text).data;
+    if (!/\S/.test(text)) continue;
+    const rect = span.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    const dist = distanceToRect(x, y, rect);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestNode = node as Text;
+      bestHeight = rect.height;
+    }
+  }
+
+  if (!bestNode || bestDist > Math.max(12, bestHeight * 1.5)) return false;
+
+  // A pdfjs span can hold a whole run of text, so pick the word inside it
+  // closest to the click rather than selecting the entire run.
+  const text = bestNode.data;
+  const range = document.createRange();
+  let start = -1;
+  let end = -1;
+  let wordDist = Infinity;
+  for (const m of text.matchAll(/\S+/g)) {
+    const s = m.index;
+    const e = s + m[0].length;
+    range.setStart(bestNode, s);
+    range.setEnd(bestNode, e);
+    const d = distanceToRect(x, y, range.getBoundingClientRect());
+    if (d < wordDist) {
+      wordDist = d;
+      start = s;
+      end = e;
+    }
+  }
+  if (start < 0) return false;
+
+  range.setStart(bestNode, start);
+  range.setEnd(bestNode, end);
+  const sel = window.getSelection();
+  if (!sel) return false;
+  sel.removeAllRanges();
+  sel.addRange(range);
+  return true;
 }
 
 // Walk the rendered text-layer spans on the current page and tint any span
@@ -1192,8 +1526,12 @@ function AnnotationsOverlay({
 }) {
   return (
     <div className="absolute inset-0 pointer-events-none">
-      {annotations.map((ann) =>
-        ann.rects.map((rect, i) => (
+      {annotations.map((ann) => {
+        // Margin notes anchor with a quiet dotted underline, not a color
+        // fill — the margin mark is the affordance; the page stays calm.
+        // They're managed from the note card, so no inline remove button.
+        const isNote = ann.note != null && ann.note.trim().length > 0;
+        return ann.rects.map((rect, i) => (
           <div
             key={`${ann.id}-${i}`}
             className="absolute group"
@@ -1202,13 +1540,14 @@ function AnnotationsOverlay({
               top: `${rect.y * 100}%`,
               width: `${rect.w * 100}%`,
               height: `${rect.h * 100}%`,
-              backgroundColor: ANNOTATION_FILL[ann.color],
+              backgroundColor: isNote ? 'transparent' : ANNOTATION_FILL[ann.color],
+              borderBottom: isNote ? '1.5px dotted rgba(212,160,84,0.6)' : undefined,
               borderRadius: '2px',
               pointerEvents: 'auto',
             }}
-            title={ann.anchor_text || undefined}
+            title={isNote ? ann.note ?? undefined : ann.anchor_text || undefined}
           >
-            {i === 0 && (
+            {i === 0 && !isNote && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRemove(ann.id); }}
                 className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-black/70 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
@@ -1218,8 +1557,8 @@ function AnnotationsOverlay({
               </button>
             )}
           </div>
-        )),
-      )}
+        ));
+      })}
     </div>
   );
 }
@@ -1228,11 +1567,13 @@ function SelectionMenu({
   x,
   y,
   onPick,
+  onNote,
   onCancel,
 }: {
   x: number;
   y: number;
   onPick: (color: AnnotationColor) => void;
+  onNote: () => void;
   onCancel: () => void;
 }) {
   const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
@@ -1253,6 +1594,14 @@ function SelectionMenu({
           title={`Highlight ${c}`}
         />
       ))}
+      <div className="w-px h-4 bg-white/15 mx-0.5" />
+      <button
+        onClick={onNote}
+        className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
+        title="Add a margin note"
+      >
+        <StickyNote size={14} />
+      </button>
       <div className="w-px h-4 bg-white/15 mx-0.5" />
       <button
         onClick={onCancel}

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import llmProxy from './vite-claude-proxy'
+import pdfjsAssets from './vite-pdfjs-assets'
 
 export default defineConfig(({ mode }) => {
   // Load .env so ANTHROPIC_API_KEY is available to the proxy plugin
@@ -10,7 +11,7 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, env);
 
   return {
-    plugins: [react(), tailwindcss(), llmProxy()],
+    plugins: [react(), tailwindcss(), llmProxy(), pdfjsAssets()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { X, RotateCw, Trash2, Undo2, Loader2, Check } from 'lucide-react';
 import { downloadVaultDocument } from '@/lib/vault-persist';
 import { sandboxApi } from '@/lib/sandbox-api';
+import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
 // Light PDF editing: reorder (drag), delete, and rotate pages on a page
 // grid, then save as a NEW document via the edit_pdf server action — the
@@ -50,7 +51,7 @@ export default function PdfPageEditor({ doc, onClose, onSaved }: Props) {
         const data = await blob.arrayBuffer();
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-        const pdf = await pdfjsLib.getDocument({ data }).promise;
+        const pdf = await pdfjsLib.getDocument({ data, ...PDFJS_DOC_PARAMS }).promise;
         if (cancelled) return;
         const n = Math.min(pdf.numPages, MAX_PAGES);
         setTotalPages(pdf.numPages);
