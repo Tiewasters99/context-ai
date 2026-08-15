@@ -17,6 +17,13 @@ interface Product {
 
 const PRODUCTS: Product[] = [
   {
+    name: 'The Contextspaces Editor',
+    tagline: 'Hand over any AI draft — brief, memo, letter. The Editor improves, clarifies and polishes until the writing is clear, direct and logical, and every change returns as a redline.',
+    accent: '#c96852',
+    to: '/app/editor',
+    status: 'In training',
+  },
+  {
     name: 'Bucketizer',
     tagline: 'Your case theory as a living tree — every document classified against the elements you must prove. AI-proposed, attorney-confirmed.',
     accent: '#34d399',
