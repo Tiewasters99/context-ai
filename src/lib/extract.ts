@@ -1,4 +1,5 @@
 import mammoth from 'mammoth';
+import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
 /** Extract text content from a File based on its type */
 export async function extractText(file: File): Promise<string> {
@@ -56,7 +57,7 @@ async function extractPdf(file: File): Promise<string> {
   ).toString();
 
   const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer, ...PDFJS_DOC_PARAMS }).promise;
 
   const pages: string[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {

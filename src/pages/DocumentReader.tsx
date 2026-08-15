@@ -20,6 +20,7 @@ import {
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
+import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
@@ -312,7 +313,10 @@ export default function DocumentReader() {
         if (kind === 'pdf') {
           const pdfjsLib = await import('pdfjs-dist');
           pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          const pdf = await pdfjsLib.getDocument({
+            data: arrayBuffer,
+            ...PDFJS_DOC_PARAMS,
+          }).promise;
           if (cancelled) return;
           pdfDocRef.current = pdf;
           setTotalPages(pdf.numPages);

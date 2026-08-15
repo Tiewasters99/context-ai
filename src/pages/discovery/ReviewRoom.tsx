@@ -16,6 +16,7 @@ import FloatingPanel from './FloatingPanel';
 import TagPickerPanel from './TagPickerPanel';
 import PrivilegeLogPanel from './PrivilegeLogPanel';
 import ProducePanel from './ProducePanel';
+import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
 // pdfjs worker URL — same build-time resolution pattern as DocumentReader.
 const PDFJS_WORKER_URL = new URL(
@@ -582,7 +583,7 @@ function PdfPane({
         const url = await getDiscoverySignedUrl(storagePath, 3600);
         const pdfjsLib = await import('pdfjs-dist');
         pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-        const pdf = await pdfjsLib.getDocument({ url }).promise;
+        const pdf = await pdfjsLib.getDocument({ url, ...PDFJS_DOC_PARAMS }).promise;
         if (cancelled) { void pdf.destroy(); return; }
         pdfRef.current = pdf;
         onNumPages(pdf.numPages);
