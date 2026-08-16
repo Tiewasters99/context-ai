@@ -47,8 +47,9 @@ export default function EditorRoom() {
           polishes until the writing is clear, direct and logical.
         </p>
         <p className="mt-2 max-w-xl text-[13px] leading-relaxed text-white/60">
-          Guided by Eden Quainton and Fable 5, the Editor is learning the old way: a verdict in
-          the margin, then back to the idea. Every change returns as a redline.
+          Guided by the Contextspaces Founder and frontier intelligence, the Editor works the
+          old-fashioned way: comments in the margin, then a proposed edit. Every change shown in
+          a redline. Click through to approve or add your own changes.
         </p>
 
         <div className="mt-5 flex items-center gap-2">
