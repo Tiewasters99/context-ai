@@ -10,6 +10,7 @@ import { runEditorPass } from '@/lib/editor/pass';
 import { applyEdits } from '@/lib/editor/verifier';
 import { wordDiff } from '@/lib/editor/diff';
 import type { EditorPassResult, ProposedEdit, PraiseNote } from '@/lib/editor/types';
+import DeskSourcePicker from './DeskSourcePicker';
 
 const RED = '#c96852'; // the red pen
 const GOLD = '#e8b84a'; // praise, on dark
@@ -89,7 +90,10 @@ export default function EditorRoom() {
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [sourceNote, setSourceNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const segments = useMemo(
     () => (result ? buildSegments(submitted, result.edits) : []),
@@ -145,6 +149,30 @@ export default function EditorRoom() {
     setPhase('desk');
   }
 
+  async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-picking the same file
+    if (!file) return;
+    setSourceNote({ kind: 'info', text: `Reading “${file.name}”…` });
+    try {
+      const { extractText } = await import('@/lib/extract');
+      const text = (await extractText(file)).trim();
+      if (text.length < 40 || text.startsWith('[Binary file') || text.startsWith('[Unsupported')) {
+        throw new Error('no readable text found — if it is a scan, ingest it into Contextspaces (OCR runs there) and pull it from your matters instead');
+      }
+      setManuscript(text);
+      setSourceNote({ kind: 'info', text: `Loaded “${file.name}” — review the text, then submit.` });
+    } catch (err) {
+      setSourceNote({ kind: 'error', text: `Could not read “${file.name}”: ${err instanceof Error ? err.message : String(err)}` });
+    }
+  }
+
+  function handleVaultLoaded(text: string, title: string) {
+    setPickerOpen(false);
+    setManuscript(text.trim());
+    setSourceNote({ kind: 'info', text: `Loaded “${title}” from your matters — review the text, then submit.` });
+  }
+
   const backdrop = (
     <>
       <img
@@ -178,16 +206,47 @@ export default function EditorRoom() {
           )}
 
           <div className="mt-6 bg-[#faf7f0] rounded-sm shadow-2xl p-5 sm:p-6">
-            <p className="text-[10px] font-semibold tracking-[0.24em] uppercase text-stone-500">
-              Lay a manuscript on the desk
-            </p>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <p className="text-[10px] font-semibold tracking-[0.24em] uppercase text-stone-500">
+                Lay a manuscript on the desk
+              </p>
+              <span className="text-[12px] text-stone-500">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="underline underline-offset-2 hover:text-stone-700"
+                  style={{ color: INK_RED }}
+                >
+                  Upload a file
+                </button>
+                {' · '}
+                <button
+                  onClick={() => setPickerOpen(true)}
+                  className="underline underline-offset-2 hover:text-stone-700"
+                  style={{ color: INK_RED }}
+                >
+                  From your matters
+                </button>
+              </span>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.txt,.md"
+              onChange={handleFile}
+              className="hidden"
+            />
             <textarea
               value={manuscript}
               onChange={(e) => setManuscript(e.target.value)}
-              placeholder="Paste the draft…"
+              placeholder="Paste the draft — or upload a file, or pull one from your matters…"
               className="mt-3 w-full min-h-[280px] bg-transparent text-[15px] leading-relaxed text-[#1c1917] placeholder:text-stone-400 focus:outline-none resize-y"
               style={{ fontFamily: 'Georgia, serif' }}
             />
+            {sourceNote && (
+              <p className={`mt-1 text-[12px] ${sourceNote.kind === 'error' ? 'text-red-700' : 'text-stone-500'}`}>
+                {sourceNote.text}
+              </p>
+            )}
             <div className="mt-2 flex items-center justify-between">
               <span className="text-[11px] text-stone-400">
                 {manuscript.trim() ? `${manuscript.trim().length.toLocaleString()} characters` : ''}
@@ -202,6 +261,10 @@ export default function EditorRoom() {
               </button>
             </div>
           </div>
+
+          {pickerOpen && (
+            <DeskSourcePicker onCancel={() => setPickerOpen(false)} onLoaded={handleVaultLoaded} />
+          )}
 
           <p className="mt-5 text-[12px] italic text-white/35" style={{ fontFamily: 'Georgia, serif' }}>
             <span style={{ color: `${RED}cc` }}>{CORRECTIVE_AMBIENCE.join(' · ')}</span>
