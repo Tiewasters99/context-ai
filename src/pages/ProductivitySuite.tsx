@@ -21,7 +21,7 @@ const PRODUCTS: Product[] = [
     tagline: 'Hand over any AI draft — brief, memo, letter. The Editor improves, clarifies and polishes until the writing is clear, direct and logical, and every change returns as a redline.',
     accent: '#c96852',
     to: '/app/editor',
-    status: 'In training',
+    status: 'The desk is open',
   },
   {
     name: 'Bucketizer',
