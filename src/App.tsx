@@ -15,6 +15,7 @@ import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import DocumentBuilder from '@/pages/DocumentBuilder';
 import ProductivitySuite from '@/pages/ProductivitySuite';
+import TheOffice from '@/pages/TheOffice';
 import EditorRoom from '@/pages/editor/EditorRoom';
 import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
@@ -103,6 +104,7 @@ export default function App() {
               <Route path="vault" element={<Vault />} />
               <Route path="document-builder" element={<DocumentBuilder />} />
               <Route path="suite" element={<ProductivitySuite />} />
+              <Route path="office" element={<TheOffice />} />
               <Route path="editor" element={<EditorRoom />} />
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />

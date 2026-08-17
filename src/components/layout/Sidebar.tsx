@@ -17,6 +17,7 @@ import {
   LayoutGrid,
   Scale,
   GraduationCap,
+  Landmark,
 } from 'lucide-react';
 import {
   DndContext,
@@ -297,6 +298,19 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         >
           <GraduationCap size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Student Hub</span>}
+        </Link>
+
+        {/* The Office — the public face of the workspace */}
+        <Link
+          to="/app/office"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            isActive('/app/office')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+        >
+          <Landmark size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>The Office</span>}
         </Link>
 
         {/* Serverspaces Header */}

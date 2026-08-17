@@ -17,6 +17,13 @@ interface Product {
 
 const PRODUCTS: Product[] = [
   {
+    name: 'The Office',
+    tagline: 'The public face of your workspace: a walkable, photoreal office. Drag documents onto its shelves and practice areas — visitors browse the library; nothing leaves the vault.',
+    accent: '#d8b87a',
+    to: '/app/office',
+    status: 'New',
+  },
+  {
     name: 'The Contextspaces Editor',
     tagline: 'Hand over any AI draft — brief, memo, letter. The Editor improves, clarifies and polishes until the writing is clear, direct and logical, and every change returns as a redline.',
     accent: '#c96852',
