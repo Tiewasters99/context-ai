@@ -149,15 +149,14 @@ export default function EditorRoom() {
     setPhase('desk');
   }
 
-  async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = ''; // allow re-picking the same file
-    if (!file) return;
+  async function readFile(file: File) {
     setSourceNote({ kind: 'info', text: `Reading “${file.name}”…` });
     try {
-      const { extractText } = await import('@/lib/extract');
-      const text = (await extractText(file)).trim();
-      if (text.length < 40 || text.startsWith('[Binary file') || text.startsWith('[Unsupported')) {
+      const { extractManuscript } = await import('@/lib/editor/extract-manuscript');
+      const text = (
+        await extractManuscript(file, (label) => setSourceNote({ kind: 'info', text: label }))
+      ).trim();
+      if (text.length < 40) {
         throw new Error('no readable text found — if it is a scan, ingest it into Contextspaces (OCR runs there) and pull it from your matters instead');
       }
       setManuscript(text);
@@ -165,6 +164,19 @@ export default function EditorRoom() {
     } catch (err) {
       setSourceNote({ kind: 'error', text: `Could not read “${file.name}”: ${err instanceof Error ? err.message : String(err)}` });
     }
+  }
+
+  function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-picking the same file
+    if (file) void readFile(file);
+  }
+
+  function openFileDialog() {
+    // Warm the extraction chunks while the OS dialog is up, so the first
+    // upload doesn't pay the pdfjs load mid-gesture.
+    void import('@/lib/editor/extract-manuscript');
+    fileInputRef.current?.click();
   }
 
   function handleVaultLoaded(text: string, title: string) {
@@ -186,15 +198,26 @@ export default function EditorRoom() {
   );
 
   // ── The desk ─────────────────────────────────────────────────────────
+  // The sheet sits to the left, over the Editor's paper-stacked desk, so
+  // the Editor himself stays visible beside the manuscript — you are
+  // handing him a draft, not papering over him.
   if (phase === 'desk') {
     return (
-      <div className="relative min-h-full bg-black overflow-y-auto animate-[fadeIn_1.4s_ease-out]">
+      <div
+        className="relative min-h-full bg-black overflow-y-auto animate-[fadeIn_1.4s_ease-out]"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const file = e.dataTransfer.files?.[0];
+          if (file) void readFile(file);
+        }}
+      >
         {backdrop}
-        <div className="relative z-10 max-w-3xl mx-auto px-6 sm:px-10 pt-[34vh] pb-10">
+        <div className="relative z-10 max-w-xl px-6 sm:px-10 lg:pl-[5%] lg:pr-0 pt-[16vh] lg:pt-[12vh] pb-10 mx-auto lg:mx-0">
           <p className="text-[11px] font-semibold tracking-[0.3em] uppercase" style={{ color: GOLD }}>
             The Contextspaces Editor
           </p>
-          <p className="mt-2 max-w-xl text-[16px] leading-snug text-[#f5f2ed]" style={{ fontFamily: 'Georgia, serif' }}>
+          <p className="mt-2 text-[15px] leading-snug text-[#f5f2ed]" style={{ fontFamily: 'Georgia, serif' }}>
             Bring any AI draft — a brief, a memo, a letter. Comments in the margin, then a proposed
             edit; every change returned as a redline for you to rule on.
           </p>
@@ -205,14 +228,22 @@ export default function EditorRoom() {
             </p>
           )}
 
-          <div className="mt-6 bg-[#faf7f0] rounded-sm shadow-2xl p-5 sm:p-6">
+          <div
+            className="mt-6 bg-[#faf7f0] rounded-sm shadow-2xl p-5 sm:p-6"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files?.[0];
+              if (file) void readFile(file);
+            }}
+          >
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <p className="text-[10px] font-semibold tracking-[0.24em] uppercase text-stone-500">
                 Lay a manuscript on the desk
               </p>
               <span className="text-[12px] text-stone-500">
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openFileDialog}
                   className="underline underline-offset-2 hover:text-stone-700"
                   style={{ color: INK_RED }}
                 >
@@ -238,8 +269,8 @@ export default function EditorRoom() {
             <textarea
               value={manuscript}
               onChange={(e) => setManuscript(e.target.value)}
-              placeholder="Paste the draft — or upload a file, or pull one from your matters…"
-              className="mt-3 w-full min-h-[280px] bg-transparent text-[15px] leading-relaxed text-[#1c1917] placeholder:text-stone-400 focus:outline-none resize-y"
+              placeholder="Paste the draft — or drop a file here, upload one, or pull one from your matters…"
+              className="mt-3 w-full min-h-[220px] bg-transparent text-[15px] leading-relaxed text-[#1c1917] placeholder:text-stone-400 focus:outline-none resize-y"
               style={{ fontFamily: 'Georgia, serif' }}
             />
             {sourceNote && (
