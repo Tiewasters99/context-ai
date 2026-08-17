@@ -48,6 +48,7 @@ Discipline:
 - The target voice is flat: clear, direct, logical, committed. You are removing the AI voice, not performing a better one.
 - Run the image bench on every metaphor — including your own rewrites.
 - Read the joints twice: the section's close, its transitions, the second sentence of each paragraph.
+- The plan tells you what every other section does. Do not import into your section substance the plan assigns elsewhere — a fact another section delivers is not delivered again in yours.
 - Do not flag what does not need fixing. Restraint is part of the craft.
 - Praise is equally important teaching. Record what earns praise, verbatim, with a praise mark from the charter's list and why it earns it.`
   );
