@@ -174,9 +174,9 @@ the ego-removal layer.
 
 ## The critique taxonomy — transmission, selection, earning
 
-> Amendment of 2026-08-18 (DRAFT — awaiting Eden's markup), from the live
-> editing session on "The Ghazal and the Sabā" (source draft: Kimi K3;
-> editorial direction: EQ; worked up with Opus 5). The session's premise:
+> Amendment of 2026-08-18 (marked up and adopted by Eden the same day),
+> from the live editing session on "The Ghazal and the Sabā" (source
+> draft: Kimi K3; editorial direction: EQ; worked up with Opus 5). The session's premise:
 > AI prose is fluent, so it does not fail at the sentence level the way
 > weak human prose does. It fails at the level of *reference*, *fit*, and
 > *earning* — images that sound right but do not fit, knowledge assumed
@@ -276,12 +276,11 @@ introduce terms before using them; answer the material question; no
 second person in essays about third parties; hedge with *perhaps*;
 minimize *to be*.
 
-> ⚠ One tension flagged for Eden: the source session's rules include
-> "road map up front for lay readers," while principle 5 bans
-> signposting. Proposed reconciliation: the road map is *substantive
-> orientation* (Situate, from Situate–Hook–Seed) and is owed to lay
-> readers; *signposting* is the empty procedural kind ("This essay will
-> first… then…") and stays banned. Eden to confirm or redraw the line.
+The road-map line, ruled by Eden (2026-08-18): **Situate, but no
+procedural signposting.** Substantive orientation — the Situate of
+Situate–Hook–Seed, the context a lay reader needs before the argument
+can land — is owed. The empty procedural kind ("This essay will first…
+then…") stays banned under principle 5.
 
 ## The forms of the work
 
@@ -367,8 +366,10 @@ README for the case format.
   letter, research paper, creative writing, marketing, presentation — and
   the desk now takes the form with the manuscript. The Editor's pen is
   Kimi K3 through the provider-neutral layer, with Opus 4.8 as fallback.
-- **v0.4 (2026-08-18, DRAFT):** The critique taxonomy — transmission,
-  selection, earning — from the "Ghazal and the Sabā" session: detection
-  heuristics behind the existing marks; three candidate marks (mismatch,
-  logic, unearned) awaiting Eden's ruling; the close as repeat-theme-
-  with-twist; banned register. Pending Eden's markup before adoption.
+- **v0.4 (2026-08-18):** The critique taxonomy — transmission, selection,
+  earning — from the "Ghazal and the Sabā" session, adopted after Eden's
+  markup: detection heuristics behind the existing marks; the close as
+  repeat-theme-with-twist; banned register; the road-map line ruled
+  (Situate owed, procedural signposting banned). The marks mismatch,
+  logic, and unearned remain candidates under the interim filing rule
+  until Eden rules on adoption.
