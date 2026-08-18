@@ -23,10 +23,14 @@ import {
 } from './types';
 
 /**
- * The Editor runs on Opus 4.8 — Eden's call (2026-08-15): editing is not a
- * processing-power question; the skill is taste learned from examples.
+ * The Editor's pen is Kimi K3 — Eden's call (2026-08-18): a talented writer
+ * at a fraction of frontier cost, and the platform's proof that development
+ * itself is model-agnostic. If Kimi can't take the manuscript (no key on
+ * this deployment, rate limit, outage), the pass falls back to Opus 4.8 —
+ * the pen the Editor trained with — and says so in the pass notes.
  */
-export const DEFAULT_EDITOR_MODEL = 'claude-opus-4-8';
+export const DEFAULT_EDITOR_MODEL: string = 'kimi-k3';
+export const FALLBACK_EDITOR_MODEL: string = 'claude-opus-4-8';
 
 /** Below this size the section editor sees the whole manuscript for context. */
 const FULL_CONTEXT_LIMIT = 12_000;
@@ -175,11 +179,12 @@ export interface RunEditorPassOptions {
 }
 
 export async function runEditorPass(manuscript: string, options: RunEditorPassOptions = {}): Promise<EditorPassResult> {
-  const { modelId = DEFAULT_EDITOR_MODEL, signal, onProgress } = options;
+  const { signal, onProgress } = options;
+  let modelId = options.modelId ?? DEFAULT_EDITOR_MODEL;
   const passNotes: string[] = [];
 
   onProgress?.({ phase: 'plan', label: 'Reading for the argument…' });
-  const plan = await generateStructured<DocumentPlan>({
+  const planRequest = () => generateStructured<DocumentPlan>({
     modelId,
     signal,
     system: plannerSystem(),
@@ -189,6 +194,19 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
     inputSchema: PLAN_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 3000,
   });
+
+  let plan: DocumentPlan;
+  try {
+    plan = await planRequest();
+  } catch (err) {
+    // The pen failed before a single edit was made — swap pens and reread
+    // rather than dying on the desk. Only from the default pen, and never
+    // on a user abort.
+    if (signal?.aborted || modelId !== DEFAULT_EDITOR_MODEL || DEFAULT_EDITOR_MODEL === FALLBACK_EDITOR_MODEL) throw err;
+    modelId = FALLBACK_EDITOR_MODEL;
+    passNotes.push(`The Editor's usual pen was unavailable (${err instanceof Error ? err.message : String(err)}) — this pass ran on the fallback model.`);
+    plan = await planRequest();
+  }
 
   const sections = resolveSections(manuscript, plan, passNotes);
   const fullContext = manuscript.length <= FULL_CONTEXT_LIMIT;

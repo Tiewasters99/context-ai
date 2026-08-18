@@ -121,7 +121,7 @@ const openaiAdapter: ProviderAdapter = {
 /** Google Gemini API (generateContent with streaming) */
 const googleAdapter: ProviderAdapter = {
   providerId: 'google',
-  buildRequestBody(request: LLMRequest, _model: ModelConfig): string {
+  buildRequestBody(request: LLMRequest): string {
     const systemParts: { text: string }[] = [];
 
     if (request.system) {
@@ -169,9 +169,39 @@ const xaiAdapter: ProviderAdapter = {
   providerId: 'xai',
 };
 
+/**
+ * Moonshot AI (Kimi) — OpenAI-compatible, with two quirks probed live
+ * against kimi-k3 (2026-08-18):
+ * - it rejects any `temperature` but 1 → never send sampling params;
+ * - a named tool_choice ("specified") is incompatible with its always-on
+ *   thinking → send `tool_choice: 'required'` instead. We only ever offer
+ *   one tool, so `required` is forced in practice — and the model keeps
+ *   its thinking pass before filing, which is the behavior we want.
+ */
+const moonshotAdapter: ProviderAdapter = {
+  ...openaiAdapter,
+  providerId: 'moonshot',
+  buildRequestBody(request: LLMRequest, model: ModelConfig): string {
+    const body = JSON.parse(openaiAdapter.buildRequestBody(request, model));
+    delete body.temperature;
+    return JSON.stringify(body);
+  },
+  buildStructuredRequestBody(request: StructuredRequest, model: ModelConfig): string {
+    const body = JSON.parse(openaiAdapter.buildStructuredRequestBody(request, model));
+    delete body.temperature;
+    body.tool_choice = 'required';
+    // Thinking spends from max_tokens: a budget sized for the tool payload
+    // alone dies with finish_reason=length before the model ever files.
+    // Callers state the payload budget; the thinking headroom lives here.
+    body.max_tokens = (request.maxTokens ?? 8192) + 12_000;
+    return JSON.stringify(body);
+  },
+};
+
 export const adapters: Record<string, ProviderAdapter> = {
   anthropic: anthropicAdapter,
   openai: openaiAdapter,
   google: googleAdapter,
   xai: xaiAdapter,
+  moonshot: moonshotAdapter,
 };
