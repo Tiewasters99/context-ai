@@ -149,31 +149,36 @@ export default function EditorRoom() {
     setPhase('desk');
   }
 
-  // A "document" whose text is an HTML page is almost always a failed
-  // download captured mid-redirect (the classic: a PACER session lapses
-  // and the saved "PDF" is the Case Search page). Refuse it plainly
-  // rather than laying a web page on the desk.
-  function looksLikeWebPage(text: string): boolean {
-    const head = text.slice(0, 400).toLowerCase();
-    if (head.includes('<!doctype') || head.includes('<html')) return true;
-    return (text.slice(0, 4000).match(/<\/?[a-z][^>]*>/gi) ?? []).length > 20;
-  }
-
   async function readFile(file: File) {
     setSourceNote({ kind: 'info', text: `Reading “${file.name}”…` });
     try {
-      const { extractManuscript } = await import('@/lib/editor/extract-manuscript');
-      const text = (
-        await extractManuscript(file, (label) => setSourceNote({ kind: 'info', text: label }))
-      ).trim();
+      const { extractManuscript, StaleChunkError } = await import('@/lib/editor/extract-manuscript');
+      const { prepareDeskText } = await import('@/lib/editor/desk-text');
+      let text: string;
+      try {
+        text = (await extractManuscript(file, (label) => setSourceNote({ kind: 'info', text: label }))).trim();
+      } catch (err) {
+        // A redeploy deleted this tab's hashed chunks (the pdfjs worker
+        // fetch isn't covered by the vite:preloadError self-heal) —
+        // reload once, with the same loop guard main.tsx uses.
+        if (err instanceof StaleChunkError && Date.now() - Number(sessionStorage.getItem('chunk-reload-at') || 0) > 60_000) {
+          sessionStorage.setItem('chunk-reload-at', String(Date.now()));
+          setSourceNote({ kind: 'info', text: 'The app updated under this tab — reloading…' });
+          window.location.reload();
+          return;
+        }
+        throw err;
+      }
       if (text.length < 40) {
         throw new Error('no readable text found — if it is a scan, ingest it into Contextspaces (OCR runs there) and pull it from your matters instead');
       }
-      if (looksLikeWebPage(text)) {
-        throw new Error('this file contains a captured web page, not a document — a failed download often saves the site’s login or search page instead of the PDF');
-      }
-      setManuscript(text);
-      setSourceNote({ kind: 'info', text: `Loaded “${file.name}” — review the text, then submit.` });
+      const prepared = prepareDeskText(text);
+      if (prepared.kind === 'refused') throw new Error(prepared.reason);
+      setManuscript(prepared.text);
+      setSourceNote({
+        kind: 'info',
+        text: `Loaded “${file.name}”${prepared.kind === 'converted' ? ` (${prepared.note})` : ''} — review the text, then submit.`,
+      });
     } catch (err) {
       setSourceNote({ kind: 'error', text: `Could not read “${file.name}”: ${err instanceof Error ? err.message : String(err)}` });
     }
@@ -192,18 +197,19 @@ export default function EditorRoom() {
     fileInputRef.current?.click();
   }
 
-  function handleVaultLoaded(text: string, title: string) {
+  async function handleVaultLoaded(text: string, title: string) {
     setPickerOpen(false);
-    const trimmed = text.trim();
-    if (looksLikeWebPage(trimmed)) {
-      setSourceNote({
-        kind: 'error',
-        text: `“${title}” can’t be edited: its stored text is a captured web page (a court/PACER screen), not the document itself — the download that created it likely failed mid-session. Re-download the real PDF and re-ingest it, or pick another copy.`,
-      });
+    const { prepareDeskText } = await import('@/lib/editor/desk-text');
+    const prepared = prepareDeskText(text);
+    if (prepared.kind === 'refused') {
+      setSourceNote({ kind: 'error', text: `“${title}” can’t be edited: ${prepared.reason}` });
       return;
     }
-    setManuscript(trimmed);
-    setSourceNote({ kind: 'info', text: `Loaded “${title}” from your matters — review the text, then submit.` });
+    setManuscript(prepared.text);
+    setSourceNote({
+      kind: 'info',
+      text: `Loaded “${title}” from your matters${prepared.kind === 'converted' ? ` (${prepared.note})` : ''} — review the text, then submit.`,
+    });
   }
 
   const backdrop = (
