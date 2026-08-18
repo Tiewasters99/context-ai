@@ -34,7 +34,7 @@ export interface ModelConfig {
   tier: 'free' | 'pro' | 'byok';
 }
 
-export type ProviderId = 'anthropic' | 'openai' | 'google' | 'xai' | 'moonshot';
+export type ProviderId = 'anthropic' | 'openai' | 'google' | 'xai' | 'moonshot' | 'fireworks';
 
 /**
  * A request for structured output: the model must return data matching the

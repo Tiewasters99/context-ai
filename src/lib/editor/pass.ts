@@ -15,6 +15,7 @@ import {
   CORRECTIVE_MARKS,
   PRAISE_MARKS,
   type CorrectiveMark,
+  type DocumentForm,
   type DocumentPlan,
   type EditorPassResult,
   type EditorProgress,
@@ -174,12 +175,14 @@ function planDigest(plan: DocumentPlan): string {
 
 export interface RunEditorPassOptions {
   modelId?: string;
+  /** The form of the work (charter v0.3). Undeclared, the Editor names it in the plan. */
+  form?: DocumentForm;
   signal?: AbortSignal;
   onProgress?: (progress: EditorProgress) => void;
 }
 
 export async function runEditorPass(manuscript: string, options: RunEditorPassOptions = {}): Promise<EditorPassResult> {
-  const { signal, onProgress } = options;
+  const { signal, onProgress, form } = options;
   let modelId = options.modelId ?? DEFAULT_EDITOR_MODEL;
   const passNotes: string[] = [];
 
@@ -187,7 +190,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
   const planRequest = () => generateStructured<DocumentPlan>({
     modelId,
     signal,
-    system: plannerSystem(),
+    system: plannerSystem(form),
     userContent: `THE MANUSCRIPT\n\n${manuscript}`,
     toolName: 'file_document_plan',
     toolDescription: 'File the document-level plan: thesis, structural assessment, and verbatim section anchors.',
@@ -239,7 +242,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       }>({
         modelId,
         signal,
-        system: sectionEditorSystem(),
+        system: sectionEditorSystem(form),
         userContent,
         toolName: 'file_section_edits',
         toolDescription: 'File the proposed edits and praise for this section, each with its full work-product.',
@@ -273,7 +276,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       }>({
         modelId,
         signal,
-        system: criticSystem(),
+        system: criticSystem(form),
         userContent: `THE TEXT\n\n${clean}`,
         toolName: 'file_critic_report',
         toolDescription: 'File the blind critic’s report and any flags on residual AI-isms.',

@@ -9,7 +9,8 @@ import { useMemo, useRef, useState } from 'react';
 import { runEditorPass } from '@/lib/editor/pass';
 import { applyEdits } from '@/lib/editor/verifier';
 import { wordDiff } from '@/lib/editor/diff';
-import type { EditorPassResult, ProposedEdit, PraiseNote } from '@/lib/editor/types';
+import { DOCUMENT_FORMS } from '@/lib/editor/types';
+import type { DocumentForm, EditorPassResult, ProposedEdit, PraiseNote } from '@/lib/editor/types';
 import DeskSourcePicker from './DeskSourcePicker';
 
 const RED = '#c96852'; // the red pen
@@ -91,6 +92,7 @@ export default function EditorRoom() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [form, setForm] = useState<DocumentForm | ''>('');
   const [sourceNote, setSourceNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -116,6 +118,7 @@ export default function EditorRoom() {
     abortRef.current = controller;
     try {
       const pass = await runEditorPass(text, {
+        form: form || undefined,
         signal: controller.signal,
         onProgress: (p) => setProgress(p.label),
       });
@@ -305,9 +308,25 @@ export default function EditorRoom() {
                 {sourceNote.text}
               </p>
             )}
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-stone-400">
-                {manuscript.trim() ? `${manuscript.trim().length.toLocaleString()} characters` : ''}
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="min-w-0 flex items-baseline gap-3">
+                <label className="text-[12px] text-stone-500 shrink-0" style={{ fontFamily: 'Georgia, serif' }}>
+                  <span className="italic">The form:</span>{' '}
+                  <select
+                    value={form}
+                    onChange={(e) => setForm(e.target.value as DocumentForm | '')}
+                    className="bg-transparent text-[12px] cursor-pointer focus:outline-none"
+                    style={{ color: INK_RED, fontFamily: 'Georgia, serif' }}
+                  >
+                    <option value="">let the Editor judge</option>
+                    {DOCUMENT_FORMS.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </label>
+                <span className="text-[11px] text-stone-400 truncate">
+                  {manuscript.trim() ? `${manuscript.trim().length.toLocaleString()} characters` : ''}
+                </span>
               </span>
               <button
                 onClick={submit}

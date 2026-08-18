@@ -67,6 +67,15 @@ const providerRoutes: Record<string, ProviderRoute> = {
     envKey: 'MOONSHOT_API_KEY',
     streamType: 'sse',
   },
+  fireworks: {
+    url: () => 'https://api.fireworks.ai/inference/v1/chat/completions',
+    headers: (key) => ({
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+    }),
+    envKey: 'FIREWORKS_API_KEY',
+    streamType: 'sse',
+  },
 };
 
 /**
