@@ -23,6 +23,21 @@ export const CORRECTIVE_MARKS = [
 ] as const;
 export type CorrectiveMark = (typeof CORRECTIVE_MARKS)[number];
 
+/**
+ * The forms of the work (charter v0.3). The Editor holds every manuscript
+ * to the demands of its form; undeclared, it names the form in its plan.
+ */
+export const DOCUMENT_FORMS = [
+  'brief',
+  'memo',
+  'letter',
+  'research paper',
+  'creative writing',
+  'marketing',
+  'presentation',
+] as const;
+export type DocumentForm = (typeof DOCUMENT_FORMS)[number];
+
 export const PRAISE_MARKS = [
   'excellent',
   'insightful',

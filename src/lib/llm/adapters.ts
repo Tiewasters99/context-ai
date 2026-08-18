@@ -198,10 +198,31 @@ const moonshotAdapter: ProviderAdapter = {
   },
 };
 
+/**
+ * Fireworks AI — OpenAI-compatible; hosts the open Kimi weights US-side
+ * with zero data retention. Kimi's thinking still spends from max_tokens
+ * regardless of host, so structured calls get the same headroom. Named
+ * tool_choice is kept (standard OpenAI shape) — if the first live smoke
+ * test against a real key shows the Moonshot-style thinking conflict,
+ * switch to their forced variant ('any') like the moonshot adapter's
+ * 'required'.
+ */
+const fireworksAdapter: ProviderAdapter = {
+  ...openaiAdapter,
+  providerId: 'fireworks',
+  buildStructuredRequestBody(request: StructuredRequest, model: ModelConfig): string {
+    const body = JSON.parse(openaiAdapter.buildStructuredRequestBody(request, model));
+    delete body.temperature;
+    body.max_tokens = (request.maxTokens ?? 8192) + 12_000;
+    return JSON.stringify(body);
+  },
+};
+
 export const adapters: Record<string, ProviderAdapter> = {
   anthropic: anthropicAdapter,
   openai: openaiAdapter,
   google: googleAdapter,
   xai: xaiAdapter,
   moonshot: moonshotAdapter,
+  fireworks: fireworksAdapter,
 };
