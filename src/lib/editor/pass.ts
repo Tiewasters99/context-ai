@@ -24,13 +24,16 @@ import {
 } from './types';
 
 /**
- * The Editor's pen is Kimi K3 — Eden's call (2026-08-18): a talented writer
- * at a fraction of frontier cost, and the platform's proof that development
- * itself is model-agnostic. If Kimi can't take the manuscript (no key on
- * this deployment, rate limit, outage), the pass falls back to Opus 4.8 —
- * the pen the Editor trained with — and says so in the pass notes.
+ * The Editor's pen is Kimi K3, US-hosted — Eden's call (2026-08-18): a
+ * talented writer at a fraction of frontier cost, served from the open
+ * weights on Fireworks (US infrastructure, zero data retention) so client
+ * material never routes abroad. If the pen is unavailable (no key on this
+ * deployment, rate limit, outage), the pass falls back to Opus 4.8 — the
+ * pen the Editor trained with — and says so in the pass notes. The
+ * fallback is deliberately NOT Moonshot's own API: a silent failover must
+ * never reroute a manuscript to a host with weaker data terms.
  */
-export const DEFAULT_EDITOR_MODEL: string = 'kimi-k3';
+export const DEFAULT_EDITOR_MODEL: string = 'kimi-k3-us';
 export const FALLBACK_EDITOR_MODEL: string = 'claude-opus-4-8';
 
 /** Below this size the section editor sees the whole manuscript for context. */
