@@ -58,6 +58,24 @@ const providerRoutes: Record<string, ProviderRoute> = {
     envKey: 'XAI_API_KEY',
     streamType: 'sse',
   },
+  moonshot: {
+    url: () => 'https://api.moonshot.ai/v1/chat/completions',
+    headers: (key) => ({
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+    }),
+    envKey: 'MOONSHOT_API_KEY',
+    streamType: 'sse',
+  },
+  fireworks: {
+    url: () => 'https://api.fireworks.ai/inference/v1/chat/completions',
+    headers: (key) => ({
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${key}`,
+    }),
+    envKey: 'FIREWORKS_API_KEY',
+    streamType: 'sse',
+  },
 };
 
 /**

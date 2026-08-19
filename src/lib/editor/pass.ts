@@ -15,6 +15,7 @@ import {
   CORRECTIVE_MARKS,
   PRAISE_MARKS,
   type CorrectiveMark,
+  type DocumentForm,
   type DocumentPlan,
   type EditorPassResult,
   type EditorProgress,
@@ -23,10 +24,17 @@ import {
 } from './types';
 
 /**
- * The Editor runs on Opus 4.8 — Eden's call (2026-08-15): editing is not a
- * processing-power question; the skill is taste learned from examples.
+ * The Editor's pen is Kimi K3, US-hosted — Eden's call (2026-08-18): a
+ * talented writer at a fraction of frontier cost, served from the open
+ * weights on Fireworks (US infrastructure, zero data retention) so client
+ * material never routes abroad. If the pen is unavailable (no key on this
+ * deployment, rate limit, outage), the pass falls back to Opus 4.8 — the
+ * pen the Editor trained with — and says so in the pass notes. The
+ * fallback is deliberately NOT Moonshot's own API: a silent failover must
+ * never reroute a manuscript to a host with weaker data terms.
  */
-export const DEFAULT_EDITOR_MODEL = 'claude-opus-4-8';
+export const DEFAULT_EDITOR_MODEL: string = 'kimi-k3-us';
+export const FALLBACK_EDITOR_MODEL: string = 'claude-opus-4-8';
 
 /** Below this size the section editor sees the whole manuscript for context. */
 const FULL_CONTEXT_LIMIT = 12_000;
@@ -170,25 +178,41 @@ function planDigest(plan: DocumentPlan): string {
 
 export interface RunEditorPassOptions {
   modelId?: string;
+  /** The form of the work (charter v0.3). Undeclared, the Editor names it in the plan. */
+  form?: DocumentForm;
   signal?: AbortSignal;
   onProgress?: (progress: EditorProgress) => void;
 }
 
 export async function runEditorPass(manuscript: string, options: RunEditorPassOptions = {}): Promise<EditorPassResult> {
-  const { modelId = DEFAULT_EDITOR_MODEL, signal, onProgress } = options;
+  const { signal, onProgress, form } = options;
+  let modelId = options.modelId ?? DEFAULT_EDITOR_MODEL;
   const passNotes: string[] = [];
 
   onProgress?.({ phase: 'plan', label: 'Reading for the argument…' });
-  const plan = await generateStructured<DocumentPlan>({
+  const planRequest = () => generateStructured<DocumentPlan>({
     modelId,
     signal,
-    system: plannerSystem(),
+    system: plannerSystem(form),
     userContent: `THE MANUSCRIPT\n\n${manuscript}`,
     toolName: 'file_document_plan',
     toolDescription: 'File the document-level plan: thesis, structural assessment, and verbatim section anchors.',
     inputSchema: PLAN_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 3000,
   });
+
+  let plan: DocumentPlan;
+  try {
+    plan = await planRequest();
+  } catch (err) {
+    // The pen failed before a single edit was made — swap pens and reread
+    // rather than dying on the desk. Only from the default pen, and never
+    // on a user abort.
+    if (signal?.aborted || modelId !== DEFAULT_EDITOR_MODEL || DEFAULT_EDITOR_MODEL === FALLBACK_EDITOR_MODEL) throw err;
+    modelId = FALLBACK_EDITOR_MODEL;
+    passNotes.push(`The Editor's usual pen was unavailable (${err instanceof Error ? err.message : String(err)}) — this pass ran on the fallback model.`);
+    plan = await planRequest();
+  }
 
   const sections = resolveSections(manuscript, plan, passNotes);
   const fullContext = manuscript.length <= FULL_CONTEXT_LIMIT;
@@ -221,7 +245,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       }>({
         modelId,
         signal,
-        system: sectionEditorSystem(),
+        system: sectionEditorSystem(form),
         userContent,
         toolName: 'file_section_edits',
         toolDescription: 'File the proposed edits and praise for this section, each with its full work-product.',
@@ -255,7 +279,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       }>({
         modelId,
         signal,
-        system: criticSystem(),
+        system: criticSystem(form),
         userContent: `THE TEXT\n\n${clean}`,
         toolName: 'file_critic_report',
         toolDescription: 'File the blind critic’s report and any flags on residual AI-isms.',

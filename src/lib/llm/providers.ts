@@ -35,6 +35,29 @@ export const providers: ProviderConfig[] = [
     ],
   },
   {
+    id: 'moonshot',
+    name: 'Moonshot AI',
+    models: [
+      // ⚠ Confidentiality: these route to api.moonshot.ai (Singapore entity;
+      // API data may be used for training, no zero-retention tier). Fine for
+      // public/non-client material. Before any client-matter text flows here,
+      // switch to a US zero-data-retention host of the same open weights
+      // (Fireworks/Together/Baseten/DeepInfra) — same OpenAI-compatible shape.
+      { id: 'kimi-k3', apiModelId: 'kimi-k3', name: 'Kimi K3', description: 'Moonshot\'s flagship open-weight writer — 1M context', contextWindow: 1000000, tier: 'pro' },
+      { id: 'kimi-k2.6', apiModelId: 'kimi-k2.6', name: 'Kimi K2.6', description: 'Value tier — strong writing at a fraction of the cost', contextWindow: 256000, tier: 'pro' },
+    ],
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    models: [
+      // The confidentiality tier for open weights: US-hosted, zero data
+      // retention by default. Same Kimi K3 weights as Moonshot's own API —
+      // this is the route client-matter text takes.
+      { id: 'kimi-k3-us', apiModelId: 'accounts/fireworks/models/kimi-k3', name: 'Kimi K3 (US-hosted)', description: 'The same open weights on Fireworks — US-hosted, zero data retention', contextWindow: 1000000, tier: 'pro' },
+    ],
+  },
+  {
     id: 'xai',
     name: 'xAI',
     models: [

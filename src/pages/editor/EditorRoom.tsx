@@ -9,7 +9,8 @@ import { useMemo, useRef, useState } from 'react';
 import { runEditorPass } from '@/lib/editor/pass';
 import { applyEdits } from '@/lib/editor/verifier';
 import { wordDiff } from '@/lib/editor/diff';
-import type { EditorPassResult, ProposedEdit, PraiseNote } from '@/lib/editor/types';
+import { DOCUMENT_FORMS } from '@/lib/editor/types';
+import type { DocumentForm, EditorPassResult, ProposedEdit, PraiseNote } from '@/lib/editor/types';
 import DeskSourcePicker from './DeskSourcePicker';
 
 const RED = '#c96852'; // the red pen
@@ -91,6 +92,7 @@ export default function EditorRoom() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [form, setForm] = useState<DocumentForm | ''>('');
   const [sourceNote, setSourceNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -116,6 +118,7 @@ export default function EditorRoom() {
     abortRef.current = controller;
     try {
       const pass = await runEditorPass(text, {
+        form: form || undefined,
         signal: controller.signal,
         onProgress: (p) => setProgress(p.label),
       });
@@ -149,28 +152,67 @@ export default function EditorRoom() {
     setPhase('desk');
   }
 
-  async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = ''; // allow re-picking the same file
-    if (!file) return;
+  async function readFile(file: File) {
     setSourceNote({ kind: 'info', text: `Reading “${file.name}”…` });
     try {
-      const { extractText } = await import('@/lib/extract');
-      const text = (await extractText(file)).trim();
-      if (text.length < 40 || text.startsWith('[Binary file') || text.startsWith('[Unsupported')) {
+      const { extractManuscript, StaleChunkError } = await import('@/lib/editor/extract-manuscript');
+      const { prepareDeskText } = await import('@/lib/editor/desk-text');
+      let text: string;
+      try {
+        text = (await extractManuscript(file, (label) => setSourceNote({ kind: 'info', text: label }))).trim();
+      } catch (err) {
+        // A redeploy deleted this tab's hashed chunks (the pdfjs worker
+        // fetch isn't covered by the vite:preloadError self-heal) —
+        // reload once, with the same loop guard main.tsx uses.
+        if (err instanceof StaleChunkError && Date.now() - Number(sessionStorage.getItem('chunk-reload-at') || 0) > 60_000) {
+          sessionStorage.setItem('chunk-reload-at', String(Date.now()));
+          setSourceNote({ kind: 'info', text: 'The app updated under this tab — reloading…' });
+          window.location.reload();
+          return;
+        }
+        throw err;
+      }
+      if (text.length < 40) {
         throw new Error('no readable text found — if it is a scan, ingest it into Contextspaces (OCR runs there) and pull it from your matters instead');
       }
-      setManuscript(text);
-      setSourceNote({ kind: 'info', text: `Loaded “${file.name}” — review the text, then submit.` });
+      const prepared = prepareDeskText(text);
+      if (prepared.kind === 'refused') throw new Error(prepared.reason);
+      setManuscript(prepared.text);
+      setSourceNote({
+        kind: 'info',
+        text: `Loaded “${file.name}”${prepared.kind === 'converted' ? ` (${prepared.note})` : ''} — review the text, then submit.`,
+      });
     } catch (err) {
       setSourceNote({ kind: 'error', text: `Could not read “${file.name}”: ${err instanceof Error ? err.message : String(err)}` });
     }
   }
 
-  function handleVaultLoaded(text: string, title: string) {
+  function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // allow re-picking the same file
+    if (file) void readFile(file);
+  }
+
+  function openFileDialog() {
+    // Warm the extraction chunks while the OS dialog is up, so the first
+    // upload doesn't pay the pdfjs load mid-gesture.
+    void import('@/lib/editor/extract-manuscript');
+    fileInputRef.current?.click();
+  }
+
+  async function handleVaultLoaded(text: string, title: string) {
     setPickerOpen(false);
-    setManuscript(text.trim());
-    setSourceNote({ kind: 'info', text: `Loaded “${title}” from your matters — review the text, then submit.` });
+    const { prepareDeskText } = await import('@/lib/editor/desk-text');
+    const prepared = prepareDeskText(text);
+    if (prepared.kind === 'refused') {
+      setSourceNote({ kind: 'error', text: `“${title}” can’t be edited: ${prepared.reason}` });
+      return;
+    }
+    setManuscript(prepared.text);
+    setSourceNote({
+      kind: 'info',
+      text: `Loaded “${title}” from your matters${prepared.kind === 'converted' ? ` (${prepared.note})` : ''} — review the text, then submit.`,
+    });
   }
 
   const backdrop = (
@@ -186,15 +228,26 @@ export default function EditorRoom() {
   );
 
   // ── The desk ─────────────────────────────────────────────────────────
+  // The sheet sits to the left, over the Editor's paper-stacked desk, so
+  // the Editor himself stays visible beside the manuscript — you are
+  // handing him a draft, not papering over him.
   if (phase === 'desk') {
     return (
-      <div className="relative min-h-full bg-black overflow-y-auto animate-[fadeIn_1.4s_ease-out]">
+      <div
+        className="relative min-h-full bg-black overflow-y-auto animate-[fadeIn_1.4s_ease-out]"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const file = e.dataTransfer.files?.[0];
+          if (file) void readFile(file);
+        }}
+      >
         {backdrop}
-        <div className="relative z-10 max-w-3xl mx-auto px-6 sm:px-10 pt-[34vh] pb-10">
+        <div className="relative z-10 max-w-xl px-6 sm:px-10 lg:pl-[5%] lg:pr-0 pt-[16vh] lg:pt-[12vh] pb-10 mx-auto lg:mx-0">
           <p className="text-[11px] font-semibold tracking-[0.3em] uppercase" style={{ color: GOLD }}>
             The Contextspaces Editor
           </p>
-          <p className="mt-2 max-w-xl text-[16px] leading-snug text-[#f5f2ed]" style={{ fontFamily: 'Georgia, serif' }}>
+          <p className="mt-2 text-[15px] leading-snug text-[#f5f2ed]" style={{ fontFamily: 'Georgia, serif' }}>
             Bring any AI draft — a brief, a memo, a letter. Comments in the margin, then a proposed
             edit; every change returned as a redline for you to rule on.
           </p>
@@ -205,14 +258,22 @@ export default function EditorRoom() {
             </p>
           )}
 
-          <div className="mt-6 bg-[#faf7f0] rounded-sm shadow-2xl p-5 sm:p-6">
+          <div
+            className="mt-6 bg-[#faf7f0] rounded-sm shadow-2xl p-5 sm:p-6"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files?.[0];
+              if (file) void readFile(file);
+            }}
+          >
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <p className="text-[10px] font-semibold tracking-[0.24em] uppercase text-stone-500">
                 Lay a manuscript on the desk
               </p>
               <span className="text-[12px] text-stone-500">
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={openFileDialog}
                   className="underline underline-offset-2 hover:text-stone-700"
                   style={{ color: INK_RED }}
                 >
@@ -238,8 +299,8 @@ export default function EditorRoom() {
             <textarea
               value={manuscript}
               onChange={(e) => setManuscript(e.target.value)}
-              placeholder="Paste the draft — or upload a file, or pull one from your matters…"
-              className="mt-3 w-full min-h-[280px] bg-transparent text-[15px] leading-relaxed text-[#1c1917] placeholder:text-stone-400 focus:outline-none resize-y"
+              placeholder="Paste the draft — or drop a file here, upload one, or pull one from your matters…"
+              className="mt-3 w-full min-h-[220px] bg-transparent text-[15px] leading-relaxed text-[#1c1917] placeholder:text-stone-400 focus:outline-none resize-y"
               style={{ fontFamily: 'Georgia, serif' }}
             />
             {sourceNote && (
@@ -247,9 +308,25 @@ export default function EditorRoom() {
                 {sourceNote.text}
               </p>
             )}
-            <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-stone-400">
-                {manuscript.trim() ? `${manuscript.trim().length.toLocaleString()} characters` : ''}
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="min-w-0 flex items-baseline gap-3">
+                <label className="text-[12px] text-stone-500 shrink-0" style={{ fontFamily: 'Georgia, serif' }}>
+                  <span className="italic">The form:</span>{' '}
+                  <select
+                    value={form}
+                    onChange={(e) => setForm(e.target.value as DocumentForm | '')}
+                    className="bg-transparent text-[12px] cursor-pointer focus:outline-none"
+                    style={{ color: INK_RED, fontFamily: 'Georgia, serif' }}
+                  >
+                    <option value="">let the Editor judge</option>
+                    {DOCUMENT_FORMS.map((f) => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                </label>
+                <span className="text-[11px] text-stone-400 truncate">
+                  {manuscript.trim() ? `${manuscript.trim().length.toLocaleString()} characters` : ''}
+                </span>
               </span>
               <button
                 onClick={submit}

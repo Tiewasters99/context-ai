@@ -16,7 +16,14 @@ ${charter}
 ---
 `;
 
-export function plannerSystem(): string {
+/** The form charge appended to every task (charter: "The forms of the work"). */
+function formCharge(form?: string): string {
+  return form
+    ? `\n\nTHE FORM: This manuscript is a ${form}. The charter's "forms of the work" entry for the ${form} governs its register and its characteristic failures — hold the manuscript to it.`
+    : `\n\nTHE FORM: None was declared. Name the form in your structural assessment and hold the manuscript to that form's entry in the charter's "forms of the work."`;
+}
+
+export function plannerSystem(form?: string): string {
   return (
     SHARED_PREAMBLE +
     `Your task in this pass: READ FOR THE ARGUMENT. Do not edit yet.
@@ -26,11 +33,12 @@ Read the whole manuscript and produce the document-level plan the charter requir
 - Your structural assessment: where the document's structure serves the thesis and where it shows the AI voice (symmetric paragraphs, equal airtime for unequal arguments, a conclusion that restates, an opening that fails to Situate/Hook/Seed).
 - The sections: divide the manuscript into its argument sections. For each, copy the section's first 6–12 words VERBATIM, character for character, from the manuscript — these anchors are used mechanically to split the text, so any paraphrase breaks the pass. Note each section's role, and any section-level structural diagnosis.
 
-Divide by argument, not by paragraph; a short document may be a single section. Never more than 8 sections.`
+Divide by argument, not by paragraph; a short document may be a single section. Never more than 8 sections.` +
+    formCharge(form)
   );
 }
 
-export function sectionEditorSystem(): string {
+export function sectionEditorSystem(form?: string): string {
   return (
     SHARED_PREAMBLE +
     `Your task in this pass: EDIT ONE SECTION, working from the document plan you are given.
@@ -50,17 +58,19 @@ Discipline:
 - Read the joints twice: the section's close, its transitions, the second sentence of each paragraph.
 - The plan tells you what every other section does. Do not import into your section substance the plan assigns elsewhere — a fact another section delivers is not delivered again in yours.
 - Do not flag what does not need fixing. Restraint is part of the craft.
-- Praise is equally important teaching. Record what earns praise, verbatim, with a praise mark from the charter's list and why it earns it.`
+- Praise is equally important teaching. Record what earns praise, verbatim, with a praise mark from the charter's list and why it earns it.` +
+    formCharge(form)
   );
 }
 
-export function criticSystem(): string {
+export function criticSystem(form?: string): string {
   return (
     SHARED_PREAMBLE +
     `Your task in this pass: THE BLIND CRITIC. You are reading a finished text cold — you did not write it, you have not seen any earlier draft, and you owe its author nothing. Distance is your superpower.
 
 Read for residual AI-isms only: hedging, performative balance, signposting, triads, the pattern-matched Ending, images that fail the camera test or the portability test, personification with an unearned verb, ascending abstraction at a close. Check the joints twice.
 
-For each failure, quote the offending passage VERBATIM and give the one-word margin verdict and a one-sentence note. Then give a short overall report: does this text still sound like a model, and where. If it reads clean, say so plainly — do not invent findings to seem thorough.`
+For each failure, quote the offending passage VERBATIM and give the one-word margin verdict and a one-sentence note. Then give a short overall report: does this text still sound like a model, and where. If it reads clean, say so plainly — do not invent findings to seem thorough.` +
+    formCharge(form)
   );
 }

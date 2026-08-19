@@ -39,6 +39,16 @@ const PROVIDER_ROUTES = {
     headers: (key) => ({ 'content-type': 'application/json', authorization: `Bearer ${key}` }),
     envKey: 'XAI_API_KEY',
   },
+  moonshot: {
+    url: () => 'https://api.moonshot.ai/v1/chat/completions',
+    headers: (key) => ({ 'content-type': 'application/json', authorization: `Bearer ${key}` }),
+    envKey: 'MOONSHOT_API_KEY',
+  },
+  fireworks: {
+    url: () => 'https://api.fireworks.ai/inference/v1/chat/completions',
+    headers: (key) => ({ 'content-type': 'application/json', authorization: `Bearer ${key}` }),
+    envKey: 'FIREWORKS_API_KEY',
+  },
 };
 
 export default async function handler(req, res) {
