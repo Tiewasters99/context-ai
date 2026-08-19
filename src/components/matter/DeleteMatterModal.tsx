@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Trash2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
+import ModalPortal from '@/components/ui/ModalPortal';
 
 // Confirmation + cascade for matter deletion. The caller computes the list
 // of descendant ids (including the target itself) so we can clean up
@@ -54,52 +55,54 @@ export default function DeleteMatterModal({ target, onClose, onDeleted }: Props)
   const subCount = target.descendantIds.length - 1;
 
   return (
-    <>
-      <div className="fixed inset-0 z-[60] bg-black/40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
-            <Trash2 size={15} className="text-red-300" />
-            Delete matter
-          </h3>
-          <button
-            onClick={onClose}
-            disabled={deleting}
-            className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors disabled:opacity-40"
-          >
-            <X size={16} />
-          </button>
-        </div>
-        <p className="text-[13px] text-white/80 mb-2">
-          Delete <span className="text-[#e8b84a] font-semibold">{target.matterName}</span>?
-        </p>
-        {subCount > 0 && (
-          <p className="text-[12px] text-amber-300 mb-2">
-            This also deletes {subCount} sub-matter{subCount === 1 ? '' : 's'} underneath.
+    <ModalPortal>
+      <>
+        <div className="fixed inset-0 z-[60] bg-black/40" onClick={onClose} />
+        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+              <Trash2 size={15} className="text-red-300" />
+              Delete matter
+            </h3>
+            <button
+              onClick={onClose}
+              disabled={deleting}
+              className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors disabled:opacity-40"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <p className="text-[13px] text-white/80 mb-2">
+            Delete <span className="text-[#e8b84a] font-semibold">{target.matterName}</span>?
           </p>
-        )}
-        <p className="text-[11px] text-white/50 leading-relaxed mb-5">
-          All documents, passages, pages, lists, and tables in this matter (and its sub-matters) are permanently deleted. This cannot be undone.
-        </p>
-        {error && <p className="text-[12px] text-red-300 mb-3">{error}</p>}
-        <div className="flex gap-2">
-          <button
-            onClick={onClose}
-            disabled={deleting}
-            className="flex-1 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-[13px] text-white/80 hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleDelete}
-            disabled={deleting}
-            className="flex-1 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-200 text-[13px] font-medium transition-colors disabled:opacity-40"
-          >
-            {deleting ? 'Deleting…' : 'Delete'}
-          </button>
+          {subCount > 0 && (
+            <p className="text-[12px] text-amber-300 mb-2">
+              This also deletes {subCount} sub-matter{subCount === 1 ? '' : 's'} underneath.
+            </p>
+          )}
+          <p className="text-[11px] text-white/50 leading-relaxed mb-5">
+            All documents, passages, pages, lists, and tables in this matter (and its sub-matters) are permanently deleted. This cannot be undone.
+          </p>
+          {error && <p className="text-[12px] text-red-300 mb-3">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              disabled={deleting}
+              className="flex-1 py-2 rounded-lg border border-[rgba(255,255,255,0.1)] text-[13px] text-white/80 hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleDelete}
+              disabled={deleting}
+              className="flex-1 py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-400/40 text-red-200 text-[13px] font-medium transition-colors disabled:opacity-40"
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </div>
         </div>
-      </div>
-    </>
+      </>
+    </ModalPortal>
   );
 }
 
