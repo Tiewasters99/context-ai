@@ -7,8 +7,8 @@
  * provider-neutral structured output through src/lib/llm.
  */
 
-import { generateStructured } from '@/lib/llm';
-import { plannerSystem, sectionEditorSystem, criticSystem } from './constitution';
+import { generateStructured, findModel } from '@/lib/llm';
+import { plannerSystem, sectionEditorSystem, lightEditorSystem, criticSystem } from './constitution';
 import { verifyEdits, applyEdits, buildNormalized, normalize } from './verifier';
 import type { RawEdit } from './verifier';
 import {
@@ -38,6 +38,16 @@ export const FALLBACK_EDITOR_MODEL: string = 'claude-opus-4-8';
 
 /** Below this size the section editor sees the whole manuscript for context. */
 const FULL_CONTEXT_LIMIT = 12_000;
+
+/**
+ * At or below this size the Editor takes the manuscript in one sitting —
+ * a single edit call instead of plan + per-section calls. Most of the
+ * cost of a pass is the model's thinking, which is billed per call.
+ */
+const LIGHT_PASS_LIMIT = 7_000;
+
+/** Sections are independent by design — a few desks work at once. */
+const SECTION_CONCURRENCY = 3;
 
 const PLAN_SCHEMA = {
   type: 'object',
@@ -133,6 +143,17 @@ const CRITIC_SCHEMA = {
   },
 } as const;
 
+const LIGHT_SCHEMA = {
+  type: 'object',
+  required: ['thesis', 'assessment', 'edits', 'praise'],
+  properties: {
+    thesis: PLAN_SCHEMA.properties.thesis,
+    assessment: PLAN_SCHEMA.properties.assessment,
+    edits: SECTION_SCHEMA.properties.edits,
+    praise: SECTION_SCHEMA.properties.praise,
+  },
+} as const;
+
 interface ResolvedSection {
   title: string;
   role: string;
@@ -189,80 +210,139 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
   let modelId = options.modelId ?? DEFAULT_EDITOR_MODEL;
   const passNotes: string[] = [];
 
-  onProgress?.({ phase: 'plan', label: 'Reading for the argument…' });
-  const planRequest = () => generateStructured<DocumentPlan>({
-    modelId,
-    signal,
-    system: plannerSystem(form),
-    userContent: `THE MANUSCRIPT\n\n${manuscript}`,
-    toolName: 'file_document_plan',
-    toolDescription: 'File the document-level plan: thesis, structural assessment, and verbatim section anchors.',
-    inputSchema: PLAN_SCHEMA as unknown as Record<string, unknown>,
-    maxTokens: 3000,
-  });
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  const onUsage = (u: { inputTokens: number; outputTokens: number }) => {
+    usage.inputTokens += u.inputTokens;
+    usage.outputTokens += u.outputTokens;
+  };
 
-  let plan: DocumentPlan;
-  try {
-    plan = await planRequest();
-  } catch (err) {
-    // The pen failed before a single edit was made — swap pens and reread
-    // rather than dying on the desk. Only from the default pen, and never
-    // on a user abort.
-    if (signal?.aborted || modelId !== DEFAULT_EDITOR_MODEL || DEFAULT_EDITOR_MODEL === FALLBACK_EDITOR_MODEL) throw err;
-    modelId = FALLBACK_EDITOR_MODEL;
-    passNotes.push(`The Editor's usual pen was unavailable (${err instanceof Error ? err.message : String(err)}) — this pass ran on the fallback model.`);
-    plan = await planRequest();
+  // The FIRST model call gets the pen-fallback treatment: if the default
+  // pen fails before any edit is made, swap pens and reread rather than
+  // dying on the desk. Never on a user abort.
+  async function firstCallWithFallback<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (err) {
+      if (signal?.aborted || modelId !== DEFAULT_EDITOR_MODEL || DEFAULT_EDITOR_MODEL === FALLBACK_EDITOR_MODEL) throw err;
+      modelId = FALLBACK_EDITOR_MODEL;
+      passNotes.push(`The Editor's usual pen was unavailable (${err instanceof Error ? err.message : String(err)}) — this pass ran on the fallback model.`);
+      return run();
+    }
   }
 
-  const sections = resolveSections(manuscript, plan, passNotes);
-  const fullContext = manuscript.length <= FULL_CONTEXT_LIMIT;
+  type SectionResult = {
+    edits: Array<{ before: string; claim: string; failure: string; mark: CorrectiveMark; authority: string; after: string }>;
+    praise: Array<{ quote: string; mark: PraiseMark; note: string }>;
+  };
 
+  let plan: DocumentPlan;
   const rawEdits: RawEdit[] = [];
   const praise: PraiseNote[] = [];
 
-  for (let i = 0; i < sections.length; i++) {
-    const section = sections[i];
+  if (manuscript.length <= LIGHT_PASS_LIMIT) {
+    // The light pass: one sitting, one call — the reading and the edits
+    // together. Most of a pass's cost is per-call thinking; a short
+    // manuscript doesn't need a separate plan and section apparatus.
+    onProgress?.({ phase: 'plan', label: 'The Editor takes the manuscript in one sitting…' });
+    const light = await firstCallWithFallback(() =>
+      generateStructured<{ thesis: string; assessment: string } & SectionResult>({
+        modelId,
+        signal,
+        onUsage,
+        system: lightEditorSystem(form),
+        userContent: `THE MANUSCRIPT\n\n${manuscript}`,
+        toolName: 'file_edited_manuscript',
+        toolDescription: 'File the reading (thesis, assessment) and every proposed edit and praise note, each with its full work-product.',
+        inputSchema: LIGHT_SCHEMA as unknown as Record<string, unknown>,
+        maxTokens: 16000,
+      }),
+    );
+    plan = { thesis: light.thesis, assessment: light.assessment, sections: [] };
+    light.edits.forEach((edit, j) => rawEdits.push({ id: `edit-0-${j}`, ...edit }));
+    light.praise.forEach((p, j) => praise.push({ id: `praise-0-${j}`, pos: manuscript.indexOf(p.quote), ...p }));
+  } else {
+    onProgress?.({ phase: 'plan', label: 'Reading for the argument…' });
+    plan = await firstCallWithFallback(() =>
+      generateStructured<DocumentPlan>({
+        modelId,
+        signal,
+        onUsage,
+        system: plannerSystem(form),
+        userContent: `THE MANUSCRIPT\n\n${manuscript}`,
+        toolName: 'file_document_plan',
+        toolDescription: 'File the document-level plan: thesis, structural assessment, and verbatim section anchors.',
+        inputSchema: PLAN_SCHEMA as unknown as Record<string, unknown>,
+        maxTokens: 3000,
+      }),
+    );
+
+    const sections = resolveSections(manuscript, plan, passNotes);
+    const fullContext = manuscript.length <= FULL_CONTEXT_LIMIT;
+
+    // The sections are independent by design — the plan carries the
+    // document context — so a few desks work at once. Wall-clock drops
+    // from the sum of the sections to roughly the slowest few.
+    const results: Array<SectionResult | null> = new Array(sections.length).fill(null);
+    let nextIndex = 0;
+    let filed = 0;
     onProgress?.({
       phase: 'edit',
-      label: `Editing section ${i + 1} of ${sections.length} — “${section.title}”`,
-      sectionIndex: i,
+      label: `The editors take their sections — 0 of ${sections.length} filed…`,
+      sectionIndex: 0,
       sectionCount: sections.length,
     });
 
-    const sectionText = manuscript.slice(section.start, section.end);
-    const context = fullContext
-      ? `THE FULL MANUSCRIPT (for context — edit only your section)\n\n${manuscript}\n\n---\n\n`
-      : 'You are seeing only your section; the plan carries the document context.\n\n';
-    const userContent =
-      `${planDigest(plan)}\n\n${context}` +
-      `YOUR SECTION — ${i + 1} of ${sections.length}: “${section.title}” (${section.role})` +
-      `${section.structuralNote ? `\nStructural note from the plan: ${section.structuralNote}` : ''}\n\n${sectionText}`;
+    const workOneDesk = async (): Promise<void> => {
+      for (;;) {
+        const i = nextIndex++;
+        if (i >= sections.length) return;
+        const section = sections[i];
+        const sectionText = manuscript.slice(section.start, section.end);
+        const context = fullContext
+          ? `THE FULL MANUSCRIPT (for context — edit only your section)\n\n${manuscript}\n\n---\n\n`
+          : 'You are seeing only your section; the plan carries the document context.\n\n';
+        const userContent =
+          `${planDigest(plan)}\n\n${context}` +
+          `YOUR SECTION — ${i + 1} of ${sections.length}: “${section.title}” (${section.role})` +
+          `${section.structuralNote ? `\nStructural note from the plan: ${section.structuralNote}` : ''}\n\n${sectionText}`;
 
-    try {
-      const result = await generateStructured<{
-        edits: Array<{ before: string; claim: string; failure: string; mark: CorrectiveMark; authority: string; after: string }>;
-        praise: Array<{ quote: string; mark: PraiseMark; note: string }>;
-      }>({
-        modelId,
-        signal,
-        system: sectionEditorSystem(form),
-        userContent,
-        toolName: 'file_section_edits',
-        toolDescription: 'File the proposed edits and praise for this section, each with its full work-product.',
-        inputSchema: SECTION_SCHEMA as unknown as Record<string, unknown>,
-        maxTokens: 16000,
-      });
+        try {
+          results[i] = await generateStructured<SectionResult>({
+            modelId,
+            signal,
+            onUsage,
+            system: sectionEditorSystem(form),
+            userContent,
+            toolName: 'file_section_edits',
+            toolDescription: 'File the proposed edits and praise for this section, each with its full work-product.',
+            inputSchema: SECTION_SCHEMA as unknown as Record<string, unknown>,
+            maxTokens: 16000,
+          });
+        } catch (err) {
+          if (signal?.aborted) throw err;
+          passNotes.push(`Section ${i + 1} (“${section.title}”) could not be edited: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        filed++;
+        onProgress?.({
+          phase: 'edit',
+          label: `The editors take their sections — ${filed} of ${sections.length} filed…`,
+          sectionIndex: Math.min(filed, sections.length - 1),
+          sectionCount: sections.length,
+        });
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SECTION_CONCURRENCY, sections.length) }, () => workOneDesk()));
 
+    sections.forEach((section, i) => {
+      const result = results[i];
+      if (!result) return;
       result.edits.forEach((edit, j) => rawEdits.push({ id: `edit-${i}-${j}`, ...edit }));
       result.praise.forEach((p, j) => {
         let pos = manuscript.indexOf(p.quote, section.start);
         if (pos === -1 || pos >= section.end) pos = manuscript.indexOf(p.quote);
         praise.push({ id: `praise-${i}-${j}`, pos, ...p });
       });
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      passNotes.push(`Section ${i + 1} (“${section.title}”) could not be edited: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    });
   }
 
   onProgress?.({ phase: 'verify', label: 'Checking citations, quotations, and numbers…' });
@@ -279,6 +359,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       }>({
         modelId,
         signal,
+        onUsage,
         system: criticSystem(form),
         userContent: `THE TEXT\n\n${clean}`,
         toolName: 'file_critic_report',
@@ -310,5 +391,18 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
     criticReport = 'No edits survived to criticize.';
   }
 
-  return { plan, edits, praise, rejected, criticReport, passNotes };
+  const price = findModel(modelId)?.model.pricePerM;
+  return {
+    plan,
+    edits,
+    praise,
+    rejected,
+    criticReport,
+    passNotes,
+    usage: {
+      ...usage,
+      modelId,
+      estimatedCost: price ? (usage.inputTokens * price.input + usage.outputTokens * price.output) / 1e6 : undefined,
+    },
+  };
 }
