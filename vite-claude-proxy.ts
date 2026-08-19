@@ -1,5 +1,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { request as httpsRequest } from 'node:https';
+import type { IncomingMessage } from 'node:http';
 import type { Plugin } from 'vite';
 
 // Absolute file: URL to the CLI's free-DB fetchers, resolved from the
@@ -286,37 +288,24 @@ export default function llmProxy(): Plugin {
         const url = route.url(parsed.model);
         const headers = route.headers(apiKey);
 
+        // Plain https.request, not fetch: Node's fetch (undici) gives up if
+        // response HEADERS take more than 300s, and a thinking model on a
+        // non-streaming structured call can hold the line longer than that
+        // before it sends anything. The socket timeout below is inactivity-
+        // based and generous.
         try {
-          const upstream = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: parsed.body,
+          const upstream = await new Promise<IncomingMessage>((resolve, reject) => {
+            const r = httpsRequest(url, { method: 'POST', headers, timeout: 900_000 }, resolve);
+            r.on('timeout', () => r.destroy(new Error('upstream sent nothing for 900s')));
+            r.on('error', reject);
+            r.end(parsed.body);
           });
-
-          if (!upstream.ok) {
-            const errText = await upstream.text();
-            res.writeHead(upstream.status, { 'Content-Type': 'application/json' });
-            res.end(errText);
-            return;
-          }
-
-          if (upstream.body) {
-            res.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              'Connection': 'keep-alive',
-            });
-            const reader = upstream.body.getReader();
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) { res.end(); break; }
-              res.write(value);
-            }
-          } else {
-            const text = await upstream.text();
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(text);
-          }
+          res.writeHead(upstream.statusCode ?? 502, {
+            'Content-Type': (upstream.headers['content-type'] as string | undefined) ?? 'application/json',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          });
+          upstream.pipe(res);
         } catch (err: unknown) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Proxy error: ${err instanceof Error ? err.message : 'Unknown'}` }));

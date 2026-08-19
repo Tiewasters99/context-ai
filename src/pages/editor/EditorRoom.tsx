@@ -17,28 +17,66 @@ const RED = '#c96852'; // the red pen
 const GOLD = '#e8b84a'; // praise, on dark
 const INK_RED = '#a33b2a'; // the red pen, on paper
 const INK_GOLD = '#8a6d1a'; // praise, on paper
+const INK_BLUE = '#1f4e8c'; // the lawyer's own ink
 
 const CORRECTIVE_AMBIENCE = ['obscure', 'transition', 'choppy', 'repetitive', 'weak', 'vague', 'awkward', 'diction', 'barbare'];
 const PRAISE_AMBIENCE = ['excellent', 'very sharp', 'yes!', 'brilliant'];
 
 type Phase = 'desk' | 'working' | 'redline';
-type Decision = 'accepted' | 'declined';
+/** The lawyer's ruling on one edit. "Modified" = accepted with their own redraft. */
+type Decision = { kind: 'accepted' | 'declined' } | { kind: 'modified'; text: string };
 
-/** The manuscript cut into plain runs and edit spans, in order. */
+/** Text the lawyer wrote in — their own ink, applied alongside accepted edits. */
+type UserInsertion = { id: string; pos: number; text: string };
+
+/** The manuscript cut into plain runs, edit spans, and insertion points, in order. */
 type Segment =
   | { type: 'plain'; text: string; start: number }
-  | { type: 'edit'; edit: ProposedEdit };
+  | { type: 'edit'; edit: ProposedEdit }
+  | { type: 'ins'; ins: UserInsertion };
 
-function buildSegments(manuscript: string, edits: ProposedEdit[]): Segment[] {
+function buildSegments(manuscript: string, edits: ProposedEdit[], insertions: UserInsertion[]): Segment[] {
+  // Insertions consume no manuscript characters; at equal positions the
+  // insertion renders before the edit span it precedes.
+  const items = [
+    ...insertions.map((ins) => ({ pos: ins.pos, len: 0, ins, edit: undefined as ProposedEdit | undefined })),
+    ...edits.map((edit) => ({ pos: edit.pos, len: edit.before.length, edit, ins: undefined as UserInsertion | undefined })),
+  ].sort((a, b) => a.pos - b.pos || a.len - b.len);
+
   const segments: Segment[] = [];
   let cursor = 0;
-  for (const edit of edits) {
-    if (edit.pos > cursor) segments.push({ type: 'plain', text: manuscript.slice(cursor, edit.pos), start: cursor });
-    segments.push({ type: 'edit', edit });
-    cursor = edit.pos + edit.before.length;
+  for (const item of items) {
+    if (item.pos > cursor) segments.push({ type: 'plain', text: manuscript.slice(cursor, item.pos), start: cursor });
+    if (item.ins) segments.push({ type: 'ins', ins: item.ins });
+    else if (item.edit) {
+      segments.push({ type: 'edit', edit: item.edit });
+      cursor = item.pos + item.len;
+    }
   }
   if (cursor < manuscript.length) segments.push({ type: 'plain', text: manuscript.slice(cursor), start: cursor });
   return segments;
+}
+
+/** Caret position in the manuscript for a click at (x, y), via the chunk spans' data-base. */
+function manuscriptPosFromPoint(x: number, y: number): number | null {
+  type CaretDoc = Document & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+  };
+  const doc = document as CaretDoc;
+  let node: Node | null = null;
+  let offset = 0;
+  if (doc.caretRangeFromPoint) {
+    const range = doc.caretRangeFromPoint(x, y);
+    if (range) { node = range.startContainer; offset = range.startOffset; }
+  } else if (doc.caretPositionFromPoint) {
+    const p = doc.caretPositionFromPoint(x, y);
+    if (p) { node = p.offsetNode; offset = p.offset; }
+  }
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+  const base = (node.parentElement as HTMLElement | null)?.dataset.base;
+  if (base === undefined) return null;
+  return Number(base) + offset;
 }
 
 /** A one-word verdict in the margin hand. */
@@ -50,24 +88,25 @@ function MarkTag({
 }: {
   word: string;
   tone: 'red' | 'gold';
-  state: 'open' | 'accepted' | 'declined';
+  state: 'open' | 'accepted' | 'declined' | 'modified';
   onClick: () => void;
 }) {
   const color = state === 'declined' ? '#a8a29e' : tone === 'red' ? INK_RED : INK_GOLD;
+  const decided = state === 'accepted' || state === 'modified';
   return (
     <button
-      onClick={onClick}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
       className="mx-1 align-baseline italic text-[13px] leading-none whitespace-nowrap"
       style={{
         fontFamily: 'Georgia, serif',
         color,
         borderBottom: state === 'open' ? `1px dotted ${color}` : 'none',
-        fontWeight: state === 'accepted' ? 700 : 400,
+        fontWeight: decided ? 700 : 400,
         textDecoration: state === 'declined' ? 'line-through' : 'none',
         opacity: state === 'declined' ? 0.7 : 1,
       }}
     >
-      {state === 'accepted' ? `${word} ✓` : word}
+      {state === 'accepted' ? `${word} ✓` : state === 'modified' ? `${word} ✎` : word}
     </button>
   );
 }
@@ -93,16 +132,33 @@ export default function EditorRoom() {
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [form, setForm] = useState<DocumentForm | ''>('');
+  const [modifying, setModifying] = useState<{ id: string; text: string } | null>(null);
+  const [insertions, setInsertions] = useState<UserInsertion[]>([]);
+  /** Which change's quick-ruling pill is showing (edit id or insertion id). */
+  const [activeId, setActiveId] = useState<string | null>(null);
+  /** An open insertion point: where, and the text typed so far. */
+  const [inserting, setInserting] = useState<{ pos: number; text: string } | null>(null);
   const [sourceNote, setSourceNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const segments = useMemo(
-    () => (result ? buildSegments(submitted, result.edits) : []),
-    [result, submitted],
+    () => (result ? buildSegments(submitted, result.edits, insertions) : []),
+    [result, submitted, insertions],
   );
 
-  const acceptedCount = result ? result.edits.filter((e) => decisions[e.id] === 'accepted').length : 0;
+  const appliedChanges = useMemo(() => {
+    if (!result) return [];
+    const ruled = result.edits
+      .filter((e) => decisions[e.id] && decisions[e.id].kind !== 'declined')
+      .map((e) => {
+        const d = decisions[e.id];
+        return d.kind === 'modified' ? { ...e, after: d.text } : e;
+      });
+    const inserted = insertions.map((ins) => ({ ...ins, before: '', after: ins.text }));
+    return [...ruled, ...inserted].sort((a, b) => a.pos - b.pos || a.before.length - b.before.length);
+  }, [result, decisions, insertions]);
+  const appliedCount = appliedChanges.length;
   const openCount = result ? result.edits.filter((e) => !decisions[e.id]).length : 0;
 
   async function submit() {
@@ -112,6 +168,10 @@ export default function EditorRoom() {
     setResult(null);
     setDecisions({});
     setExpanded(null);
+    setModifying(null);
+    setInsertions([]);
+    setActiveId(null);
+    setInserting(null);
     setSubmitted(text);
     setPhase('working');
     const controller = new AbortController();
@@ -137,19 +197,134 @@ export default function EditorRoom() {
   function decide(id: string, decision: Decision) {
     setDecisions((prev) => ({ ...prev, [id]: decision }));
     setExpanded(null);
+    setModifying(null);
   }
 
   async function copyEdited() {
     if (!result) return;
-    const accepted = result.edits.filter((e) => decisions[e.id] === 'accepted');
-    await navigator.clipboard.writeText(applyEdits(submitted, accepted));
+    await navigator.clipboard.writeText(applyEdits(submitted, appliedChanges));
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
+  }
+
+  /** The redline as a Word document with real tracked changes. */
+  async function downloadDocx() {
+    if (!result) return;
+    const { makeRedlineDocxBlob } = await import('@/lib/editor/export-docx');
+    const changes = [
+      // Declined edits are omitted — the original text simply stands.
+      ...result.edits
+        .filter((e) => decisions[e.id]?.kind !== 'declined')
+        .map((e) => {
+          const d = decisions[e.id];
+          if (!d) {
+            return {
+              pos: e.pos, before: e.before, after: e.after,
+              status: 'open' as const, author: 'The Contextspaces Editor',
+              note: `${e.mark} — ${e.failure} (authority: ${e.authority})`,
+            };
+          }
+          return {
+            pos: e.pos, before: e.before,
+            after: d.kind === 'modified' ? d.text : e.after,
+            status: 'resolved' as const, author: 'The Contextspaces Editor',
+          };
+        }),
+      ...insertions.map((ins) => ({
+        pos: ins.pos, before: '', after: ins.text,
+        status: 'open' as const, author: 'Counsel',
+      })),
+    ];
+    const blob = await makeRedlineDocxBlob({ manuscript: submitted, changes });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Contextspaces Redline.docx';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function backToDesk() {
     abortRef.current?.abort();
     setPhase('desk');
+  }
+
+  function saveInsertion() {
+    if (!inserting) return;
+    const text = inserting.text;
+    if (text.trim()) {
+      setInsertions((prev) => [...prev, { id: `ins-${Date.now()}-${prev.length}`, pos: inserting.pos, text }]);
+    }
+    setInserting(null);
+  }
+
+  /** The open insertion point: an inline input in the lawyer's own ink. */
+  function renderInsertForm(key: string) {
+    if (!inserting) return null;
+    return (
+      <span key={key} className="inline-flex items-baseline gap-1 mx-1 align-baseline" onClick={(e) => e.stopPropagation()}>
+        <input
+          autoFocus
+          value={inserting.text}
+          onChange={(e) => setInserting({ pos: inserting.pos, text: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') saveInsertion();
+            if (e.key === 'Escape') setInserting(null);
+          }}
+          placeholder="write here…"
+          size={Math.min(60, Math.max(10, inserting.text.length + 2))}
+          className="bg-transparent focus:outline-none text-[15px]"
+          style={{ color: INK_BLUE, fontFamily: 'Georgia, serif', borderBottom: `1.5px solid ${INK_BLUE}` }}
+        />
+        <button
+          onClick={saveInsertion}
+          className="px-2 py-0.5 text-[11px] font-semibold text-[#faf7f0] rounded-sm"
+          style={{ background: INK_BLUE }}
+        >
+          Insert
+        </button>
+        <button onClick={() => setInserting(null)} className="px-1.5 py-0.5 text-[11px] text-stone-500 border border-stone-400 rounded-sm">
+          ✕
+        </button>
+      </span>
+    );
+  }
+
+  /** A run of untouched manuscript text: carries data-base for caret math, splits around an open insertion point. */
+  function renderTextRun(text: string, base: number, keyPrefix: string): React.ReactNode[] {
+    if (inserting && inserting.pos >= base && inserting.pos <= base + text.length) {
+      return [
+        <span key={`${keyPrefix}-a`} data-base={base}>{text.slice(0, inserting.pos - base)}</span>,
+        renderInsertForm(`${keyPrefix}-form`),
+        <span key={`${keyPrefix}-b`} data-base={inserting.pos}>{text.slice(inserting.pos - base)}</span>,
+      ];
+    }
+    return [<span key={keyPrefix} data-base={base}>{text}</span>];
+  }
+
+  /** A click on open paper: place the caret and open an insertion point there. */
+  function handleSheetClick(e: React.MouseEvent) {
+    if (inserting) return; // one insertion point at a time; its buttons rule it
+    const pos = manuscriptPosFromPoint(e.clientX, e.clientY);
+    setActiveId(null);
+    if (pos == null) return;
+    setInserting({ pos, text: '' });
+  }
+
+  /** The quick-ruling pill shown on hover or tap of a change. */
+  function pillButton(label: string, title: string, onClick: () => void, solid = false) {
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        title={title}
+        className="inline-flex items-center justify-center w-6 h-6 text-[12px] rounded-full border leading-none"
+        style={solid
+          ? { background: INK_RED, borderColor: INK_RED, color: '#faf7f0' }
+          : { background: '#faf7f0', borderColor: '#c9beac', color: '#57534e' }}
+      >
+        {label}
+      </button>
+    );
   }
 
   async function readFile(file: File) {
@@ -402,13 +577,16 @@ export default function EditorRoom() {
             The redline
           </span>
           <button onClick={copyEdited} className="text-[12px] text-white/80 hover:text-white underline underline-offset-2">
-            {copied ? 'Copied.' : `Copy the edited text (${acceptedCount} of ${result.edits.length} applied)`}
+            {copied ? 'Copied.' : `Copy the edited text (${appliedCount} ${appliedCount === 1 ? 'change' : 'changes'} applied)`}
+          </button>
+          <button onClick={() => void downloadDocx()} className="text-[12px] text-white/80 hover:text-white underline underline-offset-2">
+            Download .docx redline
           </button>
           {openCount > 0 && (
             <button
               onClick={() => setDecisions((prev) => {
                 const next = { ...prev };
-                for (const e of result.edits) if (!next[e.id]) next[e.id] = 'accepted';
+                for (const e of result.edits) if (!next[e.id]) next[e.id] = { kind: 'accepted' };
                 return next;
               })}
               className="text-[12px] text-white/80 hover:text-white underline underline-offset-2"
@@ -436,6 +614,10 @@ export default function EditorRoom() {
             <p className="mt-3 text-[12px] text-stone-500">
               {result.edits.length} {result.edits.length === 1 ? 'edit' : 'edits'} proposed · {result.praise.length} praised
               {result.rejected.length > 0 && ` · ${result.rejected.length} refused by the verifier`}
+              {result.usage && (
+                ` · this pass: ${(result.usage.inputTokens / 1000).toFixed(1)}k in / ${(result.usage.outputTokens / 1000).toFixed(1)}k out` +
+                (result.usage.estimatedCost != null ? ` ≈ $${result.usage.estimatedCost.toFixed(2)}` : '')
+              )}
             </p>
             {result.criticReport && (
               <details className="mt-3">
@@ -448,24 +630,55 @@ export default function EditorRoom() {
             )}
           </div>
 
-          {/* The manuscript, redlined */}
+          {/* The manuscript, redlined. Click open paper to write in your own ink. */}
+          <p className="mb-4 -mt-2 text-[11px] text-stone-400 italic" style={{ fontFamily: 'Georgia, serif' }}>
+            Hover a change — or tap it — to rule on it. Click between words to write in your own ink.
+          </p>
           <div
-            className="text-[15.5px] leading-[1.85] text-[#1c1917] whitespace-pre-wrap break-words"
+            className="text-[15.5px] leading-[1.85] text-[#1c1917] whitespace-pre-wrap break-words cursor-text"
             style={{ fontFamily: 'Georgia, serif' }}
+            onClick={handleSheetClick}
           >
             {segments.map((seg, i) => {
+              if (seg.type === 'ins') {
+                const ins = seg.ins;
+                const active = activeId === ins.id;
+                return (
+                  <span
+                    key={ins.id}
+                    onMouseEnter={() => setActiveId(ins.id)}
+                    onMouseLeave={() => setActiveId((cur) => (cur === ins.id ? null : cur))}
+                    onClick={(e) => { e.stopPropagation(); setActiveId(ins.id); }}
+                  >
+                    <span style={{ color: INK_BLUE, textDecoration: 'underline', textUnderlineOffset: 3 }}>{ins.text}</span>
+                    {active && (
+                      <span className="inline-flex items-center gap-1 mx-1 align-middle" onClick={(e) => e.stopPropagation()}>
+                        {pillButton('✎', 'Rewrite your insertion', () => {
+                          setInsertions((prev) => prev.filter((x) => x.id !== ins.id));
+                          setInserting({ pos: ins.pos, text: ins.text });
+                          setActiveId(null);
+                        })}
+                        {pillButton('✕', 'Remove your insertion', () => {
+                          setInsertions((prev) => prev.filter((x) => x.id !== ins.id));
+                          setActiveId(null);
+                        })}
+                      </span>
+                    )}
+                  </span>
+                );
+              }
               if (seg.type === 'plain') {
                 const notes = anchoredPraise.get(seg.start);
-                if (!notes || notes.length === 0) return <span key={i}>{seg.text}</span>;
+                if (!notes || notes.length === 0) return <span key={i}>{renderTextRun(seg.text, seg.start, `t${i}`)}</span>;
                 const sorted = [...notes].sort((a, b) => a.pos - b.pos);
                 const parts: React.ReactNode[] = [];
                 let cursor = seg.start;
                 for (const p of sorted) {
                   if (p.pos < cursor) continue;
-                  parts.push(<span key={`${p.id}-pre`}>{submitted.slice(cursor, p.pos)}</span>);
+                  parts.push(...renderTextRun(submitted.slice(cursor, p.pos), cursor, `${p.id}-pre`));
                   parts.push(
                     <span key={p.id}>
-                      <span style={{ borderBottom: `1px dotted ${INK_GOLD}` }}>{p.quote}</span>
+                      <span data-base={p.pos} style={{ borderBottom: `1px dotted ${INK_GOLD}` }}>{p.quote}</span>
                       <MarkTag
                         word={p.mark}
                         tone="gold"
@@ -473,7 +686,7 @@ export default function EditorRoom() {
                         onClick={() => setExpanded(expanded === p.id ? null : p.id)}
                       />
                       {expanded === p.id && (
-                        <span className="block my-2 pl-3 py-2 whitespace-normal" style={{ borderLeft: `2px solid ${INK_GOLD}` }}>
+                        <span className="block my-2 pl-3 py-2 whitespace-normal" style={{ borderLeft: `2px solid ${INK_GOLD}` }} onClick={(e) => e.stopPropagation()}>
                           <DetailRow label="Why it earns the mark">{p.note}</DetailRow>
                         </span>
                       )}
@@ -481,40 +694,62 @@ export default function EditorRoom() {
                   );
                   cursor = p.pos + p.quote.length;
                 }
-                parts.push(<span key="tail">{submitted.slice(cursor, seg.start + seg.text.length)}</span>);
+                parts.push(...renderTextRun(submitted.slice(cursor, seg.start + seg.text.length), cursor, `t${i}-tail`));
                 return <span key={i}>{parts}</span>;
               }
 
               const edit = seg.edit;
               const decision = decisions[edit.id];
-              const state = decision === 'accepted' ? 'accepted' : decision === 'declined' ? 'declined' : 'open';
+              const state = decision?.kind ?? 'open';
+              const effectiveAfter = decision?.kind === 'modified' ? decision.text : edit.after;
+              const active = activeId === edit.id;
               return (
                 <span key={edit.id}>
-                  {decision === 'declined' ? (
-                    <span>{edit.before}</span>
-                  ) : (
-                    wordDiff(edit.before, edit.after).map((op, j) =>
-                      op.type === 'same' ? (
-                        <span key={j}>{op.text}</span>
-                      ) : op.type === 'del' ? (
-                        <span key={j} style={{ color: INK_RED, textDecoration: 'line-through', opacity: 0.65 }}>
-                          {op.text}
-                        </span>
-                      ) : (
-                        <span key={j} style={{ color: INK_RED, textDecoration: 'underline', textUnderlineOffset: 3 }}>
-                          {op.text}
-                        </span>
-                      ),
-                    )
-                  )}
+                  <span
+                    onMouseEnter={() => setActiveId(edit.id)}
+                    onMouseLeave={() => setActiveId((cur) => (cur === edit.id ? null : cur))}
+                    onClick={(e) => { e.stopPropagation(); setActiveId(edit.id); }}
+                  >
+                    {state === 'declined' ? (
+                      // Ruled against: the original stands, plainly.
+                      <span>{edit.before}</span>
+                    ) : state === 'accepted' || state === 'modified' ? (
+                      // Ruled for: the sheet resolves — clean text, a whisper of ink behind it.
+                      <span style={{ background: 'rgba(163, 59, 42, 0.07)' }}>{effectiveAfter}</span>
+                    ) : (
+                      wordDiff(edit.before, effectiveAfter).map((op, j) =>
+                        op.type === 'same' ? (
+                          <span key={j}>{op.text}</span>
+                        ) : op.type === 'del' ? (
+                          <span key={j} style={{ color: INK_RED, textDecoration: 'line-through', opacity: 0.65 }}>
+                            {op.text}
+                          </span>
+                        ) : (
+                          <span key={j} style={{ color: INK_RED, textDecoration: 'underline', textUnderlineOffset: 3 }}>
+                            {op.text}
+                          </span>
+                        ),
+                      )
+                    )}
+                    {active && (
+                      <span className="inline-flex items-center gap-1 mx-1 align-middle" onClick={(e) => e.stopPropagation()}>
+                        {state !== 'accepted' && pillButton('✓', 'Accept', () => decide(edit.id, { kind: 'accepted' }), true)}
+                        {pillButton('✎', 'Modify', () => {
+                          setModifying({ id: edit.id, text: effectiveAfter || edit.before });
+                          setExpanded(edit.id);
+                        })}
+                        {state !== 'declined' && pillButton('✕', 'Decline', () => decide(edit.id, { kind: 'declined' }))}
+                      </span>
+                    )}
+                  </span>
                   <MarkTag
-                    word={edit.after === '' ? `${edit.mark} — cut` : edit.mark}
+                    word={effectiveAfter === '' ? `${edit.mark} — cut` : edit.mark}
                     tone="red"
                     state={state}
                     onClick={() => setExpanded(expanded === edit.id ? null : edit.id)}
                   />
                   {expanded === edit.id && (
-                    <span className="block my-2 pl-3 py-2 space-y-2 whitespace-normal" style={{ borderLeft: `2px solid ${INK_RED}` }}>
+                    <span className="block my-2 pl-3 py-2 space-y-2 whitespace-normal" style={{ borderLeft: `2px solid ${INK_RED}` }} onClick={(e) => e.stopPropagation()}>
                       <DetailRow label="The claim">
                         {edit.claim || 'No claim extracts — that is the diagnosis.'}
                       </DetailRow>
@@ -524,21 +759,56 @@ export default function EditorRoom() {
                         <span className="block text-[12.5px] text-amber-700">⚠ {edit.caution}</span>
                       )}
                       {edit.criticNote && <DetailRow label="The blind critic">{edit.criticNote}</DetailRow>}
-                      <span className="block pt-1">
-                        <button
-                          onClick={() => decide(edit.id, 'accepted')}
-                          className="mr-3 px-3 py-1 text-[12px] font-semibold text-[#faf7f0] rounded-sm"
-                          style={{ background: INK_RED }}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => decide(edit.id, 'declined')}
-                          className="px-3 py-1 text-[12px] font-semibold text-stone-600 border border-stone-400 rounded-sm"
-                        >
-                          Decline
-                        </button>
-                      </span>
+                      {modifying?.id === edit.id ? (
+                        <span className="block pt-1">
+                          <textarea
+                            autoFocus
+                            value={modifying.text}
+                            onChange={(e) => setModifying({ id: edit.id, text: e.target.value })}
+                            rows={Math.min(8, Math.max(2, Math.ceil(modifying.text.length / 80)))}
+                            className="w-full p-2 text-[13.5px] leading-relaxed text-[#1c1917] bg-white border border-stone-400 rounded-sm focus:outline-none resize-y"
+                            style={{ fontFamily: 'Georgia, serif' }}
+                          />
+                          <span className="block pt-2">
+                            <button
+                              onClick={() => decide(edit.id, { kind: 'modified', text: modifying.text.trim() ? modifying.text : '' })}
+                              className="mr-3 px-3 py-1 text-[12px] font-semibold text-[#faf7f0] rounded-sm"
+                              style={{ background: INK_RED }}
+                            >
+                              Accept your version
+                            </button>
+                            <button
+                              onClick={() => setModifying(null)}
+                              className="px-3 py-1 text-[12px] font-semibold text-stone-600 border border-stone-400 rounded-sm"
+                            >
+                              Cancel
+                            </button>
+                            <span className="ml-3 text-[11px] text-stone-400">Empty text proposes a cut.</span>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="block pt-1">
+                          <button
+                            onClick={() => decide(edit.id, { kind: 'accepted' })}
+                            className="mr-3 px-3 py-1 text-[12px] font-semibold text-[#faf7f0] rounded-sm"
+                            style={{ background: INK_RED }}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() => setModifying({ id: edit.id, text: effectiveAfter || edit.before })}
+                            className="mr-3 px-3 py-1 text-[12px] font-semibold text-stone-700 border border-stone-500 rounded-sm"
+                          >
+                            Modify
+                          </button>
+                          <button
+                            onClick={() => decide(edit.id, { kind: 'declined' })}
+                            className="px-3 py-1 text-[12px] font-semibold text-stone-600 border border-stone-400 rounded-sm"
+                          >
+                            Decline
+                          </button>
+                        </span>
+                      )}
                     </span>
                   )}
                 </span>

@@ -10,7 +10,7 @@
 
 import type { ProposedEdit, RejectedEdit } from './types';
 
-export interface RawEdit extends Omit<ProposedEdit, 'pos'> {}
+export type RawEdit = Omit<ProposedEdit, 'pos'>;
 
 export interface VerifyOutcome {
   accepted: ProposedEdit[];
@@ -166,7 +166,8 @@ export function verifyEdits(manuscript: string, rawEdits: RawEdit[]): VerifyOutc
   let cursor = 0;
   for (const edit of located) {
     if (edit.pos < cursor) {
-      const { pos: _pos, ...rest } = edit;
+      const { pos, ...rest } = edit;
+      void pos;
       reject(rest, 'overlaps an earlier edit');
       continue;
     }
@@ -177,8 +178,8 @@ export function verifyEdits(manuscript: string, rawEdits: RawEdit[]): VerifyOutc
   return { accepted, rejected };
 }
 
-/** Apply a set of (non-overlapping, position-sorted) edits to the manuscript. */
-export function applyEdits(manuscript: string, edits: ProposedEdit[]): string {
+/** Apply a set of (non-overlapping, position-sorted) changes to the manuscript. Accepts anything with pos/before/after — the lawyer's own insertions apply alongside the Editor's edits. */
+export function applyEdits(manuscript: string, edits: Array<Pick<ProposedEdit, 'pos' | 'before' | 'after'>>): string {
   let result = '';
   let cursor = 0;
   for (const edit of edits) {
