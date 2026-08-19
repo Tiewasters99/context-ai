@@ -22,7 +22,8 @@ const CORRECTIVE_AMBIENCE = ['obscure', 'transition', 'choppy', 'repetitive', 'w
 const PRAISE_AMBIENCE = ['excellent', 'very sharp', 'yes!', 'brilliant'];
 
 type Phase = 'desk' | 'working' | 'redline';
-type Decision = 'accepted' | 'declined';
+/** The lawyer's ruling on one edit. "Modified" = accepted with their own redraft. */
+type Decision = { kind: 'accepted' | 'declined' } | { kind: 'modified'; text: string };
 
 /** The manuscript cut into plain runs and edit spans, in order. */
 type Segment =
@@ -50,10 +51,11 @@ function MarkTag({
 }: {
   word: string;
   tone: 'red' | 'gold';
-  state: 'open' | 'accepted' | 'declined';
+  state: 'open' | 'accepted' | 'declined' | 'modified';
   onClick: () => void;
 }) {
   const color = state === 'declined' ? '#a8a29e' : tone === 'red' ? INK_RED : INK_GOLD;
+  const decided = state === 'accepted' || state === 'modified';
   return (
     <button
       onClick={onClick}
@@ -62,12 +64,12 @@ function MarkTag({
         fontFamily: 'Georgia, serif',
         color,
         borderBottom: state === 'open' ? `1px dotted ${color}` : 'none',
-        fontWeight: state === 'accepted' ? 700 : 400,
+        fontWeight: decided ? 700 : 400,
         textDecoration: state === 'declined' ? 'line-through' : 'none',
         opacity: state === 'declined' ? 0.7 : 1,
       }}
     >
-      {state === 'accepted' ? `${word} ✓` : word}
+      {state === 'accepted' ? `${word} ✓` : state === 'modified' ? `${word} ✎` : word}
     </button>
   );
 }
@@ -93,6 +95,7 @@ export default function EditorRoom() {
   const [copied, setCopied] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [form, setForm] = useState<DocumentForm | ''>('');
+  const [modifying, setModifying] = useState<{ id: string; text: string } | null>(null);
   const [sourceNote, setSourceNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -102,7 +105,16 @@ export default function EditorRoom() {
     [result, submitted],
   );
 
-  const acceptedCount = result ? result.edits.filter((e) => decisions[e.id] === 'accepted').length : 0;
+  const appliedEdits = useMemo(() => {
+    if (!result) return [];
+    return result.edits
+      .filter((e) => decisions[e.id] && decisions[e.id].kind !== 'declined')
+      .map((e) => {
+        const d = decisions[e.id];
+        return d.kind === 'modified' ? { ...e, after: d.text } : e;
+      });
+  }, [result, decisions]);
+  const appliedCount = appliedEdits.length;
   const openCount = result ? result.edits.filter((e) => !decisions[e.id]).length : 0;
 
   async function submit() {
@@ -112,6 +124,7 @@ export default function EditorRoom() {
     setResult(null);
     setDecisions({});
     setExpanded(null);
+    setModifying(null);
     setSubmitted(text);
     setPhase('working');
     const controller = new AbortController();
@@ -137,12 +150,12 @@ export default function EditorRoom() {
   function decide(id: string, decision: Decision) {
     setDecisions((prev) => ({ ...prev, [id]: decision }));
     setExpanded(null);
+    setModifying(null);
   }
 
   async function copyEdited() {
     if (!result) return;
-    const accepted = result.edits.filter((e) => decisions[e.id] === 'accepted');
-    await navigator.clipboard.writeText(applyEdits(submitted, accepted));
+    await navigator.clipboard.writeText(applyEdits(submitted, appliedEdits));
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   }
@@ -402,13 +415,13 @@ export default function EditorRoom() {
             The redline
           </span>
           <button onClick={copyEdited} className="text-[12px] text-white/80 hover:text-white underline underline-offset-2">
-            {copied ? 'Copied.' : `Copy the edited text (${acceptedCount} of ${result.edits.length} applied)`}
+            {copied ? 'Copied.' : `Copy the edited text (${appliedCount} of ${result.edits.length} applied)`}
           </button>
           {openCount > 0 && (
             <button
               onClick={() => setDecisions((prev) => {
                 const next = { ...prev };
-                for (const e of result.edits) if (!next[e.id]) next[e.id] = 'accepted';
+                for (const e of result.edits) if (!next[e.id]) next[e.id] = { kind: 'accepted' };
                 return next;
               })}
               className="text-[12px] text-white/80 hover:text-white underline underline-offset-2"
@@ -491,13 +504,14 @@ export default function EditorRoom() {
 
               const edit = seg.edit;
               const decision = decisions[edit.id];
-              const state = decision === 'accepted' ? 'accepted' : decision === 'declined' ? 'declined' : 'open';
+              const state = decision?.kind ?? 'open';
+              const effectiveAfter = decision?.kind === 'modified' ? decision.text : edit.after;
               return (
                 <span key={edit.id}>
-                  {decision === 'declined' ? (
+                  {decision?.kind === 'declined' ? (
                     <span>{edit.before}</span>
                   ) : (
-                    wordDiff(edit.before, edit.after).map((op, j) =>
+                    wordDiff(edit.before, effectiveAfter).map((op, j) =>
                       op.type === 'same' ? (
                         <span key={j}>{op.text}</span>
                       ) : op.type === 'del' ? (
@@ -512,7 +526,7 @@ export default function EditorRoom() {
                     )
                   )}
                   <MarkTag
-                    word={edit.after === '' ? `${edit.mark} — cut` : edit.mark}
+                    word={effectiveAfter === '' ? `${edit.mark} — cut` : edit.mark}
                     tone="red"
                     state={state}
                     onClick={() => setExpanded(expanded === edit.id ? null : edit.id)}
@@ -528,21 +542,56 @@ export default function EditorRoom() {
                         <span className="block text-[12.5px] text-amber-700">⚠ {edit.caution}</span>
                       )}
                       {edit.criticNote && <DetailRow label="The blind critic">{edit.criticNote}</DetailRow>}
-                      <span className="block pt-1">
-                        <button
-                          onClick={() => decide(edit.id, 'accepted')}
-                          className="mr-3 px-3 py-1 text-[12px] font-semibold text-[#faf7f0] rounded-sm"
-                          style={{ background: INK_RED }}
-                        >
-                          Accept
-                        </button>
-                        <button
-                          onClick={() => decide(edit.id, 'declined')}
-                          className="px-3 py-1 text-[12px] font-semibold text-stone-600 border border-stone-400 rounded-sm"
-                        >
-                          Decline
-                        </button>
-                      </span>
+                      {modifying?.id === edit.id ? (
+                        <span className="block pt-1">
+                          <textarea
+                            autoFocus
+                            value={modifying.text}
+                            onChange={(e) => setModifying({ id: edit.id, text: e.target.value })}
+                            rows={Math.min(8, Math.max(2, Math.ceil(modifying.text.length / 80)))}
+                            className="w-full p-2 text-[13.5px] leading-relaxed text-[#1c1917] bg-white border border-stone-400 rounded-sm focus:outline-none resize-y"
+                            style={{ fontFamily: 'Georgia, serif' }}
+                          />
+                          <span className="block pt-2">
+                            <button
+                              onClick={() => decide(edit.id, { kind: 'modified', text: modifying.text.trim() ? modifying.text : '' })}
+                              className="mr-3 px-3 py-1 text-[12px] font-semibold text-[#faf7f0] rounded-sm"
+                              style={{ background: INK_RED }}
+                            >
+                              Accept your version
+                            </button>
+                            <button
+                              onClick={() => setModifying(null)}
+                              className="px-3 py-1 text-[12px] font-semibold text-stone-600 border border-stone-400 rounded-sm"
+                            >
+                              Cancel
+                            </button>
+                            <span className="ml-3 text-[11px] text-stone-400">Empty text proposes a cut.</span>
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="block pt-1">
+                          <button
+                            onClick={() => decide(edit.id, { kind: 'accepted' })}
+                            className="mr-3 px-3 py-1 text-[12px] font-semibold text-[#faf7f0] rounded-sm"
+                            style={{ background: INK_RED }}
+                          >
+                            Accept
+                          </button>
+                          <button
+                            onClick={() => setModifying({ id: edit.id, text: effectiveAfter || edit.before })}
+                            className="mr-3 px-3 py-1 text-[12px] font-semibold text-stone-700 border border-stone-500 rounded-sm"
+                          >
+                            Modify
+                          </button>
+                          <button
+                            onClick={() => decide(edit.id, { kind: 'declined' })}
+                            className="px-3 py-1 text-[12px] font-semibold text-stone-600 border border-stone-400 rounded-sm"
+                          >
+                            Decline
+                          </button>
+                        </span>
+                      )}
                     </span>
                   )}
                 </span>
