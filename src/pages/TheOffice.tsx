@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Landmark, Plus, X, BookOpen, Scale, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { OFFICE_ROOMS } from '@/lib/office-rooms';
 
 // The Office — the back office of the firm's public room.
 //
@@ -26,6 +27,7 @@ interface OfficeSection {
   kind: 'library' | 'practice' | 'cle' | 'page';
   title: string;
   blurb: string;
+  room: string; // room slug from OFFICE_ROOMS, '' = unassigned (general Library)
   sort_order: number;
 }
 interface OfficeItem {
@@ -71,7 +73,7 @@ export default function TheOffice() {
 
   const refresh = useCallback(async () => {
     const [s, i] = await Promise.all([
-      supabase.from('office_sections').select('id, kind, title, blurb, sort_order').order('sort_order').order('created_at'),
+      supabase.from('office_sections').select('id, kind, title, blurb, room, sort_order').order('sort_order').order('created_at'),
       supabase.from('office_items').select('id, section_id, document_id, title, author, excerpt, spine, published').order('sort_order').order('created_at'),
     ]);
     if (!s.error) setSections((s.data ?? []) as OfficeSection[]);
@@ -121,6 +123,12 @@ export default function TheOffice() {
   const removeItem = async (it: OfficeItem) => {
     await supabase.from('office_items').delete().eq('id', it.id);
     setItems((prev) => prev.filter((p) => p.id !== it.id));
+  };
+
+  const setRoom = async (s: OfficeSection, room: string) => {
+    const { error } = await supabase.from('office_sections').update({ room }).eq('id', s.id);
+    if (error) { say(error.message); return; }
+    setSections((prev) => prev.map((p) => (p.id === s.id ? { ...p, room } : p)));
   };
 
   // The drop: a vault document lands on a section → it is published.
@@ -211,6 +219,22 @@ export default function TheOffice() {
           >
             <X size={13} />
           </button>
+        </div>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <Landmark size={11} className="shrink-0 text-white/25" />
+          <select
+            value={s.room}
+            onChange={(e) => setRoom(s, e.target.value)}
+            title="Which room of the office shows this section"
+            className="bg-transparent text-[11px] text-white/45 hover:text-white/80 outline-none cursor-pointer max-w-full [&>option]:bg-[#111118]"
+          >
+            <option value="">
+              {s.kind === 'practice' ? 'No room — listed under Areas of Practice' : 'No room — shows in the general Library'}
+            </option>
+            {OFFICE_ROOMS.map((r) => (
+              <option key={r.slug} value={r.slug}>{r.label}</option>
+            ))}
+          </select>
         </div>
         {its.length === 0 ? (
           <div className="text-[11.5px] text-white/30 italic mt-1.5">Drag a document here to show it.</div>

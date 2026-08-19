@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   const [sections, items] = await Promise.all([
     supabase
       .from('office_sections')
-      .select('id, kind, title, blurb, sort_order')
+      .select('id, kind, title, blurb, room, sort_order')
       .order('sort_order')
       .order('created_at'),
     supabase
@@ -75,6 +75,7 @@ export default async function handler(req, res) {
       kind: s.kind,
       title: s.title,
       blurb: s.blurb,
+      room: s.room ?? '',
       items: bySection[s.id] ?? [],
     }))
     // an empty shelf is a back-office fact, not a public one
