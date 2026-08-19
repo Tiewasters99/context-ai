@@ -52,6 +52,11 @@ const anthropicAdapter: ProviderAdapter = {
     const toolUse = content.find((c) => c.type === 'tool_use');
     return toolUse?.input ?? null;
   },
+  parseUsage(responseJson: unknown) {
+    const u = (responseJson as { usage?: { input_tokens?: number; output_tokens?: number } })?.usage;
+    if (!u || typeof u.input_tokens !== 'number') return null;
+    return { inputTokens: u.input_tokens, outputTokens: u.output_tokens ?? 0 };
+  },
 };
 
 /** OpenAI Chat Completions API (also used by xAI/Grok) */
@@ -115,6 +120,11 @@ const openaiAdapter: ProviderAdapter = {
     })?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments;
     if (typeof call !== 'string') return null;
     try { return JSON.parse(call); } catch { return null; }
+  },
+  parseUsage(responseJson: unknown) {
+    const u = (responseJson as { usage?: { prompt_tokens?: number; completion_tokens?: number } })?.usage;
+    if (!u || typeof u.prompt_tokens !== 'number') return null;
+    return { inputTokens: u.prompt_tokens, outputTokens: u.completion_tokens ?? 0 };
   },
 };
 

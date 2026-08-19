@@ -104,6 +104,14 @@ export interface DocumentPlan {
   sections: PlannedSection[];
 }
 
+export interface PassUsage {
+  inputTokens: number;
+  outputTokens: number;
+  modelId: string;
+  /** USD at list prices, when the model's price is on file. Thinking tokens bill as output. */
+  estimatedCost?: number;
+}
+
 export interface EditorPassResult {
   plan: DocumentPlan;
   /** Verified edits, in manuscript order, awaiting the lawyer's ruling. */
@@ -115,6 +123,8 @@ export interface EditorPassResult {
   criticReport: string;
   /** Non-fatal incidents during the pass (a section that errored, an unmatched anchor). */
   passNotes: string[];
+  /** What the pass cost — every call's tokens, summed, priced when possible. */
+  usage?: PassUsage;
 }
 
 export interface EditorProgress {

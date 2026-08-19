@@ -436,6 +436,10 @@ export default function EditorRoom() {
             <p className="mt-3 text-[12px] text-stone-500">
               {result.edits.length} {result.edits.length === 1 ? 'edit' : 'edits'} proposed · {result.praise.length} praised
               {result.rejected.length > 0 && ` · ${result.rejected.length} refused by the verifier`}
+              {result.usage && (
+                ` · this pass: ${(result.usage.inputTokens / 1000).toFixed(1)}k in / ${(result.usage.outputTokens / 1000).toFixed(1)}k out` +
+                (result.usage.estimatedCost != null ? ` ≈ $${result.usage.estimatedCost.toFixed(2)}` : '')
+              )}
             </p>
             {result.criticReport && (
               <details className="mt-3">
