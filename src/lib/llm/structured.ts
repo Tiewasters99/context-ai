@@ -1,4 +1,4 @@
-import type { StructuredRequest } from './types';
+import type { StructuredRequest, TokenUsage } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 
@@ -8,6 +8,8 @@ export interface GenerateStructuredOptions extends StructuredRequest {
   signal?: AbortSignal;
   /** Optional BYOK key forwarded to the proxy. */
   apiKey?: string;
+  /** Called with the provider-reported token usage, when available. */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 /**
@@ -21,7 +23,7 @@ export interface GenerateStructuredOptions extends StructuredRequest {
  * model declined to emit the tool call.
  */
 export async function generateStructured<T = unknown>(options: GenerateStructuredOptions): Promise<T> {
-  const { modelId, signal, apiKey, ...request } = options;
+  const { modelId, signal, apiKey, onUsage, ...request } = options;
 
   const found = findModel(modelId);
   if (!found) throw new Error(`Unknown model: ${modelId}`);
@@ -58,6 +60,11 @@ export async function generateStructured<T = unknown>(options: GenerateStructure
     responseJson = JSON.parse(text);
   } catch {
     throw new Error('Model returned a non-JSON response.');
+  }
+
+  if (onUsage && adapter.parseUsage) {
+    const usage = adapter.parseUsage(responseJson);
+    if (usage) onUsage(usage);
   }
 
   const parsed = adapter.parseStructuredResponse(responseJson);

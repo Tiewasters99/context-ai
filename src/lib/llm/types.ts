@@ -32,6 +32,8 @@ export interface ModelConfig {
   description: string;
   contextWindow: number; // tokens
   tier: 'free' | 'pro' | 'byok';
+  /** List price in USD per million tokens, when known — used for cost estimates shown to the user. */
+  pricePerM?: { input: number; output: number };
 }
 
 export type ProviderId = 'anthropic' | 'openai' | 'google' | 'xai' | 'moonshot' | 'fireworks';
@@ -73,6 +75,13 @@ export interface ProviderAdapter {
    * non-streaming JSON response. Returns null if the model didn't emit one.
    */
   parseStructuredResponse(responseJson: unknown): unknown | null;
+  /** Token usage from a non-streaming response, when the provider reports it. */
+  parseUsage?(responseJson: unknown): TokenUsage | null;
+}
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /** Routing decision for a given document + model combination */
