@@ -171,7 +171,9 @@ export default function TheOffice() {
     const { error } = await supabase.from('office_sections').insert([
       { kind: 'library', title: 'CLE Presentations', blurb: "The firm's continuing-legal-education work.", sort_order: 0 },
       { kind: 'library', title: 'From the Vault', blurb: 'Papers the firm is willing to show.', sort_order: 1 },
-      { kind: 'practice', title: 'Commercial Litigation', sort_order: 0 },
+      // In a multi-row insert PostgREST fills missing keys with null (not the
+      // column default), so every row must carry blurb explicitly.
+      { kind: 'practice', title: 'Commercial Litigation', blurb: '', sort_order: 0 },
     ]);
     if (error) { say(error.message); return; }
     refresh();
