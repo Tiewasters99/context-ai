@@ -207,6 +207,43 @@ export default function EditorRoom() {
     setTimeout(() => setCopied(false), 1800);
   }
 
+  /** The redline as a Word document with real tracked changes. */
+  async function downloadDocx() {
+    if (!result) return;
+    const { makeRedlineDocxBlob } = await import('@/lib/editor/export-docx');
+    const changes = [
+      // Declined edits are omitted — the original text simply stands.
+      ...result.edits
+        .filter((e) => decisions[e.id]?.kind !== 'declined')
+        .map((e) => {
+          const d = decisions[e.id];
+          if (!d) {
+            return {
+              pos: e.pos, before: e.before, after: e.after,
+              status: 'open' as const, author: 'The Contextspaces Editor',
+              note: `${e.mark} — ${e.failure} (authority: ${e.authority})`,
+            };
+          }
+          return {
+            pos: e.pos, before: e.before,
+            after: d.kind === 'modified' ? d.text : e.after,
+            status: 'resolved' as const, author: 'The Contextspaces Editor',
+          };
+        }),
+      ...insertions.map((ins) => ({
+        pos: ins.pos, before: '', after: ins.text,
+        status: 'open' as const, author: 'Counsel',
+      })),
+    ];
+    const blob = await makeRedlineDocxBlob({ manuscript: submitted, changes });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Contextspaces Redline.docx';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function backToDesk() {
     abortRef.current?.abort();
     setPhase('desk');
@@ -541,6 +578,9 @@ export default function EditorRoom() {
           </span>
           <button onClick={copyEdited} className="text-[12px] text-white/80 hover:text-white underline underline-offset-2">
             {copied ? 'Copied.' : `Copy the edited text (${appliedCount} ${appliedCount === 1 ? 'change' : 'changes'} applied)`}
+          </button>
+          <button onClick={() => void downloadDocx()} className="text-[12px] text-white/80 hover:text-white underline underline-offset-2">
+            Download .docx redline
           </button>
           {openCount > 0 && (
             <button
