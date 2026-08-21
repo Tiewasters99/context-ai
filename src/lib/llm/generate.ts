@@ -2,6 +2,7 @@ import type { LLMStreamCallbacks } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { routeRequest, selectRelevantChunks, estimateTokens } from './router';
+import { llmAuthHeader } from './auth';
 
 export interface GenerateOptions {
   modelId: string;
@@ -71,7 +72,7 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   try {
     res = await fetch('/api/llm', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await llmAuthHeader()) },
       body: JSON.stringify({
         provider: provider.id,
         model: model.apiModelId,

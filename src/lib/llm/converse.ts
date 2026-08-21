@@ -1,6 +1,7 @@
 import type { LLMMessage, LLMStreamCallbacks } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
+import { llmAuthHeader } from './auth';
 
 // Multi-turn streaming conversation through the provider-agnostic adapter
 // layer. generate() is single-shot (one instruction + context); this is the
@@ -37,7 +38,7 @@ export async function converse(options: ConverseOptions): Promise<void> {
   try {
     res = await fetch('/api/llm', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await llmAuthHeader()) },
       body: JSON.stringify({
         provider: provider.id,
         model: model.apiModelId,
