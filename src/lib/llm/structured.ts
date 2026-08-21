@@ -1,6 +1,7 @@
 import type { StructuredRequest, TokenUsage } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
+import { llmAuthHeader } from './auth';
 
 export interface GenerateStructuredOptions extends StructuredRequest {
   /** Model id from providers.ts (e.g. 'claude-opus'). */
@@ -10,6 +11,8 @@ export interface GenerateStructuredOptions extends StructuredRequest {
   apiKey?: string;
   /** Called with the provider-reported token usage, when available. */
   onUsage?: (usage: TokenUsage) => void;
+  /** Bind this call to a matter: the server enforces the matter's tier. */
+  matterId?: string;
 }
 
 /**
@@ -23,7 +26,7 @@ export interface GenerateStructuredOptions extends StructuredRequest {
  * model declined to emit the tool call.
  */
 export async function generateStructured<T = unknown>(options: GenerateStructuredOptions): Promise<T> {
-  const { modelId, signal, apiKey, onUsage, ...request } = options;
+  const { modelId, signal, apiKey, onUsage, matterId, ...request } = options;
 
   const found = findModel(modelId);
   if (!found) throw new Error(`Unknown model: ${modelId}`);
@@ -36,8 +39,8 @@ export async function generateStructured<T = unknown>(options: GenerateStructure
   try {
     res = await fetch('/api/llm', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: provider.id, model: model.apiModelId, body, apiKey }),
+      headers: { 'Content-Type': 'application/json', ...(await llmAuthHeader()) },
+      body: JSON.stringify({ provider: provider.id, model: model.apiModelId, body, apiKey, matterId }),
       signal,
     });
   } catch (err) {
