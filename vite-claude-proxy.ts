@@ -192,6 +192,8 @@ export default function llmProxy(): Plugin {
           messages?: { role: 'user' | 'assistant'; content: string }[];
           matterId?: string;
           context?: { route?: string; tab?: string; matterName?: string };
+          sessionId?: string;
+          escalate?: boolean;
         };
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString());
@@ -239,16 +241,21 @@ export default function llmProxy(): Plugin {
             global: { headers: { Authorization: `Bearer ${userToken}` } },
             auth: { persistSession: false, autoRefreshToken: false },
           });
-          const { usedTools } = await runAssistantStream({
+          const result = await runAssistantStream({
             supabase: sb,
             anthropicKey: ANTHROPIC_API_KEY,
+            // The sealed pen (SecureSpace Tier B); optional — absent means
+            // sealed matters are refused, never silently escalated.
+            fireworksKey: process.env.FIREWORKS_API_KEY,
             openaiApiKey: OPENAI_API_KEY,
             messages: parsed.messages || [],
             matterId: parsed.matterId || undefined,
             context: parsed.context || undefined,
             emit,
+            sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId ? parsed.sessionId : undefined,
+            escalate: parsed.escalate === true,
           });
-          emit({ type: 'done', usedTools });
+          emit({ type: 'done', ...result });
         } catch (err: unknown) {
           emit({ type: 'error', message: err instanceof Error ? err.message : 'assistant_failed' });
         } finally {

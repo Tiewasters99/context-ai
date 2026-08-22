@@ -29,6 +29,9 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// The sealed pen (SecureSpace Tier B). Optional at boot: without it, sealed
+// matters are refused with a plain message — never silently escalated.
+const FIREWORKS_API_KEY = process.env.FIREWORKS_API_KEY;
 
 
 export default async function handler(req, res) {
@@ -68,6 +71,11 @@ export default async function handler(req, res) {
   const messages = body?.messages;
   const matterId = body?.matterId || undefined;
   const context = sanitizeContext(body?.context);
+  // SecureSpace: continue a recorded session; ask for the frontier pen on a
+  // sealed matter (recorded as an escalation — the server decides, the
+  // client only asks).
+  const sessionId = typeof body?.sessionId === 'string' && body.sessionId ? body.sessionId : undefined;
+  const escalate = body?.escalate === true;
   if (!Array.isArray(messages) || messages.length === 0) {
     return json(res, 400, { error: 'messages (non-empty array) required' });
   }
@@ -86,16 +94,19 @@ export default async function handler(req, res) {
   };
 
   try {
-    const { usedTools } = await runAssistantStream({
+    const result = await runAssistantStream({
       supabase: sb,
       anthropicKey: ANTHROPIC_API_KEY,
+      fireworksKey: FIREWORKS_API_KEY,
       openaiApiKey: OPENAI_API_KEY,
       messages,
       matterId,
       context,
       emit,
+      sessionId,
+      escalate,
     });
-    emit({ type: 'done', usedTools });
+    emit({ type: 'done', ...result });
   } catch (err) {
     emit({ type: 'error', message: err?.message || 'assistant_failed' });
   } finally {
