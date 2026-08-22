@@ -11,6 +11,7 @@ import MatterspaceView from '@/pages/MatterspaceView';
 import PageView from '@/pages/PageView';
 import ListView from '@/pages/ListView';
 import TableView from '@/pages/TableView';
+import CalendarView from '@/pages/CalendarView';
 import NotFound from '@/pages/NotFound';
 import Vault from '@/pages/Vault';
 import DocumentBuilder from '@/pages/DocumentBuilder';
@@ -101,6 +102,7 @@ export default function App() {
               <Route path="page/:id" element={<PageView />} />
               <Route path="list/:id" element={<ListView />} />
               <Route path="table/:id" element={<TableView />} />
+              <Route path="calendar" element={<CalendarView />} />
               <Route path="vault" element={<Vault />} />
               <Route path="document-builder" element={<DocumentBuilder />} />
               <Route path="suite" element={<ProductivitySuite />} />
