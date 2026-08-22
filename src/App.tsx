@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { CanvasProvider } from '@/hooks/useCanvas';
 import Spinner from '@/components/ui/Spinner';
 import Landing from '@/pages/Landing';
 import Auth from '@/pages/Auth';
@@ -81,6 +82,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <AuthProvider>
+          <CanvasProvider>
           <Routes>
             <Route path="/" element={discoveryHost ? <Navigate to="/discovery" replace /> : <Landing />} />
             <Route path="/auth" element={<Auth />} />
@@ -158,6 +160,7 @@ export default function App() {
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </CanvasProvider>
         </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>

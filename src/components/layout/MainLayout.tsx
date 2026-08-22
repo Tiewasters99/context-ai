@@ -3,6 +3,7 @@ import { Outlet, useNavigate, useLocation, NavLink } from 'react-router-dom';
 import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
+import CanvasLayer from '@/components/canvas/CanvasLayer';
 import AmbientControls from './AmbientControls';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
@@ -99,6 +100,10 @@ export default function MainLayout() {
             never covers the last line of a page. */}
         <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
           <Outlet />
+          {/* Pinned cards. On a laptop these float over the cover as fixed
+              panels; on a phone they fall into the page under the route's
+              own content, stacked. Either way they outlive the route. */}
+          <CanvasLayer />
         </main>
       </div>
 
