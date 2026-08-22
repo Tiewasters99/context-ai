@@ -4,9 +4,10 @@ import { Lock, Unlock, X, Download } from 'lucide-react';
 import { pageToDocxBlob, downloadBlob, safeFilename } from '@/lib/export-page';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
-import PinToggle from '@/components/ui/PinToggle';
+import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
@@ -16,10 +17,11 @@ import {
 } from '@/hooks/useContentItems';
 import { RichTextEditor, normalizeBody } from '@/components/content/Editor';
 
-export default function PageView() {
-  const { id } = useParams();
+export default function PageView({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+  const params = useParams();
+  const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable('cs.pageview.card');
+  const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(embedded ? undefined : 'cs.pageview.card');
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -91,43 +93,8 @@ export default function PageView() {
 
   const isLocked = item?.is_locked ?? false;
 
-  return (
-    <div>
-      <CoverImage
-        coverUrl={item?.cover_url ?? null}
-        onCoverChange={handleCoverChange}
-        editable={!isLocked}
-        expanded={coverExpanded}
-        onExpandChange={setCoverExpanded}
-        persistKey={id ? `cs.cover.${id}` : undefined}
-      />
-
-      <div ref={cardRef} className={`max-w-4xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 ${isMobile ? 'px-4 py-6' : 'px-8 py-8 cursor-grab select-none'}`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Close + drag handle + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
-            title="Back"
-          >
-            <X size={14} strokeWidth={2} />
-          </button>
-          <div className={`w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors ${isMobile ? 'invisible' : ''}`} title="Drag to move" />
-          <div className="flex items-center gap-1">
-            <button
-              onClick={exportDocx}
-              disabled={!item || exportingKind === 'docx'}
-              className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title={exportingKind === 'docx' ? 'Exporting…' : 'Download as Word (.docx)'}
-            >
-              <Download size={14} strokeWidth={2} />
-            </button>
-            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
-            <PinToggle pinned={pinned} onToggle={togglePin} />
-            <FullscreenToggle onToggle={toggleFullscreen} />
-          </div>
-        </div>
-
+  const body = (
+    <>
         {error && (
           <p className="text-[13px] text-red-300 py-12 text-center">
             {error instanceof Error ? error.message : 'Failed to load page'}
@@ -198,6 +165,51 @@ export default function PageView() {
             </div>
           </div>
         )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="px-4 py-3">{body}</div>;
+  }
+
+  return (
+    <div>
+      <CoverImage
+        coverUrl={item?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={!isLocked}
+        expanded={coverExpanded}
+        onExpandChange={setCoverExpanded}
+        persistKey={id ? `cs.cover.${id}` : undefined}
+      />
+
+      <div ref={cardRef} className={`max-w-4xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 ${isMobile ? 'px-4 py-6' : 'px-8 py-8 cursor-grab select-none'}`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Close + drag handle + pin to canvas + fullscreen */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <button
+            onClick={() => (onClose ? onClose() : navigate(-1))}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+            title="Back"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+          <div className={`w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors ${isMobile ? 'invisible' : ''}`} title="Drag to move" />
+          <div className="flex items-center gap-1">
+            <button
+              onClick={exportDocx}
+              disabled={!item || exportingKind === 'docx'}
+              className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              title={exportingKind === 'docx' ? 'Exporting…' : 'Download as Word (.docx)'}
+            >
+              <Download size={14} strokeWidth={2} />
+            </button>
+            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            <CanvasPinToggle kind="page" id={id} title={title || item?.title || 'Untitled Page'} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
+        </div>
+
+        {body}
       </div>
     </div>
   );
