@@ -123,6 +123,7 @@ for (;;) {
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
       .eq('id', job.id);
+    await failDocumentIfExhausted(job, err);
     if (job.production_id && job.job_type.startsWith('intake')) {
       await supabase.from('productions').update({ status: 'error' }).eq('id', job.production_id);
     }
@@ -196,6 +197,46 @@ function withWatchdog(job, work) {
     timer.unref?.();
   });
   return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+}
+
+// When an ingest job fails, the job row records it — but until 2026-08-22 the
+// *document* was left wherever the pipeline dropped it, typically 'embedding'
+// with processing_error null. Invisible in the app, and the fuel for the
+// twenty-day recovery loop the ingestion audit found: recovery kept finding a
+// non-terminal document with no open job and kept minting fresh jobs.
+//
+// Migration 055 makes recovery reuse the job row so its attempt budget is
+// really spent. This closes the other half in code: on the attempt that
+// exhausts the budget, park the document with a reason a human can read,
+// drawn from lib/ingest-triage.mjs — which has always written the plain
+// English and was simply never reached from here.
+//
+// Attempts are incremented by claim_discovery_job at claim time, so
+// job.attempts is the number of this attempt. While attempts remain the
+// document is deliberately left alone: migration 055's recovery sweep
+// requeues it under the same budget.
+async function failDocumentIfExhausted(job, err) {
+  if (job.job_type !== 'ingest_document') return;
+  const docId = job.payload?.document_id;
+  if (!docId) return;
+  const attempts = Number(job.attempts ?? 0);
+  const maxAttempts = Number(job.max_attempts ?? 3);
+  if (!(attempts >= maxAttempts)) return;
+
+  const raw = String(err?.message ?? err ?? '');
+  let reason = raw.slice(0, 400);
+  try {
+    const { classifyError, describe } = await import('../lib/ingest-triage.mjs');
+    const t = describe(classifyError(raw));
+    if (t?.label) reason = `${t.label}. ${t.action ?? ''}`.trim();
+  } catch { /* triage is advisory — the raw error is still better than null */ }
+
+  const { error: updErr } = await supabase.from('documents')
+    .update({ processing_status: 'error', processing_error: reason.slice(0, 800) })
+    .eq('id', docId)
+    .neq('processing_status', 'ready');
+  if (updErr) log(`  could not mark document ${docId} failed: ${updErr.message}`);
+  else log(`  document ${docId} marked failed after ${attempts} attempts`);
 }
 
 // Documents stranded with no job row at all — the killed-serverless-function
