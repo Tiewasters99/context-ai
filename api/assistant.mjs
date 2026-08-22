@@ -11,7 +11,8 @@
 //
 // Request body:
 //   { messages: {role:'user'|'assistant', content:string}[], matterId?: string,
-//     context?: { route?: string, tab?: string, matterName?: string } }
+//     context?: { route?: string, tab?: string, matterName?: string },
+//     sessionId?: string, escalate?: boolean, charterId?: string }
 //
 // Response:
 //   { text: string, usedTools: string[] }     on success
@@ -76,6 +77,11 @@ export default async function handler(req, res) {
   // client only asks).
   const sessionId = typeof body?.sessionId === 'string' && body.sessionId ? body.sessionId : undefined;
   const escalate = body?.escalate === true;
+  // Agents: run under a charter. Only the ID travels — the charter's prose
+  // and its toolset are loaded server-side (lib/agent-charter.mjs) through
+  // the same user-scoped client, so RLS decides whether this user may run
+  // it and the browser cannot supply the instructions.
+  const charterId = typeof body?.charterId === 'string' && body.charterId ? body.charterId.slice(0, 80) : undefined;
   if (!Array.isArray(messages) || messages.length === 0) {
     return json(res, 400, { error: 'messages (non-empty array) required' });
   }
@@ -105,6 +111,7 @@ export default async function handler(req, res) {
       emit,
       sessionId,
       escalate,
+      charterId,
     });
     emit({ type: 'done', ...result });
   } catch (err) {
