@@ -14,7 +14,7 @@ for (const line of txt.split('\n')) {
   if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, '');
 }
 const SB = env.VITE_SUPABASE_URL, SRK = env.SUPABASE_SERVICE_ROLE_KEY, ANON = env.VITE_SUPABASE_ANON_KEY;
-const API = 'https://www.contextspaces.ai/api/llm';
+const API = process.argv[2] || 'https://www.contextspaces.ai/api/llm';
 
 const j = async (res) => { const t = await res.text(); try { return { status: res.status, body: JSON.parse(t) }; } catch { return { status: res.status, body: t }; } };
 const pass = (m) => console.log(`  PASS  ${m}`);
