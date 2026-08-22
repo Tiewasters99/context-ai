@@ -130,6 +130,12 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // replaced by the next command. A ref, not state: nothing re-renders.
   const commandMatterRef = useRef<{ id?: string; name?: string } | null>(null);
 
+  // SecureSpace: matter-bound exchanges are recorded server-side as an
+  // ai_sessions row (the privileged work-product ledger). We keep the id the
+  // server hands back so follow-ups land in the same session; it is keyed by
+  // matter so a scope change starts a fresh session. A ref: nothing re-renders.
+  const sessionRef = useRef<{ matterId: string; sessionId: string } | null>(null);
+
   const send = async (text: string) => {
     if (!text || loading) return;
 
@@ -171,12 +177,16 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       const token = session?.access_token;
       if (!token) throw new Error('You need to be signed in to use the assistant.');
 
+      const boundMatterId = commandMatterRef.current?.id ?? matterId;
       const res = await fetch('/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           messages: next.map((m) => ({ role: m.role, content: m.content })),
-          matterId: commandMatterRef.current?.id ?? matterId,
+          matterId: boundMatterId,
+          sessionId: boundMatterId && sessionRef.current?.matterId === boundMatterId
+            ? sessionRef.current.sessionId
+            : undefined,
           context: {
             route: location.pathname,
             ...getOrchestratorContext(),
@@ -214,9 +224,15 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             message?: string;
             action?: string;
             input?: { document_id?: string; page?: number; matter_id?: string; name?: string; description?: string };
+            sessionId?: string | null;
           };
           try { ev = JSON.parse(payload); } catch { continue; }
-          if (ev.type === 'text' && ev.text) {
+          if (ev.type === 'session') {
+            // The server opened (or continued) the recorded session for this matter.
+            if (boundMatterId && ev.sessionId) {
+              sessionRef.current = { matterId: boundMatterId, sessionId: ev.sessionId };
+            }
+          } else if (ev.type === 'text' && ev.text) {
             ensureAssistant();
             acc += ev.text;
             setAssistant(acc);
