@@ -194,6 +194,7 @@ export default function llmProxy(): Plugin {
           context?: { route?: string; tab?: string; matterName?: string };
           sessionId?: string;
           escalate?: boolean;
+          charterId?: string;
         };
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString());
@@ -254,6 +255,11 @@ export default function llmProxy(): Plugin {
             emit,
             sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId ? parsed.sessionId : undefined,
             escalate: parsed.escalate === true,
+            // Agents: only the charter ID crosses the wire; the charter is
+            // loaded server-side under the user's own RLS.
+            charterId: typeof parsed.charterId === 'string' && parsed.charterId
+              ? parsed.charterId.slice(0, 80)
+              : undefined,
           });
           emit({ type: 'done', ...result });
         } catch (err: unknown) {
