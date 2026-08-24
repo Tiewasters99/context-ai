@@ -18,6 +18,7 @@ import {
   Scale,
   GraduationCap,
   Landmark,
+  CalendarDays,
 } from 'lucide-react';
 import {
   DndContext,
@@ -255,6 +256,19 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         >
           <Home size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>My Contextspace</span>}
+        </Link>
+
+        {/* Calendar — deadlines, entries, list due dates, Google imports */}
+        <Link
+          to="/app/calendar"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            isActive('/app/calendar')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+        >
+          <CalendarDays size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Calendar</span>}
         </Link>
 
         {/* Document Builder is still a stub (route works at

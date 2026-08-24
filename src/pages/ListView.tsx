@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, ArrowUpDown, FileText, Folder, MoreHorizontal } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, FileText, Folder, MoreHorizontal } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -26,6 +26,7 @@ import ModalPortal from '@/components/ui/ModalPortal';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { supabase } from '@/lib/supabase';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import CalendarOverlay from '@/components/calendar/CalendarOverlay';
 import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
@@ -145,6 +146,12 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const [draftText, setDraftText] = useState('');
   const [saving, setSaving] = useState(false);
   const [sortMode, setSortMode] = useState<SortMode>('manual');
+  const [showCalendar, setShowCalendar] = useState(false);
+  // /app/list/:id?item=<itemId> — the calendar links back into a list this
+  // way, so the item that was clicked on the calendar is findable here.
+  const [searchParams] = useSearchParams();
+  const focusItemId = searchParams.get('item');
+  const [flashItemId, setFlashItemId] = useState<string | null>(null);
   const [parentMatter, setParentMatter] = useState<ParentMatter | null>(null);
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
@@ -216,6 +223,17 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
       }
     }
   }, [item]);
+
+  // Scroll the linked item into view and flash it, once the list is up.
+  useEffect(() => {
+    if (!focusItemId || items.length === 0) return;
+    const el = document.querySelector<HTMLElement>(`[data-item-id="${focusItemId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center' });
+    setFlashItemId(focusItemId);
+    const t = setTimeout(() => setFlashItemId(null), 4000);
+    return () => clearTimeout(t);
+  }, [focusItemId, items.length]);
 
   // A list filed in a matterspace can spawn sub-matters; one filed straight
   // into a serverspace cannot. Load the parent matter (for its serverspace
@@ -472,14 +490,24 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
               <p className="text-[12px] text-white/55">
                 {saving ? 'Saving…' : `${doneCount} of ${items.length} complete · ${progress}%`}
               </p>
-              <button
-                onClick={() => setSortMode((m) => m === 'manual' ? 'due' : 'manual')}
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
-                title={sortMode === 'manual' ? 'Sort by due date' : 'Manual order'}
-              >
-                <ArrowUpDown size={11} />
-                {sortMode === 'manual' ? 'Manual' : 'By due date'}
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setShowCalendar(true)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+                  title="See these due dates on the calendar"
+                >
+                  <CalendarDays size={11} />
+                  Calendar
+                </button>
+                <button
+                  onClick={() => setSortMode((m) => m === 'manual' ? 'due' : 'manual')}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+                  title={sortMode === 'manual' ? 'Sort by due date' : 'Manual order'}
+                >
+                  <ArrowUpDown size={11} />
+                  {sortMode === 'manual' ? 'Manual' : 'By due date'}
+                </button>
+              </div>
             </div>
 
             <div className="h-2 bg-[#1c1c26] rounded-full overflow-hidden mb-6">
@@ -497,6 +525,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
                       key={it.id}
                       item={it}
                       today={today}
+                      flash={flashItemId === it.id}
                       sortable={sortMode === 'manual'}
                       onToggle={() => updateItem(it.id, { done: !it.done })}
                       onChangeText={(text) => updateItem(it.id, { text })}
@@ -580,6 +609,16 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
         {body}
       </div>
 
+      {showCalendar && (
+        <CalendarOverlay
+          title="Calendar"
+          subtitle={`Due dates from "${title || 'this list'}" are highlighted. Everything else you can see is here too.`}
+          highlightListId={id}
+          storageKey="cs.calendar.overlay"
+          onClose={() => setShowCalendar(false)}
+        />
+      )}
+
       {newMatterContext && (
         <NewMatterModal
           context={newMatterContext}
@@ -598,6 +637,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
 interface SortableItemProps {
   item: ChecklistItem;
   today: string;
+  flash?: boolean;
   sortable: boolean;
   onToggle: () => void;
   onChangeText: (text: string) => void;
@@ -611,7 +651,7 @@ interface SortableItemProps {
   subMatterDisabledReason: string | null;
 }
 
-function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
+function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -639,7 +679,11 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 px-2 py-2 rounded-lg border border-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.03)] transition-colors group"
+      className={`flex items-center gap-2 px-2 py-2 rounded-lg border transition-colors group ${
+        flash
+          ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.12)]'
+          : 'border-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.03)]'
+      }`}
     >
       {sortable && (
         <button
@@ -831,7 +875,10 @@ interface DueDateFieldProps {
 }
 
 function DueDateField({ value, onChange, overdue, todayDue, muted }: DueDateFieldProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<{ left: number; top: number } | null>(null);
+
   const colorClass = muted
     ? 'text-white/30'
     : overdue
@@ -842,25 +889,30 @@ function DueDateField({ value, onChange, overdue, todayDue, muted }: DueDateFiel
           ? 'text-white/70'
           : 'text-white/30 hover:text-white/60';
 
-  // Modern browsers won't open a date picker from a label wrapping an
-  // input styled to zero size — call showPicker() explicitly off a ref.
+  // The popover is portalled to <body>, so a resized (overflow-hidden)
+  // list card can't clip it. Anchor it off the trigger's live rect.
   const openPicker = () => {
-    const el = inputRef.current;
+    const el = anchorRef.current;
     if (!el) return;
-    if (typeof el.showPicker === 'function') {
-      try { el.showPicker(); return; } catch { /* fall through */ }
-    }
-    el.focus();
-    el.click();
+    const r = el.getBoundingClientRect();
+    const width = 250;
+    setRect({
+      left: Math.min(Math.max(8, r.left - width + r.width), window.innerWidth - width - 8),
+      top: r.bottom + 6,
+    });
+    setOpen(true);
   };
 
   return (
-    <span className={`relative inline-flex items-center gap-1 text-[11px] shrink-0 px-2 py-1 rounded hover:bg-[rgba(255,255,255,0.04)] transition-colors ${colorClass}`}>
+    <span
+      ref={anchorRef}
+      className={`relative inline-flex items-center gap-1 text-[11px] shrink-0 px-2 py-1 rounded hover:bg-[rgba(255,255,255,0.04)] transition-colors ${colorClass}`}
+    >
       <button
         type="button"
         onClick={openPicker}
         className="flex items-center gap-1 cursor-pointer"
-        title="Due date"
+        title="Due date — opens the calendar"
       >
         <Calendar size={11} />
         {value
@@ -877,16 +929,135 @@ function DueDateField({ value, onChange, overdue, todayDue, muted }: DueDateFiel
           <X size={10} />
         </button>
       )}
-      <input
-        ref={inputRef}
-        type="date"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="absolute inset-0 opacity-0 pointer-events-none"
-        tabIndex={-1}
-        aria-hidden="true"
-      />
+      {open && rect && (
+        <DuePickerPopover
+          value={value}
+          left={rect.left}
+          top={rect.top}
+          onPick={(d) => { onChange(d); setOpen(false); }}
+          onClear={() => { onChange(''); setOpen(false); }}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </span>
+  );
+}
+
+// A real month grid, not the browser's date control: pick a day, clear the
+// date, or step into the full Contextspaces calendar. This is what the
+// calendar icon on a list item opens.
+function DuePickerPopover({
+  value, left, top, onPick, onClear, onClose,
+}: {
+  value: string;
+  left: number;
+  top: number;
+  onPick: (d: string) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const key = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const todayKey = key(new Date());
+  const [cursor, setCursor] = useState(() => {
+    const base = value ? new Date(value + 'T00:00:00') : new Date();
+    return new Date(base.getFullYear(), base.getMonth(), 1);
+  });
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const gridStart = new Date(cursor);
+  gridStart.setDate(1 - cursor.getDay());
+  const days: Date[] = [];
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    days.push(d);
+  }
+
+  const shift = (n: number) =>
+    setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + n, 1));
+
+  return (
+    <ModalPortal>
+      <div className="fixed inset-0 z-[70]" onClick={onClose}>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{ left, top, width: 250 }}
+          className="fixed rounded-lg border border-[rgba(255,255,255,0.16)] bg-[#0d0d14] shadow-2xl p-2.5"
+        >
+          <div className="flex items-center justify-between mb-1.5">
+            <button onClick={() => shift(-1)} className="p-1 rounded text-white/45 hover:text-white hover:bg-[rgba(255,255,255,0.06)]" title="Previous month">
+              <ChevronLeft size={13} />
+            </button>
+            <span className="text-[11.5px] text-[#f5f2ed]">
+              {cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+            </span>
+            <button onClick={() => shift(1)} className="p-1 rounded text-white/45 hover:text-white hover:bg-[rgba(255,255,255,0.06)]" title="Next month">
+              <ChevronRight size={13} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 gap-px mb-0.5">
+            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+              <div key={i} className="text-[9px] text-white/30 text-center py-0.5">{d}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-px">
+            {days.map((d) => {
+              const k = key(d);
+              const inMonth = d.getMonth() === cursor.getMonth();
+              const selected = k === value;
+              return (
+                <button
+                  key={k}
+                  onClick={() => onPick(k)}
+                  className={`text-[11px] tabular-nums rounded py-1 transition-colors ${
+                    selected
+                      ? 'bg-[#f0c850] text-[#0e0e12] font-bold'
+                      : k === todayKey
+                        ? 'text-[#e8b84a] hover:bg-[rgba(255,255,255,0.07)]'
+                        : inMonth
+                          ? 'text-white/75 hover:bg-[rgba(255,255,255,0.07)]'
+                          : 'text-white/20 hover:bg-[rgba(255,255,255,0.05)]'
+                  }`}
+                >
+                  {d.getDate()}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center justify-between mt-2 pt-2 border-t border-[rgba(255,255,255,0.08)]">
+            <button
+              onClick={() => onPick(todayKey)}
+              className="text-[10.5px] text-white/55 hover:text-white transition-colors"
+            >
+              Today
+            </button>
+            {value && (
+              <button
+                onClick={onClear}
+                className="text-[10.5px] text-white/40 hover:text-red-300 transition-colors"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              onClick={() => { onClose(); navigate('/app/calendar'); }}
+              className="text-[10.5px] text-[#e8b84a] hover:text-[#f5d565] transition-colors"
+            >
+              Open calendar →
+            </button>
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
   );
 }
 
