@@ -74,6 +74,31 @@ already running longer than 5 minutes gets reclaimed mid-flight — and a long
 OCR or transcription pass can burn all three attempts and be marked
 permanently failed before the deploy finishes.
 
+## Migration 057 — job priority (2026-08-23)
+
+`processing_jobs.priority` (default 0) decides who goes next; the claim is
+`order by priority desc, created_at`. The bulk scripts — `bulk-import` and
+`ingest-monitor --fix` — enqueue at -10. The web and MCP paths never mention
+priority: a BEFORE INSERT trigger demotes a matter's eleventh-and-later queued
+job to -10 on its own, so one client's production cannot hold another
+client's single upload. Only the service role can raise priority above 0;
+authenticated callers are clamped.
+
+Apply order relative to the worker deploy does not matter — the worker's
+`claim_discovery_job(p_worker)` call and every interactive enqueue are
+unchanged. The two CLI scripts DO name the column and fail loudly
+(`column "priority" does not exist`) if run before the SQL is pasted.
+
+Verify on a real Postgres without Docker:
+
+    npm i --no-save @electric-sql/pglite
+    node scripts/_verify-job-priority.mjs
+
+Known limits, on purpose: strict priority means bulk never runs while normal
+work is queued; two tenants bulk-uploading at once are FIFO between themselves
+(fair sharing is the next rule, and `serverspace_id` is already on the job for
+it); the burst rule is per matter.
+
 ## Also in the pending-dashboard batch
 
 Run `supabase/migrations/032_processing_jobs_rls.sql` in the Supabase SQL

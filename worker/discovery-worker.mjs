@@ -101,7 +101,7 @@ for (;;) {
     await sleep(POLL_MS);
     continue;
   }
-  log(`[job ${job.id}] ${job.job_type} (production ${job.production_id ?? '—'})`);
+  log(`[job ${job.id}] ${job.job_type} (production ${job.production_id ?? '—'}${job.priority ? `, priority ${job.priority}` : ''})`);
   try {
     await withHeartbeat(job, () => withWatchdog(job, dispatch(job)));
     await supabase.from('processing_jobs')
