@@ -3,6 +3,8 @@ import { pathToFileURL } from 'node:url';
 import { request as httpsRequest } from 'node:https';
 import type { IncomingMessage } from 'node:http';
 import type { Plugin } from 'vite';
+// The SecureSpace gate — same module the prod handler uses.
+import { gateLlmRequest } from './lib/ai-tier-policy.mjs';
 
 // Absolute file: URL to the CLI's free-DB fetchers, resolved from the
 // project root (process.cwd() in the Vite config context) so the dynamic
@@ -190,6 +192,9 @@ export default function llmProxy(): Plugin {
           messages?: { role: 'user' | 'assistant'; content: string }[];
           matterId?: string;
           context?: { route?: string; tab?: string; matterName?: string };
+          sessionId?: string;
+          escalate?: boolean;
+          charterId?: string;
         };
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString());
@@ -237,16 +242,26 @@ export default function llmProxy(): Plugin {
             global: { headers: { Authorization: `Bearer ${userToken}` } },
             auth: { persistSession: false, autoRefreshToken: false },
           });
-          const { usedTools } = await runAssistantStream({
+          const result = await runAssistantStream({
             supabase: sb,
             anthropicKey: ANTHROPIC_API_KEY,
+            // The sealed pen (SecureSpace Tier B); optional — absent means
+            // sealed matters are refused, never silently escalated.
+            fireworksKey: process.env.FIREWORKS_API_KEY,
             openaiApiKey: OPENAI_API_KEY,
             messages: parsed.messages || [],
             matterId: parsed.matterId || undefined,
             context: parsed.context || undefined,
             emit,
+            sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId ? parsed.sessionId : undefined,
+            escalate: parsed.escalate === true,
+            // Agents: only the charter ID crosses the wire; the charter is
+            // loaded server-side under the user's own RLS.
+            charterId: typeof parsed.charterId === 'string' && parsed.charterId
+              ? parsed.charterId.slice(0, 80)
+              : undefined,
           });
-          emit({ type: 'done', usedTools });
+          emit({ type: 'done', ...result });
         } catch (err: unknown) {
           emit({ type: 'error', message: err instanceof Error ? err.message : 'assistant_failed' });
         } finally {
@@ -261,7 +276,7 @@ export default function llmProxy(): Plugin {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
 
-        let parsed: { provider: string; model: string; body: string; apiKey?: string };
+        let parsed: { provider: string; model: string; body: string; apiKey?: string; matterId?: string };
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
@@ -274,6 +289,22 @@ export default function llmProxy(): Plugin {
         if (!route) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Unknown provider: ${parsed.provider}` }));
+          return;
+        }
+
+        // SecureSpace gate: JWT required; matter-bound requests checked
+        // against the matter's tier server-side. Same module as prod.
+        const gate = await gateLlmRequest({
+          supabaseUrl: process.env.VITE_SUPABASE_URL,
+          anonKey: process.env.VITE_SUPABASE_ANON_KEY,
+          serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+          bearer: req.headers['authorization'],
+          provider: parsed.provider,
+          matterId: parsed.matterId,
+        });
+        if (!gate.ok) {
+          res.writeHead(gate.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: gate.error, tier: gate.tier, provider: gate.provider }));
           return;
         }
 

@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
-import PinToggle from '@/components/ui/PinToggle';
+import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
@@ -95,10 +96,11 @@ interface SortState {
   direction: 'asc' | 'desc';
 }
 
-export default function TableView() {
-  const { id } = useParams();
+export default function TableView({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+  const params = useParams();
+  const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.tableview.card');
+  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded ? undefined : 'cs.tableview.card');
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -243,35 +245,8 @@ export default function TableView() {
     invalidate.invalidateItem(id);
   };
 
-  return (
-    <div>
-      <CoverImage
-        coverUrl={item?.cover_url ?? null}
-        onCoverChange={handleCoverChange}
-        editable={true}
-        expanded={coverExpanded}
-        onExpandChange={setCoverExpanded}
-        persistKey={id ? `cs.cover.${id}` : undefined}
-      />
-
-      <div ref={cardRef} className="max-w-6xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Close + drag handle + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
-            title="Back"
-          >
-            <X size={14} strokeWidth={2} />
-          </button>
-          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <div className="flex items-center gap-1">
-            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
-            <PinToggle pinned={pinned} onToggle={togglePin} />
-            <FullscreenToggle onToggle={toggleFullscreen} />
-          </div>
-        </div>
-
+  const body = (
+    <>
         {error && (
           <p className="text-[13px] text-red-300 py-12 text-center">
             {error instanceof Error ? error.message : 'Failed to load table'}
@@ -365,6 +340,43 @@ export default function TableView() {
             </button>
           </>
         )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="px-4 py-3">{body}</div>;
+  }
+
+  return (
+    <div>
+      <CoverImage
+        coverUrl={item?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={true}
+        expanded={coverExpanded}
+        onExpandChange={setCoverExpanded}
+        persistKey={id ? `cs.cover.${id}` : undefined}
+      />
+
+      <div ref={cardRef} className="max-w-6xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Close + drag handle + pin to canvas + fullscreen */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <button
+            onClick={() => (onClose ? onClose() : navigate(-1))}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+            title="Back"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <div className="flex items-center gap-1">
+            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            <CanvasPinToggle kind="table" id={id} title={title || item?.title || 'Untitled Table'} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
+        </div>
+
+        {body}
       </div>
     </div>
   );

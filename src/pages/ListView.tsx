@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, FileText } from 'lucide-react';
+import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, FileText, Folder, MoreHorizontal } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -20,11 +20,14 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
-import PinToggle from '@/components/ui/PinToggle';
+import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
-import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import ModalPortal from '@/components/ui/ModalPortal';
+import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
+import { supabase } from '@/lib/supabase';
+import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import CalendarOverlay from '@/components/calendar/CalendarOverlay';
+import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
@@ -38,30 +41,102 @@ interface ChecklistItem {
   text: string;
   done: boolean;
   due?: string | null;       // YYYY-MM-DD or null
-  linked_page_id?: string | null;  // child page spawned from this item, if any
+  linked_page_id?: string | null;   // child page spawned from this item, if any
+  linked_matter_id?: string | null; // sub-matter spawned from this item, if any
 }
 
+// The parent matter a list lives in, when it lives in one at all. Lists
+// filed directly in a serverspace have no matter to nest under, so the
+// "Make sub-matter" action is unavailable there.
+interface ParentMatter {
+  id: string;
+  name: string;
+  serverspace_id: string;
+}
+
+const NO_MATTER_REASON =
+  'This list is not filed inside a matter, so there is nothing to nest a sub-matter under.';
+
+// Repair rather than discard.
+//
+// This used to drop any entry whose `id` or `text` was not a string. Items
+// written by agents, imports, and the MCP tools routinely arrive without an
+// `id`, so a list could hold 21 entries and render 16 — the header under-
+// counted, and worse, the next save wrote back only the 16 that parsed,
+// silently deleting the rest. Now a missing id is synthesised (deterministic,
+// so it stays stable across re-syncs and React keys don't churn) and a
+// non-string text is coerced. Only an entry that is not an object at all —
+// which carries nothing to keep — is skipped.
 function readListContent(content: Record<string, unknown> | undefined): ChecklistItem[] {
   const raw = content?.items;
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((r): ChecklistItem | null => {
-      if (!r || typeof r !== 'object') return null;
-      const o = r as Record<string, unknown>;
-      if (typeof o.id !== 'string' || typeof o.text !== 'string') return null;
-      const due = typeof o.due === 'string' ? o.due : null;
-      const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
-      return { id: o.id, text: o.text, done: !!o.done, due, linked_page_id };
-    })
-    .filter((x): x is ChecklistItem => x !== null);
+  const out: ChecklistItem[] = [];
+  const seen = new Set<string>();
+  raw.forEach((r, idx) => {
+    if (!r || typeof r !== 'object') return;
+    const o = r as Record<string, unknown>;
+    let id = typeof o.id === 'string' && o.id ? o.id : `item-${idx}`;
+    // Two entries sharing an id would collide as React keys and as edit
+    // targets; keep the first and give the duplicate its own.
+    if (seen.has(id)) id = `${id}-${idx}`;
+    seen.add(id);
+    const text =
+      typeof o.text === 'string' ? o.text
+      : o.text == null ? ''
+      : String(o.text);
+    const due = typeof o.due === 'string' ? o.due : null;
+    const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
+    const linked_matter_id = typeof o.linked_matter_id === 'string' ? o.linked_matter_id : null;
+    out.push({ id, text, done: !!o.done, due, linked_page_id, linked_matter_id });
+  });
+  return out;
+}
+
+// Check which linked pages and sub-matters still exist and return the items
+// with the dead references stripped — or null when nothing needed clearing.
+// A failed read is never read as "gone": we only clear on a definite answer,
+// so a target hidden by RLS keeps its link rather than losing it.
+async function withoutDeadLinks(current: ChecklistItem[]): Promise<ChecklistItem[] | null> {
+  const pageIds = [...new Set(current.map((i) => i.linked_page_id).filter((v): v is string => !!v))];
+  const matterIds = [...new Set(current.map((i) => i.linked_matter_id).filter((v): v is string => !!v))];
+  if (pageIds.length === 0 && matterIds.length === 0) return null;
+
+  const [pagesRes, mattersRes] = await Promise.all([
+    pageIds.length
+      ? supabase.from('content_items').select('id').in('id', pageIds)
+      : Promise.resolve({ data: [] as { id: string }[], error: null }),
+    matterIds.length
+      ? supabase.from('matterspaces').select('id').in('id', matterIds)
+      : Promise.resolve({ data: [] as { id: string }[], error: null }),
+  ]);
+  if (pagesRes.error || mattersRes.error) return null;
+
+  const livePages = new Set((pagesRes.data ?? []).map((r) => r.id));
+  const liveMatters = new Set((mattersRes.data ?? []).map((r) => r.id));
+
+  let changed = false;
+  const next = current.map((i) => {
+    let out = i;
+    if (i.linked_page_id && !livePages.has(i.linked_page_id)) {
+      out = { ...out, linked_page_id: null };
+      changed = true;
+    }
+    if (i.linked_matter_id && !liveMatters.has(i.linked_matter_id)) {
+      out = { ...out, linked_matter_id: null };
+      changed = true;
+    }
+    return out;
+  });
+  return changed ? next : null;
 }
 
 type SortMode = 'manual' | 'due';
 
-export default function ListView() {
-  const { id } = useParams();
+export default function ListView({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+  const params = useParams();
+  const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.listview.card');
+  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded ? undefined : 'cs.listview.card');
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -77,23 +152,75 @@ export default function ListView() {
   const [searchParams] = useSearchParams();
   const focusItemId = searchParams.get('item');
   const [flashItemId, setFlashItemId] = useState<string | null>(null);
+  const [parentMatter, setParentMatter] = useState<ParentMatter | null>(null);
+  const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const draftInputRef = useRef<HTMLInputElement>(null);
   const hydrated = useRef(false);
+  // Mirror of `items` so async handlers (the dead-link sweep, the
+  // sub-matter callback) can read the latest array without stale closures.
+  const itemsRef = useRef<ChecklistItem[]>([]);
+  // Which item is waiting on the New Sub-Matter modal to come back.
+  const pendingSubMatterFor = useRef<string | null>(null);
+  // Dead-link sweep runs once per list load.
+  const sweptFor = useRef<string | null>(null);
+  // JSON of the server's items as we last adopted them. Comparing against it
+  // tells a genuinely new server state apart from a refetch that echoes back
+  // what we just wrote.
+  const adoptedRef = useRef<string | null>(null);
+  // `saving` as a ref: the sync effect must read it without re-running when
+  // it flips, and a save in flight is the one moment our copy outranks the
+  // server's.
+  const savingRef = useRef(false);
 
-  useEffect(() => { hydrated.current = false; }, [id]);
+  useEffect(() => { itemsRef.current = items; }, [items]);
 
+  useEffect(() => { hydrated.current = false; sweptFor.current = null; adoptedRef.current = null; }, [id]);
+
+  // Hydrate on first load, and re-sync afterwards whenever the server copy
+  // actually changes. The old guard hydrated exactly once per id, so a list
+  // an agent (or another tab, or another card on the canvas) edited while
+  // this card was open stayed frozen at its stale contents and count until
+  // a full reload.
   useEffect(() => {
-    if (!item || hydrated.current) return;
-    setTitle(item.title);
-    const hydratedItems = readListContent(item.content);
-    setItems(hydratedItems);
-    if (titleRef.current) titleRef.current.textContent = item.title;
-    hydrated.current = true;
-    // Empty list on first load → focus the bottom input so the user can
-    // start typing or press Enter to spawn a first empty bullet.
-    if (hydratedItems.length === 0) {
-      setTimeout(() => draftInputRef.current?.focus(), 0);
+    if (!item) return;
+    const serverItems = readListContent(item.content);
+    const serverJson = JSON.stringify(serverItems);
+    if (serverJson === adoptedRef.current) return;
+    if (savingRef.current) return;   // our write is in flight — it wins
+    adoptedRef.current = serverJson;
+    setItems(serverItems);
+    itemsRef.current = serverItems;
+    if (!hydrated.current) {
+      setTitle(item.title);
+      if (titleRef.current) titleRef.current.textContent = item.title;
+      hydrated.current = true;
+      // Links dangle harmlessly when an item is deleted, but a deleted target
+      // would leave a marker pointing at nothing. Once per list load, drop the
+      // references whose page or sub-matter is definitely gone.
+      if (sweptFor.current !== item.id) {
+        const listId = item.id;
+        sweptFor.current = listId;
+        void (async () => {
+          const cleaned = await withoutDeadLinks(itemsRef.current);
+          if (!cleaned) return;
+          setItems(cleaned);
+          itemsRef.current = cleaned;
+          // Adopt the cleaned shape, or the resync effect would treat the
+          // server's echo of this very write as fresh remote state.
+          adoptedRef.current = JSON.stringify(cleaned);
+          try {
+            await updateContentItem(listId, { content: { items: cleaned } });
+          } catch (e) {
+            console.error('clearing dead item links failed', e);
+          }
+        })();
+      }
+      // Empty list on first load → focus the bottom input so the user can
+      // start typing or press Enter to spawn a first empty bullet.
+      if (serverItems.length === 0) {
+        setTimeout(() => draftInputRef.current?.focus(), 0);
+      }
     }
   }, [item]);
 
@@ -108,22 +235,45 @@ export default function ListView() {
     return () => clearTimeout(t);
   }, [focusItemId, items.length]);
 
+  // A list filed in a matterspace can spawn sub-matters; one filed straight
+  // into a serverspace cannot. Load the parent matter (for its serverspace
+  // and name) so the New Sub-Matter modal gets the right context.
+  const spaceId = item?.space_id;
+  const spaceType = item?.space_type;
+  useEffect(() => {
+    if (!spaceId || spaceType !== 'matterspace') { setParentMatter(null); return; }
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase
+        .from('matterspaces')
+        .select('id, name, serverspace_id')
+        .eq('id', spaceId)
+        .maybeSingle();
+      if (!cancelled) setParentMatter((data as ParentMatter | null) ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [spaceId, spaceType]);
+
   const persistItems = async (next: ChecklistItem[]) => {
     if (!id) return;
     setSaving(true);
+    savingRef.current = true;
     try {
       await updateContentItem(id, { content: { items: next } });
+      adoptedRef.current = JSON.stringify(next);
       invalidate.invalidateItem(id);
     } catch (e) {
       console.error('save failed', e);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
   const persistTitle = async (next: string) => {
     if (!id) return;
     setSaving(true);
+    savingRef.current = true;
     try {
       await updateContentItem(id, { title: next || 'Untitled List' });
       invalidate.invalidateItem(id);
@@ -131,6 +281,7 @@ export default function ListView() {
       console.error('title save failed', e);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
@@ -146,7 +297,7 @@ export default function ListView() {
   const addItem = (): string => {
     const text = draftText.trim();
     const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text, done: false, due: null, linked_page_id: null };
+    const newItem: ChecklistItem = { id: newId, text, done: false, due: null, linked_page_id: null, linked_matter_id: null };
     const next = [...items, newItem];
     setItems(next);
     setDraftText('');
@@ -158,7 +309,7 @@ export default function ListView() {
   // item right below. Returns the new item's id so the caller can focus it.
   const insertItemAfter = (afterItemId: string, currentText: string): string => {
     const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null, linked_page_id: null };
+    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null, linked_page_id: null, linked_matter_id: null };
     const next: ChecklistItem[] = [];
     for (const i of items) {
       next.push(i.id === afterItemId ? { ...i, text: currentText } : i);
@@ -219,6 +370,60 @@ export default function ListView() {
     }
   };
 
+  // Break a list item out into a sub-matter of the matter this list sits in.
+  // If the item already has one, just open it. Otherwise hand off to the
+  // shared New Sub-Matter modal — the single creation path for matterspaces,
+  // so RLS and serverspace inheritance stay correct and the user still gets
+  // to review the name and short code before anything is written.
+  const makeSubMatter = (itemId: string) => {
+    const target = itemsRef.current.find((i) => i.id === itemId);
+    if (!target) return;
+
+    if (target.linked_matter_id) {
+      navigate(`/app/matterspace/${target.linked_matter_id}`);
+      return;
+    }
+    if (!parentMatter) return;
+
+    pendingSubMatterFor.current = itemId;
+    setNewMatterContext({
+      serverspaceId: parentMatter.serverspace_id,
+      parentMatterId: parentMatter.id,
+      contextLabel: parentMatter.name,
+    });
+  };
+
+  // The modal created the sub-matter; seed it with a list of the same name
+  // (a home for the sub-items), record it on the item, then open it.
+  const handleSubMatterCreated = async (matterId: string) => {
+    const itemId = pendingSubMatterFor.current;
+    pendingSubMatterFor.current = null;
+    if (!itemId || !item) return;
+    const target = itemsRef.current.find((i) => i.id === itemId);
+
+    setSaving(true);
+    try {
+      await createContentItem({
+        space: { spaceId: matterId, spaceType: 'matterspace' },
+        contentType: 'list',
+        title: target?.text.trim() || 'Untitled List',
+        content: { items: [] },
+      });
+      const next = itemsRef.current.map((i) =>
+        i.id === itemId ? { ...i, linked_matter_id: matterId } : i,
+      );
+      setItems(next);
+      itemsRef.current = next;
+      await updateContentItem(item.id, { content: { items: next } });
+      invalidate.invalidateItem(item.id);
+    } catch (e) {
+      console.error('sub-matter setup failed', e);
+    } finally {
+      setSaving(false);
+    }
+    navigate(`/app/matterspace/${matterId}?tab=Lists`);
+  };
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -256,35 +461,8 @@ export default function ListView() {
     invalidate.invalidateItem(id);
   };
 
-  return (
-    <div>
-      <CoverImage
-        coverUrl={item?.cover_url ?? null}
-        onCoverChange={handleCoverChange}
-        editable={true}
-        expanded={coverExpanded}
-        onExpandChange={setCoverExpanded}
-        persistKey={id ? `cs.cover.${id}` : undefined}
-      />
-
-      <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Close + drag handle + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
-            title="Back"
-          >
-            <X size={14} strokeWidth={2} />
-          </button>
-          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <div className="flex items-center gap-1">
-            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
-            <PinToggle pinned={pinned} onToggle={togglePin} />
-            <FullscreenToggle onToggle={toggleFullscreen} />
-          </div>
-        </div>
-
+  const body = (
+    <>
         {error && (
           <p className="text-[13px] text-red-300 py-12 text-center">
             {error instanceof Error ? error.message : 'Failed to load list'}
@@ -355,6 +533,8 @@ export default function ListView() {
                       onDelete={() => deleteItem(it.id)}
                       onEnter={(currentText) => insertItemAfter(it.id, currentText)}
                       onExpand={() => expandItem(it.id)}
+                      onSubMatter={() => makeSubMatter(it.id)}
+                      subMatterDisabledReason={parentMatter ? null : NO_MATTER_REASON}
                     />
                   ))}
                 </div>
@@ -388,6 +568,45 @@ export default function ListView() {
             </div>
           </>
         )}
+    </>
+  );
+
+  // Inside a canvas panel the panel supplies the frame, the ribbon and the
+  // controls; the view contributes only its contents.
+  if (embedded) {
+    return <div className="px-4 py-3">{body}</div>;
+  }
+
+  return (
+    <div>
+      <CoverImage
+        coverUrl={item?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={true}
+        expanded={coverExpanded}
+        onExpandChange={setCoverExpanded}
+        persistKey={id ? `cs.cover.${id}` : undefined}
+      />
+
+      <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Close + drag handle + pin to canvas + fullscreen */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <button
+            onClick={() => (onClose ? onClose() : navigate(-1))}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+            title="Back"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <div className="flex items-center gap-1">
+            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            <CanvasPinToggle kind="list" id={id} title={title || item?.title || 'Untitled List'} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
+        </div>
+
+        {body}
       </div>
 
       {showCalendar && (
@@ -397,6 +616,17 @@ export default function ListView() {
           highlightListId={id}
           storageKey="cs.calendar.overlay"
           onClose={() => setShowCalendar(false)}
+        />
+      )}
+
+      {newMatterContext && (
+        <NewMatterModal
+          context={newMatterContext}
+          onClose={() => { pendingSubMatterFor.current = null; setNewMatterContext(null); }}
+          onCreated={(matterId) => { void handleSubMatterCreated(matterId); }}
+          initialName={
+            itemsRef.current.find((i) => i.id === pendingSubMatterFor.current)?.text.trim() || ''
+          }
         />
       )}
     </div>
@@ -415,9 +645,13 @@ interface SortableItemProps {
   onDelete: () => void;
   onEnter: (currentText: string) => string;
   onExpand: () => void;
+  onSubMatter: () => void;
+  // Null when the action is available; otherwise the plain-English reason
+  // it isn't, shown under the greyed-out menu entry.
+  subMatterDisabledReason: string | null;
 }
 
-function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand }: SortableItemProps) {
+function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -428,8 +662,15 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
   };
 
   // Draft local text so each keystroke doesn't trigger a save round-trip.
+  // Synced from the server copy by adjusting state during render rather than
+  // in an effect — the effect version double-rendered every remote change and
+  // the react-hooks lint now rejects it (you-might-not-need-an-effect).
   const [text, setText] = useState(item.text);
-  useEffect(() => { setText(item.text); }, [item.text]);
+  const [prevServerText, setPrevServerText] = useState(item.text);
+  if (item.text !== prevServerText) {
+    setPrevServerText(item.text);
+    setText(item.text);
+  }
 
   const overdue = item.due && !item.done && item.due < today;
   const todayDue = item.due && !item.done && item.due === today;
@@ -485,17 +726,32 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
         todayDue={!!todayDue}
         muted={item.done}
       />
-      <button
-        onClick={onExpand}
-        className={`p-1 rounded transition-all shrink-0 ${
-          item.linked_page_id
-            ? 'text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)]'
-            : 'opacity-0 group-hover:opacity-100 text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.06)]'
-        }`}
-        title={item.linked_page_id ? 'Open as page' : 'Expand to a full page'}
-      >
-        <FileText size={13} />
-      </button>
+      {/* Standing markers: an item that has a page or a sub-matter says so
+          without being hovered, and the marker itself opens the target. */}
+      {item.linked_page_id && (
+        <button
+          onClick={onExpand}
+          className="p-1 rounded shrink-0 text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors"
+          title="Open page"
+        >
+          <FileText size={13} />
+        </button>
+      )}
+      {item.linked_matter_id && (
+        <button
+          onClick={onSubMatter}
+          className="p-1 rounded shrink-0 text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors"
+          title="Open sub-matter"
+        >
+          <Folder size={13} />
+        </button>
+      )}
+      <ItemActionsMenu
+        item={item}
+        onExpand={onExpand}
+        onSubMatter={onSubMatter}
+        subMatterDisabledReason={subMatterDisabledReason}
+      />
       <button
         onClick={onDelete}
         className="opacity-0 group-hover:opacity-100 p-1 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
@@ -504,6 +760,108 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
         <Trash2 size={13} />
       </button>
     </div>
+  );
+}
+
+
+interface ItemActionsMenuProps {
+  item: ChecklistItem;
+  onExpand: () => void;
+  onSubMatter: () => void;
+  subMatterDisabledReason: string | null;
+}
+
+// The quiet per-item menu. It stays out of the way until the row is hovered,
+// and it is portalled to <body> with fixed coordinates so a resized (and
+// therefore scrolling) list card can't clip it.
+function ItemActionsMenu({ item, onExpand, onSubMatter, subMatterDisabledReason }: ItemActionsMenuProps) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
+
+  const open = () => {
+    const r = buttonRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const MENU_HEIGHT = subMatterDisabledReason ? 132 : 84;
+    const below = r.bottom + 6;
+    const top = below + MENU_HEIGHT > window.innerHeight ? Math.max(8, r.top - 6 - MENU_HEIGHT) : below;
+    setAnchor({ top, right: Math.max(8, window.innerWidth - r.right) });
+  };
+
+  useEffect(() => {
+    if (!anchor) return;
+    // A pointerdown on the trigger itself is left alone so the button can
+    // toggle the menu shut on the following click instead of reopening it.
+    const close = (e?: Event) => {
+      const t = e?.target;
+      if (t instanceof Node && buttonRef.current?.contains(t)) return;
+      setAnchor(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setAnchor(null); };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('resize', close);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [anchor]);
+
+  const entry = 'w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors';
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        onClick={() => (anchor ? setAnchor(null) : open())}
+        className={`p-1 rounded transition-all shrink-0 text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)] ${
+          anchor ? 'opacity-100 text-white' : 'opacity-0 group-hover:opacity-100'
+        }`}
+        title="More"
+      >
+        <MoreHorizontal size={13} />
+      </button>
+
+      {anchor && (
+        <ModalPortal>
+          <div
+            style={{ top: anchor.top, right: anchor.right }}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="fixed z-[70] min-w-[210px] rounded-lg border border-[rgba(255,255,255,0.12)] bg-[#12121a] py-1 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+          >
+            <button
+              onClick={() => { setAnchor(null); onExpand(); }}
+              className={`${entry} text-white/80 hover:bg-[rgba(255,255,255,0.06)] hover:text-white`}
+            >
+              <FileText size={12} className="shrink-0 text-white/45" />
+              {item.linked_page_id ? 'Open page' : 'Open as page'}
+            </button>
+
+            {item.linked_matter_id || !subMatterDisabledReason ? (
+              <button
+                onClick={() => { setAnchor(null); onSubMatter(); }}
+                className={`${entry} text-white/80 hover:bg-[rgba(255,255,255,0.06)] hover:text-white`}
+              >
+                <Folder size={12} className="shrink-0 text-white/45" />
+                {item.linked_matter_id ? 'Open sub-matter' : 'Make sub-matter'}
+              </button>
+            ) : (
+              <>
+                <div className={`${entry} text-white/30 cursor-not-allowed`} aria-disabled="true">
+                  <Folder size={12} className="shrink-0 text-white/20" />
+                  Make sub-matter
+                </div>
+                <p className="px-3 pb-1.5 text-[10px] leading-snug text-white/35">
+                  {subMatterDisabledReason}
+                </p>
+              </>
+            )}
+          </div>
+        </ModalPortal>
+      )}
+    </>
   );
 }
 

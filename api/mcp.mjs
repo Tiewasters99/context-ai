@@ -256,6 +256,9 @@ export default async function handler(req, res) {
         const result = await callTool(sb, name, args, {
           openaiApiKey: OPENAI_API_KEY,
           googleApiKey: process.env.GOOGLE_API_KEY, // enables file_document OCR of scanned PDFs
+          // The SecureSpace seal: this is an EXTERNAL connector — sealed
+          // matters (tier B/C, inherited down the tree) are invisible here.
+          sealConnector: true,
         });
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],

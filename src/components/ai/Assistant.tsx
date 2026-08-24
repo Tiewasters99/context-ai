@@ -130,6 +130,28 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // replaced by the next command. A ref, not state: nothing re-renders.
   const commandMatterRef = useRef<{ id?: string; name?: string } | null>(null);
 
+  // Agents: a command can also arrive carrying a CHARTER — the agent whose
+  // job this run is. Only the id crosses the wire; the server loads the
+  // charter under the user's own RLS, appends its prose to the system
+  // prompt, and narrows the run's tools to the charter's list. It sticks
+  // for follow-ups the same way the matter does, and the header says so, so
+  // nobody wonders which agent is answering.
+  const [runningCharter, setRunningCharter] = useState<{ id: string; name: string } | null>(null);
+  const charterRef = useRef<{ id: string; name: string } | null>(null);
+  const setCharter = (c: { id: string; name: string } | null) => {
+    charterRef.current = c;
+    setRunningCharter(c);
+  };
+
+  // SecureSpace: matter-bound exchanges are recorded server-side as an
+  // ai_sessions row (the privileged work-product ledger). We keep the id the
+  // server hands back so follow-ups land in the same session; it is keyed by
+  // matter so a scope change starts a fresh session. A ref: nothing re-renders.
+  // Keyed by matter AND charter: a charter run is its own session in the
+  // ledger, so switching agents inside one matter does not silently
+  // continue the previous agent's record.
+  const sessionRef = useRef<{ key: string; sessionId: string } | null>(null);
+
   const send = async (text: string) => {
     if (!text || loading) return;
 
@@ -171,12 +193,19 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       const token = session?.access_token;
       if (!token) throw new Error('You need to be signed in to use the assistant.');
 
+      const boundMatterId = commandMatterRef.current?.id ?? matterId;
+      const boundCharterId = charterRef.current?.id;
+      const sessionKey = `${boundMatterId ?? ''}|${boundCharterId ?? ''}`;
       const res = await fetch('/api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           messages: next.map((m) => ({ role: m.role, content: m.content })),
-          matterId: commandMatterRef.current?.id ?? matterId,
+          matterId: boundMatterId,
+          charterId: boundCharterId,
+          sessionId: boundMatterId && sessionRef.current?.key === sessionKey
+            ? sessionRef.current.sessionId
+            : undefined,
           context: {
             route: location.pathname,
             ...getOrchestratorContext(),
@@ -214,9 +243,15 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             message?: string;
             action?: string;
             input?: { document_id?: string; page?: number; matter_id?: string; name?: string; description?: string };
+            sessionId?: string | null;
           };
           try { ev = JSON.parse(payload); } catch { continue; }
-          if (ev.type === 'text' && ev.text) {
+          if (ev.type === 'session') {
+            // The server opened (or continued) the recorded session for this matter.
+            if (boundMatterId && ev.sessionId) {
+              sessionRef.current = { key: sessionKey, sessionId: ev.sessionId };
+            }
+          } else if (ev.type === 'text' && ev.text) {
             ensureAssistant();
             acc += ev.text;
             setAssistant(acc);
@@ -282,6 +317,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       const cmd = (e as CustomEvent<AssistantCommand>).detail;
       if (!cmd?.prompt?.trim()) return;
       commandMatterRef.current = { id: cmd.matterId, name: cmd.matterName };
+      setCharter(cmd.charterId ? { id: cmd.charterId, name: cmd.charterName || 'Agent' } : null);
       void sendRef.current(cmd.prompt.trim());
     };
     window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
@@ -314,6 +350,24 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Running under a charter (Agents). Stated plainly, with a way out:
+            an agent that answers without saying it is an agent is exactly the
+            thing this tab is not. */}
+        {runningCharter && (
+          <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.08)] bg-[rgba(232,184,74,0.06)]">
+            <span className="text-[11px] text-[#e8b84a] truncate">
+              Running as <span className="font-semibold">{runningCharter.name}</span>
+            </span>
+            <button
+              onClick={() => setCharter(null)}
+              className="text-[11px] text-white/45 hover:text-white transition-colors shrink-0"
+              title="Stop running under this charter"
+            >
+              clear
+            </button>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">

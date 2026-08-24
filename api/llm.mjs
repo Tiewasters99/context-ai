@@ -13,10 +13,12 @@
 // If `body` requests streaming the upstream stream is piped through; if it
 // requests a single JSON object that object is returned as-is.
 //
-// NOTE: like the dev proxy, this endpoint is currently unauthenticated —
-// it proxies the server's API keys. If abuse becomes a concern, gate it on
-// a forwarded Supabase JWT (the cite-check engine already has the session
-// and can send it; src/lib/llm/generate.ts would need the same change).
+// SecureSpace gate (2026-08-21): every request requires a Supabase JWT,
+// and a request bound to a matter (body.matterId) is checked against the
+// matter's ai_tier server-side — the tier is read from the database,
+// never trusted from the client. Fails closed on missing auth config.
+
+import { gateLlmRequest } from '../lib/ai-tier-policy.mjs';
 
 const PROVIDER_ROUTES = {
   anthropic: {
@@ -60,10 +62,20 @@ export default async function handler(req, res) {
 
   const parsed = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
   if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'invalid_body' });
-  const { provider, model, body, apiKey } = parsed;
+  const { provider, model, body, apiKey, matterId } = parsed;
 
   const route = PROVIDER_ROUTES[provider];
   if (!route) return json(res, 400, { error: `unknown_provider: ${provider}` });
+
+  const gate = await gateLlmRequest({
+    supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+    anonKey: process.env.VITE_SUPABASE_ANON_KEY,
+    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    bearer: req.headers.authorization,
+    provider,
+    matterId,
+  });
+  if (!gate.ok) return json(res, gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
   const key = apiKey || process.env[route.envKey];
   if (!key) return json(res, 400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` });
   if (typeof body !== 'string') return json(res, 400, { error: 'body must be a JSON string' });
