@@ -33,6 +33,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { classifyError, summarize, describe } from '../lib/ingest-triage.mjs';
+import { JOB_PRIORITY } from '../lib/ingest-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -156,8 +157,12 @@ async function autoFix(sb, rows, report) {
       .contains('payload', { document_id: t.id }).limit(1);
     if (dupe?.length) continue;                       // already in flight
 
+    // matterspace_id is NOT NULL on processing_jobs; this insert used to omit
+    // it and fail every time. BULK priority: a sweep must never hold up a
+    // person's single upload (migration 057).
     const { error } = await sb.from('processing_jobs').insert({
-      job_type: 'ingest_document', status: 'queued', payload: { document_id: t.id },
+      matterspace_id: t.matter, job_type: 'ingest_document', status: 'queued',
+      priority: JOB_PRIORITY.BULK, payload: { document_id: t.id },
     });
     if (error) { console.log(`  ! ${t.name}: ${error.message}`); continue; }
     await sb.from('documents')

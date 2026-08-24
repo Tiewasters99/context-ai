@@ -46,7 +46,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { processDocument, needsWorkerIngest, MEDIA_EXTENSIONS, IMAGE_EXTENSIONS } from '../lib/ingest-core.mjs';
+import { processDocument, needsWorkerIngest, MEDIA_EXTENSIONS, IMAGE_EXTENSIONS, JOB_PRIORITY } from '../lib/ingest-core.mjs';
 import { classifyError, summarize } from '../lib/ingest-triage.mjs';
 
 const execFileP = promisify(execFile);
@@ -329,9 +329,17 @@ async function phaseRun() {
       // Big/slow work goes to the always-on Fly worker; the serverless and CLI
       // paths cannot finish it. Same routing rule the web app uses.
       if (needsWorkerIngest(r.ext, stat.size)) {
-        await supabase.from('processing_jobs').insert({
-          job_type: 'ingest_document', status: 'queued', payload: { document_id: docId },
+        // matterspace_id is NOT NULL on processing_jobs. Until 2026-08-23 this
+        // insert omitted it and never looked at the result, so every "queued"
+        // file silently failed to enqueue and sat in 'pending' until
+        // recover_stranded_documents rescued it a quarter of an hour later.
+        // BULK priority because a thousand-file import must never hold up
+        // someone's single upload (migration 057).
+        const { error: qErr } = await supabase.from('processing_jobs').insert({
+          matterspace_id: matter.id, job_type: 'ingest_document', status: 'queued',
+          priority: JOB_PRIORITY.BULK, payload: { document_id: docId },
         });
+        if (qErr) throw new Error(`enqueue: ${qErr.message}`);
         counts.queued++;
         await appendLedger({ ...r, status: 'queued', document_id: docId, ts: new Date().toISOString() });
         return;
