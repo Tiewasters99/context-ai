@@ -31,6 +31,13 @@ const PRODUCTS: Product[] = [
     status: 'The desk is open',
   },
   {
+    name: 'Agents',
+    tagline: 'A team of agents you write. A charter says what the job is, a toolset says exactly what it may touch, and a trigger says when it runs — every run recorded in the matter’s ledger.',
+    accent: '#8fb8de',
+    to: '/app/agents',
+    status: 'New',
+  },
+  {
     name: 'Bucketizer',
     tagline: 'Your case theory as a living tree — every document classified against the elements you must prove. AI-proposed, attorney-confirmed.',
     accent: '#34d399',

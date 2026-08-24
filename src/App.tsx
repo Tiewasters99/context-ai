@@ -25,6 +25,7 @@ import ChatGPTConnect from '@/pages/ChatGPTConnect';
 import Connections from '@/pages/Connections';
 import Settings from '@/pages/Settings';
 import BucketizerHome from '@/pages/BucketizerHome';
+import AgentsHome from '@/pages/AgentsHome';
 import MootBench from '@/pages/moot/MootBench';
 import MootSession from '@/pages/moot/MootSession';
 import TextView from '@/pages/student-hub/TextView';
@@ -112,6 +113,7 @@ export default function App() {
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
               <Route path="settings" element={<Settings />} />
               <Route path="bucketizer" element={<BucketizerHome />} />
+              <Route path="agents" element={<AgentsHome />} />
               <Route path="moot-bench" element={<MootBench />} />
               <Route path="moot-bench/:id" element={<MootSession />} />
               <Route path="student-hub" element={<TextView />} />
