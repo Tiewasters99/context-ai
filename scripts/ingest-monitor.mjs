@@ -158,13 +158,24 @@ async function fetchStuckJobs(sb, cutoff) {
 // not been pasted — a watchdog that dies on a missing dependency protects
 // nothing.
 async function fetchReadyEmpty(sb, matterId) {
-  const { data, error } = await sb.rpc('ready_but_empty');
-  if (error) {
-    const missing = /could not find|does not exist|PGRST202|404/i.test(error.message);
-    return { rows: [], note: missing ? 'unavailable — paste migration 059' : `failed: ${error.message}` };
+  // PostgREST caps ANY response — a set-returning RPC included — at 1,000 rows,
+  // and it truncates SILENTLY. The first live run of this check reported
+  // exactly 1,000 empty documents out of ~4,000 and looked healthy doing it —
+  // the precise failure mode this monitor exists to end. Page until the short
+  // page; .order() makes the walk stable across pages.
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.rpc('ready_but_empty')
+      .order('document_id')
+      .range(from, from + 999);
+    if (error) {
+      const missing = /could not find|does not exist|PGRST202|404/i.test(error.message);
+      return { rows: [], note: missing ? 'unavailable — paste migration 059' : `failed: ${error.message}` };
+    }
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
   }
-  const rows = (data || []).filter((d) => !matterId || d.matterspace_id === matterId);
-  return { rows, note: null };
+  return { rows: rows.filter((d) => !matterId || d.matterspace_id === matterId), note: null };
 }
 
 function classifyEmpty(d) {
