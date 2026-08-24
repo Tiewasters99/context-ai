@@ -153,8 +153,14 @@ const todo = docs.filter((d) => d.storage_path && !withPassages.has(d.id));
 // canonical twin in the same matter. --include-duplicates OCRs everything if
 // that trade turns out to be wrong; --manifest writes the full skip list so the
 // decision is recoverable rather than folklore.
+// Group over EVERY stored TIFF, not just the unprocessed ones. Grouping over
+// the to-do list looks right and is wrong on the second run: once a canonical
+// copy has passages it drops out of the to-do list, its twin becomes the only
+// member of its group, and the twin gets promoted to canonical and OCR'd. Any
+// resume would quietly reinstate the duplicates this is meant to skip — and a
+// multi-hour run over thousands of pages will be resumed.
 const groups = new Map();
-for (const d of todo) {
+for (const d of docs.filter((x) => x.storage_path)) {
   const k = `${d.matterspace_id}|${d.source_filename}|${d.file_size_bytes}`;
   if (!groups.has(k)) groups.set(k, []);
   groups.get(k).push(d);
@@ -162,13 +168,19 @@ for (const d of todo) {
 const canonical = [];
 const dupeSkipped = [];
 for (const copies of groups.values()) {
-  if (copies.length === 1) { canonical.push(copies[0]); continue; }
+  // Oldest first (the original filing), document id as a stable tiebreak, and
+  // a copy that already has passages wins outright — so the canonical never
+  // changes between runs.
   const sorted = [...copies].sort((a, b) =>
     (withPassages.has(b.id) ? 1 : 0) - (withPassages.has(a.id) ? 1 : 0) ||
     String(a.created_at).localeCompare(String(b.created_at)) ||
     a.id.localeCompare(b.id));
-  canonical.push(sorted[0]);
-  for (const twin of sorted.slice(1)) dupeSkipped.push({ skipped: twin, keep: sorted[0] });
+  const keep = sorted[0];
+  // The group is satisfied the moment ANY copy carries passages: the page is
+  // in the index and searchable, which is the whole objective.
+  const satisfied = copies.some((c) => withPassages.has(c.id));
+  if (!satisfied) canonical.push(keep);
+  for (const twin of sorted.slice(1)) dupeSkipped.push({ skipped: twin, keep });
 }
 
 const work = args.includeDuplicates ? todo : canonical;
