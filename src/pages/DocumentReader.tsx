@@ -24,6 +24,8 @@ import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
+import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import { useConnections } from '@/hooks/useConnections';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -103,8 +105,9 @@ type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
 
-export default function DocumentReader() {
-  const { id } = useParams<{ id: string }>();
+export default function DocumentReader({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+  const params = useParams<{ id: string }>();
+  const id = propId ?? params.id;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
@@ -990,7 +993,7 @@ export default function DocumentReader() {
           is set, this is a discoverable "Add cover" bar (subtle until hover);
           when set, a 180px banner; when expanded, becomes the page background
           via CSS variable so the reader chrome stays in front. */}
-      {loadState === 'ready' && (
+      {loadState === 'ready' && !embedded && (
         <CoverImage
           coverUrl={doc?.cover_url ?? null}
           onCoverChange={handleCoverChange}
@@ -1005,6 +1008,9 @@ export default function DocumentReader() {
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             onClick={() => {
+              // In a canvas panel, closing means taking the card off the
+              // canvas — there is no history to walk back through.
+              if (embedded) { onClose?.(); return; }
               // In a fresh tab (opened from the Bucketizer or a shared link)
               // there is no history to go back to — land on the document's
               // matter instead of silently doing nothing.
@@ -1145,11 +1151,16 @@ export default function DocumentReader() {
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
-          <CoverModeToggle
-            hasCover={!!doc?.cover_url}
-            expanded={coverExpanded}
-            onToggle={() => setCoverExpanded(!coverExpanded)}
-          />
+          {!embedded && (
+            <CoverModeToggle
+              hasCover={!!doc?.cover_url}
+              expanded={coverExpanded}
+              onToggle={() => setCoverExpanded(!coverExpanded)}
+            />
+          )}
+          {!embedded && (
+            <CanvasPinToggle kind="document" id={id} title={doc?.title || 'Document'} />
+          )}
           <div className="w-px h-5 bg-white/10 mx-1" />
           <button
             onClick={handleDownload}
