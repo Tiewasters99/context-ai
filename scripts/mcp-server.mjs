@@ -57,6 +57,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const result = await callTool(supabase, name, args, {
       openaiApiKey: process.env.OPENAI_API_KEY,
       googleApiKey: process.env.GOOGLE_API_KEY, // enables file_document OCR of scanned PDFs
+      // The SecureSpace seal: this stdio server feeds an external client
+      // (Claude Desktop / Claude Code) — sealed matters are invisible here.
+      sealConnector: true,
     });
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   } catch (err) {
