@@ -27,6 +27,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 import { processDocument, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
+import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -177,6 +178,17 @@ export default async function handler(req, res) {
     });
     return json(res, 200, { ok: true, passageCount });
   } catch (err) {
+    // The SecureSpace seal refused a pipe (lib/seal-pipes.mjs): the file is
+    // uploaded and viewable, it simply cannot be read by an outside provider.
+    // That is a 409 with an explanation, not a 500 — and 'held', not 'error',
+    // so nothing retries what will be refused identically every time.
+    if (isSealedPipeError(err)) {
+      await sb
+        .from('documents')
+        .update({ processing_status: HELD_STATUS, processing_error: heldReason(err) })
+        .eq('id', doc.id);
+      return json(res, 409, { error: 'sealed_pipe', held: true, message: err.message });
+    }
     // Mark the document as error so the UI shows it. processDocument may
     // have already set this for the 'no passages' case; our update is
     // idempotent for the user-visible error message.

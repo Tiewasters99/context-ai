@@ -10,6 +10,14 @@ export interface GenerateOptions {
   contextFiles: { name: string; content: string }[];
   callbacks: LLMStreamCallbacks;
   signal?: AbortSignal;
+  /**
+   * Bind this call to a matter so /api/llm can enforce that matter's tier.
+   * Pass it whenever `contextFiles` came out of a matter — which, for every
+   * caller of this function today, is always. Omitted, the request reaches
+   * the gate with nothing to check and is treated as unbound content: the
+   * right answer for a dashboard draft, the wrong one for a client file.
+   */
+  matterId?: string;
 }
 
 export interface GenerateResult {
@@ -21,7 +29,7 @@ export interface GenerateResult {
 const SYSTEM_PROMPT = 'You are an AI assistant inside The Vault, a secure document workspace. The user may provide context documents and an instruction. Follow the instruction precisely, using the provided documents as reference. Produce professional, well-formatted output.';
 
 export async function generate(options: GenerateOptions): Promise<GenerateResult | undefined> {
-  const { modelId, instruction, contextFiles, callbacks, signal } = options;
+  const { modelId, instruction, contextFiles, callbacks, signal, matterId } = options;
 
   const found = findModel(modelId);
   if (!found) {
@@ -77,6 +85,7 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
         provider: provider.id,
         model: model.apiModelId,
         body: requestBody,
+        matterId,
       }),
       signal,
     });

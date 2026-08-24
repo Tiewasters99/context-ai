@@ -599,7 +599,7 @@ export default function Vault() {
           else setOpenFile(file);
         }} />;
       case 'workbench':
-        return <AIWorkbench vaultFiles={vaultFiles} onSaveToVault={addGeneratedDoc} />;
+        return <AIWorkbench vaultFiles={vaultFiles} matterId={matter?.id} onSaveToVault={addGeneratedDoc} />;
       case 'sandbox':
         return <SandboxPanel />;
       case 'citecheck':

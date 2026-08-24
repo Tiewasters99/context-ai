@@ -21,7 +21,7 @@ interface LegalSourceResult {
   source_label?: string | null;
 }
 
-async function fetchFromFreeDb(cite: Cite, signal?: AbortSignal): Promise<LegalSourceResult> {
+async function fetchFromFreeDb(cite: Cite, signal?: AbortSignal, matterId?: string): Promise<LegalSourceResult> {
   try {
     const res = await fetch('/api/legal-source', {
       method: 'POST',
@@ -30,6 +30,10 @@ async function fetchFromFreeDb(cite: Cite, signal?: AbortSignal): Promise<LegalS
         authority_type: cite.authority_type,
         citation_bluebook: cite.citation_bluebook,
         case_name: cite.case_name,
+        // Which authorities a brief leans on is the matter's work product, and
+        // this route proxies out to Cornell, eCFR, NY Senate and CourtListener.
+        // Bound so a sealed matter's citation list stops at our own server.
+        matterId,
       }),
       signal,
     });
@@ -64,7 +68,7 @@ const RATE_SCHEMA = {
 async function rateConfidence(
   cite: Cite,
   sourceText: string,
-  opts: { modelId: string; signal?: AbortSignal },
+  opts: { modelId: string; signal?: AbortSignal; matterId?: string },
 ): Promise<{ rating: 'high' | 'medium' | 'low'; justification: string }> {
   const payload = JSON.stringify({
     citation: cite.citation_bluebook,
@@ -75,6 +79,8 @@ async function rateConfidence(
   const result = await generateStructured<{ rating?: string; justification?: string }>({
     modelId: opts.modelId,
     signal: opts.signal,
+    // The payload carries the proposition verbatim from the draft.
+    matterId: opts.matterId,
     system: RATE_SYSTEM,
     userContent: payload,
     toolName: 'record_rating',
@@ -88,7 +94,7 @@ async function rateConfidence(
 
 export async function checkOne(
   cite: Cite,
-  opts: { modelId: string; signal?: AbortSignal },
+  opts: { modelId: string; signal?: AbortSignal; matterId?: string },
 ): Promise<CheckResult> {
   const flags: CheckFlag[] = [];
   let sourceText: string | null = null;
@@ -122,7 +128,7 @@ export async function checkOne(
   } else {
     let fetched: LegalSourceResult = { found: false };
     if (cite.authority_type === 'statute' || cite.authority_type === 'regulation' || cite.authority_type === 'case' || cite.authority_type === 'rule') {
-      fetched = await fetchFromFreeDb(cite, opts.signal);
+      fetched = await fetchFromFreeDb(cite, opts.signal, opts.matterId);
     }
     if (fetched.found) {
       sourceText = fetched.full_text ?? null;

@@ -201,12 +201,15 @@ export interface RunEditorPassOptions {
   modelId?: string;
   /** The form of the work (charter v0.3). Undeclared, the Editor names it in the plan. */
   form?: DocumentForm;
+  /** The matter the manuscript came from, when it came from one. Every call
+   *  below sends the manuscript itself, so the pass is bound to that tier. */
+  matterId?: string;
   signal?: AbortSignal;
   onProgress?: (progress: EditorProgress) => void;
 }
 
 export async function runEditorPass(manuscript: string, options: RunEditorPassOptions = {}): Promise<EditorPassResult> {
-  const { signal, onProgress, form } = options;
+  const { signal, onProgress, form, matterId } = options;
   let modelId = options.modelId ?? DEFAULT_EDITOR_MODEL;
   const passNotes: string[] = [];
 
@@ -248,6 +251,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       generateStructured<{ thesis: string; assessment: string } & SectionResult>({
         modelId,
         signal,
+        matterId,
         onUsage,
         system: lightEditorSystem(form),
         userContent: `THE MANUSCRIPT\n\n${manuscript}`,
@@ -266,6 +270,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       generateStructured<DocumentPlan>({
         modelId,
         signal,
+        matterId,
         onUsage,
         system: plannerSystem(form),
         userContent: `THE MANUSCRIPT\n\n${manuscript}`,
@@ -310,6 +315,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
           results[i] = await generateStructured<SectionResult>({
             modelId,
             signal,
+            matterId,
             onUsage,
             system: sectionEditorSystem(form),
             userContent,
@@ -359,6 +365,7 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
       }>({
         modelId,
         signal,
+        matterId,
         onUsage,
         system: criticSystem(form),
         userContent: `THE TEXT\n\n${clean}`,

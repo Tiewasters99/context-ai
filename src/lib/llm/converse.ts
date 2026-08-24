@@ -16,10 +16,12 @@ export interface ConverseOptions {
   maxTokens?: number;
   callbacks: LLMStreamCallbacks;
   signal?: AbortSignal;
+  /** Bind this call to a matter; /api/llm enforces that matter's tier. See generate(). */
+  matterId?: string;
 }
 
 export async function converse(options: ConverseOptions): Promise<void> {
-  const { modelId, system, messages, maxTokens = 4096, callbacks, signal } = options;
+  const { modelId, system, messages, maxTokens = 4096, callbacks, signal, matterId } = options;
 
   const found = findModel(modelId);
   if (!found) {
@@ -43,6 +45,7 @@ export async function converse(options: ConverseOptions): Promise<void> {
         provider: provider.id,
         model: model.apiModelId,
         body: requestBody,
+        matterId,
       }),
       signal,
     });

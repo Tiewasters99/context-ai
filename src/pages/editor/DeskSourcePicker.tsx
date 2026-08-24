@@ -22,7 +22,12 @@ type Crumb = { id: string; name: string };
 
 type Props = {
   onCancel: () => void;
-  onLoaded: (text: string, title: string) => void;
+  /**
+   * `matterId` travels with the text: the Editor sends whole manuscripts to a
+   * model, and a manuscript pulled out of a matter is that matter's content.
+   * Null when the document has no matter.
+   */
+  onLoaded: (text: string, title: string, matterId: string | null) => void;
 };
 
 /** Ready documents in one matter, paged past the 1,000-row cap. */
@@ -110,7 +115,7 @@ export default function DeskSourcePicker({ onCancel, onLoaded }: Props) {
     setError(null);
     try {
       const loaded = await loadCorpusDocumentText(id);
-      onLoaded(loaded.text, title);
+      onLoaded(loaded.text, title, loaded.matterId);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setFetchingDoc(null);

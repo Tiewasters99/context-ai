@@ -147,6 +147,7 @@ export async function generateTreeFromPleadings(input: {
     inputSchema: TREE_SCHEMA,
     maxTokens: 16_000,
     signal: input.signal,
+    matterId: input.matterId,
   });
 
   if (!result?.claims?.length) throw new Error('The model returned no claims.');
@@ -297,6 +298,7 @@ export async function classifyDocument(input: {
     inputSchema: CLASSIFY_SCHEMA,
     maxTokens: 4_000,
     signal: input.signal,
+    matterId: input.matterId,
   });
 
   const rows = decodeAssignments(result, refToId, refToPassageId).map((r) => ({

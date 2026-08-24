@@ -186,6 +186,7 @@ export default function MeetingView() {
             Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({
+            meeting_id: meetingId,
             transcript: transcriptText,
             alreadyFlagged: flagsRef.current.map((f) => f.text),
           }),
@@ -246,7 +247,7 @@ export default function MeetingView() {
       onOpen: () => setStatus("live"),
       onClose: () => setStatus("idle"),
       onStream: (stream) => setAudioStream(stream),
-    });
+    }, meetingId);
     clientRef.current = client;
     try {
       await client.start();
@@ -307,6 +308,9 @@ export default function MeetingView() {
             Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({
+            // Binds the transcript to this meeting's matter so the server can
+            // read its tier. Without it the seal has nothing to check.
+            meeting_id: meetingId,
             transcript: renderTranscriptForClaude(transcriptRef.current),
             messages: nextMessages.map(({ role, content }) => ({
               role,

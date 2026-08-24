@@ -39,6 +39,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import {
   sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv,
 } from '../lib/discovery/util.mjs';
@@ -119,6 +120,16 @@ for (;;) {
       log(`[job ${job.id}] WATCHDOG: no completion after ${JOB_TIMEOUT_MS / 60_000}m — restarting worker so the claim can be reclaimed`);
       process.exit(1);
     }
+    // The SecureSpace seal (lib/seal-pipes.mjs) is a decision, not a fault.
+    // Parking is the whole point: an error would be retried, and a retry that
+    // can only ever be refused again is how two documents turned into 1,641
+    // failed jobs apiece over twenty days (the 2026-08-22 ingestion audit).
+    // 'held' is claimed by nothing and swept by nothing; Phase B requeues it.
+    if (isSealedPipeError(err)) {
+      log(`[job ${job.id}] HELD: ${err.message}`);
+      await holdJob(job, err);
+      continue;
+    }
     log(`[job ${job.id}] ERROR: ${err.message}`);
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
@@ -197,6 +208,26 @@ function withWatchdog(job, work) {
     timer.unref?.();
   });
   return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+}
+
+// Park a job the seal refused, and the document with it. Both rows land in
+// 'held': terminal for claim_discovery_job (which claims only 'queued') and
+// invisible to 055/058's recovery sweep (which revives only pending /
+// extracting / chunking / embedding). Nothing here burns the attempt budget,
+// because nothing here is an attempt — the answer will be the same until a
+// sealed route exists or the matter is unsealed.
+async function holdJob(job, err) {
+  const reason = heldReason(err);
+  await supabase.from('processing_jobs')
+    .update({ status: HELD_STATUS, error: reason, finished_at: new Date().toISOString() })
+    .eq('id', job.id);
+  const docId = job.payload?.document_id;
+  if (!docId) return;
+  const { error: updErr } = await supabase.from('documents')
+    .update({ processing_status: HELD_STATUS, processing_error: reason })
+    .eq('id', docId)
+    .neq('processing_status', 'ready');
+  if (updErr) log(`  could not hold document ${docId}: ${updErr.message}`);
 }
 
 // When an ingest job fails, the job row records it — but until 2026-08-22 the
@@ -481,8 +512,14 @@ async function ingestDisplayPdf(prod, item, pdfBuf, filename) {
       ocr,
     });
   } catch (err) {
+    // A sealed matter refusing the pipe is not an ingestion failure — the item
+    // is filed, stored and reviewable; it is only unindexed, and 'held' says
+    // exactly that instead of crying error over a working document.
     await supabase.from('documents')
-      .update({ processing_status: 'error', processing_error: err.message })
+      .update({
+        processing_status: isSealedPipeError(err) ? HELD_STATUS : 'error',
+        processing_error: isSealedPipeError(err) ? heldReason(err) : err.message,
+      })
       .eq('id', docRow.id);
     // Ingestion failure is non-fatal: the item is still reviewable.
   }
@@ -861,6 +898,10 @@ async function directFolderIntake(folder, productionId) {
       .eq('id', job.id);
     log('Done.');
   } catch (err) {
+    if (isSealedPipeError(err)) {
+      await holdJob(job, err);
+      die(err.message);
+    }
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
       .eq('id', job.id);

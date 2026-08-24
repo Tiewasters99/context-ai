@@ -134,65 +134,27 @@ async function listMatterContents(args) {
 //    Hybrid retrieval: tsvector rank + pgvector cosine. Returns passages
 //    with citation coordinates ready to cite.
 // -----------------------------------------------------------------------------
+// Delegates to lib/mcp-core.mjs rather than issuing its own RPC. This file
+// used to carry a second copy of the retrieval path — its own embedOne against
+// api.openai.com and its own search_passages call — and a second copy is a
+// second place for a seal to be missing. It was also calling the RPC by a
+// signature two migrations out of date (p_matterspace_id, singular; the
+// function has taken p_matterspace_ids since 012), so the duplicate had
+// already drifted into being broken. One implementation: the tier check, the
+// matter-tree scope and the two-stage retrieval all arrive for free.
 async function search(args) {
   if (!args.q) die('search: --q "<query text>" is required');
-  const matter = await resolveMatter(args.matter);
-
-  const queryEmbedding = await embedOne(args.q);
-
-  const { data, error } = await supabase.rpc('search_passages', {
-    p_matterspace_id:    matter.id,
-    p_query_text:        args.q,
-    p_query_embedding:   queryEmbedding,
-    p_doc_types:         splitList(args['doc-types']),
-    p_witness_names:     splitList(args.witnesses),
-    p_document_ids:      splitList(args['document-ids']),
-    p_summary_level:     numOrDefault(args['summary-level'], 0),
-    p_limit:             numOrDefault(args.limit, 5),
-  });
-  if (error) die(`search: ${error.message}`);
-
-  const fullText = args['full-text'] === true || args['full-text'] === 'true';
-  const PREVIEW_CHARS = 800;
-
-  print({
-    query: args.q,
-    matter: { id: matter.id, short_code: matter.short_code, name: matter.name },
-    result_count: data.length,
-    preview_mode: !fullText,
-    results: data.map(r => {
-      const out = {
-        passage_id: r.passage_id,
-        document_id: r.document_id,
-        document_title: r.document_title,
-        doc_type: r.doc_type,
-        citation: formatCitation(r),
-        coordinates: {
-          page_start: r.page_start,
-          page_end: r.page_end,
-          line_start: r.line_start,
-          line_end: r.line_end,
-        },
-        witness: r.witness_name,
-        examination: r.examination_type,
-        passage_type: r.passage_type,
-        text_full_length: r.text.length,
-        scores: {
-          hybrid: round3(r.hybrid_score),
-          text_rank: round3(r.text_rank),
-          vector: round3(r.vector_score),
-        },
-      };
-      if (fullText || r.text.length <= PREVIEW_CHARS) {
-        out.text = r.text;
-      } else {
-        out.text_preview = r.text.slice(0, PREVIEW_CHARS);
-        out.text_truncated = true;
-        out.hint = `Call get-passage --id ${r.passage_id} for the full ${r.text.length}-char passage.`;
-      }
-      return out;
-    }),
-  });
+  const { handleSearch } = await import('../lib/mcp-core.mjs');
+  const out = await handleSearch(supabase, {
+    matter: args.matter,
+    q: args.q,
+    doc_types: splitList(args['doc-types']),
+    witnesses: splitList(args.witnesses),
+    document_ids: splitList(args['document-ids']),
+    limit: numOrDefault(args.limit, 5),
+    full_text: args['full-text'] === true || args['full-text'] === 'true',
+  }, { openaiApiKey: process.env.OPENAI_API_KEY });
+  print(out);
 }
 
 
@@ -346,28 +308,6 @@ async function resolveMatter(key) {
   return data;
 }
 
-async function embedOne(text) {
-  const key = requireEnv('OPENAI_API_KEY');
-  const res = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${key}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      dimensions: EMBEDDING_DIM,
-      input: text,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    die(`embed: ${res.status} ${body.slice(0, 400)}`);
-  }
-  const data = await res.json();
-  return data.data[0].embedding;
-}
-
 function formatCitation(row) {
   // Produce a human-readable cite string and leave the raw coords in the payload.
   const docTitle = row.document_title || 'Document';
@@ -425,11 +365,6 @@ function numOrDefault(v, d) {
   if (v == null || v === true) return d;
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? n : d;
-}
-
-function round3(n) {
-  if (n == null) return null;
-  return Math.round(n * 1000) / 1000;
 }
 
 function print(obj) {

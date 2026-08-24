@@ -73,6 +73,44 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'messages required' });
   }
 
+  // The SecureSpace seal. The transcript below is the meeting itself, verbatim,
+  // and this route has never consulted a tier — it went straight to Anthropic
+  // with a web_search tool attached. Two things follow from the tier policy
+  // (lib/ai-tier-policy.mjs), which already has an answer for this provider:
+  //
+  //   Tier C (silo)  — no cloud provider is permitted. Refuse.
+  //   Tier B (sealed) — Anthropic IS permitted, as a recorded escalation. The
+  //                     model call stands; what does not is web_search, which
+  //                     would turn the transcript into queries against the open
+  //                     web. Dropped for sealed meetings.
+  //
+  // The meeting id is what binds this to a matter (meetings.matterspace_id,
+  // migration 019). Without one there is nothing to check — the same rule
+  // /api/llm applies to an unbound draft.
+  let sealedMeeting = false;
+  if (body.meeting_id) {
+    const { data: meeting } = await sb
+      .from('meetings').select('matterspace_id').eq('id', body.meeting_id).maybeSingle();
+    if (meeting?.matterspace_id) {
+      const { matterTierWithClient } = await import('../lib/ai-tier-policy.mjs');
+      let tier;
+      try {
+        tier = await matterTierWithClient(sb, meeting.matterspace_id);
+      } catch {
+        tier = null;
+      }
+      if (!tier || tier === 'C') {
+        return json(res, 403, {
+          error: 'tier_violation',
+          message: tier === 'C'
+            ? 'This meeting is in a Tier C (Silo) matter: no cloud model may see the transcript.'
+            : 'The tier of this meeting could not be read, so the transcript was not sent anywhere.',
+        });
+      }
+      sealedMeeting = tier === 'B';
+    }
+  }
+
   const transcript = (body.transcript || '').trim();
   const system = transcript
     ? [
@@ -99,9 +137,11 @@ export default async function handler(req, res) {
       output_config: { effort: 'high' },
       system,
       messages: body.messages,
-      tools: [
-        { type: 'web_search_20260209', name: 'web_search', max_uses: 5 },
-      ],
+      // No web search inside a sealed matter: the queries it would issue are
+      // drawn from the transcript, and they leave for the open internet.
+      tools: sealedMeeting
+        ? []
+        : [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
     });
     for await (const event of stream) {
       if (event.type === 'content_block_start') {

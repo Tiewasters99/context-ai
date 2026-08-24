@@ -95,7 +95,7 @@ export async function runCiteCheck(opts: RunCiteCheckOptions): Promise<RunResult
     // 1. Extract citations.
     onProgress?.({ phase: 'extracting-cites', message: 'Reading the brief and pulling every citation…' });
     if (signal?.aborted) { await interrupt(); throw new DOMException('Aborted', 'AbortError'); }
-    const cites = await extractCitations(draftText, { modelId, signal });
+    const cites = await extractCitations(draftText, { modelId, signal, matterId });
 
     // 2. Check each cite.
     const results: CheckResult[] = [];
@@ -103,7 +103,7 @@ export async function runCiteCheck(opts: RunCiteCheckOptions): Promise<RunResult
       if (signal?.aborted) { await interrupt(); throw new DOMException('Aborted', 'AbortError'); }
       const c = cites[i];
       onProgress?.({ phase: 'checking', index: i + 1, total: cites.length, current: c.citation_bluebook ?? c.raw ?? '' });
-      results.push(await checkOne(c, { modelId, signal }));
+      results.push(await checkOne(c, { modelId, signal, matterId }));
     }
 
     // 3. Render + tally.

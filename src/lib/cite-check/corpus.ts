@@ -10,6 +10,8 @@ import { supabase } from '@/lib/supabase';
 
 export interface CorpusDocumentText {
   documentId: string;
+  /** The matter this document lives in — the tier that governs its text. */
+  matterId: string | null;
   title: string;
   text: string;
   passageCount: number;
@@ -18,7 +20,7 @@ export interface CorpusDocumentText {
 export async function loadCorpusDocumentText(documentId: string): Promise<CorpusDocumentText> {
   const { data: doc, error: docErr } = await supabase
     .from('documents')
-    .select('id, title, source_filename, processing_status')
+    .select('id, title, source_filename, processing_status, matterspace_id')
     .eq('id', documentId)
     .maybeSingle();
   if (docErr || !doc) throw new Error(`document lookup: ${docErr?.message ?? 'not found'}`);
@@ -51,6 +53,7 @@ export async function loadCorpusDocumentText(documentId: string): Promise<Corpus
 
   return {
     documentId: doc.id,
+    matterId: doc.matterspace_id ?? null,
     title: doc.title || doc.source_filename || 'Untitled document',
     text: parts.join('\n\n'),
     passageCount: count,

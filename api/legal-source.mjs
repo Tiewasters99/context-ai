@@ -57,6 +57,33 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'citation_bluebook or case_name required' });
   }
 
+  // The SecureSpace seal. This route is a proxy to four third parties (Cornell
+  // LII, eCFR, NY Senate, CourtListener), and the citation it forwards is the
+  // matter's work product: the list of authorities a brief relies on maps the
+  // theory of the case. A sealed matter's cite-check therefore stops at our own
+  // server — the run still completes, on stored authorities and the sealed pen,
+  // with `found: false` standing for "we did not look outside".
+  //
+  // The request is user-scoped (`sb` carries the caller's JWT), so RLS decides
+  // what the tier walk can see: a matter the caller cannot read resolves to no
+  // tier, and pipeIsSealed treats that as sealed. Fail closed.
+  if (body?.matterId) {
+    const { pipeIsSealed } = await import('../lib/seal-pipes.mjs');
+    let sealed;
+    try {
+      sealed = await pipeIsSealed(sb, body.matterId);
+    } catch {
+      sealed = true; // an unreadable tier is not permission to send it out
+    }
+    if (sealed) {
+      return json(res, 200, {
+        found: false,
+        sealed: true,
+        error: 'This matter is sealed (SecureSpace) — the citation was not sent to an outside legal database.',
+      });
+    }
+  }
+
   try {
     let result;
     if (authorityType === 'statute' || authorityType === 'regulation' || authorityType === 'rule') {

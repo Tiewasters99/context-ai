@@ -66,6 +66,9 @@ export default function MootSession() {
       modelId: session.model_id,
       instruction: benchMemoInstruction(),
       contextFiles: session.sources,
+      // session.sources are matter documents when the session was built from a
+      // matter (MootBench's "fromMatter" path), so the tier travels with them.
+      matterId: session.matterspace_id ?? undefined,
       signal: ctrl.signal,
       callbacks: {
         onChunk: (t) => { text += t; setLiveText(text); },
@@ -111,6 +114,7 @@ export default function MootSession() {
       // A judge's question is short; a colleague laying out seven motions
       // and the arguments on each needs room.
       maxTokens: s.mode === 'colleague' ? 4096 : 1024,
+      matterId: s.matterspace_id ?? undefined,
       signal: ctrl.signal,
       callbacks: {
         onChunk: (t) => { text += t; setLiveText(text); },

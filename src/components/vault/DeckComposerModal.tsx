@@ -157,6 +157,8 @@ export default function DeckComposerModal({ box, docs, preselectedIds, onClose, 
         toolDescription: 'Return the finished deck outline as structured slides.',
         inputSchema: DECK_SCHEMA as unknown as Record<string, unknown>,
         maxTokens: 8000,
+        // The user content above is raw passage text from these documents.
+        matterId: box.id,
       });
       if (!spec?.slides?.length) throw new Error('The model returned no slides — try rephrasing the instruction.');
       setDeck(spec);
