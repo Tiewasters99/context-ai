@@ -626,9 +626,9 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
   // in an effect — the effect version double-rendered every remote change and
   // the react-hooks lint now rejects it (you-might-not-need-an-effect).
   const [text, setText] = useState(item.text);
-  const lastServerText = useRef(item.text);
-  if (item.text !== lastServerText.current) {
-    lastServerText.current = item.text;
+  const [prevServerText, setPrevServerText] = useState(item.text);
+  if (item.text !== prevServerText) {
+    setPrevServerText(item.text);
     setText(item.text);
   }
 
