@@ -12,6 +12,11 @@
 //      embedding) past --stale-minutes — the process handling them died
 //   3. processing_jobs queued or running past the same window — the Fly worker
 //      is down, or a job wedged
+//   4. documents marked `ready` that hold ZERO passages — the audit's headline
+//      class (99.3% said ready; 60.5% were searchable). Needs migration 059's
+//      ready_but_empty(); degrades gracefully until it is pasted. Text-bearing
+//      extensions escalate; images/media and deliberate duplicates count as
+//      known-benign. --no-empty-check skips it.
 //
 // What it does about it:
 //   default        report only
@@ -33,6 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { classifyError, summarize, describe } from '../lib/ingest-triage.mjs';
+import { JOB_PRIORITY, SUPPORTED_EXTENSIONS, IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../lib/ingest-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,10 +49,18 @@ const MUTED = {
   documents: [
     '82c752fa-0000-0000-0000-000000000000', // placeholder shape; see --mute-doc
   ],
-  reasons: ['no_text'],  // photo-only documents are stored and viewable
+  reasons: ['no_text', 'duplicate_of_indexed', 'stored_without_text'],  // stored-and-viewable is their normal resting state
 };
 
 const TRANSIENT = ['pending', 'extracting', 'chunking', 'embedding'];
+
+// Extensions whose whole purpose is text. `ready` with zero passages on one of
+// these is never benign. Images and media are excluded on purpose:
+// store-and-display is a legitimate resting state for a photo or an
+// untranscribed recording, and flagging thousands of them would train the
+// reader to ignore the digest.
+const TEXT_BEARING = SUPPORTED_EXTENSIONS.filter(
+  (e) => !IMAGE_EXTENSIONS.includes(e) && !MEDIA_EXTENSIONS.includes(e));
 
 const args = parseArgs(process.argv.slice(2));
 const STALE_MIN = numOr(args['stale-minutes'], 45);
@@ -69,10 +83,13 @@ async function main() {
   const matterId = args.matter ? await resolveMatter(sb, args.matter) : null;
   const cutoff = new Date(Date.now() - STALE_MIN * 60_000).toISOString();
 
-  const [errored, stalled, jobs] = await Promise.all([
+  const [errored, stalled, jobs, readyEmpty] = await Promise.all([
     fetchDocs(sb, matterId, (q) => q.eq('processing_status', 'error')),
     fetchDocs(sb, matterId, (q) => q.in('processing_status', TRANSIENT).lt('updated_at', cutoff)),
     fetchStuckJobs(sb, cutoff),
+    args['no-empty-check']
+      ? Promise.resolve({ rows: [], note: 'skipped (--no-empty-check)' })
+      : fetchReadyEmpty(sb, matterId),
   ]);
 
   const rows = [
@@ -84,6 +101,10 @@ async function main() {
       id: d.id, name: d.source_filename || d.title, matter: d.matterspace_id,
       error: `stuck in '${d.processing_status}' since ${d.updated_at}`, cls: 'stuck',
     })),
+    ...readyEmpty.rows.map((d) => ({
+      id: d.document_id, name: d.source_filename || d.title, matter: d.matterspace_id,
+      error: 'ready with zero passages', cls: classifyEmpty(d),
+    })),
   ].filter((r) => !MUTED.documents.includes(r.id));
 
   const report = summarize(rows);
@@ -92,7 +113,7 @@ async function main() {
 
   if (QUIET && !needsAttention && report.total === 0) process.exit(0);
 
-  const text = render({ report, escalate, jobs, matter: args.matter, staleMin: STALE_MIN });
+  const text = render({ report, escalate, jobs, matter: args.matter, staleMin: STALE_MIN, emptyNote: readyEmpty.note });
   if (!QUIET || needsAttention) console.log(text);
 
   if (args.fix) await autoFix(sb, rows, report);
@@ -130,6 +151,44 @@ async function fetchStuckJobs(sb, cutoff) {
   return data || [];
 }
 
+// The audit's headline class, as one RPC (migration 059): every `ready`
+// document with zero passages, each carrying has_indexed_twin so a duplicate
+// whose canonical copy IS searchable folds into known-benign. Classification
+// lives here, next to the extension lists. Degrades gracefully when 059 has
+// not been pasted — a watchdog that dies on a missing dependency protects
+// nothing.
+async function fetchReadyEmpty(sb, matterId) {
+  // PostgREST caps ANY response — a set-returning RPC included — at 1,000 rows,
+  // and it truncates SILENTLY. The first live run of this check reported
+  // exactly 1,000 empty documents out of ~4,000 and looked healthy doing it —
+  // the precise failure mode this monitor exists to end. Page until the short
+  // page; .order() makes the walk stable across pages.
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.rpc('ready_but_empty')
+      .order('document_id')
+      .range(from, from + 999);
+    if (error) {
+      const missing = /could not find|does not exist|PGRST202|404/i.test(error.message);
+      return { rows: [], note: missing ? 'unavailable — paste migration 059' : `failed: ${error.message}` };
+    }
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return { rows: rows.filter((d) => !matterId || d.matterspace_id === matterId), note: null };
+}
+
+function classifyEmpty(d) {
+  if (d.has_indexed_twin) return 'duplicate_of_indexed';
+  return TEXT_BEARING.includes(extOf(d.source_filename)) ? 'ready_but_empty' : 'stored_without_text';
+}
+
+function extOf(name) {
+  const s = String(name || '');
+  const i = s.lastIndexOf('.');
+  return i < 0 ? '' : s.slice(i).toLowerCase();
+}
+
 async function resolveMatter(sb, code) {
   const { data } = await sb.from('matterspaces').select('id')
     .or(`short_code.eq.${code},id.eq.${code}`).maybeSingle();
@@ -156,8 +215,12 @@ async function autoFix(sb, rows, report) {
       .contains('payload', { document_id: t.id }).limit(1);
     if (dupe?.length) continue;                       // already in flight
 
+    // matterspace_id is NOT NULL on processing_jobs; this insert used to omit
+    // it and fail every time. BULK priority: a sweep must never hold up a
+    // person's single upload (migration 057).
     const { error } = await sb.from('processing_jobs').insert({
-      job_type: 'ingest_document', status: 'queued', payload: { document_id: t.id },
+      matterspace_id: t.matter, job_type: 'ingest_document', status: 'queued',
+      priority: JOB_PRIORITY.BULK, payload: { document_id: t.id },
     });
     if (error) { console.log(`  ! ${t.name}: ${error.message}`); continue; }
     await sb.from('documents')
@@ -174,19 +237,27 @@ async function autoFix(sb, rows, report) {
 // -----------------------------------------------------------------------------
 // Rendering
 // -----------------------------------------------------------------------------
-function render({ report, escalate, jobs, matter, staleMin }) {
+function render({ report, escalate, jobs, matter, staleMin, emptyNote }) {
   const L = [];
   const scope = matter ? `matter "${matter}"` : 'all matters';
   L.push(`Contextspaces ingestion health — ${scope}`);
   L.push(new Date().toISOString());
   L.push('');
 
-  if (report.total === 0 && jobs.length === 0) {
-    L.push('All documents are ready. Nothing queued, nothing stuck.');
+  // The headline counts only what needs eyes. Before 059 this said "All
+  // documents are ready" over an index that was 60.5% searchable — the benign
+  // classes are still COUNTED, but they no longer masquerade as health.
+  const escalatedTotal = escalate.reduce((s, g) => s + g.count, 0);
+  if (escalatedTotal === 0 && jobs.length === 0) {
+    L.push('All documents are ready, and every text-bearing document is searchable.');
+    const mutedG = report.groups.filter((g) => MUTED.reasons.includes(g.cls));
+    if (mutedG.length) L.push('Known-benign: ' + mutedG.map((g) => `${g.label} ×${g.count}`).join(', '));
+    if (emptyNote) L.push(`(ready-but-empty check ${emptyNote})`);
     return L.join('\n');
   }
 
-  L.push(`${report.total} document(s) not searchable.`);
+  L.push(`${escalatedTotal} document(s) not searchable${report.total > escalatedTotal ? ` (+${report.total - escalatedTotal} known-benign)` : ''}.`);
+  if (emptyNote) L.push(`(ready-but-empty check ${emptyNote})`);
   L.push(`  ${report.needsHuman} need a decision from you`);
   L.push(`  ${report.autoRetryable} should clear on a re-run (--fix)`);
 

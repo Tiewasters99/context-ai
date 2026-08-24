@@ -20,12 +20,13 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
-import PinToggle from '@/components/ui/PinToggle';
+import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import ModalPortal from '@/components/ui/ModalPortal';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { supabase } from '@/lib/supabase';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
@@ -55,20 +56,39 @@ interface ParentMatter {
 const NO_MATTER_REASON =
   'This list is not filed inside a matter, so there is nothing to nest a sub-matter under.';
 
+// Repair rather than discard.
+//
+// This used to drop any entry whose `id` or `text` was not a string. Items
+// written by agents, imports, and the MCP tools routinely arrive without an
+// `id`, so a list could hold 21 entries and render 16 — the header under-
+// counted, and worse, the next save wrote back only the 16 that parsed,
+// silently deleting the rest. Now a missing id is synthesised (deterministic,
+// so it stays stable across re-syncs and React keys don't churn) and a
+// non-string text is coerced. Only an entry that is not an object at all —
+// which carries nothing to keep — is skipped.
 function readListContent(content: Record<string, unknown> | undefined): ChecklistItem[] {
   const raw = content?.items;
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((r): ChecklistItem | null => {
-      if (!r || typeof r !== 'object') return null;
-      const o = r as Record<string, unknown>;
-      if (typeof o.id !== 'string' || typeof o.text !== 'string') return null;
-      const due = typeof o.due === 'string' ? o.due : null;
-      const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
-      const linked_matter_id = typeof o.linked_matter_id === 'string' ? o.linked_matter_id : null;
-      return { id: o.id, text: o.text, done: !!o.done, due, linked_page_id, linked_matter_id };
-    })
-    .filter((x): x is ChecklistItem => x !== null);
+  const out: ChecklistItem[] = [];
+  const seen = new Set<string>();
+  raw.forEach((r, idx) => {
+    if (!r || typeof r !== 'object') return;
+    const o = r as Record<string, unknown>;
+    let id = typeof o.id === 'string' && o.id ? o.id : `item-${idx}`;
+    // Two entries sharing an id would collide as React keys and as edit
+    // targets; keep the first and give the duplicate its own.
+    if (seen.has(id)) id = `${id}-${idx}`;
+    seen.add(id);
+    const text =
+      typeof o.text === 'string' ? o.text
+      : o.text == null ? ''
+      : String(o.text);
+    const due = typeof o.due === 'string' ? o.due : null;
+    const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
+    const linked_matter_id = typeof o.linked_matter_id === 'string' ? o.linked_matter_id : null;
+    out.push({ id, text, done: !!o.done, due, linked_page_id, linked_matter_id });
+  });
+  return out;
 }
 
 // Check which linked pages and sub-matters still exist and return the items
@@ -111,10 +131,11 @@ async function withoutDeadLinks(current: ChecklistItem[]): Promise<ChecklistItem
 
 type SortMode = 'manual' | 'due';
 
-export default function ListView() {
-  const { id } = useParams();
+export default function ListView({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+  const params = useParams();
+  const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.listview.card');
+  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded ? undefined : 'cs.listview.card');
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -136,41 +157,63 @@ export default function ListView() {
   const pendingSubMatterFor = useRef<string | null>(null);
   // Dead-link sweep runs once per list load.
   const sweptFor = useRef<string | null>(null);
+  // JSON of the server's items as we last adopted them. Comparing against it
+  // tells a genuinely new server state apart from a refetch that echoes back
+  // what we just wrote.
+  const adoptedRef = useRef<string | null>(null);
+  // `saving` as a ref: the sync effect must read it without re-running when
+  // it flips, and a save in flight is the one moment our copy outranks the
+  // server's.
+  const savingRef = useRef(false);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
 
-  useEffect(() => { hydrated.current = false; sweptFor.current = null; }, [id]);
+  useEffect(() => { hydrated.current = false; sweptFor.current = null; adoptedRef.current = null; }, [id]);
 
+  // Hydrate on first load, and re-sync afterwards whenever the server copy
+  // actually changes. The old guard hydrated exactly once per id, so a list
+  // an agent (or another tab, or another card on the canvas) edited while
+  // this card was open stayed frozen at its stale contents and count until
+  // a full reload.
   useEffect(() => {
-    if (!item || hydrated.current) return;
-    setTitle(item.title);
-    const hydratedItems = readListContent(item.content);
-    setItems(hydratedItems);
-    itemsRef.current = hydratedItems;
-    if (titleRef.current) titleRef.current.textContent = item.title;
-    hydrated.current = true;
-    // Links dangle harmlessly when an item is deleted, but a deleted target
-    // would leave a marker pointing at nothing. Once per load, drop the
-    // references whose page or sub-matter is definitely gone.
-    if (sweptFor.current !== item.id) {
-      const listId = item.id;
-      sweptFor.current = listId;
-      void (async () => {
-        const cleaned = await withoutDeadLinks(itemsRef.current);
-        if (!cleaned) return;
-        setItems(cleaned);
-        itemsRef.current = cleaned;
-        try {
-          await updateContentItem(listId, { content: { items: cleaned } });
-        } catch (e) {
-          console.error('clearing dead item links failed', e);
-        }
-      })();
-    }
-    // Empty list on first load → focus the bottom input so the user can
-    // start typing or press Enter to spawn a first empty bullet.
-    if (hydratedItems.length === 0) {
-      setTimeout(() => draftInputRef.current?.focus(), 0);
+    if (!item) return;
+    const serverItems = readListContent(item.content);
+    const serverJson = JSON.stringify(serverItems);
+    if (serverJson === adoptedRef.current) return;
+    if (savingRef.current) return;   // our write is in flight — it wins
+    adoptedRef.current = serverJson;
+    setItems(serverItems);
+    itemsRef.current = serverItems;
+    if (!hydrated.current) {
+      setTitle(item.title);
+      if (titleRef.current) titleRef.current.textContent = item.title;
+      hydrated.current = true;
+      // Links dangle harmlessly when an item is deleted, but a deleted target
+      // would leave a marker pointing at nothing. Once per list load, drop the
+      // references whose page or sub-matter is definitely gone.
+      if (sweptFor.current !== item.id) {
+        const listId = item.id;
+        sweptFor.current = listId;
+        void (async () => {
+          const cleaned = await withoutDeadLinks(itemsRef.current);
+          if (!cleaned) return;
+          setItems(cleaned);
+          itemsRef.current = cleaned;
+          // Adopt the cleaned shape, or the resync effect would treat the
+          // server's echo of this very write as fresh remote state.
+          adoptedRef.current = JSON.stringify(cleaned);
+          try {
+            await updateContentItem(listId, { content: { items: cleaned } });
+          } catch (e) {
+            console.error('clearing dead item links failed', e);
+          }
+        })();
+      }
+      // Empty list on first load → focus the bottom input so the user can
+      // start typing or press Enter to spawn a first empty bullet.
+      if (serverItems.length === 0) {
+        setTimeout(() => draftInputRef.current?.focus(), 0);
+      }
     }
   }, [item]);
 
@@ -196,19 +239,23 @@ export default function ListView() {
   const persistItems = async (next: ChecklistItem[]) => {
     if (!id) return;
     setSaving(true);
+    savingRef.current = true;
     try {
       await updateContentItem(id, { content: { items: next } });
+      adoptedRef.current = JSON.stringify(next);
       invalidate.invalidateItem(id);
     } catch (e) {
       console.error('save failed', e);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
   const persistTitle = async (next: string) => {
     if (!id) return;
     setSaving(true);
+    savingRef.current = true;
     try {
       await updateContentItem(id, { title: next || 'Untitled List' });
       invalidate.invalidateItem(id);
@@ -216,6 +263,7 @@ export default function ListView() {
       console.error('title save failed', e);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
@@ -395,35 +443,8 @@ export default function ListView() {
     invalidate.invalidateItem(id);
   };
 
-  return (
-    <div>
-      <CoverImage
-        coverUrl={item?.cover_url ?? null}
-        onCoverChange={handleCoverChange}
-        editable={true}
-        expanded={coverExpanded}
-        onExpandChange={setCoverExpanded}
-        persistKey={id ? `cs.cover.${id}` : undefined}
-      />
-
-      <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Close + drag handle + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
-            title="Back"
-          >
-            <X size={14} strokeWidth={2} />
-          </button>
-          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
-          <div className="flex items-center gap-1">
-            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
-            <PinToggle pinned={pinned} onToggle={togglePin} />
-            <FullscreenToggle onToggle={toggleFullscreen} />
-          </div>
-        </div>
-
+  const body = (
+    <>
         {error && (
           <p className="text-[13px] text-red-300 py-12 text-center">
             {error instanceof Error ? error.message : 'Failed to load list'}
@@ -518,6 +539,45 @@ export default function ListView() {
             </div>
           </>
         )}
+    </>
+  );
+
+  // Inside a canvas panel the panel supplies the frame, the ribbon and the
+  // controls; the view contributes only its contents.
+  if (embedded) {
+    return <div className="px-4 py-3">{body}</div>;
+  }
+
+  return (
+    <div>
+      <CoverImage
+        coverUrl={item?.cover_url ?? null}
+        onCoverChange={handleCoverChange}
+        editable={true}
+        expanded={coverExpanded}
+        onExpandChange={setCoverExpanded}
+        persistKey={id ? `cs.cover.${id}` : undefined}
+      />
+
+      <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+        {/* Close + drag handle + pin to canvas + fullscreen */}
+        <div className="flex items-center justify-between mb-4 -mt-1">
+          <button
+            onClick={() => (onClose ? onClose() : navigate(-1))}
+            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
+            title="Back"
+          >
+            <X size={14} strokeWidth={2} />
+          </button>
+          <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
+          <div className="flex items-center gap-1">
+            <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            <CanvasPinToggle kind="list" id={id} title={title || item?.title || 'Untitled List'} />
+            <FullscreenToggle onToggle={toggleFullscreen} />
+          </div>
+        </div>
+
+        {body}
       </div>
 
       {newMatterContext && (
@@ -562,8 +622,15 @@ function SortableItem({ item, today, sortable, onToggle, onChangeText, onChangeD
   };
 
   // Draft local text so each keystroke doesn't trigger a save round-trip.
+  // Synced from the server copy by adjusting state during render rather than
+  // in an effect — the effect version double-rendered every remote change and
+  // the react-hooks lint now rejects it (you-might-not-need-an-effect).
   const [text, setText] = useState(item.text);
-  useEffect(() => { setText(item.text); }, [item.text]);
+  const lastServerText = useRef(item.text);
+  if (item.text !== lastServerText.current) {
+    lastServerText.current = item.text;
+    setText(item.text);
+  }
 
   const overdue = item.due && !item.done && item.due < today;
   const todayDue = item.due && !item.done && item.due === today;
