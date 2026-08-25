@@ -40,6 +40,14 @@ const check = (ok, label, detail = '') => {
   if (!ok) failures += 1;
 };
 
+// Tier B now maps to the Voyage SageMaker route, which activates on env vars.
+// Sections 1–4 assert the UNCONFIGURED behaviour (sealed = text-only), so any
+// AWS credentials that happen to exist on this machine must not leak in — the
+// harness would otherwise try to call a real endpoint and fail confusingly.
+for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_REGION', 'SAGEMAKER_VOYAGE_ENDPOINT']) {
+  delete process.env[k];
+}
+
 // ---------------------------------------------------------------------------
 // The witness. Every provider hostname the app can reach, and a recorder that
 // stands in for fetch so no call can slip through unlogged.
@@ -336,6 +344,7 @@ ROUTES['fake-zdr'] = {
   body: (texts) => ({ model: 'zdr-embed-1', input: texts }),
   parse: (json) => json.data.map((d) => d.embedding),
 };
+const priorTierB = TIER_ROUTES.B;
 TIER_ROUTES.B = 'fake-zdr';
 process.env.FAKE_ZDR_API_KEY = 'zdr-test-key';
 
@@ -393,7 +402,103 @@ check(mixed.result_count > 0, 'the mixed search still returns results', `n=${mix
 check(mixed.sealed_text_only === undefined,
   'and carries no text-only notice, because nothing was downgraded');
 
-TIER_ROUTES.B = null; // leave policy as we found it
+TIER_ROUTES.B = priorTierB; // leave policy as we found it
+
+// ---------------------------------------------------------------------------
+// 6. The REAL Tier-B route: voyage-4 on SageMaker. Fake credentials, stubbed
+//    host — what is under test is the route itself: that a sealed ingest goes
+//    to runtime.sagemaker and nowhere else, that the request is SigV4-signed,
+//    that documents and queries carry the right input_type, and that the
+//    passages come out stamped voyage-4.
+// ---------------------------------------------------------------------------
+console.log('\n--- the real route: voyage-4 on SageMaker -----------------------');
+
+process.env.AWS_ACCESS_KEY_ID = 'AKIDFICTION';
+process.env.AWS_SECRET_ACCESS_KEY = 'fiction-secret-for-harness-only';
+process.env.AWS_REGION = 'us-east-1';
+process.env.SAGEMAKER_VOYAGE_ENDPOINT = 'voyage-4-embed';
+const SM_HOST = 'runtime.sagemaker.us-east-1.amazonaws.com';
+
+const sagemakerRequests = [];
+const preSmFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : input?.url ?? String(input);
+  if (url.includes(SM_HOST)) {
+    calls.push(new URL(url).hostname);
+    const body = JSON.parse(init.body);
+    sagemakerRequests.push({ url, headers: init.headers, body });
+    return new Response(JSON.stringify({
+      data: body.input.map(() => ({ embedding: Array(EMBEDDING_DIM).fill(0.04) })),
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  return preSmFetch(input, init);
+};
+
+check(TIER_ROUTES.B === 'voyage-4-sagemaker', 'Tier B policy names the voyage route', TIER_ROUTES.B);
+
+reset();
+const DOC_VOY = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+newDoc(DOC_VOY, SEALED, 'third-letter.txt');
+const voyResult = await processDocument(supabase, {
+  documentId: DOC_VOY, fileBuf: TEXT, ext: '.txt', openaiApiKey: 'sk-test',
+});
+check(calls.includes(SM_HOST), 'sealed ingest reached ONLY our SageMaker endpoint',
+  `calls=[${calls.join(', ')}]`);
+check(!calls.includes('api.openai.com') && !calls.includes('api.voyageai.com'),
+  'and neither OpenAI nor the direct Voyage API');
+check(voyResult.embeddingModel === 'voyage-4', 'processDocument reports the voyage-4 space');
+const voyPassages = db.passages.filter((p) => p.document_id === DOC_VOY);
+check(voyPassages.every((p) => Array.isArray(p.embedding) && p.embedding_model === 'voyage-4'),
+  'passages embedded and stamped voyage-4');
+
+const ingestReq = sagemakerRequests[0];
+check(ingestReq.body.input_type === 'document', "ingest used input_type 'document'",
+  ingestReq.body.input_type);
+check(ingestReq.body.output_dimension === EMBEDDING_DIM, 'and asked for 1024 dimensions');
+check(/^AWS4-HMAC-SHA256 Credential=AKIDFICTION\/\d{8}\/us-east-1\/sagemaker\/aws4_request,/.test(
+  ingestReq.headers.authorization ?? ''),
+  'the request is SigV4-signed for sagemaker/us-east-1',
+  (ingestReq.headers.authorization ?? 'MISSING').slice(0, 60));
+check(/\/endpoints\/voyage-4-embed\/invocations$/.test(ingestReq.url),
+  'addressed to the configured endpoint');
+
+reset();
+searchRpcCalls.length = 0;
+sagemakerRequests.length = 0;
+const voySearch = await handleSearch(supabase, { matter: SEALED, q: 'Ormsby' },
+  { openaiApiKey: 'sk-test' });
+check(calls.includes(SM_HOST) && !calls.includes('api.openai.com'),
+  'sealed search embedded the query at SageMaker only');
+check(sagemakerRequests[0]?.body.input_type === 'query', "search used input_type 'query'",
+  sagemakerRequests[0]?.body.input_type);
+check(searchRpcCalls.every((c) => c.model === 'voyage-4'),
+  'search_passages was told to filter stage A on voyage-4');
+check(voySearch.result_count > 0 && voySearch.sealed_text_only === undefined,
+  'results returned, with no text-only downgrade notice');
+
+// The resilience case: endpoint down. The group must degrade to text-only
+// with a note, never error out and never touch another provider.
+reset();
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : input?.url ?? String(input);
+  if (url.includes(SM_HOST)) {
+    calls.push(new URL(url).hostname);
+    return new Response(JSON.stringify({ message: 'Endpoint voyage-4-embed is not InService.' }),
+      { status: 400, headers: { 'content-type': 'application/json' } });
+  }
+  return preSmFetch(input, init);
+};
+const downSearch = await handleSearch(supabase, { matter: SEALED, q: 'Ormsby' },
+  { openaiApiKey: 'sk-test' });
+check(downSearch.result_count > 0, 'endpoint DOWN: search still answers on full text',
+  `n=${downSearch.result_count}`);
+check(/embedding step failed/.test(downSearch.note ?? ''), 'and the note says why',
+  (downSearch.note ?? '').slice(0, 60));
+check(!calls.includes('api.openai.com'), 'no fallback to another provider while down');
+
+for (const k of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'SAGEMAKER_VOYAGE_ENDPOINT']) {
+  delete process.env[k];
+}
 
 // ---------------------------------------------------------------------------
 globalThis.fetch = realFetch;
