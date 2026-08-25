@@ -136,7 +136,9 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const params = useParams();
   const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded ? undefined : 'cs.listview.card');
+  // Geometry is remembered per list, not per view type — one list left small
+  // in a corner must not drag every other list into that same corner.
+  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded || !id ? undefined : `cs.listview.card.${id}`);
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();

@@ -100,7 +100,8 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
   const params = useParams();
   const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded ? undefined : 'cs.tableview.card');
+  // Per-table geometry — see the matching note in ListView.
+  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded || !id ? undefined : `cs.tableview.card.${id}`);
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();

@@ -21,7 +21,8 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
   const params = useParams();
   const id = propId ?? params.id;
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(embedded ? undefined : 'cs.pageview.card');
+  // Per-page geometry — see the matching note in ListView.
+  const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(embedded || !id ? undefined : `cs.pageview.card.${id}`);
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
