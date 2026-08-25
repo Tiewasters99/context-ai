@@ -32,6 +32,9 @@ export interface CanvasCard {
   y: number;
   w: number;
   h: number;
+  /** Full screen. x/y/w/h keep the windowed rect, so leaving full screen
+      returns the panel exactly where it was. */
+  max?: boolean;
 }
 
 // Every view that can appear both on its route and inside a canvas panel
@@ -167,6 +170,7 @@ export function loadCanvas(userId: string, space: CanvasSpace): CanvasCard[] {
         id: v.id,
         title: typeof v.title === 'string' ? v.title : 'Untitled',
         x: v.x, y: v.y, w: v.w, h: v.h,
+        max: (v as { max?: unknown }).max === true,
       });
     }
     return out;

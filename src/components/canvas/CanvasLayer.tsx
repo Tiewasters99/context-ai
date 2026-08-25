@@ -78,7 +78,7 @@ export default function CanvasLayer() {
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const { cards, setSpace, unpin, raise, setRect, setTitle } = useCanvas();
+  const { cards, setSpace, unpin, raise, toggleMax, setRect, setTitle } = useCanvas();
 
   const route = useMemo(() => readRoute(location.pathname), [location.pathname]);
 
@@ -134,6 +134,7 @@ export default function CanvasLayer() {
           onFocus={() => raise(card.key)}
           onUnpin={() => unpin(card.key)}
           onOpenFull={() => navigate(`/app/${KIND_TO_ROUTE[card.kind]}/${card.id}`)}
+          onToggleMax={() => toggleMax(card.key)}
           onRect={(rect) => setRect(card.key, rect)}
         >
           <CanvasCardBody card={card} onClose={() => unpin(card.key)} />

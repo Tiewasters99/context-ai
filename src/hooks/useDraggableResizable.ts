@@ -101,6 +101,22 @@ export function useDraggableResizable(storageKey?: string) {
       return;
     }
 
+    // Per-item storage keys mean this effect re-runs when the user navigates
+    // from one list (or page, or table) straight to another: same mounted
+    // component, same DOM node, new key. Shed the previous item's inline
+    // geometry and flags first, so a card with no saved state of its own
+    // opens at its natural default instead of inheriting its predecessor's
+    // rect, pin, or fullscreen.
+    for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY', 'borderRadius'] as const) {
+      card.style[prop] = '';
+    }
+    isFullscreen.current = false;
+    savedPos.current = null;
+    if (isPinned.current) {
+      isPinned.current = false;
+      setPinned(false);
+    }
+
     // Restore last-known position from a prior session. Position is
     // applied even when the card was left unpinned so users come back to
     // exactly where they put it. The pinned flag adds the lock on top.

@@ -38,6 +38,8 @@ interface CanvasContextValue {
   unpin: (key: string) => void;
   /** Bring a card to the front of the stack. */
   raise: (key: string) => void;
+  /** Flip a card between full screen and its windowed rect. */
+  toggleMax: (key: string) => void;
   setRect: (key: string, rect: { x: number; y: number; w: number; h: number }) => void;
   setTitle: (key: string, title: string) => void;
   /** Called by CanvasLayer as the route changes. */
@@ -124,6 +126,14 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // The windowed rect is left untouched, so leaving full screen puts the
+  // panel back exactly where it was.
+  const toggleMax = useCallback((key: string) => {
+    setCards((prev) =>
+      prev.map((c) => (c.key === key ? { ...c, max: !c.max } : c)),
+    );
+  }, []);
+
   const setRect = useCallback(
     (key: string, rect: { x: number; y: number; w: number; h: number }) => {
       setCards((prev) =>
@@ -140,8 +150,8 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<CanvasContextValue>(
-    () => ({ space, cards, isPinned, pin, unpin, raise, setRect, setTitle, setSpace }),
-    [space, cards, isPinned, pin, unpin, raise, setRect, setTitle, setSpace],
+    () => ({ space, cards, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace }),
+    [space, cards, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace],
   );
 
   return <CanvasContext.Provider value={value}>{children}</CanvasContext.Provider>;
