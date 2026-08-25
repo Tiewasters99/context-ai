@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Pin, Maximize2, Minimize2, ExternalLink, X } from 'lucide-react';
-import { MIN_H, MIN_W, type CanvasCard } from '@/lib/canvas';
+import { CANVAS_FULLSCREEN_Z, MIN_H, MIN_W, type CanvasCard } from '@/lib/canvas';
 
 interface CanvasPanelProps {
   card: CanvasCard;
@@ -189,7 +189,7 @@ export default function CanvasPanel({
           width: '100vw',
           height: '100vh',
           // Above every windowed panel and the route card, below modals.
-          zIndex: 45,
+          zIndex: CANVAS_FULLSCREEN_Z,
           backgroundColor: 'rgba(8,8,14,0.96)',
         }
       : {

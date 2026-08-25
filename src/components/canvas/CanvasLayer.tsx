@@ -14,12 +14,13 @@ import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useCanvas } from '@/hooks/useCanvas';
 import { useContentItem } from '@/hooks/useContentItems';
-import { isCanvasKind, type CanvasCard, type CanvasCardKind, type CanvasSpace } from '@/lib/canvas';
+import { CALENDAR_CARD_ID, isCanvasKind, panelZ, type CanvasCard, type CanvasCardKind, type CanvasSpace } from '@/lib/canvas';
 import CanvasPanel from './CanvasPanel';
 import ListView from '@/pages/ListView';
 import PageView from '@/pages/PageView';
 import TableView from '@/pages/TableView';
 import DocumentReader from '@/pages/DocumentReader';
+import CalendarView from '@/pages/CalendarView';
 
 // Route segment → card kind. `table` is the route; `database` is the
 // content_type behind it — the canvas speaks in routes.
@@ -30,12 +31,11 @@ const ROUTE_TO_KIND: Record<string, CanvasCardKind> = {
   document: 'document',
 };
 
-const KIND_TO_ROUTE: Record<CanvasCardKind, string> = {
-  list: 'list',
-  page: 'page',
-  table: 'table',
-  document: 'document',
-};
+// Where a card's "open as a full page" goes. Every kind but the calendar
+// carries an id in its path; the calendar is a single sheet at /app/calendar.
+function routeFor(card: { kind: CanvasCardKind; id: string }): string {
+  return card.kind === 'calendar' ? '/app/calendar' : `/app/${card.kind}/${card.id}`;
+}
 
 interface RouteTarget {
   kind: CanvasCardKind | null;
@@ -45,7 +45,12 @@ interface RouteTarget {
 
 function readRoute(pathname: string): RouteTarget {
   const parts = pathname.split('/').filter(Boolean); // ['app', 'list', '<id>']
-  if (parts[0] !== 'app' || parts.length < 3) return { kind: null, id: null, space: null };
+  if (parts[0] !== 'app') return { kind: null, id: null, space: null };
+  // The calendar route carries no id — it is the one card of its kind.
+  if (parts.length === 2 && parts[1] === 'calendar') {
+    return { kind: 'calendar', id: CALENDAR_CARD_ID, space: null };
+  }
+  if (parts.length < 3) return { kind: null, id: null, space: null };
   const [, segment, id] = parts;
   if (segment === 'matterspace') return { kind: null, id: null, space: { spaceId: id, spaceType: 'matterspace' } };
   if (segment === 'serverspace') return { kind: null, id: null, space: { spaceId: id, spaceType: 'serverspace' } };
@@ -84,7 +89,10 @@ export default function CanvasLayer() {
 
   // Content routes carry their space on the item itself. This read is already
   // in the React Query cache — the route view fetched it — so it costs nothing.
-  const contentId = route.kind && route.kind !== 'document' ? route.id ?? undefined : undefined;
+  const contentId =
+    route.kind && route.kind !== 'document' && route.kind !== 'calendar'
+      ? route.id ?? undefined
+      : undefined;
   const { data: contentItem } = useContentItem(contentId);
   const { data: docSpace } = useDocumentSpace(route.kind === 'document' ? route.id : null);
 
@@ -130,10 +138,10 @@ export default function CanvasLayer() {
           key={card.key}
           card={card}
           stacked={isMobile}
-          zIndex={26 + i}
+          zIndex={panelZ(i)}
           onFocus={() => raise(card.key)}
           onUnpin={() => unpin(card.key)}
-          onOpenFull={() => navigate(`/app/${KIND_TO_ROUTE[card.kind]}/${card.id}`)}
+          onOpenFull={() => navigate(routeFor(card))}
           onToggleMax={() => toggleMax(card.key)}
           onRect={(rect) => setRect(card.key, rect)}
         >
@@ -155,5 +163,7 @@ function CanvasCardBody({ card, onClose }: { card: CanvasCard; onClose: () => vo
       return <TableView id={card.id} embedded onClose={onClose} />;
     case 'document':
       return <DocumentReader id={card.id} embedded onClose={onClose} />;
+    case 'calendar':
+      return <CalendarView embedded onClose={onClose} />;
   }
 }
