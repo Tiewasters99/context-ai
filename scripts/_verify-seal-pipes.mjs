@@ -30,6 +30,7 @@
 // No .env, no network, no prod. Exit 0 = sealed.
 
 import { EMBEDDING_DIM, processDocument } from '../lib/ingest-core.mjs';
+import { ROUTES, TIER_ROUTES } from '../lib/embed-routes.mjs';
 import { handleSearch } from '../lib/mcp-core.mjs';
 import { isSealedPipeError } from '../lib/seal-pipes.mjs';
 
@@ -152,6 +153,7 @@ function makeClient() {
         searchRpcCalls.push({
           ids: params.p_matterspace_ids,
           hadEmbedding: params.p_query_embedding !== null && params.p_query_embedding !== undefined,
+          model: params.p_embedding_model ?? null,
         });
         const scope = new Set(params.p_matterspace_ids);
         const hits = db.passages
@@ -174,7 +176,7 @@ function makeClient() {
     },
   };
 }
-let searchRpcCalls = [];
+const searchRpcCalls = [];
 
 const supabase = makeClient();
 
@@ -243,8 +245,14 @@ const sealedPassages = db.passages.filter((p) => p.matterspace_id === SEALED);
 check(sealedPassages.length > 0, 'sealed matter still got passages (text search survives)',
   `n=${sealedPassages.length}`);
 check(sealedPassages.every((p) => p.embedding === null), 'every sealed passage has a null embedding');
-check(sealedPassages.every((p) => p.embedding_model === undefined),
-  'embedding_model is left to its column default, so full-text still matches');
+// Phase A left this to the column default because migration 056's FULL-TEXT
+// stage filtered on it, so any other value made a sealed matter unfindable.
+// 061 removed that filter, and the stamp now means one thing only: which space
+// this row's vector lives in. It is written explicitly, and for a passage with
+// no vector it names the space the row would join if it were ever embedded.
+check(sealedPassages.every((p) => p.embedding_model === 'text-embedding-3-small'),
+  'unembedded passages are stamped with the tier-A space they would join',
+  [...new Set(sealedPassages.map((p) => p.embedding_model))].join(', '));
 check(docById(DOC_SEALED).processing_status === 'ready',
   'sealed text document is genuinely ready, not held', docById(DOC_SEALED).processing_status);
 check(sealedResult.embedded === false, 'processDocument reports it did not embed');
@@ -285,7 +293,7 @@ check(providerCalls().length === 0, 'the refused recording made ZERO provider ca
 // ---------------------------------------------------------------------------
 console.log('\n--- sealed search ----------------------------------------------');
 reset();
-searchRpcCalls = [];
+searchRpcCalls.length = 0;
 const sealedSearch = await handleSearch(supabase, { matter: SEALED, q: 'Ormsby' },
   { openaiApiKey: 'sk-test' });
 check(providerCalls().length === 0, 'sealed search made ZERO provider calls',
@@ -299,12 +307,93 @@ check(/sealed/i.test(sealedSearch.note ?? ''), 'the note explains why', sealedSe
 
 // Control again: an unsealed scope embeds as before.
 reset();
-searchRpcCalls = [];
+searchRpcCalls.length = 0;
 const openSearch = await handleSearch(supabase, { matter: OPEN, q: 'Ormsby' },
   { openaiApiKey: 'sk-test' });
 check(providerCalls().includes('api.openai.com'), 'unsealed search DID embed the query');
 check(searchRpcCalls.every((c) => c.hadEmbedding), 'unsealed scope got its embedding');
 check(openSearch.sealed_text_only === undefined, 'unsealed result carries no seal notice');
+
+// ---------------------------------------------------------------------------
+// 5. Phase B: give Tier B a zero-retention route and prove the wiring.
+//
+// No such route is permitted in lib/embed-routes.mjs yet — that is a
+// procurement decision, not a code one. What IS a code question is whether the
+// day it is permitted, the two embedding spaces stay apart. So register a
+// fake one here and watch where the bytes go.
+// ---------------------------------------------------------------------------
+console.log('\n--- phase B wiring: a permitted route for Tier B ----------------');
+
+const ZDR_HOST = 'zdr.example-provider.test';
+ROUTES['fake-zdr'] = {
+  id: 'fake-zdr',
+  provider: 'fake-zdr',
+  model: 'zdr-embed-1',
+  dim: EMBEDDING_DIM,
+  url: `https://${ZDR_HOST}/v1/embeddings`,
+  keyEnv: 'FAKE_ZDR_API_KEY',
+  headers: (k) => ({ authorization: `Bearer ${k}`, 'content-type': 'application/json' }),
+  body: (texts) => ({ model: 'zdr-embed-1', input: texts }),
+  parse: (json) => json.data.map((d) => d.embedding),
+};
+TIER_ROUTES.B = 'fake-zdr';
+process.env.FAKE_ZDR_API_KEY = 'zdr-test-key';
+
+// Teach the recorder to answer as the fake provider too.
+const baseFetch = globalThis.fetch;
+globalThis.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : input?.url ?? String(input);
+  if (url.includes(ZDR_HOST)) {
+    calls.push(new URL(url).hostname);
+    const body = JSON.parse(init.body);
+    const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    return new Response(JSON.stringify({
+      data: inputs.map(() => ({ embedding: Array(EMBEDDING_DIM).fill(0.02) })),
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
+  return baseFetch(input, init);
+};
+
+reset();
+const DOC_ZDR = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+newDoc(DOC_ZDR, SEALED, 'second-letter.txt');
+const zdrResult = await processDocument(supabase, {
+  documentId: DOC_ZDR, fileBuf: TEXT, ext: '.txt', openaiApiKey: 'sk-test',
+});
+check(calls.includes(ZDR_HOST), 'sealed ingest now reaches the ZERO-RETENTION provider',
+  `calls=[${calls.join(', ')}]`);
+check(!calls.includes('api.openai.com'),
+  'and still never reaches OpenAI — no fallback, ever');
+const zdrPassages = db.passages.filter((p) => p.document_id === DOC_ZDR);
+check(zdrPassages.every((p) => Array.isArray(p.embedding)), 'the sealed passages got real vectors');
+check(zdrPassages.every((p) => p.embedding_model === 'zdr-embed-1'),
+  'stamped with the ZDR model, not the tier-A one',
+  [...new Set(zdrPassages.map((p) => p.embedding_model))].join(', '));
+check(zdrResult.embeddingModel === 'zdr-embed-1', 'processDocument reports which space it used');
+
+// The cross-wiring assertion: one search spanning BOTH tiers.
+reset();
+searchRpcCalls.length = 0;
+const mixed = await handleSearch(supabase, { q: 'Ormsby' }, { openaiApiKey: 'sk-test' });
+check(calls.includes('api.openai.com') && calls.includes(ZDR_HOST),
+  'a mixed-scope search embeds the query once per space',
+  `calls=[${calls.join(', ')}]`);
+
+const sealedRpc = searchRpcCalls.filter((c) => c.ids.includes(SEALED));
+const openRpc = searchRpcCalls.filter((c) => c.ids.includes(OPEN));
+check(sealedRpc.length > 0 && sealedRpc.every((c) => c.model === 'zdr-embed-1'),
+  'the sealed group is queried with the ZDR model',
+  sealedRpc.map((c) => c.model).join(', '));
+check(openRpc.length > 0 && openRpc.every((c) => c.model === 'text-embedding-3-small'),
+  'the tier-A group is queried with the OpenAI model',
+  openRpc.map((c) => c.model).join(', '));
+check(!searchRpcCalls.some((c) => c.ids.includes(SEALED) && c.ids.includes(OPEN)),
+  'NO RPC ever mixes matters from two spaces in one call');
+check(mixed.result_count > 0, 'the mixed search still returns results', `n=${mixed.result_count}`);
+check(mixed.sealed_text_only === undefined,
+  'and carries no text-only notice, because nothing was downgraded');
+
+TIER_ROUTES.B = null; // leave policy as we found it
 
 // ---------------------------------------------------------------------------
 globalThis.fetch = realFetch;
