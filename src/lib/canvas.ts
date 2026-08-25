@@ -59,6 +59,17 @@ export function isCanvasKind(v: unknown): v is CanvasCardKind {
   return typeof v === 'string' && (CANVAS_KINDS as readonly string[]).includes(v);
 }
 
+// Some cards do not belong to a matter. The calendar is one sheet covering
+// every deadline you can see, so pinning it inside Teman and losing it the
+// moment you open GateGuard is simply wrong — it follows you instead. Its
+// layout lives under a user-scoped key rather than a space-scoped one, and
+// it survives having no space at all (the dashboard, the Vault).
+const GLOBAL_KINDS: readonly CanvasCardKind[] = ['calendar'];
+
+export function isGlobalKind(kind: CanvasCardKind): boolean {
+  return GLOBAL_KINDS.includes(kind);
+}
+
 export function cardKey(kind: CanvasCardKind, id: string): string {
   return `${kind}:${id}`;
 }
@@ -72,6 +83,10 @@ const VERSION = 'v1';
 
 export function canvasStorageKey(userId: string, space: CanvasSpace): string {
   return `cs.canvas.${VERSION}:${userId}:${space.spaceType}:${space.spaceId}`;
+}
+
+export function globalCanvasStorageKey(userId: string): string {
+  return `cs.canvas.${VERSION}:${userId}:global`;
 }
 
 // Panels open at a size that suits what they hold: a checklist is narrow,
@@ -199,9 +214,9 @@ function isCard(v: unknown): v is CanvasCard {
   );
 }
 
-export function loadCanvas(userId: string, space: CanvasSpace): CanvasCard[] {
+function loadFromKey(storageKey: string): CanvasCard[] {
   try {
-    const raw = localStorage.getItem(canvasStorageKey(userId, space));
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     const list = Array.isArray(parsed) ? parsed : (parsed as { cards?: unknown })?.cards;
@@ -228,12 +243,27 @@ export function loadCanvas(userId: string, space: CanvasSpace): CanvasCard[] {
   }
 }
 
-export function saveCanvas(userId: string, space: CanvasSpace, cards: CanvasCard[]): void {
+function saveToKey(key: string, cards: CanvasCard[]): void {
   try {
-    const key = canvasStorageKey(userId, space);
     if (cards.length === 0) localStorage.removeItem(key);
     else localStorage.setItem(key, JSON.stringify({ cards }));
   } catch {
     // Private mode / quota — the canvas still works for this session.
   }
+}
+
+export function loadCanvas(userId: string, space: CanvasSpace): CanvasCard[] {
+  return loadFromKey(canvasStorageKey(userId, space)).filter((c) => !isGlobalKind(c.kind));
+}
+
+export function saveCanvas(userId: string, space: CanvasSpace, cards: CanvasCard[]): void {
+  saveToKey(canvasStorageKey(userId, space), cards.filter((c) => !isGlobalKind(c.kind)));
+}
+
+export function loadGlobalCanvas(userId: string): CanvasCard[] {
+  return loadFromKey(globalCanvasStorageKey(userId)).filter((c) => isGlobalKind(c.kind));
+}
+
+export function saveGlobalCanvas(userId: string, cards: CanvasCard[]): void {
+  saveToKey(globalCanvasStorageKey(userId), cards.filter((c) => isGlobalKind(c.kind)));
 }

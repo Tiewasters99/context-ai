@@ -20,9 +20,11 @@ import {
   cardKey,
   clampToViewport,
   loadCanvas,
+  loadGlobalCanvas,
   nextPlacement,
   sameSpace,
   saveCanvas,
+  saveGlobalCanvas,
   type CanvasCard,
   type CanvasCardKind,
   type CanvasSpace,
@@ -62,22 +64,32 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
 
   const ownerId = userId && space ? `${userId}::${space.spaceType}:${space.spaceId}` : null;
 
-  // Load when the user or the space changes.
+  // Load when the user or the space changes. Global cards (the calendar) are
+  // loaded whether or not a space is known, so pinning the calendar from the
+  // dashboard — or anywhere with no matter in view — actually sticks.
   useEffect(() => {
-    if (!userId || !space) {
+    if (!userId) {
       ownerRef.current = null;
       setCards([]);
       return;
     }
     const viewport = { width: window.innerWidth, height: window.innerHeight };
-    const loaded = loadCanvas(userId, space).map((c) => clampToViewport(c, viewport));
+    const globals = loadGlobalCanvas(userId).map((c) => clampToViewport(c, viewport));
+    const scoped = space
+      ? loadCanvas(userId, space).map((c) => clampToViewport(c, viewport))
+      : [];
     ownerRef.current = ownerId;
-    setCards(loaded);
+    setCards([...globals, ...scoped]);
   }, [userId, space, ownerId]);
 
-  // Persist — but only once the loaded set actually belongs to this space.
+  // Persist. The two buckets are written separately: the global one needs
+  // only a user, the space-scoped one additionally needs the loaded set to
+  // belong to the space currently on screen (or a space change would write
+  // the outgoing matter's cards into the incoming matter's key).
   useEffect(() => {
-    if (!userId || !space) return;
+    if (!userId) return;
+    saveGlobalCanvas(userId, cards);
+    if (!space) return;
     if (ownerRef.current !== ownerId) return;
     saveCanvas(userId, space, cards);
   }, [cards, userId, space, ownerId]);
