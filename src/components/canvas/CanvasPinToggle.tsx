@@ -1,8 +1,11 @@
 // The pin in a card's header. Pinning puts the card on the canvas, where it
 // stays while you open other cards; unpinning takes it off again.
 //
-// It reads "Pinned" in words when lit because the state matters and a gold
-// icon alone does not say what it bought you.
+// It reads in words rather than relying on a gold icon, because the icon
+// alone never said what pinning bought you. Until the user has pinned
+// anything it reads "Keep open" — the instruction, not the mechanism —
+// since nothing else in the app tells you that pinning is how you get a
+// second card on screen at the same time.
 
 import { Pin, PinOff } from 'lucide-react';
 import { useOptionalCanvas } from '@/hooks/useCanvas';
@@ -21,6 +24,9 @@ export default function CanvasPinToggle({
   if (!canvas || !id) return null;
 
   const pinned = canvas.isPinned(kind, id);
+  // Once there is something on the canvas the user has learned the gesture,
+  // so the button goes quiet again and just shows the pin.
+  const teaching = !pinned && canvas.cards.length === 0;
 
   return (
     <button
@@ -30,12 +36,13 @@ export default function CanvasPinToggle({
       }`}
       title={
         pinned
-          ? 'Pinned to the canvas — it stays open when you open another card. Click to unpin.'
-          : 'Pin to the canvas — keep this card open while you open others'
+          ? 'Pinned — this card stays on screen while you open others. Click to unpin.'
+          : 'Pin this card to keep it on screen while you open others. Pin as many as you like; each one can be moved, resized from any edge, and taken full screen.'
       }
     >
       {pinned ? <Pin size={14} strokeWidth={2} /> : <PinOff size={14} strokeWidth={2} />}
       {pinned && <span className="text-[10px] font-medium">Pinned</span>}
+      {teaching && <span className="text-[10px] font-medium">Keep open</span>}
     </button>
   );
 }

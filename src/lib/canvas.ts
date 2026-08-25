@@ -16,7 +16,11 @@
 
 import type { SpaceType } from '@/hooks/useContentItems';
 
-export type CanvasCardKind = 'list' | 'page' | 'table' | 'document';
+export type CanvasCardKind = 'list' | 'page' | 'table' | 'document' | 'calendar';
+
+// The calendar is one sheet, not one of many, so it has no row of its own to
+// key off. It still needs an id to be a card like any other; this is it.
+export const CALENDAR_CARD_ID = 'calendar';
 
 export interface CanvasSpace {
   spaceId: string;
@@ -49,7 +53,7 @@ export interface EmbeddableViewProps {
   onClose?: () => void;
 }
 
-export const CANVAS_KINDS: readonly CanvasCardKind[] = ['list', 'page', 'table', 'document'];
+export const CANVAS_KINDS: readonly CanvasCardKind[] = ['list', 'page', 'table', 'document', 'calendar'];
 
 export function isCanvasKind(v: unknown): v is CanvasCardKind {
   return typeof v === 'string' && (CANVAS_KINDS as readonly string[]).includes(v);
@@ -77,10 +81,23 @@ const DEFAULT_SIZE: Record<CanvasCardKind, { w: number; h: number }> = {
   page:     { w: 520, h: 520 },
   table:    { w: 560, h: 440 },
   document: { w: 620, h: 660 },
+  calendar: { w: 560, h: 520 },   // a month grid needs width to stay legible
 };
 
 export const MIN_W = 280;
 export const MIN_H = 180;
+
+// Pinned panels stack from here, above the route card (12) and below modals
+// (70). See the stacking contract in useDraggableResizable.ts. The cap keeps
+// a very busy canvas from climbing into the modal layer; past it, panels
+// share the top band and the raise-on-focus order still decides among them.
+export const CANVAS_PANEL_Z = 30;
+export const CANVAS_PANEL_Z_MAX = 55;
+export const CANVAS_FULLSCREEN_Z = 60;
+
+export function panelZ(index: number): number {
+  return Math.min(CANVAS_PANEL_Z + index, CANVAS_PANEL_Z_MAX);
+}
 
 export function defaultSize(kind: CanvasCardKind): { w: number; h: number } {
   return DEFAULT_SIZE[kind];

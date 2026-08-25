@@ -5,6 +5,16 @@ import { useIsMobile } from './useIsMobile';
 // card's own vertical margin.
 const TOP_INSET = 96;
 
+// Stacking contract for cards (see also CANVAS_PANEL_Z in lib/canvas.ts):
+//   route card ...................... 12   the card you are reading
+//   canvas panels ................... 30+  the cards you pinned to stay on top
+//   either one, taken full screen ... 60
+//   modals / portals ................ 70   (ModalPortal, pickers)
+// The route card sits BELOW pinned panels on purpose: pinning means "keep
+// this in front while I work", so a panel must never hide behind the route.
+const ROUTE_CARD_Z = 12;
+const ROUTE_CARD_FULLSCREEN_Z = 60;
+
 // `storageKey` opts the card into persistent layout state. With a key, the
 // card remembers (across reloads) where the user last left it AND whether
 // they right-clicked to pin it. Position survives even when unpinned —
@@ -73,7 +83,7 @@ export function useDraggableResizable(
     card.style.top = rect.top + 'px';
     card.style.width = rect.width + 'px';
     card.style.margin = '0';
-    card.style.zIndex = '30';
+    card.style.zIndex = String(ROUTE_CARD_Z);
     card.style.maxWidth = 'none';
     card.style.cursor = 'default';
     isPinned.current = true;
@@ -158,7 +168,7 @@ export function useDraggableResizable(
         card.style.maxHeight = 'none';   // an explicit size outranks the viewport bound
       }
       card.style.margin = '0';
-      card.style.zIndex = '30';
+      card.style.zIndex = String(ROUTE_CARD_Z);
       card.style.maxWidth = 'none';
       card.style.cursor = saved.pinned ? 'default' : 'grab';
       if (saved.pinned) {
@@ -203,7 +213,7 @@ export function useDraggableResizable(
       card.style.top = rect.top + 'px';
       card.style.width = rect.width + 'px';
       card.style.margin = '0';
-      card.style.zIndex = '30';
+      card.style.zIndex = String(ROUTE_CARD_Z);
       card.style.maxWidth = 'none';
     };
 
@@ -334,7 +344,7 @@ export function useDraggableResizable(
       card.style.height = '100vh';
       card.style.margin = '0';
       card.style.maxWidth = 'none';
-      card.style.zIndex = '40';
+      card.style.zIndex = String(ROUTE_CARD_FULLSCREEN_Z);
       card.style.borderRadius = '0';
       card.style.cursor = 'default';
       card.style.overflowY = 'auto';
