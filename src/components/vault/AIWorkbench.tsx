@@ -7,13 +7,20 @@ import type { SearchResult } from '@/lib/search';
 
 interface AIWorkbenchProps {
   vaultFiles: VaultFile[];
+  /**
+   * The matter these files belong to, when the Vault is in matter mode. The
+   * workbench sends whole file contents to the model, so the tier has to
+   * travel with them — without this the request reaches /api/llm unbound and
+   * a sealed matter's documents would be gated by nothing.
+   */
+  matterId?: string;
   /** Persist the current output as an editable draft in "Generated Documents". */
   onSaveToVault?: (name: string, content: string) => void;
 }
 
 type Mode = 'manual' | 'auto';
 
-export default function AIWorkbench({ vaultFiles, onSaveToVault }: AIWorkbenchProps) {
+export default function AIWorkbench({ vaultFiles, matterId, onSaveToVault }: AIWorkbenchProps) {
   const models = useMemo(() => allModels(), []);
   const [selectedModelId, setSelectedModelId] = useState('claude-opus');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
@@ -102,6 +109,7 @@ export default function AIWorkbench({ vaultFiles, onSaveToVault }: AIWorkbenchPr
       modelId: selectedModelId,
       instruction,
       contextFiles,
+      matterId,
       signal: controller.signal,
       callbacks: {
         onChunk: (text) => setOutput((prev) => prev + text),
@@ -113,7 +121,7 @@ export default function AIWorkbench({ vaultFiles, onSaveToVault }: AIWorkbenchPr
     if (result?.message) {
       setRoutingInfo((prev) => prev + (prev ? ' · ' : '') + result.message);
     }
-  }, [instruction, generating, manualSelected, indexedFiles, selectedModelId, currentModel, mode]);
+  }, [instruction, generating, manualSelected, indexedFiles, selectedModelId, currentModel, mode, matterId]);
 
   const handleStop = () => {
     abortRef.current?.abort();

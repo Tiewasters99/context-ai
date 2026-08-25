@@ -60,11 +60,14 @@ interface RawCite {
 
 export async function extractCitations(
   draftText: string,
-  opts: { modelId: string; signal?: AbortSignal } = { modelId: 'claude-opus-4-8' },
+  opts: { modelId: string; signal?: AbortSignal; matterId?: string } = { modelId: 'claude-opus-4-8' },
 ): Promise<Cite[]> {
   const result = await generateStructured<{ citations?: RawCite[] }>({
     modelId: opts.modelId,
     signal: opts.signal,
+    // The whole brief is the prompt here, so this is the single largest piece
+    // of matter content the cite-check run sends anywhere. It binds.
+    matterId: opts.matterId,
     system: EXTRACT_SYSTEM,
     userContent: draftText,
     toolName: 'record_citations',

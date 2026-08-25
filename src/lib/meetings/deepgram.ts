@@ -38,9 +38,11 @@ export class DeepgramLiveClient {
   private silentGain: GainNode | null = null;
   private visibilityHandler: (() => void) | null = null;
   private handlers: Handlers;
+  private meetingId: string | null;
 
-  constructor(handlers: Handlers) {
+  constructor(handlers: Handlers, meetingId?: string) {
     this.handlers = handlers;
+    this.meetingId = meetingId ?? null;
   }
 
   async start() {
@@ -48,11 +50,24 @@ export class DeepgramLiveClient {
     const accessToken = session?.access_token;
     if (!accessToken) throw new Error("not authenticated");
 
+    // The meeting id lets the server check the matter's tier before it mints a
+    // credential. A sealed matter gets a 403 and no key — this browser never
+    // opens the socket, so no audio can leave even in principle.
     const tokenRes = await fetch("/api/deepgram-token", {
       method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ meeting_id: this.meetingId }),
     });
     if (!tokenRes.ok) {
+      // The seal's refusal carries an explanation the user should read, rather
+      // than being flattened into a status code.
+      const detail = await tokenRes.json().catch(() => null);
+      if (detail?.error === "sealed_pipe" && detail?.message) {
+        throw new Error(detail.message);
+      }
       throw new Error(`Failed to mint Deepgram credential: ${tokenRes.status}`);
     }
     const { credential, scheme } = (await tokenRes.json()) as {

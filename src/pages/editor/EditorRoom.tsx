@@ -123,6 +123,11 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 export default function EditorRoom() {
   const [phase, setPhase] = useState<Phase>('desk');
   const [manuscript, setManuscript] = useState('');
+  // The matter the manuscript came out of, when it came out of one. Set only
+  // by the vault picker and cleared by every other way text gets here, so a
+  // pasted draft is never labelled with the last matter that was open. It
+  // binds the pass to that matter's tier (lib/ai-tier-policy.mjs).
+  const [sourceMatterId, setSourceMatterId] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState('');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +184,7 @@ export default function EditorRoom() {
     try {
       const pass = await runEditorPass(text, {
         form: form || undefined,
+        matterId: sourceMatterId ?? undefined,
         signal: controller.signal,
         onProgress: (p) => setProgress(p.label),
       });
@@ -353,6 +359,7 @@ export default function EditorRoom() {
       const prepared = prepareDeskText(text);
       if (prepared.kind === 'refused') throw new Error(prepared.reason);
       setManuscript(prepared.text);
+      setSourceMatterId(null);
       setSourceNote({
         kind: 'info',
         text: `Loaded “${file.name}”${prepared.kind === 'converted' ? ` (${prepared.note})` : ''} — review the text, then submit.`,
@@ -375,7 +382,7 @@ export default function EditorRoom() {
     fileInputRef.current?.click();
   }
 
-  async function handleVaultLoaded(text: string, title: string) {
+  async function handleVaultLoaded(text: string, title: string, matterId: string | null) {
     setPickerOpen(false);
     const { prepareDeskText } = await import('@/lib/editor/desk-text');
     const prepared = prepareDeskText(text);
@@ -384,6 +391,7 @@ export default function EditorRoom() {
       return;
     }
     setManuscript(prepared.text);
+    setSourceMatterId(matterId);
     setSourceNote({
       kind: 'info',
       text: `Loaded “${title}” from your matters${prepared.kind === 'converted' ? ` (${prepared.note})` : ''} — review the text, then submit.`,
@@ -473,7 +481,7 @@ export default function EditorRoom() {
             />
             <textarea
               value={manuscript}
-              onChange={(e) => setManuscript(e.target.value)}
+              onChange={(e) => { setManuscript(e.target.value); setSourceMatterId(null); }}
               placeholder="Paste the draft — or drop a file here, upload one, or pull one from your matters…"
               className="mt-3 w-full min-h-[220px] bg-transparent text-[15px] leading-relaxed text-[#1c1917] placeholder:text-stone-400 focus:outline-none resize-y"
               style={{ fontFamily: 'Georgia, serif' }}

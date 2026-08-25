@@ -64,6 +64,27 @@ export default async function handler(req, res) {
   const transcript = (body?.transcript || '').trim();
   if (transcript.length < 200) return json(res, 200, { flags: [] });
 
+  // The SecureSpace seal, same rule as /api/meeting-chat: Anthropic is a
+  // permitted (recorded) provider on Tier B, and no provider at all on Tier C.
+  // This route runs on a timer against the live transcript, so an ungated Tier
+  // C meeting would have been egressing continuously, unprompted.
+  if (body?.meeting_id) {
+    const { data: meeting } = await sb
+      .from('meetings').select('matterspace_id').eq('id', body.meeting_id).maybeSingle();
+    if (meeting?.matterspace_id) {
+      const { matterTierWithClient } = await import('../lib/ai-tier-policy.mjs');
+      let tier;
+      try {
+        tier = await matterTierWithClient(sb, meeting.matterspace_id);
+      } catch {
+        tier = null;
+      }
+      // Silent by design: this is a background scanner the user did not ask
+      // for, and an empty flag list is its normal quiet answer.
+      if (!tier || tier === 'C') return json(res, 200, { flags: [], sealed: true });
+    }
+  }
+
   const alreadyText = (body?.alreadyFlagged || []).slice(-20).join('\n- ');
   const userText = `<meeting_transcript>
 ${transcript}

@@ -49,6 +49,39 @@ export default async function handler(req, res) {
   const { data: userData, error: userErr } = await sb.auth.getUser();
   if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
 
+  // The SecureSpace seal. This endpoint hands the browser a key with which it
+  // streams live room audio to Deepgram — the rawest content in the product,
+  // and until now the one exit with no tier check at all. There is no offline
+  // ASR here, so a sealed meeting cannot be transcribed live: refuse the
+  // credential rather than mint one and hope the client behaves. The meeting is
+  // still recorded and still runs; only the live transcript is unavailable.
+  //
+  // No meeting_id means an unbound session with no matter to protect. Once one
+  // is supplied, an unreadable tier is treated as sealed — fail closed.
+  const body = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
+  if (body?.meeting_id) {
+    const { data: meeting } = await sb
+      .from('meetings').select('matterspace_id').eq('id', body.meeting_id).maybeSingle();
+    if (meeting?.matterspace_id) {
+      const { pipeIsSealed } = await import('../lib/seal-pipes.mjs');
+      let sealed;
+      try {
+        sealed = await pipeIsSealed(sb, meeting.matterspace_id);
+      } catch {
+        sealed = true;
+      }
+      if (sealed) {
+        return json(res, 403, {
+          error: 'sealed_pipe',
+          message:
+            'This meeting is in a sealed matter (SecureSpace). Live transcription would stream the ' +
+            'room audio to an outside provider, so it is switched off here. Record the meeting and ' +
+            'ingest it once a sealed transcription route is in place.',
+        });
+      }
+    }
+  }
+
   const grantRes = await fetch('https://api.deepgram.com/v1/auth/grant', {
     method: 'POST',
     headers: {
@@ -71,4 +104,8 @@ function json(res, status, obj) {
   res.statusCode = status;
   res.setHeader('content-type', 'application/json');
   return res.end(JSON.stringify(obj));
+}
+
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
 }
