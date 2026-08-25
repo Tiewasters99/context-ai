@@ -153,8 +153,15 @@ check(!rows.some((r) => /registered office/.test(r.text)),
 //     cannot drift away from what it is arguing about.
 // ---------------------------------------------------------------------------
 console.log('\n--- the naive fix: stage B only, no stage C guard --------------');
+// Normalized to LF before deriving: git materializes the migration with CRLF
+// on Windows, while JavaScript normalizes the template literal below to LF at
+// parse time — so without this, the replace silently no-ops and the "naive"
+// variant keeps the guard it exists to demonstrate the absence of. The count
+// assertion after is what turns that failure mode from silent into loud.
 const guarded = fs.readFileSync(
-  path.resolve(__dirname, '..', 'supabase', 'migrations', '061_search_model_scoped_vectors.sql'), 'utf8');
+  path.resolve(__dirname, '..', 'supabase', 'migrations', '061_search_model_scoped_vectors.sql'), 'utf8')
+  .replace(/\r\n/g, '\n');
+const GUARD = /embedding_model {3}= p_embedding_model/g;
 const naive = guarded
   .replace(/create or replace function public\.search_passages\(/,
     'create or replace function public.search_passages_naive(')
@@ -165,8 +172,10 @@ const naive = guarded
             then 1 - (p.embedding <=> p_query_embedding)`,
     `      (case when v_has_vec and p.embedding is not null
             then 1 - (p.embedding <=> p_query_embedding)`);
-check(naive !== guarded && /search_passages_naive/.test(naive),
-  'derived the unguarded variant from the real 061 file');
+check(
+  /search_passages_naive/.test(naive)
+    && (naive.match(GUARD) ?? []).length === (guarded.match(GUARD) ?? []).length - 1,
+  'derived the unguarded variant from the real 061 file (stage-C guard verifiably removed)');
 await db.exec(naive);
 
 const naiveRows = await q(
