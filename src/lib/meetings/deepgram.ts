@@ -86,6 +86,20 @@ export class DeepgramLiveClient {
       punctuate: "true",
       endpointing: "300",
       language: "en",
+      // Deepgram's Model Improvement Program is opt-OUT, per request. Their
+      // terms claim the right to use submitted content "including training and
+      // testing our Models"; this parameter is the only thing that withdraws
+      // it, and it has to be set on every single call — one omission puts a
+      // meeting into a training corpus permanently.
+      //
+      // Set for every tier, not just sealed ones. A Tier-A matter is still a
+      // client's matter, and nobody in this product ever agreed to train a
+      // vendor's speech model on their conversations. Sealed matters do not
+      // reach this code at all — /api/deepgram-token refuses them a credential.
+      //
+      // NB Deepgram's published rates are the opted-IN rates and they publish
+      // no opted-out price, so this may change billing. Worth the call.
+      mip_opt_out: "true",
     });
     const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
 
