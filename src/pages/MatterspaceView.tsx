@@ -81,7 +81,8 @@ export default function MatterspaceView() {
       localStorage.setItem(TAB_STORAGE_KEY(id), activeTab);
     } catch {}
   }, [activeTab, id]);
-  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable('cs.matterspace.card');
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } =
+    useDraggableResizable('cs.matterspace.card', { boundToViewport: true });
 
   const [matter, setMatter] = useState<MatterRow | null>(null);
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
@@ -201,11 +202,11 @@ export default function MatterspaceView() {
       />
 
       <div ref={cardRef} className={`max-w-5xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] ${
-        isMobile ? 'px-4 py-6 my-4' : 'px-8 py-8 my-8 cursor-grab select-none'
+        isMobile ? 'px-4 py-6 my-4' : 'px-8 pt-0 pb-8 my-8 cursor-grab select-none'
       }`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen — desktop only; on a phone the
             card flows in place (same treatment as the Dashboard card). */}
-        <div className={`items-center justify-between mb-4 -mt-1 ${isMobile ? 'hidden' : 'flex'}`}>
+        <div className={`md:sticky md:top-0 z-20 items-center justify-between -mx-8 px-8 pt-6 pb-3 mb-4 rounded-t-xl border-b border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,18,0.95)] backdrop-blur-[30px] ${isMobile ? 'hidden' : 'flex'}`}>
           <button
             onClick={() => navigate('/app')}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"

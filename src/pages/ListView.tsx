@@ -138,7 +138,10 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const navigate = useNavigate();
   // Geometry is remembered per list, not per view type — one list left small
   // in a corner must not drag every other list into that same corner.
-  const { cardRef, toggleFullscreen } = useDraggableResizable(embedded || !id ? undefined : `cs.listview.card.${id}`);
+  const { cardRef, toggleFullscreen } = useDraggableResizable(
+    embedded || !id ? undefined : `cs.listview.card.${id}`,
+    { boundToViewport: true },
+  );
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -590,9 +593,12 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
         persistKey={id ? `cs.cover.${id}` : undefined}
       />
 
-      <div ref={cardRef} className="max-w-4xl mx-auto px-8 py-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+      <div ref={cardRef} className="max-w-4xl mx-auto px-8 pt-0 pb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + pin to canvas + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
+        {/* A ribbon, not a floating row: the card scrolls its own content
+            now, so these controls stay pinned to the top of the frame
+            instead of scrolling out of reach on a long list. */}
+        <div className="md:sticky md:top-0 z-20 flex items-center justify-between -mx-8 px-8 pt-6 pb-3 mb-4 rounded-t-xl border-b border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,18,0.95)] backdrop-blur-[30px]">
           <button
             onClick={() => (onClose ? onClose() : navigate(-1))}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"

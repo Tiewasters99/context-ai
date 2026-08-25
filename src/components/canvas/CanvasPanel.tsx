@@ -9,7 +9,7 @@
 // full screen and back — the windowed rect survives the round trip.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Pin, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
+import { Pin, Maximize2, Minimize2, ExternalLink, X } from 'lucide-react';
 import { MIN_H, MIN_W, type CanvasCard } from '@/lib/canvas';
 
 interface CanvasPanelProps {
@@ -240,12 +240,15 @@ export default function CanvasPanel({
         >
           <ExternalLink size={12} strokeWidth={2} />
         </button>
+        {/* Close is an X, like every other card. The gold pin at the left of
+            the ribbon is what says this card is pinned; a second pin icon
+            here only made people wonder which one closed it. */}
         <button
           onClick={onUnpin}
-          className="p-1 rounded hover:bg-[rgba(255,255,255,0.1)] text-[#e8b84a] hover:text-[#f5d178] transition-colors shrink-0"
-          title="Unpin — take this card off the canvas"
+          className="p-1 rounded hover:bg-[rgba(255,255,255,0.1)] text-white/55 hover:text-white transition-colors shrink-0"
+          title="Close — take this card off the canvas"
         >
-          <Pin size={12} strokeWidth={2} />
+          <X size={13} strokeWidth={2} />
         </button>
       </div>
 

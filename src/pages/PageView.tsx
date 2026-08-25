@@ -22,7 +22,10 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
   const id = propId ?? params.id;
   const navigate = useNavigate();
   // Per-page geometry — see the matching note in ListView.
-  const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(embedded || !id ? undefined : `cs.pageview.card.${id}`);
+  const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(
+    embedded || !id ? undefined : `cs.pageview.card.${id}`,
+    { boundToViewport: true },
+  );
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
@@ -184,9 +187,9 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
         persistKey={id ? `cs.cover.${id}` : undefined}
       />
 
-      <div ref={cardRef} className={`max-w-4xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 ${isMobile ? 'px-4 py-6' : 'px-8 py-8 cursor-grab select-none'}`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
+      <div ref={cardRef} className={`max-w-4xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 ${isMobile ? 'px-4 py-6' : 'px-8 pt-0 pb-8 cursor-grab select-none'}`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + pin to canvas + fullscreen */}
-        <div className="flex items-center justify-between mb-4 -mt-1">
+        <div className="md:sticky md:top-0 z-20 flex items-center justify-between -mx-4 px-4 pt-0 md:-mx-8 md:px-8 md:pt-6 pb-3 mb-4 rounded-t-xl border-b border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,18,0.95)] backdrop-blur-[30px]">
           <button
             onClick={() => (onClose ? onClose() : navigate(-1))}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"

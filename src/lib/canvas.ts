@@ -86,41 +86,73 @@ export function defaultSize(kind: CanvasCardKind): { w: number; h: number } {
   return DEFAULT_SIZE[kind];
 }
 
-// Where a newly pinned card lands. Route cards are centred and wide, so the
-// canvas fills in from the right edge first — on a laptop that is genuine
-// side-by-side rather than a card dropped on top of the one you are reading.
-// Each further card steps left and down so nothing ever fully covers what is
-// already pinned; past the left edge the cascade wraps back to the right.
+const TOP = 76;      // below the app header
+const EDGE = 16;     // inset from the viewport edges
+const GAP = 12;      // between tiled cards
+
+type Rect = { x: number; y: number; w: number; h: number };
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// Where a newly pinned card lands.
+//
+// Cards TILE rather than cascade: a new card takes the first free slot in a
+// grid, so ten pinned cards are ten usable cards instead of one card with
+// nine slivers behind it. Slots fill from the right, because the route card
+// you are reading is centred and wide — the first pin lands beside it, not
+// on top of it.
+//
+// When the workspace runs out of room at the card's natural size, the grid
+// gets denser (the new card comes in smaller) rather than giving up and
+// piling cards in a corner. Only when even the densest grid is full does a
+// card cascade off the newest one — and by then the user is well past the
+// point where they should be resizing or unpinning something.
 export function nextPlacement(
   kind: CanvasCardKind,
   existing: CanvasCard[],
   viewport: { width: number; height: number },
-): { x: number; y: number; w: number; h: number } {
-  const { w, h } = defaultSize(kind);
-  const width = Math.min(w, Math.max(MIN_W, viewport.width - 32));
-  const height = Math.min(h, Math.max(MIN_H, viewport.height - 120));
+): Rect {
+  const natural = defaultSize(kind);
+  const availW = Math.max(MIN_W, viewport.width - EDGE * 2);
+  const availH = Math.max(MIN_H, viewport.height - TOP - EDGE);
 
-  const STEP = 30;
-  const TOP = 76;
-  const RIGHT_MARGIN = 20;
-  const LEFT_LIMIT = 16;
+  for (const scale of [1, 0.8, 0.65, 0.5]) {
+    const w = Math.max(MIN_W, Math.min(Math.round(natural.w * scale), availW));
+    const h = Math.max(MIN_H, Math.min(Math.round(natural.h * scale), availH));
+    const cols = Math.max(1, Math.floor((availW + GAP) / (w + GAP)));
+    const rows = Math.max(1, Math.floor((availH + GAP) / (h + GAP)));
 
-  const n = existing.length;
-  const perColumn = Math.max(1, Math.floor((viewport.height - TOP - height - 24) / STEP) + 1);
-  const step = n % perColumn;
-  const wrap = Math.floor(n / perColumn);
-
-  let x = viewport.width - width - RIGHT_MARGIN - step * STEP - wrap * (STEP * 2);
-  let y = TOP + step * STEP;
-
-  // Wrapped past the left edge — start the cascade over at the right.
-  if (x < LEFT_LIMIT) {
-    x = viewport.width - width - RIGHT_MARGIN - step * STEP;
-    if (x < LEFT_LIMIT) x = LEFT_LIMIT;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        // Columns march leftward from the right edge.
+        const candidate: Rect = {
+          x: viewport.width - EDGE - w - c * (w + GAP),
+          y: TOP + r * (h + GAP),
+          w,
+          h,
+        };
+        if (candidate.x < EDGE) continue;
+        if (!existing.some((e) => overlaps(candidate, e))) {
+          return { x: Math.round(candidate.x), y: Math.round(candidate.y), w, h };
+        }
+      }
+    }
   }
-  y = Math.min(y, Math.max(TOP, viewport.height - height - 24));
 
-  return { x: Math.round(x), y: Math.round(y), w: width, h: height };
+  // Every slot taken — step off the newest card so the new one is reachable.
+  const width = Math.max(MIN_W, Math.min(natural.w, availW));
+  const height = Math.max(MIN_H, Math.min(natural.h, availH));
+  const last = existing[existing.length - 1];
+  const x = last ? last.x - 30 : viewport.width - EDGE - width;
+  const y = last ? last.y + 30 : TOP;
+  return {
+    x: Math.round(Math.max(EDGE, Math.min(x, viewport.width - 80))),
+    y: Math.round(Math.max(TOP, Math.min(y, viewport.height - 60))),
+    w: width,
+    h: height,
+  };
 }
 
 // Keep a restored card reachable: a layout saved on a wide external monitor

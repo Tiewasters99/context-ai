@@ -1,6 +1,10 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useIsMobile } from './useIsMobile';
 
+// Room left above and below a viewport-bound card: the app header plus the
+// card's own vertical margin.
+const TOP_INSET = 96;
+
 // `storageKey` opts the card into persistent layout state. With a key, the
 // card remembers (across reloads) where the user last left it AND whether
 // they right-clicked to pin it. Position survives even when unpinned —
@@ -13,7 +17,19 @@ import { useIsMobile } from './useIsMobile';
 // breakpoint: the card sheds any inline positioning and flows in normal
 // document order. Consumers can read the returned `isMobile` to hide the
 // drag handle / pin / fullscreen affordances, which mean nothing here.
-export function useDraggableResizable(storageKey?: string) {
+// `boundToViewport` is for cards that sit in the page's normal flow (the
+// route cards: a list, a page, a matter). Without it a card taller than the
+// window has no reachable bottom edge — you can scroll to the bottom of the
+// content, but by then the card's header, with its close and pin controls,
+// has scrolled off the top. There is no scroll position that shows both. The
+// bound caps the card at the window height and lets its own content scroll
+// inside, so the frame stays put: all four resize edges and the header are
+// on screen at all times. An explicit height from a resize overrides it.
+export function useDraggableResizable(
+  storageKey?: string,
+  options?: { boundToViewport?: boolean },
+) {
+  const boundToViewport = !!options?.boundToViewport;
   const isMobile = useIsMobile();
   const cardRef = useRef<HTMLDivElement>(null);
   const isFullscreen = useRef(false);
@@ -95,7 +111,7 @@ export function useDraggableResizable(storageKey?: string) {
     // prior desktop session restored from localStorage) applied so the
     // card returns to normal flow, and bind no drag/resize listeners.
     if (isMobile) {
-      for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY'] as const) {
+      for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY', 'maxHeight'] as const) {
         card.style[prop] = '';
       }
       return;
@@ -107,7 +123,7 @@ export function useDraggableResizable(storageKey?: string) {
     // geometry and flags first, so a card with no saved state of its own
     // opens at its natural default instead of inheriting its predecessor's
     // rect, pin, or fullscreen.
-    for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY', 'borderRadius'] as const) {
+    for (const prop of ['position', 'left', 'top', 'width', 'height', 'margin', 'zIndex', 'maxWidth', 'cursor', 'overflowY', 'borderRadius', 'maxHeight'] as const) {
       card.style[prop] = '';
     }
     isFullscreen.current = false;
@@ -115,6 +131,14 @@ export function useDraggableResizable(storageKey?: string) {
     if (isPinned.current) {
       isPinned.current = false;
       setPinned(false);
+    }
+
+    // Keep the whole frame on screen (see the note on `boundToViewport`).
+    // A saved explicit height means the user already chose a size, so the
+    // restore below overrides this.
+    if (boundToViewport) {
+      card.style.maxHeight = `calc(100vh - ${TOP_INSET}px)`;
+      card.style.overflowY = 'auto';
     }
 
     // Restore last-known position from a prior session. Position is
@@ -128,7 +152,11 @@ export function useDraggableResizable(storageKey?: string) {
       if (saved.width) card.style.width = saved.width;
       // A restored explicit height must scroll its overflow, or content
       // spills past the card edge (the bug: text escapes a shortened card).
-      if (saved.height) { card.style.height = saved.height; card.style.overflowY = 'auto'; }
+      if (saved.height) {
+        card.style.height = saved.height;
+        card.style.overflowY = 'auto';
+        card.style.maxHeight = 'none';   // an explicit size outranks the viewport bound
+      }
       card.style.margin = '0';
       card.style.zIndex = '30';
       card.style.maxWidth = 'none';
@@ -210,6 +238,7 @@ export function useDraggableResizable(storageKey?: string) {
         // letting items overflow outside the card.
         card.style.height = origH + 'px';
         card.style.overflowY = 'auto';
+        card.style.maxHeight = 'none';   // the user is choosing the height now
       } else {
         isDragging = true;
         makeFixed();
@@ -285,7 +314,7 @@ export function useDraggableResizable(storageKey?: string) {
       card.removeEventListener('contextmenu', onContextMenu);
       card.removeEventListener('dblclick', onDoubleClick);
     };
-  }, [storageKey, pin, unpin, readState, writeState, isMobile]);
+  }, [storageKey, pin, unpin, readState, writeState, isMobile, boundToViewport]);
 
   const toggleFullscreen = useCallback(() => {
     const card = cardRef.current;
