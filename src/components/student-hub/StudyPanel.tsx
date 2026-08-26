@@ -500,7 +500,8 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
               rows={1}
               placeholder="Ask your assistant…"
               style={{
-                flex: 1, resize: 'none', fontFamily: T.serif, fontSize: 14, lineHeight: 1.5,
+                // 16px so iOS Safari doesn't zoom the page on focus.
+                flex: 1, resize: 'none', fontFamily: T.serif, fontSize: 16, lineHeight: 1.5,
                 padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,
                 background: '#FFFFFF', color: T.ink, outline: 'none',
               }}
@@ -547,7 +548,7 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                 style={{
                   width: '100%', boxSizing: 'border-box', margin: '4px 0 8px', padding: '8px 10px',
                   border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
-                  outline: 'none', fontFamily: T.serif, fontSize: 14, color: T.ink,
+                  outline: 'none', fontFamily: T.serif, fontSize: 16, color: T.ink,
                 }}
               />
               <input
@@ -557,7 +558,7 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                 style={{
                   width: '100%', boxSizing: 'border-box', margin: '0 0 10px', padding: '8px 10px',
                   border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
-                  outline: 'none', fontFamily: T.mono, fontSize: 12.5, color: T.ink,
+                  outline: 'none', fontFamily: T.mono, fontSize: 16, color: T.ink,
                 }}
               />
               <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontFamily: T.sans, fontSize: 12.5, color: T.ink, lineHeight: 1.45 }}>
@@ -717,7 +718,7 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                           style={{
                             flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '7px 9px',
                             border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
-                            outline: 'none', fontFamily: T.mono, fontSize: 12, color: T.ink,
+                            outline: 'none', fontFamily: T.mono, fontSize: 16, color: T.ink,
                           }}
                         />
                         <button

@@ -365,7 +365,8 @@ export default function StudentHubHome() {
                 width: '100%', boxSizing: 'border-box', margin: '8px 0 10px',
                 padding: '12px 14px', border: `1px solid ${T.rule}`, borderRadius: 2,
                 background: '#FFFFFF', color: T.ink, outline: 'none', resize: 'vertical',
-                fontFamily: T.serif, fontSize: 15, lineHeight: 1.55,
+                // 16px so iOS Safari doesn't zoom the page on focus.
+                fontFamily: T.serif, fontSize: 16, lineHeight: 1.55,
               }}
             />
             <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>

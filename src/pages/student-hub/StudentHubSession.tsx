@@ -502,8 +502,9 @@ export default function StudentHubSession() {
         placeholder="Find in the text…"
         aria-label="Find in the text"
         style={{
+          // 16px so iOS Safari doesn't zoom the page on focus.
           flex: '0 1 240px', border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
-          color: T.ink, outline: 'none', padding: '7px 10px', fontFamily: T.sans, fontSize: 13,
+          color: T.ink, outline: 'none', padding: '7px 10px', fontFamily: T.sans, fontSize: 16,
         }}
       />
       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 56 }}>
@@ -683,7 +684,7 @@ export default function StudentHubSession() {
                         value={newMatterName}
                         onChange={(e) => setNewMatterName(e.target.value)}
                         placeholder="Name the new matter"
-                        style={{ ...destField, fontFamily: T.serif, fontSize: 14 }}
+                        style={{ ...destField, fontFamily: T.serif, fontSize: 16 }}
                       />
                     </label>
                   )}
@@ -1030,7 +1031,7 @@ export default function StudentHubSession() {
                 placeholder={dictation.listening ? 'Listening… speak your answer' : 'Answer the professor — type or tap the mic'}
                 rows={2}
                 style={{
-                  flex: 1, resize: 'none', fontFamily: T.serif, fontSize: 15, lineHeight: 1.5,
+                  flex: 1, resize: 'none', fontFamily: T.serif, fontSize: 16, lineHeight: 1.5,
                   padding: '10px 12px', border: `1px solid ${T.rule}`, borderRadius: 2,
                   background: '#FFFFFF', color: T.ink, outline: 'none',
                 }}

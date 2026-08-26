@@ -88,6 +88,7 @@ export function AskAssistant({ modelId, onClose }: { modelId: string; onClose: (
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         style={{
           display: 'flex', alignItems: 'center', gap: 10, cursor: 'grab', touchAction: 'none',
           background: T.greenDark, borderBottom: `2px solid ${T.brass}`,
@@ -172,9 +173,10 @@ export function AskAssistant({ modelId, onClose }: { modelId: string; onClose: (
           placeholder="Ask…"
           aria-label="Your question"
           style={{
+            // 16px so iOS Safari doesn't zoom the page on focus.
             flex: 1, resize: 'none', border: `1px solid ${T.rule}`, borderRadius: 2,
             background: '#FFFFFF', color: T.ink, outline: 'none', padding: '8px 10px',
-            fontFamily: T.serif, fontSize: 14, lineHeight: 1.45,
+            fontFamily: T.serif, fontSize: 16, lineHeight: 1.45,
           }}
         />
         <GreenButton onClick={send} disabled={!draft.trim() || live !== null} style={{ fontSize: 12, padding: '9px 16px' }}>
