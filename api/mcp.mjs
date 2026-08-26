@@ -228,8 +228,16 @@ export default async function handler(req, res) {
           'call get_media with a document UUID to receive a short-lived ' +
           'streaming URL (supports HTTP Range). When a user asks you to watch ' +
           'or analyze a video stored in Contextspaces, use get_media and fetch ' +
-          'the URL yourself; do not report that video is unavailable and do ' +
-          'not ask for a local file path. You can also ORGANIZE the ' +
+          'the URL yourself before asking for a local file path. If your ' +
+          'environment blocks the fetch (sandboxed agents may get 403 ' +
+          'host_not_allowed from an egress proxy), the URL is still valid: ' +
+          'give it to the user as a clickable download link and accept a ' +
+          'manual upload as fallback — do not retry repeatedly and do not ' +
+          'report the media as unavailable. To combine stored PDFs into one ' +
+          'document (exhibits into a filing), call assemble_documents — it ' +
+          'merges server-side, files the result into the matter, and returns ' +
+          'a download link, so no fetch from your side is needed. ' +
+          'You can also ORGANIZE the ' +
           'workspace: create_matter creates matters, sub-matters, and folders ' +
           '(all the same container), move_document relocates stored ' +
           'documents, and copy_document duplicates them — so "make an ' +
