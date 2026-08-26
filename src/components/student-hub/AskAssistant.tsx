@@ -5,8 +5,9 @@ import { T } from './theme';
 import { GreenButton } from './ui';
 
 // The general assistant: a free-standing conversation with the model chosen
-// in the picker, tied to no particular reading. The Socratic professor and
-// the reading-grounded aide keep their rooms; this one answers anything.
+// in the picker, tied to no particular reading. One assistant, three doors —
+// this one on the shelf, and the study panel's assistant tab standing beside
+// a reading. The Socratic professor keeps his own room.
 // Ephemeral by design — nothing is stored.
 
 const SYSTEM =
@@ -115,9 +116,17 @@ export function AskAssistant({ modelId, onClose }: { modelId: string; onClose: (
       {/* Conversation */}
       <div ref={scrollRef} style={{ overflowY: 'auto', flex: 1, padding: '12px 14px' }}>
         {msgs.length === 0 && live === null && (
-          <p style={{ fontFamily: T.serif, fontSize: 13.5, fontStyle: 'italic', color: T.faint, lineHeight: 1.55, margin: 0 }}>
-            Ask anything — a term, a concept, a passage. The assistant answers with
-            the model chosen in the picker. The conversation is not saved.
+          <p style={{ fontFamily: T.serif, fontSize: 13.5, color: T.faint, lineHeight: 1.55, margin: 0 }}>
+            The assistant is limited mostly by your imagination. Try: AP study questions
+            on tonight&rsquo;s reading &middot; SAT vocabulary lists and a prep session
+            &middot; an interactive book report &middot; a multimedia class presentation
+            &middot; &ldquo;What does a nonsuit correspond to today?&rdquo; And soon: build
+            your own Miniverse&trade; from what you&rsquo;re reading &mdash; a Fitzgerald
+            Riviera to walk through with your study group.
+            <span style={{ color: T.brass }}> (coming)</span>
+            <span style={{ display: 'block', marginTop: 8, fontStyle: 'italic' }}>
+              It answers with the model chosen in the picker. The conversation is not saved.
+            </span>
           </p>
         )}
         {msgs.map((m, i) => (
