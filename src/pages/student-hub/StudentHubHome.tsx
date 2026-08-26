@@ -10,9 +10,10 @@ import { readUploadedText, type StageProgress } from '@/lib/student-hub-upload';
 import {
   SAMPLE_TITLE, SAMPLE_CITATION, SAMPLE_SOURCE_LABEL, SAMPLE_READING,
 } from '@/lib/student-hub-sample';
+import { useTextCovers } from '@/lib/student-hub-covers';
 import { T } from '@/components/student-hub/theme';
 import {
-  HubStyles, CaseCaption, GreenButton, QuietControl, ErrorNote,
+  HubStyles, CaseCaption, GreenButton, QuietControl, ErrorNote, BookCover,
 } from '@/components/student-hub/ui';
 import { AskAssistant } from '@/components/student-hub/AskAssistant';
 
@@ -40,6 +41,7 @@ export default function StudentHubHome() {
 
   const [shelfOpen, setShelfOpen] = useState(false);
   const [texts, setTexts] = useState<StudyText[] | null>(null);
+  const covers = useTextCovers(texts);
   const [assistantOpen, setAssistantOpen] = useState(false);
 
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -171,7 +173,8 @@ export default function StudentHubHome() {
     fontFamily: T.sans, fontSize: 12, fontWeight: 700,
     letterSpacing: '0.05em', textTransform: 'uppercase', color: T.oxblood,
   };
-  const spineColors = [T.greenDark, T.oxblood, T.green];
+  // The binding under the cover — what a book shows before its cover arrives.
+  const bindingColors = [T.greenDark, T.oxblood, T.green];
 
   return (
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%' }}>
@@ -192,7 +195,7 @@ export default function StudentHubHome() {
       <main style={{ maxWidth: 780, margin: '0 auto', padding: '26px 20px 48px' }}>
         {loadError && <ErrorNote>{loadError}</ErrorNote>}
 
-        {/* ---- The shelf itself: your texts as spines ---- */}
+        {/* ---- The shelf itself: your texts, cover out ---- */}
         {shelfOpen && (
           <section aria-label="Your texts" style={{ marginBottom: 34 }}>
             <div style={{
@@ -212,24 +215,39 @@ export default function StudentHubHome() {
                   Nothing shelved as a text yet — add one below.
                 </span>
               )}
-              {texts?.map((t, i) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  title={t.title}
-                  onClick={() => navigate(`/app/student-hub/texts?text=${t.id}`)}
-                  style={{
-                    appearance: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
-                    writingMode: 'vertical-rl', height: 108 + ((i * 7) % 3) * 11,
-                    padding: '12px 7px', borderRadius: '2px 2px 0 0',
-                    borderTop: `2px solid ${T.brass}`,
-                    background: spineColors[i % spineColors.length], color: T.paper,
-                    fontFamily: T.serif, fontStyle: 'italic', fontSize: 12.5, textAlign: 'left',
-                  }}
-                >
-                  {t.title.length > 42 ? `${t.title.slice(0, 40)}…` : t.title}
-                </button>
-              ))}
+              {texts?.map((t, i) => {
+                // Books are not all one size; the widths stagger a little and
+                // the covers keep a book's proportions, so they still stand
+                // at their own heights on the rail.
+                const w = 64 + ((i * 7) % 3) * 4;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    title={t.title}
+                    onClick={() => navigate(`/app/student-hub/texts?text=${t.id}`)}
+                    style={{
+                      appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
+                      flexShrink: 0, padding: 0, width: w, textAlign: 'left',
+                    }}
+                  >
+                    <div style={{
+                      width: w, height: Math.round(w * 1.5) + 2, overflow: 'hidden',
+                      borderTop: `2px solid ${T.brass}`, borderRadius: '2px 2px 0 0',
+                      background: bindingColors[i % bindingColors.length],
+                    }}>
+                      <BookCover src={covers.get(t.id)} width={w} style={{ borderRadius: 0 }} />
+                    </div>
+                    <div style={{
+                      fontFamily: T.serif, fontStyle: 'italic', fontSize: 11.5, color: T.ink,
+                      marginTop: 6, lineHeight: 1.3,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      {t.title}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
             <div style={{
               display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
