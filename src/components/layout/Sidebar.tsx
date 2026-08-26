@@ -21,6 +21,7 @@ import {
   CalendarDays,
   Pin,
   PinOff,
+  Lock,
 } from 'lucide-react';
 import {
   DndContext,
@@ -44,14 +45,19 @@ import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMa
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import ShareModal from '@/components/serverspace/ShareModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
+import SecureSpacesSection from '@/components/securespace/SecureSpacesSection';
+import SealMatterModal, { type SealTarget } from '@/components/securespace/SealMatterModal';
 
 // Drag-and-drop ids are encoded as "matter:<uuid>" or "ss-root:<uuid>" so
 // dragEnd can tell whether the drop target is a matter (nest underneath)
 // or a serverspace's top-level area (re-parent to null inside that serverspace).
+// The SecureSpaces shelf at the bottom of the rail is a third target: dropping
+// a matter there doesn't re-parent it, it opens the seal confirmation.
 type DragData = { kind: 'matter'; matterId: string; serverspaceId: string };
 type DropData =
   | { kind: 'matter'; matterId: string; serverspaceId: string }
-  | { kind: 'ss-root'; serverspaceId: string };
+  | { kind: 'ss-root'; serverspaceId: string }
+  | { kind: 'securespaces' };
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -75,6 +81,10 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
   const [showNewServerspace, setShowNewServerspace] = useState(false);
 
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+  // When the New-matter modal was opened from the SecureSpaces shelf, the
+  // matter is born sealed (ai_tier B) instead of being sealed after the fact.
+  const [newMatterSealed, setNewMatterSealed] = useState(false);
+  const [sealTarget, setSealTarget] = useState<SealTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [shareTarget, setShareTarget] = useState<{ scope: 'serverspace' | 'matterspace'; id: string; name: string } | null>(null);
@@ -121,6 +131,24 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
     const dst = e.over?.data.current as DropData | undefined;
     setDragging(null);
     if (!src || !dst) return;
+
+    // Dropped on the SecureSpaces shelf: not a re-parent — open the seal
+    // confirmation for this matter (no-op if it's already sealed).
+    if (dst.kind === 'securespaces') {
+      const m = serverspaces
+        .flatMap((s) => s.matterspaces)
+        .find((x) => x.id === src.matterId);
+      if (!m || m.ai_tier !== 'A') return;
+      // collectDescendantIds includes the matter itself.
+      const descendantCount = collectDescendantIds(serverspaces, src.matterId).length - 1;
+      setSealTarget({
+        matterId: src.matterId,
+        matterName: m.name,
+        mode: 'seal',
+        descendantCount,
+      });
+      return;
+    }
 
     // Resolve target: matter row → nest under that matter; ss-root → top-level.
     const newParentId = dst.kind === 'matter' ? dst.matterId : null;
@@ -437,6 +465,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
                         isActive={isActive}
                         dragging={dragging}
                         draggingDescendants={draggingDescendants}
+                        inheritedSealed={false}
                       />
                     ))}
                     <button
@@ -452,6 +481,32 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             );
           })}
         </div>
+
+        {/* SecureSpaces — sealed matters shelf (Beta). Lives inside the
+            DndContext so a matter dragged from the tree above can be dropped
+            here to seal it. */}
+        <SecureSpacesSection
+          serverspaces={serverspaces}
+          collapsed={collapsed}
+          matterDragActive={!!dragging}
+          isActive={isActive}
+          onNewSecureSpace={(serverspaceId, serverspaceName) => {
+            setNewMatterSealed(true);
+            setNewMatterContext({
+              serverspaceId,
+              parentMatterId: null,
+              contextLabel: serverspaceName,
+            });
+          }}
+          onUnseal={(row) =>
+            setSealTarget({
+              matterId: row.matter.id,
+              matterName: row.matter.name,
+              mode: 'unseal',
+              descendantCount: row.descendantCount,
+            })
+          }
+        />
         <DragOverlay>
           {dragging && draggingMatterName && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#1c1c26] border border-[#e8b84a]/40 text-[12px] text-[#f5f1e8] shadow-lg shadow-black/40">
@@ -509,12 +564,22 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
       {newMatterContext && (
         <NewMatterModal
           context={newMatterContext}
-          onClose={() => setNewMatterContext(null)}
+          sealed={newMatterSealed}
+          onClose={() => {
+            setNewMatterContext(null);
+            setNewMatterSealed(false);
+          }}
           onCreated={() => {
             if (newMatterContext.parentMatterId) {
               setExpandedMatters((prev) => new Set(prev).add(newMatterContext.parentMatterId!));
             }
           }}
+        />
+      )}
+      {sealTarget && (
+        <SealMatterModal
+          target={sealTarget}
+          onClose={() => setSealTarget(null)}
         />
       )}
       {deleteTarget && (
@@ -596,6 +661,10 @@ interface MatterNodeProps {
   isActive: (path: string) => boolean;
   dragging: DragData | null;
   draggingDescendants: Set<string>;
+  // True when any ancestor matter is sealed — the seal inherits downward, so
+  // sub-matters of a SecureSpace show the lock even though their own ai_tier
+  // is still 'A'.
+  inheritedSealed: boolean;
 }
 
 function MatterNode({
@@ -610,12 +679,14 @@ function MatterNode({
   isActive,
   dragging,
   draggingDescendants,
+  inheritedSealed,
 }: MatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
   const isExpanded = expandedMatters.has(matter.id);
   const myLabel = `${ancestorLabel} / ${matter.name}`;
   const path = `/app/matterspace/${matter.id}`;
+  const sealed = inheritedSealed || matter.ai_tier !== 'A';
 
   const dragData: DragData = { kind: 'matter', matterId: matter.id, serverspaceId };
   const dropData: DropData = { kind: 'matter', matterId: matter.id, serverspaceId };
@@ -683,7 +754,16 @@ function MatterNode({
           className={`flex-1 truncate py-1.5 text-[12px] ${
             isActive(path) ? 'font-medium text-white' : 'hover:text-white'
           }`}
+          title={sealed ? `${matter.name} — sealed` : undefined}
         >
+          {sealed && (
+            <Lock
+              size={10}
+              strokeWidth={2.25}
+              className="inline-block mr-1 -mt-px shrink-0"
+              style={{ color: '#5aa88f' }}
+            />
+          )}
           {matter.name}
         </Link>
         <button
@@ -739,6 +819,7 @@ function MatterNode({
               isActive={isActive}
               dragging={dragging}
               draggingDescendants={draggingDescendants}
+              inheritedSealed={sealed}
             />
           ))}
         </div>

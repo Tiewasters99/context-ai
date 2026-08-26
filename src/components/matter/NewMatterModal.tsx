@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Lock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import ModalPortal from '@/components/ui/ModalPortal';
@@ -24,6 +24,10 @@ interface Props {
   // still reviews and submits — this only seeds the fields.
   initialName?: string;
   initialDescription?: string;
+  // The matter is born sealed (ai_tier 'B') — set when invoked from the
+  // SecureSpaces shelf. The server enforces the seal off the column; this
+  // just writes it at insert so there is no unsealed instant.
+  sealed?: boolean;
 }
 
 const slugify = (s: string) => {
@@ -32,7 +36,7 @@ const slugify = (s: string) => {
   return out.slice(0, 64);
 };
 
-export default function NewMatterModal({ context, onClose, onCreated, initialName = '', initialDescription = '' }: Props) {
+export default function NewMatterModal({ context, onClose, onCreated, initialName = '', initialDescription = '', sealed = false }: Props) {
   const refreshServerspaces = useServerspacesRefresh();
   const [name, setName] = useState(initialName);
   const [shortCode, setShortCode] = useState(initialName ? slugify(initialName) : '');
@@ -64,6 +68,7 @@ export default function NewMatterModal({ context, onClose, onCreated, initialNam
         name: cleanName,
         short_code: cleanShort,
         description: description.trim() || null,
+        ...(sealed ? { ai_tier: 'B' as const } : {}),
       })
       .select('id')
       .single();
@@ -87,8 +92,13 @@ export default function NewMatterModal({ context, onClose, onCreated, initialNam
         <div className="fixed inset-0 z-[60] bg-black/40" onClick={onClose} />
         <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
           <div className="flex items-center justify-between mb-1">
-            <h3 className="text-[15px] font-semibold text-white">
-              {context.parentMatterId ? 'New Sub-Matter' : 'New Matter'}
+            <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
+              {sealed && <Lock size={14} style={{ color: '#5aa88f' }} strokeWidth={2.25} />}
+              {sealed
+                ? 'New SecureSpace'
+                : context.parentMatterId
+                  ? 'New Sub-Matter'
+                  : 'New Matter'}
             </h3>
             <button
               onClick={onClose}
@@ -99,6 +109,11 @@ export default function NewMatterModal({ context, onClose, onCreated, initialNam
           </div>
           <p className="text-[11px] text-white/50 mb-5">
             in <span className="text-[#e8b84a]/80">{context.contextLabel}</span>
+            {sealed && (
+              <span style={{ color: '#5aa88f' }}>
+                {' '}· born sealed — never reaches an outside AI provider
+              </span>
+            )}
           </p>
           <form onSubmit={handleSubmit} className="space-y-3">
             <input
@@ -143,7 +158,7 @@ export default function NewMatterModal({ context, onClose, onCreated, initialNam
               disabled={!name.trim() || creating}
               className="w-full py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#f5d565] text-[#0e0e12] text-[13px] font-bold transition-colors disabled:opacity-40 shadow-[0_0_20px_rgba(240,200,80,0.3)]"
             >
-              {creating ? 'Creating…' : 'Create Matter'}
+              {creating ? 'Creating…' : sealed ? 'Create SecureSpace' : 'Create Matter'}
             </button>
           </form>
         </div>

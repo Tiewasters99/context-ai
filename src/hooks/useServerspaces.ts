@@ -11,6 +11,11 @@ export interface ServerspaceMatter {
   name: string;
   short_code: string | null;
   parent_matterspace_id: string | null;
+  // SecureSpace tier (migration 051): 'A' open, 'B' sealed, 'C' silo. This is
+  // the matter's OWN tier; the seal inherits downward, so a matter is
+  // effectively sealed when any ancestor is B/C — compute that in memory from
+  // the tree rather than per-matter queries.
+  ai_tier: 'A' | 'B' | 'C';
 }
 
 export interface Serverspace {
@@ -25,7 +30,7 @@ const SERVERSPACES_KEY = ['serverspaces'] as const;
 async function fetchServerspaces(): Promise<Serverspace[]> {
   const { data, error } = await supabase
     .from('serverspaces')
-    .select('id, name, matterspaces (id, name, short_code, parent_matterspace_id)')
+    .select('id, name, matterspaces (id, name, short_code, parent_matterspace_id, ai_tier)')
     .order('created_at', { ascending: true });
   if (error) throw new Error(`serverspaces: ${error.message}`);
   if (!data) return [];
