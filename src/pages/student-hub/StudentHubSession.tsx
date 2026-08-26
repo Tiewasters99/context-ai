@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { converse } from '@/lib/llm';
 import {
-  getSession, updateSession, listMessages, addMessage, clearMessages, getPageUrls, listAllReadings,
+  getSession, updateSession, deleteSession, listMessages, addMessage, clearMessages, getPageUrls, listAllReadings,
   generateBrief, generateOutline, professorSystem, professorHistory, formatTranscript,
   type StudySession, type StudyMessage, type Highlight, type Resource, type OutlineAnnotations,
 } from '@/lib/student-hub';
@@ -29,8 +29,11 @@ function youtubeId(url: string): string | null {
   return m ? m[1] : null;
 }
 
+const MAX_MATCHES = 500;
+
 export default function StudentHubSession() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [session, setSession] = useState<StudySession | null>(null);
   const [messages, setMessages] = useState<StudyMessage[]>([]);
   const [loadError, setLoadError] = useState('');
@@ -51,6 +54,12 @@ export default function StudentHubSession() {
   const [exportDone, setExportDone] = useState<ExportResult | null>(null);
   const [includeNotes, setIncludeNotes] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Find-in-the-text: plain word search over the reading.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [hit, setHit] = useState(0);
   // Page magnification for the reader; remembered on this machine.
   const [zoom, setZoom] = useState(() => {
     const z = Number(localStorage.getItem('student-hub-zoom'));
@@ -270,7 +279,126 @@ export default function StudentHubSession() {
     }
   }, [session, messages]);
 
+  /* ---------------- Find in the text ---------------- */
+
+  const lowerReading = useMemo(() => (session ? session.reading.toLowerCase() : ''), [session]);
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [] as number[];
+    const out: number[] = [];
+    let from = 0;
+    while (out.length < MAX_MATCHES) {
+      const at = lowerReading.indexOf(q, from);
+      if (at === -1) break;
+      out.push(at);
+      from = at + q.length;
+    }
+    return out;
+  }, [lowerReading, query]);
+
+  useEffect(() => { setHit(0); }, [query]);
+  useEffect(() => {
+    if (searchOpen && matches.length && !session?.pages?.length) {
+      document.getElementById(`hub-hit-${hit}`)?.scrollIntoView({ block: 'center' });
+    }
+  }, [hit, matches, searchOpen, session?.pages?.length]);
+
+  // The reading with matches marked, for text readings. Paged readings get a
+  // snippet list instead — the marks can't land on a page image.
+  const markedReading = useMemo(() => {
+    if (!session) return null;
+    const q = query.trim();
+    if (!searchOpen || q.length < 2 || !matches.length || session.pages?.length) return session.reading;
+    const parts: React.ReactNode[] = [];
+    let last = 0;
+    matches.forEach((at, i) => {
+      parts.push(session.reading.slice(last, at));
+      parts.push(
+        <mark
+          key={i}
+          id={`hub-hit-${i}`}
+          style={{ background: i === hit ? T.oxblood : T.brass, color: T.paper, padding: '0 1px', borderRadius: 1 }}
+        >
+          {session.reading.slice(at, at + q.length)}
+        </mark>,
+      );
+      last = at + q.length;
+    });
+    parts.push(session.reading.slice(last));
+    return parts;
+  }, [session, searchOpen, query, matches, hit]);
+
+  const snippets = useMemo(() => {
+    if (!session?.pages?.length || !searchOpen) return [];
+    const q = query.trim();
+    if (q.length < 2) return [];
+    return matches.slice(0, 40).map((at) => {
+      const a = Math.max(0, at - 60);
+      const b = Math.min(session.reading.length, at + q.length + 60);
+      return {
+        before: (a > 0 ? '…' : '') + session.reading.slice(a, at).replace(/\s+/g, ' '),
+        match: session.reading.slice(at, at + q.length),
+        after: session.reading.slice(at + q.length, b).replace(/\s+/g, ' ') + (b < session.reading.length ? '…' : ''),
+      };
+    });
+  }, [session, searchOpen, query, matches]);
+
+  /* ---------------- Removal ---------------- */
+
+  const removeReading = useCallback(async () => {
+    if (!session || deleting) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await deleteSession(session.id);
+      navigate(session.text_id ? `/app/student-hub?text=${session.text_id}` : '/app/student-hub/shelf');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The reading could not be removed.');
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  }, [session, deleting, navigate]);
+
   /* ---------------- Render ---------------- */
+
+  const searchBar = searchOpen ? (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 10, flexWrap: 'wrap' }}>
+      <input
+        autoFocus
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); if (matches.length) setHit((h) => (h + 1) % matches.length); }
+          if (e.key === 'Escape') { setSearchOpen(false); setQuery(''); }
+        }}
+        placeholder="Find in the text…"
+        aria-label="Find in the text"
+        style={{
+          flex: '0 1 240px', border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
+          color: T.ink, outline: 'none', padding: '7px 10px', fontFamily: T.sans, fontSize: 13,
+        }}
+      />
+      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 56 }}>
+        {query.trim().length >= 2
+          ? (matches.length ? `${hit + 1} / ${matches.length}${matches.length === MAX_MATCHES ? '+' : ''}` : 'not found')
+          : ''}
+      </span>
+      <QuietControl
+        onClick={() => setHit((h) => (h - 1 + matches.length) % matches.length)}
+        disabled={matches.length < 2}
+        aria-label="Previous match"
+      >
+        ‹
+      </QuietControl>
+      <QuietControl
+        onClick={() => setHit((h) => (h + 1) % matches.length)}
+        disabled={matches.length < 2}
+        aria-label="Next match"
+      >
+        ›
+      </QuietControl>
+    </div>
+  ) : null;
 
   const fieldLabel: React.CSSProperties = {
     fontFamily: T.sans, fontSize: 12, fontWeight: 700,
@@ -326,6 +454,24 @@ export default function StudentHubSession() {
           >
             {exportOpen ? 'close export' : 'file to Contextspaces →'}
           </QuietControl>
+          {confirmDelete ? (
+            <QuietControl
+              onClick={() => void removeReading()}
+              disabled={deleting}
+              style={{ alignSelf: 'center', color: T.paper, background: T.oxblood, borderColor: T.oxblood }}
+              title="Deletes the reading, its transcripts, and any stored scan pages — for good"
+            >
+              {deleting ? 'removing…' : 'remove this reading?'}
+            </QuietControl>
+          ) : (
+            <QuietControl
+              onClick={() => setConfirmDelete(true)}
+              style={{ alignSelf: 'center' }}
+              title="Remove this reading from your account"
+            >
+              remove
+            </QuietControl>
+          )}
         </div>
       </nav>
 
@@ -400,6 +546,13 @@ export default function StudentHubSession() {
                 )}
                 {pageUrls && (
                   <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
+                    <QuietControl
+                      onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setQuery(''); }}
+                      style={searchOpen ? { background: T.brass, color: T.paper, borderColor: T.brass } : undefined}
+                      title="Find a word or phrase in the reading"
+                    >
+                      ⌕ find
+                    </QuietControl>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <QuietControl onClick={() => changeZoom(-0.25)} disabled={zoom <= 1} aria-label="Smaller pages">A−</QuietControl>
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 38, textAlign: 'center' }}>
@@ -414,6 +567,29 @@ export default function StudentHubSession() {
                     >
                       {marking ? '✎ highlighting — drag on the page' : '✎ highlight'}
                     </QuietControl>
+                  </div>
+                )}
+                {searchBar}
+                {searchOpen && query.trim().length >= 2 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontFamily: T.sans, fontSize: 11, color: T.faint, marginBottom: 4 }}>
+                      {snippets.length
+                        ? `Found in the transcription of your pages${matches.length > snippets.length ? ` (first ${snippets.length})` : ''}:`
+                        : 'Nothing found in the transcription of your pages.'}
+                    </div>
+                    {snippets.map((s, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          fontFamily: T.serif, fontSize: 13.5, lineHeight: 1.5, color: T.ink,
+                          borderBottom: `1px solid ${T.rule}`, padding: '6px 0',
+                        }}
+                      >
+                        {s.before}
+                        <mark style={{ background: T.brass, color: T.paper, padding: '0 1px', borderRadius: 1 }}>{s.match}</mark>
+                        {s.after}
+                      </div>
+                    ))}
                   </div>
                 )}
                 <div style={{ overflowX: zoom > 1 ? 'auto' : 'visible' }}>
@@ -447,17 +623,25 @@ export default function StudentHubSession() {
             ) : (
               <>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, paddingBottom: 8 }}>
+                  <QuietControl
+                    onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setQuery(''); }}
+                    style={searchOpen ? { background: T.brass, color: T.paper, borderColor: T.brass, marginRight: 6 } : { marginRight: 6 }}
+                    title="Find a word or phrase in the reading"
+                  >
+                    ⌕ find
+                  </QuietControl>
                   <QuietControl onClick={() => changeZoom(-0.25)} disabled={zoom <= 1} aria-label="Smaller text">A−</QuietControl>
                   <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 38, textAlign: 'center' }}>
                     {Math.round(zoom * 100)}%
                   </span>
                   <QuietControl onClick={() => changeZoom(0.25)} disabled={zoom >= 3} aria-label="Larger text">A+</QuietControl>
                 </div>
+                {searchBar}
                 <div style={{
                   fontFamily: T.serif, fontSize: 15.5 * zoom, lineHeight: 1.6, color: T.ink,
                   whiteSpace: 'pre-wrap', padding: '6px 0',
                 }}>
-                  {session.reading}
+                  {markedReading}
                 </div>
               </>
             )}

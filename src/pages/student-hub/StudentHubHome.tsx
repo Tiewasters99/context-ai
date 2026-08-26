@@ -13,6 +13,7 @@ import { T } from '@/components/student-hub/theme';
 import {
   HubStyles, CaseCaption, GreenButton, QuietControl, ErrorNote,
 } from '@/components/student-hub/ui';
+import { AskAssistant } from '@/components/student-hub/AskAssistant';
 
 // The Student Hub shelf: every loose text, rendered like a casebook's
 // Table of Cases, plus the intake desk — paste a text or upload one.
@@ -38,6 +39,7 @@ export default function StudentHubHome() {
 
   const [shelfOpen, setShelfOpen] = useState(false);
   const [texts, setTexts] = useState<StudyText[] | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   const uploadInput = useRef<HTMLInputElement>(null);
   const [upFiles, setUpFiles] = useState<File[]>([]);
@@ -340,6 +342,13 @@ export default function StudentHubHome() {
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>
+              <QuietControl
+                onClick={() => setAssistantOpen((v) => !v)}
+                style={assistantOpen ? { background: T.green, color: T.paper, borderColor: T.green } : { color: T.green, borderColor: T.green }}
+                title="A direct conversation with the model chosen in the picker"
+              >
+                Ask your AI assistant
+              </QuietControl>
             </div>
           </section>
 
@@ -415,6 +424,8 @@ export default function StudentHubHome() {
         </p>
         {error && <div style={{ marginTop: 12 }}><ErrorNote>{error}</ErrorNote></div>}
       </main>
+
+      {assistantOpen && <AskAssistant modelId={modelId} onClose={() => setAssistantOpen(false)} />}
     </div>
   );
 }
