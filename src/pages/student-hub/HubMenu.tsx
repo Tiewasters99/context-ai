@@ -29,7 +29,7 @@ const FEATURES: { name: string; line: string }[] = [
   },
   {
     name: 'Study groups',
-    line: 'up to five people around a text, chat and video, within fair use.',
+    line: 'you and up to five classmates around a text, chat and video, within fair use.',
   },
   {
     name: 'Add texts',

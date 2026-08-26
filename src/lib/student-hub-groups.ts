@@ -6,7 +6,8 @@
 
 import { supabase } from '@/lib/supabase';
 
-export const GROUP_CAP = 5;
+// Six seats: the person who forms the group and up to five invitees.
+export const GROUP_CAP = 6;
 
 export const ATTESTATION =
   'I own a lawful copy of this text. My study group may discuss it with me here on that basis.';
