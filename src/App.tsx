@@ -29,6 +29,7 @@ import BucketizerHome from '@/pages/BucketizerHome';
 import AgentsHome from '@/pages/AgentsHome';
 import MootBench from '@/pages/moot/MootBench';
 import MootSession from '@/pages/moot/MootSession';
+import HubMenu from '@/pages/student-hub/HubMenu';
 import TextView from '@/pages/student-hub/TextView';
 import StudentHubHome from '@/pages/student-hub/StudentHubHome';
 import StudentHubSession from '@/pages/student-hub/StudentHubSession';
@@ -118,7 +119,8 @@ export default function App() {
               <Route path="agents" element={<AgentsHome />} />
               <Route path="moot-bench" element={<MootBench />} />
               <Route path="moot-bench/:id" element={<MootSession />} />
-              <Route path="student-hub" element={<TextView />} />
+              <Route path="student-hub" element={<HubMenu />} />
+              <Route path="student-hub/texts" element={<TextView />} />
               <Route path="student-hub/shelf" element={<StudentHubHome />} />
               <Route path="student-hub/add" element={<AddChapter />} />
               <Route path="student-hub/:id" element={<StudentHubSession />} />

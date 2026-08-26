@@ -15,12 +15,17 @@ import { useDictation, useProfessorVoice } from '@/components/student-hub/voice'
 import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights';
 import { StudyPanel, type GroupSeed } from '@/components/student-hub/StudyPanel';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
-import { exportReading, downloadReading, type ExportResult } from '@/lib/student-hub-export';
+import {
+  exportReading, downloadReading, listExportServerspaces, listExportMatters,
+  readRememberedDestination, rememberDestination, DEFAULT_SERVERSPACE_NAME,
+  type ExportResult, type ExportDestination, type NamedRow,
+} from '@/lib/student-hub-export';
 
 // One reading, five postures: the reading itself (the actual pages of the
 // student's scanned casebook, highlightable), the brief, the interactive
 // outline, the cold call, and the student's own notes & resources. The
-// study aide floats over all of them.
+// study panel floats over all of them, and the reading's own toolbar is a
+// door into its assistant.
 
 type TabId = 'reading' | 'brief' | 'outline' | 'coldcall' | 'notes';
 
@@ -30,6 +35,21 @@ function youtubeId(url: string): string | null {
 }
 
 const MAX_MATCHES = 500;
+
+// Sentinels for the export destination selects. DEFAULT_SPACE stands for the
+// hub's own "Academic — Contracts", offered only while it does not yet exist.
+const DEFAULT_SPACE = '__default__';
+const NEW_MATTER = '__new__';
+
+const destLabel: React.CSSProperties = {
+  fontFamily: T.sans, fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em',
+  textTransform: 'uppercase', color: T.faint,
+};
+const destField: React.CSSProperties = {
+  fontFamily: T.sans, fontSize: 12.5, color: T.ink, background: '#FFFFFF',
+  border: `1px solid ${T.rule}`, borderRadius: 2, padding: '6px 8px', outline: 'none',
+  maxWidth: 260,
+};
 
 export default function StudentHubSession() {
   const { id } = useParams();
@@ -48,11 +68,21 @@ export default function StudentHubSession() {
   const [resTitle, setResTitle] = useState('');
   const [resUrl, setResUrl] = useState('');
   const [groupSeed, setGroupSeed] = useState<GroupSeed | null>(null);
+  // A nonce that opens the study panel on its assistant tab.
+  const [askSeed, setAskSeed] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState('');
   const [exportDone, setExportDone] = useState<ExportResult | null>(null);
   const [includeNotes, setIncludeNotes] = useState(true);
+  // Where the reading is filed — chosen by the student, remembered after.
+  const [spaces, setSpaces] = useState<NamedRow[] | null>(null);
+  const [spaceId, setSpaceId] = useState('');
+  const [matters, setMatters] = useState<NamedRow[] | null>(null);
+  const [matterId, setMatterId] = useState('');
+  const [newMatterName, setNewMatterName] = useState('');
+  const [destReady, setDestReady] = useState(false);
+  const [destError, setDestError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -343,6 +373,104 @@ export default function StudentHubSession() {
     });
   }, [session, searchOpen, query, matches]);
 
+  /* ---------------- Where it gets filed ---------------- */
+
+  // The matter the hub would pick on its own — named for the chapter, or the
+  // catch-all for a reading that arrived loose.
+  const defaultMatterName = session?.chapter || 'Loose readings';
+
+  // Opening the export panel resolves an opening choice once: the last
+  // destination used on this machine if it is still there, otherwise the
+  // hub's own default (Academic — Contracts → the chapter).
+  useEffect(() => {
+    if (!exportOpen || destReady || !session) return;
+    let stale = false;
+    const fallbackName = session.chapter || 'Loose readings';
+    (async () => {
+      try {
+        const list = await listExportServerspaces();
+        if (stale) return;
+        setSpaces(list);
+
+        const settle = async (space: NamedRow, wantedMatterId?: string, wantedName?: string) => {
+          const ms = await listExportMatters(space.id);
+          if (stale) return;
+          setMatters(ms);
+          setSpaceId(space.id);
+          const found = ms.find((m) => m.id === wantedMatterId)
+            ?? (wantedName ? ms.find((m) => m.name === wantedName) : undefined);
+          if (found) {
+            setMatterId(found.id);
+          } else {
+            setMatterId(NEW_MATTER);
+            setNewMatterName(wantedName || fallbackName);
+          }
+          setDestReady(true);
+        };
+
+        const remembered = readRememberedDestination();
+        const lastUsed = remembered && list.find((s) => s.id === remembered.serverspaceId);
+        if (lastUsed) {
+          await settle(lastUsed, remembered.matterspaceId, remembered.newName || fallbackName);
+          return;
+        }
+
+        const academic = list.find((s) => s.name === DEFAULT_SERVERSPACE_NAME);
+        if (academic) {
+          await settle(academic, undefined, fallbackName);
+          return;
+        }
+
+        // Neither on record nor on file: the hub makes both, as it always has.
+        setSpaceId(DEFAULT_SPACE);
+        setMatters(null);
+        setMatterId('');
+        setNewMatterName(fallbackName);
+        setDestReady(true);
+      } catch (e) {
+        if (!stale) setDestError(e instanceof Error ? e.message : 'Your spaces could not be listed.');
+      }
+    })();
+    return () => { stale = true; };
+  }, [exportOpen, destReady, session]);
+
+  const chooseSpace = useCallback((id: string) => {
+    setDestError('');
+    setSpaceId(id);
+    setMatters(null);
+    setMatterId('');
+    if (!id || id === DEFAULT_SPACE) return;
+    listExportMatters(id)
+      .then((ms) => {
+        setMatters(ms);
+        setMatterId(ms.length ? ms[0].id : NEW_MATTER);
+      })
+      .catch((e) => setDestError(e instanceof Error ? e.message : 'Those matters could not be listed.'));
+  }, []);
+
+  const destination: ExportDestination | null = (() => {
+    if (spaceId === DEFAULT_SPACE) return { kind: 'default' };
+    if (!spaceId) return null;
+    if (matterId === NEW_MATTER) {
+      const name = newMatterName.trim();
+      return name ? { kind: 'new', serverspaceId: spaceId, matterName: name } : null;
+    }
+    return matterId ? { kind: 'existing', serverspaceId: spaceId, matterspaceId: matterId } : null;
+  })();
+
+  // The hub's own space is offered only while the student doesn't have one —
+  // and stays on offer, so a wrong turn in the select is recoverable.
+  const offerDefaultSpace = spaces !== null && !spaces.some((s) => s.name === DEFAULT_SERVERSPACE_NAME);
+
+  const destSpaceName = spaceId === DEFAULT_SPACE
+    ? DEFAULT_SERVERSPACE_NAME
+    : spaces?.find((s) => s.id === spaceId)?.name ?? '…';
+  const destMatterName = spaceId === DEFAULT_SPACE
+    ? defaultMatterName
+    : matterId === NEW_MATTER
+      ? newMatterName.trim() || defaultMatterName
+      : matters?.find((m) => m.id === matterId)?.name ?? '';
+
   /* ---------------- Removal ---------------- */
 
   const removeReading = useCallback(async () => {
@@ -351,7 +479,7 @@ export default function StudentHubSession() {
     setError('');
     try {
       await deleteSession(session.id);
-      navigate(session.text_id ? `/app/student-hub?text=${session.text_id}` : '/app/student-hub/shelf');
+      navigate(session.text_id ? `/app/student-hub/texts?text=${session.text_id}` : '/app/student-hub/shelf');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The reading could not be removed.');
       setDeleting(false);
@@ -420,12 +548,23 @@ export default function StudentHubSession() {
     );
   }
 
+  // Where this reading belongs: its text's table of contents, or the shelf
+  // if it came in loose.
+  const readingHome = session.text_id
+    ? `/app/student-hub/texts?text=${session.text_id}`
+    : '/app/student-hub/shelf';
+
   return (
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%', display: 'flex', flexDirection: 'column' }}>
       <HubStyles />
       <CaseCaption
-        backTo={`/app/student-hub${session.text_id ? `?text=${session.text_id}` : ''}`}
+        backTo={readingHome}
         kicker={`Contextspaces · Student Hub${session.source_label ? ` · ${session.source_label}` : ''}`}
+        crumbs={[
+          { label: 'Contextspaces', to: '/app' },
+          { label: 'Student Hub', to: '/app/student-hub' },
+          { label: session.source_label || 'Your text', to: readingHome },
+        ]}
         title={session.title}
         citation={session.citation || undefined}
       />
@@ -433,7 +572,7 @@ export default function StudentHubSession() {
       <nav style={{ borderBottom: `1px solid ${T.rule}`, position: 'sticky', top: 0, zIndex: 5, background: T.paper }}>
         <div style={{ maxWidth: 780, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 4, padding: '8px 16px', flexWrap: 'wrap' }}>
           <Link
-            to={`/app/student-hub${session.text_id ? `?text=${session.text_id}` : ''}`}
+            to={readingHome}
             style={{
               fontFamily: T.sans, fontSize: 12, fontWeight: 600, color: T.faint,
               textDecoration: 'none', padding: '10px 10px 10px 0', whiteSpace: 'nowrap',
@@ -487,24 +626,87 @@ export default function StudentHubSession() {
           }}>
             {!exportDone ? (
               <>
-                <p style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, lineHeight: 1.55, margin: '0 0 10px' }}>
-                  Files <em>{session.title}</em> into <strong>Academic — Contracts</strong>
-                  {session.chapter ? <> → {session.chapter}</> : null} as a regular Contextspaces
+                <p style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, lineHeight: 1.55, margin: '0 0 12px' }}>
+                  Files <em>{session.title}</em> into <strong>{destSpaceName}</strong>
+                  {destMatterName ? <> → {destMatterName}</> : null} as a regular Contextspaces
                   document — indexed and searchable, reachable from any LLM you&rsquo;ve connected
-                  over MCP. The space is private to you; the reading stays yours alone.
+                  over MCP. The space is private to you unless you have shared it; the reading
+                  stays yours alone.
                 </p>
+
+                {/* ---- Pick the destination ---- */}
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end', margin: '0 0 14px' }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={destLabel}>Space</span>
+                    <select
+                      value={spaceId}
+                      onChange={(e) => chooseSpace(e.target.value)}
+                      disabled={spaces === null}
+                      style={destField}
+                    >
+                      {!spaceId && <option value="">choosing…</option>}
+                      {offerDefaultSpace && (
+                        <option value={DEFAULT_SPACE}>{DEFAULT_SERVERSPACE_NAME} (new)</option>
+                      )}
+                      {(spaces ?? []).map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={destLabel}>Matter</span>
+                    {spaceId === DEFAULT_SPACE ? (
+                      <span style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, padding: '6px 0' }}>
+                        {defaultMatterName} <span style={{ color: T.faint, fontSize: 12 }}>(new)</span>
+                      </span>
+                    ) : (
+                      <select
+                        value={matterId}
+                        onChange={(e) => setMatterId(e.target.value)}
+                        disabled={!spaceId || matters === null}
+                        style={destField}
+                      >
+                        {(matters === null || !matterId) && <option value="">choosing…</option>}
+                        {(matters ?? []).map((m) => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                        {matters !== null && <option value={NEW_MATTER}>new matter…</option>}
+                      </select>
+                    )}
+                  </label>
+
+                  {spaceId !== DEFAULT_SPACE && matterId === NEW_MATTER && (
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <span style={destLabel}>Its name</span>
+                      <input
+                        value={newMatterName}
+                        onChange={(e) => setNewMatterName(e.target.value)}
+                        placeholder="Name the new matter"
+                        style={{ ...destField, fontFamily: T.serif, fontSize: 14 }}
+                      />
+                    </label>
+                  )}
+                </div>
+                {destError && <ErrorNote>{destError}</ErrorNote>}
+
                 <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontFamily: T.sans, fontSize: 12.5, color: T.ink }}>
                   <input type="checkbox" checked={includeNotes} onChange={(e) => setIncludeNotes(e.target.checked)} />
                   include my brief, outline, notes &amp; cold-call transcript as a companion document
                 </label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12, flexWrap: 'wrap' }}>
                   <GreenButton
-                    disabled={exporting}
+                    disabled={exporting || !destination}
                     onClick={() => {
+                      if (!destination) return;
                       setExporting(true);
                       setError('');
-                      exportReading(session, session.chapter || 'Loose readings', { includeStudyNotes: includeNotes }, setExportNote)
-                        .then(setExportDone)
+                      exportReading(session, defaultMatterName, destination, { includeStudyNotes: includeNotes }, setExportNote)
+                        .then((r) => {
+                          setExportDone(r);
+                          // Next time, the hub opens where the student left off.
+                          rememberDestination({ serverspaceId: r.serverspaceId, matterspaceId: r.matterId });
+                        })
                         .catch((e) => setError(e instanceof Error ? e.message : 'The export failed.'))
                         .finally(() => setExporting(false));
                     }}
@@ -545,13 +747,20 @@ export default function StudentHubSession() {
                   </p>
                 )}
                 {pageUrls && (
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, paddingBottom: 8 }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, paddingBottom: 8, flexWrap: 'wrap' }}>
                     <QuietControl
                       onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setQuery(''); }}
                       style={searchOpen ? { background: T.brass, color: T.paper, borderColor: T.brass } : undefined}
                       title="Find a word or phrase in the reading"
                     >
                       ⌕ find
+                    </QuietControl>
+                    <QuietControl
+                      onClick={() => setAskSeed(Date.now())}
+                      style={{ color: T.green, borderColor: T.green }}
+                      title="Opens the study panel on its assistant, which has read this reading"
+                    >
+                      ask your assistant
                     </QuietControl>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <QuietControl onClick={() => changeZoom(-0.25)} disabled={zoom <= 1} aria-label="Smaller pages">A−</QuietControl>
@@ -622,13 +831,20 @@ export default function StudentHubSession() {
               </>
             ) : (
               <>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, paddingBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, paddingBottom: 8, flexWrap: 'wrap' }}>
                   <QuietControl
                     onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setQuery(''); }}
                     style={searchOpen ? { background: T.brass, color: T.paper, borderColor: T.brass, marginRight: 6 } : { marginRight: 6 }}
                     title="Find a word or phrase in the reading"
                   >
                     ⌕ find
+                  </QuietControl>
+                  <QuietControl
+                    onClick={() => setAskSeed(Date.now())}
+                    style={{ color: T.green, borderColor: T.green, marginRight: 6 }}
+                    title="Opens the study panel on its assistant, which has read this reading"
+                  >
+                    ask your assistant
                   </QuietControl>
                   <QuietControl onClick={() => changeZoom(-0.25)} disabled={zoom <= 1} aria-label="Smaller text">A−</QuietControl>
                   <span style={{ fontFamily: T.mono, fontSize: 11, color: T.faint, minWidth: 38, textAlign: 'center' }}>
@@ -937,6 +1153,8 @@ export default function StudentHubSession() {
         session={session}
         seed={groupSeed}
         onSeedConsumed={() => setGroupSeed(null)}
+        askSeed={askSeed}
+        onAskSeedConsumed={() => setAskSeed(null)}
       />
     </div>
   );

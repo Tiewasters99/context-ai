@@ -14,9 +14,10 @@ import { supabase } from '@/lib/supabase';
 import { T } from './theme';
 
 // The study panel — floating at mid-page right, draggable by its ribbon,
-// resizable from the corner. Two tabs: THE AIDE (direct answers grounded
-// in the reading, private) and YOUR GROUP (live chat with up to five
-// classmates over this text, passage-anchored questions, group video).
+// resizable from the corner. Two tabs: ASSISTANT (direct answers grounded
+// in the reading, private — the same assistant the shelf floats, standing
+// closer to the text) and YOUR GROUP (chat with up to five classmates over
+// this text, passage-anchored questions, group video).
 
 export interface GroupSeed {
   content: string;
@@ -49,17 +50,20 @@ function PanelTab({ active, children, onClick }: {
   );
 }
 
-export function StudyPanel({ session, seed, onSeedConsumed }: {
+export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedConsumed }: {
   session: StudySession;
   seed: GroupSeed | null;
   onSeedConsumed: () => void;
+  /** A nonce from outside — the reading's own "ask your assistant" control. */
+  askSeed?: number | null;
+  onAskSeedConsumed?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'aide' | 'group'>('aide');
   const [drag, setDrag] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
 
-  /* ---------------- aide ---------------- */
+  /* ---------------- assistant ---------------- */
   const [aideMsgs, setAideMsgs] = useState<StudyMessage[] | null>(null);
   const [aideLive, setAideLive] = useState('');
   const [aideBusy, setAideBusy] = useState(false);
@@ -90,16 +94,24 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
     onSeedConsumed();
   }, [seed, onSeedConsumed]);
 
+  /* The reading's toolbar asks for the assistant. */
+  useEffect(() => {
+    if (askSeed == null) return;
+    setOpen(true);
+    setTab('aide');
+    onAskSeedConsumed?.();
+  }, [askSeed, onAskSeedConsumed]);
+
   useEffect(() => {
     void supabase.auth.getUser().then(({ data }) => setMyEmail(data.user?.email ?? ''));
   }, []);
 
-  /* Load the aide thread once opened. */
+  /* Load the assistant thread once opened. */
   useEffect(() => {
     if (!open || tab !== 'aide' || aideMsgs !== null) return;
     listMessages(session.id, 'ask')
       .then(setAideMsgs)
-      .catch((e) => setErr(e instanceof Error ? e.message : 'Could not open the aide.'));
+      .catch((e) => setErr(e instanceof Error ? e.message : 'Could not open the assistant.'));
   }, [open, tab, aideMsgs, session.id]);
 
   /* Load the group once opened; subscribe while ready. */
@@ -269,7 +281,7 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
     );
     return (
       <>
-        {edgeTab('30%', 'The aide', 'aide')}
+        {edgeTab('30%', 'Assistant', 'aide')}
         {edgeTab('56%', 'Group', 'group')}
       </>
     );
@@ -320,24 +332,29 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
       </div>
 
       <div style={{ display: 'flex', flexShrink: 0, background: T.greenDark }}>
-        <PanelTab active={tab === 'aide'} onClick={() => setTab('aide')}>The aide</PanelTab>
+        <PanelTab active={tab === 'aide'} onClick={() => setTab('aide')}>Assistant</PanelTab>
         <PanelTab active={tab === 'group'} onClick={() => setTab('group')}>Your group</PanelTab>
       </div>
 
-      {/* ---------------- aide tab ---------------- */}
+      {/* ---------------- assistant tab ---------------- */}
       {tab === 'aide' && (
         <>
           <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
             {(aideMsgs ?? []).length === 0 && !aideBusy && (
               <p style={{ fontFamily: T.serif, fontSize: 13.5, color: T.faint, lineHeight: 1.55 }}>
-                Ask anything, plainly answered: &ldquo;What is an action in assumpsit?&rdquo;
-                &ldquo;What does a nonsuit correspond to today?&rdquo; The aide has read this assignment.
+                The assistant has read this reading, and it is limited mostly by your
+                imagination. Try: AP study questions on tonight&rsquo;s reading &middot; SAT
+                vocabulary lists and a prep session &middot; an interactive book report &middot;
+                a multimedia class presentation &middot; &ldquo;What does a nonsuit correspond
+                to today?&rdquo; And soon: build your own Miniverse&trade; from what you&rsquo;re
+                reading &mdash; a Fitzgerald Riviera to walk through with your study group.
+                <span style={{ color: T.brass }}> (coming)</span>
               </p>
             )}
             {(aideMsgs ?? []).map((m) => (
               <div key={m.id} style={{ margin: '10px 0' }}>
                 <div style={{ ...label, color: m.role === 'professor' ? T.green : T.faint }}>
-                  {m.role === 'professor' ? 'THE AIDE:' : 'YOU:'}
+                  {m.role === 'professor' ? 'THE ASSISTANT:' : 'YOU:'}
                 </div>
                 <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
                   {m.content}
@@ -346,7 +363,7 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
             ))}
             {aideBusy && (
               <div style={{ margin: '10px 0' }}>
-                <div style={{ ...label, color: T.green }}>THE AIDE:</div>
+                <div style={{ ...label, color: T.green }}>THE ASSISTANT:</div>
                 <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
                   {aideLive || <span style={{ color: T.faint, fontStyle: 'italic' }}>…</span>}
                 </div>
@@ -360,7 +377,7 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
               onChange={(e) => setAideInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void askAide(); } }}
               rows={1}
-              placeholder="Ask the aide…"
+              placeholder="Ask your assistant…"
               style={{
                 flex: 1, resize: 'none', fontFamily: T.serif, fontSize: 14, lineHeight: 1.5,
                 padding: '8px 10px', border: `1px solid ${T.rule}`, borderRadius: 2,

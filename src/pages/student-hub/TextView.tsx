@@ -16,6 +16,12 @@ import StudentHubHome from './StudentHubHome';
 
 type Drawer = 'readings' | 'outlines' | 'briefs' | 'coldcalls';
 
+// The caption words are walkable: same brass, same tracking, no underline —
+// they simply happen to be links now.
+const crumbLink: React.CSSProperties = {
+  color: 'inherit', textDecoration: 'none', font: 'inherit', letterSpacing: 'inherit',
+};
+
 const DRAWER_TAB: Record<Drawer, string> = {
   readings: '',
   outlines: '?tab=outline',
@@ -182,7 +188,8 @@ export default function TextView() {
                 ←
               </button>
             )}
-            Contextspaces · Student Hub ·{' '}
+            <Link to="/app" style={crumbLink}>Contextspaces</Link> ·{' '}
+            <Link to="/app/student-hub" style={crumbLink}>Student Hub</Link> ·{' '}
             <button
               type="button"
               onClick={() => setPicker((v) => !v)}

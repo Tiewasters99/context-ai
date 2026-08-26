@@ -74,7 +74,7 @@ export default function AddChapter() {
     setPhase('seeding');
     try {
       const textId = await seedChapter(plan, onProgress);
-      navigate(`/app/student-hub?text=${textId}`);
+      navigate(`/app/student-hub/texts?text=${textId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The chapter could not be shelved.');
       setPhase('review');
@@ -94,8 +94,13 @@ export default function AddChapter() {
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%' }}>
       <HubStyles />
       <CaseCaption
-        backTo="/app/student-hub"
+        backTo="/app/student-hub/texts"
         kicker="Contextspaces · Student Hub · New chapter"
+        crumbs={[
+          { label: 'Contextspaces', to: '/app' },
+          { label: 'Student Hub', to: '/app/student-hub' },
+          { label: 'New chapter' },
+        ]}
         title="Add a chapter"
         citation="From your own scanned casebook to its place on the shelf."
       />
