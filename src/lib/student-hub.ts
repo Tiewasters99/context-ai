@@ -211,8 +211,65 @@ export async function updateSession(
   if (error) throw new Error(error.message);
 }
 
+const prefixOf = (path: string) => path.slice(0, path.lastIndexOf('/'));
+
+/** Remove every stored object under one scan folder — the page images and
+ *  the ocr/ sidecar transcriptions. Deleting a reading must take the copy
+ *  out of the account, not just off the shelf. */
+async function removeScanFolder(prefix: string): Promise<void> {
+  const paths: string[] = [];
+  for (const folder of [prefix, `${prefix}/ocr`]) {
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase.storage
+        .from(SCAN_BUCKET)
+        .list(folder, { limit: 1000, offset });
+      if (error || !data?.length) break;
+      for (const entry of data) if (entry.id) paths.push(`${folder}/${entry.name}`);
+      if (data.length < 1000) break;
+    }
+  }
+  for (let i = 0; i < paths.length; i += 100) {
+    const { error } = await supabase.storage.from(SCAN_BUCKET).remove(paths.slice(i, i + 100));
+    if (error) throw new Error(error.message);
+  }
+}
+
+/** Scan folders the readings being deleted point into, minus any folder some
+ *  OTHER reading still uses (chapter items share their chapter's folder). */
+async function orphanedPrefixes(deleting: Pick<StudySession, 'id' | 'pages'>[]): Promise<string[]> {
+  const mine = new Set<string>();
+  for (const s of deleting) for (const p of s.pages ?? []) mine.add(prefixOf(p));
+  if (!mine.size) return [];
+  const ids = new Set(deleting.map((s) => s.id));
+  const { data, error } = await supabase
+    .from('student_hub_sessions')
+    .select('id,pages')
+    .not('pages', 'is', null);
+  if (error) throw new Error(error.message);
+  for (const row of (data ?? []) as Pick<StudySession, 'id' | 'pages'>[]) {
+    if (ids.has(row.id)) continue;
+    for (const p of row.pages ?? []) mine.delete(prefixOf(p));
+  }
+  return [...mine];
+}
+
+/** Delete a reading — its row, its transcripts (FK cascade), and its stored
+ *  scan pages when no other reading shares them. */
 export async function deleteSession(id: string): Promise<void> {
+  const session = await getSession(id);
+  if (session) {
+    for (const prefix of await orphanedPrefixes([session])) await removeScanFolder(prefix);
+  }
   const { error } = await supabase.from('student_hub_sessions').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+/** Delete a whole text: every reading under it, their transcripts and study
+ *  groups (FK cascade), and the stored scan folders they leave behind. */
+export async function deleteText(id: string): Promise<void> {
+  const readings = await listReadings(id);
+  for (const prefix of await orphanedPrefixes(readings)) await removeScanFolder(prefix);
+  const { error } = await supabase.from('student_hub_texts').delete().eq('id', id);
   if (error) throw new Error(error.message);
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  listTexts, listReadings, sessionsWithTranscripts, updateSession, generateOutline,
+  listTexts, listReadings, sessionsWithTranscripts, updateSession, generateOutline, deleteText,
   type StudyText, type StudySession, type OutlineAnnotations,
 } from '@/lib/student-hub';
 import { T } from '@/components/student-hub/theme';
@@ -40,6 +40,27 @@ export default function TextView() {
   const [picker, setPicker] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [outlining, setOutlining] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  useEffect(() => { setConfirmDelete(false); }, [textId]);
+
+  const removeText = async () => {
+    if (!textId || deleting) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await deleteText(textId);
+      setTexts((prev) => prev?.filter((t) => t.id !== textId) ?? prev);
+      setReadings([]);
+      setSearchParams({});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The text could not be removed.');
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(false);
+    }
+  };
 
   useEffect(() => {
     listTexts()
@@ -175,15 +196,31 @@ export default function TextView() {
             </button>
           </div>
           {selected && !picker && (
-            <div style={{ marginTop: 6 }}>
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
               <span style={{ fontFamily: T.serif, fontSize: 16, fontStyle: 'italic', color: T.paper }}>
                 {selected.title}
               </span>
               {readings.length > 0 && (
-                <span style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)', marginLeft: 10 }}>
+                <span style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)' }}>
                   {sectionCount} section{sectionCount === 1 ? '' : 's'} · {readings.length} reading{readings.length === 1 ? '' : 's'}
                 </span>
               )}
+              <span style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={() => (confirmDelete ? void removeText() : setConfirmDelete(true))}
+                disabled={deleting}
+                title="Deletes this text, all its readings and transcripts, and its stored scan pages — for good"
+                style={{
+                  appearance: 'none', cursor: 'pointer', fontFamily: T.sans, fontSize: 11,
+                  padding: '3px 10px', borderRadius: 2,
+                  border: `1px solid ${confirmDelete ? T.oxblood : 'rgba(250,248,242,0.4)'}`,
+                  background: confirmDelete ? T.oxblood : 'transparent',
+                  color: confirmDelete ? T.paper : 'rgba(250,248,242,0.75)',
+                }}
+              >
+                {deleting ? 'removing…' : confirmDelete ? 'remove this text and everything under it?' : 'remove'}
+              </button>
             </div>
           )}
         </div>
