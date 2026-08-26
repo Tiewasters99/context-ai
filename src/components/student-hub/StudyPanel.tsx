@@ -21,7 +21,7 @@ import { T } from './theme';
 // closer to the text) and YOUR GROUP (chat over this text, passage-anchored
 // questions, group video).
 //
-// A group seats five people counting whoever formed it, and that person is
+// A group seats six people — whoever formed it and five invitees — and that person is
 // its whole administration: they add an address, the invitation goes out,
 // and they can take the seat back. The roster below spells that out rather
 // than leaving it to be discovered.
@@ -553,7 +553,7 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
               <input
                 value={newEmails}
                 onChange={(e) => setNewEmails(e.target.value)}
-                placeholder="Classmates' emails, comma-separated (up to 4)"
+                placeholder="Classmates' emails, comma-separated (up to 5)"
                 style={{
                   width: '100%', boxSizing: 'border-box', margin: '0 0 10px', padding: '8px 10px',
                   border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
@@ -648,8 +648,8 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                     lineHeight: 1.45, margin: '0 0 8px',
                   }}>
                     {isOwner
-                      ? 'You admit and remove people here — no site admin involved. Five seats, yours included.'
-                      : `${ownerEmail || 'The person who formed this group'} admits and removes people here — five seats, theirs included.`}
+                      ? 'You admit and remove people here — no site admin involved. Six seats, yours included.'
+                      : `${ownerEmail || 'The person who formed this group'} admits and removes people here — six seats, theirs included.`}
                   </p>
 
                   {members.map((m) => {
@@ -705,7 +705,7 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                   {isOwner && (seatsOpen > 0 ? (
                     <div style={{ marginTop: 10 }}>
                       <div style={{ ...label, color: T.faint, textTransform: 'uppercase' }}>
-                        Add up to four people by email address
+                        Add up to five people by email address
                       </div>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <input

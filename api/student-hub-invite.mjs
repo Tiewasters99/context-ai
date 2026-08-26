@@ -1,7 +1,7 @@
 // POST /api/student-hub-invite  { groupId, email }
 //
-// Sends one study-group invitation. A Student Hub group holds five people
-// counting the person who formed it (migration 041; GROUP_CAP in
+// Sends one study-group invitation. A Student Hub group holds six people —
+// the person who formed it and five invitees (GROUP_CAP in
 // src/lib/student-hub-groups.ts), and that person admits and removes the
 // others — no site administrator sits in the middle. The seat row itself is
 // written client-side under RLS before this call; all this endpoint does is
@@ -156,9 +156,9 @@ export function invitation({ inviter, groupName, textTitle, email }) {
   const subject = `${inviter} invited you to ${groupName} on Contextspaces`;
 
   const text = [
-    `${inviter} has given you one of the five seats in ${groupName}, a study group${on} in the Contextspaces Student Hub.`,
+    `${inviter} has given you a seat in ${groupName}, a study group${on} in the Contextspaces Student Hub.`,
     '',
-    `A group holds five people, and one of those seats is yours. To take it, create a Contextspaces account with this address — ${email} — and the seat is waiting for you the moment you sign in.`,
+    `A group holds six people, and one of those seats is yours. To take it, create a Contextspaces account with this address — ${email} — and the seat is waiting for you the moment you sign in.`,
     '',
     HUB_URL,
     '',
@@ -166,9 +166,9 @@ export function invitation({ inviter, groupName, textTitle, email }) {
   ].join('\n');
 
   const html = `<div style="font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:1.6;color:#1C1B17;max-width:520px">
-  <p style="margin:0 0 14px"><strong>${esc(inviter)}</strong> has given you one of the five seats in
+  <p style="margin:0 0 14px"><strong>${esc(inviter)}</strong> has given you a seat in
     <strong>${esc(groupName)}</strong>, a study group${on ? ` on ${esc(textTitle)}` : ''} in the Contextspaces Student Hub.</p>
-  <p style="margin:0 0 14px">A group holds five people, and one of those seats is yours. To take it, create a
+  <p style="margin:0 0 14px">A group holds six people, and one of those seats is yours. To take it, create a
     Contextspaces account with this address &mdash; <span style="font-family:Consolas,monospace;font-size:13px">${esc(email)}</span>
     &mdash; and the seat is waiting for you the moment you sign in.</p>
   <p style="margin:0 0 18px"><a href="${HUB_URL}" style="color:#1F4D3A">${HUB_URL}</a></p>
