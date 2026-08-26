@@ -98,6 +98,60 @@ export async function listMembers(groupId: string): Promise<GroupMember[]> {
   return (data ?? []) as GroupMember[];
 }
 
+/** Give one more address a seat. Only the person who formed the group may
+ *  do this — RLS (041, shg_members_insert) checks created_by itself; the cap
+ *  is the app's to keep, as it is at creation. */
+export async function addMember(groupId: string, email: string): Promise<GroupMember> {
+  const addr = email.trim().toLowerCase();
+  if (!addr) throw new Error('An email address is needed.');
+  const held = await listMembers(groupId);
+  if (held.some((m) => m.email.toLowerCase() === addr)) {
+    throw new Error('That address already holds a seat here.');
+  }
+  if (held.length >= GROUP_CAP) {
+    throw new Error(`Every seat is taken — a group holds ${GROUP_CAP}, yours included.`);
+  }
+  const { data, error } = await supabase
+    .from('student_hub_group_members')
+    .insert({ group_id: groupId, email: addr, user_id: null, attested_at: null })
+    .select('*')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as GroupMember;
+}
+
+/** Take a seat back. RLS (041, shg_members_delete) allows the group's
+ *  creator to delete any row in it, so this needs no privileged endpoint. */
+export async function removeMember(groupId: string, email: string): Promise<void> {
+  const { error } = await supabase
+    .from('student_hub_group_members')
+    .delete()
+    .eq('group_id', groupId)
+    .ilike('email', email.trim());
+  if (error) throw new Error(error.message);
+}
+
+export type InviteOutcome = 'sent' | 'email_not_configured';
+
+/** Mail the invitation for a seat that already exists. Returns
+ *  'email_not_configured' when the mailer has no key yet — the seat stands
+ *  either way, and the panel says as much. Anything else throws. */
+export async function sendInvitation(groupId: string, email: string): Promise<InviteOutcome> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error('Not signed in');
+  const res = await fetch('/api/student-hub-invite', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ groupId, email: email.trim().toLowerCase() }),
+  });
+  if (res.ok) return 'sent';
+  let body: { error?: string; detail?: string } = {};
+  try { body = (await res.json()) as typeof body; } catch { /* not JSON */ }
+  if (res.status === 501 || body.error === 'email_not_configured') return 'email_not_configured';
+  throw new Error(body.detail || body.error || `The invitation could not be sent (${res.status}).`);
+}
+
 /** An invited member claims their row and affirms the attestation. */
 export async function claimAndAttest(groupId: string): Promise<void> {
   const { data: userData } = await supabase.auth.getUser();

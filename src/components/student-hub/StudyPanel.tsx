@@ -6,18 +6,25 @@ import {
 } from '@/lib/student-hub';
 import {
   getGroupForText, createGroup, listMembers, claimAndAttest,
+  addMember, removeMember, sendInvitation,
   listGroupMessages, sendGroupMessage, subscribeGroupMessages, videoRoomUrl,
   ATTESTATION, GROUP_CAP,
   type StudyGroup, type GroupMember, type GroupMessage, type GroupAnchor,
 } from '@/lib/student-hub-groups';
 import { supabase } from '@/lib/supabase';
+import { QuietControl } from './ui';
 import { T } from './theme';
 
 // The study panel — floating at mid-page right, draggable by its ribbon,
 // resizable from the corner. Two tabs: ASSISTANT (direct answers grounded
 // in the reading, private — the same assistant the shelf floats, standing
-// closer to the text) and YOUR GROUP (chat with up to five classmates over
-// this text, passage-anchored questions, group video).
+// closer to the text) and YOUR GROUP (chat over this text, passage-anchored
+// questions, group video).
+//
+// A group seats five people counting whoever formed it, and that person is
+// its whole administration: they add an address, the invitation goes out,
+// and they can take the seat back. The roster below spells that out rather
+// than leaving it to be discovered.
 
 export interface GroupSeed {
   content: string;
@@ -27,6 +34,17 @@ export interface GroupSeed {
 
 const label: React.CSSProperties = {
   fontFamily: T.mono, fontSize: 10, letterSpacing: '0.08em', marginBottom: 3,
+};
+
+/** What happened to an invitation while this panel has been open. */
+type InviteNote = 'sending' | 'sent' | 'email_not_configured' | 'error';
+
+const INVITE_NOTE: Record<InviteNote, string> = {
+  sending: 'sending the invitation…',
+  sent: 'invitation sent',
+  email_not_configured:
+    'Email sending isn’t set up yet — ask them to create a Contextspaces account with this address and their seat will be waiting.',
+  error: 'the invitation didn’t go out — the seat is still theirs',
 };
 
 function PanelTab({ active, children, onClick }: {
@@ -75,15 +93,34 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
   const [gMsgs, setGMsgs] = useState<GroupMessage[]>([]);
   const [gInput, setGInput] = useState('');
   const [myEmail, setMyEmail] = useState('');
+  const [myUid, setMyUid] = useState('');
   const [newName, setNewName] = useState('Study group');
   const [newEmails, setNewEmails] = useState('');
   const [attestChecked, setAttestChecked] = useState(false);
   const [creating, setCreating] = useState(false);
 
+  /* ---------------- the roster (seats) ---------------- */
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [adding, setAdding] = useState(false);
+  /* What became of each invitation this sitting. Nothing in the schema
+     records it, so a reload leaves a row showing only claimed/unclaimed. */
+  const [inviteState, setInviteState] = useState<Record<string, InviteNote>>({});
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const rosterShown = useRef(false);
+
   const [err, setErr] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const seenIds = useRef<Set<string>>(new Set());
+  const errTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* Trouble adding someone clears itself; the row keeps the outcome. */
+  const flashErr = useCallback((message: string) => {
+    setErr(message);
+    if (errTimer.current) clearTimeout(errTimer.current);
+    errTimer.current = setTimeout(() => setErr(''), 6000);
+  }, []);
 
   /* A passage question arrives from the annotation card. */
   useEffect(() => {
@@ -103,7 +140,10 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
   }, [askSeed, onAskSeedConsumed]);
 
   useEffect(() => {
-    void supabase.auth.getUser().then(({ data }) => setMyEmail(data.user?.email ?? ''));
+    void supabase.auth.getUser().then(({ data }) => {
+      setMyEmail(data.user?.email ?? '');
+      setMyUid(data.user?.id ?? '');
+    });
   }, []);
 
   /* Load the assistant thread once opened. */
@@ -146,7 +186,19 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [aideMsgs, aideLive, gMsgs, tab]);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (errTimer.current) clearTimeout(errTimer.current);
+  }, []);
+
+  /* A group with an empty seat opens its roster once, for its owner: the
+     first thing they should see is that filling it is theirs to do. */
+  useEffect(() => {
+    if (rosterShown.current || group === 'loading' || !group || !myUid) return;
+    if (group.created_by !== myUid || !members.length) return;
+    rosterShown.current = true;
+    if (members.length < GROUP_CAP) setRosterOpen(true);
+  }, [group, members, myUid]);
 
   /* ---------------- actions ---------------- */
 
@@ -203,7 +255,21 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
     try {
       const g = await createGroup(session.text_id, newName.trim() || 'Study group', newEmails.split(','));
       setGroup(g);
-      setMembers(await listMembers(g.id));
+      const seated = await listMembers(g.id);
+      setMembers(seated);
+      setRosterOpen(true);
+      rosterShown.current = true;
+      // Everyone named on the form is invited straight away — same mail, same
+      // graceful failure, as when a seat is handed out one at a time.
+      for (const m of seated.filter((s) => !s.user_id)) {
+        setInviteState((prev) => ({ ...prev, [m.email.toLowerCase()]: 'sending' }));
+        try {
+          const outcome = await sendInvitation(g.id, m.email);
+          setInviteState((prev) => ({ ...prev, [m.email.toLowerCase()]: outcome }));
+        } catch {
+          setInviteState((prev) => ({ ...prev, [m.email.toLowerCase()]: 'error' }));
+        }
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'The group could not be created.');
     } finally {
@@ -220,6 +286,54 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
       setErr(e instanceof Error ? e.message : 'The attestation could not be recorded.');
     }
   }, [group]);
+
+  /* Admit one person: the seat is written first and kept whatever the
+     mailer does, because the seat is the thing that matters — anyone who
+     creates an account with that address finds it waiting. */
+  const admit = useCallback(async () => {
+    if (group === 'loading' || !group || adding) return;
+    const addr = inviteEmail.trim().toLowerCase();
+    if (!addr) return;
+    setAdding(true);
+    setErr('');
+    try {
+      await addMember(group.id, addr);
+    } catch (e) {
+      setAdding(false);
+      flashErr(e instanceof Error ? e.message : 'That seat could not be given.');
+      return;
+    }
+    setInviteEmail('');
+    setInviteState((prev) => ({ ...prev, [addr]: 'sending' }));
+    try {
+      setMembers(await listMembers(group.id));
+    } catch { /* the insert stood; the list refreshes on the next open */ }
+    try {
+      const outcome = await sendInvitation(group.id, addr);
+      setInviteState((prev) => ({ ...prev, [addr]: outcome }));
+    } catch (e) {
+      setInviteState((prev) => ({ ...prev, [addr]: 'error' }));
+      flashErr(e instanceof Error ? e.message : 'The invitation could not be sent.');
+    } finally {
+      setAdding(false);
+    }
+  }, [group, adding, inviteEmail, flashErr]);
+
+  const evict = useCallback(async (email: string) => {
+    if (group === 'loading' || !group) return;
+    setConfirmRemove(null);
+    try {
+      await removeMember(group.id, email);
+      setMembers(await listMembers(group.id));
+      setInviteState((prev) => {
+        const next = { ...prev };
+        delete next[email.toLowerCase()];
+        return next;
+      });
+    } catch (e) {
+      flashErr(e instanceof Error ? e.message : 'That seat could not be taken back.');
+    }
+  }, [group, flashErr]);
 
   const sendToGroup = useCallback(async (content: string, anchor?: GroupAnchor) => {
     if (group === 'loading' || !group || !content.trim()) return;
@@ -289,6 +403,13 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
 
   const myRow = members.find((m) => m.email.toLowerCase() === myEmail.toLowerCase());
   const needsAttest = group !== 'loading' && group && myRow && !myRow.attested_at;
+  const theGroup = group === 'loading' ? null : group;
+  // Whoever formed the group is its whole administration.
+  const isOwner = !!theGroup && !!myUid && theGroup.created_by === myUid;
+  const ownerEmail = theGroup
+    ? members.find((m) => m.user_id === theGroup.created_by)?.email ?? ''
+    : '';
+  const seatsOpen = Math.max(0, GROUP_CAP - members.length);
 
   return (
     <div
@@ -493,6 +614,14 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                 <span style={{ fontFamily: T.sans, fontSize: 11, color: T.faint, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {group.name} · {members.map((m) => m.email.split('@')[0]).join(', ')}
                 </span>
+                <QuietControl
+                  onClick={() => setRosterOpen((v) => !v)}
+                  aria-expanded={rosterOpen}
+                  title={isOwner ? 'Who holds a seat — and add or remove people' : 'Who holds a seat'}
+                  style={{ flexShrink: 0, color: rosterOpen ? T.green : T.faint }}
+                >
+                  seats {members.length}/{GROUP_CAP}
+                </QuietControl>
                 <button
                   type="button"
                   onClick={() => void startVideo()}
@@ -507,6 +636,119 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                   ▶ group video
                 </button>
               </div>
+
+              {/* ---- the roster: who holds a seat, and who hands them out ---- */}
+              {rosterOpen && (
+                <div style={{
+                  borderBottom: `1px solid ${T.rule}`, background: '#FFFFFF',
+                  padding: '9px 12px 11px', flexShrink: 0, maxHeight: 250, overflowY: 'auto',
+                }}>
+                  <p style={{
+                    fontFamily: T.sans, fontSize: 11.5, color: T.faint,
+                    lineHeight: 1.45, margin: '0 0 8px',
+                  }}>
+                    {isOwner
+                      ? 'You admit and remove people here — no site admin involved. Five seats, yours included.'
+                      : `${ownerEmail || 'The person who formed this group'} admits and removes people here — five seats, theirs included.`}
+                  </p>
+
+                  {members.map((m) => {
+                    const note = inviteState[m.email.toLowerCase()];
+                    const mine = m.user_id === group.created_by;
+                    return (
+                      <div key={m.email} style={{ margin: '0 0 5px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{
+                            fontFamily: T.mono, fontSize: 11.5, color: T.ink, flex: 1,
+                            minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {m.email}
+                          </span>
+                          <span style={{
+                            fontFamily: T.sans, fontSize: 10, letterSpacing: '0.06em',
+                            textTransform: 'uppercase', flexShrink: 0,
+                            color: m.user_id ? T.green : T.brass,
+                          }}>
+                            {mine ? 'formed the group' : m.user_id ? 'seat claimed' : 'seat unclaimed'}
+                          </span>
+                          {isOwner && !mine && (
+                            confirmRemove === m.email ? (
+                              <QuietControl
+                                onClick={() => void evict(m.email)}
+                                style={{ flexShrink: 0, color: T.paper, background: T.oxblood, borderColor: T.oxblood }}
+                              >
+                                remove?
+                              </QuietControl>
+                            ) : (
+                              <QuietControl
+                                onClick={() => setConfirmRemove(m.email)}
+                                aria-label={`Take back ${m.email}'s seat`}
+                                style={{ flexShrink: 0 }}
+                              >
+                                ×
+                              </QuietControl>
+                            )
+                          )}
+                        </div>
+                        {note && (
+                          <div style={{
+                            fontFamily: T.sans, fontSize: 11, lineHeight: 1.4, marginTop: 1,
+                            color: note === 'error' ? T.oxblood : T.faint,
+                          }}>
+                            {INVITE_NOTE[note]}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {isOwner && (seatsOpen > 0 ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ ...label, color: T.faint, textTransform: 'uppercase' }}>
+                        Add up to four people by email address
+                      </div>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <input
+                          value={inviteEmail}
+                          onChange={(e) => setInviteEmail(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void admit(); } }}
+                          type="email"
+                          placeholder="their email address"
+                          style={{
+                            flex: 1, minWidth: 0, boxSizing: 'border-box', padding: '7px 9px',
+                            border: `1px solid ${T.rule}`, borderRadius: 2, background: '#FFFFFF',
+                            outline: 'none', fontFamily: T.mono, fontSize: 12, color: T.ink,
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void admit()}
+                          disabled={adding || !inviteEmail.trim()}
+                          style={{
+                            appearance: 'none', border: 'none', borderRadius: 2, flexShrink: 0,
+                            cursor: adding || !inviteEmail.trim() ? 'default' : 'pointer',
+                            background: adding || !inviteEmail.trim() ? T.rule : T.green, color: T.paper,
+                            fontFamily: T.sans, fontSize: 12, fontWeight: 600, letterSpacing: '0.04em',
+                            padding: '0 15px',
+                          }}
+                        >
+                          {adding ? 'Adding…' : 'Add'}
+                        </button>
+                      </div>
+                      <p style={{ fontFamily: T.sans, fontSize: 11, color: T.faint, lineHeight: 1.45, margin: '6px 0 0' }}>
+                        {seatsOpen === 1 ? 'One seat is open.' : `${seatsOpen} seats are open.`} An
+                        invitation goes to the address you give; they create a Contextspaces account
+                        with that same address and the seat is theirs.
+                      </p>
+                    </div>
+                  ) : (
+                    <p style={{ fontFamily: T.sans, fontSize: 11, color: T.faint, lineHeight: 1.45, margin: '10px 0 0' }}>
+                      Every seat is taken. Take one back above to make room for someone else.
+                    </p>
+                  ))}
+                </div>
+              )}
+
               <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 14px' }}>
                 {gMsgs.length === 0 && (
                   <p style={{ fontFamily: T.serif, fontSize: 13.5, color: T.faint, lineHeight: 1.55 }}>
