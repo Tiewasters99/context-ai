@@ -19,6 +19,8 @@ import {
   GraduationCap,
   Landmark,
   CalendarDays,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import {
   DndContext,
@@ -36,6 +38,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import { useOptionalCanvas } from '@/hooks/useCanvas';
+import { CALENDAR_CARD_ID, cardKey } from '@/lib/canvas';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import ShareModal from '@/components/serverspace/ShareModal';
@@ -258,18 +262,24 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           {!collapsed && <span>My Contextspace</span>}
         </Link>
 
-        {/* Calendar — deadlines, entries, list due dates, Google imports */}
-        <Link
-          to="/app/calendar"
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
-            isActive('/app/calendar')
-              ? 'bg-[#16161d] text-white font-medium'
-              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-          }`}
-        >
-          <CalendarDays size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Calendar</span>}
-        </Link>
+        {/* Calendar — deadlines, entries, list due dates, Google imports.
+            The pin beside it summons the calendar as a card on the canvas
+            without navigating anywhere, which is the point of it: you want
+            the day's shape up beside your lists, not instead of them. */}
+        <div className="flex items-center gap-1 mt-px">
+          <Link
+            to="/app/calendar"
+            className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors flex-1 min-w-0 ${
+              isActive('/app/calendar')
+                ? 'bg-[#16161d] text-white font-medium'
+                : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+            }`}
+          >
+            <CalendarDays size={15} className="shrink-0" strokeWidth={1.75} />
+            {!collapsed && <span>Calendar</span>}
+          </Link>
+          {!collapsed && <CalendarCanvasToggle />}
+        </div>
 
         {/* Document Builder is still a stub (route works at
             /app/document-builder) — it returns to the nav when it does
@@ -734,5 +744,36 @@ function MatterNode({
         </div>
       )}
     </div>
+  );
+}
+
+// Puts the calendar on the canvas (or takes it off) without leaving the page
+// you are on. The calendar is a global card, so once it is up it follows you
+// from matter to matter instead of belonging to whichever one you pinned it in.
+function CalendarCanvasToggle() {
+  const canvas = useOptionalCanvas();
+  if (!canvas) return null;
+  const pinned = canvas.isPinned('calendar', CALENDAR_CARD_ID);
+  return (
+    <button
+      onClick={() =>
+        pinned
+          ? canvas.unpin(cardKey('calendar', CALENDAR_CARD_ID))
+          : canvas.pin({ kind: 'calendar', id: CALENDAR_CARD_ID, title: 'Calendar' })
+      }
+      className={`p-1.5 mr-1 rounded-md shrink-0 transition-colors ${
+        pinned
+          ? 'text-[#e8b84a] hover:text-[#f5d178] hover:bg-[rgba(255,255,255,0.06)]'
+          : 'text-white/35 hover:text-white hover:bg-[rgba(255,255,255,0.06)]'
+      }`}
+      title={
+        pinned
+          ? 'Calendar is on the canvas — click to take it off'
+          : 'Put the calendar on the canvas, beside whatever you are working in'
+      }
+      aria-label={pinned ? 'Remove calendar from canvas' : 'Add calendar to canvas'}
+    >
+      {pinned ? <Pin size={13} strokeWidth={2} /> : <PinOff size={13} strokeWidth={2} />}
+    </button>
   );
 }
