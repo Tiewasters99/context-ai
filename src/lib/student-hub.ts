@@ -126,6 +126,29 @@ export async function listTexts(): Promise<StudyText[]> {
   return (data ?? []) as StudyText[];
 }
 
+/** Put a new book on the shelf. The title is the book's identity here, so a
+ *  second book by the same name is refused rather than silently doubled
+ *  (same rule the scanned-chapter pipeline applies in seedChapter). */
+export async function createText(title: string): Promise<StudyText> {
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) throw new Error('Not signed in');
+  const { data: existing, error: dupErr } = await supabase
+    .from('student_hub_texts')
+    .select('id')
+    .eq('title', title)
+    .limit(1);
+  if (dupErr) throw new Error(dupErr.message);
+  if (existing?.length) throw new Error(`"${title}" is already in your library.`);
+  const { data, error } = await supabase
+    .from('student_hub_texts')
+    .insert({ owner_id: userId, title })
+    .select('*')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as StudyText;
+}
+
 /** All readings of one text, in shelf order (chapter/section grouping is by field). */
 export async function listReadings(textId: string): Promise<StudySession[]> {
   const { data, error } = await supabase
@@ -177,6 +200,13 @@ export async function createSession(input: {
   modelId: string;
   /** Storage paths of scanned pages backing the reading, when it arrived as a scan. */
   pages?: string[];
+  /** The book this reading belongs under; absent files it loose on the shelf. */
+  textId?: string;
+  /** Where it sits in that book's tree — absent leaves the fields empty, which
+   *  the tree reads as a flat book. */
+  chapter?: string;
+  section?: string;
+  sort?: number;
 }): Promise<StudySession> {
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
@@ -191,6 +221,10 @@ export async function createSession(input: {
       reading: input.reading,
       model_id: input.modelId,
       ...(input.pages?.length ? { pages: input.pages } : {}),
+      ...(input.textId ? { text_id: input.textId } : {}),
+      ...(input.chapter !== undefined ? { chapter: input.chapter } : {}),
+      ...(input.section !== undefined ? { section: input.section } : {}),
+      ...(input.sort !== undefined ? { sort: input.sort } : {}),
     })
     .select('*')
     .single();
@@ -331,7 +365,7 @@ export async function listAllReadings(): Promise<Pick<StudySession, 'id' | 'titl
 /* ==================== Caption extraction ==================== */
 
 const PARAPHRASE_RULE =
-  'The reading is the student\'s own scanned casebook. Paraphrase editorial matter; ' +
+  'The reading is from the student\'s own book. Paraphrase editorial matter; ' +
   'quote only short, pointed phrases (a sentence at most) where the exact words carry legal weight.';
 
 /** Pull the case caption out of a pasted reading so the student doesn't type it. */
@@ -344,8 +378,8 @@ export async function extractCaption(
     modelId,
     signal,
     system:
-      'You identify the principal case in a law-school casebook reading and return its caption. ' +
-      'If several cases appear, the principal case is the first one set out at length.',
+      'You identify the principal case or work in a reading and return its caption or title. ' +
+      'In a casebook reading with several cases, the principal case is the first one set out at length.',
     userContent: reading.slice(0, 8000),
     toolName: 'record_caption',
     toolDescription: 'Record the caption of the principal case in this reading.',
@@ -460,8 +494,8 @@ export async function generateOutline(
 // into tutoring and back.
 export function professorSystem(session: StudySession): string {
   return [
-    'You are helping a first-year law student prepare for class on the reading below, which the student scanned',
-    'from their own casebook. Default to Socratic questioning, as their professor would: one question at a time,',
+    'You are helping a student prepare for class on the reading below, which comes from the student\'s own book.',
+    'Default to Socratic questioning, as their professor would: one question at a time,',
     'then wait. But follow the student\'s lead — if they say they don\'t understand, shift into explanation and work',
     'it through with them until it is solid, then pick the questioning back up. The goal is that they walk into',
     'class genuinely prepared.',
@@ -473,16 +507,17 @@ export function professorSystem(session: StudySession): string {
   ].join('\n');
 }
 
-// The study aide answers directly — the counterpoint to the Socratic
-// professor. It handles vocabulary, procedure, and legal history ("what is
-// an action in assumpsit?") and ties them to modern law.
+// The assistant answers directly — the counterpoint to the Socratic
+// professor. It handles whatever the page throws up: a word, a reference,
+// a point of procedure or legal history ("what is an action in assumpsit?").
 export function aideSystem(session: StudySession): string {
   return [
-    'You are the study aide at a first-year law student\'s elbow while they read their casebook. Unlike their',
-    'professor, you answer directly and plainly — no Socratic games. When the question is about vocabulary,',
-    'procedure, or legal history (an action in assumpsit, a writ, a nonsuit, a remittitur), explain what it was',
-    'and what it corresponds to today. When the question is about the reading, ground your answer in it.',
-    'Keep answers short and precise; go deeper only when asked.',
+    'You are the student\'s assistant, at their elbow while they read their own book. Unlike their professor,',
+    'you answer directly and plainly — no Socratic games. The question can come from anywhere on the page: a',
+    'term of art in a novel, a historical reference, a phrase that needs translating, a point of procedure or',
+    'legal history (an action in assumpsit, a writ, a nonsuit, a remittitur). Explain what it is, and what it',
+    'corresponds to today when that is what the student needs. When the question is about the reading, ground',
+    'your answer in it. Keep answers short and precise; go deeper only when asked.',
     PARAPHRASE_RULE,
     '',
     'The reading:',
