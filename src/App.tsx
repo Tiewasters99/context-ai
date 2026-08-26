@@ -47,6 +47,7 @@ import MediationRegister from '@/pages/mediation/MediationRegister';
 import MediationJoin from '@/pages/mediation/MediationJoin';
 import MediationCase from '@/pages/mediation/MediationCase';
 import AuthCallback from '@/pages/AuthCallback';
+import AuthConfirm from '@/pages/AuthConfirm';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
 
@@ -90,6 +91,7 @@ export default function App() {
             <Route path="/" element={discoveryHost ? <Navigate to="/discovery" replace /> : <Landing />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route path="/auth/confirm" element={<AuthConfirm />} />
             <Route path="/auth/reset" element={<ResetPassword />} />
             <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
             <Route
