@@ -126,6 +126,29 @@ export async function listTexts(): Promise<StudyText[]> {
   return (data ?? []) as StudyText[];
 }
 
+/** Put a new book on the shelf. The title is the book's identity here, so a
+ *  second book by the same name is refused rather than silently doubled
+ *  (same rule the scanned-chapter pipeline applies in seedChapter). */
+export async function createText(title: string): Promise<StudyText> {
+  const { data: userData } = await supabase.auth.getUser();
+  const userId = userData.user?.id;
+  if (!userId) throw new Error('Not signed in');
+  const { data: existing, error: dupErr } = await supabase
+    .from('student_hub_texts')
+    .select('id')
+    .eq('title', title)
+    .limit(1);
+  if (dupErr) throw new Error(dupErr.message);
+  if (existing?.length) throw new Error(`"${title}" is already in your library.`);
+  const { data, error } = await supabase
+    .from('student_hub_texts')
+    .insert({ owner_id: userId, title })
+    .select('*')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as StudyText;
+}
+
 /** All readings of one text, in shelf order (chapter/section grouping is by field). */
 export async function listReadings(textId: string): Promise<StudySession[]> {
   const { data, error } = await supabase
@@ -177,6 +200,13 @@ export async function createSession(input: {
   modelId: string;
   /** Storage paths of scanned pages backing the reading, when it arrived as a scan. */
   pages?: string[];
+  /** The book this reading belongs under; absent files it loose on the shelf. */
+  textId?: string;
+  /** Where it sits in that book's tree — absent leaves the fields empty, which
+   *  the tree reads as a flat book. */
+  chapter?: string;
+  section?: string;
+  sort?: number;
 }): Promise<StudySession> {
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
@@ -191,6 +221,10 @@ export async function createSession(input: {
       reading: input.reading,
       model_id: input.modelId,
       ...(input.pages?.length ? { pages: input.pages } : {}),
+      ...(input.textId ? { text_id: input.textId } : {}),
+      ...(input.chapter !== undefined ? { chapter: input.chapter } : {}),
+      ...(input.section !== undefined ? { section: input.section } : {}),
+      ...(input.sort !== undefined ? { sort: input.sort } : {}),
     })
     .select('*')
     .single();

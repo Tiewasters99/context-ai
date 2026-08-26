@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { allModels } from '@/lib/llm';
 import {
-  listSessions, createSession, deleteSession, extractCaption, listTexts,
+  listSessions, createSession, createText, deleteSession, deleteText,
+  extractCaption, listTexts,
   DEFAULT_MODEL_ID, type StudySession, type StudyText,
 } from '@/lib/student-hub';
 import { readUploadedText, type StageProgress } from '@/lib/student-hub-upload';
@@ -108,15 +109,28 @@ export default function StudentHubHome() {
       const named = upFiles.length === 1 ? upFiles[0].name.replace(/\.[a-z0-9]+$/i, '').trim() : '';
       const title = caption.title.trim() || named
         || text.split('\n').find((l) => l.trim())?.slice(0, 80) || 'Untitled text';
-      const s = await createSession({
-        title,
-        citation: caption.citation.trim(),
-        sourceLabel: caption.source_label.trim() || 'your own text',
-        reading: text,
-        modelId,
-        pages: pages ?? undefined,
-      });
-      navigate(`/app/student-hub/${s.id}`);
+      // A file you upload is a book: it takes its own place on the shelf, with
+      // this reading under it. No headings, so the tree renders it flat.
+      const book = await createText(title);
+      try {
+        await createSession({
+          title,
+          citation: caption.citation.trim(),
+          sourceLabel: caption.source_label.trim() || 'your own text',
+          reading: text,
+          modelId,
+          pages: pages ?? undefined,
+          textId: book.id,
+          chapter: '',
+          section: '',
+          sort: 1,
+        });
+      } catch (e) {
+        // Never leave an empty book behind.
+        try { await deleteText(book.id); } catch { /* the filing error is the one to report */ }
+        throw e;
+      }
+      navigate(`/app/student-hub/texts?text=${book.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The upload could not be filed.');
       setFiling(null);
@@ -236,8 +250,8 @@ export default function StudentHubHome() {
 
         {/* ---- Table of loose texts ---- */}
         {sessions && sessions.length > 0 && (
-          <section style={{ marginBottom: 40 }}>
-            <div style={{ ...label, color: T.green, marginBottom: 4 }}>Table of readings</div>
+          <section style={{ marginBottom: 12 }}>
+            <div style={{ ...label, color: T.green, marginBottom: 4 }}>Loose readings</div>
             {sessions.map((s) => (
               <div
                 key={s.id}
@@ -285,10 +299,21 @@ export default function StudentHubHome() {
         {sessions && sessions.length === 0 && (
           <p style={{
             fontFamily: T.serif, fontSize: 15, color: T.faint,
-            lineHeight: 1.6, margin: '0 0 32px', maxWidth: 460,
+            lineHeight: 1.6, margin: '0 0 12px', maxWidth: 460,
           }}>
             Nothing filed yet. Paste or upload your first text below — or take the
             sample seat and let the professor start with the hairy hand.
+          </p>
+        )}
+
+        {/* The shelf's two outcomes, said once: pasted text stays loose here,
+            an uploaded file becomes a book of its own. */}
+        {sessions && (
+          <p style={{
+            fontFamily: T.sans, fontSize: 12, color: T.faint,
+            lineHeight: 1.5, margin: '0 0 30px',
+          }}>
+            Books you upload take their place in <em>Your texts</em>.
           </p>
         )}
 
