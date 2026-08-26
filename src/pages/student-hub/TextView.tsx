@@ -4,8 +4,9 @@ import {
   listTexts, listReadings, sessionsWithTranscripts, updateSession, generateOutline, deleteText,
   type StudyText, type StudySession, type OutlineAnnotations,
 } from '@/lib/student-hub';
+import { useTextCovers } from '@/lib/student-hub-covers';
 import { T } from '@/components/student-hub/theme';
-import { HubStyles, HubTab, ErrorNote, GreenButton } from '@/components/student-hub/ui';
+import { HubStyles, HubTab, ErrorNote, GreenButton, BookCover } from '@/components/student-hub/ui';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
 import StudentHubHome from './StudentHubHome';
 
@@ -21,6 +22,10 @@ type Drawer = 'readings' | 'outlines' | 'briefs' | 'coldcalls';
 const crumbLink: React.CSSProperties = {
   color: 'inherit', textDecoration: 'none', font: 'inherit', letterSpacing: 'inherit',
 };
+
+// Cover widths: a thumbnail in the picker, a modest plate in the caption band.
+const PICKER_COVER = 34;
+const CAPTION_COVER = 44;
 
 const DRAWER_TAB: Record<Drawer, string> = {
   readings: '',
@@ -108,6 +113,8 @@ export default function TextView() {
     }
     return chapters;
   }, [readings]);
+
+  const covers = useTextCovers(texts);
 
   if (texts && texts.length === 0) return <StudentHubHome />;
 
@@ -203,31 +210,43 @@ export default function TextView() {
             </button>
           </div>
           {selected && !picker && (
-            <div style={{ marginTop: 6, display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ fontFamily: T.serif, fontSize: 16, fontStyle: 'italic', color: T.paper }}>
-                {selected.title}
-              </span>
-              {readings.length > 0 && (
-                <span style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)' }}>
-                  {sectionCount} section{sectionCount === 1 ? '' : 's'} · {readings.length} reading{readings.length === 1 ? '' : 's'}
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{
+                flex: 1, minWidth: 0, display: 'flex',
+                alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+              }}>
+                <span style={{ fontFamily: T.serif, fontSize: 16, fontStyle: 'italic', color: T.paper }}>
+                  {selected.title}
                 </span>
-              )}
-              <span style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={() => (confirmDelete ? void removeText() : setConfirmDelete(true))}
-                disabled={deleting}
-                title="Deletes this text, all its readings and transcripts, and its stored scan pages — for good"
-                style={{
-                  appearance: 'none', cursor: 'pointer', fontFamily: T.sans, fontSize: 11,
-                  padding: '3px 10px', borderRadius: 2,
-                  border: `1px solid ${confirmDelete ? T.oxblood : 'rgba(250,248,242,0.4)'}`,
-                  background: confirmDelete ? T.oxblood : 'transparent',
-                  color: confirmDelete ? T.paper : 'rgba(250,248,242,0.75)',
-                }}
-              >
-                {deleting ? 'removing…' : confirmDelete ? 'remove this text and everything under it?' : 'remove'}
-              </button>
+                {readings.length > 0 && (
+                  <span style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)' }}>
+                    {sectionCount} section{sectionCount === 1 ? '' : 's'} · {readings.length} reading{readings.length === 1 ? '' : 's'}
+                  </span>
+                )}
+                <span style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  onClick={() => (confirmDelete ? void removeText() : setConfirmDelete(true))}
+                  disabled={deleting}
+                  title="Deletes this text, all its readings and transcripts, and its stored scan pages — for good"
+                  style={{
+                    appearance: 'none', cursor: 'pointer', fontFamily: T.sans, fontSize: 11,
+                    padding: '3px 10px', borderRadius: 2,
+                    border: `1px solid ${confirmDelete ? T.oxblood : 'rgba(250,248,242,0.4)'}`,
+                    background: confirmDelete ? T.oxblood : 'transparent',
+                    color: confirmDelete ? T.paper : 'rgba(250,248,242,0.75)',
+                  }}
+                >
+                  {deleting ? 'removing…' : confirmDelete ? 'remove this text and everything under it?' : 'remove'}
+                </button>
+              </div>
+              {/* The book itself, at the edge of the caption — set aside on a phone. */}
+              <BookCover
+                src={covers.get(selected.id)}
+                width={CAPTION_COVER}
+                className="hub-caption-cover"
+                style={{ flexShrink: 0, border: '1px solid rgba(169,139,69,0.55)' }}
+              />
             </div>
           )}
         </div>
@@ -254,11 +273,18 @@ export default function TextView() {
               onClick={() => { setSearchParams({ text: t.id }); setPicker(false); }}
               style={{
                 appearance: 'none', border: 'none', cursor: 'pointer', display: 'flex',
-                alignItems: 'baseline', gap: 12, width: '100%', textAlign: 'left',
+                alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
                 padding: '16px 4px', background: 'transparent', borderBottom: `1px solid ${T.rule}`,
               }}
             >
-              <span style={{ color: T.brass, fontFamily: T.serif, flexShrink: 0 }}>§</span>
+              {/* The book shows its cover; the § keeps the place until it does. */}
+              <span style={{
+                width: PICKER_COVER, height: Math.round(PICKER_COVER * 1.5), flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                color: T.brass, fontFamily: T.serif,
+              }}>
+                <BookCover src={covers.get(t.id)} width={PICKER_COVER} fallback="§" />
+              </span>
               <span style={{ fontFamily: T.serif, fontSize: 18, fontStyle: 'italic', color: T.ink }}>
                 {t.title}
               </span>
@@ -271,7 +297,10 @@ export default function TextView() {
               padding: '16px 4px', borderBottom: `1px solid ${T.rule}`, textDecoration: 'none',
             }}
           >
-            <span style={{ color: T.brass, fontFamily: T.serif, flexShrink: 0 }}>＋</span>
+            <span style={{
+              color: T.brass, fontFamily: T.serif, flexShrink: 0,
+              width: PICKER_COVER, textAlign: 'center',
+            }}>＋</span>
             <span style={{ fontFamily: T.serif, fontSize: 18, fontStyle: 'italic', color: T.green }}>
               Add a chapter
             </span>

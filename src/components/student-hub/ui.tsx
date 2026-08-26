@@ -3,17 +3,51 @@
 // 2px radii, hairline rules, no shadows, no gradients; serif for content,
 // letterspaced sans for chrome, mono for transcript apparatus.
 
+import { useState } from 'react';
 import type { ReactNode, CSSProperties, ButtonHTMLAttributes } from 'react';
 import { Link } from 'react-router-dom';
 import { T } from './theme';
 
-/** Pulse for the live mic; disabled wholesale under prefers-reduced-motion. */
+/** Pulse for the live mic; disabled wholesale under prefers-reduced-motion.
+ *  The caption band's cover steps aside on a phone, where the title needs
+ *  the whole width. */
 export function HubStyles() {
   return (
     <style>{`
       @keyframes hubPulse { 0%,100% { box-shadow: 0 0 0 0 rgba(122,46,46,0.45); } 50% { box-shadow: 0 0 0 8px rgba(122,46,46,0); } }
       @media (prefers-reduced-motion: reduce) { .student-hub-root * { animation: none !important; } }
+      @media (max-width: 480px) { .student-hub-root .hub-caption-cover { display: none !important; } }
     `}</style>
+  );
+}
+
+/** A book's cover at thumbnail size: 2:3, as a bound book stands. If the
+ *  image never arrives — no cover yet, or one that fails to load — whatever
+ *  stood there before takes its place, and the box keeps its size. */
+export function BookCover({ src, width, alt = '', className, fallback = null, style }: {
+  src?: string;
+  width: number;
+  alt?: string;
+  className?: string;
+  fallback?: ReactNode;
+  style?: CSSProperties;
+}) {
+  // Remember which image failed, not merely that one did, so a new cover on
+  // the same card is given its own chance.
+  const [failed, setFailed] = useState<string | null>(null);
+  if (!src || failed === src) return <>{fallback}</>;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      loading="lazy"
+      onError={() => setFailed(src)}
+      style={{
+        width, height: Math.round(width * 1.5), objectFit: 'cover',
+        display: 'block', borderRadius: 2, ...style,
+      }}
+    />
   );
 }
 
