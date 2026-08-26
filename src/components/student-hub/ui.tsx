@@ -30,14 +30,19 @@ export function Kicker({ children }: { children: ReactNode }) {
 
 /** Case-caption header band: greenDark, brass 3px rule, italic serif title.
  *  `backTo` puts the persistent paper back-arrow at the head of the kicker. */
-export function CaseCaption({ kicker, title, citation, backTo }: {
+export function CaseCaption({ kicker, title, citation, backTo, onTitleClick }: {
   kicker: string;
   title: string;
   citation?: string;
   backTo?: string;
+  /** When set, the title itself is a control (e.g. the shelf opens from it). */
+  onTitleClick?: () => void;
 }) {
   // Set the "v." small and non-italic, as in a printed caption.
   const parts = title.split(/ v\.? /);
+  const titleBody = parts.length === 2 ? (
+    <>{parts[0]} <span style={{ fontStyle: 'normal', fontSize: '0.7em', opacity: 0.7 }}>v.</span> {parts[1]}</>
+  ) : title;
   return (
     <header style={{ background: T.greenDark, borderBottom: `3px solid ${T.brass}`, padding: '24px 24px 18px' }}>
       <div style={{ maxWidth: 780, margin: '0 auto' }}>
@@ -57,9 +62,18 @@ export function CaseCaption({ kicker, title, citation, backTo }: {
           fontFamily: T.serif, fontSize: 'clamp(22px, 4vw, 30px)', color: T.paper,
           fontStyle: 'italic', fontWeight: 400, margin: '0.2em 0 0',
         }}>
-          {parts.length === 2 ? (
-            <>{parts[0]} <span style={{ fontStyle: 'normal', fontSize: '0.7em', opacity: 0.7 }}>v.</span> {parts[1]}</>
-          ) : title}
+          {onTitleClick ? (
+            <button
+              type="button"
+              onClick={onTitleClick}
+              style={{
+                appearance: 'none', border: 'none', background: 'none', padding: 0,
+                cursor: 'pointer', font: 'inherit', color: 'inherit',
+              }}
+            >
+              {titleBody}
+            </button>
+          ) : titleBody}
         </h1>
         {citation && (
           <div style={{ fontFamily: T.serif, fontSize: 13, color: 'rgba(250,248,242,0.65)', marginTop: 4 }}>

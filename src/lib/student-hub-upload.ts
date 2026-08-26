@@ -148,12 +148,14 @@ async function uploadOne(path: string, blob: Blob): Promise<void> {
   }
 }
 
-export async function newChapterPrefix(): Promise<string> {
+export async function newScanPrefix(kind: string): Promise<string> {
   const { data } = await supabase.auth.getUser();
   const uid = data.user?.id;
   if (!uid) throw new Error('Not signed in');
-  return `${uid}/chapter-${Date.now().toString(36)}`;
+  return `${uid}/${kind}-${Date.now().toString(36)}`;
 }
+
+export const newChapterPrefix = (): Promise<string> => newScanPrefix('chapter');
 
 /** Every object name directly under a bucket folder (paginated past the
  *  per-call cap — a chapter can run 300 pages). */
@@ -287,6 +289,77 @@ export async function ocrPages(
   };
   await Promise.all(Array.from({ length: Math.min(2, batches.length) }, worker));
   return texts;
+}
+
+/* ===================== any-text intake ===================== */
+
+/** Per-page text from a PDF's own text layer — the born-digital shortcut.
+ *  Returns null when the layer is too thin to be the real text (a scan). */
+export async function pdfTextPages(file: File): Promise<string[] | null> {
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url,
+  ).toString();
+  const pdf = await pdfjsLib.getDocument({
+    data: await file.arrayBuffer(),
+    ...PDFJS_DOC_PARAMS,
+  }).promise;
+  try {
+    const pages: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      let text = '';
+      for (const item of content.items) {
+        const it = item as { str?: string; hasEOL?: boolean };
+        if (it.str) text += it.str;
+        if (it.hasEOL) text += '\n';
+      }
+      pages.push(text.trim());
+      page.cleanup();
+    }
+    const chars = pages.reduce((n, t) => n + t.length, 0);
+    return chars / pdf.numPages >= 200 ? pages : null;
+  } finally {
+    await pdf.destroy();
+  }
+}
+
+export interface UploadedText {
+  text: string;
+  /** Storage paths when the upload was a scan that went through OCR. */
+  pages: string[] | null;
+}
+
+const isPlainTextFile = (f: File) =>
+  /\.(txt|md|markdown)$/i.test(f.name) || f.type.startsWith('text/');
+const isPdfFile = (f: File) => /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+
+/** Turn any picked file — .txt/.md, a PDF, or a set of page images — into
+ *  reading text. A PDF with a real text layer reads itself (free, instant);
+ *  scans take the same storage + OCR path a chapter does, so the filed
+ *  reading keeps its page images for the reader. */
+export async function readUploadedText(
+  files: File[],
+  onProgress: OnProgress,
+  signal?: AbortSignal,
+): Promise<UploadedText> {
+  if (files.length === 1 && isPlainTextFile(files[0])) {
+    return { text: (await files[0].text()).trim(), pages: null };
+  }
+  if (files.length === 1 && isPdfFile(files[0])) {
+    const layer = await pdfTextPages(files[0]);
+    if (layer) return { text: layer.join('\n\n').trim(), pages: null };
+    const prefix = await newScanPrefix('text');
+    const paths = await uploadPdfPages(prefix, files[0], onProgress);
+    const texts = await ocrPages(prefix, paths, onProgress, signal);
+    return { text: texts.join('\n\n').trim(), pages: paths };
+  }
+  const prefix = await newScanPrefix('text');
+  const paths = await uploadPageFiles(prefix, files, onProgress);
+  const texts = await ocrPages(prefix, paths, onProgress, signal);
+  return { text: texts.join('\n\n').trim(), pages: paths };
 }
 
 /* ===================== chapter mapping ===================== */
