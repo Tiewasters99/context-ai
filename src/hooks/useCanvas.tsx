@@ -55,7 +55,26 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   const userId = user?.id ?? null;
 
   const [space, setSpaceState] = useState<CanvasSpace | null>(null);
-  const [cards, setCards] = useState<CanvasCard[]>([]);
+  // `cards` and the user they were loaded for move together in one state
+  // value. Keeping hydration in a ref did not work: both effects run in the
+  // same commit, so the load effect set the ref and the save effect then read
+  // it alongside the PREVIOUS render's empty `cards` — and an empty save
+  // deletes the key, which is what silently ate the pinned calendar.
+  const [canvas, setCanvas] = useState<{ hydratedFor: string | null; cards: CanvasCard[] }>(
+    { hydratedFor: null, cards: [] },
+  );
+  const cards = canvas.cards;
+
+  // Every mutator edits the cards inside the single state value, so hydration
+  // and cards can never drift apart.
+  const editCards = useCallback(
+    (fn: (prev: CanvasCard[]) => CanvasCard[]) =>
+      setCanvas((prev) => {
+        const next = fn(prev.cards);
+        return next === prev.cards ? prev : { ...prev, cards: next };
+      }),
+    [],
+  );
 
   // Which (user, space) the `cards` in state belong to. Without this, the
   // save effect would write the outgoing space's cards into the incoming
@@ -70,7 +89,7 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!userId) {
       ownerRef.current = null;
-      setCards([]);
+      setCanvas({ hydratedFor: null, cards: [] });
       return;
     }
     const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -79,20 +98,22 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
       ? loadCanvas(userId, space).map((c) => clampToViewport(c, viewport))
       : [];
     ownerRef.current = ownerId;
-    setCards([...globals, ...scoped]);
+    setCanvas({ hydratedFor: userId, cards: [...globals, ...scoped] });
   }, [userId, space, ownerId]);
 
-  // Persist. The two buckets are written separately: the global one needs
-  // only a user, the space-scoped one additionally needs the loaded set to
-  // belong to the space currently on screen (or a space change would write
-  // the outgoing matter's cards into the incoming matter's key).
+  // Persist. Never write before the load has run for THIS user: on the first
+  // commit after sign-in `cards` is still the initial empty array, and an
+  // empty save deletes the key outright — which silently ate the pinned
+  // calendar on every reload. The space bucket was already protected by the
+  // ownerRef check; the global bucket had no equivalent and needed one.
   useEffect(() => {
     if (!userId) return;
-    saveGlobalCanvas(userId, cards);
+    if (canvas.hydratedFor !== userId) return;   // same render as canvas.cards
+    saveGlobalCanvas(userId, canvas.cards);
     if (!space) return;
     if (ownerRef.current !== ownerId) return;
-    saveCanvas(userId, space, cards);
-  }, [cards, userId, space, ownerId]);
+    saveCanvas(userId, space, canvas.cards);
+  }, [canvas, userId, space, ownerId]);
 
   const setSpace = useCallback((next: CanvasSpace | null) => {
     // Routes that carry no space of their own (the dashboard, the Vault)
@@ -112,7 +133,7 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
 
   const pin = useCallback(
     ({ kind, id, title }: { kind: CanvasCardKind; id: string; title: string }) => {
-      setCards((prev) => {
+      editCards((prev) => {
         const key = cardKey(kind, id);
         if (prev.some((c) => c.key === key)) return prev;
         const viewport = { width: window.innerWidth, height: window.innerHeight };
@@ -120,15 +141,15 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
         return [...prev, { key, kind, id, title, ...rect }];
       });
     },
-    [],
+    [editCards],
   );
 
   const unpin = useCallback((key: string) => {
-    setCards((prev) => prev.filter((c) => c.key !== key));
-  }, []);
+    editCards((prev) => prev.filter((c) => c.key !== key));
+  }, [editCards]);
 
   const raise = useCallback((key: string) => {
-    setCards((prev) => {
+    editCards((prev) => {
       const idx = prev.findIndex((c) => c.key === key);
       if (idx < 0 || idx === prev.length - 1) return prev;
       const next = prev.slice();
@@ -136,30 +157,30 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
       next.push(card);
       return next;
     });
-  }, []);
+  }, [editCards]);
 
   // The windowed rect is left untouched, so leaving full screen puts the
   // panel back exactly where it was.
   const toggleMax = useCallback((key: string) => {
-    setCards((prev) =>
+    editCards((prev) =>
       prev.map((c) => (c.key === key ? { ...c, max: !c.max } : c)),
     );
-  }, []);
+  }, [editCards]);
 
   const setRect = useCallback(
     (key: string, rect: { x: number; y: number; w: number; h: number }) => {
-      setCards((prev) =>
+      editCards((prev) =>
         prev.map((c) => (c.key === key ? { ...c, ...rect } : c)),
       );
     },
-    [],
+    [editCards],
   );
 
   const setTitle = useCallback((key: string, title: string) => {
-    setCards((prev) =>
+    editCards((prev) =>
       prev.map((c) => (c.key === key && c.title !== title ? { ...c, title } : c)),
     );
-  }, []);
+  }, [editCards]);
 
   const value = useMemo<CanvasContextValue>(
     () => ({ space, cards, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace }),
