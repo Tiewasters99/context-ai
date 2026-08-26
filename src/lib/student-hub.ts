@@ -175,6 +175,8 @@ export async function createSession(input: {
   sourceLabel: string;
   reading: string;
   modelId: string;
+  /** Storage paths of scanned pages backing the reading, when it arrived as a scan. */
+  pages?: string[];
 }): Promise<StudySession> {
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
@@ -188,6 +190,7 @@ export async function createSession(input: {
       source_label: input.sourceLabel,
       reading: input.reading,
       model_id: input.modelId,
+      ...(input.pages?.length ? { pages: input.pages } : {}),
     })
     .select('*')
     .single();

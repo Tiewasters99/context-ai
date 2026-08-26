@@ -388,8 +388,8 @@ export function StudyPanel({ session, seed, onSeedConsumed }: {
         <>
           {!session.text_id ? (
             <p style={{ fontFamily: T.serif, fontSize: 13.5, color: T.faint, lineHeight: 1.55, padding: '14px 16px' }}>
-              Study groups live on a text. Open a reading from one of your chapters
-              and the group forms there.
+              A study group forms around a text. Open a reading that belongs to
+              one of your texts and the group meets there.
             </p>
           ) : group === 'loading' ? (
             <p style={{ fontFamily: T.mono, fontSize: 12, color: T.faint, padding: '14px 16px' }}>

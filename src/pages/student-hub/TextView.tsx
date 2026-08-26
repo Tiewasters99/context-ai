@@ -240,7 +240,7 @@ export default function TextView() {
               to="/app/student-hub/shelf"
               style={{ fontFamily: T.sans, fontSize: 12, color: T.faint, textDecoration: 'none' }}
             >
-              The shelf — loose readings &amp; paste a new one →
+              The shelf — paste or upload a new text →
             </Link>
           </div>
         </main>
@@ -385,7 +385,7 @@ export default function TextView() {
             to="/app/student-hub/shelf"
             style={{ fontFamily: T.sans, fontSize: 12, color: T.faint, textDecoration: 'none' }}
           >
-            The shelf — loose readings &amp; paste a new one →
+            The shelf — paste or upload a new text →
           </Link>
         </div>
       </main>
