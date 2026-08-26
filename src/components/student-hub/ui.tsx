@@ -28,10 +28,19 @@ export function Kicker({ children }: { children: ReactNode }) {
   );
 }
 
+/** One segment of the caption's crumb trail; `to` makes it a link. */
+export interface Crumb {
+  label: string;
+  to?: string;
+}
+
 /** Case-caption header band: greenDark, brass 3px rule, italic serif title.
- *  `backTo` puts the persistent paper back-arrow at the head of the kicker. */
-export function CaseCaption({ kicker, title, citation, backTo, onTitleClick }: {
+ *  `backTo` puts the persistent paper back-arrow at the head of the kicker.
+ *  `crumbs` replaces the flat `kicker` string with a walkable trail — same
+ *  type, same size, same tracking, so the band reads exactly as before. */
+export function CaseCaption({ kicker, crumbs, title, citation, backTo, onTitleClick }: {
   kicker: string;
+  crumbs?: Crumb[];
   title: string;
   citation?: string;
   backTo?: string;
@@ -56,7 +65,21 @@ export function CaseCaption({ kicker, title, citation, backTo, onTitleClick }: {
               ←
             </Link>
           )}
-          {kicker}
+          {crumbs
+            ? crumbs.map((c, i) => (
+                <span key={i}>
+                  {i > 0 && ' · '}
+                  {c.to ? (
+                    <Link
+                      to={c.to}
+                      style={{ color: 'inherit', textDecoration: 'none', font: 'inherit', letterSpacing: 'inherit' }}
+                    >
+                      {c.label}
+                    </Link>
+                  ) : c.label}
+                </span>
+              ))
+            : kicker}
         </Kicker>
         <h1 style={{
           fontFamily: T.serif, fontSize: 'clamp(22px, 4vw, 30px)', color: T.paper,

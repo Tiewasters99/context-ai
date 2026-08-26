@@ -165,6 +165,11 @@ export default function StudentHubHome() {
       <CaseCaption
         backTo="/app/student-hub"
         kicker="Contextspaces · Student Hub · The shelf"
+        crumbs={[
+          { label: 'Contextspaces', to: '/app' },
+          { label: 'Student Hub', to: '/app/student-hub' },
+          { label: 'The shelf' },
+        ]}
         title="The shelf"
         citation="Your texts."
         onTitleClick={toggleShelf}
@@ -198,7 +203,7 @@ export default function StudentHubHome() {
                   key={t.id}
                   type="button"
                   title={t.title}
-                  onClick={() => navigate(`/app/student-hub?text=${t.id}`)}
+                  onClick={() => navigate(`/app/student-hub/texts?text=${t.id}`)}
                   style={{
                     appearance: 'none', border: 'none', cursor: 'pointer', flexShrink: 0,
                     writingMode: 'vertical-rl', height: 108 + ((i * 7) % 3) * 11,
@@ -217,7 +222,7 @@ export default function StudentHubHome() {
               gap: 14, flexWrap: 'wrap', marginTop: 8,
             }}>
               <Link
-                to="/app/student-hub"
+                to="/app/student-hub/texts"
                 style={{ fontFamily: T.sans, fontSize: 12, color: T.green, textDecoration: 'none' }}
               >
                 Open your texts →
