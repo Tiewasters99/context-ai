@@ -8,8 +8,12 @@
 //
 //   1. no token                      → 401
 //   2. matter at tier A              → session event provider=anthropic; done
-//   3. same matter sealed to B       → provider=fireworks (Kimi K3, US ZDR)
-//   3b. B + escalate:true            → provider=anthropic, escalation=true
+//   3. same matter sealed to B       → the sealed pen: provider=aws-bedrock
+//      (Claude in our own AWS account, zero retention) when the server has
+//      its key, else provider=fireworks (Kimi K3)
+//   3b. B + escalate:true            → aws-bedrock + escalation=false when
+//      Bedrock served step 3 (frontier already inside the seal — nothing to
+//      record); else provider=anthropic, escalation=true
 //   4. same matter as C              → error code silo_not_connected
 //   5. ledger: ai_sessions rows with the right tier; ai_messages user +
 //      assistant rows with model/provider/tokens; refusal recorded too
@@ -82,6 +86,8 @@ if (!matter) { console.log('no matter found'); process.exit(1); }
 const originalTier = matter.ai_tier;
 console.log(`test matter: "${matter.name}" (tier ${originalTier})\n`);
 const PROMPT = 'Reply with exactly the single word: ready. Do not use any tools.';
+const SEALED_PENS = new Set(['aws-bedrock', 'fireworks']);
+let sealedProvider = null; // which pen actually served step 3
 const sessions = [];
 const setTier = (t) => fetch(`${SB}/rest/v1/matterspaces?id=eq.${matter.id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ ai_tier: t }) });
 
@@ -102,7 +108,10 @@ try {
     if (s2?.sessionId === s.sessionId) pass('follow-up continues the same session'); else fail('follow-up opened a new session', s2);
   }
 
-  // ── 3. tier B → Fireworks/Kimi ──────────────────────────────────────
+  // ── 3. tier B → the sealed pen ──────────────────────────────────────
+  // aws-bedrock (Claude, our AWS account, zero retention) when the server
+  // has BEDROCK_ keys; fireworks (Kimi K3) otherwise. The session event
+  // tells us which pen this server actually holds.
   await setTier('B');
   if (SKIP_B) {
     out = await ask(matter.id, PROMPT);
@@ -113,17 +122,26 @@ try {
   } else {
     out = await ask(matter.id, PROMPT);
     s = ev(out.events, 'session'); d = ev(out.events, 'done'); e = ev(out.events, 'error');
-    if (s?.provider === 'fireworks' && s?.tier === 'B' && s?.escalation === false) { pass(`tier B → ${s.model}`); sessions.push(s.sessionId); }
-    else fail('tier B pen', { s, e });
+    if (s && SEALED_PENS.has(s.provider) && s.tier === 'B' && s.escalation === false) {
+      pass(`tier B → ${s.provider}/${s.model}`); sessions.push(s.sessionId); sealedProvider = s.provider;
+    } else fail('tier B pen', { s, e });
     if (d && !e && textOf(out.events).trim()) pass(`tier B answered: "${textOf(out.events).trim().slice(0, 40)}" (${d.usage?.input}/${d.usage?.output} tok)`);
     else fail('tier B did not complete', { d, e, text: textOf(out.events).slice(0, 200) });
   }
 
-  // ── 3b. tier B + escalate → Claude, recorded as escalation ──────────
+  // ── 3b. tier B + escalate ───────────────────────────────────────────
+  // With the Bedrock pen configured, escalation is moot: the sealed default
+  // already IS frontier Claude inside the seal, so the same pen answers and
+  // nothing is recorded as an escalation. Without it, the old contract
+  // holds: first-party Claude, flagged escalation:true.
   out = await ask(matter.id, PROMPT, { escalate: true });
   s = ev(out.events, 'session'); e = ev(out.events, 'error');
-  if (s?.provider === 'anthropic' && s?.escalation === true) { pass('tier B + escalate:true → frontier pen, flagged as escalation'); sessions.push(s.sessionId); }
-  else fail('escalation', { s, e });
+  if (sealedProvider === 'aws-bedrock') {
+    if (s?.provider === 'aws-bedrock' && s?.escalation === false) { pass('tier B + escalate:true → Bedrock pen, stays inside the seal (no escalation to record)'); sessions.push(s.sessionId); }
+    else fail('escalation (Bedrock-configured server)', { s, e });
+  } else if (s?.provider === 'anthropic' && s?.escalation === true) {
+    pass('tier B + escalate:true → frontier pen, flagged as escalation'); sessions.push(s.sessionId);
+  } else fail('escalation', { s, e });
 
   // ── 4. tier C → refused ─────────────────────────────────────────────
   await setTier('C');

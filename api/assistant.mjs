@@ -24,14 +24,17 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { runAssistantStream } from '../lib/assistant-core.mjs';
+import { runAssistantStream, bedrockCredsFromEnv } from '../lib/assistant-core.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-// The sealed pen (SecureSpace Tier B). Optional at boot: without it, sealed
-// matters are refused with a plain message — never silently escalated.
+// The sealed pens (SecureSpace Tier B). Both optional at boot: with neither,
+// sealed matters are refused with a plain message — never silently escalated.
+// When the Bedrock creds exist they win: frontier Claude, zero retention,
+// our own AWS account (docs/BEDROCK_CLAUDE_PEN_SETUP.md).
+const BEDROCK_CREDS = bedrockCredsFromEnv();
 const FIREWORKS_API_KEY = process.env.FIREWORKS_API_KEY;
 
 
@@ -104,6 +107,7 @@ export default async function handler(req, res) {
       supabase: sb,
       anthropicKey: ANTHROPIC_API_KEY,
       fireworksKey: FIREWORKS_API_KEY,
+      bedrockCreds: BEDROCK_CREDS,
       openaiApiKey: OPENAI_API_KEY,
       messages,
       matterId,
