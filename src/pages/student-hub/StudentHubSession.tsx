@@ -15,6 +15,9 @@ import { useDictation, useProfessorVoice } from '@/components/student-hub/voice'
 import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights';
 import { StudyPanel, type GroupSeed } from '@/components/student-hub/StudyPanel';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
+import { HubReader } from '@/components/student-hub/HubReader';
+import { reflowReading, readingParagraphs } from '@/lib/student-hub-reflow';
+import { getTextCoverUrls, useTemplateCover } from '@/lib/student-hub-covers';
 import {
   exportReading, downloadReading, listExportServerspaces, listExportMatters,
   readRememberedDestination, rememberDestination, DEFAULT_SERVERSPACE_NAME,
@@ -25,7 +28,12 @@ import {
 // student's scanned casebook, highlightable), the brief, the interactive
 // outline, the cold call, and the student's own notes & resources. The
 // study panel floats over all of them, and the reading's own toolbar is a
-// door into its assistant.
+// door into its assistant — and, since the reader was added, into the book.
+//
+// Ingested text is never shown raw. It goes through reflowReading once and
+// that reflowed string is the canonical display text everywhere on this page:
+// the reading tab, find-in-the-text, the reader, and the exported copy. The
+// stored row is left exactly as it arrived.
 
 type TabId = 'reading' | 'brief' | 'outline' | 'coldcall' | 'notes';
 
@@ -104,6 +112,13 @@ export default function StudentHubSession() {
   };
   const [pageUrls, setPageUrls] = useState<string[] | null>(null);
   const [pagesError, setPagesError] = useState('');
+  // The book, opened full-screen over the study surface.
+  const [readerOpen, setReaderOpen] = useState(false);
+  // Its cover: page one of the text's first scan where there is one, and the
+  // shelf's own plate for this title where there isn't.
+  const [scanCover, setScanCover] = useState<string | null>(null);
+  const plateCover = useTemplateCover(session?.title ?? '');
+  const coverUrl = scanCover ?? plateCover;
 
   const [working, setWorking] = useState<'brief' | 'outline' | 'professor' | null>(null);
   const [liveText, setLiveText] = useState('');
@@ -143,6 +158,19 @@ export default function StudentHubSession() {
       .catch((e) => { if (!stale) setPagesError(e instanceof Error ? e.message : 'Your pages could not be fetched.'); });
     return () => { stale = true; };
   }, [session?.pages]);
+
+  // The cover the reader opens on, resolved as soon as the reading is known so
+  // that the book is ready before the student asks for it.
+  useEffect(() => {
+    const textId = session?.text_id;
+    if (!textId) return;
+    let stale = false;
+    getTextCoverUrls([textId])
+      .then((covers) => { if (!stale) setScanCover(covers.get(textId) ?? null); })
+      // A cover that will not sign costs the book its plate, nothing more.
+      .catch(() => { /* the template plate stands in */ });
+    return () => { stale = true; };
+  }, [session?.text_id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -311,7 +339,13 @@ export default function StudentHubSession() {
 
   /* ---------------- Find in the text ---------------- */
 
-  const lowerReading = useMemo(() => (session ? session.reading.toLowerCase() : ''), [session]);
+  // The reading as it is read: paragraphs put back, page artifacts dropped,
+  // verse left alone. Everything on this page counts characters against this
+  // string, so the marks, the snippets and the reader all agree.
+  const readingText = useMemo(() => reflowReading(session?.reading ?? ''), [session?.reading]);
+  const paragraphs = useMemo(() => readingParagraphs(readingText), [readingText]);
+
+  const lowerReading = useMemo(() => readingText.toLowerCase(), [readingText]);
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (q.length < 2) return [] as number[];
@@ -333,30 +367,38 @@ export default function StudentHubSession() {
     }
   }, [hit, matches, searchOpen, session?.pages?.length]);
 
-  // The reading with matches marked, for text readings. Paged readings get a
+  // The reading with matches marked, paragraph by paragraph. The match offsets
+  // are absolute in the reflowed string, so each paragraph takes the ones that
+  // fell inside it and slices them from its own start. Paged readings get a
   // snippet list instead — the marks can't land on a page image.
-  const markedReading = useMemo(() => {
-    if (!session) return null;
+  const markedParagraphs = useMemo(() => {
     const q = query.trim();
-    if (!searchOpen || q.length < 2 || !matches.length || session.pages?.length) return session.reading;
-    const parts: React.ReactNode[] = [];
-    let last = 0;
-    matches.forEach((at, i) => {
-      parts.push(session.reading.slice(last, at));
-      parts.push(
-        <mark
-          key={i}
-          id={`hub-hit-${i}`}
-          style={{ background: i === hit ? T.oxblood : T.brass, color: T.paper, padding: '0 1px', borderRadius: 1 }}
-        >
-          {session.reading.slice(at, at + q.length)}
-        </mark>,
-      );
-      last = at + q.length;
+    const marking = searchOpen && q.length >= 2 && matches.length > 0 && !session?.pages?.length;
+    return paragraphs.map((p): React.ReactNode => {
+      if (!marking) return p.text;
+      const end = p.start + p.text.length;
+      const parts: React.ReactNode[] = [];
+      let cursor = 0;
+      matches.forEach((at, i) => {
+        if (at < p.start || at >= end) return;
+        const from = at - p.start;
+        parts.push(p.text.slice(cursor, from));
+        parts.push(
+          <mark
+            key={i}
+            id={`hub-hit-${i}`}
+            style={{ background: i === hit ? T.oxblood : T.brass, color: T.paper, padding: '0 1px', borderRadius: 1 }}
+          >
+            {p.text.slice(from, from + q.length)}
+          </mark>,
+        );
+        cursor = from + q.length;
+      });
+      if (!parts.length) return p.text;
+      parts.push(p.text.slice(cursor));
+      return parts;
     });
-    parts.push(session.reading.slice(last));
-    return parts;
-  }, [session, searchOpen, query, matches, hit]);
+  }, [paragraphs, searchOpen, query, matches, hit, session?.pages?.length]);
 
   const snippets = useMemo(() => {
     if (!session?.pages?.length || !searchOpen) return [];
@@ -364,14 +406,14 @@ export default function StudentHubSession() {
     if (q.length < 2) return [];
     return matches.slice(0, 40).map((at) => {
       const a = Math.max(0, at - 60);
-      const b = Math.min(session.reading.length, at + q.length + 60);
+      const b = Math.min(readingText.length, at + q.length + 60);
       return {
-        before: (a > 0 ? '…' : '') + session.reading.slice(a, at).replace(/\s+/g, ' '),
-        match: session.reading.slice(at, at + q.length),
-        after: session.reading.slice(at + q.length, b).replace(/\s+/g, ' ') + (b < session.reading.length ? '…' : ''),
+        before: (a > 0 ? '…' : '') + readingText.slice(a, at).replace(/\s+/g, ' '),
+        match: readingText.slice(at, at + q.length),
+        after: readingText.slice(at + q.length, b).replace(/\s+/g, ' ') + (b < readingText.length ? '…' : ''),
       };
     });
-  }, [session, searchOpen, query, matches]);
+  }, [session?.pages?.length, searchOpen, query, matches, readingText]);
 
   /* ---------------- Where it gets filed ---------------- */
 
@@ -750,6 +792,13 @@ export default function StudentHubSession() {
                 {pageUrls && (
                   <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 10, paddingBottom: 8, flexWrap: 'wrap' }}>
                     <QuietControl
+                      onClick={() => setReaderOpen(true)}
+                      style={{ color: T.brass, borderColor: T.brass }}
+                      title="Opens the pages full-screen, as a book"
+                    >
+                      ⛶ open the book
+                    </QuietControl>
+                    <QuietControl
                       onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setQuery(''); }}
                       style={searchOpen ? { background: T.brass, color: T.paper, borderColor: T.brass } : undefined}
                       title="Find a word or phrase in the reading"
@@ -834,6 +883,13 @@ export default function StudentHubSession() {
               <>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 4, paddingBottom: 8, flexWrap: 'wrap' }}>
                   <QuietControl
+                    onClick={() => setReaderOpen(true)}
+                    style={{ color: T.brass, borderColor: T.brass, marginRight: 6 }}
+                    title="Opens the reading full-screen, as a book"
+                  >
+                    ⛶ open the book
+                  </QuietControl>
+                  <QuietControl
                     onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setQuery(''); }}
                     style={searchOpen ? { background: T.brass, color: T.paper, borderColor: T.brass, marginRight: 6 } : { marginRight: 6 }}
                     title="Find a word or phrase in the reading"
@@ -856,9 +912,16 @@ export default function StudentHubSession() {
                 {searchBar}
                 <div style={{
                   fontFamily: T.serif, fontSize: 15.5 * zoom, lineHeight: 1.6, color: T.ink,
-                  whiteSpace: 'pre-wrap', padding: '6px 0',
+                  padding: '6px 0',
                 }}>
-                  {markedReading}
+                  {paragraphs.map((p, i) => (
+                    <p
+                      key={i}
+                      style={{ margin: '0 0 0.9em', whiteSpace: p.verse ? 'pre-wrap' : undefined }}
+                    >
+                      {markedParagraphs[i]}
+                    </p>
+                  ))}
                 </div>
               </>
             )}
@@ -1157,6 +1220,19 @@ export default function StudentHubSession() {
         askSeed={askSeed}
         onAskSeedConsumed={() => setAskSeed(null)}
       />
+
+      {readerOpen && (
+        <HubReader
+          title={session.title}
+          citation={session.citation || undefined}
+          reflowed={session.pages?.length ? '' : readingText}
+          pageUrls={session.pages?.length ? pageUrls : null}
+          coverUrl={coverUrl}
+          sessionId={session.id}
+          onClose={() => setReaderOpen(false)}
+          onAskAssistant={() => setAskSeed(Date.now())}
+        />
+      )}
     </div>
   );
 }

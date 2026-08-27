@@ -17,6 +17,7 @@
 import { supabase } from '@/lib/supabase';
 import { persistVaultFile, watchDocumentStatus, type MatterRef } from '@/lib/vault-persist';
 import { formatTranscript, listMessages, type StudySession } from '@/lib/student-hub';
+import { reflowReading } from '@/lib/student-hub-reflow';
 
 export const DEFAULT_SERVERSPACE_NAME = 'Academic — Contracts';
 
@@ -211,7 +212,10 @@ function readingDocument(session: StudySession): string {
     session.source_label,
     '',
   ].filter(Boolean).join('\n');
-  return `${head}\n${session.reading}`;
+  // The copy that leaves the hub reads the way the reading reads on screen:
+  // real paragraphs, not the hard-wrapped lines the ingest handed over. The
+  // stored row keeps whatever it was given.
+  return `${head}\n${reflowReading(session.reading)}`;
 }
 
 async function studyNotesDocument(session: StudySession): Promise<string | null> {
