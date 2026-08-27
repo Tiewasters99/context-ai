@@ -136,7 +136,7 @@ try {
   if (req.init.headers?.['anthropic-version'] === '2023-06-01') pass('anthropic-version header present');
   else fail('anthropic-version header', req.init.headers);
   const body = JSON.parse(req.init.body);
-  if (body.model === 'anthropic.claude-opus-4-8' && body.stream === true && body.thinking?.type === 'adaptive'
+  if (body.model === 'anthropic.claude-opus-5' && body.stream === true && body.thinking?.type === 'adaptive'
     && body.tools?.[0]?.input_schema && typeof body.system === 'string' && body.messages?.[0]?.role === 'user') {
     pass('body: Bedrock model id, stream, adaptive thinking, tools, system');
   } else fail('request body', { model: body.model, stream: body.stream, thinking: body.thinking });
