@@ -237,7 +237,7 @@ export default function llmProxy(): Plugin {
         };
         try {
           const { createClient } = await import('@supabase/supabase-js');
-          const { runAssistantStream } = await import(ASSISTANT_MODULE_URL);
+          const { runAssistantStream, bedrockCredsFromEnv } = await import(ASSISTANT_MODULE_URL);
           const sb = createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
             global: { headers: { Authorization: `Bearer ${userToken}` } },
             auth: { persistSession: false, autoRefreshToken: false },
@@ -245,9 +245,11 @@ export default function llmProxy(): Plugin {
           const result = await runAssistantStream({
             supabase: sb,
             anthropicKey: ANTHROPIC_API_KEY,
-            // The sealed pen (SecureSpace Tier B); optional — absent means
-            // sealed matters are refused, never silently escalated.
+            // The sealed pens (SecureSpace Tier B); optional — with neither,
+            // sealed matters are refused, never silently escalated. Bedrock
+            // (our own AWS account, zero retention) wins when configured.
             fireworksKey: process.env.FIREWORKS_API_KEY,
+            bedrockCreds: bedrockCredsFromEnv(),
             openaiApiKey: OPENAI_API_KEY,
             messages: parsed.messages || [],
             matterId: parsed.matterId || undefined,
