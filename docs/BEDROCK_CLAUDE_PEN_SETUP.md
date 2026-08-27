@@ -1,7 +1,9 @@
-# Sealed chat pen: Claude Opus 4.8 via Bedrock, in our own AWS account
+# Sealed chat pen: Claude Opus 5 via Bedrock, in our own AWS account
 
-Built 2026-08-27. Tier-B (sealed) matters chat through **Claude Opus 4.8 on
-Amazon Bedrock's Messages API** (`bedrock-mantle.us-east-1.api.aws`) in our
+Built 2026-08-27 (pen upgraded 4.8 → Opus 5 same day — Eden's call: Opus 5 is
+the stronger legal-reasoning model; 4.8 remains the Tier-A writing pen).
+Tier-B (sealed) matters chat through **Claude Opus 5 on Amazon Bedrock's
+Messages API** (`bedrock-mantle.us-east-1.api.aws`) in our
 own AWS account, with the account pinned to **`data_retention_mode: none`** —
 contractual zero retention: no request or response is written to durable
 storage by AWS or shared with the model provider. This replaces both halves of
@@ -31,8 +33,13 @@ set, refusal otherwise). **The cutover is one retention setting + one IAM user
 Same AWS account as the embeddings work: **Contextspaces (956035085448)**,
 us-east-1. Bedrock is serverless — no endpoint, no instance, no quota case.
 
-1. **Model access.** Bedrock console → Model access → Claude Opus 4.8 is open
-   to all Bedrock customers; confirm it shows as available for the account.
+1. **Model access.** Unlike 4.8 (open to all Bedrock customers), **Opus 5 is
+   access-gated** — request it. Easiest route: Bedrock console → **Model
+   catalog** → open the **Claude Opus 5** card → **Request model access** →
+   short use-case form → Submit. (The classic page also works:
+   `console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess`.)
+   Retention facts verified 2026-08-27 by live probe in this account: Opus 5
+   and 4.8 both list `none` in `allowed_modes`; Fable/Mythos 5 do not.
 
 2. **Pin the account to zero retention.** There is no console UI for this at
    launch — it is one API call. From CloudShell in the console (it already
@@ -78,7 +85,7 @@ us-east-1. Bedrock is serverless — no endpoint, no instance, no quota case.
 
    Create an access key for it. This key can ask Claude questions and read
    the retention configuration — nothing else. (Once the console shows the
-   Opus 4.8 model ARN, narrow `CreateInference`'s Resource to it.)
+   Opus 5 model ARN, narrow `CreateInference`'s Resource to it.)
 
 4. **Env vars, two places** (`.env` already carries the PASTE placeholders;
    the Fly worker does not chat, so it needs nothing):
@@ -113,7 +120,7 @@ us-east-1. Bedrock is serverless — no endpoint, no instance, no quota case.
 
 ## What changes when it goes live
 
-- Sealed (Tier B) chat runs on Claude Opus 4.8 with zero retention in our
+- Sealed (Tier B) chat runs on Claude Opus 5 with zero retention in our
   account. The ledger stamps `provider: 'aws-bedrock'` on every message.
 - The **Escalate** control becomes moot: the sealed default already is the
   frontier pen, inside the seal, so `escalate: true` is answered by the same
@@ -122,5 +129,6 @@ us-east-1. Bedrock is serverless — no endpoint, no instance, no quota case.
   the Bedrock key, and `api.anthropic.com` remains reachable from a sealed
   matter ONLY via that fallback's recorded escalation. Removing the fallback
   entirely is a policy decision noted in `lib/ai-tier-policy.mjs`.
-- Pricing on the ledger: $5.50 / $27.50 per million tokens (list $5 / $25
-  plus the regional endpoint's 10% residency premium).
+- Pricing on the ledger: $5.50 / $27.50 per million tokens (Opus 5 lists at
+  the same $5 / $25 as 4.8, plus the regional endpoint's 10% residency
+  premium).
