@@ -18,6 +18,8 @@ import {
   StickyNote,
   Copy,
   Check,
+  Printer,
+  FileText,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -514,16 +516,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // and the trackpad does nothing: a long case was click-click-click. The
   // wheel now turns pages (and, zoomed in, turns them at the page's edge),
   // and a right-edge rail — the scrollbar the reader was missing — drags
-  // through the whole document. When the pane genuinely scrolls, the rail
-  // steps left so the native bar keeps its lane.
-  const [paneScrolls, setPaneScrolls] = useState(false);
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const el = contentRef.current;
-      if (el) setPaneScrolls(el.scrollHeight > el.clientHeight + 2);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [page, zoom, fitPage, containerTick, loadState, fileKind, renderedScale]);
+  // through the whole document. The rail keeps its own permanent lane, so
+  // it never shifts and never sits over the native bar.
 
   // A fresh page starts at its top; wheeling backward lands at the top too,
   // as page readers do.
@@ -594,6 +588,89 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       setCopyState('idle');
     }
   }, [copyState, loadState, fileKind, docHtml, titlePageHtml]);
+
+  // ── Print ───────────────────────────────────────────────────────────
+  // A PDF prints as itself: the original file into a hidden same-origin
+  // iframe, whose viewer takes the print dialog. Rendered documents
+  // (docx, slides, scripts) print the page through the print stylesheet,
+  // which shows only the document.
+  const [printing, setPrinting] = useState(false);
+  const handlePrint = useCallback(async () => {
+    if (printing || loadState !== 'ready') return;
+    if (fileKind !== 'pdf') {
+      window.print();
+      return;
+    }
+    if (!doc?.storage_path) return;
+    setPrinting(true);
+    try {
+      const { data: blob, error } = await supabase.storage
+        .from('vault-documents')
+        .download(doc.storage_path);
+      if (error || !blob) {
+        setErrorMsg(error?.message || 'The file could not be fetched to print.');
+        return;
+      }
+      const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+      const frame = document.createElement('iframe');
+      frame.style.position = 'fixed';
+      frame.style.right = '0';
+      frame.style.bottom = '0';
+      frame.style.width = '0';
+      frame.style.height = '0';
+      frame.style.border = '0';
+      frame.src = url;
+      frame.onload = () => {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      };
+      document.body.appendChild(frame);
+      // The frame outlives the dialog; a minute is plenty, and the blob URL
+      // dies with it.
+      window.setTimeout(() => {
+        frame.remove();
+        URL.revokeObjectURL(url);
+      }, 60000);
+    } finally {
+      setPrinting(false);
+    }
+  }, [printing, loadState, fileKind, doc]);
+
+  // ── The reader's own right-click menu ───────────────────────────────
+  // The browser's context menu over a privileged document offers the
+  // document to the browser — "Ask Gemini" included. Ours offers the
+  // reader's own verbs instead; content leaves Contextspaces only through
+  // a connection the user chose.
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
+  const openContextMenu = useCallback((e: React.MouseEvent) => {
+    if (loadState !== 'ready') return; // an empty pane can keep the browser's menu
+    e.preventDefault();
+    const sel = window.getSelection();
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      hasSelection: !!sel && !sel.isCollapsed && sel.toString().trim().length > 0,
+    });
+  }, [loadState]);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [ctxMenu]);
+
+  const copySelection = useCallback(async () => {
+    const sel = window.getSelection();
+    const text = sel?.toString() ?? '';
+    if (!text.trim()) return;
+    await writeClipboard(text, selectionHtml(text));
+  }, []);
 
   // Cover support — mirrors how Pages/Lists/Tables use CoverImage.
   // Expanded mode promotes the cover to the page background via a CSS var,
@@ -1273,6 +1350,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             {copyState === 'done' ? <Check size={15} /> : <Copy size={15} />}
           </button>
           <button
+            onClick={() => void handlePrint()}
+            disabled={printing || loadState !== 'ready'}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title={printing ? 'Printing…' : 'Print the document'}
+          >
+            <Printer size={15} />
+          </button>
+          <button
             onClick={handleDownload}
             disabled={downloading || !doc?.storage_path}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1341,7 +1426,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="relative flex-1 min-h-0 flex">
+          <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
             className={`flex-1 overflow-auto flex justify-center ${
@@ -1387,7 +1472,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             )}
             {loadState === 'ready' && fileKind === 'docx' && docHtml && (
               <div
-                className="docx-page max-w-3xl w-full mx-auto shadow-2xl"
+                className="docx-page print-root max-w-3xl w-full mx-auto shadow-2xl"
                 style={{
                   backgroundColor: '#ffffff',
                   color: '#1a1810',
@@ -1401,14 +1486,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             )}
             {loadState === 'ready' && fileKind === 'pptx' && docHtml && (
               <div
-                className="pptx-deck max-w-3xl w-full mx-auto"
+                className="pptx-deck print-root max-w-3xl w-full mx-auto"
                 style={{ fontSize: `${Math.round(16 * (zoom / 1.5))}px` }}
                 dangerouslySetInnerHTML={{ __html: docHtml }}
               />
             )}
             {loadState === 'ready' && fileKind === 'fountain' && (
               <div
-                className="fountain-page max-w-[8.5in] w-full mx-auto shadow-2xl"
+                className="fountain-page print-root max-w-[8.5in] w-full mx-auto shadow-2xl"
                 style={{
                   backgroundColor: '#fafaf6',
                   color: '#15130b',
@@ -1437,7 +1522,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             <PageRail
               page={page}
               total={totalPages}
-              inset={paneScrolls ? 15 : 0}
+              theme={theme}
               onPage={setPage}
             />
           )}
@@ -1481,6 +1566,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       )}
         </div>
       </div>
+      {ctxMenu && (
+        <ReaderMenu
+          at={ctxMenu}
+          hasSelection={ctxMenu.hasSelection}
+          canDownload={!downloading && !!doc?.storage_path}
+          canDrive={hasDriveConnection && !driveExporting && !!doc?.storage_path}
+          printing={printing}
+          onCopySel={() => void copySelection()}
+          onCopyDoc={() => void handleCopyText()}
+          onPrint={() => void handlePrint()}
+          onDownload={() => void handleDownload()}
+          onDrive={() => void handleDriveExport()}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
       {selectionMenu && (
         <SelectionMenu
           x={selectionMenu.x}
@@ -1658,18 +1758,22 @@ const ANNOTATION_DOT: Record<AnnotationColor, string> = {
 // The right-edge page rail: a scrollbar-shaped thumb mapped over the whole
 // document. Drag it, or click anywhere on the track, to move through the
 // pages — the vertical companion to the bottom slider, present even in
-// fit-page mode where no native scrollbar can exist. Exported for the
-// harness probes; the reader is its only product surface.
-export function PageRail({ page, total, inset, onPage }: {
+// fit-page mode where no native scrollbar can exist. It owns a permanent
+// flex lane at the pane's right edge, so it never moves and never shares
+// ground with the native bar; its ink follows the reader's theme, so it
+// reads on parchment as plainly as by lamplight. Exported for the harness
+// probes; the reader is its only product surface.
+export function PageRail({ page, total, theme, onPage }: {
   page: number;
   total: number;
-  /** Pixels to step left, when the native scrollbar owns the true edge. */
-  inset: number;
+  theme: Theme;
   onPage: (p: number) => void;
 }) {
   const railRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [hover, setHover] = useState(false);
   const THUMB = 56;
+  const dark = theme === 'dark';
 
   const pageAt = (clientY: number): number => {
     const el = railRef.current;
@@ -1684,8 +1788,8 @@ export function PageRail({ page, total, inset, onPage }: {
   return (
     <div
       ref={railRef}
-      className="group absolute top-0 bottom-0 w-[15px] z-20 bg-white/5 cursor-pointer touch-none"
-      style={{ right: inset }}
+      className="w-[15px] shrink-0 relative cursor-pointer touch-none select-none"
+      style={{ background: dark ? 'rgba(255,255,255,0.07)' : 'rgba(42,30,16,0.10)' }}
       onPointerDown={(e) => {
         (e.currentTarget as Element).setPointerCapture(e.pointerId);
         setDragging(true);
@@ -1694,6 +1798,8 @@ export function PageRail({ page, total, inset, onPage }: {
       onPointerMove={(e) => { if (dragging) onPage(pageAt(e.clientY)); }}
       onPointerUp={() => setDragging(false)}
       onPointerCancel={() => setDragging(false)}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
       role="slider"
       aria-label="Scroll through the pages"
       aria-valuemin={1}
@@ -1702,13 +1808,70 @@ export function PageRail({ page, total, inset, onPage }: {
       title={`Page ${page} of ${total} — drag to move through the document`}
     >
       <div
-        className="absolute left-[2px] right-[2px] rounded-full bg-white/40 group-hover:bg-[#e8b84a]/85"
+        className="absolute left-[2px] right-[2px] rounded-full"
         style={{
           height: THUMB,
           top: `calc(${(page - 1) / Math.max(1, total - 1)} * (100% - ${THUMB}px))`,
-          ...(dragging ? { background: '#e8b84a', transition: 'none' } : { transition: 'top 120ms ease' }),
+          background: dragging
+            ? '#e8b84a'
+            : hover
+              ? (dark ? 'rgba(232, 184, 74, 0.85)' : 'rgba(160, 109, 31, 0.9)')
+              : (dark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(42, 30, 16, 0.55)'),
+          transition: dragging ? 'none' : 'top 120ms ease, background 120ms ease',
         }}
       />
+    </div>
+  );
+}
+
+// The reader's context menu — its own verbs where the browser's menu stood.
+function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onCopySel, onCopyDoc, onPrint, onDownload, onDrive, onClose }: {
+  at: { x: number; y: number };
+  hasSelection: boolean;
+  canDownload: boolean;
+  canDrive: boolean;
+  printing: boolean;
+  onCopySel: () => void;
+  onCopyDoc: () => void;
+  onPrint: () => void;
+  onDownload: () => void;
+  onDrive: () => void;
+  onClose: () => void;
+}) {
+  const items: { icon: React.ReactNode; label: string; run: () => void; disabled?: boolean }[] = [
+    { icon: <Copy size={14} />, label: 'Copy', run: onCopySel, disabled: !hasSelection },
+    { icon: <FileText size={14} />, label: 'Copy the whole document', run: onCopyDoc },
+    { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: onPrint, disabled: printing },
+    { icon: <Download size={14} />, label: 'Download the original', run: onDownload, disabled: !canDownload },
+    ...(canDrive
+      ? [{ icon: <HardDrive size={14} />, label: 'Save to Google Drive', run: onDrive }]
+      : []),
+  ];
+  const W = 240;
+  const x = Math.max(8, Math.min(at.x, window.innerWidth - W - 8));
+  const y = Math.max(8, Math.min(at.y, window.innerHeight - (items.length * 34 + 14)));
+  return (
+    <div
+      role="menu"
+      className="fixed z-[80] py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
+      style={{ left: x, top: y, width: W }}
+      // Keep the click inside from collapsing the selection or reaching the
+      // document-level closer before the item runs.
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {items.map((it) => (
+        <button
+          key={it.label}
+          role="menuitem"
+          disabled={it.disabled}
+          onClick={() => { it.run(); onClose(); }}
+          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs text-white/80 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span className="shrink-0 opacity-80">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -1852,6 +2015,22 @@ function ReaderStyle({ theme }: { theme: Theme }) {
       }
       .textLayer .markedContent { display: contents; }
       .textLayer ::selection { background: ${selectionBg}; }
+      /* Printing a rendered document (docx, slides, script): only the
+         document itself reaches the paper — no app chrome, no dark ground.
+         PDFs never come this way; they print as their original file. */
+      @media print {
+        body * { visibility: hidden !important; }
+        .print-root, .print-root * { visibility: visible !important; }
+        .print-root {
+          position: absolute !important;
+          left: 0 !important;
+          top: 0 !important;
+          width: 100% !important;
+          max-width: none !important;
+          margin: 0 !important;
+          box-shadow: none !important;
+        }
+      }
       .textLayer ::-moz-selection { background: ${selectionBg}; }
 
       .docx-page :is(h1,h2,h3,h4) { font-weight: 700; margin: 1em 0 0.4em; line-height: 1.25; }
