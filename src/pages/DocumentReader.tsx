@@ -16,6 +16,8 @@ import {
   Download,
   HardDrive,
   StickyNote,
+  Copy,
+  Check,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -56,6 +58,14 @@ import {
   type ComposerLink,
 } from '@/components/reader/Marginalia';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  interceptStyledCopy,
+  pdfDocumentText,
+  reflowedHtml,
+  selectionHtml,
+  htmlPlainText,
+  writeClipboard,
+} from '@/lib/reader-copy';
 
 // pdfjs worker URL — same pattern as src/lib/extract.ts. Resolved at build
 // time by Vite from the installed pdfjs-dist package.
@@ -498,6 +508,92 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     () => setPage((p) => Math.min(totalPages, p + 1)),
     [totalPages],
   );
+
+  // ── Scrolling through the case ──────────────────────────────────────
+  // In fit-page mode nothing overflows, so the browser offers no scrollbar
+  // and the trackpad does nothing: a long case was click-click-click. The
+  // wheel now turns pages (and, zoomed in, turns them at the page's edge),
+  // and a right-edge rail — the scrollbar the reader was missing — drags
+  // through the whole document. When the pane genuinely scrolls, the rail
+  // steps left so the native bar keeps its lane.
+  const [paneScrolls, setPaneScrolls] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const el = contentRef.current;
+      if (el) setPaneScrolls(el.scrollHeight > el.clientHeight + 2);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [page, zoom, fitPage, containerTick, loadState, fileKind, renderedScale]);
+
+  // A fresh page starts at its top; wheeling backward lands at the top too,
+  // as page readers do.
+  useEffect(() => {
+    if (fileKind === 'pdf') contentRef.current?.scrollTo({ top: 0 });
+  }, [page, fileKind]);
+
+  const wheelAcc = useRef({ sum: 0, at: 0, turned: 0 });
+  const wheelPage = useCallback((e: React.WheelEvent) => {
+    if (fileKind !== 'pdf' || loadState !== 'ready') return;
+    const el = contentRef.current;
+    if (!el) return;
+    const scrollable = el.scrollHeight > el.clientHeight + 2;
+    if (scrollable) {
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
+      const atTop = el.scrollTop <= 2;
+      if ((e.deltaY > 0 && !atBottom) || (e.deltaY < 0 && !atTop)) {
+        wheelAcc.current.sum = 0;
+        return; // the pane itself has room to scroll
+      }
+    }
+    const now = Date.now();
+    if (now - wheelAcc.current.turned < 450) return; // ride out trackpad inertia
+    if (now - wheelAcc.current.at > 260) wheelAcc.current.sum = 0;
+    wheelAcc.current.at = now;
+    wheelAcc.current.sum += e.deltaY;
+    if (wheelAcc.current.sum > 120) {
+      wheelAcc.current = { sum: 0, at: now, turned: now };
+      goNext();
+    } else if (wheelAcc.current.sum < -120) {
+      wheelAcc.current = { sum: 0, at: now, turned: now };
+      goPrev();
+    }
+  }, [fileKind, loadState, goNext, goPrev]);
+
+  // ── Clean copy ──────────────────────────────────────────────────────
+  // The whole document onto the clipboard as it should paste into Word:
+  // a PDF's text reflowed into flowing paragraphs, a .docx as its own
+  // semantic HTML (its real bold and italics travel), slides and scripts
+  // as plain text. Selection copy over the PDF text layer is intercepted
+  // in the content pane below for the same reason — the painted layer's
+  // styling is not the document's.
+  const [copyState, setCopyState] = useState<'idle' | 'busy' | 'done'>('idle');
+  const handleCopyText = useCallback(async () => {
+    if (copyState !== 'idle' || loadState !== 'ready') return;
+    setCopyState('busy');
+    try {
+      let text = '';
+      let html = '';
+      if (fileKind === 'pdf' && pdfDocRef.current) {
+        text = await pdfDocumentText(
+          pdfDocRef.current as Parameters<typeof pdfDocumentText>[0],
+        );
+        html = reflowedHtml(text);
+      } else if (docHtml) {
+        const full = (titlePageHtml ?? '') + docHtml;
+        text = htmlPlainText(full);
+        html = fileKind === 'docx' ? full : selectionHtml(text);
+      }
+      if (!text) {
+        setCopyState('idle');
+        return;
+      }
+      await writeClipboard(text, html);
+      setCopyState('done');
+      window.setTimeout(() => setCopyState('idle'), 2000);
+    } catch {
+      setCopyState('idle');
+    }
+  }, [copyState, loadState, fileKind, docHtml, titlePageHtml]);
 
   // Cover support — mirrors how Pages/Lists/Tables use CoverImage.
   // Expanded mode promotes the cover to the page background via a CSS var,
@@ -1163,6 +1259,20 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           )}
           <div className="w-px h-5 bg-white/10 mx-1" />
           <button
+            onClick={() => void handleCopyText()}
+            disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml)}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title={
+              copyState === 'done'
+                ? 'Copied — paste into Word or anywhere'
+                : copyState === 'busy'
+                  ? 'Copying…'
+                  : 'Copy the whole document as clean text'
+            }
+          >
+            {copyState === 'done' ? <Check size={15} /> : <Copy size={15} />}
+          </button>
+          <button
             onClick={handleDownload}
             disabled={downloading || !doc?.storage_path}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
@@ -1231,12 +1341,20 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">
+          <div className="relative flex-1 min-h-0 flex">
           <div
             ref={contentRef}
             className={`flex-1 overflow-auto flex justify-center ${
               fileKind === 'pdf' && fitPage ? 'items-center' : 'items-start py-6 px-4'
             }`}
             style={{ backgroundColor: rootBg }}
+            onWheel={wheelPage}
+            // A selection copied off the PDF text layer would otherwise carry
+            // the layer's own paint — transformed spans, transparent ink,
+            // search-highlight color — into Word. Hand the clipboard the text.
+            onCopy={(e) => {
+              if (fileKind === 'pdf') interceptStyledCopy(e, textLayerRef.current);
+            }}
           >
             {loadState === 'loading' && (
               <p className="mt-10 text-[13px] text-white/50">Loading document…</p>
@@ -1314,6 +1432,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                 )}
               </div>
             )}
+          </div>
+          {fileKind === 'pdf' && loadState === 'ready' && totalPages > 1 && (
+            <PageRail
+              page={page}
+              total={totalPages}
+              inset={paneScrolls ? 15 : 0}
+              onPage={setPage}
+            />
+          )}
           </div>
 
           {showBottomNav && (
@@ -1527,6 +1654,64 @@ const ANNOTATION_DOT: Record<AnnotationColor, string> = {
   pink: '#f472b6',
   blue: '#60a5fa',
 };
+
+// The right-edge page rail: a scrollbar-shaped thumb mapped over the whole
+// document. Drag it, or click anywhere on the track, to move through the
+// pages — the vertical companion to the bottom slider, present even in
+// fit-page mode where no native scrollbar can exist. Exported for the
+// harness probes; the reader is its only product surface.
+export function PageRail({ page, total, inset, onPage }: {
+  page: number;
+  total: number;
+  /** Pixels to step left, when the native scrollbar owns the true edge. */
+  inset: number;
+  onPage: (p: number) => void;
+}) {
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const THUMB = 56;
+
+  const pageAt = (clientY: number): number => {
+    const el = railRef.current;
+    if (!el) return page;
+    const r = el.getBoundingClientRect();
+    const usable = r.height - THUMB;
+    if (usable <= 0) return page;
+    const frac = Math.min(1, Math.max(0, (clientY - r.top - THUMB / 2) / usable));
+    return 1 + Math.round(frac * (total - 1));
+  };
+
+  return (
+    <div
+      ref={railRef}
+      className="group absolute top-0 bottom-0 w-[15px] z-20 bg-white/5 cursor-pointer touch-none"
+      style={{ right: inset }}
+      onPointerDown={(e) => {
+        (e.currentTarget as Element).setPointerCapture(e.pointerId);
+        setDragging(true);
+        onPage(pageAt(e.clientY));
+      }}
+      onPointerMove={(e) => { if (dragging) onPage(pageAt(e.clientY)); }}
+      onPointerUp={() => setDragging(false)}
+      onPointerCancel={() => setDragging(false)}
+      role="slider"
+      aria-label="Scroll through the pages"
+      aria-valuemin={1}
+      aria-valuemax={total}
+      aria-valuenow={page}
+      title={`Page ${page} of ${total} — drag to move through the document`}
+    >
+      <div
+        className="absolute left-[2px] right-[2px] rounded-full bg-white/40 group-hover:bg-[#e8b84a]/85"
+        style={{
+          height: THUMB,
+          top: `calc(${(page - 1) / Math.max(1, total - 1)} * (100% - ${THUMB}px))`,
+          ...(dragging ? { background: '#e8b84a', transition: 'none' } : { transition: 'top 120ms ease' }),
+        }}
+      />
+    </div>
+  );
+}
 
 function AnnotationsOverlay({
   annotations,
