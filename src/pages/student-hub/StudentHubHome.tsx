@@ -114,8 +114,9 @@ export default function StudentHubHome() {
       // A file you upload is a book: it takes its own place on the shelf, with
       // this reading under it. No headings, so the tree renders it flat.
       const book = await createText(title);
+      let filed;
       try {
-        await createSession({
+        filed = await createSession({
           title,
           citation: caption.citation.trim(),
           sourceLabel: caption.source_label.trim() || 'your own text',
@@ -132,7 +133,8 @@ export default function StudentHubHome() {
         try { await deleteText(book.id); } catch { /* the filing error is the one to report */ }
         throw e;
       }
-      navigate(`/app/student-hub/texts?text=${book.id}`);
+      // Upload, click, read — the book opens itself, cover first.
+      navigate(`/app/student-hub/${filed.id}?read=1`);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The upload could not be filed.');
       setFiling(null);
@@ -220,32 +222,46 @@ export default function StudentHubHome() {
                 // the covers keep a book's proportions, so they still stand
                 // at their own heights on the rail.
                 const w = 64 + ((i * 7) % 3) * 4;
+                // Taking a book off the shelf reads it; its title underneath
+                // walks to its page in Your texts instead.
                 return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    title={t.title}
-                    onClick={() => navigate(`/app/student-hub/texts?text=${t.id}`)}
-                    style={{
-                      appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
-                      flexShrink: 0, padding: 0, width: w, textAlign: 'left',
-                    }}
-                  >
-                    <div style={{
-                      width: w, height: Math.round(w * 1.5) + 2, overflow: 'hidden',
-                      borderTop: `2px solid ${T.brass}`, borderRadius: '2px 2px 0 0',
-                      background: bindingColors[i % bindingColors.length],
-                    }}>
-                      <BookCover src={covers.get(t.id)} width={w} style={{ borderRadius: 0 }} />
-                    </div>
-                    <div style={{
-                      fontFamily: T.serif, fontStyle: 'italic', fontSize: 11.5, color: T.ink,
-                      marginTop: 6, lineHeight: 1.3,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                    }}>
-                      {t.title}
-                    </div>
-                  </button>
+                  <div key={t.id} style={{ flexShrink: 0, width: w }}>
+                    <button
+                      type="button"
+                      title={`Read ${t.title}`}
+                      aria-label={`Read ${t.title}`}
+                      onClick={() => navigate(`/app/student-hub/texts?text=${t.id}&read=1`)}
+                      style={{
+                        appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
+                        display: 'block', padding: 0, width: w,
+                      }}
+                    >
+                      <div style={{
+                        width: w, height: Math.round(w * 1.5) + 2, overflow: 'hidden',
+                        borderTop: `2px solid ${T.brass}`, borderRadius: '2px 2px 0 0',
+                        background: bindingColors[i % bindingColors.length],
+                      }}>
+                        <BookCover src={covers.get(t.id)} width={w} style={{ borderRadius: 0 }} />
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      title={`${t.title} — its readings, outlines, and briefs`}
+                      onClick={() => navigate(`/app/student-hub/texts?text=${t.id}`)}
+                      style={{
+                        appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
+                        display: 'block', padding: 0, width: '100%', textAlign: 'left',
+                      }}
+                    >
+                      <div style={{
+                        fontFamily: T.serif, fontStyle: 'italic', fontSize: 11.5, color: T.ink,
+                        marginTop: 6, lineHeight: 1.3,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {t.title}
+                      </div>
+                    </button>
+                  </div>
                 );
               })}
             </div>
