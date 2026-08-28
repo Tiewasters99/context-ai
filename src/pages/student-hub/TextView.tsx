@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   listTexts, listReadings, sessionsWithTranscripts, updateSession, generateOutline, deleteText,
@@ -94,6 +94,30 @@ export default function TextView() {
       .catch((e) => { if (!stale) setError(e instanceof Error ? e.message : 'Could not load the readings.'); });
     return () => { stale = true; };
   }, [textId]);
+
+  // The reading the book opens to: the one it was last open at, or the first.
+  const readTarget = useCallback((): StudySession | null => {
+    if (!readings.length) return null;
+    try {
+      const last = localStorage.getItem(`hub-reader-last-${textId}`);
+      return readings.find((r) => r.id === last) ?? readings[0];
+    } catch {
+      return readings[0];
+    }
+  }, [readings, textId]);
+
+  const openBook = useCallback(() => {
+    const target = readTarget();
+    if (target) navigate(`/app/student-hub/${target.id}?read=1`);
+  }, [readTarget, navigate]);
+
+  // A book arrived at with ?read=1 — a shelf cover click lands here first —
+  // opens itself as soon as its readings are known.
+  useEffect(() => {
+    if (searchParams.get('read') !== '1' || !textId) return;
+    const target = readTarget();
+    if (target) navigate(`/app/student-hub/${target.id}?read=1`, { replace: true });
+  }, [searchParams, textId, readTarget, navigate]);
 
   // chapter -> section -> items, preserving sort order.
   const tree = useMemo(() => {
@@ -226,6 +250,20 @@ export default function TextView() {
                 <span style={{ flex: 1 }} />
                 <button
                   type="button"
+                  onClick={openBook}
+                  disabled={!readings.length}
+                  title="Open the book and read — cover first, then the pages"
+                  style={{
+                    appearance: 'none', cursor: readings.length ? 'pointer' : 'default',
+                    fontFamily: T.sans, fontSize: 11, padding: '3px 10px', borderRadius: 2,
+                    border: `1px solid ${T.brass}`, background: 'transparent', color: T.brass,
+                    opacity: readings.length ? 1 : 0.5,
+                  }}
+                >
+                  ⛶ open the book
+                </button>
+                <button
+                  type="button"
                   onClick={() => (confirmDelete ? void removeText() : setConfirmDelete(true))}
                   disabled={deleting}
                   title="Deletes this text, all its readings and transcripts, and its stored scan pages — for good"
@@ -240,13 +278,26 @@ export default function TextView() {
                   {deleting ? 'removing…' : confirmDelete ? 'remove this text and everything under it?' : 'remove'}
                 </button>
               </div>
-              {/* The book itself, at the edge of the caption — set aside on a phone. */}
-              <BookCover
-                src={covers.get(selected.id)}
-                width={CAPTION_COVER}
+              {/* The book itself, at the edge of the caption — set aside on a
+                  phone. Picking it up reads it. */}
+              <button
+                type="button"
+                onClick={openBook}
+                disabled={!readings.length}
+                title={`Read ${selected.title}`}
+                aria-label={`Read ${selected.title}`}
                 className="hub-caption-cover"
-                style={{ flexShrink: 0, border: '1px solid rgba(169,139,69,0.55)' }}
-              />
+                style={{
+                  appearance: 'none', border: 'none', background: 'none', padding: 0,
+                  cursor: readings.length ? 'pointer' : 'default', flexShrink: 0,
+                }}
+              >
+                <BookCover
+                  src={covers.get(selected.id)}
+                  width={CAPTION_COVER}
+                  style={{ border: '1px solid rgba(169,139,69,0.55)' }}
+                />
+              </button>
             </div>
           )}
         </div>

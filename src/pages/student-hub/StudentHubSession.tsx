@@ -65,7 +65,7 @@ export default function StudentHubSession() {
   const [session, setSession] = useState<StudySession | null>(null);
   const [messages, setMessages] = useState<StudyMessage[]>([]);
   const [loadError, setLoadError] = useState('');
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<TabId>(() => {
     const q = searchParams.get('tab');
     return q === 'brief' || q === 'outline' || q === 'coldcall' || q === 'notes' ? q : 'reading';
@@ -171,6 +171,36 @@ export default function StudentHubSession() {
       .catch(() => { /* the template plate stands in */ });
     return () => { stale = true; };
   }, [session?.text_id]);
+
+  // Arriving with ?read=1 — the shelf cover, the book page's door, or a
+  // fresh upload — opens the book as soon as it can be opened: at once for a
+  // text reading, when the signed pages arrive for a scanned one. The param
+  // is consumed so closing the book, or refreshing, does not reopen it.
+  const autoOpened = useRef(false);
+  useEffect(() => { autoOpened.current = false; }, [id]);
+  useEffect(() => {
+    if (autoOpened.current || searchParams.get('read') !== '1' || !session) return;
+    if (session.pages?.length && !pageUrls) return;
+    const frame = requestAnimationFrame(() => {
+      autoOpened.current = true;
+      setReaderOpen(true);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('read');
+        return next;
+      }, { replace: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [searchParams, session, pageUrls, setSearchParams]);
+
+  // The book remembers which reading it was open to, so the book-level doors
+  // put the student back where they left off.
+  useEffect(() => {
+    if (!readerOpen || !session?.text_id) return;
+    try {
+      localStorage.setItem(`hub-reader-last-${session.text_id}`, session.id);
+    } catch { /* a blocked store costs a bookmark, nothing more */ }
+  }, [readerOpen, session?.text_id, session?.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
