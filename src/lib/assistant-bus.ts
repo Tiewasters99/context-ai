@@ -6,9 +6,21 @@
 // dispatcher and the panel need no component relationship.
 
 export interface AssistantCommand {
-  prompt: string;
+  /**
+   * The prompt to run. OPTIONAL: a command with no prompt just opens the
+   * panel scoped to the matter/charter it names — SecureChat's "open the
+   * sealed room" button — without spending a model call.
+   */
+  prompt?: string;
   matterId?: string;
   matterName?: string;
+  /**
+   * Display hint: the named matter is sealed (SecureSpace Tier B/C), so the
+   * panel may show the sealed-room strip immediately instead of waiting for
+   * the server's `session` event. Display only — the server enforces the
+   * tier from the database regardless of what this says.
+   */
+  sealed?: boolean;
   /**
    * Run under an agent charter: an agent_charters uuid, or `builtin:<key>`
    * for one of the standing "On duty" agents. Only the ID travels — the

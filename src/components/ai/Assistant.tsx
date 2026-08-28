@@ -20,6 +20,16 @@ const welcomeMessage: ChatMessage = {
   timestamp: new Date(),
 };
 
+// Friendly pen names for the header, from the model ids the server emits
+// (PENS in lib/assistant-core.mjs). An unknown id shows as itself — truth
+// beats pretty.
+function penLabel(model: string): string {
+  if (model.includes('opus-5')) return 'Opus 5';
+  if (model.includes('opus-4-8')) return 'Opus 4.8';
+  if (model.includes('kimi')) return 'Kimi K3';
+  return model.replace(/^anthropic\./, '');
+}
+
 export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
   const [input, setInput] = useState('');
@@ -125,10 +135,20 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   };
 
   // Commands arrive from other surfaces (the docket's highlight-to-Run
-  // chip, next-step Run buttons) carrying the matter they came from. The
-  // scope sticks for follow-up questions in the same panel session and is
-  // replaced by the next command. A ref, not state: nothing re-renders.
+  // chip, next-step Run buttons, SecureChat's open button) carrying the
+  // matter they came from. The scope sticks for follow-up questions in the
+  // same panel session and is replaced by the next command. A ref for the
+  // wire (nothing re-renders), plus display state so the panel can SAY
+  // where it is scoped — a sticky scope the user can't see is a scope
+  // they'll forget.
   const commandMatterRef = useRef<{ id?: string; name?: string } | null>(null);
+  const [scope, setScope] = useState<{ name: string; sealed?: boolean } | null>(null);
+
+  // The pen that actually answered, from the server's `session` event —
+  // tier, provider, model, escalation. The header renders it live instead
+  // of guessing; reset when the scope changes (a different matter may sit
+  // at a different tier).
+  const [livePen, setLivePen] = useState<{ tier: string; provider: string; model: string } | null>(null);
 
   // Agents: a command can also arrive carrying a CHARTER — the agent whose
   // job this run is. Only the id crosses the wire; the server loads the
@@ -244,12 +264,19 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             action?: string;
             input?: { document_id?: string; page?: number; matter_id?: string; name?: string; description?: string };
             sessionId?: string | null;
+            tier?: string;
+            provider?: string;
+            model?: string;
           };
           try { ev = JSON.parse(payload); } catch { continue; }
           if (ev.type === 'session') {
             // The server opened (or continued) the recorded session for this matter.
             if (boundMatterId && ev.sessionId) {
               sessionRef.current = { key: sessionKey, sessionId: ev.sessionId };
+            }
+            // The pen the tier chose — rendered live in the header.
+            if (ev.provider && ev.model) {
+              setLivePen({ tier: ev.tier ?? 'A', provider: ev.provider, model: ev.model });
             }
           } else if (ev.type === 'text' && ev.text) {
             ensureAssistant();
@@ -315,10 +342,14 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   useEffect(() => {
     const onCommand = (e: Event) => {
       const cmd = (e as CustomEvent<AssistantCommand>).detail;
-      if (!cmd?.prompt?.trim()) return;
+      if (!cmd) return;
       commandMatterRef.current = { id: cmd.matterId, name: cmd.matterName };
+      setScope(cmd.matterName ? { name: cmd.matterName, sealed: cmd.sealed } : null);
+      setLivePen(null);
       setCharter(cmd.charterId ? { id: cmd.charterId, name: cmd.charterName || 'Agent' } : null);
-      void sendRef.current(cmd.prompt.trim());
+      // A command may carry no prompt: it scopes and opens the panel
+      // (SecureChat's door) without spending a model call.
+      if (cmd.prompt?.trim()) void sendRef.current(cmd.prompt.trim());
     };
     window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
     return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
@@ -337,11 +368,25 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)]">
-          {/* Truth-in-labeling: name the model that actually answers. Keep
-              in sync with MODEL in lib/assistant-core.mjs — the Orchestrator
-              runs ONE fixed model; there is no silent model switching. */}
-          <h2 className="text-sm font-semibold text-white">
-            Orchestrator <span className="text-[11px] font-normal text-white/45">· Opus 4.8</span>
+          {/* Truth-in-labeling: name the model that actually answers. Before
+              the first exchange we show the Tier-A default; after it, the
+              server's `session` event tells us which pen the matter's tier
+              actually chose (a sealed matter is served by the sealed pen,
+              never the default), and a SEALED chip says so. */}
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-white">
+            Orchestrator{' '}
+            <span className="text-[11px] font-normal text-white/45">
+              · {livePen ? penLabel(livePen.model) : 'Opus 4.8'}
+            </span>
+            {livePen && livePen.tier !== 'A' && (
+              <span
+                className="px-1 py-px rounded text-[9px] font-semibold tracking-wide"
+                style={{ backgroundColor: 'rgba(90,168,143,0.14)', color: '#5aa88f' }}
+                title="This matter is sealed: no training, zero data retention, recorded as privileged work product."
+              >
+                SEALED
+              </span>
+            )}
           </h2>
           <button
             onClick={onClose}
@@ -350,6 +395,33 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Where the panel is scoped. For SecureChat (a born-sealed room)
+            the strip states the ground rules up front — the Heppner facts,
+            inverted: no training, zero retention, inside a matter. For any
+            other command scope it simply names the matter, so the sticky
+            scope is visible instead of remembered. */}
+        {scope && (
+          <div
+            className="flex items-center justify-between gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.08)]"
+            style={scope.sealed ? { backgroundColor: 'rgba(90,168,143,0.07)' } : undefined}
+          >
+            <span className="text-[11px] truncate" style={{ color: scope.sealed ? '#5aa88f' : 'rgba(255,255,255,0.55)' }}>
+              {scope.sealed ? (
+                <>Sealed room — <span className="font-semibold">{scope.name}</span> · no training · zero data retention</>
+              ) : (
+                <>In <span className="font-semibold">{scope.name}</span></>
+              )}
+            </span>
+            <button
+              onClick={() => { commandMatterRef.current = null; setScope(null); setLivePen(null); }}
+              className="text-[11px] text-white/45 hover:text-white transition-colors shrink-0"
+              title="Leave this matter's scope"
+            >
+              clear
+            </button>
+          </div>
+        )}
 
         {/* Running under a charter (Agents). Stated plainly, with a way out:
             an agent that answers without saying it is an agent is exactly the
