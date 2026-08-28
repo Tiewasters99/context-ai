@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Lock, LockOpen, Plus, Upload } from 'lucide-react';
+import { Lock, LockOpen, MessageCircle, Plus, Upload } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import type { Serverspace, ServerspaceMatter } from '@/hooks/useServerspaces';
 import { persistVaultFile, moveVaultDocument, type MatterRef } from '@/lib/vault-persist';
@@ -67,6 +67,8 @@ interface SectionProps {
   isActive: (path: string) => boolean;
   onNewSecureSpace: (serverspaceId: string, serverspaceName: string) => void;
   onUnseal: (row: SecureSpaceRow) => void;
+  /** Open SecureChat: the Assistant scoped to the born-sealed personal room. */
+  onOpenSecureChat: () => void;
 }
 
 export default function SecureSpacesSection({
@@ -76,6 +78,7 @@ export default function SecureSpacesSection({
   isActive,
   onNewSecureSpace,
   onUnseal,
+  onOpenSecureChat,
 }: SectionProps) {
   const rows = useMemo(() => collectSealedRows(serverspaces), [serverspaces]);
   const [spacePicker, setSpacePicker] = useState(false);
@@ -119,6 +122,36 @@ export default function SecureSpacesSection({
           <Plus size={14} strokeWidth={1.75} />
         </button>
       </div>
+
+      {/* SecureChat — one click into the sealed personal room. The strongest
+          claims in the product, stated in six words, both enforced
+          server-side: the room is Tier B from birth. */}
+      {collapsed ? (
+        <button
+          onClick={onOpenSecureChat}
+          className="mx-auto mb-1.5 flex p-1.5 rounded-md transition-colors hover:bg-[rgba(90,168,143,0.14)]"
+          style={{ color: TIER_B_COLOR }}
+          aria-label="Open SecureChat"
+          title="Open SecureChat — no training · zero data retention"
+        >
+          <MessageCircle size={15} strokeWidth={1.75} />
+        </button>
+      ) : (
+        <button
+          onClick={onOpenSecureChat}
+          className="mx-2 mb-1.5 block w-[calc(100%-16px)] rounded-md border px-2.5 py-2 text-left transition-colors hover:bg-[rgba(90,168,143,0.12)]"
+          style={{ borderColor: 'rgba(90,168,143,0.35)', backgroundColor: 'rgba(90,168,143,0.07)' }}
+          title="Sealed chat in My SecureSpace — your matter never reaches an outside provider, nothing is retained, nothing is trained on."
+        >
+          <span className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: TIER_B_COLOR }}>
+            <MessageCircle size={13} strokeWidth={2} />
+            Open SecureChat
+          </span>
+          <span className="block mt-0.5 text-[10px] text-white/45">
+            No training · zero data retention
+          </span>
+        </button>
+      )}
 
       {/* Serverspace picker for the + button when several spaces exist. */}
       {spacePicker && !collapsed && (

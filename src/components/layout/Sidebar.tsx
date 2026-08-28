@@ -38,6 +38,8 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
+import { ensureMySecureSpace } from '@/lib/securechat';
+import { runInAssistant } from '@/lib/assistant-bus';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { useOptionalCanvas } from '@/hooks/useCanvas';
 import { CALENDAR_CARD_ID, cardKey } from '@/lib/canvas';
@@ -506,6 +508,22 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               descendantCount: row.descendantCount,
             })
           }
+          onOpenSecureChat={() => {
+            // Find-or-create the born-sealed personal room, then hand the
+            // Assistant a promptless command: MainLayout opens the panel,
+            // Assistant scopes to the room, and no model call is spent
+            // until the user actually says something.
+            void (async () => {
+              if (serverspaces.length === 0) return;
+              try {
+                const room = await ensureMySecureSpace(serverspaces[0].id);
+                await refreshServerspaces();
+                runInAssistant({ matterId: room.id, matterName: room.name, sealed: true });
+              } catch (err) {
+                console.error('SecureChat:', err instanceof Error ? err.message : err);
+              }
+            })();
+          }}
         />
         <DragOverlay>
           {dragging && draggingMatterName && (
