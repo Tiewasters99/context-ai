@@ -232,3 +232,38 @@ export function readingParagraphs(reflowed: string): ReadingParagraph[] {
   }
   return out;
 }
+
+/**
+ * Where a quoted phrase falls in the reading — for "take me there".
+ *
+ * The model quotes what it read; the page holds what was stored. Between the
+ * two stand case, line wraps, curly quotes, and dashes, so both sides are
+ * normalized (lowercase, whitespace collapsed, punctuation softened) and the
+ * match is mapped back to the original offsets. Null when the phrase is too
+ * short to trust or simply is not there.
+ */
+export function findQuote(hay: string, quote: string): { at: number; len: number } | null {
+  const soften = (ch: string) => {
+    const c = ch.toLowerCase();
+    if (c === '‘' || c === '’') return "'";
+    if (c === '“' || c === '”') return '"';
+    if (c === '–' || c === '—') return '-';
+    return c;
+  };
+  const map: number[] = [];
+  let norm = '';
+  let pendingSpace = false;
+  for (let i = 0; i < hay.length; i += 1) {
+    if (/\s/.test(hay[i])) { pendingSpace = norm.length > 0; continue; }
+    if (pendingSpace) { norm += ' '; map.push(i - 1); pendingSpace = false; }
+    norm += soften(hay[i]);
+    map.push(i);
+  }
+  const needle = quote.trim().split('').map(soften).join('').replace(/\s+/g, ' ');
+  if (needle.length < 4) return null;
+  const at = norm.indexOf(needle);
+  if (at === -1) return null;
+  const from = map[at];
+  const to = map[Math.min(at + needle.length - 1, map.length - 1)];
+  return { at: from, len: to - from + 1 };
+}

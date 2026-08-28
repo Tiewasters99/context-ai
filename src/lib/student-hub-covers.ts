@@ -1,10 +1,15 @@
-// Every book on the shelf shows a cover, and nothing is stored to make it so.
+// Every book on the shelf shows a cover — its own, whenever it has one.
 //
-// A book whose first reading carries scanned pages shows its own first page —
-// the most honest cover a scanned book can have. A book with no scan behind it
-// is given a plate from the Contextspaces template library, chosen by a stable
-// hash of its title: the same title always lands on the same plate, so the
-// shelf looks the same tomorrow without a column to remember it in.
+// Resolution order: a cover the student gave the book (page one of an
+// uploaded PDF, captured at upload time, or an image handed over later) wins;
+// a book whose first reading carries scanned pages shows its own first page;
+// only a book with neither is given a plate from the Contextspaces template
+// library, chosen by a stable hash of its title, so the shelf looks the same
+// tomorrow without a column to remember it in.
+//
+// A given cover is one storage object at {uid}/covers/{textId}.jpg in the
+// private scan bucket — the deterministic path IS the record, so no schema
+// changes and the same RLS (038) that locks the scans locks the covers.
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -78,14 +83,68 @@ export function useTemplateCover(title: string): string | null {
   return useMemo(() => (list?.length ? coverForTitle(title) : null), [list, title]);
 }
 
+export interface TextCover {
+  url: string;
+  /** True when the cover is the book's own — given, not assigned. */
+  custom: boolean;
+}
+
+const COVER_FOLDER = 'covers';
+
+async function ownUid(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  const uid = data.user?.id;
+  if (!uid) throw new Error('Not signed in');
+  return uid;
+}
+
+const coverObjectPath = (uid: string, textId: string) =>
+  `${uid}/${COVER_FOLDER}/${textId}.jpg`;
+
+/** Give a book its cover. The bucket has no UPDATE policy (038), so a
+ *  replacement is a removal followed by a fresh upload. */
+export async function uploadCover(textId: string, blob: Blob): Promise<void> {
+  const uid = await ownUid();
+  const path = coverObjectPath(uid, textId);
+  await supabase.storage.from(SCAN_BUCKET).remove([path]);
+  const { error } = await supabase.storage
+    .from(SCAN_BUCKET)
+    .upload(path, blob, { contentType: 'image/jpeg' });
+  if (error) throw new Error(error.message);
+}
+
+/** Take a given cover back; the book returns to its scan page or plate. */
+export async function removeCover(textId: string): Promise<void> {
+  const uid = await ownUid();
+  const { error } = await supabase.storage
+    .from(SCAN_BUCKET)
+    .remove([coverObjectPath(uid, textId)]);
+  if (error) throw new Error(error.message);
+}
+
 /**
- * Page one of each book's first scanned reading, signed for an hour: one query
- * for the readings, one signing call for the pages (as getPageUrls does).
- * Books with nothing scanned are simply absent from the map.
+ * The real cover of every book that has one, signed for an hour: one listing
+ * of the covers folder, one query for scanned first pages, one signing call
+ * for everything found. Books with neither are simply absent from the map —
+ * the caller's plate stands in.
  */
-export async function getTextCoverUrls(textIds: string[]): Promise<Map<string, string>> {
-  const covers = new Map<string, string>();
+export async function getTextCoverUrls(textIds: string[]): Promise<Map<string, TextCover>> {
+  const covers = new Map<string, TextCover>();
   if (!textIds.length) return covers;
+
+  // Covers the student gave their books, found by the path alone.
+  const wanted = new Set(textIds);
+  const given = new Map<string, string>();
+  try {
+    const uid = await ownUid();
+    const { data: names } = await supabase.storage
+      .from(SCAN_BUCKET)
+      .list(`${uid}/${COVER_FOLDER}`, { limit: 1000 });
+    for (const entry of names ?? []) {
+      const id = entry.name.replace(/\.jpg$/, '');
+      if (id !== entry.name && wanted.has(id)) given.set(id, coverObjectPath(uid, id));
+    }
+  } catch { /* an unlistable folder costs the given covers, not the shelf */ }
 
   const { data, error } = await supabase
     .from('student_hub_sessions')
@@ -100,35 +159,38 @@ export async function getTextCoverUrls(textIds: string[]): Promise<Map<string, s
   const firstPage = new Map<string, string>();
   for (const row of (data ?? []) as { text_id: string | null; pages: string[] | null }[]) {
     const page = row.pages?.[0];
-    if (!row.text_id || !page || firstPage.has(row.text_id)) continue;
+    if (!row.text_id || !page || given.has(row.text_id) || firstPage.has(row.text_id)) continue;
     firstPage.set(row.text_id, page);
   }
-  if (!firstPage.size) return covers;
+  if (!given.size && !firstPage.size) return covers;
 
   const ids: string[] = [];
   const paths: string[] = [];
-  for (const [id, path] of firstPage) {
-    ids.push(id);
-    paths.push(path);
-  }
+  const custom: boolean[] = [];
+  for (const [id, path] of given) { ids.push(id); paths.push(path); custom.push(true); }
+  for (const [id, path] of firstPage) { ids.push(id); paths.push(path); custom.push(false); }
   const { data: signed, error: signError } = await supabase.storage
     .from(SCAN_BUCKET)
     .createSignedUrls(paths, 3600);
   if (signError) throw new Error(signError.message);
   (signed ?? []).forEach((s, i) => {
-    if (s.signedUrl) covers.set(ids[i], s.signedUrl);
+    if (s.signedUrl) covers.set(ids[i], { url: s.signedUrl, custom: custom[i] });
   });
   return covers;
 }
 
 /**
- * A cover for every book handed in: its own first scanned page where there is
- * one, otherwise its plate from the library. A book missing from the map has
- * no cover yet — render whatever stood there before.
+ * A cover for every book handed in: its own given cover, else its first
+ * scanned page, else its plate from the library. A book missing from the map
+ * has no cover yet — render whatever stood there before. Bump `version` after
+ * giving or taking back a cover and the map refreshes.
  */
-export function useTextCovers(texts: StudyText[] | null | undefined): Map<string, string> {
+export function useTextCovers(
+  texts: StudyText[] | null | undefined,
+  version = 0,
+): Map<string, TextCover> {
   const plateList = useSyncExternalStore(subscribePlates, platesSnapshot);
-  const [scans, setScans] = useState<Map<string, string>>(() => new Map());
+  const [own, setOwn] = useState<Map<string, TextCover>>(() => new Map());
 
   // The ids as one string, so the query runs when the shelf changes, not on
   // every render that hands over a fresh array.
@@ -137,18 +199,20 @@ export function useTextCovers(texts: StudyText[] | null | undefined): Map<string
     if (!ids) return;
     let stale = false;
     getTextCoverUrls(ids.split(','))
-      .then((m) => { if (!stale) setScans(m); })
-      // A scan that cannot be signed falls back to the book's plate.
+      .then((m) => { if (!stale) setOwn(m); })
+      // A cover that cannot be signed falls back to the book's plate.
       .catch(() => { /* nothing to report on a shelf */ });
     return () => { stale = true; };
-  }, [ids]);
+  }, [ids, version]);
 
   return useMemo(() => {
-    const covers = new Map<string, string>();
+    const covers = new Map<string, TextCover>();
     for (const t of texts ?? []) {
-      const url = scans.get(t.id) ?? (plateList?.length ? coverForTitle(t.title) : null);
-      if (url) covers.set(t.id, url);
+      const found = own.get(t.id);
+      const plate = plateList?.length ? coverForTitle(t.title) : null;
+      if (found) covers.set(t.id, found);
+      else if (plate) covers.set(t.id, { url: plate, custom: false });
     }
     return covers;
-  }, [texts, scans, plateList]);
+  }, [texts, own, plateList]);
 }

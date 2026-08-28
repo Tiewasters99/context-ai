@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   listTexts, listReadings, sessionsWithTranscripts, updateSession, generateOutline, deleteText,
   type StudyText, type StudySession, type OutlineAnnotations,
 } from '@/lib/student-hub';
-import { useTextCovers } from '@/lib/student-hub-covers';
+import { useTextCovers, uploadCover, removeCover } from '@/lib/student-hub-covers';
+import { coverJpeg } from '@/lib/student-hub-upload';
 import { T } from '@/components/student-hub/theme';
 import { HubStyles, HubTab, ErrorNote, GreenButton, BookCover } from '@/components/student-hub/ui';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
@@ -53,8 +54,42 @@ export default function TextView() {
   const [outlining, setOutlining] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Giving the book its own cover: a picked image replaces whatever the
+  // resolver would assign; bumping the version refreshes every thumbnail.
+  const coverInput = useRef<HTMLInputElement>(null);
+  const [coverVersion, setCoverVersion] = useState(0);
+  const [coverBusy, setCoverBusy] = useState(false);
 
   useEffect(() => { setConfirmDelete(false); }, [textId]);
+
+  const replaceCover = async (file: File | undefined) => {
+    if (!file || !textId || coverBusy) return;
+    setCoverBusy(true);
+    setError('');
+    try {
+      await uploadCover(textId, await coverJpeg(file));
+      setCoverVersion((v) => v + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That image could not become the cover.');
+    } finally {
+      setCoverBusy(false);
+      if (coverInput.current) coverInput.current.value = '';
+    }
+  };
+
+  const takeBackCover = async () => {
+    if (!textId || coverBusy) return;
+    setCoverBusy(true);
+    setError('');
+    try {
+      await removeCover(textId);
+      setCoverVersion((v) => v + 1);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The cover could not be removed.');
+    } finally {
+      setCoverBusy(false);
+    }
+  };
 
   const removeText = async () => {
     if (!textId || deleting) return;
@@ -138,7 +173,7 @@ export default function TextView() {
     return chapters;
   }, [readings]);
 
-  const covers = useTextCovers(texts);
+  const covers = useTextCovers(texts, coverVersion);
 
   if (texts && texts.length === 0) return <StudentHubHome />;
 
@@ -279,25 +314,64 @@ export default function TextView() {
                 </button>
               </div>
               {/* The book itself, at the edge of the caption — set aside on a
-                  phone. Picking it up reads it. */}
-              <button
-                type="button"
-                onClick={openBook}
-                disabled={!readings.length}
-                title={`Read ${selected.title}`}
-                aria-label={`Read ${selected.title}`}
-                className="hub-caption-cover"
-                style={{
-                  appearance: 'none', border: 'none', background: 'none', padding: 0,
-                  cursor: readings.length ? 'pointer' : 'default', flexShrink: 0,
-                }}
-              >
-                <BookCover
-                  src={covers.get(selected.id)}
-                  width={CAPTION_COVER}
-                  style={{ border: '1px solid rgba(169,139,69,0.55)' }}
+                  phone. Picking it up reads it; beneath it, the cover can be
+                  replaced with the book's own. */}
+              <div className="hub-caption-cover" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                <button
+                  type="button"
+                  onClick={openBook}
+                  disabled={!readings.length}
+                  title={`Read ${selected.title}`}
+                  aria-label={`Read ${selected.title}`}
+                  style={{
+                    appearance: 'none', border: 'none', background: 'none', padding: 0,
+                    cursor: readings.length ? 'pointer' : 'default',
+                  }}
+                >
+                  <BookCover
+                    src={covers.get(selected.id)?.url}
+                    width={CAPTION_COVER}
+                    style={{ border: '1px solid rgba(169,139,69,0.55)' }}
+                  />
+                </button>
+                <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    onClick={() => coverInput.current?.click()}
+                    disabled={coverBusy}
+                    title="Give this book its real cover — a photo or image of your own copy"
+                    style={{
+                      appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
+                      padding: 0, fontFamily: T.sans, fontSize: 9.5, letterSpacing: '0.04em',
+                      color: 'rgba(250,248,242,0.6)', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {coverBusy ? 'saving…' : 'replace cover'}
+                  </button>
+                  {covers.get(selected.id)?.custom && !coverBusy && (
+                    <button
+                      type="button"
+                      onClick={() => void takeBackCover()}
+                      title="Remove the given cover; the book falls back to its page or plate"
+                      aria-label="Remove the given cover"
+                      style={{
+                        appearance: 'none', border: 'none', background: 'none', cursor: 'pointer',
+                        padding: 0, fontFamily: T.sans, fontSize: 10, color: 'rgba(250,248,242,0.45)',
+                      }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+                <input
+                  ref={coverInput}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => void replaceCover(e.target.files?.[0])}
+                  style={{ display: 'none' }}
+                  aria-hidden="true"
                 />
-              </button>
+              </div>
             </div>
           )}
         </div>
@@ -334,7 +408,7 @@ export default function TextView() {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 color: T.brass, fontFamily: T.serif,
               }}>
-                <BookCover src={covers.get(t.id)} width={PICKER_COVER} fallback="§" />
+                <BookCover src={covers.get(t.id)?.url} width={PICKER_COVER} fallback="§" />
               </span>
               <span style={{ fontFamily: T.serif, fontSize: 18, fontStyle: 'italic', color: T.ink }}>
                 {t.title}

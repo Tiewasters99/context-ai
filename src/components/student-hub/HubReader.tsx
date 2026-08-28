@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import '@fontsource-variable/cormorant-garamond';
 import '@fontsource-variable/cormorant-garamond/wght-italic.css';
-import { readingParagraphs, type ReadingParagraph } from '@/lib/student-hub-reflow';
+import { findQuote, readingParagraphs, type ReadingParagraph } from '@/lib/student-hub-reflow';
 
 // The book, opened. Everywhere else the Student Hub is a law library — flat
 // paper, hairline rules, a lawyer's surface. This is the one room that is not:
@@ -51,34 +51,81 @@ const READER_CSS = `
 .hub-reader button { font-family: inherit; color: inherit; }
 
 /* The chrome takes the height its title and citation need — the page box
-   below it is measured, not assumed, so it gives back whatever is left. */
+   below it is measured, not assumed, so it gives back whatever is left.
+   The side padding keeps the title clear of the corner controls. */
 .hub-reader-chrome {
   text-align: center;
-  padding: 0.9rem 5rem 0.5rem;
+  padding: 0.9rem 9rem 0.5rem;
   flex-shrink: 0;
   max-height: 104px;
   overflow: hidden;
   box-sizing: border-box;
 }
+/* The title is the book's name over the open page — it must read at a
+   glance, in both lights, not whisper. */
 .hub-reader-title {
   font-family: var(--hub-reader-serif);
   font-size: clamp(1.25rem, 2vw, 1.6rem);
-  font-weight: 500;
+  font-weight: 600;
   font-style: italic;
   line-height: 1.15;
   margin: 0;
-  letter-spacing: 0.01em;
-  opacity: 0.9;
+  letter-spacing: 0.02em;
+  color: #2a1608;
 }
-.hub-reader.dark .hub-reader-title { color: #e8d48a; }
-.hub-reader-citation {
+.hub-reader.dark .hub-reader-title {
+  color: #f2e0a4;
+  text-shadow: 0 0 18px rgba(232, 212, 138, 0.28);
+}
+/* Top-right corner: the glass and the go-to box, on the page itself. */
+.hub-reader-corner {
+  position: absolute;
+  top: 0.8rem;
+  right: 1rem;
+  z-index: 26;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.hub-reader-corner-btn {
+  width: 40px; height: 40px;
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0;
+  background: rgba(42, 30, 16, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(42, 30, 16, 0.18);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: all 180ms ease;
+}
+.hub-reader.dark .hub-reader-corner-btn { background: rgba(232, 212, 138, 0.08); border-color: rgba(232, 212, 138, 0.18); }
+.hub-reader-corner-btn:hover { opacity: 1; background: rgba(42, 30, 16, 0.14); }
+.hub-reader.dark .hub-reader-corner-btn:hover { background: rgba(232, 212, 138, 0.14); }
+.hub-reader-goto {
+  width: 4.6em;
+  box-sizing: border-box;
+  padding: 0.45rem 0.8rem;
+  background: rgba(42, 30, 16, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(42, 30, 16, 0.18);
+  border-radius: 999px;
   font-family: var(--hub-reader-serif);
-  font-size: clamp(0.78rem, 1vw, 0.9rem);
+  /* 16px so iOS Safari doesn't zoom the page on focus. */
+  font-size: 16px;
   font-style: italic;
-  margin: 0.15rem 0 0;
-  letter-spacing: 0.06em;
-  opacity: 0.6;
+  text-align: center;
+  color: inherit;
+  outline: none;
+  transition: border-color 180ms ease;
 }
+.hub-reader.dark .hub-reader-goto { background: rgba(232, 212, 138, 0.08); border-color: rgba(232, 212, 138, 0.18); }
+.hub-reader-goto:focus { border-color: rgba(42, 30, 16, 0.45); }
+.hub-reader.dark .hub-reader-goto:focus { border-color: rgba(232, 212, 138, 0.5); }
+.hub-reader-goto::placeholder { color: inherit; opacity: 0.45; }
+.hub-reader-goto::-webkit-outer-spin-button, .hub-reader-goto::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 .hub-reader-stage { position: relative; flex: 1 1 auto; min-height: 0; }
 .hub-reader-area {
@@ -345,7 +392,10 @@ const READER_CSS = `
 /* On a phone every control is a thumb's target: 44px minimum, the slider
    given its hit area as padding so the track itself stays a hairline. */
 @media (max-width: 768px) {
-  .hub-reader-chrome { padding: 0.6rem 1rem 0.35rem; max-height: 84px; }
+  .hub-reader-chrome { padding: 0.6rem 6.6rem 0.35rem; max-height: 84px; }
+  .hub-reader-corner { top: 0.45rem; right: 0.45rem; gap: 0.3rem; }
+  .hub-reader-corner-btn { width: 44px; height: 44px; }
+  .hub-reader-goto { width: 4em; padding: 0.55rem 0.5rem; }
   .hub-reader-area { bottom: 128px; }
   .hub-reader-nav { width: 44px; height: 44px; opacity: 0.7; }
   .hub-reader-nav.left { left: 0.4rem; }
@@ -370,8 +420,6 @@ const READER_CSS = `
 
 export interface HubReaderProps {
   title: string;
-  /** The author or citation line, set small and italic under the title. */
-  citation?: string;
   /** The reflowed reading, for a text reading; empty when the reading is paged. */
   reflowed: string;
   /** Signed page-image URLs, for a scanned reading. */
@@ -381,6 +429,9 @@ export interface HubReaderProps {
   sessionId: string;
   onClose: () => void;
   onAskAssistant: () => void;
+  /** The assistant's "take me there": a page for a scanned reading, a
+   *  verbatim quote to find for a text one. A fresh nonce turns once. */
+  turnTo?: { page?: number; quote?: string; nonce: number } | null;
 }
 
 /** The paragraph a character offset falls in. */
@@ -423,7 +474,7 @@ function write(key: string, value: string): void {
 }
 
 export function HubReader({
-  title, citation, reflowed, pageUrls, coverUrl, sessionId, onClose, onAskAssistant,
+  title, reflowed, pageUrls, coverUrl, sessionId, onClose, onAskAssistant, turnTo,
 }: HubReaderProps) {
   const paged = !!pageUrls?.length;
   const coverPages = coverUrl ? 1 : 0;
@@ -574,6 +625,48 @@ export function HubReader({
     else setFontSize((f) => Math.min(FONT_MAX, Math.max(FONT_MIN, f + delta)));
   }, [paged]);
 
+  /* ---------------- Go to a page by its number ---------------- */
+
+  const [gotoDraft, setGotoDraft] = useState('');
+  const commitGoto = useCallback(() => {
+    const n = parseInt(gotoDraft, 10);
+    setGotoDraft('');
+    if (!Number.isFinite(n)) return;
+    goTo(coverPages + Math.max(1, Math.min(bodyPages, n)) - 1);
+  }, [gotoDraft, goTo, coverPages, bodyPages]);
+
+  /* ---------------- The assistant turns the pages ---------------- */
+
+  // The passage the assistant turned to, lit briefly so the eye lands on it.
+  const [flash, setFlash] = useState<{ at: number; len: number } | null>(null);
+  const turnedRef = useRef(0);
+  useEffect(() => {
+    if (!turnTo || turnTo.nonce === turnedRef.current) return;
+    if (turnTo.page == null && (!turnTo.quote || (!paged && !measured))) {
+      // A quote needs the pagination in hand first; this re-runs when it lands.
+      if (!turnTo.quote || paged) turnedRef.current = turnTo.nonce;
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      turnedRef.current = turnTo.nonce;
+      if (turnTo.page != null) {
+        goTo(coverPages + turnTo.page - 1);
+        return;
+      }
+      const found = findQuote(reflowed, turnTo.quote!);
+      if (!found) return; // the assistant misquoted; the book stays put
+      goTo(coverPages + (pageMap[paragraphAt(paras, found.at)] ?? 0));
+      setFlash(found);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [turnTo, measured, paged, reflowed, paras, pageMap, coverPages, goTo]);
+
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 5000);
+    return () => clearTimeout(t);
+  }, [flash]);
+
   /* ---------------- Search, over the reflowed text ---------------- */
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -623,6 +716,16 @@ export function HubReader({
     : <>{bodyIndex + 1}<span className="hub-reader-sep">/</span>{bodyPages}</>;
 
   const paragraphNodes = (p: ReadingParagraph, index: number): ReactNode => {
+    // The lit passage the assistant turned to outranks any search marks.
+    if (flash && flash.at >= p.start && flash.at < p.start + p.text.length) {
+      const from = flash.at - p.start;
+      const to = Math.min(p.text.length, from + flash.len);
+      return [
+        p.text.slice(0, from),
+        <mark key={`flash-${index}`} className="hub-reader-mark active">{p.text.slice(from, to)}</mark>,
+        p.text.slice(to),
+      ];
+    }
     if (!marking.length || hitLength < 2) return p.text;
     const end = p.start + p.text.length;
     const nodes: ReactNode[] = [];
@@ -647,10 +750,46 @@ export function HubReader({
     <div className={`hub-reader ${theme}`} role="dialog" aria-label={`${title} — the book`}>
       <style>{READER_CSS}</style>
 
+      {/* The title alone, as a book's opened page carries it — no apparatus. */}
       <div className="hub-reader-chrome">
         <h1 className="hub-reader-title">{title}</h1>
-        {citation && <p className="hub-reader-citation">{citation}</p>}
       </div>
+
+      {/* Two ways to a place, on the page itself: the glass, and a page
+          number typed plain. The search overlay takes the corner over. */}
+      {!searchOpen && (
+        <div className="hub-reader-corner">
+          {!paged && (
+            <button
+              type="button"
+              className="hub-reader-corner-btn"
+              onClick={() => setSearchOpen(true)}
+              aria-label="Find in this reading"
+              title="find in this reading"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M21 21L16.5 16.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
+          <input
+            className="hub-reader-goto"
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            value={gotoDraft}
+            onChange={(e) => setGotoDraft(e.target.value.replace(/\D/g, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commitGoto(); (e.target as HTMLInputElement).blur(); }
+              if (e.key === 'Escape') { setGotoDraft(''); (e.target as HTMLInputElement).blur(); }
+            }}
+            placeholder="p. —"
+            aria-label="Go to a page by number"
+            title="Type a page number and press Enter"
+          />
+        </div>
+      )}
 
       <div className="hub-reader-stage">
         <div className="hub-reader-area" ref={areaRef}>

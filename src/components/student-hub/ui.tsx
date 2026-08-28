@@ -7,6 +7,7 @@ import { useState } from 'react';
 import type { ReactNode, CSSProperties, ButtonHTMLAttributes } from 'react';
 import { Link } from 'react-router-dom';
 import { T } from './theme';
+import { inlineMarkdown } from './assistant-inline';
 
 /** Pulse for the live mic; disabled wholesale under prefers-reduced-motion.
  *  The caption band's cover steps aside on a phone, where the title needs
@@ -270,7 +271,11 @@ export function Transcript({ turns, live }: {
             }}>
               {line++}
             </div>
-            <div style={{ fontFamily: T.serif, fontSize: 15.5, lineHeight: 1.6, color: T.ink }}>{r}</div>
+            <div style={{ fontFamily: T.serif, fontSize: 15.5, lineHeight: 1.6, color: T.ink }}>
+              {/* The professor's marks render as type, not asterisks; the
+                  line-numbered gutter is the transcript's, so inline only. */}
+              {prof ? inlineMarkdown(r, `${key}-${j}`) : r}
+            </div>
           </div>
         ))}
       </div>

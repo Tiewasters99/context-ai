@@ -3,6 +3,7 @@ import { converse } from '@/lib/llm';
 import type { LLMMessage } from '@/lib/llm';
 import { T } from './theme';
 import { GreenButton } from './ui';
+import { AssistantProse } from './assistant-markdown';
 
 // The general assistant: a free-standing conversation with the model chosen
 // in the picker, tied to no particular reading. One assistant, three doors —
@@ -138,9 +139,15 @@ export function AskAssistant({ modelId, onClose }: { modelId: string; onClose: (
             }}>
               {m.role === 'user' ? 'You' : 'The assistant'}
             </div>
-            <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
-              {m.content}
-            </div>
+            {m.role === 'user' ? (
+              <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
+                {m.content}
+              </div>
+            ) : (
+              <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink }}>
+                <AssistantProse text={m.content} />
+              </div>
+            )}
           </div>
         ))}
         {live !== null && (
@@ -151,8 +158,10 @@ export function AskAssistant({ modelId, onClose }: { modelId: string; onClose: (
             }}>
               The assistant
             </div>
-            <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
-              {live || <span style={{ color: T.faint, fontStyle: 'italic' }}>…</span>}
+            <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink }}>
+              {live
+                ? <AssistantProse text={live} />
+                : <span style={{ color: T.faint, fontStyle: 'italic' }}>…</span>}
             </div>
           </div>
         )}
