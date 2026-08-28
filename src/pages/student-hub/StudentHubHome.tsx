@@ -10,7 +10,7 @@ import { readUploadedText, type StageProgress } from '@/lib/student-hub-upload';
 import {
   SAMPLE_TITLE, SAMPLE_CITATION, SAMPLE_SOURCE_LABEL, SAMPLE_READING,
 } from '@/lib/student-hub-sample';
-import { useTextCovers } from '@/lib/student-hub-covers';
+import { useTextCovers, uploadCover } from '@/lib/student-hub-covers';
 import { T } from '@/components/student-hub/theme';
 import {
   HubStyles, CaseCaption, GreenButton, QuietControl, ErrorNote, BookCover,
@@ -101,7 +101,7 @@ export default function StudentHubHome() {
     setError('');
     setUpProgress(null);
     try {
-      const { text, pages } = await readUploadedText(upFiles, setUpProgress);
+      const { text, pages, cover } = await readUploadedText(upFiles, setUpProgress);
       if (!text) throw new Error('Nothing readable came out of that file.');
       setUpProgress({ stage: 'seed', done: 0, total: 1 });
       let caption = { title: '', citation: '', source_label: '' };
@@ -114,6 +114,10 @@ export default function StudentHubHome() {
       // A file you upload is a book: it takes its own place on the shelf, with
       // this reading under it. No headings, so the tree renders it flat.
       const book = await createText(title);
+      if (cover) {
+        // Its own cover, best-effort — a failure costs the plate, not the book.
+        try { await uploadCover(book.id, cover); } catch { /* the plate stands in */ }
+      }
       let filed;
       try {
         filed = await createSession({
@@ -241,7 +245,7 @@ export default function StudentHubHome() {
                         borderTop: `2px solid ${T.brass}`, borderRadius: '2px 2px 0 0',
                         background: bindingColors[i % bindingColors.length],
                       }}>
-                        <BookCover src={covers.get(t.id)} width={w} style={{ borderRadius: 0 }} />
+                        <BookCover src={covers.get(t.id)?.url} width={w} style={{ borderRadius: 0 }} />
                       </div>
                     </button>
                     <button

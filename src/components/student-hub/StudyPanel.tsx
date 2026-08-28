@@ -14,6 +14,21 @@ import {
 import { supabase } from '@/lib/supabase';
 import { QuietControl } from './ui';
 import { T } from './theme';
+import { AssistantProse } from './assistant-markdown';
+
+// The assistant's "take me there" arrives as a marker line it was taught to
+// end with: »turn-to: verbatim words from the reading«. The line is the
+// mechanism, not the message — it is stripped before saving or showing, and
+// the quote goes to whoever can turn the pages. The looser tail match keeps
+// a half-streamed marker from flickering into view.
+const TURN_TO = /\n?»\s*turn-?to:?\s*([^«\n]*)«?\s*$/i;
+
+function splitTurnTo(text: string): { clean: string; quote: string | null } {
+  const m = text.match(TURN_TO);
+  if (!m) return { clean: text, quote: null };
+  const quote = m[1].trim();
+  return { clean: text.replace(TURN_TO, '').trimEnd(), quote: quote.length >= 4 ? quote : null };
+}
 
 // The study panel — floating at mid-page right, draggable by its ribbon,
 // resizable from the corner. Two tabs: ASSISTANT (direct answers grounded
@@ -68,13 +83,15 @@ function PanelTab({ active, children, onClick }: {
   );
 }
 
-export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedConsumed }: {
+export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedConsumed, onTurnTo }: {
   session: StudySession;
   seed: GroupSeed | null;
   onSeedConsumed: () => void;
   /** A nonce from outside — the reading's own "ask your assistant" control. */
   askSeed?: number | null;
   onAskSeedConsumed?: () => void;
+  /** The assistant asked for the book to be turned to this quoted passage. */
+  onTurnTo?: (quote: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'aide' | 'group'>('aide');
@@ -240,13 +257,16 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
     setAideBusy(false);
     setAideLive('');
     if (!text) return;
+    const { clean, quote } = splitTurnTo(text);
     try {
-      const saved = await addMessage(session.id, 'professor', text, 'ask');
+      const saved = await addMessage(session.id, 'professor', clean || text, 'ask');
       setAideMsgs((prev) => (prev ? [...prev, saved] : prev));
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'The answer could not be saved.');
     }
-  }, [aideInput, aideBusy, aideMsgs, session]);
+    // Only after the answer stands does the book turn.
+    if (quote) onTurnTo?.(quote);
+  }, [aideInput, aideBusy, aideMsgs, session, onTurnTo]);
 
   const create = useCallback(async () => {
     if (!session.text_id || !attestChecked || creating) return;
@@ -477,16 +497,24 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                 <div style={{ ...label, color: m.role === 'professor' ? T.green : T.faint }}>
                   {m.role === 'professor' ? 'THE ASSISTANT:' : 'YOU:'}
                 </div>
-                <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
-                  {m.content}
-                </div>
+                {m.role === 'professor' ? (
+                  <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink }}>
+                    <AssistantProse text={m.content} />
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
+                    {m.content}
+                  </div>
+                )}
               </div>
             ))}
             {aideBusy && (
               <div style={{ margin: '10px 0' }}>
                 <div style={{ ...label, color: T.green }}>THE ASSISTANT:</div>
-                <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink, whiteSpace: 'pre-wrap' }}>
-                  {aideLive || <span style={{ color: T.faint, fontStyle: 'italic' }}>…</span>}
+                <div style={{ fontFamily: T.serif, fontSize: 14, lineHeight: 1.55, color: T.ink }}>
+                  {aideLive
+                    ? <AssistantProse text={splitTurnTo(aideLive).clean} />
+                    : <span style={{ color: T.faint, fontStyle: 'italic' }}>…</span>}
                 </div>
               </div>
             )}

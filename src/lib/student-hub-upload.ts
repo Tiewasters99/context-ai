@@ -330,6 +330,25 @@ export interface UploadedText {
   text: string;
   /** Storage paths when the upload was a scan that went through OCR. */
   pages: string[] | null;
+  /** The book's own cover — page one of a born-digital PDF, rendered at
+   *  upload time. Scans don't need one (their first page IS the cover) and
+   *  plain text has none to give. */
+  cover: Blob | null;
+}
+
+/** Page one of a PDF as a JPEG — the cover a born-digital book brought with
+ *  it. Best-effort: a book without a cover still reads. */
+export async function pdfCoverBlob(file: File): Promise<Blob | null> {
+  try {
+    for await (const { blob } of pdfPageBlobs(file)) return blob;
+  } catch { /* the plate stands in */ }
+  return null;
+}
+
+/** One picked image, sized down to serve as a cover. Throws when the browser
+ *  cannot decode the picked file. */
+export function coverJpeg(file: File): Promise<Blob> {
+  return toPageJpeg(file);
 }
 
 const isPlainTextFile = (f: File) =>
@@ -346,20 +365,22 @@ export async function readUploadedText(
   signal?: AbortSignal,
 ): Promise<UploadedText> {
   if (files.length === 1 && isPlainTextFile(files[0])) {
-    return { text: (await files[0].text()).trim(), pages: null };
+    return { text: (await files[0].text()).trim(), pages: null, cover: null };
   }
   if (files.length === 1 && isPdfFile(files[0])) {
     const layer = await pdfTextPages(files[0]);
-    if (layer) return { text: layer.join('\n\n').trim(), pages: null };
+    if (layer) {
+      return { text: layer.join('\n\n').trim(), pages: null, cover: await pdfCoverBlob(files[0]) };
+    }
     const prefix = await newScanPrefix('text');
     const paths = await uploadPdfPages(prefix, files[0], onProgress);
     const texts = await ocrPages(prefix, paths, onProgress, signal);
-    return { text: texts.join('\n\n').trim(), pages: paths };
+    return { text: texts.join('\n\n').trim(), pages: paths, cover: null };
   }
   const prefix = await newScanPrefix('text');
   const paths = await uploadPageFiles(prefix, files, onProgress);
   const texts = await ocrPages(prefix, paths, onProgress, signal);
-  return { text: texts.join('\n\n').trim(), pages: paths };
+  return { text: texts.join('\n\n').trim(), pages: paths, cover: null };
 }
 
 /* ===================== chapter mapping ===================== */

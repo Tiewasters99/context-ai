@@ -16,7 +16,7 @@ import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights'
 import { StudyPanel, type GroupSeed } from '@/components/student-hub/StudyPanel';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
 import { HubReader } from '@/components/student-hub/HubReader';
-import { reflowReading, readingParagraphs } from '@/lib/student-hub-reflow';
+import { reflowReading, readingParagraphs, findQuote } from '@/lib/student-hub-reflow';
 import { getTextCoverUrls, useTemplateCover } from '@/lib/student-hub-covers';
 import {
   exportReading, downloadReading, listExportServerspaces, listExportMatters,
@@ -114,6 +114,8 @@ export default function StudentHubSession() {
   const [pagesError, setPagesError] = useState('');
   // The book, opened full-screen over the study surface.
   const [readerOpen, setReaderOpen] = useState(false);
+  // The assistant's "take me there", handed to the open book.
+  const [turnTo, setTurnTo] = useState<{ page?: number; quote?: string; nonce: number } | null>(null);
   // Its cover: page one of the text's first scan where there is one, and the
   // shelf's own plate for this title where there isn't.
   const [scanCover, setScanCover] = useState<string | null>(null);
@@ -166,7 +168,7 @@ export default function StudentHubSession() {
     if (!textId) return;
     let stale = false;
     getTextCoverUrls([textId])
-      .then((covers) => { if (!stale) setScanCover(covers.get(textId) ?? null); })
+      .then((covers) => { if (!stale) setScanCover(covers.get(textId)?.url ?? null); })
       // A cover that will not sign costs the book its plate, nothing more.
       .catch(() => { /* the template plate stands in */ });
     return () => { stale = true; };
@@ -374,6 +376,24 @@ export default function StudentHubSession() {
   // string, so the marks, the snippets and the reader all agree.
   const readingText = useMemo(() => reflowReading(session?.reading ?? ''), [session?.reading]);
   const paragraphs = useMemo(() => readingParagraphs(readingText), [readingText]);
+
+  /* ------------- The assistant takes the student there ------------- */
+
+  // A text reading turns to the quote exactly; a scanned one gets the page
+  // estimated from where the quote falls in the transcription — the images
+  // themselves hold no offsets to aim at.
+  const handleTurnTo = useCallback((quote: string) => {
+    if (!session) return;
+    if (session.pages?.length) {
+      const found = findQuote(readingText, quote);
+      const frac = found ? found.at / Math.max(1, readingText.length) : 0;
+      const page = Math.max(1, Math.min(session.pages.length, Math.round(frac * (session.pages.length - 1)) + 1));
+      setTurnTo({ page, nonce: Date.now() });
+    } else {
+      setTurnTo({ quote, nonce: Date.now() });
+    }
+    setReaderOpen(true);
+  }, [session, readingText]);
 
   const lowerReading = useMemo(() => readingText.toLowerCase(), [readingText]);
   const matches = useMemo(() => {
@@ -1249,18 +1269,19 @@ export default function StudentHubSession() {
         onSeedConsumed={() => setGroupSeed(null)}
         askSeed={askSeed}
         onAskSeedConsumed={() => setAskSeed(null)}
+        onTurnTo={handleTurnTo}
       />
 
       {readerOpen && (
         <HubReader
           title={session.title}
-          citation={session.citation || undefined}
           reflowed={session.pages?.length ? '' : readingText}
           pageUrls={session.pages?.length ? pageUrls : null}
           coverUrl={coverUrl}
           sessionId={session.id}
-          onClose={() => setReaderOpen(false)}
+          onClose={() => { setReaderOpen(false); setTurnTo(null); }}
           onAskAssistant={() => setAskSeed(Date.now())}
+          turnTo={turnTo}
         />
       )}
     </div>
