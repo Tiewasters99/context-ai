@@ -3,9 +3,11 @@
 // Resolution order: a cover the student gave the book (page one of an
 // uploaded PDF, captured at upload time, or an image handed over later) wins;
 // a book whose first reading carries scanned pages shows its own first page;
-// only a book with neither is given a plate from the Contextspaces template
-// library, chosen by a stable hash of its title, so the shelf looks the same
-// tomorrow without a column to remember it in.
+// a book with neither is looked up by title in the public catalogs and wears
+// its real published jacket; only when the catalogs draw a blank is it given
+// a plate from the Contextspaces template library, chosen by a stable hash
+// of its title, so the shelf looks the same tomorrow without a column to
+// remember it in.
 //
 // A given cover is one storage object at {uid}/covers/{textId}.jpg in the
 // private scan bucket — the deterministic path IS the record, so no schema
@@ -81,6 +83,119 @@ export function coverForTitle(title: string): string | null {
 export function useTemplateCover(title: string): string | null {
   const list = useSyncExternalStore(subscribePlates, platesSnapshot);
   return useMemo(() => (list?.length ? coverForTitle(title) : null), [list, title]);
+}
+
+// ---------------------------------------------------------------------------
+// The catalog: a book with no cover of its own is looked up by title in the
+// public catalogs — Google Books first, Open Library second — and wears its
+// real published jacket. Only an exact title match (or title + subtitle) is
+// accepted: a shelf showing the wrong book's jacket is worse than a plate,
+// so a near-miss falls through to the template library. Verdicts — jackets
+// and blanks alike — are kept in localStorage, one lookup per title, ever.
+// ---------------------------------------------------------------------------
+
+const CATALOG_CACHE_KEY = 'student-hub-catalog-covers-v1';
+
+/** A title flattened for comparison: case, accents, punctuation set aside. */
+function catalogKey(title: string): string {
+  return title
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const catalog = new Map<string, string | null>(); // key -> jacket URL; null = the catalogs drew a blank
+const catalogPending = new Set<string>();
+const catalogWatchers = new Set<() => void>();
+let catalogVersion = 0;
+let catalogHydrated = false;
+
+function hydrateCatalog(): void {
+  if (catalogHydrated) return;
+  catalogHydrated = true;
+  try {
+    const raw = localStorage.getItem(CATALOG_CACHE_KEY);
+    if (!raw) return;
+    for (const [k, v] of Object.entries(JSON.parse(raw) as Record<string, string>)) {
+      catalog.set(k, v || null);
+    }
+  } catch { /* a cold cache only means the lookups run again */ }
+}
+
+function persistCatalog(): void {
+  try {
+    const out: Record<string, string> = {};
+    for (const [k, v] of catalog) out[k] = v ?? '';
+    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(out));
+  } catch { /* blocked storage still leaves the session cache standing */ }
+}
+
+function subscribeCatalog(onChange: () => void): () => void {
+  catalogWatchers.add(onChange);
+  return () => { catalogWatchers.delete(onChange); };
+}
+const catalogSnapshot = () => catalogVersion;
+
+const titleMatches = (want: string, title?: string, subtitle?: string) =>
+  catalogKey(title ?? '') === want ||
+  catalogKey(`${title ?? ''} ${subtitle ?? ''}`) === want;
+
+/** The jacket Google Books holds for exactly this title, if any. */
+async function googleJacket(title: string, want: string): Promise<string | null> {
+  const q = encodeURIComponent(`intitle:"${title}"`);
+  const r = await fetch(
+    `https://www.googleapis.com/books/v1/volumes?q=${q}&printType=books&maxResults=10`,
+  );
+  if (!r.ok) return null;
+  const data = (await r.json()) as {
+    items?: {
+      volumeInfo?: { title?: string; subtitle?: string; imageLinks?: { thumbnail?: string } };
+    }[];
+  };
+  for (const item of data.items ?? []) {
+    const info = item.volumeInfo;
+    const jacket = info?.imageLinks?.thumbnail;
+    if (jacket && titleMatches(want, info?.title, info?.subtitle)) {
+      return jacket.replace(/^http:/, 'https:').replace(/&edge=curl/, '');
+    }
+  }
+  return null;
+}
+
+/** The jacket Open Library holds for exactly this title, most-published first. */
+async function openLibraryJacket(title: string, want: string): Promise<string | null> {
+  const q = encodeURIComponent(`title:"${title}"`);
+  const r = await fetch(
+    `https://openlibrary.org/search.json?q=${q}&fields=title,subtitle,cover_i&limit=20&sort=editions`,
+  );
+  if (!r.ok) return null;
+  const data = (await r.json()) as {
+    docs?: { title?: string; subtitle?: string; cover_i?: number }[];
+  };
+  const hit = (data.docs ?? []).find((d) => d.cover_i && titleMatches(want, d.title, d.subtitle));
+  return hit?.cover_i ? `https://covers.openlibrary.org/b/id/${hit.cover_i}-L.jpg` : null;
+}
+
+/** Look a title up once; watchers hear when its verdict is in. */
+function ensureCatalogCover(title: string): void {
+  hydrateCatalog();
+  const key = catalogKey(title);
+  if (!key || catalog.has(key) || catalogPending.has(key)) return;
+  catalogPending.add(key);
+  void (async () => {
+    let jacket: string | null = null;
+    try { jacket = await googleJacket(title, key); } catch { /* quota or offline — ask the next catalog */ }
+    if (!jacket) {
+      try { jacket = await openLibraryJacket(title, key); } catch { /* the plate will stand in */ }
+    }
+    catalog.set(key, jacket);
+    persistCatalog();
+    catalogPending.delete(key);
+    catalogVersion += 1;
+    catalogWatchers.forEach((w) => w());
+  })();
 }
 
 export interface TextCover {
@@ -181,16 +296,19 @@ export async function getTextCoverUrls(textIds: string[]): Promise<Map<string, T
 
 /**
  * A cover for every book handed in: its own given cover, else its first
- * scanned page, else its plate from the library. A book missing from the map
- * has no cover yet — render whatever stood there before. Bump `version` after
- * giving or taking back a cover and the map refreshes.
+ * scanned page, else its real jacket from the catalogs, else its plate from
+ * the library. A book missing from the map has no cover yet — render whatever
+ * stood there before. Bump `version` after giving or taking back a cover and
+ * the map refreshes.
  */
 export function useTextCovers(
   texts: StudyText[] | null | undefined,
   version = 0,
 ): Map<string, TextCover> {
   const plateList = useSyncExternalStore(subscribePlates, platesSnapshot);
+  const catalogTick = useSyncExternalStore(subscribeCatalog, catalogSnapshot);
   const [own, setOwn] = useState<Map<string, TextCover>>(() => new Map());
+  const [ownReady, setOwnReady] = useState(false);
 
   // The ids as one string, so the query runs when the shelf changes, not on
   // every render that hands over a fresh array.
@@ -198,21 +316,33 @@ export function useTextCovers(
   useEffect(() => {
     if (!ids) return;
     let stale = false;
+    setOwnReady(false);
     getTextCoverUrls(ids.split(','))
       .then((m) => { if (!stale) setOwn(m); })
-      // A cover that cannot be signed falls back to the book's plate.
-      .catch(() => { /* nothing to report on a shelf */ });
+      // A cover that cannot be signed falls back to the book's jacket or plate.
+      .catch(() => { /* nothing to report on a shelf */ })
+      .finally(() => { if (!stale) setOwnReady(true); });
     return () => { stale = true; };
   }, [ids, version]);
+
+  // Only a book the shelf could not dress from its own pages asks the catalog.
+  useEffect(() => {
+    if (!ownReady) return;
+    for (const t of texts ?? []) if (!own.has(t.id)) ensureCatalogCover(t.title);
+  }, [ownReady, own, texts]);
 
   return useMemo(() => {
     const covers = new Map<string, TextCover>();
     for (const t of texts ?? []) {
       const found = own.get(t.id);
+      if (found) { covers.set(t.id, found); continue; }
+      const jacket = catalog.get(catalogKey(t.title));
+      if (jacket) { covers.set(t.id, { url: jacket, custom: false }); continue; }
       const plate = plateList?.length ? coverForTitle(t.title) : null;
-      if (found) covers.set(t.id, found);
-      else if (plate) covers.set(t.id, { url: plate, custom: false });
+      if (plate) covers.set(t.id, { url: plate, custom: false });
     }
     return covers;
-  }, [texts, own, plateList]);
+    // catalogTick names the external catalog map's version, not a value read
+    // directly in this body — it is what re-runs the memo when a verdict lands.
+  }, [texts, own, plateList, catalogTick]);
 }
