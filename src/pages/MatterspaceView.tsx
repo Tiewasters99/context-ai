@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight, Pencil } from 'lucide-react';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -133,6 +133,20 @@ export default function MatterspaceView() {
     refreshServerspaces(); // sidebar + dashboard reflect the new name
   }, [matter, refreshServerspaces]);
 
+  // The pencil next to the heading — the visible way into the same inline
+  // rename the heading already offers on click. Selects the whole name so
+  // typing replaces it outright.
+  const startRename = useCallback(() => {
+    const el = titleRef.current;
+    if (!el) return;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, []);
+
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
@@ -239,21 +253,31 @@ export default function MatterspaceView() {
           </div>
           <div className="flex-1 min-w-0">
             {matter && !loadError ? (
-              <h1
-                ref={titleRef}
-                contentEditable
-                suppressContentEditableWarning
-                onBlur={handleRenameBlur}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
-                  if (e.key === 'Escape') {
-                    if (titleRef.current) titleRef.current.textContent = matter.name;
-                    (e.target as HTMLElement).blur();
-                  }
-                }}
-                title="Click to rename"
-                className="text-2xl font-bold text-[#f5f2ed] outline-none break-words rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.06)] transition-colors"
-              />
+              <div className="flex items-center gap-1.5 group/title">
+                <h1
+                  ref={titleRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onBlur={handleRenameBlur}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+                    if (e.key === 'Escape') {
+                      if (titleRef.current) titleRef.current.textContent = matter.name;
+                      (e.target as HTMLElement).blur();
+                    }
+                  }}
+                  title="Click to rename"
+                  className="min-w-0 text-2xl font-bold text-[#f5f2ed] outline-none break-words rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.06)] transition-colors empty:before:content-['Untitled'] empty:before:text-white/30"
+                />
+                <button
+                  onClick={startRename}
+                  className="p-1.5 rounded-md text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.06)] transition-colors shrink-0"
+                  title="Rename this matter"
+                  aria-label="Rename this matter"
+                >
+                  <Pencil size={14} strokeWidth={1.75} />
+                </button>
+              </div>
             ) : (
               <h1 className="text-2xl font-bold text-[#f5f2ed] truncate">
                 {loadError ? 'Matterspace' : 'Loading…'}
