@@ -2326,6 +2326,10 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         background-position: center;
       }
       .reader-scroll::-webkit-scrollbar-button:hover { background-color: ${sbBtnHover}; }
+      .reader-scroll::-webkit-scrollbar-button:vertical:start:increment,
+      .reader-scroll::-webkit-scrollbar-button:vertical:end:decrement,
+      .reader-scroll::-webkit-scrollbar-button:horizontal:start:increment,
+      .reader-scroll::-webkit-scrollbar-button:horizontal:end:decrement { display: none; }
       .reader-scroll::-webkit-scrollbar-button:vertical:decrement { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
       .reader-scroll::-webkit-scrollbar-button:vertical:decrement:hover { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='%23e8b84a'/%3E%3C/svg%3E"); }
       .reader-scroll::-webkit-scrollbar-button:vertical:increment { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
