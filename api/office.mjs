@@ -68,8 +68,10 @@ export default async function handler(req, res) {
     // Raw text passages in reading order. The cap keeps one request from
     // shipping a 700-page transcript; MAX_CHARS trims the tail passage-by-
     // passage so the reader can say, honestly, that the rest stays filed.
-    const MAX_PASSAGES = 800;
-    const MAX_CHARS = 600_000;
+    // Sized so a full novel reads to its last line — Tender Is the Night
+    // runs ~617k chars and was losing its ending at 600k.
+    const MAX_PASSAGES = 1200;
+    const MAX_CHARS = 1_200_000;
     const { data: passages, error: passError } = await supabase
       .from('passages')
       .select('sequence_number, page_start, text')
