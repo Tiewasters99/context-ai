@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeft,
@@ -117,6 +117,9 @@ type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
 
+// Vertical gap between page slots in the continuous stack.
+const PAGE_GAP = 16;
+
 export default function DocumentReader({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
   const params = useParams<{ id: string }>();
   const id = propId ?? params.id;
@@ -141,9 +144,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // Fit-page mode (PDF only). When on, each page is scaled so the entire
   // page is visible at once — one screenful = exactly one PDF page, so the
   // reader's pages line up with the PDF's pages for citation/citechecking.
-  // Default on; `renderedScale` is the scale the last render actually used.
+  // Default on. The stack scrolls continuously in either mode.
   const [fitPage, setFitPage] = useState(true);
-  const [renderedScale, setRenderedScale] = useState(1.5);
   const [isFullscreen, setIsFullscreen] = useState(false);
   // Bumped whenever the content pane resizes, to re-fit the page.
   const [containerTick, setContainerTick] = useState(0);
@@ -167,6 +169,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const [selectionMenu, setSelectionMenu] = useState<{
     x: number;
     y: number;
+    page: number;
     rects: FractionalRect[];
     anchorText: string;
   } | null>(null);
@@ -177,6 +180,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const [noteComposer, setNoteComposer] = useState<{
     x: number;
     y: number;
+    page: number;
     rects: FractionalRect[];
     anchorText: string;
   } | null>(null);
@@ -185,13 +189,23 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
 
   const pdfDocRef = useRef<unknown>(null);
-  // The in-flight pdfjs canvas render, so overlapping runs of the render
-  // effect can't collide on one canvas.
-  const renderTaskRef = useRef<{ cancel(): void } | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const textLayerRef = useRef<HTMLDivElement | null>(null);
+  // Natural (scale-1) size of every page, so the stack can lay out a
+  // fixed-height slot per page before any page paints. Seeded with page
+  // 1's size on load; a background sweep corrects odd-sized pages.
+  const [pageDims, setPageDims] = useState<{ w: number; h: number }[] | null>(null);
+  // One canvas + text layer per slot; only slots near the viewport are
+  // painted. pdfjs refuses overlapping renders on one canvas, so each
+  // slot's in-flight task is tracked and cancelled per page number.
+  const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const textLayerRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const renderedKeyRef = useRef(new Map<number, string>());
+  const renderTasksRef = useRef(new Map<number, { cancel(): void }>());
+  const stackRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const pageStateRef = useRef(1);
+  const restoredRef = useRef(false);
+  const anchorReadyRef = useRef(false);
 
   // Restore persisted prefs.
   useEffect(() => {
@@ -219,18 +233,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
   }, [sidebarOpen]);
 
-  // Deep-link: when the URL carries ?page=N (e.g. the in-app assistant opened
-  // this document to a cited page), jump there once the page count is known.
-  // Decoupled from the heavy PDF-load effect so opening the SAME document to a
-  // new page (query-only change, no remount) still jumps. Takes precedence
-  // over the localStorage last-page restore because it runs after load sets
-  // totalPages.
-  useEffect(() => {
-    const p = parseInt(searchParams.get('page') ?? '', 10);
-    if (Number.isFinite(p) && p >= 1 && totalPages > 0) {
-      setPage(Math.min(p, totalPages));
-    }
-  }, [searchParams, totalPages]);
+  // Deep links (?page=N) are honored by the restore + follow effects in the
+  // continuous-stack block below, once the stack can be measured.
 
   // Track OS fullscreen state so the toolbar button reflects reality even
   // when the user leaves fullscreen via Escape.
@@ -276,6 +280,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setOutline(null);
     setAnnotations([]);
     setSelectionMenu(null);
+    setPageDims(null);
+    renderedKeyRef.current.clear();
+    canvasRefs.current = [];
+    textLayerRefs.current = [];
+    restoredRef.current = false;
+    anchorReadyRef.current = false;
 
     void (async () => {
       const { data, error } = await supabase
@@ -334,6 +344,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           }).promise;
           if (cancelled) return;
           pdfDocRef.current = pdf;
+          // Page 1's size stands in for every slot until the dims sweep
+          // below reports the real per-page sizes.
+          const firstPage = await pdf.getPage(1);
+          const v1 = firstPage.getViewport({ scale: 1 });
+          if (cancelled) return;
+          setPageDims(new Array(pdf.numPages).fill({ w: v1.width, h: v1.height }));
           setTotalPages(pdf.numPages);
 
           const savedPage = localStorage.getItem(`ctx_reader_page_${id}`);
@@ -377,181 +393,281 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     return () => { cancelled = true; };
   }, [id]);
 
-  // Render the current PDF page on page / zoom / theme change.
+  // ── The continuous page stack ───────────────────────────────────────
+  // Every page owns a fixed-height slot in one scrollable column, so the
+  // pane's native scrollbar spans the whole document: drag the thumb to
+  // cross a hundred pages, roll the wheel to move a line. Only the slots
+  // near the viewport are painted; the rest stay white paper with a faint
+  // page number until scrolled into reach. Before this, the reader drew
+  // one page at a time — in fit mode nothing could scroll at all, and
+  // zoomed in the native bar spanned just the one page, which is why long
+  // cases could be scrolled finely but never quickly, and short pleadings
+  // quickly but never finely.
+
+  // One uniform scale for the stack. Fit mode sizes a page to the pane as
+  // the single-page reader did (a screenful ≈ a page, for citation work);
+  // zoom mode uses the chosen zoom. Page 1 stands in for the document's
+  // page size — filings are uniform, and odd-sized exhibits correct once
+  // the dims sweep reports in.
+  const renderedScale = useMemo(() => {
+    if (fileKind !== 'pdf' || !fitPage) return zoom;
+    const pane = contentRef.current;
+    const d = pageDims?.[0];
+    if (!pane || !d || pane.clientWidth <= 0 || pane.clientHeight <= 0) return zoom;
+    const PAD = 24; // breathing room around the page
+    // The margin rails flank each page in-flow; subtract them so the page
+    // never overflows horizontally.
+    const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
+    const fit = Math.min(
+      (pane.clientWidth - PAD * 2 - rails) / d.w,
+      (pane.clientHeight - PAD * 2) / d.h,
+    );
+    return Math.max(0.1, Math.min(fit, 6));
+    // containerTick re-measures the pane on resize / sidebar / fullscreen;
+    // loadState re-measures once the pane exists.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState]);
+
+  // Top offset of every slot inside the scroll content — the map between
+  // scrollTop and page numbers, used by jumps and by scroll derivation.
+  const slotTops = useMemo(() => {
+    if (!pageDims) return null;
+    const tops: number[] = [];
+    let y = 24; // the stack container's top padding (py-6)
+    for (const d of pageDims) {
+      tops.push(y);
+      y += d.h * renderedScale + PAGE_GAP;
+    }
+    return tops;
+  }, [pageDims, renderedScale]);
+  const slotTopsRef = useRef<number[] | null>(null);
+  useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
+  useEffect(() => { pageStateRef.current = page; }, [page]);
+
+  // Every control that names a page — rail, slider, thumbnails, outline,
+  // search, deep links, arrow keys — lands here: set the indicator and
+  // scroll the stack. Hand-scrolling flows the other way (scroll → page)
+  // and never scrolls back, so the two directions cannot fight.
+  const gotoPage = useCallback((p: number) => {
+    const clamped = Math.max(1, Math.min(totalPages || 1, p));
+    setPage(clamped);
+    const tops = slotTopsRef.current;
+    const el = contentRef.current;
+    if (tops && el) el.scrollTo({ top: Math.max(0, tops[clamped - 1] - 8) });
+  }, [totalPages]);
+
+  // Derive the current page while the user scrolls: the page whose band
+  // holds the point 40% down the viewport.
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el || loadState !== 'ready' || fileKind !== 'pdf') return;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const tops = slotTopsRef.current;
+        if (!tops || tops.length === 0) return;
+        const probe = el.scrollTop + el.clientHeight * 0.4;
+        let p = tops.length;
+        for (let i = 0; i < tops.length; i++) {
+          if (tops[i] > probe) { p = i; break; }
+        }
+        p = Math.max(1, p);
+        if (p !== pageStateRef.current) setPage(p);
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [loadState, fileKind]);
+
+  // Restore the last-read page — or honor a ?page= deep link (the in-app
+  // assistant opens documents to a cited page) — once the stack can be
+  // measured, exactly once per document.
+  useEffect(() => {
+    if (restoredRef.current || !slotTops || loadState !== 'ready' || fileKind !== 'pdf') return;
+    restoredRef.current = true;
+    const linked = parseInt(searchParams.get('page') ?? '', 10);
+    const saved = parseInt(localStorage.getItem(`ctx_reader_page_${id}`) ?? '', 10);
+    const target = Number.isFinite(linked) && linked >= 1 ? linked
+      : Number.isFinite(saved) && saved >= 1 ? saved
+      : 1;
+    if (target > 1) gotoPage(target);
+  }, [slotTops, loadState, fileKind, id, searchParams, gotoPage]);
+
+  // Follow later deep links on the SAME mounted document (query-only
+  // change, no remount).
+  useEffect(() => {
+    if (!restoredRef.current) return; // the restore effect takes the first
+    const p = parseInt(searchParams.get('page') ?? '', 10);
+    if (Number.isFinite(p) && p >= 1 && totalPages > 0) gotoPage(p);
+  }, [searchParams, totalPages, gotoPage]);
+
+  // When the geometry changes under the reader — zoom, fit toggle, pane
+  // resize, or the dims sweep correcting slot heights — re-anchor to the
+  // page being read instead of drifting to wherever the old offsets land.
+  useEffect(() => {
+    if (!slotTops || loadState !== 'ready' || fileKind !== 'pdf') return;
+    if (!restoredRef.current) return;
+    if (!anchorReadyRef.current) { anchorReadyRef.current = true; return; }
+    const el = contentRef.current;
+    if (el) el.scrollTo({ top: Math.max(0, slotTops[pageStateRef.current - 1] - 8) });
+  }, [slotTops, loadState, fileKind]);
+
+  // Remember where the reader stands, for next time this document opens.
+  useEffect(() => {
+    if (loadState === 'ready' && fileKind === 'pdf' && id && page >= 1) {
+      localStorage.setItem(`ctx_reader_page_${id}`, String(page));
+    }
+  }, [page, id, loadState, fileKind]);
+
+  // The dims sweep: real per-page sizes, replacing the page-1 stand-in.
+  // Cheap relative to the thumbnail strip, which renders every page.
   useEffect(() => {
     if (loadState !== 'ready' || fileKind !== 'pdf') return;
-    const pdf = pdfDocRef.current as { getPage(n: number): Promise<unknown> } | null;
-    const canvas = canvasRef.current;
-    const textLayerContainer = textLayerRef.current;
-    if (!pdf || !canvas || !textLayerContainer) return;
+    const pdf = pdfDocRef.current as {
+      numPages: number;
+      getPage(n: number): Promise<{ getViewport(o: { scale: number }): { width: number; height: number } }>;
+    } | null;
+    if (!pdf) return;
+    let cancelled = false;
+    void (async () => {
+      const dims: { w: number; h: number }[] = [];
+      for (let p = 1; p <= pdf.numPages; p++) {
+        try {
+          const v = (await pdf.getPage(p)).getViewport({ scale: 1 });
+          dims.push({ w: v.width, h: v.height });
+        } catch {
+          dims.push({ w: 612, h: 792 });
+        }
+        if (cancelled) return;
+      }
+      setPageDims((prev) => {
+        if (!prev || prev.length !== dims.length) return dims;
+        const changed = dims.some(
+          (d, i) => Math.abs(d.h - prev[i].h) > 0.5 || Math.abs(d.w - prev[i].w) > 0.5,
+        );
+        return changed ? dims : prev;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [loadState, fileKind, id]);
+
+  // Paint the slots near the viewport; free the ones left far behind so a
+  // long case never holds hundreds of live canvases. A page repaints only
+  // when its render key (scale, highlight state) changes.
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf' || !pageDims) return;
+    const pdf = pdfDocRef.current as {
+      getPage(n: number): Promise<{
+        getViewport(opts: { scale: number }): { width: number; height: number };
+        render(opts: unknown): { promise: Promise<void>; cancel(): void };
+        streamTextContent(): ReadableStream;
+      }>;
+    } | null;
+    if (!pdf) return;
 
     let cancelled = false;
-    let textLayer: { render(): Promise<unknown>; cancel(): void } | null = null;
+    const from = Math.max(1, page - 2);
+    const to = Math.min(totalPages, page + 2);
 
-    // A render left over from a previous run of this effect is still holding
-    // the canvas; stop it before we touch anything.
-    if (renderTaskRef.current) {
-      try { renderTaskRef.current.cancel(); } catch { /* already settled */ }
-      renderTaskRef.current = null;
+    for (const [p] of Array.from(renderedKeyRef.current)) {
+      if (p >= from - 3 && p <= to + 3) continue;
+      try { renderTasksRef.current.get(p)?.cancel(); } catch { /* settled */ }
+      renderTasksRef.current.delete(p);
+      const canvas = canvasRefs.current[p - 1];
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+        canvas.style.width = '0px';
+        canvas.style.height = '0px';
+      }
+      const layer = textLayerRefs.current[p - 1];
+      if (layer) layer.innerHTML = '';
+      renderedKeyRef.current.delete(p);
     }
 
-    void (async () => {
+    const highlightFor = (p: number) =>
+      searchQuery && matches.some((m) => m.page === p) ? searchQuery : '';
+
+    const renderPage = async (p: number, key: string) => {
+      const canvas = canvasRefs.current[p - 1];
+      const layerEl = textLayerRefs.current[p - 1];
+      if (!canvas || !layerEl) return;
+      // pdfjs refuses two renders on one canvas ("Cannot use the same
+      // canvas during multiple render operations") — cancel this slot's
+      // in-flight work before starting over.
+      try { renderTasksRef.current.get(p)?.cancel(); } catch { /* settled */ }
+      renderTasksRef.current.delete(p);
       try {
-        const pdfPage = await pdf.getPage(page) as {
-          getViewport(opts: { scale: number }): { width: number; height: number };
-          render(opts: unknown): { promise: Promise<void>; cancel(): void };
-          streamTextContent(): ReadableStream;
-        };
+        const pdfPage = await pdf.getPage(p);
         if (cancelled) return;
-
-        // Compute the render scale. In fit-page mode, scale the page so
-        // the entire page is visible at once inside the content pane —
-        // one screenful = exactly one PDF page, which is what makes the
-        // reader's pages line up with the PDF's pages for citation.
-        let scale = zoom;
-        if (fitPage) {
-          const pane = contentRef.current;
-          if (pane && pane.clientWidth > 0 && pane.clientHeight > 0) {
-            const natural = pdfPage.getViewport({ scale: 1 });
-            const PAD = 24; // breathing room around the page
-            // The margin rails flank the page in-flow; subtract them so the
-            // page never overflows horizontally. On desktop the height
-            // constraint almost always wins anyway, so the page size is
-            // visually unchanged.
-            const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
-            const fit = Math.min(
-              (pane.clientWidth - PAD * 2 - rails) / natural.width,
-              (pane.clientHeight - PAD * 2) / natural.height,
-            );
-            scale = Math.max(0.1, Math.min(fit, 6));
-          }
-        }
-        setRenderedScale(scale);
-
-        const viewport = pdfPage.getViewport({ scale });
+        const viewport = pdfPage.getViewport({ scale: renderedScale });
         canvas.width = viewport.width;
         canvas.height = viewport.height;
         canvas.style.width = `${viewport.width}px`;
         canvas.style.height = `${viewport.height}px`;
-
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
-
         // PACER-style rendering: leave the document's own colors alone —
-        // true white pages, true black ink, faithful images for scans
-        // (death certificates, handwritten exhibits, etc.) — and let the
-        // surrounding frame do the dark-mode work. Recoloring the page
-        // itself via pdfjs pageColors made everything look black-on-black
-        // and distorted scanned exhibits.
-        const renderOpts: Record<string, unknown> = {
-          canvasContext: ctx,
-          viewport,
-        };
-        // Cancel any render still in flight on this canvas before starting
-        // another. pdfjs refuses to run two renders against one canvas
-        // ("Cannot use the same canvas during multiple render operations"),
-        // and this effect fires several times back-to-back on load — React
-        // dev-mode double-invokes it, and page/zoom/theme/resize all retrigger
-        // it. Without cancellation the second render throws into the silent
-        // catch below and the page stays permanently blank: canvas sized,
-        // nothing painted, no text layer, no error. Keeping the handle also
-        // lets cleanup abort a render whose effect run is already stale.
-        const task = pdfPage.render(renderOpts);
-        renderTaskRef.current = task;
+        // true white pages, true black ink, faithful images for scans —
+        // and let the surrounding frame do the dark-mode work. Recoloring
+        // via pdfjs pageColors made scanned exhibits black-on-black.
+        const task = pdfPage.render({ canvasContext: ctx, viewport });
+        renderTasksRef.current.set(p, task);
         await task.promise;
         if (cancelled) return;
-        renderTaskRef.current = null;
+        renderTasksRef.current.delete(p);
 
-        textLayerContainer.innerHTML = '';
-        textLayerContainer.style.width = `${viewport.width}px`;
-        textLayerContainer.style.height = `${viewport.height}px`;
-        // pdfjs's TextLayer emits spans sized by CSS variables
-        // (--font-height, --scale-x) that only resolve against a
-        // viewer-supplied scale factor; the library expects the embedding
-        // viewer to set it. Without it every span falls back to the
-        // inherited 16px font and selection geometry drifts off the canvas
-        // — invisible at zoom ≈ 1.3, but in fit-page mode you select text
-        // inches away from the cursor.
-        textLayerContainer.style.setProperty('--scale-factor', String(scale));
-        textLayerContainer.style.setProperty('--total-scale-factor', String(scale));
-
+        layerEl.innerHTML = '';
+        // pdfjs's TextLayer sizes spans off viewer-supplied CSS variables;
+        // without them every span falls back to 16px and selection drifts
+        // inches off the canvas.
+        layerEl.style.setProperty('--scale-factor', String(renderedScale));
+        layerEl.style.setProperty('--total-scale-factor', String(renderedScale));
         const pdfjsLib = await import('pdfjs-dist');
-        textLayer = new pdfjsLib.TextLayer({
+        const textLayer = new pdfjsLib.TextLayer({
           textContentSource: pdfPage.streamTextContent(),
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           viewport: viewport as any,
-          container: textLayerContainer,
+          container: layerEl,
         });
+        renderTasksRef.current.set(p, textLayer);
         await textLayer.render();
-
-        if (searchQuery && matches.length > 0 && matches[matchIdx]?.page === page) {
-          highlightTextLayerMatches(textLayerContainer, searchQuery);
-        }
-
-        localStorage.setItem(`ctx_reader_page_${id}`, String(page));
+        if (cancelled) return;
+        renderTasksRef.current.delete(p);
+        const hl = highlightFor(p);
+        if (hl) highlightTextLayerMatches(layerEl, hl);
+        renderedKeyRef.current.set(p, key);
       } catch {
-        // Render race conditions can happen if page changes mid-render;
-        // a subsequent render will correct the canvas.
+        // Cancellation or a render race; a later pass repaints the slot.
+        renderTasksRef.current.delete(p);
       }
-    })();
-
-    return () => {
-      cancelled = true;
-      if (renderTaskRef.current) {
-        try { renderTaskRef.current.cancel(); } catch { /* already settled */ }
-        renderTaskRef.current = null;
-      }
-      if (textLayer) try { textLayer.cancel(); } catch { /* noop */ }
     };
-  }, [page, zoom, fitPage, containerTick, loadState, fileKind, id, theme, searchQuery, matches, matchIdx, isMobile]);
 
-  const goPrev = useCallback(() => setPage((p) => Math.max(1, p - 1)), []);
-  const goNext = useCallback(
-    () => setPage((p) => Math.min(totalPages, p + 1)),
-    [totalPages],
-  );
-
-  // ── Scrolling through the case ──────────────────────────────────────
-  // In fit-page mode nothing overflows, so the browser offers no scrollbar
-  // and the trackpad does nothing: a long case was click-click-click. The
-  // wheel now turns pages (and, zoomed in, turns them at the page's edge),
-  // and a right-edge rail — the scrollbar the reader was missing — drags
-  // through the whole document. The rail keeps its own permanent lane, so
-  // it never shifts and never sits over the native bar.
-
-  // A fresh page starts at its top; wheeling backward lands at the top too,
-  // as page readers do.
-  useEffect(() => {
-    if (fileKind === 'pdf') contentRef.current?.scrollTo({ top: 0 });
-  }, [page, fileKind]);
-
-  const wheelAcc = useRef({ sum: 0, at: 0, turned: 0 });
-  const wheelPage = useCallback((e: React.WheelEvent) => {
-    if (fileKind !== 'pdf' || loadState !== 'ready') return;
-    const el = contentRef.current;
-    if (!el) return;
-    const scrollable = el.scrollHeight > el.clientHeight + 2;
-    if (scrollable) {
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2;
-      const atTop = el.scrollTop <= 2;
-      if ((e.deltaY > 0 && !atBottom) || (e.deltaY < 0 && !atTop)) {
-        wheelAcc.current.sum = 0;
-        return; // the pane itself has room to scroll
-      }
+    for (let p = from; p <= to; p++) {
+      const key = `${renderedScale.toFixed(4)}|${highlightFor(p)}`;
+      if (renderedKeyRef.current.get(p) === key) continue;
+      renderedKeyRef.current.delete(p);
+      void renderPage(p, key);
     }
-    const now = Date.now();
-    if (now - wheelAcc.current.turned < 450) return; // ride out trackpad inertia
-    if (now - wheelAcc.current.at > 260) wheelAcc.current.sum = 0;
-    wheelAcc.current.at = now;
-    wheelAcc.current.sum += e.deltaY;
-    if (wheelAcc.current.sum > 120) {
-      wheelAcc.current = { sum: 0, at: now, turned: now };
-      goNext();
-    } else if (wheelAcc.current.sum < -120) {
-      wheelAcc.current = { sum: 0, at: now, turned: now };
-      goPrev();
+
+    return () => { cancelled = true; };
+  }, [page, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches]);
+
+  // On unmount, stop whatever pdfjs still has in flight.
+  useEffect(() => () => {
+    for (const t of renderTasksRef.current.values()) {
+      try { t.cancel(); } catch { /* settled */ }
     }
-  }, [fileKind, loadState, goNext, goPrev]);
+    renderTasksRef.current.clear();
+  }, []);
+
+  const goPrev = useCallback(() => gotoPage(pageStateRef.current - 1), [gotoPage]);
+  const goNext = useCallback(() => gotoPage(pageStateRef.current + 1), [gotoPage]);
 
   // ── Clean copy ──────────────────────────────────────────────────────
   // The whole document onto the clipboard as it should paste into Word:
@@ -880,42 +996,56 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         setSelectionMenu(null);
         return;
       }
-      const layer = textLayerRef.current;
-      if (!layer) return;
 
-      // Only act on selections that actually touch the page's text layer.
+      // Only act on selections that actually touch a page's text layer,
+      // and remember WHICH page — annotations anchor to a page number.
       //
       // Testing sel.anchorNode alone was wrong, and silently broke both
       // highlighting and margin notes: a drag that begins a few pixels off a
       // glyph — i.e. almost every real drag — anchors in whichever sibling
       // element sits under the cursor at mousedown, usually the annotations
       // overlay (`absolute inset-0`, same box as the text layer), and only
-      // *ends* inside the text layer. The old guard rejected that as "page
-      // chrome" and no popover ever appeared. Range.intersectsNode covers
-      // every direction the user can drag, including selections that start
-      // above the page and end below it.
+      // *ends* inside the text layer. Range.intersectsNode covers every
+      // direction the user can drag, including selections that start above
+      // the page and end below it.
       if (sel.rangeCount === 0) {
         setSelectionMenu(null);
         return;
       }
       const range = sel.getRangeAt(0);
-      const touchesTextLayer =
-        layer.contains(sel.anchorNode) ||
-        layer.contains(sel.focusNode) ||
-        range.intersectsNode(layer);
-      if (!touchesTextLayer) {
+      let layer: HTMLDivElement | null = null;
+      let layerPage = 0;
+      for (let i = 0; i < textLayerRefs.current.length; i++) {
+        const el = textLayerRefs.current[i];
+        if (!el || el.childNodes.length === 0) continue;
+        if (
+          el.contains(sel.anchorNode) ||
+          el.contains(sel.focusNode) ||
+          range.intersectsNode(el)
+        ) {
+          layer = el;
+          layerPage = i + 1;
+          break;
+        }
+      }
+      if (!layer) {
         setSelectionMenu(null);
         return;
       }
+
+      const layerRect = layer.getBoundingClientRect();
+      // A drag that crosses into the next page still anchors to the first
+      // page it touched; keep only the rectangles on that page.
       const clientRects = Array.from(range.getClientRects()).filter(
-        (r) => r.width > 0 && r.height > 0,
+        (r) =>
+          r.width > 0 && r.height > 0 &&
+          r.bottom > layerRect.top - 1 && r.top < layerRect.bottom + 1,
       );
       if (clientRects.length === 0) {
         setSelectionMenu(null);
         return;
       }
 
-      const layerRect = layer.getBoundingClientRect();
       const fractRects: FractionalRect[] = clientRects.map((r) => ({
         x: (r.left - layerRect.left) / layerRect.width,
         y: (r.top - layerRect.top) / layerRect.height,
@@ -927,6 +1057,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       setSelectionMenu({
         x: union.left + union.width / 2,
         y: union.top - 8,
+        page: layerPage,
         rects: fractRects,
         anchorText: sel.toString().trim().slice(0, 1000),
       });
@@ -947,14 +1078,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     // word every time the user clicked anywhere on the page, and clicking
     // empty space has to stay a way to dismiss.
     function handleDoubleClick(e: MouseEvent) {
-      const layer = textLayerRef.current;
+      let layer: HTMLDivElement | null = null;
+      for (const el of textLayerRefs.current) {
+        if (!el || el.childNodes.length === 0) continue;
+        const box = el.getBoundingClientRect();
+        if (
+          e.clientX >= box.left && e.clientX <= box.right &&
+          e.clientY >= box.top && e.clientY <= box.bottom
+        ) {
+          layer = el;
+          break;
+        }
+      }
       if (!layer) return;
-
-      const box = layer.getBoundingClientRect();
-      if (
-        e.clientX < box.left || e.clientX > box.right ||
-        e.clientY < box.top || e.clientY > box.bottom
-      ) return;
 
       // If the double-click already produced something selectable, the
       // mouseup handler has it — don't second-guess the browser.
@@ -976,14 +1112,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       document.removeEventListener('mouseup', captureSelection);
       document.removeEventListener('dblclick', handleDoubleClick);
     };
-  }, [loadState, fileKind, page, zoom]);
+  }, [loadState, fileKind]);
 
   const saveAnnotation = useCallback(
     async (color: AnnotationColor) => {
       if (!id || !selectionMenu) return;
       const ann = await createAnnotation({
         documentId: id,
-        page,
+        page: selectionMenu.page,
         color,
         rects: selectionMenu.rects,
         anchorText: selectionMenu.anchorText,
@@ -995,7 +1131,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       window.getSelection()?.removeAllRanges();
       setSelectionMenu(null);
     },
-    [id, page, selectionMenu],
+    [id, selectionMenu],
   );
 
   const removeAnnotation = useCallback(async (annId: string) => {
@@ -1005,6 +1141,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     }
   }, []);
 
+  // Stable handlers for the memoized page slots — the stack re-renders on
+  // every derived-page change while scrolling, and these keep the hundreds
+  // of untouched slots from re-rendering with it.
+  const openNoteAt = useCallback((n: Annotation, a: { x: number; y: number }) => {
+    setOpenNote({ id: n.id, x: a.x, y: a.y });
+  }, []);
+  const openRefAt = useCallback((link: IncomingLink, a: { x: number; y: number }) => {
+    setOpenRef({ link, x: a.x, y: a.y });
+  }, []);
+  const removeAnnotationCb = useCallback((annId: string) => {
+    void removeAnnotation(annId);
+  }, [removeAnnotation]);
+  const setCanvasEl = useCallback((p: number, el: HTMLCanvasElement | null) => {
+    canvasRefs.current[p - 1] = el;
+  }, []);
+  const setTextLayerEl = useCallback((p: number, el: HTMLDivElement | null) => {
+    textLayerRefs.current[p - 1] = el;
+  }, []);
+
   // Save a margin note: derive page:line deterministically from the ingested
   // passages (transcripts get real line numbers; everything else stays
   // page-only — the verbatim quote in anchor_text is the ground truth),
@@ -1012,10 +1167,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const saveNote = useCallback(
     async (args: { body: string; visibility: AnnotationVisibility; links: ComposerLink[] }) => {
       if (!id || !noteComposer) return;
-      const derived = await derivePageLine(id, page, noteComposer.anchorText);
+      const derived = await derivePageLine(id, noteComposer.page, noteComposer.anchorText);
       const ann = await createAnnotation({
         documentId: id,
-        page,
+        page: noteComposer.page,
         color: 'gold',
         rects: noteComposer.rects,
         anchorText: noteComposer.anchorText,
@@ -1039,7 +1194,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       }
       setNoteComposer(null);
     },
-    [id, page, noteComposer],
+    [id, noteComposer],
   );
 
   const editNote = useCallback(
@@ -1067,9 +1222,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (!destArr) return;
     try {
       const pageIdx = await pdf.getPageIndex(destArr[0]);
-      setPage(pageIdx + 1);
+      gotoPage(pageIdx + 1);
     } catch { /* dest resolution can fail on malformed PDFs */ }
-  }, []);
+  }, [gotoPage]);
 
   // Arrow-key navigation.
   useEffect(() => {
@@ -1132,21 +1287,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setMatches(found);
     setMatchIdx(0);
     setSearching(false);
-    if (found.length > 0) setPage(found[0].page);
-  }, [fileKind]);
+    if (found.length > 0) gotoPage(found[0].page);
+  }, [fileKind, gotoPage]);
 
   const goNextMatch = useCallback(() => {
     if (matches.length === 0) return;
     const next = (matchIdx + 1) % matches.length;
     setMatchIdx(next);
-    setPage(matches[next].page);
-  }, [matchIdx, matches]);
+    gotoPage(matches[next].page);
+  }, [matchIdx, matches, gotoPage]);
   const goPrevMatch = useCallback(() => {
     if (matches.length === 0) return;
     const next = (matchIdx - 1 + matches.length) % matches.length;
     setMatchIdx(next);
-    setPage(matches[next].page);
-  }, [matchIdx, matches]);
+    gotoPage(matches[next].page);
+  }, [matchIdx, matches, gotoPage]);
 
   // ────────────────────────────────────────────────────────────────────
   // Render
@@ -1421,7 +1576,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             currentPage={page}
             thumbnails={thumbnails}
             outline={outline}
-            onJumpPage={(p) => setPage(p)}
+            onJumpPage={(p) => gotoPage(p)}
             onJumpDest={(d) => void jumpDest(d)}
           />
         )}
@@ -1429,16 +1584,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
-            className={`flex-1 overflow-auto flex justify-center ${
-              fileKind === 'pdf' && fitPage ? 'items-center' : 'items-start py-6 px-4'
-            }`}
+            className="flex-1 overflow-auto flex justify-center items-start py-6 px-4"
             style={{ backgroundColor: rootBg }}
-            onWheel={wheelPage}
             // A selection copied off the PDF text layer would otherwise carry
             // the layer's own paint — transformed spans, transparent ink,
             // search-highlight color — into Word. Hand the clipboard the text.
             onCopy={(e) => {
-              if (fileKind === 'pdf') interceptStyledCopy(e, textLayerRef.current);
+              if (fileKind === 'pdf') interceptStyledCopy(e, stackRef.current);
             }}
           >
             {loadState === 'loading' && (
@@ -1447,27 +1599,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             {loadState === 'error' && (
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
             )}
-            {loadState === 'ready' && fileKind === 'pdf' && (
-              <div className="flex flex-row items-stretch">
-                <CrossRefRail
-                  refs={incomingLinks.filter((r) => r.target_page === page)}
-                  isMobile={isMobile}
-                  onOpen={(link, a) => setOpenRef({ link, x: a.x, y: a.y })}
-                />
-                <div className="relative">
-                  <canvas ref={canvasRef} className="block shadow-2xl" />
-                  <AnnotationsOverlay
-                    annotations={annotations.filter((a) => a.page === page)}
-                    onRemove={(annId) => void removeAnnotation(annId)}
+            {loadState === 'ready' && fileKind === 'pdf' && pageDims && (
+              <div ref={stackRef} className="flex flex-col items-center">
+                {pageDims.map((d, i) => (
+                  <PageSlot
+                    key={i + 1}
+                    p={i + 1}
+                    w={d.w * renderedScale}
+                    h={d.h * renderedScale}
+                    annotations={annotations}
+                    incomingLinks={incomingLinks}
+                    isMobile={isMobile}
+                    currentUserId={user?.id ?? null}
+                    setCanvasEl={setCanvasEl}
+                    setTextLayerEl={setTextLayerEl}
+                    onRemove={removeAnnotationCb}
+                    onOpenNote={openNoteAt}
+                    onOpenRef={openRefAt}
                   />
-                  <div ref={textLayerRef} className="textLayer absolute inset-0" />
-                </div>
-                <NotesRail
-                  notes={annotations.filter((a) => a.page === page && annotationIsNote(a))}
-                  currentUserId={user?.id ?? null}
-                  isMobile={isMobile}
-                  onOpen={(n, a) => setOpenNote({ id: n.id, x: a.x, y: a.y })}
-                />
+                ))}
               </div>
             )}
             {loadState === 'ready' && fileKind === 'docx' && docHtml && (
@@ -1523,7 +1673,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               page={page}
               total={totalPages}
               theme={theme}
-              onPage={setPage}
+              onPage={gotoPage}
             />
           )}
           </div>
@@ -1549,7 +1699,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               min={1}
               max={totalPages}
               value={page}
-              onChange={(e) => setPage(parseInt(e.target.value, 10))}
+              onChange={(e) => gotoPage(parseInt(e.target.value, 10))}
               className="w-56"
               aria-label="Page slider"
             />
@@ -1590,6 +1740,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             setNoteComposer({
               x: selectionMenu.x,
               y: selectionMenu.y,
+              page: selectionMenu.page,
               rects: selectionMenu.rects,
               anchorText: selectionMenu.anchorText,
             });
@@ -1737,6 +1888,80 @@ function highlightTextLayerMatches(container: HTMLElement, query: string) {
     }
   });
 }
+
+// One page's slot in the continuous stack: margin rails flanking a
+// fixed-size page box holding the canvas, the annotation overlay, and the
+// text layer. The box keeps its full size whether or not the page is
+// painted — the stack's scroll geometry must never depend on what happens
+// to be rendered — and an unpainted slot reads as white paper with a faint
+// page number. Memoized because the stack re-renders on every derived-page
+// change while scrolling; without this, a 600-page record rebuilds 600
+// slots per page crossed.
+const PageSlot = memo(function PageSlot({
+  p,
+  w,
+  h,
+  annotations,
+  incomingLinks,
+  isMobile,
+  currentUserId,
+  setCanvasEl,
+  setTextLayerEl,
+  onRemove,
+  onOpenNote,
+  onOpenRef,
+}: {
+  p: number;
+  w: number;
+  h: number;
+  annotations: Annotation[];
+  incomingLinks: IncomingLink[];
+  isMobile: boolean;
+  currentUserId: string | null;
+  setCanvasEl: (p: number, el: HTMLCanvasElement | null) => void;
+  setTextLayerEl: (p: number, el: HTMLDivElement | null) => void;
+  onRemove: (id: string) => void;
+  onOpenNote: (n: Annotation, a: { x: number; y: number }) => void;
+  onOpenRef: (link: IncomingLink, a: { x: number; y: number }) => void;
+}) {
+  return (
+    <div className="flex flex-row items-stretch" style={{ marginBottom: PAGE_GAP }}>
+      <CrossRefRail
+        refs={incomingLinks.filter((r) => r.target_page === p)}
+        isMobile={isMobile}
+        onOpen={onOpenRef}
+      />
+      <div
+        className="relative shadow-2xl"
+        style={{ width: w, height: h, backgroundColor: '#ffffff' }}
+      >
+        <div className="absolute inset-0 flex items-center justify-center text-[13px] text-black/25 select-none">
+          {p}
+        </div>
+        <canvas
+          ref={(el) => setCanvasEl(p, el)}
+          width={0}
+          height={0}
+          className="absolute left-0 top-0 block"
+        />
+        <AnnotationsOverlay
+          annotations={annotations.filter((a) => a.page === p)}
+          onRemove={onRemove}
+        />
+        <div
+          ref={(el) => setTextLayerEl(p, el)}
+          className="textLayer absolute inset-0"
+        />
+      </div>
+      <NotesRail
+        notes={annotations.filter((a) => a.page === p && annotationIsNote(a))}
+        currentUserId={currentUserId}
+        isMobile={isMobile}
+        onOpen={onOpenNote}
+      />
+    </div>
+  );
+});
 
 // Inline colored boxes for each annotation rect on the current page.
 // Positioned inside the same parent as the canvas + text layer; sits
