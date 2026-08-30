@@ -134,6 +134,45 @@ h1, h2, h3, h4, h5, h6 {
   background: rgba(232, 184, 74, 1);
   background-clip: padding-box;
 }
+/* The little scrollers — the step arrows at the ends of every bar. Styling
+   ::-webkit-scrollbar makes Chrome drop its native buttons, which silently
+   removed line-by-line scrolling: click an arrow for one line, hold it to
+   crawl. The warm-gray arrow reads on both the dark chrome and the reader's
+   parchment; gold on hover, like the thumb. */
+::-webkit-scrollbar-button {
+  width: 15px;
+  height: 15px;
+  background-color: rgba(255, 255, 255, 0.05);
+  background-repeat: no-repeat;
+  background-position: center;
+}
+::-webkit-scrollbar-button:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+::-webkit-scrollbar-button:single-button:vertical:decrement {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='rgba(158,148,130,0.95)'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:vertical:decrement:hover {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='%23e8b84a'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:vertical:increment {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='rgba(158,148,130,0.95)'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:vertical:increment:hover {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='%23e8b84a'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:horizontal:decrement {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M1.5 4.5 L7 8 L7 1 Z' fill='rgba(158,148,130,0.95)'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:horizontal:decrement:hover {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M1.5 4.5 L7 8 L7 1 Z' fill='%23e8b84a'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:horizontal:increment {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M7.5 4.5 L2 8 L2 1 Z' fill='rgba(158,148,130,0.95)'/%3E%3C/svg%3E");
+}
+::-webkit-scrollbar-button:single-button:horizontal:increment:hover {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M7.5 4.5 L2 8 L2 1 Z' fill='%23e8b84a'/%3E%3C/svg%3E");
+}
 /* Firefox — 'auto' keeps a full-width, grabbable bar (not the thin variant). */
 * {
   scrollbar-width: auto;
