@@ -20,6 +20,7 @@ import {
   Check,
   Printer,
   FileText,
+  Pencil,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -1141,6 +1142,42 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     }
   }, []);
 
+  // Rename — the document title in the toolbar is editable in place, with
+  // the pencil making it visible (the matter-heading idiom). The empty
+  // element gets its text imperatively so React never fights the caret.
+  const docTitleRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const el = docTitleRef.current;
+    if (el && document.activeElement !== el) el.textContent = doc?.title ?? '';
+  }, [doc?.title, loadState]);
+  const handleTitleBlur = useCallback(async () => {
+    const el = docTitleRef.current;
+    if (!el || !id || !doc) return;
+    const prev = doc.title || '';
+    const next = (el.textContent ?? '').trim();
+    if (!next || next === prev) {
+      el.textContent = prev;
+      return;
+    }
+    setDoc((cur) => (cur ? { ...cur, title: next } : cur));
+    const { error } = await supabase.from('documents').update({ title: next }).eq('id', id);
+    if (error) {
+      console.error('document rename failed', error);
+      setDoc((cur) => (cur ? { ...cur, title: prev } : cur));
+      if (docTitleRef.current) docTitleRef.current.textContent = prev;
+    }
+  }, [id, doc]);
+  const startDocRename = useCallback(() => {
+    const el = docTitleRef.current;
+    if (!el) return;
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, []);
+
   // Stable handlers for the memoized page slots — the stack re-renders on
   // every derived-page change while scrolling, and these keep the hundreds
   // of untouched slots from re-rendering with it.
@@ -1362,9 +1399,32 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               <PanelLeft size={15} />
             </button>
           )}
-          <span className="text-sm text-[var(--color-text-bright)] truncate">
-            {doc?.title || 'Document'}
-          </span>
+          <span
+            ref={docTitleRef}
+            contentEditable={!!doc}
+            suppressContentEditableWarning
+            spellCheck={false}
+            onBlur={() => void handleTitleBlur()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+              if (e.key === 'Escape') {
+                if (docTitleRef.current) docTitleRef.current.textContent = doc?.title ?? '';
+                (e.target as HTMLElement).blur();
+              }
+            }}
+            title="Click to rename this document"
+            className="text-sm text-[var(--color-text-bright)] truncate outline-none rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.08)] focus:overflow-visible focus:text-clip transition-colors empty:before:content-['Document'] empty:before:text-white/30"
+          />
+          {doc && (
+            <button
+              onClick={startDocRename}
+              className="p-1 rounded-md text-white/35 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.06)] transition-colors shrink-0"
+              title="Rename this document"
+              aria-label="Rename this document"
+            >
+              <Pencil size={13} strokeWidth={1.75} />
+            </button>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {fileKind === 'pdf' && (
@@ -1584,7 +1644,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
-            className="flex-1 overflow-auto flex justify-center items-start py-6 px-4"
+            className="reader-scroll flex-1 overflow-auto flex justify-center items-start py-6 px-4"
             style={{ backgroundColor: rootBg }}
             // A selection copied off the PDF text layer would otherwise carry
             // the layer's own paint — transformed spans, transparent ink,
@@ -2203,6 +2263,11 @@ function ReaderStyle({ theme }: { theme: Theme }) {
     theme === 'dark'
       ? 'rgba(245, 207, 96, 0.55)'
       : 'rgba(212, 160, 84, 0.45)';
+  const dark = theme === 'dark';
+  const sbTrack = dark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(42, 30, 16, 0.08)';
+  const sbThumb = dark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(42, 30, 16, 0.5)';
+  const sbBtnHover = dark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(42, 30, 16, 0.16)';
+  const sbInk = dark ? 'rgba(255,255,255,0.65)' : 'rgba(42,30,16,0.75)';
   return (
     <style>{`
       .textLayer {
@@ -2240,6 +2305,33 @@ function ReaderStyle({ theme }: { theme: Theme }) {
       }
       .textLayer .markedContent { display: contents; }
       .textLayer ::selection { background: ${selectionBg}; }
+      /* The reading pane's scrollbar wears the reader's theme — the app-wide
+         white-on-dark bar washes out on parchment. The thumb rides the whole
+         case; the step arrows move it a line at a time (hold to crawl). */
+      .reader-scroll::-webkit-scrollbar-track { background: ${sbTrack}; }
+      .reader-scroll::-webkit-scrollbar-thumb {
+        background: ${sbThumb};
+        border-radius: 8px;
+        border: 3px solid transparent;
+        background-clip: padding-box;
+        min-height: 48px;
+      }
+      .reader-scroll::-webkit-scrollbar-thumb:hover { background: rgba(232, 184, 74, 0.9); background-clip: padding-box; }
+      .reader-scroll::-webkit-scrollbar-thumb:active { background: #e8b84a; background-clip: padding-box; }
+      .reader-scroll::-webkit-scrollbar-button {
+        width: 15px;
+        height: 15px;
+        background-color: ${sbTrack};
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+      .reader-scroll::-webkit-scrollbar-button:hover { background-color: ${sbBtnHover}; }
+      .reader-scroll::-webkit-scrollbar-button:vertical:decrement { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
+      .reader-scroll::-webkit-scrollbar-button:vertical:decrement:hover { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='%23e8b84a'/%3E%3C/svg%3E"); }
+      .reader-scroll::-webkit-scrollbar-button:vertical:increment { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
+      .reader-scroll::-webkit-scrollbar-button:vertical:increment:hover { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='%23e8b84a'/%3E%3C/svg%3E"); }
+      .reader-scroll::-webkit-scrollbar-button:horizontal:decrement { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M1.5 4.5 L7 8 L7 1 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
+      .reader-scroll::-webkit-scrollbar-button:horizontal:increment { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M7.5 4.5 L2 8 L2 1 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
       /* Printing a rendered document (docx, slides, script): only the
          document itself reaches the paper — no app chrome, no dark ground.
          PDFs never come this way; they print as their original file. */
