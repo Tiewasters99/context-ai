@@ -62,6 +62,7 @@ const SOURCE_BUCKET = {
   'extension-claude': 'Claude',
   'extension-chatgpt': 'ChatGPT',
   'extension-gemini': 'Gemini',
+  'extension-kimi': 'Kimi',
   'extension-midjourney': 'Midjourney',
   'extension-elevenlabs': 'ElevenLabs',
   'extension-veed': 'Veed',
@@ -84,11 +85,21 @@ const SOURCE_BUCKET = {
 async function collectCaptured() {
   const messages = new Map(); // convKey -> record
   const drafts = new Map();   // groupKey -> record (longest text wins)
+  const artifacts = new Map(); // `${source}:${ident}` -> latest artifacts line
   const rl = readline.createInterface({ input: fs.createReadStream(CHAT_LOG) });
   for await (const line of rl) {
     let j; try { j = JSON.parse(line); } catch { continue; }
     const source = j.source || 'unknown';
     const ident = j.conversationId || normUrl(j.url) || (j.title ? `t:${j.title}` : `d:${(j.ts || '').slice(0, 10)}`);
+    if (j.kind === 'artifacts') {
+      // Deliverables captured alongside the chat (created files, legacy
+      // artifacts). Latest snapshot per conversation wins; the content lives
+      // on disk under ~/FileSaver/artifacts and is read at render time.
+      const key = `${source}:${ident}`;
+      const prev = artifacts.get(key);
+      if (!prev || (j.ts || '') >= (prev.ts || '')) artifacts.set(key, j);
+      continue;
+    }
     if (j.kind === 'draft') {
       const text = (j.draft || '').trim();
       if (text.length < 80) continue;
@@ -108,6 +119,22 @@ async function collectCaptured() {
       if (!prev || size > prev._size) {
         messages.set(key, { key, source, title: j.title, ts: j.ts, url: j.url, messages: msgs, _size: size, ident: `${source}:${ident}` });
       }
+    }
+  }
+  // Attach each conversation's artifact set; a conversation whose transcript
+  // never got captured but whose artifacts did still becomes a (minimal)
+  // record, so the deliverable is searchable even without the chat around it.
+  for (const rec of messages.values()) {
+    const art = artifacts.get(rec.ident);
+    if (art) rec.artifacts = art;
+  }
+  for (const [identKey, art] of artifacts) {
+    const convKey = `conv:${identKey}`;
+    if (!messages.has(convKey)) {
+      messages.set(convKey, {
+        key: convKey, source: art.source || 'unknown', title: art.title,
+        ts: art.ts, url: art.url, messages: [], _size: 0, ident: identKey, artifacts: art,
+      });
     }
   }
   // Drop drafts whose conversation was captured as messages.
@@ -205,7 +232,42 @@ function renderMarkdown(conv) {
       lines.push(`**${t.role === 'user' ? 'User' : 'Assistant'}:**`, '', t.text, '');
     }
   }
+  renderArtifactSection(lines, scrub, conv.artifacts);
   return lines.join('\n');
+}
+
+// Deliverables captured for this conversation: inline each text file's content
+// (read from ~/FileSaver/artifacts at render time — the log line is only a
+// pointer), and name the binary outputs whose bytes we can't fetch yet. The
+// document hash covers this section, so a new revision re-ingests naturally.
+const FILESAVER_DIR = 'C:/Users/equai/FileSaver';
+function renderArtifactSection(lines, scrub, art) {
+  const files = Array.isArray(art?.artifacts) ? art.artifacts : [];
+  const presented = Array.isArray(art?.presented) ? art.presented : [];
+  if (!files.length && !presented.length) return;
+  lines.push('', '## Files & artifacts created in this conversation', '');
+  for (const a of files) {
+    let body = '';
+    try {
+      const parts = String(a.relPath || '').split('/').filter((s) => s && s !== '..');
+      if (parts.length) body = fs.readFileSync(path.join(FILESAVER_DIR, ...parts), 'utf-8');
+    } catch { /* file missing on disk — still list it by name below */ }
+    lines.push(`### ${a.name}${a.title && a.title !== a.name ? ` — ${a.title}` : ''}`, '');
+    lines.push(body ? scrub(body.slice(0, 200_000)) : '*(content not on disk)*', '');
+  }
+  // Binary container outputs (.docx/.pdf renderings, etc.) — dedupe by name,
+  // skip ones whose text source was captured above under the same basename.
+  const capturedBases = new Set(files.map((f) => (f.name || '').toLowerCase().replace(/\.[^.]+$/, '').replace(/[_\s-]+/g, '')));
+  const seen = new Set();
+  for (const p of presented) {
+    const key = `${p.name}|${p.mime_type}`.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const base = (p.name || '').toLowerCase().replace(/\.[^.]+$/, '').replace(/[_\s-]+/g, '');
+    if (base && capturedBases.has(base)) continue;
+    lines.push(`- Output file presented in chat (binary, not yet archived): **${p.name}** (${p.mime_type || 'unknown type'})`);
+  }
+  lines.push('');
 }
 
 // ---------------------------------------------------------------------------
