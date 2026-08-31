@@ -8,9 +8,11 @@ export interface GenerateOptions {
   signal?: AbortSignal;
 }
 
+// NOTE: superseded by lib/llm (providers.ts + adapters); nothing imports this
+// module today. Kept with valid model aliases so it can't 404 if revived.
 const MODEL_MAP: Record<string, string> = {
-  opus: 'claude-opus-4-6-20250415',
-  sonnet: 'claude-sonnet-4-6-20250514',
+  opus: 'claude-opus-4-8',
+  sonnet: 'claude-sonnet-4-6',
 };
 
 export async function generateWithClaude({

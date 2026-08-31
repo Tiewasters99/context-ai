@@ -4,7 +4,7 @@ import { adapters } from './adapters';
 import { llmAuthHeader } from './auth';
 
 export interface GenerateStructuredOptions extends StructuredRequest {
-  /** Model id from providers.ts (e.g. 'claude-opus'). */
+  /** Model id from providers.ts (e.g. 'claude-opus-4-8'). */
   modelId: string;
   signal?: AbortSignal;
   /** Optional BYOK key forwarded to the proxy. */

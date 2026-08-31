@@ -5,13 +5,12 @@ export const providers: ProviderConfig[] = [
     id: 'anthropic',
     name: 'Anthropic',
     models: [
-      // Fable 5 has no sampling params and always-on thinking; our adapter
-      // already sends neither, so it works through the same code path.
-      { id: 'claude-fable-5', apiModelId: 'claude-fable-5', name: 'Claude Fable 5', description: 'Anthropic\'s most capable model — deepest reasoning and long-horizon work', contextWindow: 1000000, tier: 'pro' },
-      { id: 'claude-opus-4-8', apiModelId: 'claude-opus-4-8', name: 'Claude Opus 4.8', description: 'Most capable Opus — complex reasoning, long documents, structured analysis', contextWindow: 200000, tier: 'pro' },
-      { id: 'claude-opus-4-7', apiModelId: 'claude-opus-4-7', name: 'Claude Opus 4.7', description: 'Complex reasoning, long documents, structured analysis', contextWindow: 200000, tier: 'pro' },
-      { id: 'claude-opus', apiModelId: 'claude-opus-4-6-20250415', name: 'Claude Opus 4.6', description: 'Most capable — complex reasoning, long documents', contextWindow: 200000, tier: 'pro' },
-      { id: 'claude-sonnet', apiModelId: 'claude-sonnet-4-6-20250514', name: 'Claude Sonnet 4.6', description: 'Fast and capable — great for most tasks', contextWindow: 200000, tier: 'free' },
+      // First entry is the fallback default (models[0]) — keep Opus 4.8 here.
+      { id: 'claude-opus-4-8', apiModelId: 'claude-opus-4-8', name: 'Claude Opus 4.8', description: 'Most capable Opus — complex reasoning, long documents, structured analysis', contextWindow: 1000000, tier: 'pro' },
+      { id: 'claude-opus-5', apiModelId: 'claude-opus-5', name: 'Claude Opus 5', description: 'Newest Opus — deep reasoning and agentic work, same price as 4.8', contextWindow: 1000000, tier: 'pro' },
+      // premium: 2x Opus pricing — only cost-insensitive surfaces (Moot Bench) offer it.
+      { id: 'claude-fable-5', apiModelId: 'claude-fable-5', name: 'Claude Fable 5', description: 'Anthropic\'s most capable model — deepest reasoning, priced at 2x Opus', contextWindow: 1000000, tier: 'pro', premium: true },
+      { id: 'claude-sonnet', apiModelId: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', description: 'Fast and capable — great for most tasks', contextWindow: 1000000, tier: 'free' },
     ],
   },
   {
@@ -78,4 +77,11 @@ export function findModel(modelId: string) {
 
 export function allModels() {
   return providers.flatMap((p) => p.models.map((m) => ({ ...m, provider: p })));
+}
+
+/** allModels minus premium-priced entries — the default catalog for routine
+ *  surfaces. Surfaces where peak intelligence beats cost (Moot Bench) call
+ *  allModels() directly. */
+export function standardModels() {
+  return allModels().filter((m) => !m.premium);
 }

@@ -4,7 +4,7 @@ export { converse } from './converse';
 export type { ConverseOptions } from './converse';
 export { generateStructured } from './structured';
 export type { GenerateStructuredOptions } from './structured';
-export { providers, findModel, allModels } from './providers';
+export { providers, findModel, allModels, standardModels } from './providers';
 export { adapters } from './adapters';
 export { routeRequest, estimateTokens, chunkText, selectRelevantChunks } from './router';
 export type { LLMMessage, LLMRequest, LLMStreamCallbacks, ProviderConfig, ModelConfig, ProviderId, RoutingDecision, StructuredRequest } from './types';
