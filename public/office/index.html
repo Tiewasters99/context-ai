@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Office v.1 — Depth Study</title>
+<style>
+  :root { --gold: #d8b87a; --ink: #f3ede2; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { display: block; }
+
+  /* cinematic layers */
+  #vignette { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 42%, transparent 52%, rgba(0,0,0,.38) 100%); }
+  #fader { position: fixed; inset: 0; background: #000; transition: opacity 1.4s ease; pointer-events: none; z-index: 6; }
+  #warp { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 5;
+    background: radial-gradient(circle at 50% 48%, rgba(216,184,122,.32), rgba(216,184,122,0) 62%);
+    filter: blur(6px); }
+
+  /* editable signage */
+  #sign { position: fixed; top: 6.5%; left: 0; right: 0; text-align: center; pointer-events: none;
+    will-change: transform; }
+  #sign h1 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; margin: 0;
+    color: var(--ink); font-size: clamp(28px, 4.6vw, 58px); letter-spacing: .34em; text-indent: .34em;
+    text-shadow: 0 2px 18px rgba(0,0,0,.65); pointer-events: auto; outline: none; }
+  #sign .rule { width: 120px; height: 1px; margin: 14px auto 10px;
+    background: linear-gradient(90deg, transparent, var(--gold), transparent); }
+  #sign p { font-family: Georgia, serif; font-style: italic; margin: 0; color: var(--gold);
+    font-size: clamp(13px, 1.5vw, 18px); letter-spacing: .12em;
+    text-shadow: 0 1px 10px rgba(0,0,0,.7); pointer-events: auto; outline: none; }
+  #sign [contenteditable]:focus { text-shadow: 0 0 22px rgba(216,184,122,.55); }
+
+  /* room switcher */
+  #rooms { position: fixed; left: 26px; bottom: 22px; font-family: Georgia, serif; z-index: 2; }
+  #rooms button { display: block; background: none; border: none; cursor: pointer; padding: 5px 0;
+    color: rgba(243,237,226,.5); font-family: inherit; font-size: 13px; letter-spacing: .14em;
+    text-align: left; text-shadow: 0 1px 8px rgba(0,0,0,.8); transition: color .3s; }
+  #rooms button:hover { color: var(--ink); }
+  #rooms button.active { color: var(--gold); }
+
+  #hint { position: fixed; right: 26px; bottom: 22px; font-family: Georgia, serif; font-style: italic;
+    color: rgba(243,237,226,.55); font-size: 13px; letter-spacing: .06em; pointer-events: none;
+    text-align: right; text-shadow: 0 1px 8px rgba(0,0,0,.8); transition: opacity 2s; }
+  #tag { position: fixed; right: 26px; top: 20px; font-family: Georgia, serif; font-size: 11px;
+    letter-spacing: .22em; color: rgba(216,184,122,.5); pointer-events: none; }
+
+  /* the docket — opened from a computer screen in the scene */
+  #matters { position: fixed; top: 50%; right: 5%; width: min(400px, 86vw);
+    transform: translateY(-50%) translateY(14px);
+    background: rgba(14, 11, 8, .84); backdrop-filter: blur(14px);
+    border: 1px solid rgba(216,184,122,.35); padding: 26px 30px 20px;
+    font-family: Georgia, serif; color: var(--ink); z-index: 4;
+    opacity: 0; pointer-events: none; transition: opacity .45s ease, transform .45s ease; }
+  #matters.open { opacity: 1; pointer-events: auto; transform: translateY(-50%); }
+  #matters h2 { margin: 0; font-weight: 400; font-size: 15px; letter-spacing: .3em;
+    color: var(--gold); }
+  #matters .mrule { height: 1px; margin: 12px 0 6px;
+    background: linear-gradient(90deg, var(--gold), transparent); }
+  #matters ul { list-style: none; margin: 0; padding: 0; }
+  #matters li { padding: 9px 0; border-bottom: 1px solid rgba(216,184,122,.12); }
+  #matters li:last-child { border-bottom: none; }
+  #matters .mn { font-size: 14px; letter-spacing: .08em; }
+  #matters li:hover .mn { color: var(--gold); }
+  #matters .md { font-size: 12px; font-style: italic; color: rgba(243,237,226,.55); margin-top: 2px; }
+  #matters .mfoot { font-size: 11px; font-style: italic; color: rgba(216,184,122,.55);
+    margin: 14px 0 0; }
+  #mattersClose { position: absolute; top: 10px; right: 14px; background: none; border: none;
+    color: rgba(243,237,226,.6); font-size: 20px; cursor: pointer; font-family: Georgia, serif; }
+  #mattersClose:hover { color: var(--gold); }
+
+  /* the firm nav — reception only */
+  #firmNav { position: fixed; top: calc(6.5% + clamp(96px, 13vw, 150px)); left: 0; right: 0;
+    text-align: center; font-family: Georgia, serif; z-index: 2;
+    opacity: 0; pointer-events: none; transition: opacity .6s ease; }
+  #firmNav.here { opacity: 1; pointer-events: auto; }
+  #firmNav button { background: none; border: none; cursor: pointer; font-family: inherit;
+    color: rgba(243,237,226,.72); font-size: 13px; letter-spacing: .22em; padding: 2px 22px;
+    border-left: 1px solid rgba(216,184,122,.4); text-shadow: 0 1px 8px rgba(0,0,0,.8);
+    transition: color .3s; }
+  #firmNav button:first-child { border-left: none; }
+  #firmNav button:hover { color: var(--gold); }
+
+  /* the generic info sheet (About / Attorneys / …) — same family as the docket */
+  #info { position: fixed; top: 50%; left: 50%; width: min(460px, 88vw);
+    transform: translate(-50%, -50%) translateY(14px);
+    background: rgba(14, 11, 8, .86); backdrop-filter: blur(14px);
+    border: 1px solid rgba(216,184,122,.35); padding: 26px 32px 22px;
+    font-family: Georgia, serif; color: var(--ink); z-index: 4;
+    opacity: 0; pointer-events: none; transition: opacity .45s ease, transform .45s ease; }
+  #info.open { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
+  #info h2 { margin: 0; font-weight: 400; font-size: 15px; letter-spacing: .3em; color: var(--gold); }
+  #info .mrule { height: 1px; margin: 12px 0 10px;
+    background: linear-gradient(90deg, var(--gold), transparent); }
+  #info .ibody { font-size: 14px; line-height: 1.65; outline: none; white-space: pre-line;
+    max-height: 56vh; overflow-y: auto; }
+  #info .ibody:focus { text-shadow: 0 0 18px rgba(216,184,122,.3); }
+  #infoClose { position: absolute; top: 10px; right: 14px; background: none; border: none;
+    color: rgba(243,237,226,.6); font-size: 20px; cursor: pointer; font-family: Georgia, serif; }
+  #infoClose:hover { color: var(--gold); }
+  #info .parea { margin-bottom: 14px; }
+  #info .pname { font-size: 12px; letter-spacing: .24em; color: var(--gold); margin-bottom: 5px; }
+  #info .pdoc { display: block; width: 100%; background: none; border: none; text-align: left;
+    cursor: pointer; font-family: Georgia, serif; font-size: 13.5px; color: rgba(243,237,226,.85);
+    padding: 4px 0 4px 12px; border-left: 1px solid rgba(216,184,122,.3); }
+  #info .pdoc:hover { color: var(--gold); border-left-color: var(--gold); }
+  #info .pfoot { font-size: 11px; font-style: italic; color: rgba(216,184,122,.55); margin: 6px 0 0; }
+
+  /* motion toggle */
+  #motionBtn { position: fixed; left: 50%; transform: translateX(-50%); bottom: 20px;
+    background: none; border: 1px solid rgba(216,184,122,.35); border-radius: 999px;
+    color: rgba(243,237,226,.65); font-family: Georgia, serif; font-size: 11px;
+    letter-spacing: .22em; padding: 7px 20px 6px; cursor: pointer; z-index: 2;
+    text-shadow: 0 1px 8px rgba(0,0,0,.8); transition: color .3s, border-color .3s; }
+  #motionBtn:hover { color: var(--gold); border-color: var(--gold); }
+  #motionBtn.frozen { color: var(--gold); border-color: rgba(216,184,122,.7); }
+
+  /* the library — spines on shelves, click to take a book down */
+  #library { position: fixed; inset: 0; background: rgba(8, 6, 4, .95); z-index: 6;
+    overflow-y: auto; opacity: 0; pointer-events: none; transition: opacity .5s ease;
+    font-family: Georgia, serif; color: var(--ink); }
+  #library.open { opacity: 1; pointer-events: auto; }
+  #library .lwrap { max-width: 1080px; margin: 0 auto; padding: 54px 40px 80px; }
+  #library h2 { font-weight: 400; font-size: 20px; letter-spacing: .4em; color: var(--gold);
+    text-align: center; margin: 0 0 6px; }
+  #library .lsub { text-align: center; font-style: italic; font-size: 13px;
+    color: rgba(243,237,226,.5); margin: 0 0 34px; }
+  #library .study { margin: 30px 0 0; }
+  #library .study h3 { font-weight: 400; font-size: 13px; letter-spacing: .28em;
+    color: var(--gold); margin: 0 0 2px; }
+  #library .study .blurb { font-style: italic; font-size: 12.5px; color: rgba(243,237,226,.55);
+    margin: 0 0 14px; max-width: 640px; }
+  .shelfRow { display: flex; align-items: flex-end; gap: 4px; padding: 0 6px 0;
+    border-bottom: 6px solid rgba(90, 64, 38, .9); overflow-x: auto;
+    box-shadow: 0 8px 18px rgba(0,0,0,.5); }
+  .spine { flex: 0 0 auto; width: 38px; border: none; cursor: pointer; position: relative;
+    border-radius: 3px 3px 0 0; box-shadow: inset 3px 0 6px rgba(255,255,255,.14),
+    inset -3px 0 7px rgba(0,0,0,.45), 0 -2px 6px rgba(0,0,0,.3);
+    transition: transform .22s ease, filter .22s ease; }
+  .spine:hover { transform: translateY(-9px); filter: brightness(1.22); }
+  .spine span { position: absolute; inset: 10px 0 12px; writing-mode: vertical-rl;
+    margin: auto; font-family: Georgia, serif; font-size: 11.5px; letter-spacing: .08em;
+    color: #ecdfc2; text-shadow: 0 1px 2px rgba(0,0,0,.8); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  #libClose { position: fixed; top: 22px; right: 30px; background: none; border: none;
+    color: rgba(243,237,226,.6); font-size: 26px; cursor: pointer; font-family: Georgia, serif;
+    z-index: 7; }
+  #libClose:hover { color: var(--gold); }
+
+  /* the open book */
+  #book { position: fixed; inset: 0; background: rgba(8, 6, 4, .97); z-index: 8;
+    overflow-y: auto; opacity: 0; pointer-events: none; transition: opacity .4s ease;
+    font-family: Georgia, serif; color: var(--ink); }
+  #book.open { opacity: 1; pointer-events: auto; }
+  #book .bwrap { max-width: 680px; margin: 0 auto; padding: 64px 40px 90px; }
+  #book .bstudy { font-size: 11px; letter-spacing: .3em; color: var(--gold); margin: 0 0 14px; }
+  #book h2 { font-weight: 400; font-size: clamp(24px, 3.2vw, 34px); letter-spacing: .06em;
+    margin: 0 0 4px; }
+  #book .bauthor { font-style: italic; color: var(--gold); font-size: 15px; margin: 0 0 22px; }
+  #book .btext { font-size: 15px; line-height: 1.75; white-space: pre-line; }
+  #book .bnote { font-style: italic; color: rgba(243,237,226,.55); font-size: 13px;
+    margin-top: 22px; }
+  #book .blinks { margin-top: 26px; padding-top: 14px;
+    border-top: 1px solid rgba(216,184,122,.25); }
+  #book .blinks a { display: block; color: var(--gold); font-size: 13.5px;
+    text-decoration: none; border-bottom: none; padding: 4px 0; letter-spacing: .04em; }
+  #book .blinks a:hover { text-decoration: underline; }
+  #book .bread { display: block; margin-top: 28px; background: none; cursor: pointer;
+    border: 1px solid rgba(216,184,122,.45); color: var(--gold); padding: 10px 24px;
+    font-family: Georgia, serif; font-size: 13px; letter-spacing: .18em; }
+  #book .bread:hover { background: rgba(216,184,122,.12); }
+  #book .bread:disabled { opacity: .55; cursor: default; }
+  #book .bpages { margin-top: 34px; border-top: 1px solid rgba(216,184,122,.25);
+    padding-top: 18px; }
+  #book .bpage { font-size: 15px; line-height: 1.75; white-space: pre-line; margin: 0 0 28px; }
+  #book .bpageno { font-size: 10.5px; letter-spacing: .25em; color: rgba(216,184,122,.55);
+    margin: 0 0 8px; }
+  #book .btrail { font-style: italic; color: rgba(243,237,226,.5); font-size: 13.5px;
+    margin: 40px 0 0; text-align: center; }
+  #bookBack { position: fixed; top: 22px; left: 30px; background: none; border: none;
+    color: rgba(243,237,226,.6); font-size: 14px; letter-spacing: .12em; cursor: pointer;
+    font-family: Georgia, serif; z-index: 9; }
+  #bookBack:hover { color: var(--gold); }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="vignette"></div>
+<div id="warp"></div>
+
+<div id="sign">
+  <h1 contenteditable="true" spellcheck="false">QUAINTON LAW</h1>
+  <div class="rule"></div>
+  <p contenteditable="true" spellcheck="false">Counsel for the consequential.</p>
+</div>
+
+<nav id="firmNav">
+  <button data-page="about">ABOUT</button><button data-page="attorneys">ATTORNEYS</button><button data-page="location">LOCATION</button><button data-page="practice">AREAS OF PRACTICE</button><button data-page="library">LIBRARY</button>
+</nav>
+
+<aside id="info">
+  <button id="infoClose" aria-label="close">×</button>
+  <h2 id="infoTitle"></h2>
+  <div class="mrule"></div>
+  <div class="ibody" id="infoBody" contenteditable="true" spellcheck="false"></div>
+</aside>
+
+<button id="motionBtn">MOTION&ensp;·&ensp;ON</button>
+
+<div id="library">
+  <button id="libClose" aria-label="close">×</button>
+  <div class="lwrap">
+    <h2>THE LIBRARY</h2>
+    <p class="lsub">The firm's shelves — take a book down.</p>
+    <div id="shelves"></div>
+  </div>
+</div>
+
+<div id="book">
+  <button id="bookBack">← the shelves</button>
+  <div class="bwrap" id="bookBody"></div>
+</div>
+
+<div id="rooms">
+  <button data-room="1" class="active">I &nbsp;·&nbsp; RECEPTION — DUSK</button>
+  <button data-room="9">II &nbsp;·&nbsp; RECEPTION — MORNING</button>
+  <button data-room="2">III &nbsp;·&nbsp; RECEPTION — DAY</button>
+  <button data-room="4">IV &nbsp;·&nbsp; BOARDROOM A — DUSK</button>
+  <button data-room="5">V &nbsp;·&nbsp; BOARDROOM B — NIGHT</button>
+  <button data-room="8">VI &nbsp;·&nbsp; BREAKOUT — CANDLELIGHT</button>
+  <button data-room="6">VII &nbsp;·&nbsp; OFFICE A — THE PARK</button>
+  <button data-room="7">VIII &nbsp;·&nbsp; OFFICE B — EVENING</button>
+  <button data-room="10">IX &nbsp;·&nbsp; OFFICE C — GOLDEN HOUR</button>
+  <button data-room="11">X &nbsp;·&nbsp; OFFICE D — THE TOWER</button>
+  <button data-room="12">XI &nbsp;·&nbsp; OFFICE E — THE HARBOR</button>
+  <button data-room="3">XII &nbsp;·&nbsp; SALON — EVENING</button>
+</div>
+
+<aside id="matters">
+  <button id="mattersClose" aria-label="close">×</button>
+  <h2>ACTIVE MATTERS</h2>
+  <div class="mrule"></div>
+  <ul id="mattersList"></ul>
+  <p class="mfoot">Full dockets live in the firm's Contextspaces.</p>
+</aside>
+
+<div id="hint">W&thinsp;A&thinsp;S&thinsp;D — walk&ensp;·&ensp;wheel — zoom&ensp;·&ensp;mouse — look<br>step into the golden ring</div>
+<div id="tag">OFFICE&ensp;v.1</div>
+<div id="fader"></div>
+
+<script>
+  window.__errors = [];
+  addEventListener('error', e => __errors.push(`${e.message} @${(e.filename||'').split('/').pop()}:${e.lineno}`));
+  addEventListener('unhandledrejection', e => __errors.push('rej: ' + e.reason));
+</script>
+<script type="module">
+import * as THREE from './lib/three.module.js';
+import { LIBRARY, STUDIES } from './assets/library.js';
+
+const stage = document.getElementById('stage');
+const fader = document.getElementById('fader');
+const warpFx = document.getElementById('warp');
+const sign  = document.getElementById('sign');
+const hint  = document.getElementById('hint');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+// ---- camera ---------------------------------------------------------------
+// The image is rebuilt as a 3D shell as seen from its own camera at the origin.
+// The render camera walks inside that shell; its fov stays narrower than the
+// shell's so the frame never runs off the photograph's edge.
+const SRC_FOV = 72;                                   // assumed fov of the Midjourney "lens"
+const SRC_TAN = Math.tan(THREE.MathUtils.degToRad(SRC_FOV / 2));
+const camera = new THREE.PerspectiveCamera(34, 1, 0.05, 30);
+function fitFov() {
+  camera.aspect = innerWidth / innerHeight;
+  const maxHalfH = THREE.MathUtils.degToRad(56) / 2;  // horizontal ceiling
+  let fovY = 2 * Math.atan(Math.tan(maxHalfH) / camera.aspect);
+  fovY = Math.min(fovY, THREE.MathUtils.degToRad(48));
+  camera.fov = THREE.MathUtils.radToDeg(fovY);
+  camera.updateProjectionMatrix();
+}
+fitFov();
+
+// ---- rooms ----------------------------------------------------------------
+const ROOMS = {
+  1: { name: 'RECEPTION',   gamma: 2.4, next: 9, portal: [ 0.55, -0.08, -1.55], nav: true,
+       shelf: [[940, 520], [940, 600]] },              // the reception bookcases
+  9: { name: 'RECEPTION AM',gamma: 2.9, next: 2, portal: [-0.55, -0.05, -1.55], nav: true },
+  2: { name: 'RECEPTION',   gamma: 3.2, next: 4, portal: [ 0.55, -0.05, -1.55], nav: true },
+  4: { name: 'BOARDROOM A', gamma: 2.8, next: 5, portal: [-0.55, -0.05, -1.55] },
+  5: { name: 'BOARDROOM B', gamma: 2.6, next: 8, portal: [ 0.55, -0.05, -1.55] },
+  8: { name: 'BREAKOUT',    gamma: 2.6, next: 6, portal: [-0.55, -0.05, -1.55] },
+  6: { name: 'OFFICE A',    gamma: 1.9, next: 7, portal: [-0.55, -0.05, -1.55],
+       screen: [[630, 578], [630, 640]],               // iMac pixel + desk-base pixel (1024² image)
+       shelf: [[930, 540], [930, 620]] },              // the office bookcase
+  7: { name: 'OFFICE B',    gamma: 2.1, next: 10, portal: [-0.55, -0.05, -1.55],
+       screen: [[638, 580], [640, 660]] },
+  10:{ name: 'OFFICE C',    gamma: 2.4, next: 11, portal: [ 0.55, -0.05, -1.55] },
+  11:{ name: 'OFFICE D',    gamma: 2.2, next: 12, portal: [-0.55, -0.05, -1.55],
+       screen: [[690, 690], [690, 745]] },             // the MacBook on the desk
+  12:{ name: 'OFFICE E',    gamma: 2.6, next: 3, portal: [ 0.55, -0.05, -1.55] },
+  3: { name: 'SALON',       gamma: 3.4, next: 1, portal: [ 0.55, -0.05, -1.50] },
+};
+const ORDER = [1, 9, 2, 4, 5, 8, 6, 7, 10, 11, 12, 3]; // digit keys cover the first nine
+const loader = new THREE.LoadingManager(start);
+const tl = new THREE.TextureLoader(loader);
+for (const i of Object.keys(ROOMS)) {
+  const color = tl.load(`assets/room${i}.png`);
+  color.colorSpace = THREE.SRGBColorSpace;            // three 0.184 washes out darks without this
+  const depth = tl.load(`assets/depth${i}.png`);
+  depth.generateMipmaps = false;
+  depth.minFilter = THREE.LinearFilter;
+  Object.assign(ROOMS[i], { color, depth });
+}
+
+// ---- the shell ------------------------------------------------------------
+const uniforms = {
+  colorMap:  { value: null },
+  depthMap:  { value: null },
+  depthGamma:{ value: 2.4 },
+  nearDist:  { value: 1.25 },
+  farDist:   { value: 7.0 },
+  srcTan:    { value: SRC_TAN },
+};
+const mat = new THREE.ShaderMaterial({
+  uniforms,
+  vertexShader: /* glsl */`
+    uniform sampler2D depthMap;
+    uniform float depthGamma, nearDist, farDist, srcTan;
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      float d = pow(texture2D(depthMap, uv).r, depthGamma);   // 1 = near, 0 = far
+      float dist = mix(farDist, nearDist, d);
+      // reproject the pixel along its original camera ray (planar z-depth)
+      vec3 ray = vec3(position.xy * srcTan, -1.0);
+      vec3 p = ray * dist;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+    }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D colorMap;
+    varying vec2 vUv;
+    void main() {
+      gl_FragColor = vec4(texture2D(colorMap, vUv).rgb, 1.0);
+    }`,
+});
+const shell = new THREE.Mesh(new THREE.PlaneGeometry(2, 2, 320, 320), mat);
+shell.frustumCulled = false;
+mat.side = THREE.DoubleSide;                          // mirrored wings flip the winding
+scene.add(shell);
+
+// The world loops: mirrored copies of the shell continue the room past both
+// edges (a mirror is seam-continuous by construction), so looking or drifting
+// sideways never runs off the photograph.
+const WING = THREE.MathUtils.degToRad(SRC_FOV);
+for (const s of [-1, 1]) {
+  const wingMesh = shell.clone();
+  wingMesh.rotation.y = s * WING;
+  wingMesh.scale.x = -1;
+  wingMesh.frustumCulled = false;
+  scene.add(wingMesh);
+}
+
+// ---- the wormhole ---------------------------------------------------------
+function glowTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const rad = g.createRadialGradient(128, 128, 10, 128, 128, 126);
+  rad.addColorStop(0.00, 'rgba(255,244,214,.95)');
+  rad.addColorStop(0.25, 'rgba(216,184,122,.55)');
+  rad.addColorStop(0.55, 'rgba(216,184,122,.18)');
+  rad.addColorStop(1.00, 'rgba(216,184,122,0)');
+  g.fillStyle = rad; g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+}
+const portal = new THREE.Group();
+const glowMat = new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, opacity: 0.8,
+  blending: THREE.AdditiveBlending, depthWrite: false });
+const glow = new THREE.Mesh(new THREE.PlaneGeometry(0.30, 0.30), glowMat);
+const ring = new THREE.Mesh(new THREE.TorusGeometry(0.105, 0.005, 12, 72),
+  new THREE.MeshBasicMaterial({ color: 0xd8b87a, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false }));
+const tap = new THREE.Mesh(new THREE.SphereGeometry(0.28),                 // generous tap target
+  new THREE.MeshBasicMaterial({ visible: false }));
+portal.add(glow, ring, tap);                           // no label — the ring is simply a door
+scene.add(portal);
+
+// ---- in-scene hotspots (computer screens, bookshelves) --------------------
+function makeHotspot() {
+  const group = new THREE.Group();
+  const hGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.38),
+    new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, opacity: 0.35,
+      blending: THREE.AdditiveBlending, depthWrite: false }));
+  const hTap = new THREE.Mesh(new THREE.SphereGeometry(0.5),               // generous tap target
+    new THREE.MeshBasicMaterial({ visible: false }));
+  group.add(hGlow, hTap);
+  group.visible = false;
+  scene.add(group);
+  return { group, glow: hGlow, tap: hTap };
+}
+const screenHot = makeHotspot();                       // opens the matters docket
+const shelfHot  = makeHotspot();                       // opens the library
+
+// sample the room's depth map at an image pixel → distance on the shell
+const depthReader = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+function shellPoint(room, px, py) {
+  const img = room.depth.image;
+  if (!img) return null;
+  depthReader.canvas.width = depthReader.canvas.height = 1;
+  depthReader.drawImage(img, px, py, 1, 1, 0, 0, 1, 1);
+  return depthReader.getImageData(0, 0, 1, 1).data[0] / 255;
+}
+function placeHot(hot, room, spec) {
+  hot.group.visible = false;
+  if (!spec) return;
+  const [[sx, sy], [bx, by]] = spec;
+  const dS = shellPoint(room, sx, sy), dB = shellPoint(room, bx, by);
+  if (dS === null) return;
+  const d = Math.max(dS, dB);                          // glass reads as "window" — trust the solid anchor
+  const k = Math.pow(d, uniforms.depthGamma.value);
+  const dist = (7.0 * (1 - k) + 1.25 * k) * 0.96;
+  const ndx = sx / 512 - 1, ndy = 1 - sy / 512;
+  hot.group.position.set(ndx * SRC_TAN * dist, ndy * SRC_TAN * dist, -dist);
+  hot.group.scale.setScalar(dist / 2.8);               // constant apparent size
+  hot.group.visible = true;
+}
+
+// ---- room state -----------------------------------------------------------
+let current = 1;
+function applyRoom(i) {
+  current = i;
+  const r = ROOMS[i];
+  uniforms.colorMap.value = r.color;
+  uniforms.depthMap.value = r.depth;
+  uniforms.depthGamma.value = r.gamma;
+  portal.position.fromArray(r.portal);
+  placeHot(screenHot, r, r.screen);
+  placeHot(shelfHot, r, r.shelf);
+  document.getElementById('firmNav').classList.toggle('here', !!r.nav);
+  document.querySelectorAll('#rooms button').forEach(b =>
+    b.classList.toggle('active', b.dataset.room == i));
+}
+applyRoom(1);
+
+function jumpRoom(i) {                                 // instant switch (buttons / 1-2-3 keys)
+  fader.style.transition = 'opacity .3s ease';
+  fader.style.opacity = 1;
+  setTimeout(() => {
+    applyRoom(i); spawn();
+    fader.style.transition = 'opacity .8s ease'; fader.style.opacity = 0;
+  }, 320);
+}
+document.querySelectorAll('#rooms button').forEach(b =>
+  b.addEventListener('click', () => jumpRoom(+b.dataset.room)));
+
+// ---- navigation: WASD walk + mouse look -----------------------------------
+const pos = new THREE.Vector3(0, 0, 0.25);             // camera position in shell space
+const vel = new THREE.Vector3();
+const keys = new Set();
+const pointer = new THREE.Vector2();
+let yaw = 0, pitch = 0;                                // smoothed look
+const BOUNDS = { x: 0.5, zMin: -1.05, zMax: 3.40 };    // deep S / wheel pull-back for the wide establishing view
+const MAX_YAW = THREE.MathUtils.degToRad(38);          // the mirrored wings make real looking possible
+const MAX_PITCH = THREE.MathUtils.degToRad(4.5);
+const SPEED = 0.65, ACCEL = 8.0, DAMP = 10.0;  // walking pace, but crisp starts and stops — no float
+
+addEventListener('keydown', e => {
+  if (e.target.isContentEditable) return;              // typing in the sign, not walking
+  if (e.key === 'Escape') {
+    if (bookOpen) closeBook();
+    else if (libraryOpen) closeLibrary();
+    else { closeInfo(); closeMatters(); }
+    return;
+  }
+  if (e.key === ' ') { setMotion(!motionOn); e.preventDefault(); return; }
+  const slot = ORDER['123456789'.indexOf(e.key)];
+  if (slot !== undefined) { jumpRoom(slot); return; }
+  keys.add(e.key.toLowerCase());
+});
+addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+addEventListener('blur', () => keys.clear());
+addEventListener('pointermove', e => {
+  pointer.set((e.clientX / innerWidth) * 2 - 1, (e.clientY / innerHeight) * 2 - 1);
+});
+addEventListener('touchmove', e => {
+  const t = e.touches[0];
+  pointer.set((t.clientX / innerWidth) * 2 - 1, (t.clientY / innerHeight) * 2 - 1);
+}, { passive: true });
+addEventListener('wheel', e => {                       // wheel = dolly zoom, scroll back to widen
+  if (warping || uiOpen()) return;
+  vel.z += e.deltaY * 0.006;
+}, { passive: true });
+
+// ---- the docket panel ------------------------------------------------------
+const MATTERS = [
+  { n: 'Fleming', d: 'Commercial litigation — 2,626 documents, 30 depositions' },
+  { n: 'DeCamara v. Bryn Mawr', d: 'Litigation — 7,008 documents' },
+  { n: 'Peloso v. Webster / Ortega', d: 'AAA arbitration — hearing transcripts & briefs' },
+  { n: 'NovaFlux v. STERIS', d: 'Arbitration / mediation' },
+  { n: 'Coleman', d: 'Litigation — mediation track' },
+  { n: 'Atkinson', d: 'Litigation — 265 documents' },
+  { n: 'Bushell', d: 'Pleadings, cases & settlement' },
+  { n: 'UKC', d: 'Pleadings, depositions, insurance & evidence' },
+];
+const mattersEl = document.getElementById('matters');
+document.getElementById('mattersList').innerHTML = MATTERS.map(m =>
+  `<li><div class="mn">${m.n}</div><div class="md">${m.d}</div></li>`).join('');
+let mattersOpen = false;
+function openMatters() { closeAll(); mattersOpen = true; mattersEl.classList.add('open'); }
+function closeMatters() { mattersOpen = false; mattersEl.classList.remove('open'); }
+document.getElementById('mattersClose').addEventListener('click', closeMatters);
+
+// ---- the firm pages (About / Attorneys / Location / Areas of Practice) ----
+const PAGES = {
+  about: ['ABOUT THE FIRM',
+`Quainton Law PLLC is a Manhattan litigation boutique — counsel for the consequential.
+
+The firm pairs traditional courtroom craft with a working command of the technologies now reshaping its clients' disputes: complex commercial litigation tried with care, arbitrations argued to the point, and a standing study of how artificial intelligence changes what the law asks of everyone.
+
+Small by design. Senior attention on every matter.`],
+  attorneys: ['ATTORNEYS',
+`Eden Quainton — Founder & Managing Attorney
+
+Trial and appellate litigator. Commercial disputes, arbitration and mediation, and technology matters — including the questions AI is only beginning to put to the courts. Presenter, Celesq CLE: Large Language Models and the Law (August 2026).`],
+  location: ['LOCATION',
+`2 Park Avenue, 20th Floor
+New York, New York
+
+By appointment.`],
+  practice: ['AREAS OF PRACTICE',
+`Commercial Litigation — contract, business tort, and partnership disputes, in court and on appeal.
+
+Arbitration & Mediation — AAA and ad hoc proceedings; advocacy and settlement counsel.
+
+Technology & AI — counseling and disputes at the frontier: model conduct, data, and liability.
+
+Appeals — briefing and argument, state and federal.`],
+};
+const infoEl = document.getElementById('info');
+let infoOpen = false;
+function openInfo(page) {
+  closeAll();
+  const [title, body] = PAGES[page];
+  document.getElementById('infoTitle').textContent = title;
+  const bodyEl = document.getElementById('infoBody');
+  const dynPractice = DYN_SECTIONS.filter(s => s.kind === 'practice');
+  if (page === 'practice' && dynPractice.length) {
+    // live practice areas, fed from Contextspaces — each shown document opens
+    bodyEl.contentEditable = 'false';
+    bodyEl.innerHTML = dynPractice.map(s => `
+      <div class="parea">
+        <div class="pname">${s.title.toUpperCase()}</div>
+        ${s.items.map(it => `<button class="pdoc" data-book="${it.id}">${it.title}</button>`).join('')}
+      </div>`).join('') +
+      `<p class="pfoot">Filed and shown from the firm's Contextspaces.</p>`;
+  } else {
+    bodyEl.contentEditable = 'true';
+    bodyEl.textContent = body;
+  }
+  infoOpen = true; infoEl.classList.add('open');
+}
+document.getElementById('infoBody').addEventListener('click', e => {
+  const btn = e.target.closest('[data-book]');
+  if (btn) openBook(btn.dataset.book);
+});
+function closeInfo() { infoOpen = false; infoEl.classList.remove('open'); }
+document.getElementById('infoClose').addEventListener('click', closeInfo);
+document.querySelectorAll('#firmNav button').forEach(b =>
+  b.addEventListener('click', () => {
+    if (b.dataset.page === 'library') { openLibrary(); return; }
+    infoOpen ? closeInfo() : openInfo(b.dataset.page);
+  }));
+
+// ---- the library: spines on shelves, click to take a book down ------------
+const libraryEl = document.getElementById('library');
+const bookEl = document.getElementById('book');
+let libraryOpen = false, bookOpen = false;
+const spineH = t => 150 + (Array.from(t).reduce((a, c) => a + c.charCodeAt(0), 0) % 61);
+const ORDER_STUDIES = Object.keys(STUDIES);
+
+// ---- the Contextspaces feed: the office's shelves grow from the vault ------
+// Contextspaces is the back office; GET /api/office is its public manifest.
+// Whatever the firm has dragged into an Office section over there appears
+// here — CLE shelves in the Library, rulings under Areas of Practice.
+// Display-only by design; when the backend is unreachable, the built-in
+// collection stands on its own.
+let DYN_SECTIONS = [];
+const DYN_BOOKS = new Map();
+// Same-origin when the office is hosted on contextspaces.ai itself
+// (the bundled copy at /office/); absolute for local builds and mirrors.
+const MANIFEST_URL = new URLSearchParams(location.search).get('manifest')
+  || (location.hostname.endsWith('contextspaces.ai')
+    ? '/api/office'
+    : 'https://www.contextspaces.ai/api/office');
+
+function shelfHTML(title, blurb, books) {
+  return `
+  <section class="study">
+    <h3>${title.toUpperCase()}</h3>
+    <p class="blurb">${blurb}</p>
+    <div class="shelfRow">${books.map(b =>
+      `<button class="spine" data-book="${b.id}" style="background:linear-gradient(180deg, ${b.spine}, #14100c); height:${spineH(b.title)}px"><span>${b.title}</span></button>`).join('')}
+    </div>
+  </section>`;
+}
+function renderShelves() {
+  const dyn = DYN_SECTIONS.filter(s => s.kind === 'library' || s.kind === 'cle')
+    .map(s => shelfHTML(s.title, s.blurb || "Shown from the firm's Contextspaces.", s.items));
+  const builtin = ORDER_STUDIES.map(study =>
+    shelfHTML(study, STUDIES[study], LIBRARY.filter(b => b.src === study)));
+  document.getElementById('shelves').innerHTML = dyn.concat(builtin).join('');
+}
+renderShelves();
+
+(async () => {
+  try {
+    const r = await fetch(MANIFEST_URL, { mode: 'cors' });
+    if (!r.ok) return;
+    const data = await r.json();
+    DYN_SECTIONS = data.sections || [];
+    for (const s of DYN_SECTIONS)
+      for (const it of s.items) DYN_BOOKS.set(it.id, { ...it, src: s.title });
+    renderShelves();
+  } catch { /* offline or backend not deployed — the office keeps its own books */ }
+})();
+function openLibrary() { closeAll(); libraryOpen = true; libraryEl.classList.add('open'); }
+function closeLibrary() { libraryOpen = false; libraryEl.classList.remove('open'); closeBook(); }
+function openBook(id) {
+  const b = LIBRARY.find(v => v.id === id) || DYN_BOOKS.get(id);
+  if (!b) return;
+  document.getElementById('bookBody').innerHTML = `
+    <p class="bstudy">${b.src.toUpperCase()}</p>
+    <h2>${b.title}</h2>
+    <p class="bauthor">${b.author}</p>
+    <div class="btext">${b.excerpt || ''}</div>
+    ${b.summary ? `<div class="btext" style="margin-top:22px">${b.summary}</div>` : ''}
+    ${b.note ? `<p class="bnote">${b.note}</p>` : ''}
+    ${(b.links || (b.url ? [{ label: 'About this book', url: b.url }] : [])).length ?
+      `<div class="blinks">${(b.links || [{ label: 'About this book', url: b.url }])
+        .map(l => `<a href="${l.url}" target="_blank" rel="noopener">${l.label} ↗</a>`).join('')}</div>` : ''}
+    ${b.readable ? `<button class="bread" data-read="${b.id}">READ THE BOOK</button>` : ''}`;
+  bookOpen = true; bookEl.classList.add('open');
+}
+
+// ---- the reading room: the whole text, a page at a time --------------------
+// GET /api/office?book=<item id> serves the indexed passages of one published
+// item — text only, capped server-side. The original file never leaves the
+// vault; this is a visitor browsing a book left out on the office table.
+async function readBook(id) {
+  const btn = document.querySelector('#bookBody .bread');
+  if (btn) { btn.disabled = true; btn.textContent = 'OPENING…'; }
+  try {
+    const u = MANIFEST_URL + (MANIFEST_URL.includes('?') ? '&' : '?') + 'book=' + encodeURIComponent(id);
+    const r = await fetch(u, { mode: 'cors' });
+    if (!r.ok) throw new Error('closed');
+    const d = await r.json();
+    const host = document.createElement('div');
+    host.className = 'bpages';
+    // textContent, never innerHTML — the document's own text stays inert.
+    let lastPage = null;
+    for (const p of (d.pages || [])) {
+      if (p.page != null && p.page !== lastPage) {
+        const n = document.createElement('p');
+        n.className = 'bpageno';
+        n.textContent = 'PAGE ' + p.page;
+        host.appendChild(n);
+        lastPage = p.page;
+      }
+      const t = document.createElement('p');
+      t.className = 'bpage';
+      t.textContent = p.text || '';
+      host.appendChild(t);
+    }
+    if (d.truncated) {
+      const trail = document.createElement('p');
+      trail.className = 'btrail';
+      trail.textContent = 'The rest stays in the vault.';
+      host.appendChild(trail);
+    }
+    if (btn) btn.replaceWith(host);
+    else document.getElementById('bookBody').appendChild(host);
+  } catch {
+    if (btn) { btn.disabled = false; btn.textContent = 'THE READING ROOM IS CLOSED — TRY AGAIN'; }
+  }
+}
+document.getElementById('bookBody').addEventListener('click', e => {
+  const r = e.target.closest('[data-read]');
+  if (r) readBook(r.dataset.read);
+});
+function closeBook() { bookOpen = false; bookEl.classList.remove('open'); }
+document.getElementById('libClose').addEventListener('click', closeLibrary);
+document.getElementById('bookBack').addEventListener('click', closeBook);
+document.getElementById('shelves').addEventListener('click', e => {
+  const s = e.target.closest('.spine');
+  if (s) openBook(s.dataset.book);
+});
+
+function closeAll() { closeMatters(); closeInfo(); closeBook(); libraryOpen = false; libraryEl.classList.remove('open'); }
+const uiOpen = () => mattersOpen || infoOpen || libraryOpen || bookOpen;
+
+// ---- motion toggle ---------------------------------------------------------
+let motionOn = true;
+const motionBtn = document.getElementById('motionBtn');
+function setMotion(on) {
+  motionOn = on;
+  motionBtn.innerHTML = on ? 'MOTION&ensp;·&ensp;ON' : 'MOTION&ensp;·&ensp;OFF';
+  motionBtn.classList.toggle('frozen', !on);
+}
+motionBtn.addEventListener('click', () => setMotion(!motionOn));
+
+// portal / screen click
+const raycaster = new THREE.Raycaster();
+renderer.domElement.addEventListener('click', e => {
+  if (warping) return;
+  if (uiOpen()) { closeAll(); return; }
+  const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  if (screenHot.group.visible && raycaster.intersectObject(screenHot.tap, false).length) { openMatters(); return; }
+  if (shelfHot.group.visible && raycaster.intersectObject(shelfHot.tap, false).length) { openLibrary(); return; }
+  if (raycaster.intersectObject(tap, false).length) beginWarp();
+});
+
+function spawn() {
+  pos.set(0, 0, 0.25); vel.set(0, 0, 0); yaw = 0; pitch = 0;
+}
+
+// ---- wormhole transition ---------------------------------------------------
+let warping = false, warpT0 = 0, crossed = false;
+const warpFrom = new THREE.Vector3();
+function beginWarp() {
+  if (warping) return;
+  warping = true; crossed = false; warpT0 = performance.now();
+  warpFrom.copy(pos);
+}
+function warpTick(now) {
+  const t = (now - warpT0) / 1000;                     // 0 → 2.2s: a calm glide, not a ride
+  if (t < 1.15) {                                      // drift into the ring
+    const k = t / 1.15, e = k * k * (3 - 2 * k);
+    pos.lerpVectors(warpFrom, portal.position, e * 0.92);
+    warpFx.style.opacity = Math.min(1, k * 1.5);       // a soft gold breath, nothing more
+    if (t > 0.55) { fader.style.transition = 'opacity .55s ease'; fader.style.opacity = 1; }
+  } else if (!crossed) {                               // the crossing — guaranteed even if frames stall
+    crossed = true;
+    applyRoom(ROOMS[current].next === undefined ? 1 : ROOMS[current].next);
+    spawn();
+    pos.z = 0.6;                                       // arrive still moving, gently forward
+    warpT0 = now - 1200;
+  } else if (t < 2.2) {                                // settle: the veil lifts, the walk eases out
+    const k = Math.min(1, (t - 1.2) / 1.0), e = 1 - Math.pow(1 - k, 2);
+    pos.z = 0.6 - e * 0.35;
+    fader.style.transition = 'opacity .9s ease'; fader.style.opacity = 0;
+    warpFx.style.opacity = Math.max(0, 1 - k * 1.4);
+  } else {
+    fader.style.opacity = 0; warpFx.style.opacity = 0;
+    warping = false;
+  }
+}
+
+// ---- main loop -------------------------------------------------------------
+let started = false, tPrev = 0;
+function loop(now) { tick(now); requestAnimationFrame(loop); }
+function start() {
+  started = true; tPrev = performance.now();
+  applyRoom(1);
+  requestAnimationFrame(loop);
+  fader.style.opacity = 0;
+  setTimeout(() => { hint.style.opacity = 0; }, 12000);
+}
+
+function tick(now) {
+  const dt = Math.min(0.05, (now - tPrev) / 1000); tPrev = now;
+  const t = now / 1000;
+
+  if (warping) {
+    warpTick(now);
+  } else {
+    // -- walk (paused while reading) --
+    const held = uiOpen();
+    const fwd = held ? 0 : (keys.has('w') || keys.has('arrowup') ? 1 : 0) - (keys.has('s') || keys.has('arrowdown') ? 1 : 0);
+    const strafe = held ? 0 : (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+    const want = new THREE.Vector3(strafe, 0, -fwd);
+    if (want.lengthSq() > 0) want.normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).multiplyScalar(SPEED);
+    vel.lerp(want, 1 - Math.exp(-((want.lengthSq() ? ACCEL : DAMP)) * dt));
+    pos.addScaledVector(vel, dt);
+    pos.x = THREE.MathUtils.clamp(pos.x, -BOUNDS.x, BOUNDS.x);
+    pos.z = THREE.MathUtils.clamp(pos.z, BOUNDS.zMin, BOUNDS.zMax);
+    pos.y = 0;
+
+    // -- look: firm and deliberate — a response curve quiets the center,
+    //    tight damping tracks the hand without wobble, no idle drift.
+    //    Frozen entirely by the MOTION toggle or while any panel is open. --
+    if (motionOn && !held) {
+      const curve = v => Math.sign(v) * Math.pow(Math.abs(v), 1.7);
+      yaw += ((curve(-pointer.x) * MAX_YAW) - yaw) * (1 - Math.exp(-20.0 * dt));
+      pitch += ((curve(-pointer.y) * MAX_PITCH) - pitch) * (1 - Math.exp(-20.0 * dt));
+    }
+
+    // -- portal proximity = walking into the ring --
+    if (pos.distanceTo(portal.position) < 0.55) beginWarp();
+  }
+
+  camera.position.copy(pos);
+  camera.rotation.set(pitch, yaw, 0, 'YXZ');
+
+  // portal life: billboard, breathe, spin
+  portal.lookAt(camera.position);
+  const pulse = 1 + Math.sin(t * 1.7) * 0.05 + Math.sin(t * 4.3) * 0.02;
+  glow.scale.setScalar(pulse);
+  ring.scale.setScalar(2 - pulse);
+  ring.rotation.z = t * 0.35;
+  for (const hot of [screenHot, shelfHot]) {
+    if (!hot.group.visible) continue;
+    hot.group.lookAt(camera.position);
+    hot.glow.material.opacity = 0.22 + Math.sin(t * 1.3 + (hot === shelfHot ? 1.9 : 0)) * 0.10;
+  }
+
+  // signage counter-parallax (gentle — yaw is a real look now, not a sway)
+  sign.style.transform = `translate(${(pos.x * -60) + yaw * 90}px, ${pos.z * 8 - pitch * 160}px)`;
+
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => { fitFov(); renderer.setSize(innerWidth, innerHeight); });
+
+window.__office = { uniforms, camera, pos, ROOMS, portal, beginWarp, openMatters, openLibrary,
+  openInfo, setMotion, screenHot, shelfHot,                              // live-tuning handle
+  step: t => tick(t), jump: i => { applyRoom(i); spawn(); } };           // manual frame-step (hidden-tab debugging)
+</script>
+</body>
+</html>
