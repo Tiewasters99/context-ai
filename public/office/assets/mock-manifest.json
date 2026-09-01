@@ -1,0 +1,42 @@
+{
+  "generated": "2026-08-17T00:00:00Z",
+  "sections": [
+    {
+      "id": "mock-cle",
+      "kind": "library",
+      "title": "CLE Presentations",
+      "blurb": "The firm's continuing-legal-education work, straight from Contextspaces.",
+      "items": [
+        {
+          "id": "mock-llm-cle",
+          "title": "Large Language Models & the Law",
+          "author": "Eden Quainton — Celesq, August 2026",
+          "excerpt": "A working tour of how large language models actually meet legal practice: what the systems are, where they fail, and what a reasonable process for using them looks like — drawn from the presenter's own litigation practice.",
+          "spine": "#8a6d2a"
+        },
+        {
+          "id": "mock-benavides",
+          "title": "Benavides v. Tesla — Trial Materials",
+          "author": "CLE companion set",
+          "excerpt": "Transcripts and materials from a modern autonomous-driving trial, assembled as a teaching set.",
+          "spine": "#243a52"
+        }
+      ]
+    },
+    {
+      "id": "mock-defamation",
+      "kind": "practice",
+      "title": "Defamation",
+      "blurb": "",
+      "items": [
+        {
+          "id": "mock-coleman-ruling",
+          "title": "Coleman — Ruling on the Motion to Dismiss",
+          "author": "From the Coleman matter",
+          "excerpt": "The court's ruling, shown here as the firm would show a bound volume in its reception: readable, citable, and not carried out the door.",
+          "spine": "#742d2d"
+        }
+      ]
+    }
+  ]
+}
