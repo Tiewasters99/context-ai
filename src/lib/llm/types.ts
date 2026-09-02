@@ -34,6 +34,9 @@ export interface ModelConfig {
   tier: 'free' | 'pro' | 'byok';
   /** List price in USD per million tokens, when known — used for cost estimates shown to the user. */
   pricePerM?: { input: number; output: number };
+  /** 2x-price frontier tier (Fable). Only surfaces that opt in show these —
+   *  routine surfaces (Workbench, Student Hub) use standardModels(). */
+  premium?: boolean;
 }
 
 export type ProviderId = 'anthropic' | 'openai' | 'google' | 'xai' | 'moonshot' | 'fireworks';

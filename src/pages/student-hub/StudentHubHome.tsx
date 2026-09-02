@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { allModels } from '@/lib/llm';
+import { standardModels } from '@/lib/llm';
 import {
   listSessions, createSession, createText, deleteSession, deleteText,
   extractCaption, listTexts,
@@ -407,7 +407,7 @@ export default function StudentHubHome() {
                   padding: '6px 8px',
                 }}
               >
-                {allModels().map((m) => (
+                {standardModels().map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
               </select>

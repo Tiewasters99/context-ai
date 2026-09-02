@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { Send, FileText, Check, ChevronDown, Copy, Download, Square, AlertCircle, Info, Search, Zap, Sparkles } from 'lucide-react';
-import { generate, allModels, estimateTokens } from '@/lib/llm';
+import { generate, standardModels, estimateTokens } from '@/lib/llm';
 import { searchVaultFiles, autoSelectFiles } from '@/lib/search';
 import type { VaultFile } from '@/lib/vault-types';
 import type { SearchResult } from '@/lib/search';
@@ -21,8 +21,8 @@ interface AIWorkbenchProps {
 type Mode = 'manual' | 'auto';
 
 export default function AIWorkbench({ vaultFiles, matterId, onSaveToVault }: AIWorkbenchProps) {
-  const models = useMemo(() => allModels(), []);
-  const [selectedModelId, setSelectedModelId] = useState('claude-opus');
+  const models = useMemo(() => standardModels(), []);
+  const [selectedModelId, setSelectedModelId] = useState('claude-opus-4-8');
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [output, setOutput] = useState('');
