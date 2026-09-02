@@ -177,6 +177,13 @@
     margin: 0 0 8px; }
   #book .btrail { font-style: italic; color: rgba(243,237,226,.5); font-size: 13.5px;
     margin: 40px 0 0; text-align: center; }
+  /* a slide deck reads as slides: one warm card per slide */
+  #book .bslide { position: relative; background: #f5f1e6; color: #1d1810;
+    border-radius: 6px; padding: 26px 30px 22px; margin: 0 0 22px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45); font-size: 14.5px; line-height: 1.6;
+    white-space: pre-line; }
+  #book .bslide .bslidenum { position: absolute; top: 10px; right: 14px;
+    font-size: 10.5px; letter-spacing: .2em; color: rgba(120,96,40,.55); }
   #bookBack { position: fixed; top: 22px; left: 30px; background: none; border: none;
     color: rgba(243,237,226,.6); font-size: 14px; letter-spacing: .12em; cursor: pointer;
     font-family: Georgia, serif; z-index: 9; }
@@ -635,18 +642,22 @@ function closeLibrary() { libraryOpen = false; libraryEl.classList.remove('open'
 function openBook(id) {
   const b = LIBRARY.find(v => v.id === id) || DYN_BOOKS.get(id);
   if (!b) return;
+  // A readable book opens straight to its pages — take it down and it's
+  // open in your hands; the excerpt is only for books that can't be read.
   document.getElementById('bookBody').innerHTML = `
     <p class="bstudy">${b.src.toUpperCase()}</p>
     <h2>${b.title}</h2>
     <p class="bauthor">${b.author}</p>
-    <div class="btext">${b.excerpt || ''}</div>
+    ${b.readable ? '' : `<div class="btext">${b.excerpt || ''}</div>`}
     ${b.summary ? `<div class="btext" style="margin-top:22px">${b.summary}</div>` : ''}
     ${b.note ? `<p class="bnote">${b.note}</p>` : ''}
     ${(b.links || (b.url ? [{ label: 'About this book', url: b.url }] : [])).length ?
       `<div class="blinks">${(b.links || [{ label: 'About this book', url: b.url }])
         .map(l => `<a href="${l.url}" target="_blank" rel="noopener">${l.label} ↗</a>`).join('')}</div>` : ''}
-    ${b.readable ? `<button class="bread" data-read="${b.id}">READ THE BOOK</button>` : ''}`;
+    ${b.readable ? `<button class="bread" data-read="${b.id}">OPENING…</button>` : ''}`;
   bookOpen = true; bookEl.classList.add('open');
+  bookEl.scrollTop = 0;
+  if (b.readable) readBook(b.id);
 }
 
 // ---- the reading room: the whole text, a page at a time --------------------
@@ -664,19 +675,33 @@ async function readBook(id) {
     const host = document.createElement('div');
     host.className = 'bpages';
     // textContent, never innerHTML — the document's own text stays inert.
-    let lastPage = null;
-    for (const p of (d.pages || [])) {
-      if (p.page != null && p.page !== lastPage) {
-        const n = document.createElement('p');
-        n.className = 'bpageno';
-        n.textContent = 'PAGE ' + p.page;
-        host.appendChild(n);
-        lastPage = p.page;
+    if (d.kind === 'slides') {
+      // one card per slide, numbered like the deck
+      (d.pages || []).forEach((p, i) => {
+        const s = document.createElement('div');
+        s.className = 'bslide';
+        const n = document.createElement('span');
+        n.className = 'bslidenum';
+        n.textContent = String(i + 1);
+        s.appendChild(n);
+        s.appendChild(document.createTextNode(p.text || ''));
+        host.appendChild(s);
+      });
+    } else {
+      let lastPage = null;
+      for (const p of (d.pages || [])) {
+        if (p.page != null && p.page !== lastPage) {
+          const n = document.createElement('p');
+          n.className = 'bpageno';
+          n.textContent = 'PAGE ' + p.page;
+          host.appendChild(n);
+          lastPage = p.page;
+        }
+        const t = document.createElement('p');
+        t.className = 'bpage';
+        t.textContent = p.text || '';
+        host.appendChild(t);
       }
-      const t = document.createElement('p');
-      t.className = 'bpage';
-      t.textContent = p.text || '';
-      host.appendChild(t);
     }
     if (d.truncated) {
       const trail = document.createElement('p');
@@ -714,6 +739,7 @@ function setMotion(on) {
   motionBtn.classList.toggle('frozen', !on);
 }
 motionBtn.addEventListener('click', () => setMotion(!motionOn));
+setMotion(false);   // the office holds still until asked to breathe
 
 // portal / screen click
 const raycaster = new THREE.Raycaster();
