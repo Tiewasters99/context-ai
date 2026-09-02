@@ -4,6 +4,7 @@ import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import AmbientControls from './AmbientControls';
+import FeedbackWidget from '@/components/FeedbackWidget';
 import { useIsMobile } from '@/hooks/useIsMobile';
 
 export default function MainLayout() {
@@ -97,6 +98,7 @@ export default function MainLayout() {
       )}
 
       <Assistant isOpen={assistantOpen} onClose={() => setAssistantOpen(false)} />
+      <FeedbackWidget />
     </div>
   );
 }

@@ -33,6 +33,9 @@
     },
     "api/mediation-webhook.mjs": {
       "maxDuration": 30
+    },
+    "api/feedback.mjs": {
+      "maxDuration": 10
     }
   },
   "rewrites": [
