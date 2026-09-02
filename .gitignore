@@ -38,3 +38,9 @@ books/
 
 # bulk-import ledgers (local run state, per-machine)
 .import-state/
+
+# Claude Code per-clone state (permissions, agent worktrees) and the Tesseract
+# language cache that tesseract.js drops in the working directory.
+.claude/settings.local.json
+.claude/worktrees/
+*.traineddata
