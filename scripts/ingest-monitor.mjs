@@ -228,7 +228,14 @@ async function autoFix(sb, rows, report) {
       .eq('id', t.id);
     queued++;
   }
-  console.log(`  queued ${queued}. The worker picks these up within a poll cycle (~5s).`);
+  if (queued === 0) {
+    // Announcing "requeueing 20" and then queueing none is the shape of a
+    // silent no-op. Say so in the summary, not only in the scrolled-past rows.
+    console.log(`  QUEUED NOTHING — all ${targets.length} insert(s) failed. See the ! lines above; nothing was retried.`);
+    process.exitCode = 2;
+    return;
+  }
+  console.log(`  queued ${queued}${queued < targets.length ? ` of ${targets.length} (${targets.length - queued} failed or already in flight)` : ''}. The worker picks these up within a poll cycle (~5s).`);
   if (report.total > MAX_FIX) {
     console.log(`  ${report.total - MAX_FIX} remain — re-run --fix, or raise --max-fix.`);
   }
