@@ -32,7 +32,13 @@ const statusLabel = {
 // Translate raw pipeline errors into something a user can act on. The raw
 // message is still available on hover (title attr) for debugging.
 function friendlyIngestError(msg: string): string {
+  // The worker's per-attempt notes ("Attempt 1 of 3 failed — …") are already
+  // written for people; pass them through untouched.
+  if (/^Attempt \d+ of \d+ failed/.test(msg)) return msg;
   const m = msg.toLowerCase();
+  if (m.includes('dunning') || m.includes('billing blocked')) {
+    return 'Google (Gemini) billing is blocked — pay the past-due balance in Google Cloud; this retries on its own.';
+  }
   if (m.includes('no passages extracted')) {
     return 'No readable text found — likely a scanned or image-only file. Retry runs OCR.';
   }
@@ -208,13 +214,22 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       <div className="flex-1 min-w-0">
         <p className={`text-[13px] truncate ${canOpen ? 'text-white group-hover:text-[#e8b84a] transition-colors' : 'text-white'}`}>{file.name}</p>
         <p className="text-[10px] text-white/50">
-          {file.size} · {file.type.toUpperCase()} · {statusLabel[file.status]}
+          {file.size} · {file.type.toUpperCase()} · {
+            file.status === 'uploading' && file.errorMessage ? 'Retrying...' : statusLabel[file.status]
+          }
           {file.textContent && file.status === 'indexed' && (
             <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
           )}
         </p>
         {file.status === 'error' && file.errorMessage && (
           <p className="text-[10px] text-red-400/90 truncate" title={file.errorMessage}>
+            {friendlyIngestError(file.errorMessage)}
+          </p>
+        )}
+        {/* A worker attempt failed and a retry is scheduled: say so, with the
+            cause, instead of spinning as "Uploading..." for 45 minutes. */}
+        {file.status === 'uploading' && file.errorMessage && (
+          <p className="text-[10px] text-[#e8b84a]/80 truncate" title={file.errorMessage}>
             {friendlyIngestError(file.errorMessage)}
           </p>
         )}

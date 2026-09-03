@@ -134,7 +134,7 @@ for (;;) {
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
       .eq('id', job.id);
-    await failDocumentIfExhausted(job, err);
+    await recordDocumentFailure(job, err);
     if (job.production_id && job.job_type.startsWith('intake')) {
       await supabase.from('productions').update({ status: 'error' }).eq('id', job.production_id);
     }
@@ -244,30 +244,40 @@ async function holdJob(job, err) {
 //
 // Attempts are incremented by claim_discovery_job at claim time, so
 // job.attempts is the number of this attempt. While attempts remain the
-// document is deliberately left alone: migration 055's recovery sweep
-// requeues it under the same budget.
-async function failDocumentIfExhausted(job, err) {
+// document goes back to 'pending' — the state migration 058's recovery sweep
+// requeues from under the same budget — carrying a processing_error that
+// says what failed and that a retry is coming, so the app shows "Retrying"
+// with the cause instead of an uploading spinner (a 23-second Gemini billing
+// 403 looked like a 45-minute upload on 2026-09-03). The sweep clears the
+// note when it requeues; a repeat failure writes the next attempt's note.
+async function recordDocumentFailure(job, err) {
   if (job.job_type !== 'ingest_document') return;
   const docId = job.payload?.document_id;
   if (!docId) return;
   const attempts = Number(job.attempts ?? 0);
   const maxAttempts = Number(job.max_attempts ?? 3);
-  if (!(attempts >= maxAttempts)) return;
+  const exhausted = attempts >= maxAttempts;
 
   const raw = String(err?.message ?? err ?? '');
-  let reason = raw.slice(0, 400);
+  let note = null;
   try {
-    const { classifyError, describe } = await import('../lib/ingest-triage.mjs');
-    const t = describe(classifyError(raw));
-    if (t?.label) reason = `${t.label}. ${t.action ?? ''}`.trim();
+    const { attemptFailureNote } = await import('../lib/ingest-triage.mjs');
+    note = attemptFailureNote(raw, attempts, maxAttempts);
   } catch { /* triage is advisory — the raw error is still better than null */ }
+  const reason = exhausted
+    ? (note?.exhausted || raw.slice(0, 400))
+    : (note?.retrying || `Attempt ${attempts} of ${maxAttempts} failed (${raw.slice(0, 160)}). Retrying automatically.`);
 
   const { error: updErr } = await supabase.from('documents')
-    .update({ processing_status: 'error', processing_error: reason.slice(0, 800) })
+    .update({
+      processing_status: exhausted ? 'error' : 'pending',
+      processing_error: reason.slice(0, 800),
+    })
     .eq('id', docId)
     .neq('processing_status', 'ready');
-  if (updErr) log(`  could not mark document ${docId} failed: ${updErr.message}`);
-  else log(`  document ${docId} marked failed after ${attempts} attempts`);
+  if (updErr) log(`  could not record failure on document ${docId}: ${updErr.message}`);
+  else if (exhausted) log(`  document ${docId} marked failed after ${attempts} attempts`);
+  else log(`  document ${docId}: attempt ${attempts} of ${maxAttempts} noted, awaiting retry`);
 }
 
 // Documents stranded with no job row at all — the killed-serverless-function

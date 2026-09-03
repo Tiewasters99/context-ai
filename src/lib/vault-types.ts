@@ -7,7 +7,9 @@ export interface VaultFile {
   type: string;
   file: File;
   status: 'uploading' | 'indexing' | 'indexed' | 'error';
-  /** Why ingestion failed (documents.processing_error) — shown on error rows. */
+  /** Why ingestion failed (documents.processing_error) — shown on error rows,
+   *  and on 'uploading' rows when the worker has noted a failed attempt and
+   *  scheduled a retry ("Attempt 1 of 3 failed — …"). */
   errorMessage?: string;
   /** Extracted text content, available after indexing */
   textContent?: string;
