@@ -35,23 +35,38 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // and any item whose id has a jacket there gets a `cover` URL. The URL is
 // the bucket's public object URL, versioned by its upload time so a
 // re-captured jacket is not hidden behind a cached one.
-async function jacketUrls(supabase, owners) {
-  const found = new Map();
+// Pages, the same way: a deck — a PDF whose pages are wider than tall —
+// has every page captured into <owner>/office/<item id>/0001.jpg…, and the
+// Reader turns those images like a scanned book. The folder is the record.
+const publicUrl = (owner, name, stamp) =>
+  `${SUPABASE_URL}/storage/v1/object/public/cover-images/${owner}/office/${name}?v=${encodeURIComponent(stamp ?? '')}`;
+
+async function officeImages(supabase, owners) {
+  const jackets = new Map();
+  const pages = new Map();
   for (const owner of new Set(owners.filter(Boolean))) {
     const { data } = await supabase.storage
       .from('cover-images')
       .list(`${owner}/office`, { limit: 1000 });
     for (const o of data ?? []) {
-      const m = /^([0-9a-f-]{36})\.jpg$/i.exec(o.name);
-      if (!m) continue;
-      const stamp = encodeURIComponent(o.updated_at ?? o.created_at ?? '');
-      found.set(
-        m[1],
-        `${SUPABASE_URL}/storage/v1/object/public/cover-images/${owner}/office/${o.name}?v=${stamp}`,
-      );
+      const jacket = /^([0-9a-f-]{36})\.jpg$/i.exec(o.name);
+      if (jacket) {
+        jackets.set(jacket[1], publicUrl(owner, o.name, o.updated_at ?? o.created_at));
+        continue;
+      }
+      // A folder lists with no metadata; its name is the item whose pages it holds.
+      if (o.id == null && /^[0-9a-f-]{36}$/i.test(o.name)) {
+        const { data: files } = await supabase.storage
+          .from('cover-images')
+          .list(`${owner}/office/${o.name}`, { limit: 1000, sortBy: { column: 'name', order: 'asc' } });
+        const urls = (files ?? [])
+          .filter((f) => /^\d{4}\.jpg$/.test(f.name))
+          .map((f) => publicUrl(owner, `${o.name}/${f.name}`, f.updated_at ?? f.created_at));
+        if (urls.length) pages.set(o.name, urls);
+      }
     }
   }
-  return found;
+  return { jackets, pages };
 }
 
 export default async function handler(req, res) {
@@ -128,14 +143,15 @@ export default async function handler(req, res) {
       chars += text.length;
       pages.push({ n: p.sequence_number, page: p.page_start ?? null, text });
     }
-    const jackets = await jacketUrls(supabase, [item.owner_id]);
+    const images = await officeImages(supabase, [item.owner_id]);
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     res.status(200).json({
       id: item.id,
       title: item.title,
       author: item.author,
       kind: readKind,
-      cover: jackets.get(item.id) ?? null,
+      cover: images.jackets.get(item.id) ?? null,
+      images: images.pages.get(item.id) ?? null,
       pages,
       truncated,
     });
@@ -160,7 +176,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const jackets = await jacketUrls(supabase, (items.data ?? []).map((it) => it.owner_id));
+  const images = await officeImages(supabase, (items.data ?? []).map((it) => it.owner_id));
   const bySection = {};
   for (const it of items.data ?? []) {
     (bySection[it.section_id] ??= []).push({
@@ -169,7 +185,8 @@ export default async function handler(req, res) {
       author: it.author,
       excerpt: it.excerpt,
       spine: it.spine,
-      cover: jackets.get(it.id) ?? null,
+      cover: images.jackets.get(it.id) ?? null,
+      pages: images.pages.get(it.id)?.length ?? 0,
       // whether ?book= will answer for this item — the document id itself
       // stays behind the glass
       readable: Boolean(it.document_id),

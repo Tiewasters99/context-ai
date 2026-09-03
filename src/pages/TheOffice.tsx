@@ -5,7 +5,7 @@ import {
   ExternalLink, Folder, Users, Lock, FileText, DoorOpen, Image as JacketIcon,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { canCaptureCover, captureOfficeCover } from '@/lib/office-cover';
+import { canCaptureCover, captureOfficeImages } from '@/lib/office-cover';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
@@ -339,7 +339,7 @@ function SectionCard({
                   <button
                     onClick={() => onCaptureCover(it)}
                     className="p-0.5 rounded text-white/0 group-hover:text-white/50 hover:!text-white transition-colors"
-                    title="Capture the jacket — page one of the PDF, for the office's Reader"
+                    title="Capture the jacket — page one of the PDF — and every page when it is a deck, for the office's Reader"
                   >
                     <JacketIcon size={12} />
                   </button>
@@ -437,8 +437,12 @@ export default function TheOffice() {
     }
     try {
       say(`Capturing the jacket for "${it.title}"…`);
-      await captureOfficeCover(it.id, doc.storage_path, doc.source_filename);
-      say(`"${it.title}" wears its jacket in the office now.`);
+      const got = await captureOfficeImages(it.id, doc.storage_path, doc.source_filename, (done, total) => {
+        say(`Capturing the pages of "${it.title}"… ${done} of ${total}`);
+      });
+      say(got.pages
+        ? `"${it.title}" shows its jacket and all ${got.pages} pages in the office now.`
+        : `"${it.title}" wears its jacket in the office now.`);
     } catch (e) {
       say(e instanceof Error ? e.message : 'The jacket could not be captured.');
     }

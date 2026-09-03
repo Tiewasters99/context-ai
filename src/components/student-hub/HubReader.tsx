@@ -475,6 +475,10 @@ export interface HubReaderProps {
   reflowed: string;
   /** Signed page-image URLs, for a scanned reading. */
   pageUrls: string[] | null;
+  /** What the page images are. A scan is inverted under lamplight so the
+   *  paper goes dark and the ink light; a print — a slide, a plate — keeps
+   *  its colors whatever the light. */
+  pageTone?: 'scan' | 'print';
   /** A slide deck: one card per page, typeset from the deck's own text —
    *  the office's Reader has the slides' words but never the file. */
   slides?: ReaderSlide[] | null;
@@ -533,7 +537,7 @@ function write(key: string, value: string): void {
 }
 
 export function HubReader({
-  title, reflowed, pageUrls, slides, coverUrl, sessionId, onClose, onAskAssistant, onReady, turnTo,
+  title, reflowed, pageUrls, pageTone = 'scan', slides, coverUrl, sessionId, onClose, onAskAssistant, onReady, turnTo,
 }: HubReaderProps) {
   // A deck reads like a scanned book — a page is a page, whatever it holds.
   const slideCount = slides?.length ?? 0;
@@ -924,7 +928,7 @@ export function HubReader({
                     height: `${scale * 100}%`,
                     width: 'auto',
                     maxWidth: scale <= 1 ? '100%' : 'none',
-                    filter: theme === 'dark' ? DARK_PAGE_FILTER : undefined,
+                    filter: theme === 'dark' && pageTone === 'scan' ? DARK_PAGE_FILTER : undefined,
                   }}
                 />
               </div>
