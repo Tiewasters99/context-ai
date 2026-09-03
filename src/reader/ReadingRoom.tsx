@@ -33,6 +33,8 @@ interface Book {
   kind?: 'text' | 'slides';
   /** The jacket captured at publish time — the one image the glass lets through. */
   cover?: string | null;
+  /** Every page as an image, for a deck saved as PDF — the Reader turns these. */
+  images?: string[] | null;
   pages: BookPage[];
   truncated: boolean;
 }
@@ -40,7 +42,7 @@ interface Book {
 type Phase =
   | { state: 'loading' }
   | { state: 'closed'; why: string }
-  | { state: 'open'; book: Book; cover: string | null; slides: ReaderSlide[] | null };
+  | { state: 'open'; book: Book; cover: string | null; slides: ReaderSlide[] | null; images: string[] | null };
 
 const query = new URLSearchParams(window.location.search);
 const embedded = query.get('embed') === '1' || window.parent !== window;
@@ -116,7 +118,7 @@ async function fetchBook(id: string, signal: AbortSignal): Promise<Book> {
   if (r.status === 404) throw new Error('That book is not on the shelves.');
   if (!r.ok) throw new Error('The reading room is closed — try again in a moment.');
   const book = (await r.json()) as Book;
-  if (!book.pages?.length) throw new Error('This book has no pages the Reader can show.');
+  if (!book.pages?.length && !book.images?.length) throw new Error('This book has no pages the Reader can show.');
   return book;
 }
 
@@ -161,11 +163,14 @@ export default function ReadingRoom() {
     Promise.all([fetchBook(id, ctrl.signal), loadPlates()])
       .then(([book]) => {
         const deck = book.kind === 'slides';
+        const images = book.images?.length ? book.images : null;
         setPhase({
           state: 'open',
           book,
-          cover: book.cover ?? (deck ? null : coverForTitle(book.title)),
-          slides: deck ? deckSlides(book) : null,
+          // Page images are the book itself: the first page is its own cover.
+          cover: images ? null : (book.cover ?? (deck ? null : coverForTitle(book.title))),
+          slides: deck && !images ? deckSlides(book) : null,
+          images,
         });
       })
       .catch((e: unknown) => {
@@ -176,7 +181,10 @@ export default function ReadingRoom() {
   }, [id]);
 
   const book = phase.state === 'open' ? phase.book : null;
-  const reflowed = useMemo(() => (book && book.kind !== 'slides' ? readingText(book) : ''), [book]);
+  const reflowed = useMemo(
+    () => (book && book.kind !== 'slides' && !book.images?.length ? readingText(book) : ''),
+    [book],
+  );
 
   useEffect(() => {
     if (!book) return;
@@ -195,7 +203,8 @@ export default function ReadingRoom() {
       <HubReader
         title={author ? `${title} · ${author}` : title}
         reflowed={reflowed}
-        pageUrls={null}
+        pageUrls={phase.images}
+        pageTone="print"
         slides={phase.slides}
         coverUrl={phase.cover}
         sessionId={`office-${phase.book.id}`}

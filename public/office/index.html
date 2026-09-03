@@ -136,15 +136,17 @@
     font-family: Georgia, serif; color: var(--ink); }
   #library.open { opacity: 1; pointer-events: auto; }
   #library .lwrap { max-width: 1080px; margin: 0 auto; padding: 54px 40px 80px; }
-  #library h2 { font-weight: 400; font-size: 20px; letter-spacing: .4em; color: var(--gold);
-    text-align: center; margin: 0 0 6px; }
-  #library .lsub { text-align: center; font-style: italic; font-size: 13px;
-    color: rgba(243,237,226,.5); margin: 0 0 34px; }
+  /* the gold headings must read at a glance, on a phone, over the dimmed
+     room — bright gold, real weight, and a shadow to lift them off the scene */
+  #library h2 { font-weight: 600; font-size: 22px; letter-spacing: .4em; color: #f3d98f;
+    text-align: center; margin: 0 0 6px; text-shadow: 0 1px 10px rgba(0,0,0,.8), 0 0 18px rgba(243,217,143,.25); }
+  #library .lsub { text-align: center; font-style: italic; font-size: 13.5px;
+    color: rgba(243,237,226,.72); margin: 0 0 34px; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
   #library .study { margin: 30px 0 0; }
-  #library .study h3 { font-weight: 400; font-size: 13px; letter-spacing: .28em;
-    color: var(--gold); margin: 0 0 2px; }
-  #library .study .blurb { font-style: italic; font-size: 12.5px; color: rgba(243,237,226,.55);
-    margin: 0 0 14px; max-width: 640px; }
+  #library .study h3 { font-weight: 700; font-size: 14.5px; letter-spacing: .26em;
+    color: #f3d98f; margin: 0 0 3px; text-shadow: 0 1px 8px rgba(0,0,0,.85), 0 0 14px rgba(243,217,143,.22); }
+  #library .study .blurb { font-style: italic; font-size: 13px; color: rgba(243,237,226,.72);
+    margin: 0 0 14px; max-width: 640px; text-shadow: 0 1px 8px rgba(0,0,0,.8); }
   .shelfRow { display: flex; align-items: flex-end; gap: 4px; padding: 0 6px 0;
     border-bottom: 6px solid rgba(90, 64, 38, .9); overflow-x: auto;
     box-shadow: 0 8px 18px rgba(0,0,0,.5); }
