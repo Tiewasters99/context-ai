@@ -9,6 +9,14 @@
 // that reappears at the top of every page. A paragraph the page break cut in
 // half is joined back across the seam.
 //
+// Some text layers arrive double-spaced: a page set with generous leading
+// reads to the extractor as a blank line after every line, so each line lands
+// as a block of its own and nothing says where the paragraphs were. When a
+// text shows that pattern, its one-line blocks are put back together as the
+// hard-wrapped blocks they are, and the measure tells a paragraph's last line
+// from a line the wrap cut short. Headings — a chapter number, a part title,
+// a dedication's TO — keep a paragraph to themselves either way.
+//
 // Deterministic and idempotent by design — no model call, and safe to run on
 // every render and again on the way into an export. The stored row is never
 // touched: reflow is a way of displaying the text, not a rewrite of it.
@@ -43,6 +51,26 @@ const BROKEN_WORD = /[A-Za-zÀ-ÿ]-$/;
 
 /** A line taking up the sentence the previous page left hanging. */
 const OPENS_LOWERCASE = /^[a-zà-ÿ]/;
+
+/** An em dash set closed against a word at the seam — "fact—" / "—moreover" —
+ *  which the wrap cut apart; a spaced dash (" — ") keeps its space. */
+const CLOSED_DASH_END = /S—$/;
+const CLOSED_DASH_START = /^—S/;
+
+/** A line that opens with a quotation mark: someone speaking. */
+const OPENS_QUOTE = /^["“‘'«]/;
+
+/** A line that names itself a heading, whatever its case. */
+const HEADING_WORD = /^(chapter|book|part|section|canto|act|scene|prologue|epilogue|preface|introduction|contents|appendix|volume)\b/i;
+
+/** Double spacing, established over the whole text: enough one-line blocks,
+ *  wrapped at a book's measure, and a good share of them stopping mid-sentence
+ *  — which paragraphs never do, so a text of real paragraphs (or this
+ *  module's own output) never qualifies. */
+const SPACED_MIN_LINES = 8;
+const SPACED_MIN_OPEN = 0.3;
+const SPACED_MEASURE_MIN = 50;
+const SPACED_MEASURE_MAX = 140;
 
 /** Trailing blanks, the non-breaking space included — OCR leaves them everywhere. */
 const TRAILING_BLANKS = /[ \t\u00a0]+$/;
@@ -92,6 +120,42 @@ function headKey(line: string): string {
   return t.replace(/\d+/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
+/** A heading: short of a sentence end and of any lowercase letter — a chapter
+ *  number, a part title, a dedication's TO, a name in small caps — or a line
+ *  that calls itself one. It stands alone whatever the lines around it do. */
+function isHeading(line: string): boolean {
+  const t = line.trim();
+  if (!t || SENTENCE_END.test(t)) return false;
+  return !/\p{Ll}/u.test(t) || HEADING_WORD.test(t);
+}
+
+/** Whether the text's blank lines are line spacing rather than paragraph marks. */
+function isDoubleSpaced(blocks: { lines: string[] }[]): boolean {
+  const singles = blocks.filter((b) => b.lines.length === 1).map((b) => b.lines[0].trim());
+  if (singles.length < SPACED_MIN_LINES) return false;
+  const measure = median(singles.map((l) => l.length));
+  if (measure < SPACED_MEASURE_MIN || measure > SPACED_MEASURE_MAX) return false;
+  const open = singles.filter((l) => !SENTENCE_END.test(l)).length;
+  return open >= singles.length * SPACED_MIN_OPEN;
+}
+
+/** Runs of one-line blocks put back together as the wrapped blocks they were.
+ *  A block that already holds several lines is a real block and stays one. */
+function joinSpacedRuns(blocks: { lines: string[]; verse: boolean }[]): { lines: string[]; verse: boolean }[] {
+  const out: { lines: string[]; verse: boolean }[] = [];
+  let run: string[] = [];
+  const flush = () => {
+    if (run.length) out.push({ lines: run, verse: isVerse(run) });
+    run = [];
+  };
+  for (const b of blocks) {
+    if (b.lines.length === 1) run.push(b.lines[0]);
+    else { flush(); out.push(b); }
+  }
+  flush();
+  return out;
+}
+
 /** True when the block's last line stops mid-flow — full width, no sentence
  *  end — which is a page break interrupting a paragraph, not a paragraph
  *  ending. Only a block of several lines can show its own measure. */
@@ -123,19 +187,27 @@ function joinProse(lines: string[]): string[] {
       // only when the remainder is lowercase: "con-/tract" is one word,
       // "Anglo-/American" is a compound that keeps the hyphen it was born with.
       current = OPENS_LOWERCASE.test(line) ? current.slice(0, -1) + line : current + line;
+    } else if (CLOSED_DASH_END.test(current) || CLOSED_DASH_START.test(line)) {
+      // The wrap fell at a closed em dash: it closes back up.
+      current = current + line;
     } else {
       current = `${current} ${line}`;
     }
     const last = i === trimmed.length - 1;
+    const next = last ? '' : trimmed[i + 1];
+    const short = measure > 0 && line.length < measure * SHORT_LAST_LINE;
+    const ended = SENTENCE_END.test(line);
     // A break lands only before a line that could open a paragraph — never
     // before one that reads as the middle of a sentence, so that a break kept
-    // here is never a join the next pass would want to make.
-    if (last || (
-      measure > 0
-      && line.length < measure * SHORT_LAST_LINE
-      && SENTENCE_END.test(line)
-      && !OPENS_LOWERCASE.test(trimmed[i + 1])
-    )) {
+    // here is never a join the next pass would want to make. It lands after
+    // a short line that ended its sentence; around a heading; and where a
+    // sentence ends and the next line opens a quotation — a new speaker.
+    if (last || (!OPENS_LOWERCASE.test(next) && (
+      (short && ended)
+      || (short && isHeading(line))
+      || (ended && isHeading(next))
+      || (ended && OPENS_QUOTE.test(next))
+    ))) {
       paragraphs.push(current);
       current = '';
     }
@@ -164,11 +236,14 @@ export function reflowReading(raw: string): string {
   // Blocks, with bare page numbers shed from their edges — a text layer
   // leaves "247" as the first or last line of every page's block, and a
   // number alone between blank lines is a block of its own that empties away.
-  const blocks: { lines: string[]; verse: boolean }[] = [];
+  const split: { lines: string[]; verse: boolean }[] = [];
   for (const b of normalized.split(/\n{2,}/)) {
     const lines = stripEdges(b.split('\n').filter((l) => l.trim() !== ''), isPageNumberLine);
-    if (lines.length) blocks.push({ lines, verse: isVerse(lines) });
+    if (lines.length) split.push({ lines, verse: isVerse(lines) });
   }
+  // Double spacing: the blank lines were leading, not paragraph marks, and
+  // every line came in as a block of its own. Runs of them go back together.
+  const blocks = isDoubleSpaced(split) ? joinSpacedRuns(split) : split;
 
   // Running heads, established across the whole text. Verse blocks neither
   // vote nor lose lines — a villanelle's refrain repeats at stanza edges too,
