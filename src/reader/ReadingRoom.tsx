@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { HubReader } from '@/components/student-hub/HubReader';
+import { HubReader, type ReaderSlide } from '@/components/student-hub/HubReader';
 import { reflowReading } from '@/lib/student-hub-reflow';
 import { coverForTitle, loadPlates } from '@/lib/cover-plates';
 
@@ -31,6 +31,8 @@ interface Book {
   author: string | null;
   /** A slide deck reads as its slides; everything else as flowing pages. */
   kind?: 'text' | 'slides';
+  /** The jacket captured at publish time — the one image the glass lets through. */
+  cover?: string | null;
   pages: BookPage[];
   truncated: boolean;
 }
@@ -38,7 +40,7 @@ interface Book {
 type Phase =
   | { state: 'loading' }
   | { state: 'closed'; why: string }
-  | { state: 'open'; book: Book; cover: string | null };
+  | { state: 'open'; book: Book; cover: string | null; slides: ReaderSlide[] | null };
 
 const query = new URLSearchParams(window.location.search);
 const embedded = query.get('embed') === '1' || window.parent !== window;
@@ -65,21 +67,48 @@ const TRAIL = 'The rest stays in the vault.';
 
 /** The book's pages as one reading. Prose goes through the same reflow the
  *  hub uses — a PDF text layer's hard wraps, page numbers and running heads
- *  come out, the paragraphs come back. A deck keeps every slide as its own
- *  block with its lines intact, numbered as the deck numbers them. */
+ *  come out, the paragraphs come back. */
 function readingText(book: Book): string {
-  let text: string;
-  if (book.kind === 'slides') {
-    text = book.pages
-      .map((p, i) => {
-        const lines = (p.text ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-        return [`Slide ${i + 1}`, ...lines].join('\n');
-      })
-      .join('\n\n');
-  } else {
-    text = reflowReading(book.pages.map((p) => p.text ?? '').join('\n\n'));
-  }
+  const text = reflowReading(book.pages.map((p) => p.text ?? '').join('\n\n'));
   return book.truncated ? `${text}\n\n${TRAIL}` : text;
+}
+
+/** A deck's passages as slides: ingest indexes one passage per slide, its
+ *  lines in order and the speaker notes after a "Notes:" marker. Each
+ *  becomes a card the Reader turns like a page. */
+function deckSlides(book: Book): ReaderSlide[] {
+  const slides = book.pages.map((p, i) => {
+    const raw = (p.text ?? '').replace(/\r\n?/g, '\n');
+    const at = raw.search(/(^|\n)Notes: /);
+    const body = at >= 0 ? raw.slice(0, at) : raw;
+    const notes = at >= 0 ? raw.slice(at).replace(/^\n*Notes: /, '').trim() : null;
+    const lines = body.split('\n').map((l) => l.trim()).filter(Boolean);
+    return { num: i + 1, lines, notes: notes || null };
+  });
+
+  // A deck's furniture: the slide number the master prints in a corner and
+  // the footer it prints on every slide come through the text layer as the
+  // last lines of each slide. A bare number at the end goes; so does any
+  // line that closes a good share of the slides — established across the
+  // deck, so a short deck never loses a real line to a coincidence.
+  const key = (l: string) => l.replace(/\d+/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const closing = new Map<string, number>();
+  for (const s of slides) {
+    for (const l of new Set(s.lines.slice(-2).map(key))) {
+      if (l) closing.set(l, (closing.get(l) ?? 0) + 1);
+    }
+  }
+  const isFooter = (l: string) => {
+    const n = closing.get(key(l)) ?? 0;
+    return slides.length >= 5 && n >= 3 && n >= slides.length * 0.4;
+  };
+  for (const s of slides) {
+    let end = s.lines.length;
+    while (end > 1 && (/^\d{1,3}$/.test(s.lines[end - 1]) || isFooter(s.lines[end - 1]))) end -= 1;
+    s.lines = s.lines.slice(0, end);
+    if (!s.lines.length) s.lines = ['—'];
+  }
+  return slides;
 }
 
 async function fetchBook(id: string, signal: AbortSignal): Promise<Book> {
@@ -125,10 +154,20 @@ export default function ReadingRoom() {
   useEffect(() => {
     if (!id) return;
     const ctrl = new AbortController();
-    // The plate is fetched alongside the book so the cover is there when
-    // the book opens, not a page that appears a moment later.
+    // The plates are fetched alongside the book so a cover is there when
+    // the book opens, not a page that appears a moment later. A book wears
+    // its own jacket when one was captured, a plate from the library when
+    // not; a deck opens on its first slide.
     Promise.all([fetchBook(id, ctrl.signal), loadPlates()])
-      .then(([book]) => setPhase({ state: 'open', book, cover: coverForTitle(book.title) }))
+      .then(([book]) => {
+        const deck = book.kind === 'slides';
+        setPhase({
+          state: 'open',
+          book,
+          cover: book.cover ?? (deck ? null : coverForTitle(book.title)),
+          slides: deck ? deckSlides(book) : null,
+        });
+      })
       .catch((e: unknown) => {
         if (ctrl.signal.aborted) return;
         setPhase({ state: 'closed', why: e instanceof Error ? e.message : 'The reading room is closed.' });
@@ -137,12 +176,11 @@ export default function ReadingRoom() {
   }, [id]);
 
   const book = phase.state === 'open' ? phase.book : null;
-  const reflowed = useMemo(() => (book ? readingText(book) : ''), [book]);
+  const reflowed = useMemo(() => (book && book.kind !== 'slides' ? readingText(book) : ''), [book]);
 
   useEffect(() => {
     if (!book) return;
     document.title = `${book.title} — The Reading Room`;
-    tellTheOffice('ready');
   }, [book]);
 
   const close = () => {
@@ -158,9 +196,11 @@ export default function ReadingRoom() {
         title={author ? `${title} · ${author}` : title}
         reflowed={reflowed}
         pageUrls={null}
+        slides={phase.slides}
         coverUrl={phase.cover}
         sessionId={`office-${phase.book.id}`}
         onClose={close}
+        onReady={() => tellTheOffice('ready')}
       />
     );
   }

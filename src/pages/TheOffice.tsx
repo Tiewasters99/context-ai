@@ -2,9 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Landmark, Plus, X, BookOpen, Scale, ChevronRight, ChevronDown,
-  ExternalLink, Folder, Users, Lock, FileText, DoorOpen,
+  ExternalLink, Folder, Users, Lock, FileText, DoorOpen, Image as JacketIcon,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { canCaptureCover, captureOfficeCover } from '@/lib/office-cover';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
@@ -256,6 +257,7 @@ function SectionCard({
   onDropDoc,
   onRemoveSection,
   onRemoveItem,
+  onCaptureCover,
   onOpenDoc,
 }: {
   section: OfficeSection;
@@ -263,6 +265,7 @@ function SectionCard({
   onDropDoc: (docId: string, section: OfficeSection) => void;
   onRemoveSection: (s: OfficeSection) => void;
   onRemoveItem: (it: OfficeItem) => void;
+  onCaptureCover: (it: OfficeItem) => void;
   onOpenDoc: (docId: string) => void;
 }) {
   const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(
@@ -332,6 +335,15 @@ function SectionCard({
                 >
                   {it.title}
                 </span>
+                {it.document_id && (
+                  <button
+                    onClick={() => onCaptureCover(it)}
+                    className="p-0.5 rounded text-white/0 group-hover:text-white/50 hover:!text-white transition-colors"
+                    title="Capture the jacket — page one of the PDF, for the office's Reader"
+                  >
+                    <JacketIcon size={12} />
+                  </button>
+                )}
                 <button
                   onClick={() => onRemoveItem(it)}
                   className="p-0.5 rounded text-white/0 group-hover:text-white/50 hover:!text-white transition-colors"
@@ -407,6 +419,31 @@ export default function TheOffice() {
     setItems((prev) => prev.filter((p) => p.id !== it.id));
   };
 
+  // The jacket: page one of the item's PDF, captured into the public cover
+  // bucket so the office's Reader can open the book on its real cover. The
+  // only image the one-way glass lets through; a Word file or a deck has
+  // no page one to show and keeps the library's plate.
+  const captureCover = async (it: OfficeItem, quiet = false) => {
+    if (!it.document_id) return;
+    const { data: doc } = await supabase
+      .from('documents')
+      .select('storage_path, source_filename')
+      .eq('id', it.document_id)
+      .single();
+    if (!doc?.storage_path) { if (!quiet) say('The stored file could not be found.'); return; }
+    if (!canCaptureCover(doc.source_filename)) {
+      if (!quiet) say(`"${it.title}" is not a PDF — only a PDF has a page one to show as a jacket.`);
+      return;
+    }
+    try {
+      say(`Capturing the jacket for "${it.title}"…`);
+      await captureOfficeCover(it.id, doc.storage_path, doc.source_filename);
+      say(`"${it.title}" wears its jacket in the office now.`);
+    } catch (e) {
+      say(e instanceof Error ? e.message : 'The jacket could not be captured.');
+    }
+  };
+
   // The drop: a vault document lands on a section → it is published.
   const publishDoc = async (docId: string, section: OfficeSection) => {
     const { data: doc } = await supabase
@@ -427,17 +464,25 @@ export default function TheOffice() {
       .limit(1)
       .maybeSingle();
     const excerpt = (firstPassage?.text ?? '').slice(0, 700);
-    const { error } = await supabase.from('office_items').insert({
-      section_id: section.id,
-      document_id: docId,
-      title: doc.title,
-      author: doc.author ?? '',
-      excerpt,
-      spine: spineFor(doc.title),
-    });
+    const { data: row, error } = await supabase
+      .from('office_items')
+      .insert({
+        section_id: section.id,
+        document_id: docId,
+        title: doc.title,
+        author: doc.author ?? '',
+        excerpt,
+        spine: spineFor(doc.title),
+      })
+      .select('id')
+      .single();
     if (error) { say(error.message); return; }
     say(`"${doc.title}" is now showing in ${section.title}.`);
     refresh();
+    // The jacket follows on its own; a book that has none keeps its plate.
+    if (row?.id) {
+      void captureCover({ id: row.id, section_id: section.id, document_id: docId, title: doc.title } as OfficeItem, true);
+    }
   };
 
   const seedStarter = async () => {
@@ -463,6 +508,7 @@ export default function TheOffice() {
       onDropDoc={publishDoc}
       onRemoveSection={removeSection}
       onRemoveItem={removeItem}
+      onCaptureCover={(it) => void captureCover(it)}
       onOpenDoc={openDoc}
     />
   );

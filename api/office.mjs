@@ -28,6 +28,32 @@ const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Jackets. A cover is the one image the glass lets through — it is what a
+// bookshop window shows. At publish time the app captures page one of a
+// PDF into the public cover-images bucket at <owner>/office/<item id>.jpg;
+// nothing records it but the object itself, so the feed lists that folder
+// and any item whose id has a jacket there gets a `cover` URL. The URL is
+// the bucket's public object URL, versioned by its upload time so a
+// re-captured jacket is not hidden behind a cached one.
+async function jacketUrls(supabase, owners) {
+  const found = new Map();
+  for (const owner of new Set(owners.filter(Boolean))) {
+    const { data } = await supabase.storage
+      .from('cover-images')
+      .list(`${owner}/office`, { limit: 1000 });
+    for (const o of data ?? []) {
+      const m = /^([0-9a-f-]{36})\.jpg$/i.exec(o.name);
+      if (!m) continue;
+      const stamp = encodeURIComponent(o.updated_at ?? o.created_at ?? '');
+      found.set(
+        m[1],
+        `${SUPABASE_URL}/storage/v1/object/public/cover-images/${owner}/office/${o.name}?v=${stamp}`,
+      );
+    }
+  }
+  return found;
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -53,7 +79,7 @@ export default async function handler(req, res) {
   if (bookId) {
     const { data: item, error: itemError } = await supabase
       .from('office_items')
-      .select('id, title, author, document_id, published')
+      .select('id, title, author, document_id, published, owner_id')
       .eq('id', bookId)
       .eq('published', true)
       .maybeSingle();
@@ -102,12 +128,14 @@ export default async function handler(req, res) {
       chars += text.length;
       pages.push({ n: p.sequence_number, page: p.page_start ?? null, text });
     }
+    const jackets = await jacketUrls(supabase, [item.owner_id]);
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     res.status(200).json({
       id: item.id,
       title: item.title,
       author: item.author,
       kind: readKind,
+      cover: jackets.get(item.id) ?? null,
       pages,
       truncated,
     });
@@ -122,7 +150,7 @@ export default async function handler(req, res) {
       .order('created_at'),
     supabase
       .from('office_items')
-      .select('id, section_id, title, author, excerpt, spine, sort_order, document_id')
+      .select('id, section_id, title, author, excerpt, spine, sort_order, document_id, owner_id')
       .eq('published', true)
       .order('sort_order')
       .order('created_at'),
@@ -132,6 +160,7 @@ export default async function handler(req, res) {
     return;
   }
 
+  const jackets = await jacketUrls(supabase, (items.data ?? []).map((it) => it.owner_id));
   const bySection = {};
   for (const it of items.data ?? []) {
     (bySection[it.section_id] ??= []).push({
@@ -140,6 +169,7 @@ export default async function handler(req, res) {
       author: it.author,
       excerpt: it.excerpt,
       spine: it.spine,
+      cover: jackets.get(it.id) ?? null,
       // whether ?book= will answer for this item — the document id itself
       // stays behind the glass
       readable: Boolean(it.document_id),

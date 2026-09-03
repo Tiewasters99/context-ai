@@ -169,6 +169,44 @@ const READER_CSS = `
   transition: filter 400ms ease;
 }
 
+/* A deck's slide: a card on the page, set in a presentation's own sans —
+   the words of the slide, its number in the corner, the notes beneath. */
+.hub-reader-slide {
+  position: relative;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 2.2em 2.4em 2em;
+  background: #fffdf7;
+  color: #1a1810;
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  font-family: system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  text-align: left;
+}
+.hub-reader.dark .hub-reader-slide { background: #f3ecd8; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+.hub-reader-slide h2 { font-size: 1.5em; font-weight: 700; line-height: 1.2; margin: 0 0 0.6em; }
+.hub-reader-slide p { margin: 0.35em 0; }
+.hub-reader-slide-num { position: absolute; top: 0.7em; right: 1em; font-size: 0.7em; letter-spacing: 0.15em; color: rgba(0, 0, 0, 0.35); }
+.hub-reader-slide-notes {
+  margin-top: 1.4em;
+  padding: 0.8em 1em;
+  background: #f3eddc;
+  border-left: 3px solid #c9a227;
+  font-size: 0.85em;
+  color: #5c574a;
+  white-space: pre-wrap;
+}
+.hub-reader-slide-notes strong {
+  display: block;
+  margin-bottom: 0.3em;
+  font-size: 0.75em;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a08340;
+}
+
 .hub-reader-zone { position: absolute; top: 0; bottom: 0; z-index: 10; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .hub-reader-zone.left { left: 0; }
 .hub-reader-zone.right { right: 0; }
@@ -392,7 +430,7 @@ const READER_CSS = `
 /* On a phone every control is a thumb's target: 44px minimum, the slider
    given its hit area as padding so the track itself stays a hairline. */
 @media (max-width: 768px) {
-  .hub-reader-chrome { padding: 0.6rem 6.6rem 0.35rem; max-height: 84px; }
+  .hub-reader-chrome { padding: 0.6rem 7.8rem 0.35rem; max-height: 84px; }
   .hub-reader-corner { top: 0.45rem; right: 0.45rem; gap: 0.3rem; }
   .hub-reader-corner-btn { width: 44px; height: 44px; }
   .hub-reader-goto { width: 4em; padding: 0.55rem 0.5rem; }
@@ -418,12 +456,23 @@ const READER_CSS = `
 }
 `;
 
+/** One slide of a deck, read as a page: its lines (the first is the title)
+ *  and the speaker notes beneath. */
+export interface ReaderSlide {
+  num: number;
+  lines: string[];
+  notes: string | null;
+}
+
 export interface HubReaderProps {
   title: string;
   /** The reflowed reading, for a text reading; empty when the reading is paged. */
   reflowed: string;
   /** Signed page-image URLs, for a scanned reading. */
   pageUrls: string[] | null;
+  /** A slide deck: one card per page, typeset from the deck's own text —
+   *  the office's Reader has the slides' words but never the file. */
+  slides?: ReaderSlide[] | null;
   /** The cover plate or first scanned page; null opens the book on page one. */
   coverUrl: string | null;
   sessionId: string;
@@ -431,6 +480,9 @@ export interface HubReaderProps {
   /** The door to the student's assistant; a reader with no assistant — the
    *  office's Reading Room — leaves it out and the button with it. */
   onAskAssistant?: () => void;
+  /** Told once, when the pages are set and the book can be read — what a
+   *  door that holds a veil over the reader while it typesets waits for. */
+  onReady?: () => void;
   /** The assistant's "take me there": a page for a scanned reading, a
    *  verbatim quote to find for a text one. A fresh nonce turns once. */
   turnTo?: { page?: number; quote?: string; nonce: number } | null;
@@ -476,9 +528,12 @@ function write(key: string, value: string): void {
 }
 
 export function HubReader({
-  title, reflowed, pageUrls, coverUrl, sessionId, onClose, onAskAssistant, turnTo,
+  title, reflowed, pageUrls, slides, coverUrl, sessionId, onClose, onAskAssistant, onReady, turnTo,
 }: HubReaderProps) {
-  const paged = !!pageUrls?.length;
+  // A deck reads like a scanned book — a page is a page, whatever it holds.
+  const slideCount = slides?.length ?? 0;
+  const bodyCount = pageUrls?.length || slideCount;
+  const paged = bodyCount > 0;
   const coverPages = coverUrl ? 1 : 0;
   const posKey = `hub-reader-pos-${sessionId}`;
 
@@ -513,7 +568,7 @@ export function HubReader({
   const [page, setPage] = useState(() => {
     if (restored === null || restored < 0) return 0;
     if (!paged) return coverPages;
-    return Math.min(coverPages + restored, coverPages + (pageUrls?.length ?? 1) - 1);
+    return Math.min(coverPages + restored, coverPages + Math.max(1, bodyCount) - 1);
   });
 
   const narrow = box.w > 0 && box.w < 768;
@@ -522,7 +577,7 @@ export function HubReader({
   const pageH = Math.max(120, box.h);
   const step = colW + COLUMN_GAP;
 
-  const bodyPages = paged ? (pageUrls?.length ?? 0) : textPages;
+  const bodyPages = paged ? bodyCount : textPages;
   const total = coverPages + bodyPages;
   const bodyIndex = page - coverPages;
   const onCover = page < coverPages;
@@ -563,8 +618,24 @@ export function HubReader({
   useEffect(() => {
     let alive = true;
     void document.fonts?.ready.then(() => { if (alive) setFontsReady(true); });
-    return () => { alive = false; };
+    // A browser with no font-loading API, or a font that never arrives,
+    // still gets its book: the fallback face after a beat.
+    const fallback = window.setTimeout(() => { if (alive) setFontsReady(true); }, 2500);
+    return () => { alive = false; window.clearTimeout(fallback); };
   }, []);
+
+  // Nothing is typeset until the page box and the fonts are known. Laying a
+  // whole novel out at the fallback size — ten thousand columns of 120px —
+  // and again at the real one is slow enough on a laptop and, on a phone,
+  // blocked the box from ever being measured: the reader stayed blank.
+  const ready = box.w > 0 && box.h > 0 && fontsReady;
+
+  const readyTold = useRef(false);
+  useEffect(() => {
+    if (readyTold.current || !(measured || paged)) return;
+    readyTold.current = true;
+    onReady?.();
+  }, [measured, paged, onReady]);
 
   // Pagination: the text is laid out in one tall column box and read column by
   // column. The count comes from how far the content runs past the page; each
@@ -811,7 +882,7 @@ export function HubReader({
             aria-hidden="true"
           />
 
-          {!paged && (
+          {!paged && ready && (
             <div
               className="hub-reader-view"
               style={{ width: colW, height: pageH, visibility: onCover ? 'hidden' : 'visible' }}
@@ -854,6 +925,29 @@ export function HubReader({
               </div>
             </div>
           )}
+
+          {paged && !onCover && !pageUrls?.length && slides && slideCount > 0 && (() => {
+            const s = slides[Math.max(0, Math.min(slideCount - 1, bodyIndex))];
+            return (
+              <div className="hub-reader-plate" style={{ overflow: 'auto' }}>
+                <div className="hub-reader-plate-inner" style={{ padding: `12px ${gutter}px` }}>
+                  <article
+                    className="hub-reader-slide"
+                    style={{ width: Math.max(220, Math.min(760, box.w - gutter * 2)), fontSize: `${Math.round(16 * scale)}px` }}
+                  >
+                    <span className="hub-reader-slide-num">{s.num}</span>
+                    {s.lines.map((line, i) => (i === 0 ? <h2 key={i}>{line}</h2> : <p key={i}>{line}</p>))}
+                    {s.notes && (
+                      <aside className="hub-reader-slide-notes">
+                        <strong>Speaker notes</strong>
+                        {s.notes}
+                      </aside>
+                    )}
+                  </article>
+                </div>
+              </div>
+            );
+          })()}
 
           {onCover && coverUrl && (
             <div className="hub-reader-plate" style={{ overflow: 'hidden' }}>
