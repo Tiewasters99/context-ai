@@ -55,4 +55,21 @@ for (const [, cls] of LIVE) {
 console.log('  ok  every class has an actionable remedy');
 
 console.log(bad === 0 ? '\nAll triage checks passed.' : `\n${bad} FAILED`);
-process.exit(bad === 0 ? 0 : 1);
+if (bad !== 0) process.exit(1);
+
+// 2026-09-03: a Google Cloud billing hold answers 403 like a bad key. It
+// must classify as billing, not auth, and the per-attempt note must carry
+// the attempt count, the label, and the first line of the raw error.
+import { attemptFailureNote } from '../lib/ingest-triage.mjs';
+const DUNNING = 'gemini 403: {\n  "error": {\n    "code": 403,\n    "message": "Lightning dunning decision is deny for project: projects/697665506976",\n    "status": "PERMISSION_DENIED"\n  }\n}';
+assert.strictEqual(classifyError(DUNNING), 'billing', 'dunning 403 must be billing, not auth');
+assert.strictEqual(classifyError('insert passages: JWT expired'), 'auth', 'plain auth still auth');
+const note = attemptFailureNote(DUNNING, 1, 3);
+assert.strictEqual(note.cls, 'billing');
+assert.ok(note.retrying.startsWith('Attempt 1 of 3 failed — Provider billing blocked (gemini 403: {'), note.retrying);
+assert.ok(/Retrying automatically/.test(note.retrying));
+assert.ok(note.exhausted.startsWith('Provider billing blocked. Google (Gemini)'), note.exhausted);
+const unknown = attemptFailureNote('something nobody has seen before', 2, 3);
+assert.ok(unknown.retrying.startsWith('Attempt 2 of 3 failed — '), unknown.retrying);
+console.log('  ok  billing class + attemptFailureNote');
+console.log('PASS');
