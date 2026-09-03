@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>The Reading Room — Contextspaces</title>
+    <!-- The Reader on its own: one book, no workspace around it. Served as
+         /read/<book> (see vercel.json) and framed by the walkable office. -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #e8d5a0; }
+      #root { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/reader/main.tsx"></script>
+  </body>
+</html>

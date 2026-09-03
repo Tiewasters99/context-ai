@@ -428,7 +428,9 @@ export interface HubReaderProps {
   coverUrl: string | null;
   sessionId: string;
   onClose: () => void;
-  onAskAssistant: () => void;
+  /** The door to the student's assistant; a reader with no assistant — the
+   *  office's Reading Room — leaves it out and the button with it. */
+  onAskAssistant?: () => void;
   /** The assistant's "take me there": a page for a scanned reading, a
    *  verbatim quote to find for a text one. A fresh nonce turns once. */
   turnTo?: { page?: number; quote?: string; nonce: number } | null;
@@ -970,21 +972,25 @@ export function HubReader({
             </button>
           </>
         )}
-        <div className="hub-reader-divider" />
-        <button
-          type="button"
-          className="hub-reader-btn"
-          onClick={onAskAssistant}
-          aria-label="Ask your assistant about this reading"
-          title="ask your assistant"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M21 11.5C21 16.2 16.97 20 12 20c-1.2 0-2.34-.22-3.38-.6L4 21l1.32-3.95C4.48 15.7 4 13.66 4 11.5 4 6.8 8.03 3 13 3s8 3.8 8 8.5z"
-              stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" transform="translate(-1.5 0.5)"
-            />
-          </svg>
-        </button>
+        {onAskAssistant && (
+          <>
+            <div className="hub-reader-divider" />
+            <button
+              type="button"
+              className="hub-reader-btn"
+              onClick={onAskAssistant}
+              aria-label="Ask your assistant about this reading"
+              title="ask your assistant"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M21 11.5C21 16.2 16.97 20 12 20c-1.2 0-2.34-.22-3.38-.6L4 21l1.32-3.95C4.48 15.7 4 13.66 4 11.5 4 6.8 8.03 3 13 3s8 3.8 8 8.5z"
+                  stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" transform="translate(-1.5 0.5)"
+                />
+              </svg>
+            </button>
+          </>
+        )}
       </div>
 
       {searchOpen && (

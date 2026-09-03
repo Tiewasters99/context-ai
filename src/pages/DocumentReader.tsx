@@ -87,7 +87,17 @@ type DocMeta = {
   matterspace_id: string | null;
 };
 
-type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'unsupported';
+type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'unsupported';
+
+// Plain text → minimal HTML: escape, split paragraphs on blank lines.
+// Single newlines inside a paragraph survive through the text page's
+// pre-line whitespace, so hard-wrapped sources keep their lines.
+const plainTextHtml = (text: string) =>
+  text
+    .replace(/\r\n?/g, '\n')
+    .split(/\n{2,}/)
+    .map((p) => `<p>${p.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>`)
+    .join('');
 
 // PPTX display: one white card per slide, built from the same slide text the
 // ingest pipeline indexes (lib/pptx-extract.mjs's browser twin). Not a pixel
@@ -313,11 +323,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         : fn.endsWith('.docx') ? 'docx'
         : fn.endsWith('.fountain') ? 'fountain'
         : fn.endsWith('.pptx') ? 'pptx'
+        : fn.endsWith('.txt') || fn.endsWith('.md') ? 'text'
         : 'unsupported';
       setFileKind(kind);
 
       if (kind === 'unsupported') {
-        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), and Fountain (.fountain).');
+        // Not a file the reader can draw — but if ingest indexed its text,
+        // serve that as a text edition. The error page is the last resort.
+        const { data: passages } = await supabase
+          .from('passages')
+          .select('sequence_number, text')
+          .eq('document_id', data.id)
+          .eq('summary_level', 0)
+          .order('sequence_number', { ascending: true })
+          .limit(2000);
+        if (cancelled) return;
+        if (passages && passages.length > 0) {
+          setFileKind('text');
+          setDocHtml(plainTextHtml(passages.map((p) => p.text ?? '').join('\n\n')));
+          setTotalPages(1);
+          setPage(1);
+          setLoadState('ready');
+          return;
+        }
+        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), Fountain (.fountain), and plain text (.txt, .md).');
         setLoadState('error');
         return;
       }
@@ -373,6 +402,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           const html = await pptxDeckHtml(arrayBuffer);
           if (cancelled) return;
           setDocHtml(html);
+          setTotalPages(1);
+          setPage(1);
+        } else if (kind === 'text') {
+          // Plain text — the book as filed, one scrollable page.
+          const text = await blob.text();
+          if (cancelled) return;
+          setDocHtml(plainTextHtml(text));
           setTotalPages(1);
           setPage(1);
         } else {
@@ -1689,6 +1725,22 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                   padding: isMobile ? '28px 20px' : '64px 80px',
                   fontSize: `${Math.round(16 * (zoom / 1.5))}px`,
                   lineHeight: 1.6,
+                }}
+              >
+                <div dangerouslySetInnerHTML={{ __html: docHtml }} />
+              </div>
+            )}
+            {loadState === 'ready' && fileKind === 'text' && docHtml && (
+              <div
+                className="text-book-page print-root max-w-3xl w-full mx-auto shadow-2xl"
+                style={{
+                  backgroundColor: '#fffdf6',
+                  color: '#1a1810',
+                  padding: isMobile ? '28px 22px' : '64px 88px',
+                  fontFamily: 'Georgia, "Times New Roman", serif',
+                  fontSize: `${Math.round(17 * (zoom / 1.5))}px`,
+                  lineHeight: 1.75,
+                  whiteSpace: 'pre-line',
                 }}
               >
                 <div dangerouslySetInnerHTML={{ __html: docHtml }} />

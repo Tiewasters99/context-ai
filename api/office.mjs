@@ -65,6 +65,16 @@ export default async function handler(req, res) {
       res.status(404).json({ error: 'No such book on the shelves' });
       return;
     }
+    // What KIND of reading this is: a slide deck reads as slides (one card
+    // per passage — ingest indexes one passage per slide), everything else
+    // as flowing text pages. Only the shape travels; never the file.
+    const { data: srcDoc } = await supabase
+      .from('documents')
+      .select('source_filename')
+      .eq('id', item.document_id)
+      .maybeSingle();
+    const srcName = (srcDoc?.source_filename ?? '').toLowerCase();
+    const readKind = srcName.endsWith('.pptx') || srcName.endsWith('.ppt') ? 'slides' : 'text';
     // Raw text passages in reading order. The cap keeps one request from
     // shipping a 700-page transcript; MAX_CHARS trims the tail passage-by-
     // passage so the reader can say, honestly, that the rest stays filed.
@@ -97,6 +107,7 @@ export default async function handler(req, res) {
       id: item.id,
       title: item.title,
       author: item.author,
+      kind: readKind,
       pages,
       truncated,
     });
