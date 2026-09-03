@@ -57,6 +57,14 @@ const DRY = !!args['dry-run'];
 const LIMIT = args.limit ? parseInt(args.limit, 10) : Infinity;
 const ONLY_SOURCE = args.source ? String(args.source).toLowerCase() : null;
 
+// One sync at a time. The scheduled run fires every 30 minutes; a backfill
+// (or a manual run alongside it) outlasts that, and two runs on the same
+// state file each create a document for the same conversation — the state
+// remembers only the winner, the orphan never updates. Seen 2026-07-28. The
+// lock names its pid, so a crashed run's lock is ignored, not honoured.
+const LOCK_FILE = 'C:/Users/equai/FileSaver/sync-chats.lock';
+acquireLock();
+
 // Source → sub-matter display name. Claude Code gets its own bucket.
 const SOURCE_BUCKET = {
   'extension-claude': 'Claude',
@@ -443,4 +451,19 @@ async function saveState(s) { await fsp.writeFile(STATE_FILE, JSON.stringify(s, 
 function parseArgs(argv) { const out = { _: [] }; for (let i = 0; i < argv.length; i++) { const a = argv[i]; if (a.startsWith('--')) { const k = a.slice(2), v = argv[i + 1]; if (v && !v.startsWith('--')) { out[k] = v; i++; } else out[k] = true; } else out._.push(a); } return out; }
 async function loadEnv(file) { try { const t = await fsp.readFile(file, 'utf8'); for (const line of t.split('\n')) { const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/); if (!m) continue; let v = m[2]; if (/^".*"$/.test(v) || /^'.*'$/.test(v)) v = v.slice(1, -1); if (!process.env[m[1]]) process.env[m[1]] = v.trim(); } } catch {} }
 function requireEnv(n) { const v = process.env[n]; if (!v) { console.error(`Missing env ${n}`); process.exit(1); } return v; }
+function acquireLock() {
+  try {
+    const held = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
+    let alive = false;
+    try { process.kill(held.pid, 0); alive = true; } catch {}
+    if (alive && held.pid !== process.pid) {
+      console.log(`Another sync is running (pid ${held.pid}, started ${held.startedAt}); exiting.`);
+      process.exit(0);
+    }
+  } catch {}
+  fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+  process.on('exit', () => {
+    try { if (JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8')).pid === process.pid) fs.unlinkSync(LOCK_FILE); } catch {}
+  });
+}
 function log(...a) { console.log(...a); }
