@@ -392,7 +392,7 @@ const READER_CSS = `
 /* On a phone every control is a thumb's target: 44px minimum, the slider
    given its hit area as padding so the track itself stays a hairline. */
 @media (max-width: 768px) {
-  .hub-reader-chrome { padding: 0.6rem 6.6rem 0.35rem; max-height: 84px; }
+  .hub-reader-chrome { padding: 0.6rem 7.8rem 0.35rem; max-height: 84px; }
   .hub-reader-corner { top: 0.45rem; right: 0.45rem; gap: 0.3rem; }
   .hub-reader-corner-btn { width: 44px; height: 44px; }
   .hub-reader-goto { width: 4em; padding: 0.55rem 0.5rem; }
@@ -431,6 +431,9 @@ export interface HubReaderProps {
   /** The door to the student's assistant; a reader with no assistant — the
    *  office's Reading Room — leaves it out and the button with it. */
   onAskAssistant?: () => void;
+  /** Told once, when the pages are set and the book can be read — what a
+   *  door that holds a veil over the reader while it typesets waits for. */
+  onReady?: () => void;
   /** The assistant's "take me there": a page for a scanned reading, a
    *  verbatim quote to find for a text one. A fresh nonce turns once. */
   turnTo?: { page?: number; quote?: string; nonce: number } | null;
@@ -476,7 +479,7 @@ function write(key: string, value: string): void {
 }
 
 export function HubReader({
-  title, reflowed, pageUrls, coverUrl, sessionId, onClose, onAskAssistant, turnTo,
+  title, reflowed, pageUrls, coverUrl, sessionId, onClose, onAskAssistant, onReady, turnTo,
 }: HubReaderProps) {
   const paged = !!pageUrls?.length;
   const coverPages = coverUrl ? 1 : 0;
@@ -563,8 +566,24 @@ export function HubReader({
   useEffect(() => {
     let alive = true;
     void document.fonts?.ready.then(() => { if (alive) setFontsReady(true); });
-    return () => { alive = false; };
+    // A browser with no font-loading API, or a font that never arrives,
+    // still gets its book: the fallback face after a beat.
+    const fallback = window.setTimeout(() => { if (alive) setFontsReady(true); }, 2500);
+    return () => { alive = false; window.clearTimeout(fallback); };
   }, []);
+
+  // Nothing is typeset until the page box and the fonts are known. Laying a
+  // whole novel out at the fallback size — ten thousand columns of 120px —
+  // and again at the real one is slow enough on a laptop and, on a phone,
+  // blocked the box from ever being measured: the reader stayed blank.
+  const ready = box.w > 0 && box.h > 0 && fontsReady;
+
+  const readyTold = useRef(false);
+  useEffect(() => {
+    if (readyTold.current || !(measured || paged)) return;
+    readyTold.current = true;
+    onReady?.();
+  }, [measured, paged, onReady]);
 
   // Pagination: the text is laid out in one tall column box and read column by
   // column. The count comes from how far the content runs past the page; each
@@ -811,7 +830,7 @@ export function HubReader({
             aria-hidden="true"
           />
 
-          {!paged && (
+          {!paged && ready && (
             <div
               className="hub-reader-view"
               style={{ width: colW, height: pageH, visibility: onCover ? 'hidden' : 'visible' }}

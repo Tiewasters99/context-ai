@@ -142,7 +142,6 @@ export default function ReadingRoom() {
   useEffect(() => {
     if (!book) return;
     document.title = `${book.title} — The Reading Room`;
-    tellTheOffice('ready');
   }, [book]);
 
   const close = () => {
@@ -161,6 +160,7 @@ export default function ReadingRoom() {
         coverUrl={phase.cover}
         sessionId={`office-${phase.book.id}`}
         onClose={close}
+        onReady={() => tellTheOffice('ready')}
       />
     );
   }
