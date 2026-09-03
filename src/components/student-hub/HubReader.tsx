@@ -554,6 +554,10 @@ export function HubReader({
     return n !== null && n >= FONT_MIN && n <= FONT_MAX ? n : 18;
   });
   const [scale, setScale] = useState(1);
+  // A page image's own shape, read when it loads, so it can be fitted to the
+  // page box on both axes: a portrait scan fills the height of a wide window;
+  // a wide slide fills the width of a phone. Zoom scales up from that fit.
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
 
   const paras = useMemo(() => readingParagraphs(reflowed), [reflowed]);
 
@@ -918,22 +922,62 @@ export function HubReader({
             </div>
           )}
 
-          {paged && !onCover && pageUrls && (
-            <div className="hub-reader-plate" style={{ overflow: scale > 1 ? 'auto' : 'hidden' }}>
-              <div className="hub-reader-plate-inner" style={{ padding: `0 ${gutter}px` }}>
-                <img
-                  src={pageUrls[Math.max(0, Math.min(pageUrls.length - 1, bodyIndex))]}
-                  alt={`Page ${bodyIndex + 1} of the reading`}
-                  style={{
-                    height: `${scale * 100}%`,
-                    width: 'auto',
-                    maxWidth: scale <= 1 ? '100%' : 'none',
-                    filter: theme === 'dark' && pageTone === 'scan' ? DARK_PAGE_FILTER : undefined,
-                  }}
-                />
+          {paged && !onCover && pageUrls && (() => {
+            // The page fitted whole: bounded by the box's height and, for a
+            // page wider than the box — a slide on a phone — by its width.
+            // Up to full size that is plain CSS: the inner box is the page
+            // box and the image is capped on both axes, ratio kept. Zoomed
+            // in, the image outgrows the box and the box scrolls, so its
+            // size is set outright from the fit and the image's own shape.
+            const zoomed = scale > 1;
+            const fitH = natural && box.w > 0
+              ? Math.min(pageH, ((box.w - gutter * 2) * natural.h) / natural.w)
+              : null;
+            return (
+              <div className="hub-reader-plate" style={{ overflow: zoomed ? 'auto' : 'hidden' }}>
+                <div
+                  className="hub-reader-plate-inner"
+                  // Unzoomed, the inner box IS the page box — a definite width
+                  // and height — so the image's percentages have something to
+                  // resolve against. (With only a min-height they never did,
+                  // and every page image sat at its natural pixel size.)
+                  style={{ padding: `0 ${gutter}px`, ...(zoomed ? {} : { width: '100%', height: '100%' }) }}
+                >
+                  <img
+                    src={pageUrls[Math.max(0, Math.min(pageUrls.length - 1, bodyIndex))]}
+                    alt={`Page ${bodyIndex + 1} of the reading`}
+                    onLoad={(e) => {
+                      const el = e.currentTarget;
+                      if (el.naturalWidth && el.naturalHeight) {
+                        setNatural((prev) => (
+                          prev && prev.w === el.naturalWidth && prev.h === el.naturalHeight
+                            ? prev
+                            : { w: el.naturalWidth, h: el.naturalHeight }
+                        ));
+                      }
+                    }}
+                    // Unzoomed: both sizes automatic, both capped — the only
+                    // form in which the browser keeps a replaced element's
+                    // ratio while fitting it. (An explicit height with a
+                    // capped width squeezes the picture.) Zoomed: a height in
+                    // pixels from the fit, width following.
+                    style={zoomed ? {
+                      height: fitH ? `${Math.round(fitH * scale)}px` : 'auto',
+                      width: 'auto',
+                      maxWidth: 'none',
+                      filter: theme === 'dark' && pageTone === 'scan' ? DARK_PAGE_FILTER : undefined,
+                    } : {
+                      height: 'auto',
+                      width: 'auto',
+                      maxHeight: `${scale * 100}%`,
+                      maxWidth: `${scale * 100}%`,
+                      filter: theme === 'dark' && pageTone === 'scan' ? DARK_PAGE_FILTER : undefined,
+                    }}
+                  />
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {paged && !onCover && !pageUrls?.length && slides && slideCount > 0 && (() => {
             const s = slides[Math.max(0, Math.min(slideCount - 1, bodyIndex))];
@@ -960,8 +1004,12 @@ export function HubReader({
 
           {onCover && coverUrl && (
             <div className="hub-reader-plate" style={{ overflow: 'hidden' }}>
-              <div className="hub-reader-plate-inner" style={{ padding: `0 ${gutter}px` }}>
-                <img src={coverUrl} alt={`${title} — the cover`} style={{ maxHeight: pageH, maxWidth: '100%' }} />
+              <div className="hub-reader-plate-inner" style={{ padding: `0 ${gutter}px`, width: '100%', height: '100%' }}>
+                <img
+                  src={coverUrl}
+                  alt={`${title} — the cover`}
+                  style={{ maxHeight: '100%', maxWidth: '100%', width: 'auto', height: 'auto' }}
+                />
               </div>
             </div>
           )}
