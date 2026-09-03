@@ -49,7 +49,11 @@ async function pageJpeg(pdf: PdfDoc, n: number, longEdge: number, quality: numbe
     canvas.height = Math.round(viewport.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('no 2d context');
-    await page.render({ canvas, canvasContext: ctx, viewport }).promise;
+    // Annotations stay off the page: a deck exported from PowerPoint carries
+    // a comment icon in the corner of every slide, and a jacket is the page,
+    // not the notes on it. (pdf.js AnnotationMode.DISABLE is 0 — the enum is
+    // not imported so pdf.js itself stays a lazy load.)
+    await page.render({ canvas, canvasContext: ctx, viewport, annotationMode: 0 }).promise;
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', quality);
     });
