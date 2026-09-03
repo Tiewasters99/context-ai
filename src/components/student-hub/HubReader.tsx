@@ -74,8 +74,9 @@ const READER_CSS = `
   color: #2a1608;
 }
 .hub-reader.dark .hub-reader-title {
-  color: #f2e0a4;
-  text-shadow: 0 0 18px rgba(232, 212, 138, 0.28);
+  color: #f8e8b4;
+  font-weight: 700;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6), 0 0 22px rgba(240, 214, 140, 0.45);
 }
 /* Top-right corner: the glass and the go-to box, on the page itself. */
 .hub-reader-corner {
@@ -187,7 +188,7 @@ const READER_CSS = `
 .hub-reader.dark .hub-reader-slide { background: #f3ecd8; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
 .hub-reader-slide h2 { font-size: 1.5em; font-weight: 700; line-height: 1.2; margin: 0 0 0.6em; }
 .hub-reader-slide p { margin: 0.35em 0; }
-.hub-reader-slide-num { position: absolute; top: 0.7em; right: 1em; font-size: 0.7em; letter-spacing: 0.15em; color: rgba(0, 0, 0, 0.35); }
+.hub-reader-slide-num { position: absolute; top: 0.7em; right: 1em; font-size: 0.75em; font-weight: 600; letter-spacing: 0.15em; color: #a08340; }
 .hub-reader-slide-notes {
   margin-top: 1.4em;
   padding: 0.8em 1em;
@@ -200,11 +201,11 @@ const READER_CSS = `
 .hub-reader-slide-notes strong {
   display: block;
   margin-bottom: 0.3em;
-  font-size: 0.75em;
-  font-weight: 600;
+  font-size: 0.85em;
+  font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #a08340;
+  color: #8a6a1c;
 }
 
 .hub-reader-zone { position: absolute; top: 0; bottom: 0; z-index: 10; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -430,7 +431,11 @@ const READER_CSS = `
 /* On a phone every control is a thumb's target: 44px minimum, the slider
    given its hit area as padding so the track itself stays a hairline. */
 @media (max-width: 768px) {
-  .hub-reader-chrome { padding: 0.6rem 7.8rem 0.35rem; max-height: 84px; }
+  /* On a phone the title runs the full width beneath the corner buttons
+     rather than in the sliver between them — two lines at most, never
+     clipped, never four words wide. */
+  .hub-reader-chrome { padding: 3.3rem 1.1rem 0.4rem; max-height: 112px; }
+  .hub-reader-title { font-size: 1.15rem; line-height: 1.2; }
   .hub-reader-corner { top: 0.45rem; right: 0.45rem; gap: 0.3rem; }
   .hub-reader-corner-btn { width: 44px; height: 44px; }
   .hub-reader-goto { width: 4em; padding: 0.55rem 0.5rem; }
@@ -930,10 +935,10 @@ export function HubReader({
             const s = slides[Math.max(0, Math.min(slideCount - 1, bodyIndex))];
             return (
               <div className="hub-reader-plate" style={{ overflow: 'auto' }}>
-                <div className="hub-reader-plate-inner" style={{ padding: `12px ${gutter}px` }}>
+                <div className="hub-reader-plate-inner" style={{ padding: `12px ${gutter}px`, width: '100%' }}>
                   <article
                     className="hub-reader-slide"
-                    style={{ width: Math.max(220, Math.min(760, box.w - gutter * 2)), fontSize: `${Math.round(16 * scale)}px` }}
+                    style={{ width: '100%', maxWidth: 760, fontSize: `${Math.round(16 * scale)}px` }}
                   >
                     <span className="hub-reader-slide-num">{s.num}</span>
                     {s.lines.map((line, i) => (i === 0 ? <h2 key={i}>{line}</h2> : <p key={i}>{line}</p>))}
