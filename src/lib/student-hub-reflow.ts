@@ -54,8 +54,8 @@ const OPENS_LOWERCASE = /^[a-zà-ÿ]/;
 
 /** An em dash set closed against a word at the seam — "fact—" / "—moreover" —
  *  which the wrap cut apart; a spaced dash (" — ") keeps its space. */
-const CLOSED_DASH_END = /S—$/;
-const CLOSED_DASH_START = /^—S/;
+const CLOSED_DASH_END = /\S—$/;
+const CLOSED_DASH_START = /^—\S/;
 
 /** A line that opens with a quotation mark: someone speaking. */
 const OPENS_QUOTE = /^["“‘'«]/;
