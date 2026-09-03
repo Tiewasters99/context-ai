@@ -68,6 +68,7 @@ if (tender) {
     ['\nCHAPTER  1\n', 'CHAPTER 1 stands alone'],
     ['\nCHAPTER  20\n', 'CHAPTER 20 stands alone'],
     ['bored by the fact—moreover, just any direction', 'an em dash cut by the wrap closes back up'],
+    ['true Provençal France.\n\nA mile from the sea', 'a paragraph whose last line runs 80 % of the measure still ends there'],
   ]) {
     assert(after.out.includes(needle), `${what}   (main: ${before.out.includes(needle) ? 'had it' : 'lacked it'})`);
   }
