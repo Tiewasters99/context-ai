@@ -165,25 +165,18 @@
   #book .blinks a { display: block; color: var(--gold); font-size: 13.5px;
     text-decoration: none; border-bottom: none; padding: 4px 0; letter-spacing: .04em; }
   #book .blinks a:hover { text-decoration: underline; }
-  #book .bread { display: block; margin-top: 28px; background: none; cursor: pointer;
-    border: 1px solid rgba(216,184,122,.45); color: var(--gold); padding: 10px 24px;
-    font-family: Georgia, serif; font-size: 13px; letter-spacing: .18em; }
-  #book .bread:hover { background: rgba(216,184,122,.12); }
-  #book .bread:disabled { opacity: .55; cursor: default; }
-  #book .bpages { margin-top: 34px; border-top: 1px solid rgba(216,184,122,.25);
-    padding-top: 18px; }
-  #book .bpage { font-size: 15px; line-height: 1.75; white-space: pre-line; margin: 0 0 28px; }
-  #book .bpageno { font-size: 10.5px; letter-spacing: .25em; color: rgba(216,184,122,.55);
-    margin: 0 0 8px; }
-  #book .btrail { font-style: italic; color: rgba(243,237,226,.5); font-size: 13.5px;
-    margin: 40px 0 0; text-align: center; }
-  /* a slide deck reads as slides: one warm card per slide */
-  #book .bslide { position: relative; background: #f5f1e6; color: #1d1810;
-    border-radius: 6px; padding: 26px 30px 22px; margin: 0 0 22px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.45); font-size: 14.5px; line-height: 1.6;
-    white-space: pre-line; }
-  #book .bslide .bslidenum { position: absolute; top: 10px; right: 14px;
-    font-size: 10.5px; letter-spacing: .2em; color: rgba(120,96,40,.55); }
+  /* the reading room: a book taken down opens in the Contextspaces Reader,
+     framed over the office so the room stays exactly where you left it */
+  #reader { position: fixed; inset: 0; z-index: 10; background: #0b0804;
+    opacity: 0; pointer-events: none; transition: opacity .5s ease; }
+  #reader.open { opacity: 1; pointer-events: auto; }
+  #reader iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    display: block; background: transparent; }
+  #reader .rveil { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; background: rgba(8, 6, 4, .97); color: var(--gold);
+    font-family: Georgia, serif; font-style: italic; font-size: 15px; letter-spacing: .08em;
+    pointer-events: none; transition: opacity .6s ease; }
+  #reader.ready .rveil { opacity: 0; }
   #bookBack { position: fixed; top: 22px; left: 30px; background: none; border: none;
     color: rgba(243,237,226,.6); font-size: 14px; letter-spacing: .12em; cursor: pointer;
     font-family: Georgia, serif; z-index: 9; }
@@ -226,6 +219,11 @@
 <div id="book">
   <button id="bookBack">← the shelves</button>
   <div class="bwrap" id="bookBody"></div>
+</div>
+
+<div id="reader">
+  <iframe id="readerFrame" title="The Reading Room"></iframe>
+  <div class="rveil">Taking the book down…</div>
 </div>
 
 <div id="rooms">
@@ -481,7 +479,8 @@ const SPEED = 0.65, ACCEL = 8.0, DAMP = 10.0;  // walking pace, but crisp starts
 addEventListener('keydown', e => {
   if (e.target.isContentEditable) return;              // typing in the sign, not walking
   if (e.key === 'Escape') {
-    if (bookOpen) closeBook();
+    if (readerOpen) closeReader();
+    else if (bookOpen) closeBook();
     else if (libraryOpen) closeLibrary();
     else { closeInfo(); closeMatters(); }
     return;
@@ -642,82 +641,56 @@ function closeLibrary() { libraryOpen = false; libraryEl.classList.remove('open'
 function openBook(id) {
   const b = LIBRARY.find(v => v.id === id) || DYN_BOOKS.get(id);
   if (!b) return;
-  // A readable book opens straight to its pages — take it down and it's
-  // open in your hands; the excerpt is only for books that can't be read.
+  // A readable book opens in the Reader — take it down and it's open in
+  // your hands. The card with the excerpt is for books that can't be read.
+  if (b.readable) { openReader(b.id); return; }
   document.getElementById('bookBody').innerHTML = `
     <p class="bstudy">${b.src.toUpperCase()}</p>
     <h2>${b.title}</h2>
     <p class="bauthor">${b.author}</p>
-    ${b.readable ? '' : `<div class="btext">${b.excerpt || ''}</div>`}
+    <div class="btext">${b.excerpt || ''}</div>
     ${b.summary ? `<div class="btext" style="margin-top:22px">${b.summary}</div>` : ''}
     ${b.note ? `<p class="bnote">${b.note}</p>` : ''}
     ${(b.links || (b.url ? [{ label: 'About this book', url: b.url }] : [])).length ?
       `<div class="blinks">${(b.links || [{ label: 'About this book', url: b.url }])
-        .map(l => `<a href="${l.url}" target="_blank" rel="noopener">${l.label} ↗</a>`).join('')}</div>` : ''}
-    ${b.readable ? `<button class="bread" data-read="${b.id}">OPENING…</button>` : ''}`;
+        .map(l => `<a href="${l.url}" target="_blank" rel="noopener">${l.label} ↗</a>`).join('')}</div>` : ''}`;
   bookOpen = true; bookEl.classList.add('open');
   bookEl.scrollTop = 0;
-  if (b.readable) readBook(b.id);
 }
 
-// ---- the reading room: the whole text, a page at a time --------------------
-// GET /api/office?book=<item id> serves the indexed passages of one published
-// item — text only, capped server-side. The original file never leaves the
-// vault; this is a visitor browsing a book left out on the office table.
-async function readBook(id) {
-  const btn = document.querySelector('#bookBody .bread');
-  if (btn) { btn.disabled = true; btn.textContent = 'OPENING…'; }
-  try {
-    const u = MANIFEST_URL + (MANIFEST_URL.includes('?') ? '&' : '?') + 'book=' + encodeURIComponent(id);
-    const r = await fetch(u, { mode: 'cors' });
-    if (!r.ok) throw new Error('closed');
-    const d = await r.json();
-    const host = document.createElement('div');
-    host.className = 'bpages';
-    // textContent, never innerHTML — the document's own text stays inert.
-    if (d.kind === 'slides') {
-      // one card per slide, numbered like the deck
-      (d.pages || []).forEach((p, i) => {
-        const s = document.createElement('div');
-        s.className = 'bslide';
-        const n = document.createElement('span');
-        n.className = 'bslidenum';
-        n.textContent = String(i + 1);
-        s.appendChild(n);
-        s.appendChild(document.createTextNode(p.text || ''));
-        host.appendChild(s);
-      });
-    } else {
-      let lastPage = null;
-      for (const p of (d.pages || [])) {
-        if (p.page != null && p.page !== lastPage) {
-          const n = document.createElement('p');
-          n.className = 'bpageno';
-          n.textContent = 'PAGE ' + p.page;
-          host.appendChild(n);
-          lastPage = p.page;
-        }
-        const t = document.createElement('p');
-        t.className = 'bpage';
-        t.textContent = p.text || '';
-        host.appendChild(t);
-      }
-    }
-    if (d.truncated) {
-      const trail = document.createElement('p');
-      trail.className = 'btrail';
-      trail.textContent = 'The rest stays in the vault.';
-      host.appendChild(trail);
-    }
-    if (btn) btn.replaceWith(host);
-    else document.getElementById('bookBody').appendChild(host);
-  } catch {
-    if (btn) { btn.disabled = false; btn.textContent = 'THE READING ROOM IS CLOSED — TRY AGAIN'; }
-  }
+// ---- the reading room: the book opens in the Contextspaces Reader ---------
+// The Reader lives at contextspaces.ai/read/<item id> — the same Reader the
+// Student Hub reads in, fed by the same public /api/office?book= feed (text
+// only; the original never leaves the vault). It opens in a frame over the
+// office, so the room stays exactly where you left it; put the book back
+// and you are at the shelves again. ?reader=<origin> points a local office
+// at a local reader, the way ?manifest= points it at a local feed.
+const readerEl = document.getElementById('reader');
+const readerFrame = document.getElementById('readerFrame');
+const READER_BASE = (new URLSearchParams(location.search).get('reader')
+  || new URL(MANIFEST_URL, location.href).origin).replace(/\/$/, '');
+const READER_ORIGIN = new URL(READER_BASE, location.href).origin;
+let readerOpen = false, readerCloseTimer = null;
+function openReader(id) {
+  clearTimeout(readerCloseTimer);
+  readerEl.classList.remove('ready');
+  readerFrame.src = READER_BASE + '/read/' + encodeURIComponent(id) + '?embed=1';
+  readerOpen = true; readerEl.classList.add('open');
+  readerFrame.focus();
 }
-document.getElementById('bookBody').addEventListener('click', e => {
-  const r = e.target.closest('[data-read]');
-  if (r) readBook(r.dataset.read);
+function closeReader() {
+  if (!readerOpen) return;
+  readerOpen = false; readerEl.classList.remove('open');
+  // let the fade finish, then put the book back so its keys go quiet
+  readerCloseTimer = setTimeout(() => {
+    readerFrame.src = 'about:blank';
+    readerEl.classList.remove('ready');
+  }, 500);
+}
+addEventListener('message', e => {
+  if (e.origin !== READER_ORIGIN || !e.data || e.data.type !== 'cs-reader') return;
+  if (e.data.action === 'close') closeReader();
+  else if (e.data.action === 'ready') { readerEl.classList.add('ready'); readerFrame.focus(); }
 });
 function closeBook() { bookOpen = false; bookEl.classList.remove('open'); }
 document.getElementById('libClose').addEventListener('click', closeLibrary);
@@ -727,8 +700,8 @@ document.getElementById('shelves').addEventListener('click', e => {
   if (s) openBook(s.dataset.book);
 });
 
-function closeAll() { closeMatters(); closeInfo(); closeBook(); libraryOpen = false; libraryEl.classList.remove('open'); }
-const uiOpen = () => mattersOpen || infoOpen || libraryOpen || bookOpen;
+function closeAll() { closeReader(); closeMatters(); closeInfo(); closeBook(); libraryOpen = false; libraryEl.classList.remove('open'); }
+const uiOpen = () => mattersOpen || infoOpen || libraryOpen || bookOpen || readerOpen;
 
 // ---- motion toggle ---------------------------------------------------------
 let motionOn = true;

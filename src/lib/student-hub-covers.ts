@@ -17,73 +17,10 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { supabase } from '@/lib/supabase';
 import { SCAN_BUCKET, type StudyText } from '@/lib/student-hub';
 
-interface Template {
-  id: string;
-  name: string;
-  file: string;
-  category: string;
-}
-
-// The plates a book may be given. Of the twelve categories in the library
-// these three read as a bound book at thumbnail size — literary scenes, quiet
-// still lifes, and the Alhambra's arches and tilework. The rest (Tech,
-// Fantasy, People & Life, and the travel sets) would furnish a shelf of law
-// texts with the wrong century.
-const COVER_CATEGORIES = new Set(['Literary', 'Still Life', 'Alhambra']);
-
-let plates: string[] | null = null;
-let loading: Promise<void> | null = null;
-const watchers = new Set<() => void>();
-
-/** Fetch the library's manifest once, keep the plates, tell anyone waiting. */
-function loadPlates(): Promise<void> {
-  loading ??= fetch('/templates/manifest.json')
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`manifest ${r.status}`))))
-    .then((all: Template[]) => {
-      plates = all
-        .filter((t) => COVER_CATEGORIES.has(t.category))
-        .map((t) => t.file)
-        .sort();
-    })
-    // A library that will not open costs a book its plate, nothing more.
-    .catch(() => { plates = []; })
-    .finally(() => { watchers.forEach((w) => w()); });
-  return loading;
-}
-
-function subscribePlates(onChange: () => void): () => void {
-  watchers.add(onChange);
-  void loadPlates();
-  return () => { watchers.delete(onChange); };
-}
-
-// A stable reference either way, so the snapshot never churns a render.
-function platesSnapshot(): string[] | null {
-  return plates;
-}
-
-/** FNV-1a over the title, so a book always lands on the same plate. */
-function hashTitle(title: string): number {
-  const s = title.trim().toLowerCase();
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i += 1) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h;
-}
-
-/** The plate this title always gets — null until the manifest has arrived. */
-export function coverForTitle(title: string): string | null {
-  if (!plates?.length) return null;
-  return plates[hashTitle(title) % plates.length];
-}
-
-/** The plate for one title, re-rendering once the manifest is in hand. */
-export function useTemplateCover(title: string): string | null {
-  const list = useSyncExternalStore(subscribePlates, platesSnapshot);
-  return useMemo(() => (list?.length ? coverForTitle(title) : null), [list, title]);
-}
+// The plates themselves live in cover-plates.ts, which needs neither a
+// sign-in nor Supabase, so the Reading Room can share them.
+export { coverForTitle, useTemplateCover } from '@/lib/cover-plates';
+import { coverForTitle, platesSnapshot, subscribePlates } from '@/lib/cover-plates';
 
 // ---------------------------------------------------------------------------
 // The catalog: a book with no cover of its own is looked up by title in the
