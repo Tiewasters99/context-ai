@@ -145,6 +145,7 @@ function documentToVaultFile(doc: {
     file: new File([], name),
     status: mapStatus(doc.processing_status),
     stage: stageOf(doc.processing_status),
+    held: doc.processing_status === 'held' || undefined,
     errorMessage: doc.processing_error ?? undefined,
     matterspace_id: doc.matterspace_id,
     matterspace_name,
@@ -153,16 +154,13 @@ function documentToVaultFile(doc: {
   };
 }
 
-// The pipeline's non-terminal stages, in order. Anything else non-terminal
-// is unknown to this build and shown by its raw name.
-const PIPELINE_STAGES = ['pending', 'extracting', 'chunking', 'embedding'];
-
 function mapStatus(s: string): VaultFile['status'] {
   if (s === 'ready') return 'indexed';
   if (s === 'error') return 'error';
   // 'held' (lib/seal-pipes.mjs): a SecureSpace refused to send this file to
   // an outside provider. Terminal, with the reason in processing_error —
-  // before this it mapped to 'uploading' and spun forever.
+  // before this it mapped to 'uploading' and spun forever. VaultFile.held
+  // travels alongside so the panel can say "Held" and withhold Retry.
   if (s === 'held') return 'error';
   if (s === 'embedding') return 'indexing';
   // pending, extracting, chunking → uploading bucket from the UI's POV; the
@@ -170,9 +168,11 @@ function mapStatus(s: string): VaultFile['status'] {
   return 'uploading';
 }
 
+// The raw pipeline stage while non-terminal (pending / extracting / chunking /
+// embedding — or whatever a newer pipeline writes, shown by name).
 function stageOf(s: string): string | undefined {
   if (s === 'ready' || s === 'error' || s === 'held') return undefined;
-  return PIPELINE_STAGES.includes(s) ? s : s || undefined;
+  return s || undefined;
 }
 
 function formatSize(bytes: number): string {
@@ -194,12 +194,17 @@ export type VaultRefusal = UploadRefusal | { code: 'duplicate'; message: string;
 export async function checkUploadAdmissible(matter: MatterRef, file: File): Promise<VaultRefusal | null> {
   const local = checkUpload({ name: file.name, size: file.size });
   if (local) return local;
+  // Only a copy whose bytes actually landed counts. A row with no storage_path
+  // is an upload that never finished (tab closed, network drop); the recovery
+  // sweep marks it "upload it again", and refusing that re-upload as a
+  // duplicate would be a dead end.
   const { data, error } = await supabase
     .from('documents')
     .select('id, title, created_at, processing_status')
     .eq('matterspace_id', matter.id)
     .eq('source_filename', file.name)
     .eq('file_size_bytes', file.size)
+    .not('storage_path', 'is', null)
     .order('created_at', { ascending: true })
     .limit(1);
   // A failed lookup must not block the upload: the server-side paths keep
@@ -302,6 +307,8 @@ export interface DocumentStatusUpdate {
   stage?: string;
   /** Recorded reason for a ready document with no text (VaultFile.textStatus). */
   textStatus?: string;
+  /** True when the SecureSpace held the document (VaultFile.held). */
+  held?: boolean;
 }
 
 export function watchDocumentStatus(
@@ -330,6 +337,7 @@ export function watchDocumentStatus(
       errorMessage: data.processing_error || undefined,
       stage: stageOf(data.processing_status),
       textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
+      held: data.processing_status === 'held' || undefined,
     });
     if (uiStatus === 'indexed' || uiStatus === 'error') return;
     timer = setTimeout(tick, intervalMs);

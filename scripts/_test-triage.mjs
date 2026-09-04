@@ -20,6 +20,9 @@ const LIVE = [
   ['embed 400: { "error": { "message": "Invalid \'input\': maximum request size is 300000 tokens per request.", "typ', 'token_limit_400'],
   ['The upload did not finish, so there is no file to process. Please upload it again.', 'empty_file'],
   ['This file failed to process 1782 times and will not be retried automatically. It is stored and viewable, but i', 'retries_exhausted'],
+  // Interpolated numbers must not trip the loose '429' rule (review finding, 2026-09-04).
+  ['This file failed to process 1429 times and will not be retried automatically. It is stored and viewable.', 'retries_exhausted'],
+  ['Scanned PDF — OCR not configured (429 page(s), 31 chars of text). Set GOOGLE_API_KEY where this ingest runs, then Retry.', 'ocr_needed'],
   ['insert passages: canceling statement due to statement timeout', 'db_timeout'],
   ['Scanned PDF — OCR not configured (12 page(s), 31 chars of text). Set GOOGLE_API_KEY where this ingest runs, then Retry.', 'ocr_needed'],
   ['', 'other'],

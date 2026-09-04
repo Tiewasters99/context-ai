@@ -41,4 +41,4 @@ export interface UploadRefusal {
   code: 'too_large' | 'unsupported';
   message: string;
 }
-export function checkUpload(file: { name: string; size: number }): UploadRefusal | null;
+export function checkUpload(file: { name: string; size: number }, opts?: { zip?: boolean }): UploadRefusal | null;

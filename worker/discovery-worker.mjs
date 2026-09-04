@@ -549,11 +549,14 @@ async function ingestDocument(job) {
   if (!docId) throw new Error('ingest_document: payload.document_id missing');
 
   const { data: doc, error } = await supabase.from('documents')
-    .select('id, storage_path, source_filename, matterspace_id, processing_status')
+    .select('id, storage_path, source_filename, matterspace_id, processing_status, text_status:metadata->>text_status')
     .eq('id', docId).single();
   if (error) throw new Error(`document ${docId}: ${error.message}`);
   if (!doc.storage_path) throw new Error('document has no storage_path');
-  if (doc.processing_status === 'ready') { log(`  ${doc.source_filename}: already ready, skipping`); return; }
+  // A ready document with a recorded text_status is stored-without-text; a
+  // queued re-run of it is deliberate (OCR/transcription now wired). Only an
+  // indexed document is skipped.
+  if (doc.processing_status === 'ready' && !doc.text_status) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
 
   await progress(job, 5, `Downloading ${doc.source_filename}`);
   const fileBuf = await downloadFromBucket('vault-documents', doc.storage_path);

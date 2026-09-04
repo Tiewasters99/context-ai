@@ -42,8 +42,11 @@ function statusLabel(file: VaultFile): string {
   if (file.status === 'indexed') {
     return file.textStatus ? `Stored — ${describeTextStatus(file.textStatus).label}` : 'Ready';
   }
-  if (file.status === 'error') return file.errorMessage ? 'Failed' : 'Error';
+  if (file.status === 'error') return file.held ? 'Held' : file.errorMessage ? 'Failed' : 'Error';
   if (file.errorMessage) return 'Retrying…';
+  // Ephemeral mode (no matter): nothing is uploaded anywhere — the browser
+  // reads the file itself. Say that, not "Uploading".
+  if (!file.matterspace_id) return file.status === 'indexing' ? 'Extracting text…' : 'Queued…';
   if (!file.storagePath) return 'Uploading…';
   const stage = file.stage ? (stageLabel[file.stage] ?? file.stage) : (file.status === 'indexing' ? 'indexing for search' : 'starting');
   return `Uploaded — processing: ${stage}`;
@@ -52,9 +55,11 @@ function statusLabel(file: VaultFile): string {
 // Translate raw pipeline errors into something a user can act on. The raw
 // message is still available on hover (title attr) for debugging.
 function friendlyIngestError(msg: string): string {
-  // The worker's per-attempt notes ("Attempt 1 of 3 failed — …") are already
-  // written for people; pass them through untouched.
+  // The worker's per-attempt notes ("Attempt 1 of 3 failed — …") and the
+  // pipeline's own "Scanned PDF — OCR not configured …" are already written
+  // for people, fix included; pass them through untouched.
   if (/^Attempt \d+ of \d+ failed/.test(msg)) return msg;
+  if (/OCR not configured/i.test(msg)) return msg;
   const m = msg.toLowerCase();
   if (m.includes('dunning') || m.includes('billing blocked')) {
     return 'Google (Gemini) billing is blocked — pay the past-due balance in Google Cloud; this retries on its own.';
@@ -264,13 +269,17 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
           </p>
         )}
       </div>
-      {file.status === 'error' && onRetryFile && file.matterspace_id && (
+      {/* Retry on a failure; Re-run on a document stored without text (so a
+          scan can be re-OCR'd once OCR is available). Never on a 'held' row:
+          the SecureSpace refused the pipe and would refuse it again. */}
+      {onRetryFile && file.matterspace_id && !file.held &&
+        (file.status === 'error' || (file.status === 'indexed' && file.textStatus)) && (
         <button
           onClick={(e) => { e.stopPropagation(); onRetryFile(file.id); }}
           className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-[rgba(232,184,74,0.12)] text-[#e8b84a] hover:bg-[rgba(232,184,74,0.25)] transition-colors"
-          title="Re-run ingestion for this document"
+          title={file.status === 'error' ? 'Re-run ingestion for this document' : 'Run the pipeline again (for example after OCR or transcription was set up)'}
         >
-          <RefreshCw size={11} /> Retry
+          <RefreshCw size={11} /> {file.status === 'error' ? 'Retry' : 'Re-run'}
         </button>
       )}
       <button

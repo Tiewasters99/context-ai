@@ -28,6 +28,10 @@ export interface VaultFile {
    *  (documents.metadata.text_status — image_only, portfolio, …). Absent on
    *  documents that are actually indexed. */
   textStatus?: string;
+  /** Persistent mode: the SecureSpace refused to send this file to an
+   *  outside provider (documents.processing_status = 'held'). Terminal; the
+   *  reason is in errorMessage; a retry would be refused identically. */
+  held?: boolean;
   /** True for AI-generated drafts kept in the "Generated Documents" view
    *  (in-memory; never goes through Supabase). */
   generated?: boolean;
