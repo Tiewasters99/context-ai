@@ -37,7 +37,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { classifyError, summarize, describe } from '../lib/ingest-triage.mjs';
+import { classifyError, classifyTextStatus, TEXT_STATUS_CLASSES, summarize, describe } from '../lib/ingest-triage.mjs';
 import { JOB_PRIORITY, SUPPORTED_EXTENSIONS, IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../lib/ingest-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -49,7 +49,9 @@ const MUTED = {
   documents: [
     '82c752fa-0000-0000-0000-000000000000', // placeholder shape; see --mute-doc
   ],
-  reasons: ['no_text', 'duplicate_of_indexed', 'stored_without_text'],  // stored-and-viewable is their normal resting state
+  // stored-and-viewable is their normal resting state — including every
+  // row that RECORDED why it is empty (metadata.text_status, 2026-09-04).
+  reasons: ['no_text', 'duplicate_of_indexed', 'stored_without_text', ...TEXT_STATUS_CLASSES],
 };
 
 const TRANSIENT = ['pending', 'extracting', 'chunking', 'embedding'];
@@ -175,11 +177,36 @@ async function fetchReadyEmpty(sb, matterId) {
     rows.push(...(data || []));
     if (!data || data.length < 1000) break;
   }
-  return { rows: rows.filter((d) => !matterId || d.matterspace_id === matterId), note: null };
+  const scoped = rows.filter((d) => !matterId || d.matterspace_id === matterId);
+  await attachTextStatus(sb, scoped);
+  return { rows: scoped, note: null };
+}
+
+// The 059 RPC returns the raw fact (ready, zero passages) and nothing about
+// WHY. Since 2026-09-04 ingest-core records the why on the row as
+// metadata.text_status; read it here in batches so a row that said its reason
+// is classified by that reason, and only the rows that said nothing fall back
+// to the extension guess. Batched by id (200 per request, well under
+// PostgREST's URL limit) rather than a new migration.
+async function attachTextStatus(sb, rows) {
+  const byId = new Map(rows.map((r) => [r.document_id, r]));
+  const ids = [...byId.keys()];
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await sb.from('documents')
+      .select('id, text_status:metadata->>text_status')
+      .in('id', ids.slice(i, i + 200));
+    if (error) return;   // classification degrades to the extension guess
+    for (const d of data || []) {
+      const r = byId.get(d.id);
+      if (r && d.text_status) r.text_status = d.text_status;
+    }
+  }
 }
 
 function classifyEmpty(d) {
   if (d.has_indexed_twin) return 'duplicate_of_indexed';
+  const recorded = classifyTextStatus(d.text_status);
+  if (recorded) return recorded;
   return TEXT_BEARING.includes(extOf(d.source_filename)) ? 'ready_but_empty' : 'stored_without_text';
 }
 

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
+import { describeTextStatus } from '../../../lib/ingest-formats.mjs';
 import ContentSearch from './ContentSearch';
 
 interface ImportPanelProps {
@@ -22,19 +23,43 @@ const statusIcon = {
   error: <AlertCircle size={14} className="text-red-400" />,
 };
 
-const statusLabel = {
-  uploading: 'Uploading...',
-  indexing: 'Extracting text...',
-  indexed: 'Ready',
-  error: 'Error',
+// What the pipeline is doing, in the words a person would use. Keyed by
+// documents.processing_status (VaultFile.stage).
+const stageLabel: Record<string, string> = {
+  pending: 'queued',
+  extracting: 'extracting text',
+  chunking: 'splitting into passages',
+  embedding: 'indexing for search',
 };
+
+// The row's one-line status. Three honest states for a live upload, in order:
+//   Uploading…                          — the browser is still sending bytes
+//   Uploaded — processing: <stage>      — bytes landed; the server is at work
+//   Ready / Stored — <reason> / Error   — terminal
+// Before 2026-09-04 everything before 'embedding' read "Uploading..." — for
+// as long as forty-five minutes on a big scan, with the bytes long since safe.
+function statusLabel(file: VaultFile): string {
+  if (file.status === 'indexed') {
+    return file.textStatus ? `Stored — ${describeTextStatus(file.textStatus).label}` : 'Ready';
+  }
+  if (file.status === 'error') return file.held ? 'Held' : file.errorMessage ? 'Failed' : 'Error';
+  if (file.errorMessage) return 'Retrying…';
+  // Ephemeral mode (no matter): nothing is uploaded anywhere — the browser
+  // reads the file itself. Say that, not "Uploading".
+  if (!file.matterspace_id) return file.status === 'indexing' ? 'Extracting text…' : 'Queued…';
+  if (!file.storagePath) return 'Uploading…';
+  const stage = file.stage ? (stageLabel[file.stage] ?? file.stage) : (file.status === 'indexing' ? 'indexing for search' : 'starting');
+  return `Uploaded — processing: ${stage}`;
+}
 
 // Translate raw pipeline errors into something a user can act on. The raw
 // message is still available on hover (title attr) for debugging.
 function friendlyIngestError(msg: string): string {
-  // The worker's per-attempt notes ("Attempt 1 of 3 failed — …") are already
-  // written for people; pass them through untouched.
+  // The worker's per-attempt notes ("Attempt 1 of 3 failed — …") and the
+  // pipeline's own "Scanned PDF — OCR not configured …" are already written
+  // for people, fix included; pass them through untouched.
   if (/^Attempt \d+ of \d+ failed/.test(msg)) return msg;
+  if (/OCR not configured/i.test(msg)) return msg;
   const m = msg.toLowerCase();
   if (m.includes('dunning') || m.includes('billing blocked')) {
     return 'Google (Gemini) billing is blocked — pay the past-due balance in Google Cloud; this retries on its own.';
@@ -210,17 +235,27 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       }`}
       title={canOpen ? 'Open document' : file.matterspace_id ? 'Drag to a matter in the rail to move' : undefined}
     >
-      {statusIcon[file.status]}
+      {file.status === 'indexed' && file.textStatus
+        ? <CheckCircle size={14} className="text-white/35" />
+        : statusIcon[file.status]}
       <div className="flex-1 min-w-0">
         <p className={`text-[13px] truncate ${canOpen ? 'text-white group-hover:text-[#e8b84a] transition-colors' : 'text-white'}`}>{file.name}</p>
-        <p className="text-[10px] text-white/50">
-          {file.size} · {file.type.toUpperCase()} · {
-            file.status === 'uploading' && file.errorMessage ? 'Retrying...' : statusLabel[file.status]
-          }
+        <p
+          className="text-[10px] text-white/50"
+          title={file.status === 'indexed' && file.textStatus ? describeTextStatus(file.textStatus).detail : undefined}
+        >
+          {file.size} · {file.type.toUpperCase()} · {statusLabel(file)}
           {file.textContent && file.status === 'indexed' && (
             <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
           )}
         </p>
+        {/* Stored on purpose, with no searchable text: say why, in one line,
+            instead of a green "Ready" that reads as indexed. */}
+        {file.status === 'indexed' && file.textStatus && (
+          <p className="text-[10px] text-white/40 truncate">
+            {describeTextStatus(file.textStatus).detail}
+          </p>
+        )}
         {file.status === 'error' && file.errorMessage && (
           <p className="text-[10px] text-red-400/90 truncate" title={file.errorMessage}>
             {friendlyIngestError(file.errorMessage)}
@@ -234,13 +269,17 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
           </p>
         )}
       </div>
-      {file.status === 'error' && onRetryFile && file.matterspace_id && (
+      {/* Retry on a failure; Re-run on a document stored without text (so a
+          scan can be re-OCR'd once OCR is available). Never on a 'held' row:
+          the SecureSpace refused the pipe and would refuse it again. */}
+      {onRetryFile && file.matterspace_id && !file.held &&
+        (file.status === 'error' || (file.status === 'indexed' && file.textStatus)) && (
         <button
           onClick={(e) => { e.stopPropagation(); onRetryFile(file.id); }}
           className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-semibold bg-[rgba(232,184,74,0.12)] text-[#e8b84a] hover:bg-[rgba(232,184,74,0.25)] transition-colors"
-          title="Re-run ingestion for this document"
+          title={file.status === 'error' ? 'Re-run ingestion for this document' : 'Run the pipeline again (for example after OCR or transcription was set up)'}
         >
-          <RefreshCw size={11} /> Retry
+          <RefreshCw size={11} /> {file.status === 'error' ? 'Retry' : 'Re-run'}
         </button>
       )}
       <button

@@ -155,7 +155,10 @@ async function fetchScanned(matterId) {
       // post-OCR failures from a prior run (insert timeout / clone bug) so a
       // re-run with fixed code re-picks them. The .pdf filename filter below
       // keeps A/V and other binaries out.
-      .or('processing_error.ilike.no passages extracted%,processing_error.ilike.insert passages:%,processing_error.ilike.clone insert:%')
+      // "Scanned PDF — OCR not configured" is ingest-core's wording since
+      // 2026-09-04 for the same case (a PDF with no text layer ingested where
+      // no OCR hook was wired); the older three are kept for legacy rows.
+      .or('processing_error.ilike.no passages extracted%,processing_error.ilike.Scanned PDF — OCR not configured%,processing_error.ilike.insert passages:%,processing_error.ilike.clone insert:%')
       .range(from, from + 999);
     if (error) throw new Error(error.message);
     all = all.concat(data);

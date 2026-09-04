@@ -80,7 +80,7 @@ export default async function handler(req, res) {
   // Look up the document. RLS rejects this if the user doesn't have access.
   const { data: doc, error: docErr } = await sb
     .from('documents')
-    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes')
+    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes, text_status:metadata->>text_status')
     .eq('id', documentId)
     .maybeSingle();
   if (docErr) return json(res, 500, { error: `lookup: ${docErr.message}` });
@@ -88,7 +88,11 @@ export default async function handler(req, res) {
   if (!doc.storage_path) {
     return json(res, 400, { error: 'document has no storage_path; upload the file first' });
   }
-  if (doc.processing_status === 'ready') {
+  // 'ready' with a recorded text_status (image_only, media_no_transcript, …)
+  // is stored-without-text; a re-run from the Vault is how it gets another
+  // chance once OCR/transcription is available. Only an indexed document is
+  // "already ready".
+  if (doc.processing_status === 'ready' && !doc.text_status) {
     return json(res, 200, { ok: true, alreadyReady: true });
   }
 

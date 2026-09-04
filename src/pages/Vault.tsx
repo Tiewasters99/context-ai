@@ -19,11 +19,13 @@ import {
   resolveMatter,
   listMatterDocumentsRecursive,
   persistVaultFile,
+  checkUploadAdmissible,
   watchDocumentStatus,
   deleteVaultDocument,
   moveVaultDocument,
   triggerIngest,
   type MatterRef,
+  type DocumentStatusUpdate,
 } from '@/lib/vault-persist';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
@@ -226,6 +228,14 @@ export default function Vault() {
     }
   }, [matter, matterScope]);
 
+  // The one way a pipeline status update lands on a row. Every
+  // watchDocumentStatus subscription uses it, so a new field on
+  // DocumentStatusUpdate is applied in one place instead of four (the
+  // pre-2026-09-04 copies had already drifted: one dropped errorMessage).
+  const applyDocUpdate = useCallback((id: string) => (u: DocumentStatusUpdate) => {
+    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, ...u } : f));
+  }, []);
+
   // Hydrate the vault file list from the documents table when a matter loads.
   useEffect(() => {
     if (!matter || !matterScope) return;
@@ -237,11 +247,7 @@ export default function Vault() {
       // Resume polling for any docs that are still mid-pipeline.
       for (const f of files) {
         if (f.status === 'uploading' || f.status === 'indexing') {
-          cleanups.push(
-            watchDocumentStatus(f.id, (status, errorMessage) => {
-              setVaultFiles((prev) => prev.map((x) => x.id === f.id ? { ...x, status, errorMessage } : x));
-            })
-          );
+          cleanups.push(watchDocumentStatus(f.id, applyDocUpdate(f.id)));
         }
       }
     }).catch((err) => {
@@ -258,7 +264,7 @@ export default function Vault() {
       cancelled = true;
       cleanups.forEach((c) => c());
     };
-  }, [matter, matterScope]);
+  }, [matter, matterScope, applyDocUpdate]);
 
   const formatSize = (bytes: number) =>
     bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
@@ -314,43 +320,71 @@ export default function Vault() {
 
     // Persistent mode — upload + ingest via Supabase, poll for status.
     if (matter) {
+      // Refusals are decided before any bytes move (size over the cap, a
+      // type the pipeline cannot read, a duplicate of a filed copy) and
+      // reported together in one notice, in plain words, naming each file.
+      const refused: string[] = [];
       for (const file of arr) {
+        const refusal = await checkUploadAdmissible(matter, file);
+        if (refusal) {
+          refused.push(refusal.message);
+          continue;
+        }
+        // The row exists from the moment the send begins, so "Uploading…"
+        // is literally true: no storagePath until the bytes have landed.
+        const placeholderId = crypto.randomUUID();
+        const base: VaultFile = {
+          id: placeholderId,
+          name: file.name,
+          path: file.name,
+          size: formatSize(file.size),
+          sizeBytes: file.size,
+          type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
+          file,
+          status: 'uploading',
+          matterspace_id: matter.id,
+          matterspace_name: matter.name,
+        };
+        setVaultFiles((prev) => [base, ...prev]);
         try {
           const { documentId, storagePath } = await persistVaultFile(matter, file);
-          const stub: VaultFile = {
-            id: documentId,
-            name: file.name,
-            path: file.name,
-            size: formatSize(file.size),
-            sizeBytes: file.size,
-            type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
-            file,
-            status: 'uploading',
-            matterspace_id: matter.id,
-            matterspace_name: matter.name,
-            storagePath,
-          };
-          setVaultFiles((prev) => [stub, ...prev]);
+          // The hydrate effect replaces the whole list whenever the matter
+          // tree refreshes; if that happened mid-upload the placeholder is
+          // gone, and the real row must be added rather than mapped onto
+          // nothing (the document exists now; it must not vanish until reload).
+          const landed: VaultFile = { ...base, id: documentId, storagePath, stage: 'pending' };
+          setVaultFiles((prev) => prev.some((f) => f.id === placeholderId)
+            ? prev.map((f) => (f.id === placeholderId ? landed : f))
+            : prev.some((f) => f.id === documentId) ? prev : [landed, ...prev]);
           // Poll until terminal — self-stops on ready/error.
-          watchDocumentStatus(documentId, (status, errorMessage) => {
-            setVaultFiles((prev) =>
-              prev.map((f) => f.id === documentId ? { ...f, status, errorMessage } : f)
-            );
-          });
+          watchDocumentStatus(documentId, applyDocUpdate(documentId));
         } catch (err: any) {
           console.error('persistVaultFile:', err.message);
-          setVaultFiles((prev) => [{
-            id: crypto.randomUUID(),
-            name: file.name,
-            path: file.name,
-            size: formatSize(file.size),
-            sizeBytes: file.size,
-            type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
-            file,
-            status: 'error',
-            textContent: `[Upload failed: ${err.message}]`,
-          }, ...prev]);
+          // No document exists behind this row (the insert was rolled back
+          // or never happened), so it must not carry matterspace_id: that is
+          // what offers Retry, and a retry would POST a nonexistent id.
+          setVaultFiles((prev) => prev.map((f) =>
+            f.id === placeholderId
+              ? {
+                  ...f,
+                  matterspace_id: undefined,
+                  matterspace_name: undefined,
+                  status: 'error' as const,
+                  errorMessage: `Upload failed: ${err.message}. Choose the file again to retry.`,
+                  textContent: `[Upload failed: ${err.message}]`,
+                }
+              : f,
+          ));
         }
+      }
+      if (refused.length) {
+        const shown = refused.slice(0, 3);
+        const more = refused.length - shown.length;
+        setVaultNotice({
+          kind: 'warn',
+          text: `${refused.length === 1 ? 'One file was' : `${refused.length} files were`} not uploaded. ` +
+            shown.join(' ') + (more > 0 ? ` …and ${more} more.` : ''),
+        });
       }
       return;
     }
@@ -378,20 +412,25 @@ export default function Vault() {
         setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'error', textContent: `[Failed to extract text from ${nf.name}]` } : f));
       }
     }
-  }, [matter]);
+  }, [matter, applyDocUpdate]);
 
   // Re-run server-side ingestion for a document that errored (e.g. a scanned
   // PDF that failed before OCR was wired, or a transient embed failure). Flips
   // the row back to "uploading" locally, fires /api/ingest, and re-polls.
   const retryVaultFile = useCallback((id: string) => {
-    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', errorMessage: undefined } : f));
+    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', stage: 'pending', errorMessage: undefined, textStatus: undefined } : f));
     triggerIngest(id).catch((err) => console.error('retry ingest:', err.message));
-    watchDocumentStatus(id, (status, errorMessage) => {
-      setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status, errorMessage } : f));
-    });
-  }, []);
+    watchDocumentStatus(id, applyDocUpdate(id));
+  }, [applyDocUpdate]);
 
   const removeVaultFile = useCallback((id: string) => {
+    // A row with no document behind it (a failed upload's placeholder) is
+    // local state only; deleting it server-side would fail and keep it.
+    const row = vaultFiles.find((f) => f.id === id);
+    if (matter && row && !row.matterspace_id) {
+      setVaultFiles((prev) => prev.filter((f) => f.id !== id));
+      return;
+    }
     if (matter) {
       // Persistent mode — delete from DB + storage. The row only leaves the
       // list when the delete actually succeeded; a failed delete keeps the
@@ -406,7 +445,7 @@ export default function Vault() {
       return;
     }
     setVaultFiles((prev) => prev.filter((f) => f.id !== id));
-  }, [matter]);
+  }, [matter, vaultFiles]);
 
   // After an in-editor save: update the in-memory copy (text + bytes so a
   // re-open shows the edit). For a real persistent document, follow the
@@ -425,11 +464,9 @@ export default function Vault() {
       f.id === fileId ? { ...f, textContent: text, file: bytes, status: persisting ? 'uploading' : f.status } : f
     ));
     if (persisting) {
-      watchDocumentStatus(fileId, (status) => {
-        setVaultFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status } : f));
-      });
+      watchDocumentStatus(fileId, applyDocUpdate(fileId));
     }
-  }, [matter, openFile]);
+  }, [matter, openFile, applyDocUpdate]);
 
   // Stash an AI Workbench output as an editable draft under Generated Documents.
   const addGeneratedDoc = useCallback((name: string, content: string) => {
