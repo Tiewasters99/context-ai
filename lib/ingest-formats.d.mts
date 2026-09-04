@@ -20,7 +20,9 @@ export type TextStatus =
   | 'portfolio'
   | 'media_no_transcript'
   | 'binary_stored'
-  | 'unsupported';
+  | 'unsupported'
+  | 'ocr_pending'
+  | 'archive';
 
 export const TEXT_STATUS: Readonly<{
   IMAGE_ONLY: 'image_only';
@@ -29,9 +31,26 @@ export const TEXT_STATUS: Readonly<{
   MEDIA_NO_TRANSCRIPT: 'media_no_transcript';
   BINARY_STORED: 'binary_stored';
   UNSUPPORTED: 'unsupported';
+  OCR_PENDING: 'ocr_pending';
+  ARCHIVE: 'archive';
 }>;
 
 export function describeTextStatus(status: string | null | undefined): { label: string; detail: string };
+
+/** documents.metadata.ocr_pending — pages a PDF still owes OCR, and why. */
+export interface OcrPending {
+  pages: number[];
+  page_count?: number | null;
+  reason?: string;
+  at?: string;
+  attempts?: number;
+  next_retry_at?: string | null;
+  held?: boolean;
+  exhausted?: boolean;
+}
+export const OCR_RETRY_DELAYS_MS: readonly number[];
+export function ocrRetryDelayMs(attempts: number | null | undefined): number | null;
+export function describeOcrPending(pending: OcrPending | null | undefined): { label: string; detail: string } | null;
 
 export function extOf(name: string | null | undefined): string;
 export function formatBytes(n: number | null | undefined): string;

@@ -74,20 +74,17 @@ ok('unsupported: names the extension, lists the supported types, hints for .doc'
 assert.strictEqual(checkUpload({ name: 'x.exe', size: VAULT_MAX_BYTES + 1 }).code, 'too_large');
 ok('size outranks type');
 
-// .zip is accepted only where archives get expanded (the web Vault). The MCP
-// file_document path passes zip:false and gets a refusal that says why, and
-// its supported-types list no longer advertises archives.
-assert.strictEqual(checkUpload({ name: 'production.zip', size: 10 }, { zip: true }), null);
-const z = checkUpload({ name: 'production.zip', size: 10 }, { zip: false });
-assert.strictEqual(z.code, 'unsupported');
-assert.match(z.message, /\.zip archive, which this path does not unpack/);
-assert.doesNotMatch(z.message, /zip archives of those/);
-assert.doesNotMatch(checkUpload({ name: 'x.exe', size: 10 }, { zip: false }).message, /zip archives/);
-ok('zip: accepted with expansion, refused with a reason without it');
+// .zip is accepted on every path since Phase 3: the web Vault expands it in
+// the browser, everything else unpacks it at ingest. The old zip:false
+// option is tolerated and changes nothing.
+assert.strictEqual(checkUpload({ name: 'production.zip', size: 10 }), null);
+assert.strictEqual(checkUpload({ name: 'production.zip', size: 10 }, { zip: false }), null);
+assert.match(checkUpload({ name: 'x.exe', size: 10 }, { zip: false }).message, /zip archives of those/);
+ok('zip: accepted everywhere (unpacked at ingest where the browser did not)');
 
 // --- text_status vocabulary ---------------------------------------------------
 assert.deepStrictEqual(Object.values(TEXT_STATUS).sort(),
-  ['binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'portfolio', 'unsupported']);
+  ['archive', 'binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'ocr_pending', 'portfolio', 'unsupported']);
 for (const s of Object.values(TEXT_STATUS)) {
   const d = describeTextStatus(s);
   assert(d.label && d.label.length > 8, `${s} label`);
@@ -100,7 +97,11 @@ assert.match(unknown.detail, /something_new/);
 ok('every text_status has a plain label + detail; unknown values still render');
 
 // --- triage mapping -----------------------------------------------------------
+// Every stored-with-a-reason status is a benign, muted stored_* class — except
+// ocr_pending (Phase 2), which is transient and must surface: it is checked
+// on its own below.
 for (const s of Object.values(TEXT_STATUS)) {
+  if (s === TEXT_STATUS.OCR_PENDING) continue;
   const cls = classifyTextStatus(s);
   assert(TEXT_STATUS_CLASSES.includes(cls), `${s} → ${cls} is a listed class`);
   assert.strictEqual(describe(cls).severity, 'benign', `${cls} is benign`);
@@ -108,6 +109,9 @@ for (const s of Object.values(TEXT_STATUS)) {
   assert(describe(cls).action.length > 30, `${cls} has an action`);
 }
 assert.strictEqual(classifyTextStatus(null), null);
+assert.strictEqual(classifyTextStatus(TEXT_STATUS.OCR_PENDING), 'ocr_pending');
+assert(!TEXT_STATUS_CLASSES.includes('ocr_pending'), 'ocr_pending is not a muted stored_* class');
+assert.strictEqual(describe('ocr_pending').severity, 'transient', 'a scan awaiting OCR is transient, not benign');
 assert.strictEqual(classifyTextStatus(''), null);
 assert.strictEqual(classifyTextStatus('future_value'), 'stored_without_text');
 ok('classifyTextStatus: six benign classes, null for none, generic for unknown');

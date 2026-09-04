@@ -13,6 +13,7 @@ import type { VaultFile } from './vault-types';
 // The pipeline's own accepted-types list and storage cap (lib/ingest-formats.mjs
 // is dependency-free and shared with the Node side), so the pre-upload
 // refusals here can never drift from what /api/ingest actually handles.
+import type { OcrPending } from '../../lib/ingest-formats.mjs';
 import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
 
 export interface MatterRef {
@@ -95,7 +96,7 @@ export async function listMatterDocuments(matterspaceId: string): Promise<VaultF
   const data = await withRetries('list documents', () =>
     supabase
       .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status')
+      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
       .eq('matterspace_id', matterspaceId)
       .order('created_at', { ascending: false }),
   );
@@ -112,7 +113,7 @@ export async function listMatterDocumentsRecursive(
   const data = await withRetries('list documents', () =>
     supabase
       .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status')
+      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
       .in('matterspace_id', matterIds)
       .order('created_at', { ascending: false }),
   );
@@ -129,6 +130,8 @@ function documentToVaultFile(doc: {
   matterspace_id?: string;
   storage_path?: string | null;
   text_status?: string | null;
+  /** metadata->ocr_pending arrives typed as Json; narrowed below. */
+  ocr_pending?: unknown;
 }, matterspace_name?: string): VaultFile {
   const name = doc.source_filename || doc.title || 'Untitled';
   const sizeBytes = doc.file_size_bytes || 0;
@@ -151,6 +154,8 @@ function documentToVaultFile(doc: {
     matterspace_name,
     storagePath: doc.storage_path ?? undefined,
     textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
+    ocrPending: doc.processing_status === 'ready' && doc.ocr_pending && typeof doc.ocr_pending === 'object'
+      ? (doc.ocr_pending as OcrPending) : undefined,
   };
 }
 
@@ -307,6 +312,8 @@ export interface DocumentStatusUpdate {
   stage?: string;
   /** Recorded reason for a ready document with no text (VaultFile.textStatus). */
   textStatus?: string;
+  /** Pages a ready PDF still owes OCR (VaultFile.ocrPending). */
+  ocrPending?: OcrPending;
   /** True when the SecureSpace held the document (VaultFile.held). */
   held?: boolean;
 }
@@ -323,7 +330,7 @@ export function watchDocumentStatus(
     if (stopped) return;
     const { data, error } = await supabase
       .from('documents')
-      .select('processing_status, processing_error, text_status:metadata->>text_status')
+      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
       .eq('id', documentId)
       .maybeSingle();
     if (stopped) return;
@@ -337,6 +344,8 @@ export function watchDocumentStatus(
       errorMessage: data.processing_error || undefined,
       stage: stageOf(data.processing_status),
       textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
+      ocrPending: data.processing_status === 'ready' && typeof (data as { ocr_pending?: unknown }).ocr_pending === 'object'
+        ? ((data as { ocr_pending?: OcrPending | null }).ocr_pending ?? undefined) : undefined,
       held: data.processing_status === 'held' || undefined,
     });
     if (uiStatus === 'indexed' || uiStatus === 'error') return;

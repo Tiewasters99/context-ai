@@ -1,3 +1,5 @@
+import type { OcrPending } from '../../lib/ingest-formats.mjs';
+
 export interface VaultFile {
   id: string;
   name: string;
@@ -28,6 +30,11 @@ export interface VaultFile {
    *  (documents.metadata.text_status — image_only, portfolio, …). Absent on
    *  documents that are actually indexed. */
   textStatus?: string;
+  /** Persistent mode: pages a ready PDF still owes OCR, with the reason and
+   *  the retry state (documents.metadata.ocr_pending). Present beside real
+   *  passages — "Ready — 3 pages awaiting OCR" — or beside textStatus
+   *  'ocr_pending' when nothing has been read yet. */
+  ocrPending?: OcrPending;
   /** Persistent mode: the SecureSpace refused to send this file to an
    *  outside provider (documents.processing_status = 'held'). Terminal; the
    *  reason is in errorMessage; a retry would be refused identically. */

@@ -80,6 +80,13 @@ const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MINUTES ?? 120) * 60_000;
 const RECOVER_EVERY_MS = 15 * 60_000;
 const RECOVER_IDLE_MINUTES = 15;
 
+// How often the idle loop looks for documents whose scanned pages are still
+// awaiting OCR (documents.metadata.ocr_pending, Phase 2) and whose retry time
+// has come. The retry SCHEDULE lives on the row (next_retry_at, set by
+// ingest-core from ingest-formats' OCR_RETRY_DELAYS_MS); this is only how
+// promptly a due retry is noticed.
+const OCR_RETRY_SWEEP_MS = 5 * 60_000;
+
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -93,12 +100,14 @@ if (args.intake) {
 
 log(`Discovery worker ${WORKER_ID} started (poll ${POLL_MS}ms${args.once ? ', --once' : ''})`);
 let lastRecoverAt = 0;
+let lastOcrSweepAt = 0;
 
 for (;;) {
   const job = await claimJob();
   if (!job) {
     if (args.once) break;
     await recoverStrandedIfDue();
+    await requeueOcrPendingIfDue();
     await sleep(POLL_MS);
     continue;
   }
@@ -291,6 +300,54 @@ async function recoverStrandedIfDue() {
   });
   if (error) { log(`recover_stranded_documents failed: ${error.message}`); return; }
   if (data) log(`recovered ${data} stranded document(s) back into the queue`);
+}
+
+// Documents whose scanned pages are still awaiting OCR (metadata.ocr_pending,
+// Phase 2 of the ingestion plan, 2026-09-04). When OCR fails, processDocument
+// no longer fails the document: it indexes the typed pages and records the
+// scanned ones — which pages, why, and a next_retry_at on the schedule in
+// ingest-formats (5 min, 15 min, 1 h, 3 h, 6 h, then give up). Nothing in the
+// queue remembers them, because processing_jobs has no run-after column; the
+// idle loop does. Any ready document whose retry time has passed gets one
+// ingest_document job (deduped against jobs in flight), and the full re-run
+// re-reads the file, OCRs the waiting pages and re-embeds — cheap next to a
+// second table for partial passages. Held records (the SecureSpace seal) wait
+// for a sealed route; exhausted ones wait for a person. Idle-only, like the
+// stranded sweep: it never competes with real work.
+async function requeueOcrPendingIfDue() {
+  if (Date.now() - lastOcrSweepAt < OCR_RETRY_SWEEP_MS) return;
+  lastOcrSweepAt = Date.now();
+  const { data, error } = await supabase.from('documents')
+    .select('id, matterspace_id, source_filename, ocr_pending:metadata->ocr_pending')
+    .eq('processing_status', 'ready')
+    .not('metadata->ocr_pending', 'is', null)
+    .limit(500);
+  if (error) { log(`ocr_pending sweep failed: ${error.message}`); return; }
+  const now = Date.now();
+  const due = (data || []).filter((d) => {
+    const p = d.ocr_pending;
+    if (!p || typeof p !== 'object' || p.held || p.exhausted || !p.next_retry_at) return false;
+    return new Date(p.next_retry_at).getTime() <= now;
+  });
+  if (!due.length) return;
+  let queued = 0;
+  for (const d of due) {
+    const { data: inflight } = await supabase.from('processing_jobs')
+      .select('id').eq('job_type', 'ingest_document').in('status', ['queued', 'running'])
+      .contains('payload', { document_id: d.id }).limit(1);
+    if (inflight?.length) continue;
+    const { error: qErr } = await supabase.from('processing_jobs').insert({
+      matterspace_id: d.matterspace_id,
+      job_type: 'ingest_document',
+      payload: { document_id: d.id, ocr_retry: (Number(d.ocr_pending.attempts) || 0) + 1 },
+    });
+    if (qErr) { log(`  ocr retry enqueue failed for ${d.source_filename}: ${qErr.message}`); continue; }
+    await supabase.from('documents')
+      .update({ processing_status: 'pending', processing_error: null })
+      .eq('id', d.id);
+    queued++;
+  }
+  if (queued) log(`ocr_pending sweep: queued ${queued} document(s) for another OCR attempt`);
 }
 
 // ---------------------------------------------------------------------------
@@ -549,14 +606,15 @@ async function ingestDocument(job) {
   if (!docId) throw new Error('ingest_document: payload.document_id missing');
 
   const { data: doc, error } = await supabase.from('documents')
-    .select('id, storage_path, source_filename, matterspace_id, processing_status, text_status:metadata->>text_status')
+    .select('id, storage_path, source_filename, matterspace_id, processing_status, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
     .eq('id', docId).single();
   if (error) throw new Error(`document ${docId}: ${error.message}`);
   if (!doc.storage_path) throw new Error('document has no storage_path');
-  // A ready document with a recorded text_status is stored-without-text; a
-  // queued re-run of it is deliberate (OCR/transcription now wired). Only an
-  // indexed document is skipped.
-  if (doc.processing_status === 'ready' && !doc.text_status) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
+  // A ready document with a recorded text_status is stored-without-text, and
+  // one with ocr_pending still owes OCR on some pages; a queued re-run of
+  // either is deliberate. Only a fully indexed document is skipped.
+  if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
+  if (job.payload?.ocr_retry) log(`  ${doc.source_filename}: OCR retry ${job.payload.ocr_retry} for ${Array.isArray(doc.ocr_pending?.pages) ? doc.ocr_pending.pages.length + ' page(s)' : 'the scan'}`);
 
   await progress(job, 5, `Downloading ${doc.source_filename}`);
   const fileBuf = await downloadFromBucket('vault-documents', doc.storage_path);
