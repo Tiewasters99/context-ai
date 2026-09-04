@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
 import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
+import { describeTextStatus } from '../../../lib/ingest-formats.mjs';
 import ContentSearch from './ContentSearch';
 
 interface ImportPanelProps {
@@ -22,12 +23,31 @@ const statusIcon = {
   error: <AlertCircle size={14} className="text-red-400" />,
 };
 
-const statusLabel = {
-  uploading: 'Uploading...',
-  indexing: 'Extracting text...',
-  indexed: 'Ready',
-  error: 'Error',
+// What the pipeline is doing, in the words a person would use. Keyed by
+// documents.processing_status (VaultFile.stage).
+const stageLabel: Record<string, string> = {
+  pending: 'queued',
+  extracting: 'extracting text',
+  chunking: 'splitting into passages',
+  embedding: 'indexing for search',
 };
+
+// The row's one-line status. Three honest states for a live upload, in order:
+//   Uploading…                          — the browser is still sending bytes
+//   Uploaded — processing: <stage>      — bytes landed; the server is at work
+//   Ready / Stored — <reason> / Error   — terminal
+// Before 2026-09-04 everything before 'embedding' read "Uploading..." — for
+// as long as forty-five minutes on a big scan, with the bytes long since safe.
+function statusLabel(file: VaultFile): string {
+  if (file.status === 'indexed') {
+    return file.textStatus ? `Stored — ${describeTextStatus(file.textStatus).label}` : 'Ready';
+  }
+  if (file.status === 'error') return file.errorMessage ? 'Failed' : 'Error';
+  if (file.errorMessage) return 'Retrying…';
+  if (!file.storagePath) return 'Uploading…';
+  const stage = file.stage ? (stageLabel[file.stage] ?? file.stage) : (file.status === 'indexing' ? 'indexing for search' : 'starting');
+  return `Uploaded — processing: ${stage}`;
+}
 
 // Translate raw pipeline errors into something a user can act on. The raw
 // message is still available on hover (title attr) for debugging.
@@ -210,17 +230,27 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       }`}
       title={canOpen ? 'Open document' : file.matterspace_id ? 'Drag to a matter in the rail to move' : undefined}
     >
-      {statusIcon[file.status]}
+      {file.status === 'indexed' && file.textStatus
+        ? <CheckCircle size={14} className="text-white/35" />
+        : statusIcon[file.status]}
       <div className="flex-1 min-w-0">
         <p className={`text-[13px] truncate ${canOpen ? 'text-white group-hover:text-[#e8b84a] transition-colors' : 'text-white'}`}>{file.name}</p>
-        <p className="text-[10px] text-white/50">
-          {file.size} · {file.type.toUpperCase()} · {
-            file.status === 'uploading' && file.errorMessage ? 'Retrying...' : statusLabel[file.status]
-          }
+        <p
+          className="text-[10px] text-white/50"
+          title={file.status === 'indexed' && file.textStatus ? describeTextStatus(file.textStatus).detail : undefined}
+        >
+          {file.size} · {file.type.toUpperCase()} · {statusLabel(file)}
           {file.textContent && file.status === 'indexed' && (
             <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
           )}
         </p>
+        {/* Stored on purpose, with no searchable text: say why, in one line,
+            instead of a green "Ready" that reads as indexed. */}
+        {file.status === 'indexed' && file.textStatus && (
+          <p className="text-[10px] text-white/40 truncate">
+            {describeTextStatus(file.textStatus).detail}
+          </p>
+        )}
         {file.status === 'error' && file.errorMessage && (
           <p className="text-[10px] text-red-400/90 truncate" title={file.errorMessage}>
             {friendlyIngestError(file.errorMessage)}

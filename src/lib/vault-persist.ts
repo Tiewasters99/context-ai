@@ -10,6 +10,10 @@
 
 import { supabase } from './supabase';
 import type { VaultFile } from './vault-types';
+// The pipeline's own accepted-types list and storage cap (lib/ingest-formats.mjs
+// is dependency-free and shared with the Node side), so the pre-upload
+// refusals here can never drift from what /api/ingest actually handles.
+import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
 
 export interface MatterRef {
   id: string;
@@ -91,7 +95,7 @@ export async function listMatterDocuments(matterspaceId: string): Promise<VaultF
   const data = await withRetries('list documents', () =>
     supabase
       .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
+      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status')
       .eq('matterspace_id', matterspaceId)
       .order('created_at', { ascending: false }),
   );
@@ -108,7 +112,7 @@ export async function listMatterDocumentsRecursive(
   const data = await withRetries('list documents', () =>
     supabase
       .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path')
+      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status')
       .in('matterspace_id', matterIds)
       .order('created_at', { ascending: false }),
   );
@@ -124,6 +128,7 @@ function documentToVaultFile(doc: {
   processing_error: string | null;
   matterspace_id?: string;
   storage_path?: string | null;
+  text_status?: string | null;
 }, matterspace_name?: string): VaultFile {
   const name = doc.source_filename || doc.title || 'Untitled';
   const sizeBytes = doc.file_size_bytes || 0;
@@ -139,25 +144,78 @@ function documentToVaultFile(doc: {
     // server already has the bytes; the UI never reads .file in this mode.
     file: new File([], name),
     status: mapStatus(doc.processing_status),
+    stage: stageOf(doc.processing_status),
     errorMessage: doc.processing_error ?? undefined,
     matterspace_id: doc.matterspace_id,
     matterspace_name,
     storagePath: doc.storage_path ?? undefined,
+    textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
   };
 }
+
+// The pipeline's non-terminal stages, in order. Anything else non-terminal
+// is unknown to this build and shown by its raw name.
+const PIPELINE_STAGES = ['pending', 'extracting', 'chunking', 'embedding'];
 
 function mapStatus(s: string): VaultFile['status'] {
   if (s === 'ready') return 'indexed';
   if (s === 'error') return 'error';
+  // 'held' (lib/seal-pipes.mjs): a SecureSpace refused to send this file to
+  // an outside provider. Terminal, with the reason in processing_error —
+  // before this it mapped to 'uploading' and spun forever.
+  if (s === 'held') return 'error';
   if (s === 'embedding') return 'indexing';
-  // pending, extracting, chunking → uploading bucket from the UI's POV
+  // pending, extracting, chunking → uploading bucket from the UI's POV; the
+  // stage itself travels alongside (stageOf) so the label can say which.
   return 'uploading';
+}
+
+function stageOf(s: string): string | undefined {
+  if (s === 'ready' || s === 'error' || s === 'held') return undefined;
+  return PIPELINE_STAGES.includes(s) ? s : s || undefined;
 }
 
 function formatSize(bytes: number): string {
   if (bytes > 1073741824) return `${(bytes / 1073741824).toFixed(1)} GB`;
   if (bytes > 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
   return `${(bytes / 1024).toFixed(0)} KB`;
+}
+
+
+// -----------------------------------------------------------------------------
+// Pre-upload admissibility — decided at SELECTION time, before any bytes move.
+// Three refusals, each with a message written for the person who chose the
+// file: over the storage cap, a type the pipeline cannot read, and a duplicate
+// (same matter + filename + size — refused, not linked: Eden's decision,
+// 2026-09-04, and the answer names the copy that already exists).
+// -----------------------------------------------------------------------------
+export type VaultRefusal = UploadRefusal | { code: 'duplicate'; message: string; existingId: string };
+
+export async function checkUploadAdmissible(matter: MatterRef, file: File): Promise<VaultRefusal | null> {
+  const local = checkUpload({ name: file.name, size: file.size });
+  if (local) return local;
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, title, created_at, processing_status')
+    .eq('matterspace_id', matter.id)
+    .eq('source_filename', file.name)
+    .eq('file_size_bytes', file.size)
+    .order('created_at', { ascending: true })
+    .limit(1);
+  // A failed lookup must not block the upload: the server-side paths keep
+  // their own guard, and "couldn't check" is not "is a duplicate".
+  if (error || !data || data.length === 0) return null;
+  const dup = data[0];
+  const when = dup.created_at
+    ? new Date(dup.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+    : 'an earlier date';
+  const state = dup.processing_status === 'error' ? ' (that copy failed — use Retry on it)' : '';
+  return {
+    code: 'duplicate',
+    existingId: dup.id,
+    message: `"${file.name}" is already filed as "${dup.title || file.name}" on ${when}${state}. ` +
+      'Use that copy, or delete it first to replace it.',
+  };
 }
 
 
@@ -237,9 +295,18 @@ export async function persistVaultFile(
 // Poll a document's status until it reaches a terminal state (ready/error).
 // Returns a cleanup function that stops the poll early.
 // -----------------------------------------------------------------------------
+export interface DocumentStatusUpdate {
+  status: VaultFile['status'];
+  errorMessage?: string;
+  /** Raw pipeline stage while non-terminal (see VaultFile.stage). */
+  stage?: string;
+  /** Recorded reason for a ready document with no text (VaultFile.textStatus). */
+  textStatus?: string;
+}
+
 export function watchDocumentStatus(
   documentId: string,
-  onUpdate: (status: VaultFile['status'], errorMessage?: string) => void,
+  onUpdate: (update: DocumentStatusUpdate) => void,
   intervalMs = 2000
 ): () => void {
   let stopped = false;
@@ -249,16 +316,21 @@ export function watchDocumentStatus(
     if (stopped) return;
     const { data, error } = await supabase
       .from('documents')
-      .select('processing_status, processing_error')
+      .select('processing_status, processing_error, text_status:metadata->>text_status')
       .eq('id', documentId)
       .maybeSingle();
     if (stopped) return;
     if (error || !data) {
-      onUpdate('error', error?.message || 'document disappeared');
+      onUpdate({ status: 'error', errorMessage: error?.message || 'document disappeared' });
       return;
     }
     const uiStatus = mapStatus(data.processing_status);
-    onUpdate(uiStatus, data.processing_error || undefined);
+    onUpdate({
+      status: uiStatus,
+      errorMessage: data.processing_error || undefined,
+      stage: stageOf(data.processing_status),
+      textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
+    });
     if (uiStatus === 'indexed' || uiStatus === 'error') return;
     timer = setTimeout(tick, intervalMs);
   };

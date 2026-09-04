@@ -292,7 +292,7 @@ export async function exportReading(
     onProgress(`Indexing ${d.name}…`);
     await new Promise<void>((resolve, reject) => {
       const stopAt = Date.now() + 120_000;
-      const stop = watchDocumentStatus(documentId, (status, errorMessage) => {
+      const stop = watchDocumentStatus(documentId, ({ status, errorMessage }) => {
         if (status === 'indexed') { stop(); resolve(); }
         else if (status === 'error') { stop(); reject(new Error(errorMessage || 'Ingestion failed.')); }
         else if (Date.now() > stopAt) { stop(); resolve(); /* still processing; it will finish */ }

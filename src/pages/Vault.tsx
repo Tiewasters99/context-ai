@@ -19,6 +19,7 @@ import {
   resolveMatter,
   listMatterDocumentsRecursive,
   persistVaultFile,
+  checkUploadAdmissible,
   watchDocumentStatus,
   deleteVaultDocument,
   moveVaultDocument,
@@ -238,8 +239,8 @@ export default function Vault() {
       for (const f of files) {
         if (f.status === 'uploading' || f.status === 'indexing') {
           cleanups.push(
-            watchDocumentStatus(f.id, (status, errorMessage) => {
-              setVaultFiles((prev) => prev.map((x) => x.id === f.id ? { ...x, status, errorMessage } : x));
+            watchDocumentStatus(f.id, ({ status, errorMessage, stage, textStatus }) => {
+              setVaultFiles((prev) => prev.map((x) => x.id === f.id ? { ...x, status, errorMessage, stage, textStatus } : x));
             })
           );
         }
@@ -314,43 +315,60 @@ export default function Vault() {
 
     // Persistent mode — upload + ingest via Supabase, poll for status.
     if (matter) {
+      // Refusals are decided before any bytes move (size over the cap, a
+      // type the pipeline cannot read, a duplicate of a filed copy) and
+      // reported together in one notice, in plain words, naming each file.
+      const refused: string[] = [];
       for (const file of arr) {
+        const refusal = await checkUploadAdmissible(matter, file);
+        if (refusal) {
+          refused.push(refusal.message);
+          continue;
+        }
+        // The row exists from the moment the send begins, so "Uploading…"
+        // is literally true: no storagePath until the bytes have landed.
+        const placeholderId = crypto.randomUUID();
+        const base: VaultFile = {
+          id: placeholderId,
+          name: file.name,
+          path: file.name,
+          size: formatSize(file.size),
+          sizeBytes: file.size,
+          type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
+          file,
+          status: 'uploading',
+          matterspace_id: matter.id,
+          matterspace_name: matter.name,
+        };
+        setVaultFiles((prev) => [base, ...prev]);
         try {
           const { documentId, storagePath } = await persistVaultFile(matter, file);
-          const stub: VaultFile = {
-            id: documentId,
-            name: file.name,
-            path: file.name,
-            size: formatSize(file.size),
-            sizeBytes: file.size,
-            type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
-            file,
-            status: 'uploading',
-            matterspace_id: matter.id,
-            matterspace_name: matter.name,
-            storagePath,
-          };
-          setVaultFiles((prev) => [stub, ...prev]);
+          setVaultFiles((prev) => prev.map((f) =>
+            f.id === placeholderId ? { ...f, id: documentId, storagePath, stage: 'pending' } : f,
+          ));
           // Poll until terminal — self-stops on ready/error.
-          watchDocumentStatus(documentId, (status, errorMessage) => {
+          watchDocumentStatus(documentId, ({ status, errorMessage, stage, textStatus }) => {
             setVaultFiles((prev) =>
-              prev.map((f) => f.id === documentId ? { ...f, status, errorMessage } : f)
+              prev.map((f) => f.id === documentId ? { ...f, status, errorMessage, stage, textStatus } : f)
             );
           });
         } catch (err: any) {
           console.error('persistVaultFile:', err.message);
-          setVaultFiles((prev) => [{
-            id: crypto.randomUUID(),
-            name: file.name,
-            path: file.name,
-            size: formatSize(file.size),
-            sizeBytes: file.size,
-            type: file.name.split('.').pop()?.toLowerCase() ?? 'file',
-            file,
-            status: 'error',
-            textContent: `[Upload failed: ${err.message}]`,
-          }, ...prev]);
+          setVaultFiles((prev) => prev.map((f) =>
+            f.id === placeholderId
+              ? { ...f, status: 'error' as const, errorMessage: `Upload failed: ${err.message}`, textContent: `[Upload failed: ${err.message}]` }
+              : f,
+          ));
         }
+      }
+      if (refused.length) {
+        const shown = refused.slice(0, 3);
+        const more = refused.length - shown.length;
+        setVaultNotice({
+          kind: 'warn',
+          text: `${refused.length === 1 ? 'One file was' : `${refused.length} files were`} not uploaded. ` +
+            shown.join(' ') + (more > 0 ? ` …and ${more} more.` : ''),
+        });
       }
       return;
     }
@@ -384,10 +402,10 @@ export default function Vault() {
   // PDF that failed before OCR was wired, or a transient embed failure). Flips
   // the row back to "uploading" locally, fires /api/ingest, and re-polls.
   const retryVaultFile = useCallback((id: string) => {
-    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', errorMessage: undefined } : f));
+    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', stage: 'pending', errorMessage: undefined, textStatus: undefined } : f));
     triggerIngest(id).catch((err) => console.error('retry ingest:', err.message));
-    watchDocumentStatus(id, (status, errorMessage) => {
-      setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status, errorMessage } : f));
+    watchDocumentStatus(id, ({ status, errorMessage, stage, textStatus }) => {
+      setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status, errorMessage, stage, textStatus } : f));
     });
   }, []);
 
@@ -425,8 +443,8 @@ export default function Vault() {
       f.id === fileId ? { ...f, textContent: text, file: bytes, status: persisting ? 'uploading' : f.status } : f
     ));
     if (persisting) {
-      watchDocumentStatus(fileId, (status) => {
-        setVaultFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status } : f));
+      watchDocumentStatus(fileId, ({ status, errorMessage, stage, textStatus }) => {
+        setVaultFiles((prev) => prev.map((f) => f.id === fileId ? { ...f, status, errorMessage, stage, textStatus } : f));
       });
     }
   }, [matter, openFile]);
