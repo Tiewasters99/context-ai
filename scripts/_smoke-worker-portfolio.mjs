@@ -32,13 +32,18 @@ const { data: matter, error: mErr } = await supabase.from('matterspaces')
 if (mErr) throw new Error(`matter: ${mErr.message}`);
 console.log(`scratch matter: ${matter.name} (${matter.short_code}, ${matter.id})`);
 
+// Children are saved WITHOUT object streams: pdf-parse 1.1.1 (the pipeline's
+// text extractor, bundling a 2017 pdf.js) reports "Invalid PDF structure" on
+// pdf-lib's default output, so an object-stream child would fail for a reason
+// unrelated to the unpack. The cover keeps pdf-lib's default (object streams)
+// on purpose — that is the case the marker fast path cannot see.
 async function textPdf(lines) {
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);
   const page = doc.addPage([612, 792]);
   let y = 720;
   for (const l of lines) { page.drawText(l, { x: 72, y, size: 12, font }); y -= 18; }
-  return Buffer.from(await doc.save());
+  return Buffer.from(await doc.save({ useObjectStreams: false }));
 }
 
 async function fileAndQueue({ title, filename, bytes }) {
