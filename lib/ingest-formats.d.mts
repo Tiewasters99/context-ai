@@ -21,7 +21,8 @@ export type TextStatus =
   | 'media_no_transcript'
   | 'binary_stored'
   | 'unsupported'
-  | 'ocr_pending';
+  | 'ocr_pending'
+  | 'archive';
 
 export const TEXT_STATUS: Readonly<{
   IMAGE_ONLY: 'image_only';
@@ -31,6 +32,7 @@ export const TEXT_STATUS: Readonly<{
   BINARY_STORED: 'binary_stored';
   UNSUPPORTED: 'unsupported';
   OCR_PENDING: 'ocr_pending';
+  ARCHIVE: 'archive';
 }>;
 
 export function describeTextStatus(status: string | null | undefined): { label: string; detail: string };
