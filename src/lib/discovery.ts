@@ -10,6 +10,9 @@
 // polls their progress.
 
 import { supabase } from './supabase';
+// Resumable (TUS) uploads for large intake files (Phase 4) — a production
+// zip is the biggest thing anyone uploads to this site.
+import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types mirroring the migration's enums + tables
@@ -634,14 +637,36 @@ export async function uploadIntakeFile(
   matterspaceId: string,
   productionId: string,
   file: File,
+  onProgress?: (p: UploadProgress) => void,
 ): Promise<string> {
   const path = `${matterspaceId}/${productionId}/intake/${sanitizeDiscoveryFilename(file.name)}`;
+  const contentType = file.type || 'application/octet-stream';
+  if (shouldUploadResumable(file.size)) {
+    // Resumable chunks (Phase 4): a dropped connection continues from the
+    // last byte the server has instead of starting the production over.
+    const session = (await supabase.auth.getSession()).data.session;
+    if (!session?.access_token) throw new Error(`upload ${file.name}: not authenticated`);
+    try {
+      await uploadResumable({
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? '',
+        token: session.access_token,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY ?? null,
+        bucket: DISCOVERY_BUCKET,
+        objectName: path,
+        blob: file,
+        contentType,
+        lastModified: file.lastModified,
+        resumeStore: storageResumeStore(typeof localStorage !== 'undefined' ? localStorage : null),
+        onProgress,
+      });
+    } catch (err) {
+      throw new Error(`upload ${file.name}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return path;
+  }
   const { error } = await supabase.storage
     .from(DISCOVERY_BUCKET)
-    .upload(path, file, {
-      contentType: file.type || 'application/octet-stream',
-      upsert: true,
-    });
+    .upload(path, file, { contentType, upsert: true });
   if (error) throw new Error(`upload ${file.name}: ${error.message}`);
   return path;
 }

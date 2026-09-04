@@ -48,6 +48,17 @@ export interface OcrPending {
   held?: boolean;
   exhausted?: boolean;
 }
+/** documents.metadata.ocr_route — which route read the scanned pages, and roughly what it cost (Phase 4). */
+export interface OcrRoute {
+  id: string;
+  provider: string;
+  model?: string | null;
+  pages?: number | null;
+  estimated_usd?: number | null;
+  sealed?: boolean;
+  fallback_from?: { id: string; error: string }[];
+  at?: string;
+}
 export const OCR_RETRY_DELAYS_MS: readonly number[];
 export function ocrRetryDelayMs(attempts: number | null | undefined): number | null;
 export function describeOcrPending(pending: OcrPending | null | undefined): { label: string; detail: string } | null;

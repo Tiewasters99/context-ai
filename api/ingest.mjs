@@ -28,14 +28,17 @@ import { createClient } from '@supabase/supabase-js';
 
 import { processDocument, planPdfOcr, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
+import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-// Optional: enables OCR of scanned JPEG/PNG images inline. Same key the MCP
-// ingest path uses (api/mcp.mjs). PDFs with scanned pages never OCR here —
-// they are routed to the worker below (Phase 2) — so for them the key only
-// matters where the worker runs.
+// Optional: enables transcription of short recordings inline. OCR of a
+// scanned JPEG/PNG runs inline too, through the tier's OCR routes
+// (lib/ocr-routes.mjs: GOOGLE_API_KEY and/or ANTHROPIC_API_KEY for an
+// unsealed matter, the TEXTRACT_* trio for a sealed one). PDFs with scanned
+// pages never OCR here — they are routed to the worker below (Phase 2) — so
+// for them the keys only matter where the worker runs.
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 
@@ -135,13 +138,13 @@ export default async function handler(req, res) {
   }
 
   // Scanned-image OCR, for JPEG/PNG (a scanned page saved as a picture — one
-  // page, one OCR call, well inside the serverless budget) when a key is
-  // present. The hook stays wired for PDFs as a backstop, but a PDF that
-  // needs it was routed to the worker just above, so it does not run here.
+  // page, one OCR call, well inside the serverless budget). The provider
+  // picks the route the matter's tier allows and falls back within the tier
+  // (Phase 4). It stays wired for PDFs as a backstop, but a PDF that needs
+  // it was routed to the worker just above, so it does not run here.
   let ocr = null;
-  if (GOOGLE_API_KEY && (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext))) {
-    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
-    ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
+  if (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext)) {
+    ocr = makeOcrProvider(process.env);
   }
 
   // Audio/video transcription. Handles Gemini-native formats (wav/mp3/mov/mpg/

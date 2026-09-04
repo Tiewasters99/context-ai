@@ -4,8 +4,10 @@
 #   fly secrets set VITE_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... OPENAI_API_KEY=... GOOGLE_API_KEY=...
 #   fly deploy
 #
-# One always-on machine, no public ports — the worker only makes outbound
-# calls (Supabase, OpenAI, Gemini). See worker/RUNBOOK.md.
+# Two always-on machines (`fly scale count 2`, Phase 4 of the ingestion plan,
+# 2026-09-04 — so one tenant's production never blocks another's single
+# upload), no public ports — the worker only makes outbound calls (Supabase,
+# OpenAI, Gemini, Anthropic, AWS). See worker/RUNBOOK.md.
 app = "contextspaces-worker"
 primary_region = "ewr"
 

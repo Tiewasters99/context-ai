@@ -15,6 +15,9 @@ import type { VaultFile } from './vault-types';
 // refusals here can never drift from what /api/ingest actually handles.
 import type { OcrPending } from '../../lib/ingest-formats.mjs';
 import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
+// Resumable (TUS) uploads for large files (Phase 4): the same dependency-free
+// module the Node smoke test drives against the real bucket.
+import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
 
 export interface MatterRef {
   id: string;
@@ -234,9 +237,15 @@ export async function checkUploadAdmissible(matter: MatterRef, file: File): Prom
 // Returns the new document id immediately (UI can show "uploading" right away);
 // processing happens server-side and the caller polls via watchDocumentStatus.
 // -----------------------------------------------------------------------------
+export interface PersistOptions {
+  /** Upload progress, reported only on the resumable path (files of 50 MB and up). */
+  onProgress?: (p: UploadProgress) => void;
+}
+
 export async function persistVaultFile(
   matter: MatterRef,
-  file: File
+  file: File,
+  opts: PersistOptions = {},
 ): Promise<{ documentId: string; storagePath: string }> {
   const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
   const safeName = sanitizeStorageName(file.name);
@@ -258,14 +267,39 @@ export async function persistVaultFile(
     .single();
   if (insErr) throw new Error(`create document: ${insErr.message}`);
 
-  // 2. Upload to vault-documents storage
+  // 2. Upload to vault-documents storage. A large file (50 MB and up) goes
+  //    up in resumable 6 MB chunks: a dropped connection continues from the
+  //    last byte the server has, and a closed tab resumes on the next try
+  //    (the upload URL is remembered for a day). Small files keep the one
+  //    request they always used.
   const storagePath = `${matter.id}/${doc.id}/${safeName}`;
-  const { error: upErr } = await supabase.storage
-    .from('vault-documents')
-    .upload(storagePath, file, {
-      contentType: file.type || mimeFor(ext),
-      upsert: true,
-    });
+  const contentType = file.type || mimeFor(ext);
+  let upErr: { message: string } | null = null;
+  if (shouldUploadResumable(file.size)) {
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session?.access_token) throw new Error('not authenticated');
+      await uploadResumable({
+        supabaseUrl: import.meta.env.VITE_SUPABASE_URL ?? '',
+        token: session.access_token,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY ?? null,
+        bucket: 'vault-documents',
+        objectName: storagePath,
+        blob: file,
+        contentType,
+        lastModified: file.lastModified,
+        resumeStore: storageResumeStore(typeof localStorage !== 'undefined' ? localStorage : null),
+        onProgress: opts.onProgress,
+      });
+    } catch (err) {
+      upErr = { message: err instanceof Error ? err.message : String(err) };
+    }
+  } else {
+    const { error } = await supabase.storage
+      .from('vault-documents')
+      .upload(storagePath, file, { contentType, upsert: true });
+    upErr = error;
+  }
   if (upErr) {
     // Roll back the documents row so the UI doesn't show a broken stub.
     await supabase.from('documents').delete().eq('id', doc.id);
