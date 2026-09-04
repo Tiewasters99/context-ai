@@ -119,7 +119,15 @@ async function main() {
   if (!QUIET || needsAttention) console.log(text);
 
   if (args.fix) await autoFix(sb, rows, report);
-  if (args.email && (needsAttention || !QUIET)) await emailDigest(text, needsAttention);
+  // A failed send must not turn a finished health check into "could not run"
+  // (exit 2) — the digest is already printed above, and the exit code is the
+  // only signal Task Scheduler keeps. Found 2026-09-04: Gmail refused the app
+  // password ("534-5.7.9 Please log in with your web browser") and every
+  // scheduled run would have reported 2 with the real answer thrown away.
+  if (args.email && (needsAttention || !QUIET)) {
+    try { await emailDigest(text, needsAttention); }
+    catch (e) { console.error(`(--email failed: ${String(e.message || e).split('\n')[0]} — digest printed above, not sent)`); }
+  }
 
   process.exit(needsAttention ? 1 : 0);
 }
