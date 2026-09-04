@@ -38,8 +38,13 @@
 //     Z2  file_document with a .zip → accepted and queued (was refused before Phase 3)
 //     E1  .eml with a PDF, an attached message and an inline signature image → message indexed;
 //         PDF + message filed BESIDE it (no folder) and indexed; the image skipped
+//   OCR routes and the seal (Phase 4, gate G6) — --local only:
+//     F4  Gemini given a dead key → Anthropic vision reads the scanned pages; every page searchable;
+//         metadata.ocr_route names the route, model, pages, cost estimate and the failed route
+//     T1  a Tier-B (sealed) sub-matter with no Textract configured → typed pages indexed, pages [4,5]
+//         held (never sent out, never retried) with a reason naming the TEXTRACT_* vars
 //   and check_ingest_status on S1 reports text_status + searchable:false, on F1 names the pages,
-//   on Z1 names the children.
+//   on Z1 names the children, on F4 says who read the pages and what it cost, on T1 says what is held and why.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -109,15 +114,18 @@ const pass = (msg) => console.log(`  ok   ${msg}`);
 const fail = (msg) => { failures++; console.log(`  FAIL ${msg}`); };
 
 // Run this checkout's pipeline on a stored row, the way the worker does
-// (passages cleared first). `ocr`: 'real' wires Gemini from .env for PDFs and
-// OCR-able images; a function is used as the hook itself (F1–F3); null = none.
+// (passages cleared first). `ocr`: 'real' wires the tier's OCR routes from
+// .env (lib/ocr-routes.mjs — Gemini first, Anthropic vision as fallback,
+// Textract for a sealed matter) for PDFs and OCR-able images, exactly as the
+// worker does; a function is used as a bare hook (F1–F3); a provider object
+// is used as-is (F4, T1); null = none.
 async function runLocal(id, bytes, filename, ocr = 'real') {
   const { processDocument, OCRABLE_IMAGE_EXTENSIONS } = await import('../lib/ingest-core.mjs');
   const ext = '.' + filename.split('.').pop().toLowerCase();
-  let hook = typeof ocr === 'function' ? ocr : null;
-  if (ocr === 'real' && env.GOOGLE_API_KEY && (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext))) {
-    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
-    hook = (buf) => ocrPdf(buf, { apiKey: env.GOOGLE_API_KEY });
+  let hook = typeof ocr === 'function' || (ocr && typeof ocr === 'object') ? ocr : null;
+  if (ocr === 'real' && (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext))) {
+    const { makeOcrProvider } = await import('../lib/ocr-routes.mjs');
+    hook = makeOcrProvider(env);
   }
   await supabase.from('passages').delete().eq('document_id', id);
   try {
@@ -136,14 +144,14 @@ async function runLocal(id, bytes, filename, ocr = 'real') {
   }
 }
 
-async function fileAndRun({ title, filename, bytes, contentType, ocr = 'real' }) {
+async function fileAndRun({ title, filename, bytes, contentType, ocr = 'real', matterId = matter.id }) {
   const { data: row, error } = await supabase.from('documents').insert({
-    matterspace_id: matter.id, title, doc_type: 'other', source_filename: filename,
+    matterspace_id: matterId, title, doc_type: 'other', source_filename: filename,
     file_size_bytes: bytes.length, processing_status: 'pending', created_by: CREATED_BY,
   }).select('id').single();
   if (error) throw new Error(`insert ${title}: ${error.message}`);
   made.docs.push(row.id);
-  const storagePath = `${matter.id}/${row.id}/${filename.replace(/[^a-zA-Z0-9._-]+/g, '_')}`;
+  const storagePath = `${matterId}/${row.id}/${filename.replace(/[^a-zA-Z0-9._-]+/g, '_')}`;
   const { error: upErr } = await supabase.storage.from('vault-documents')
     .upload(storagePath, bytes, { contentType, upsert: true });
   if (upErr) throw new Error(`upload ${title}: ${upErr.message}`);
@@ -153,7 +161,7 @@ async function fileAndRun({ title, filename, bytes, contentType, ocr = 'real' })
     await runLocal(row.id, bytes, filename, ocr);
   } else {
     const { error: qErr } = await supabase.from('processing_jobs').insert({
-      matterspace_id: matter.id, job_type: 'ingest_document', payload: { document_id: row.id },
+      matterspace_id: matterId, job_type: 'ingest_document', payload: { document_id: row.id },
     });
     if (qErr) throw new Error(`enqueue ${title}: ${qErr.message}`);
   }
@@ -363,6 +371,59 @@ try {
     }
   } else {
     console.log('\n[F1–F3] skipped — OCR failure injection runs with --local only');
+  }
+
+  // ---- OCR routes and the seal (Phase 4, gate G6) ------------------------------------
+  // In-process only: the failover needs a route made to fail on cue, and the
+  // seal needs a sub-matter this run creates and removes.
+  if (LOCAL) {
+    const { makeOcrProvider } = await import('../lib/ocr-routes.mjs');
+
+    console.log('\n[F4] Gemini given a dead key → Anthropic vision reads the scanned pages; route and cost recorded');
+    const failover = makeOcrProvider({ ...env, GOOGLE_API_KEY: 'AIza-not-a-real-key-for-the-smoke' });
+    const f4 = await fileAndRun({ title: `Smoke failover ${tag}`, filename: `smoke-failover-${tag}.pdf`, bytes: mixedBytes, contentType: 'application/pdf', ocr: failover });
+    {
+      const d = await expectMixedIndexed('F4 failover', f4);
+      const r = d.metadata?.ocr_route;
+      if (r?.id === 'anthropic-vision' && r.pages === 2 && typeof r.estimated_usd === 'number' && r.fallback_from?.[0]?.id === 'gemini-flash' && r.sealed === false) {
+        pass(`F4: ocr_route=anthropic-vision (${r.model}), 2 pages, est. $${r.estimated_usd}, after gemini-flash failed ("${r.fallback_from[0].error.slice(0, 48)}…")`);
+      } else {
+        fail(`F4: ocr_route=${JSON.stringify(r || null).slice(0, 300)}`);
+      }
+      const st = await handleCheckIngestStatus(supabase, { document_id: f4 });
+      if (st.ocr_route?.id === 'anthropic-vision' && /read by Anthropic vision/.test(st.ocr_note || '') && /\$/.test(st.ocr_note || '')) pass(`F4 MCP: "${st.ocr_note}"`);
+      else fail(`F4 MCP: ${JSON.stringify(st).slice(0, 300)}`);
+    }
+
+    console.log('\n[T1] sealed sub-matter (Tier B), no Textract configured → typed pages indexed, scanned pages held with the reason');
+    const { data: parentRow } = await supabase.from('matterspaces').select('id, serverspace_id').eq('id', matter.id).single();
+    const { data: sealedRow, error: sErr } = await supabase.from('matterspaces').insert({
+      serverspace_id: parentRow.serverspace_id, parent_matterspace_id: matter.id, name: `Smoke sealed ${tag}`,
+      short_code: `smoke-sealed-${tag}`, ai_tier: 'B', description: 'Phase 4 smoke — removed at the end of the run.',
+    }).select('id').single();
+    if (sErr) {
+      fail(`T1: could not create a sealed sub-matter: ${sErr.message}`);
+    } else {
+      made.folders.push(sealedRow.id);
+      const noTextract = makeOcrProvider({ ...env, TEXTRACT_AWS_ACCESS_KEY_ID: '', TEXTRACT_AWS_SECRET_ACCESS_KEY: '', TEXTRACT_AI_OPT_OUT_CONFIRMED: '' });
+      const t1 = await fileAndRun({ title: `Smoke sealed mixed ${tag}`, filename: `smoke-sealed-${tag}.pdf`, bytes: mixedBytes, contentType: 'application/pdf', ocr: noTextract, matterId: sealedRow.id });
+      const d = await waitTerminal(t1);
+      const n = await passageCount(t1);
+      const op = d.metadata?.ocr_pending;
+      const p1 = await pageHasWord(t1, 1, 'memorandum');
+      const p4 = await pageHasWord(t1, 4, 'marmalade');
+      if (d.processing_status === 'ready' && n > 0 && p1 && !p4 && op?.held === true && JSON.stringify(op.pages) === '[4,5]' &&
+          /TEXTRACT_AWS_ACCESS_KEY_ID/.test(op.reason || '') && !op.next_retry_at && !d.metadata?.ocr_route) {
+        pass(`T1: ready, ${n} typed passage(s) searchable; pages [4,5] held — never sent out, no retry; reason names TEXTRACT_* ("${op.reason.slice(0, 60)}…")`);
+      } else {
+        fail(`T1: status=${d.processing_status} passages=${n} p1=${p1} p4=${p4} ocr_pending=${JSON.stringify(op || null).slice(0, 300)} error=${(d.processing_error || '').slice(0, 100)}`);
+      }
+      const st = await handleCheckIngestStatus(supabase, { document_id: t1 });
+      if (st.ocr_pending?.held && /SecureSpace seal/.test(st.note || '') && /SEALED_OCR_SETUP/.test(st.note || '')) pass(`T1 MCP: "${st.note.slice(0, 100)}…"`);
+      else fail(`T1 MCP: ${JSON.stringify(st).slice(0, 300)}`);
+    }
+  } else {
+    console.log('\n[F4, T1] skipped — route failover and the seal run with --local only');
   }
 
   // ---- containers (Phase 3, gate G2) ---------------------------------------------

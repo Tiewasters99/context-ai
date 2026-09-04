@@ -53,7 +53,10 @@ function statusLabel(file: VaultFile): string {
   // Ephemeral mode (no matter): nothing is uploaded anywhere — the browser
   // reads the file itself. Say that, not "Uploading".
   if (!file.matterspace_id) return file.status === 'indexing' ? 'Extracting text…' : 'Queued…';
-  if (!file.storagePath) return 'Uploading…';
+  // A large file goes up in resumable chunks (Phase 4) and says how far it
+  // is; a dropped connection picks up where it stopped, and the number keeps
+  // climbing instead of restarting.
+  if (!file.storagePath) return file.uploadPct != null ? `Uploading… ${file.uploadPct}%` : 'Uploading…';
   const stage = file.stage ? (stageLabel[file.stage] ?? file.stage) : (file.status === 'indexing' ? 'indexing for search' : 'starting');
   return `Uploaded — processing: ${stage}`;
 }

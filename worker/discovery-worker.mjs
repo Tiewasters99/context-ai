@@ -18,8 +18,17 @@
 //   SUPABASE_SERVICE_ROLE_KEY
 // Optional:
 //   OPENAI_API_KEY   - enables full-text ingestion of display PDFs
-//   GOOGLE_API_KEY   - enables Gemini OCR fallback for scanned PDFs
+//   GOOGLE_API_KEY   - Gemini: OCR route for unsealed matters + A/V transcription
+//   ANTHROPIC_API_KEY - Anthropic vision: the other unsealed OCR route (fallback
+//                      by default; OCR_TIER_A_ROUTES flips the order)
+//   TEXTRACT_AWS_ACCESS_KEY_ID / TEXTRACT_AWS_SECRET_ACCESS_KEY /
+//   TEXTRACT_AI_OPT_OUT_CONFIRMED - AWS Textract: the SEALED OCR route
+//                      (docs/SEALED_OCR_SETUP.md)
 //   WORKER_ID        - identifier recorded on claimed jobs
+//
+// Two machines run this loop (Phase 4, 2026-09-04): the claim is atomic
+// (FOR UPDATE SKIP LOCKED), so two workers never take one job; the idle
+// sweeps are jittered per process so they do not fire in lockstep.
 //
 // Job types: intake_zip | intake_files | intake_folder | stamp_production |
 //            package_production | ingest_document
@@ -40,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
+import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import {
   sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv,
 } from '../lib/discovery/util.mjs';
@@ -58,6 +68,12 @@ const SUPABASE_URL = requireEnv('VITE_SUPABASE_URL');
 const SERVICE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || null;
+// OCR by tier (lib/ocr-routes.mjs): reads the env on every job, so a key set
+// on a running machine takes effect without a restart.
+const ocrProvider = makeOcrProvider(process.env);
+// Idle sweeps are offset by a per-process amount so two machines (Phase 4)
+// do not scan the same rows in the same second.
+const SWEEP_JITTER_MS = Math.floor(Math.random() * 60_000);
 const WORKER_ID = process.env.WORKER_ID || `${os.hostname()}-${process.pid}`;
 const BUCKET = 'discovery-files';
 const POLL_MS = 5000;
@@ -293,7 +309,7 @@ async function recordDocumentFailure(job, err) {
 // case, which no amount of reaping finds because there is nothing to reap.
 // Runs only while idle, so it never competes with real work.
 async function recoverStrandedIfDue() {
-  if (Date.now() - lastRecoverAt < RECOVER_EVERY_MS) return;
+  if (Date.now() - lastRecoverAt < RECOVER_EVERY_MS + SWEEP_JITTER_MS) return;
   lastRecoverAt = Date.now();
   const { data, error } = await supabase.rpc('recover_stranded_documents', {
     p_idle_minutes: RECOVER_IDLE_MINUTES,
@@ -315,7 +331,7 @@ async function recoverStrandedIfDue() {
 // for a sealed route; exhausted ones wait for a person. Idle-only, like the
 // stranded sweep: it never competes with real work.
 async function requeueOcrPendingIfDue() {
-  if (Date.now() - lastOcrSweepAt < OCR_RETRY_SWEEP_MS) return;
+  if (Date.now() - lastOcrSweepAt < OCR_RETRY_SWEEP_MS + SWEEP_JITTER_MS) return;
   lastOcrSweepAt = Date.now();
   const { data, error } = await supabase.from('documents')
     .select('id, matterspace_id, source_filename, ocr_pending:metadata->ocr_pending')
@@ -566,17 +582,12 @@ async function ingestDisplayPdf(prod, item, pdfBuf, filename) {
   await supabase.from('documents').update({ storage_path: storagePath }).eq('id', docRow.id);
 
   try {
-    let ocr = null;
-    if (GOOGLE_API_KEY) {
-      const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
-      ocr = (b) => ocrPdf(b, { apiKey: GOOGLE_API_KEY });
-    }
     await processDocument(supabase, {
       documentId: docRow.id,
       fileBuf: pdfBuf,
       ext: '.pdf',
       openaiApiKey: OPENAI_API_KEY,
-      ocr,
+      ocr: ocrProvider,
     });
   } catch (err) {
     // A sealed matter refusing the pipe is not an ingestion failure — the item
@@ -626,13 +637,27 @@ async function ingestDocument(job) {
   // pattern as scripts/reingest.mjs.
   await supabase.from('passages').delete().eq('document_id', docId);
 
-  let ocr = null;
+  // OCR goes through the tier's routes (ocrProvider). Transcription stays on
+  // Gemini; a recording longer than twenty minutes is cut into parts by
+  // ffmpeg and transcribed part by part with the timestamps shifted back
+  // (lib/media-segments.mjs, Phase 4) — one request per recording ran past
+  // the model's output ceiling on hour-long calls.
   let transcribe = null;
   if (GOOGLE_API_KEY) {
-    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
-    ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
     transcribe = async (buf, { ext: mediaExt, kind, onProgress }) => {
       const { transcribeMedia, mimeForMediaExt } = await import('../lib/transcribe-gemini.mjs');
+      if (kind === 'audio') {
+        const { transcribeInSegments } = await import('../lib/media-segments.mjs');
+        const inParts = await transcribeInSegments(buf, mediaExt, {
+          onProgress,
+          transcribeSegment: (mp3, { index, total }) =>
+            transcribeMedia(mp3, { apiKey: GOOGLE_API_KEY, mimeType: 'audio/mp3', kind, onProgress, displayName: `part ${index + 1} of ${total}` }),
+        });
+        if (inParts) {
+          log(`  ${doc.source_filename}: transcribed in ${inParts.segments} parts (${Math.round(inParts.durationSec / 60)} min)`);
+          return inParts.pages;
+        }
+      }
       let mediaBuf = buf;
       let mimeType = mimeForMediaExt(mediaExt);
       // .wma has no Gemini support and .m4a is unreliable — transcode both to
@@ -654,7 +679,7 @@ async function ingestDocument(job) {
     fileBuf,
     ext,
     openaiApiKey: OPENAI_API_KEY,
-    ocr,
+    ocr: ocrProvider,
     transcribe,
     onProgress: ({ stage, message }) => {
       progress(job, stagePct[stage] ?? 40, message).catch(() => {});

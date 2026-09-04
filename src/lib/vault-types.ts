@@ -39,6 +39,10 @@ export interface VaultFile {
    *  outside provider (documents.processing_status = 'held'). Terminal; the
    *  reason is in errorMessage; a retry would be refused identically. */
   held?: boolean;
+  /** Persistent mode: how far the browser has sent a large file (0–100),
+   *  while `storagePath` is still unset. Only resumable uploads (50 MB and
+   *  up, Phase 4) report it; a small file goes in one request. */
+  uploadPct?: number;
   /** True for AI-generated drafts kept in the "Generated Documents" view
    *  (in-memory; never goes through Supabase). */
   generated?: boolean;

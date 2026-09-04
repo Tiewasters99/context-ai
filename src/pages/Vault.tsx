@@ -347,12 +347,21 @@ export default function Vault() {
         };
         setVaultFiles((prev) => [base, ...prev]);
         try {
-          const { documentId, storagePath } = await persistVaultFile(matter, file);
+          // A large file reports how far it has got (resumable chunks, Phase
+          // 4); the row reads "Uploading… 42%" until the bytes have landed.
+          let lastPct = -1;
+          const { documentId, storagePath } = await persistVaultFile(matter, file, {
+            onProgress: ({ pct }) => {
+              if (pct === lastPct) return;
+              lastPct = pct;
+              setVaultFiles((prev) => prev.map((f) => (f.id === placeholderId ? { ...f, uploadPct: pct } : f)));
+            },
+          });
           // The hydrate effect replaces the whole list whenever the matter
           // tree refreshes; if that happened mid-upload the placeholder is
           // gone, and the real row must be added rather than mapped onto
           // nothing (the document exists now; it must not vanish until reload).
-          const landed: VaultFile = { ...base, id: documentId, storagePath, stage: 'pending' };
+          const landed: VaultFile = { ...base, id: documentId, storagePath, stage: 'pending', uploadPct: undefined };
           setVaultFiles((prev) => prev.some((f) => f.id === placeholderId)
             ? prev.map((f) => (f.id === placeholderId ? landed : f))
             : prev.some((f) => f.id === documentId) ? prev : [landed, ...prev]);
