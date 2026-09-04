@@ -37,8 +37,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { classifyError, classifyTextStatus, TEXT_STATUS_CLASSES, summarize, describe } from '../lib/ingest-triage.mjs';
-import { JOB_PRIORITY, SUPPORTED_EXTENSIONS, IMAGE_EXTENSIONS, MEDIA_EXTENSIONS } from '../lib/ingest-core.mjs';
+import { classifyError, classifyTextStatus, classifyOcrPending, TEXT_STATUS_CLASSES, summarize, describe } from '../lib/ingest-triage.mjs';
+import { JOB_PRIORITY, SUPPORTED_EXTENSIONS, IMAGE_EXTENSIONS, MEDIA_EXTENSIONS, describeOcrPending } from '../lib/ingest-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,7 +51,9 @@ const MUTED = {
   ],
   // stored-and-viewable is their normal resting state — including every
   // row that RECORDED why it is empty (metadata.text_status, 2026-09-04).
-  reasons: ['no_text', 'duplicate_of_indexed', 'stored_without_text', ...TEXT_STATUS_CLASSES],
+  // ocr_held_sealed: scanned pages the SecureSpace seal kept in; the typed
+  // pages are indexed, and nothing changes until a sealed OCR route exists.
+  reasons: ['no_text', 'duplicate_of_indexed', 'stored_without_text', 'ocr_held_sealed', ...TEXT_STATUS_CLASSES],
 };
 
 const TRANSIENT = ['pending', 'extracting', 'chunking', 'embedding'];
@@ -85,13 +87,14 @@ async function main() {
   const matterId = args.matter ? await resolveMatter(sb, args.matter) : null;
   const cutoff = new Date(Date.now() - STALE_MIN * 60_000).toISOString();
 
-  const [errored, stalled, jobs, readyEmpty] = await Promise.all([
+  const [errored, stalled, jobs, readyEmpty, ocrPending] = await Promise.all([
     fetchDocs(sb, matterId, (q) => q.eq('processing_status', 'error')),
     fetchDocs(sb, matterId, (q) => q.in('processing_status', TRANSIENT).lt('updated_at', cutoff)),
     fetchStuckJobs(sb, cutoff),
     args['no-empty-check']
       ? Promise.resolve({ rows: [], note: 'skipped (--no-empty-check)' })
       : fetchReadyEmpty(sb, matterId),
+    fetchOcrPending(sb, matterId),
   ]);
 
   const rows = [
@@ -103,9 +106,16 @@ async function main() {
       id: d.id, name: d.source_filename || d.title, matter: d.matterspace_id,
       error: `stuck in '${d.processing_status}' since ${d.updated_at}`, cls: 'stuck',
     })),
-    ...readyEmpty.rows.map((d) => ({
+    // A row whose emptiness IS the pending OCR is reported once, below, with
+    // the fuller record (which pages, retrying or exhausted).
+    ...readyEmpty.rows.filter((d) => d.text_status !== 'ocr_pending').map((d) => ({
       id: d.document_id, name: d.source_filename || d.title, matter: d.matterspace_id,
       error: 'ready with zero passages', cls: classifyEmpty(d),
+    })),
+    ...ocrPending.map((d) => ({
+      id: d.id, name: d.source_filename || d.title, matter: d.matterspace_id,
+      error: `${describeOcrPending(d.ocr_pending)?.label}: ${d.ocr_pending.reason || 'no reason recorded'}`,
+      cls: classifyOcrPending(d.ocr_pending),
     })),
   ].filter((r) => !MUTED.documents.includes(r.id));
 
@@ -221,6 +231,29 @@ async function attachTextStatus(sb, rows) {
       if (r && d.text_status) r.text_status = d.text_status;
     }
   }
+}
+
+// Documents whose scanned pages still await OCR (metadata.ocr_pending, Phase
+// 2). They are 'ready' — the typed pages are indexed — so neither the error
+// nor the stalled query sees them; read the record directly, paged like the
+// rest. Retrying ones are transient (the worker's idle sweep owns the
+// schedule), exhausted ones need a person, sealed ones are muted until a
+// sealed OCR route exists.
+async function fetchOcrPending(sb, matterId) {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    let q = sb.from('documents')
+      .select('id, title, source_filename, matterspace_id, ocr_pending:metadata->ocr_pending')
+      .eq('processing_status', 'ready')
+      .not('metadata->ocr_pending', 'is', null)
+      .order('id').range(from, from + 999);
+    if (matterId) q = q.eq('matterspace_id', matterId);
+    const { data, error } = await q;
+    if (error) { console.error(`(ocr_pending check failed: ${error.message})`); break; }
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return rows.filter((d) => d.ocr_pending && typeof d.ocr_pending === 'object');
 }
 
 function classifyEmpty(d) {

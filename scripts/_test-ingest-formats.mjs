@@ -87,7 +87,7 @@ ok('zip: accepted with expansion, refused with a reason without it');
 
 // --- text_status vocabulary ---------------------------------------------------
 assert.deepStrictEqual(Object.values(TEXT_STATUS).sort(),
-  ['binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'portfolio', 'unsupported']);
+  ['binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'ocr_pending', 'portfolio', 'unsupported']);
 for (const s of Object.values(TEXT_STATUS)) {
   const d = describeTextStatus(s);
   assert(d.label && d.label.length > 8, `${s} label`);
@@ -100,7 +100,11 @@ assert.match(unknown.detail, /something_new/);
 ok('every text_status has a plain label + detail; unknown values still render');
 
 // --- triage mapping -----------------------------------------------------------
+// Every stored-with-a-reason status is a benign, muted stored_* class — except
+// ocr_pending (Phase 2), which is transient and must surface: it is checked
+// on its own below.
 for (const s of Object.values(TEXT_STATUS)) {
+  if (s === TEXT_STATUS.OCR_PENDING) continue;
   const cls = classifyTextStatus(s);
   assert(TEXT_STATUS_CLASSES.includes(cls), `${s} → ${cls} is a listed class`);
   assert.strictEqual(describe(cls).severity, 'benign', `${cls} is benign`);
@@ -108,6 +112,9 @@ for (const s of Object.values(TEXT_STATUS)) {
   assert(describe(cls).action.length > 30, `${cls} has an action`);
 }
 assert.strictEqual(classifyTextStatus(null), null);
+assert.strictEqual(classifyTextStatus(TEXT_STATUS.OCR_PENDING), 'ocr_pending');
+assert(!TEXT_STATUS_CLASSES.includes('ocr_pending'), 'ocr_pending is not a muted stored_* class');
+assert.strictEqual(describe('ocr_pending').severity, 'transient', 'a scan awaiting OCR is transient, not benign');
 assert.strictEqual(classifyTextStatus(''), null);
 assert.strictEqual(classifyTextStatus('future_value'), 'stored_without_text');
 ok('classifyTextStatus: six benign classes, null for none, generic for unknown');

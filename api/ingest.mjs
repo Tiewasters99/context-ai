@@ -26,15 +26,16 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { processDocument, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
+import { processDocument, planPdfOcr, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-// Optional: enables OCR of scanned, image-only PDFs (no text layer). Same key
-// the MCP ingest path uses (api/mcp.mjs). When absent, scanned PDFs still fail
-// with "no passages extracted" as before — OCR is purely additive.
+// Optional: enables OCR of scanned JPEG/PNG images inline. Same key the MCP
+// ingest path uses (api/mcp.mjs). PDFs with scanned pages never OCR here —
+// they are routed to the worker below (Phase 2) — so for them the key only
+// matters where the worker runs.
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
 
@@ -80,7 +81,7 @@ export default async function handler(req, res) {
   // Look up the document. RLS rejects this if the user doesn't have access.
   const { data: doc, error: docErr } = await sb
     .from('documents')
-    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes, text_status:metadata->>text_status')
+    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
     .eq('id', documentId)
     .maybeSingle();
   if (docErr) return json(res, 500, { error: `lookup: ${docErr.message}` });
@@ -89,10 +90,10 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'document has no storage_path; upload the file first' });
   }
   // 'ready' with a recorded text_status (image_only, media_no_transcript, …)
-  // is stored-without-text; a re-run from the Vault is how it gets another
-  // chance once OCR/transcription is available. Only an indexed document is
-  // "already ready".
-  if (doc.processing_status === 'ready' && !doc.text_status) {
+  // is stored-without-text, and 'ready' with ocr_pending still owes OCR on
+  // some pages; a re-run from the Vault is how either gets another chance.
+  // Only a fully indexed document is "already ready".
+  if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending) {
     return json(res, 200, { ok: true, alreadyReady: true });
   }
 
@@ -104,31 +105,8 @@ export default async function handler(req, res) {
   // don't depend on worker uptime at all.
   const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
   if (needsWorkerIngest(ext0, doc.file_size_bytes)) {
-    // Don't double-enqueue when the user mashes Retry.
-    const { data: existing } = await sb.from('processing_jobs')
-      .select('id').eq('job_type', 'ingest_document')
-      .in('status', ['queued', 'running'])
-      .contains('payload', { document_id: doc.id })
-      .limit(1);
-    if (!existing?.length) {
-      const { error: qErr } = await sb.from('processing_jobs').insert({
-        matterspace_id: doc.matterspace_id,
-        job_type: 'ingest_document',
-        payload: { document_id: doc.id },
-      });
-      // Queue insert failing (e.g. RLS/schema drift) must not strand the doc —
-      // fall through to the inline attempt, which is what happened before.
-      if (qErr) {
-        console.error('enqueue ingest_document failed, falling back inline:', qErr.message);
-      } else {
-        await sb.from('documents')
-          .update({ processing_status: 'pending', processing_error: null })
-          .eq('id', doc.id);
-        return json(res, 202, { ok: true, queued: true });
-      }
-    } else {
-      return json(res, 202, { ok: true, queued: true, deduped: true });
-    }
+    const queued = await enqueueForWorker(sb, doc);
+    if (queued) return json(res, 202, queued);
   }
 
   // Download the file from storage. RLS on the storage bucket enforces
@@ -144,12 +122,22 @@ export default async function handler(req, res) {
   const fileBuf = Buffer.from(arrayBuf);
   const ext = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
 
-  // Scanned-document OCR. Wired for PDFs (invoked only when the PDF extracts
-  // to ~no text) and for JPEG/PNG images (scanned pages — always OCR'd), when
-  // a key is present. Gemini OCR of a large scan can exceed the 60s serverless
-  // budget; small and medium scans (exhibits, single page images) finish
-  // comfortably. Big image-only productions still need the CLI
-  // (scripts/ocr-scanned.mjs) or the background worker.
+  // A PDF with scanned pages goes to the worker too (Phase 2, 2026-09-04) —
+  // see planPdfOcr for why size alone was the wrong test. The text layer is
+  // extracted once here to decide (a second or two); a born-digital PDF, with
+  // no page awaiting OCR, continues inline exactly as before.
+  if (ext === '.pdf') {
+    const plan = await planPdfOcr(fileBuf);
+    if (plan.ocrPages.length) {
+      const queued = await enqueueForWorker(sb, doc);
+      if (queued) return json(res, 202, { ...queued, reason: 'ocr', ocr_pages: plan.ocrPages.length, page_count: plan.pageCount });
+    }
+  }
+
+  // Scanned-image OCR, for JPEG/PNG (a scanned page saved as a picture — one
+  // page, one OCR call, well inside the serverless budget) when a key is
+  // present. The hook stays wired for PDFs as a backstop, but a PDF that
+  // needs it was routed to the worker just above, so it does not run here.
   let ocr = null;
   if (GOOGLE_API_KEY && (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext))) {
     const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
@@ -207,6 +195,33 @@ export default async function handler(req, res) {
   }
 }
 
+
+// Queue one ingest_document job for the always-on worker and mark the row
+// pending. Returns the 202 body, or null when the insert failed (RLS/schema
+// drift) so the caller falls through to the inline attempt — the queue
+// failing must never strand the document. Dedupes against a job already in
+// flight so a mashed Retry button enqueues once.
+async function enqueueForWorker(sb, doc) {
+  const { data: existing } = await sb.from('processing_jobs')
+    .select('id').eq('job_type', 'ingest_document')
+    .in('status', ['queued', 'running'])
+    .contains('payload', { document_id: doc.id })
+    .limit(1);
+  if (existing?.length) return { ok: true, queued: true, deduped: true };
+  const { error: qErr } = await sb.from('processing_jobs').insert({
+    matterspace_id: doc.matterspace_id,
+    job_type: 'ingest_document',
+    payload: { document_id: doc.id },
+  });
+  if (qErr) {
+    console.error('enqueue ingest_document failed, falling back inline:', qErr.message);
+    return null;
+  }
+  await sb.from('documents')
+    .update({ processing_status: 'pending', processing_error: null })
+    .eq('id', doc.id);
+  return { ok: true, queued: true };
+}
 
 function json(res, status, obj) {
   res.statusCode = status;
