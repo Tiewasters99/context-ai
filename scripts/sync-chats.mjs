@@ -37,6 +37,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { renderConversation } from '../lib/chat-render.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -211,71 +212,20 @@ async function collectClaudeCode() {
 // ---------------------------------------------------------------------------
 // 2. Render a conversation to markdown
 // ---------------------------------------------------------------------------
-function renderMarkdown(conv) {
-  const bucket = SOURCE_BUCKET[conv.source] || conv.source;
-  const when = (conv.ts || '').slice(0, 10);
-  const lines = [
-    `# ${conv.title || 'Untitled conversation'}`,
-    '',
-    `*Source: ${bucket}${conv.project ? ` · ${conv.project}` : ''}${when ? ` · ${when}` : ''}${conv.url ? ` · ${conv.url}` : ''}*`,
-    '',
-  ];
-  // Strip embedded base64 blobs (data URIs, bare base64 runs): they carry no
-  // searchable signal and their token density (~1.3 chars/token vs the 4 the
-  // pipeline assumes) blows the embeddings per-input limit.
-  const scrub = (s) => s
-    .replace(/data:[a-z/+.-]+;base64,[A-Za-z0-9+/=]+/gi, '[embedded file]')
-    .replace(/[A-Za-z0-9+/=]{2000,}/g, '[binary data]');
-  if (conv.text) {
-    lines.push(scrub(conv.text));
-  } else if (conv.messages) {
-    for (const m of conv.messages) {
-      const who = m.role === 'user' ? 'User' : 'Assistant';
-      const content = scrub((typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).trim());
-      if (!content) continue;
-      lines.push(`**${who}:**`, '', content, '');
-    }
-  } else if (conv.turns) {
-    for (const t of conv.turns) {
-      lines.push(`**${t.role === 'user' ? 'User' : 'Assistant'}:**`, '', t.text, '');
-    }
-  }
-  renderArtifactSection(lines, scrub, conv.artifacts);
-  return lines.join('\n');
-}
-
-// Deliverables captured for this conversation: inline each text file's content
-// (read from ~/FileSaver/artifacts at render time — the log line is only a
-// pointer), and name the binary outputs whose bytes we can't fetch yet. The
-// document hash covers this section, so a new revision re-ingests naturally.
+// Plain, conversational text: "You:" / "Claude:" turns, the model's markdown
+// folded into prose (the reader shows these documents as text, so markup
+// used to appear literally). Artifact files are read from ~/FileSaver at
+// render time — the log line is only a pointer — and the document hash
+// covers them, so a new revision re-ingests naturally.
 const FILESAVER_DIR = 'C:/Users/equai/FileSaver';
-function renderArtifactSection(lines, scrub, art) {
-  const files = Array.isArray(art?.artifacts) ? art.artifacts : [];
-  const presented = Array.isArray(art?.presented) ? art.presented : [];
-  if (!files.length && !presented.length) return;
-  lines.push('', '## Files & artifacts created in this conversation', '');
-  for (const a of files) {
-    let body = '';
-    try {
-      const parts = String(a.relPath || '').split('/').filter((s) => s && s !== '..');
-      if (parts.length) body = fs.readFileSync(path.join(FILESAVER_DIR, ...parts), 'utf-8');
-    } catch { /* file missing on disk — still list it by name below */ }
-    lines.push(`### ${a.name}${a.title && a.title !== a.name ? ` — ${a.title}` : ''}`, '');
-    lines.push(body ? scrub(body.slice(0, 200_000)) : '*(content not on disk)*', '');
-  }
-  // Binary container outputs (.docx/.pdf renderings, etc.) — dedupe by name,
-  // skip ones whose text source was captured above under the same basename.
-  const capturedBases = new Set(files.map((f) => (f.name || '').toLowerCase().replace(/\.[^.]+$/, '').replace(/[_\s-]+/g, '')));
-  const seen = new Set();
-  for (const p of presented) {
-    const key = `${p.name}|${p.mime_type}`.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const base = (p.name || '').toLowerCase().replace(/\.[^.]+$/, '').replace(/[_\s-]+/g, '');
-    if (base && capturedBases.has(base)) continue;
-    lines.push(`- Output file presented in chat (binary, not yet archived): **${p.name}** (${p.mime_type || 'unknown type'})`);
-  }
-  lines.push('');
+function renderMarkdown(conv) {
+  return renderConversation(conv, {
+    sourceName: SOURCE_BUCKET[conv.source] || conv.source,
+    readArtifact: (relPath) => {
+      const parts = String(relPath).split('/').filter((s) => s && s !== '..');
+      return parts.length ? fs.readFileSync(path.join(FILESAVER_DIR, ...parts), 'utf-8') : '';
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
