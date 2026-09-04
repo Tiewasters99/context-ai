@@ -239,7 +239,7 @@ try {
   // ---- check_ingest_status tells the truth about a stored-without-text doc ---------
   console.log('\n[MCP] check_ingest_status on S1');
   const st = await handleCheckIngestStatus(supabase, { document_id: s1 });
-  if (st.status === 'ready' && st.text_status === TEXT_STATUS.BINARY_STORED && st.searchable === false && /stored/i.test(st.note || '')) pass(`MCP: text_status=${st.text_status}, searchable=false, note="${st.note.slice(0, 60)}…"`);
+  if (st.status === 'ready' && st.text_status === TEXT_STATUS.BINARY_STORED && st.searchable === false && /Kept to open or download/.test(st.note || '')) pass(`MCP: text_status=${st.text_status}, searchable=false, note="${st.note.slice(0, 60)}…"`);
   else fail(`MCP: ${JSON.stringify(st).slice(0, 200)}`);
 } finally {
   console.log('\ncleanup');
