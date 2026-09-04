@@ -32,13 +32,20 @@
 //         re-run with real OCR → ocr_pending cleared, pages 4–5 searchable
 //     F2  image-only PDF → ready, 0 passages, text_status ocr_pending
 //     F3  .png scan → ready, 0 passages, text_status ocr_pending (not image_only)
-//   and check_ingest_status on S1 reports text_status + searchable:false, on F1 names the pages.
+//   containers (Phase 3, gate G2):
+//     Z1  .zip (2 files + a nested zip + Mac junk) → archive stored with reason, moved into a folder
+//         named after it; 3 children filed there and indexed; junk skipped
+//     Z2  file_document with a .zip → accepted and queued (was refused before Phase 3)
+//     E1  .eml with a PDF, an attached message and an inline signature image → message indexed;
+//         PDF + message filed BESIDE it (no folder) and indexed; the image skipped
+//   and check_ingest_status on S1 reports text_status + searchable:false, on F1 names the pages,
+//   on Z1 names the children.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
-import { imageOnlyPdf, mixedPdf, scannedPagePng } from './_fixtures-ingest.mjs';
+import { imageOnlyPdf, mixedPdf, scannedPagePng, archiveFixture, emlFixture } from './_fixtures-ingest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const env = Object.fromEntries(
@@ -96,7 +103,7 @@ const realTxt = Buffer.from(
   'carries no text_status. '.repeat(3), 'utf8');
 
 // --- helpers ------------------------------------------------------------------
-const made = { docs: [] };
+const made = { docs: [], folders: [] };
 let failures = 0;
 const pass = (msg) => console.log(`  ok   ${msg}`);
 const fail = (msg) => { failures++; console.log(`  FAIL ${msg}`); };
@@ -158,7 +165,7 @@ async function waitTerminal(id, ms = 8 * 60_000) {
   let last = '';
   while (Date.now() - t0 < ms) {
     const { data } = await supabase.from('documents')
-      .select('id, processing_status, processing_error, page_count, metadata').eq('id', id).maybeSingle();
+      .select('id, processing_status, processing_error, page_count, matterspace_id, metadata').eq('id', id).maybeSingle();
     const line = data ? `${data.processing_status}${data.processing_error ? ' | ' + data.processing_error.slice(0, 100) : ''}` : 'gone';
     if (line !== last) { console.log(`       ${new Date().toISOString().slice(11, 19)} ${line}`); last = line; }
     if (data && (data.processing_status === 'ready' || data.processing_status === 'error')) return data;
@@ -195,6 +202,43 @@ async function expectMixedIndexed(label, id) {
   } else {
     fail(`${label}: status=${d.processing_status} passages=${n} page_count=${d.page_count} text_status=${md.text_status} ocr_pending=${JSON.stringify(md.ocr_pending || null).slice(0, 120)} p1=${p1} p4=${p4} p5=${p5} error=${(d.processing_error || '').slice(0, 100)}`);
   }
+  return d;
+}
+
+// ---- containers (Phase 3) ------------------------------------------------------
+// A container's children are queued for the worker. In --local mode nothing
+// drains that queue, so the children are run here, in-process, the way the
+// worker would: download the stored bytes, run this checkout's pipeline.
+// Either way every child and folder is remembered for cleanup.
+async function adoptChildren(summary) {
+  for (const c of summary?.children || []) if (c.id && !made.docs.includes(c.id)) made.docs.push(c.id);
+  if (summary?.folder_id && !made.folders.includes(summary.folder_id)) made.folders.push(summary.folder_id);
+}
+async function runChildrenLocal(summary) {
+  if (!LOCAL) return;
+  for (const c of summary?.children || []) {
+    const { data: row } = await supabase.from('documents').select('id, storage_path, source_filename, processing_status').eq('id', c.id).maybeSingle();
+    if (!row?.storage_path || row.processing_status === 'ready') continue;
+    const { data: blob, error } = await supabase.storage.from('vault-documents').download(row.storage_path);
+    if (error) { fail(`child ${row.source_filename}: download ${error.message}`); continue; }
+    console.log(`       child ${row.source_filename}`);
+    await runLocal(row.id, Buffer.from(await blob.arrayBuffer()), row.source_filename, 'real');
+    // A child that is itself a container (the nested .eml) files its own
+    // children; adopt and run those too.
+    const { data: after } = await supabase.from('documents').select('metadata').eq('id', row.id).maybeSingle();
+    const nested = after?.metadata?.archive || after?.metadata?.email_attachments || null;
+    if (nested?.children?.length) { await adoptChildren(nested); await runChildrenLocal(nested); }
+  }
+}
+// The child named `title` is ready, searchable, and cites `word` on page 1.
+async function expectChildIndexed(label, summary, titleRe, word) {
+  const c = (summary?.children || []).find((k) => titleRe.test(k.title || ''));
+  if (!c) { fail(`${label}: no child matching ${titleRe}`); return null; }
+  const d = await waitTerminal(c.id);
+  const n = await passageCount(c.id);
+  const hit = await pageHasWord(c.id, 1, word);
+  if (d.processing_status === 'ready' && n > 0 && !d.metadata?.text_status && hit) pass(`${label}: child "${c.title}" ready, ${n} passage(s), cites "${word}"`);
+  else fail(`${label}: child "${c.title}" status=${d.processing_status} passages=${n} text_status=${d.metadata?.text_status} hit=${hit} error=${(d.processing_error || '').slice(0, 100)}`);
   return d;
 }
 
@@ -320,13 +364,97 @@ try {
   } else {
     console.log('\n[F1–F3] skipped — OCR failure injection runs with --local only');
   }
+
+  // ---- containers (Phase 3, gate G2) ---------------------------------------------
+  console.log('\n[Z1] .zip (2 files + nested zip + Mac junk) → archive stored, unpacked into a folder, children indexed');
+  const zipBytes = await archiveFixture({ tag });
+  const z1 = await fileAndRun({ title: `Smoke archive ${tag}`, filename: `smoke-archive-${tag}.zip`, bytes: zipBytes, contentType: 'application/zip' });
+  {
+    const d = await waitTerminal(z1);
+    const a = d.metadata?.archive;
+    await adoptChildren(a);
+    const titles = (a?.children || []).map((c) => c.title).sort();
+    if (d.processing_status === 'ready' && d.metadata?.text_status === TEXT_STATUS.ARCHIVE && a && a.entry_count === 3 &&
+        JSON.stringify(titles) === JSON.stringify(['Deposition of J. Walters', 'Exhibit C', 'notes']) &&
+        a.folder_id && d.matterspace_id === a.folder_id && (a.skipped || []).length === 2) {
+      pass(`Z1: ready, text_status=archive; folder "${a.folder_name}"; archive moved in; 3 children ${JSON.stringify(titles)}; 2 junk entries skipped`);
+    } else {
+      fail(`Z1: status=${d.processing_status} text_status=${d.metadata?.text_status} archive=${JSON.stringify(a || null).slice(0, 300)} in_folder=${d.matterspace_id === a?.folder_id}`);
+    }
+    await runChildrenLocal(a);
+    await expectChildIndexed('Z1', a, /Deposition/, 'cobalt');
+    await expectChildIndexed('Z1', a, /^notes$/, 'saffron');
+    await expectChildIndexed('Z1', a, /Exhibit C/, 'vermilion');
+    const { data: kids } = await supabase.from('documents').select('id, matterspace_id, container_kind:metadata->>container_kind, container_entry:metadata->>container_entry').in('id', (a?.children || []).map((c) => c.id));
+    const nested = (kids || []).find((k) => /inner\.zip\//.test(k.container_entry || ''));
+    if ((kids || []).every((k) => k.matterspace_id === a?.folder_id && k.container_kind === 'zip') && nested) pass(`Z1: every child in the folder with container_kind=zip; nested entry recorded as "${nested.container_entry}"`);
+    else fail(`Z1: children=${JSON.stringify(kids || []).slice(0, 300)}`);
+    const st = await handleCheckIngestStatus(supabase, { document_id: z1 });
+    if (st.container?.kind === 'zip' && st.container.children?.length === 3 && /unpacked: 3 document\(s\) filed in the folder/.test(st.container_note || '')) pass(`Z1 MCP: check_ingest_status names 3 children — "${st.container_note.slice(0, 80)}…"`);
+    else fail(`Z1 MCP: ${JSON.stringify(st).slice(0, 300)}`);
+  }
+
+  console.log('\n[Z2] file_document with a .zip → accepted and queued for the worker');
+  {
+    const r = await handleFileDocument(supabase,
+      { matter: matter.id, filename: `smoke-archive-mcp-${tag}.zip`, content: zipBytes.toString('base64'), encoding: 'base64', title: `Smoke archive via MCP ${tag}` },
+      { openaiApiKey: env.OPENAI_API_KEY, userId: CREATED_BY });
+    if (r.document_id) made.docs.push(r.document_id);
+    if (r.status === 'queued' && r.job_id && /unpacks it into a folder/.test(r.note || '')) pass(`Z2: queued (job ${String(r.job_id).slice(0, 8)}…), note="${r.note.slice(0, 70)}…"`);
+    else fail(`Z2: ${JSON.stringify(r).slice(0, 300)}`);
+    if (LOCAL) {
+      // Nothing drains the queue here: cancel the job so the deployed worker
+      // does not unpack a second copy after this run has cleaned up.
+      await supabase.from('processing_jobs').delete().eq('job_type', 'ingest_document').contains('payload', { document_id: r.document_id });
+    } else {
+      const d = await waitTerminal(r.document_id);
+      await adoptChildren(d.metadata?.archive);
+      if (d.processing_status === 'ready' && d.metadata?.text_status === TEXT_STATUS.ARCHIVE) pass('Z2: worker unpacked it');
+      else fail(`Z2: status=${d.processing_status} error=${(d.processing_error || '').slice(0, 100)}`);
+    }
+  }
+
+  console.log('\n[E1] .eml with a PDF, an attached message and an inline signature → message indexed; attachments filed beside it');
+  const emlBytes = await emlFixture({ tag });
+  const e1 = await fileAndRun({ title: `Smoke email ${tag}`, filename: `smoke-email-${tag}.eml`, bytes: emlBytes, contentType: 'message/rfc822' });
+  {
+    const d = await waitTerminal(e1);
+    const n = await passageCount(e1);
+    const ea = d.metadata?.email_attachments;
+    await adoptChildren(ea);
+    const body = await pageHasWord(e1, 1, 'ochre folder');
+    const titles = (ea?.children || []).map((c) => c.title).sort();
+    if (d.processing_status === 'ready' && n > 0 && !d.metadata?.text_status && body && ea && ea.entry_count === 2 && !ea.folder_id &&
+        d.matterspace_id === matter.id && titles.length === 2 && /Disclosures/.test(titles[0]) && /Forwarded scheduling note/.test(titles[1]) && (ea.skipped || []).length === 1) {
+      pass(`E1: email ready, ${n} passage(s), body searchable; 2 attachments filed beside it (${titles.join(' | ')}); inline image skipped`);
+    } else {
+      fail(`E1: status=${d.processing_status} passages=${n} body=${body} text_status=${d.metadata?.text_status} email_attachments=${JSON.stringify(ea || null).slice(0, 300)}`);
+    }
+    await runChildrenLocal(ea);
+    await expectChildIndexed('E1', ea, /Disclosures/, 'magenta ledger');
+    await expectChildIndexed('E1', ea, /Forwarded scheduling note/, 'teal calendar');
+    const { data: kids } = await supabase.from('documents').select('id, matterspace_id, container_kind:metadata->>container_kind').in('id', (ea?.children || []).map((c) => c.id));
+    if ((kids || []).length === 2 && kids.every((k) => k.matterspace_id === matter.id && k.container_kind === 'eml')) pass('E1: both attachments sit in the same matter as the email (no folder), container_kind=eml');
+    else fail(`E1: children=${JSON.stringify(kids || []).slice(0, 300)}`);
+  }
 } finally {
   console.log('\ncleanup');
   const { data: rows } = await supabase.from('documents').select('id, storage_path').in('id', made.docs);
   const paths = (rows || []).map((r) => r.storage_path).filter(Boolean);
   if (paths.length) await supabase.storage.from('vault-documents').remove(paths);
   if (made.docs.length) await supabase.from('documents').delete().in('id', made.docs);
-  console.log(`  removed ${made.docs.length} doc(s)`);
+  // Jobs the children left behind (queued for a worker that, in --local
+  // mode, never ran) would fail on a deleted document; drop them.
+  for (const id of made.docs) {
+    await supabase.from('processing_jobs').delete().eq('job_type', 'ingest_document').in('status', ['queued']).contains('payload', { document_id: id });
+  }
+  let removedFolders = 0;
+  for (const f of made.folders) {
+    const { count } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('matterspace_id', f);
+    if (count === 0) { await supabase.from('matterspaces').delete().eq('id', f); removedFolders++; }
+    else console.log(`  folder ${f} kept (${count} docs)`);
+  }
+  console.log(`  removed ${made.docs.length} doc(s), ${removedFolders} folder(s)`);
 }
 console.log(failures ? `\n${failures} FAILED` : '\nPASS');
 process.exit(failures ? 1 : 0);

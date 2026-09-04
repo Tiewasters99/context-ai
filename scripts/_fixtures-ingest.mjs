@@ -102,3 +102,91 @@ export async function mixedPdf({ marker4 = 'marmalade', marker5 = 'quixotic', ta
     { scan: [`EXHIBIT B ${tag}`.trim(), `Handwritten note: the ${marker5} witness arrived late.`, 'Interview began at ten.', 'Ended before noon.'] },
   ]);
 }
+
+// ---- Containers (Phase 3, gate G2) ------------------------------------------
+
+// A .zip from a plan of { path: bytes }. Directory entries are implied by the
+// paths. Built with JSZip, the same library the browser uses.
+export async function zipFixture(files) {
+  const JSZip = (await import('jszip')).default;
+  const zip = new JSZip();
+  for (const [p, bytes] of Object.entries(files)) zip.file(p, bytes);
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+// The Phase 3 acceptance archive: a typed PDF, a text file, a nested archive
+// holding another PDF, and the junk a Mac drops in (skipped). `tag` makes
+// the words unique per run.
+export async function archiveFixture({ tag = '' } = {}) {
+  const inner = await zipFixture({
+    'nested/Exhibit C.pdf': await textPdf([`EXHIBIT C ${tag}`.trim(), 'The nested exhibit mentions a vermilion ledger.']),
+  });
+  return zipFixture({
+    'Transcript Files/Deposition of J. Walters.pdf': await textPdf([`DEPOSITION ${tag}`.trim(), 'The witness described a cobalt briefcase.']),
+    'Transcript Files/notes.txt': Buffer.from(`Smoke ${tag}: the reporter noted a saffron envelope.\n`),
+    'Transcript Files/inner.zip': inner,
+    '__MACOSX/Transcript Files/._notes.txt': Buffer.from('junk'),
+    'Transcript Files/.DS_Store': Buffer.from('junk'),
+  });
+}
+
+// A multipart email: text + HTML body, an inline signature image referenced
+// by cid (not an attachment), a PDF attachment, and an attached message.
+export async function emlFixture({ tag = '', subject = 'Initial disclosures' } = {}) {
+  const pdf = await textPdf([`DISCLOSURES ${tag}`.trim(), 'The attached disclosure names a magenta ledger.']);
+  const png = await scannedPagePng(['signature'], { width: 120, height: 40 });
+  const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
+  const b64 = (buf) => buf.toString('base64').replace(/(.{76})/g, `$1${CRLF}`);
+  const nested = [
+    'From: clerk@example.com', 'To: eden@example.com', `Subject: Forwarded scheduling note ${tag}`.trim(),
+    'Content-Type: text/plain; charset=utf-8', '', `The forwarded note ${tag} mentions a teal calendar.`, '',
+  ].join(CRLF);
+  const lines = [
+    'From: "Opposing Counsel" <counsel@example.com>',
+    'To: eden@example.com',
+    `Subject: ${subject} ${tag}`.trim(),
+    'Date: Thu, 17 Apr 2025 09:12:00 -0500',
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/mixed; boundary="MIX"',
+    '',
+    '--MIX',
+    'Content-Type: multipart/related; boundary="REL"',
+    '',
+    '--REL',
+    'Content-Type: multipart/alternative; boundary="ALT"',
+    '',
+    '--ALT',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    `Good morning all, attached please find the disclosures ${tag}. The body mentions an ochre folder.`,
+    '',
+    '--ALT',
+    'Content-Type: text/html; charset=utf-8',
+    '',
+    `<p>Good morning all, attached please find the disclosures ${tag}. The body mentions an ochre folder.</p><img src="cid:sig001">`,
+    '',
+    '--ALT--',
+    '--REL',
+    'Content-Type: image/png; name="image002.png"',
+    'Content-Transfer-Encoding: base64',
+    'Content-ID: <sig001>',
+    'Content-Disposition: inline; filename="image002.png"',
+    '',
+    b64(png),
+    '--REL--',
+    '--MIX',
+    'Content-Type: application/pdf; name="2025.04.17 - Second Amended Initial Disclosures.pdf"',
+    'Content-Transfer-Encoding: base64',
+    'Content-Disposition: attachment; filename="2025.04.17 - Second Amended Initial Disclosures.pdf"',
+    '',
+    b64(pdf),
+    '--MIX',
+    'Content-Type: message/rfc822',
+    'Content-Disposition: attachment',
+    '',
+    nested,
+    '--MIX--',
+    '',
+  ];
+  return Buffer.from(lines.join(CRLF), 'utf8');
+}

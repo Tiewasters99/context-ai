@@ -74,20 +74,17 @@ ok('unsupported: names the extension, lists the supported types, hints for .doc'
 assert.strictEqual(checkUpload({ name: 'x.exe', size: VAULT_MAX_BYTES + 1 }).code, 'too_large');
 ok('size outranks type');
 
-// .zip is accepted only where archives get expanded (the web Vault). The MCP
-// file_document path passes zip:false and gets a refusal that says why, and
-// its supported-types list no longer advertises archives.
-assert.strictEqual(checkUpload({ name: 'production.zip', size: 10 }, { zip: true }), null);
-const z = checkUpload({ name: 'production.zip', size: 10 }, { zip: false });
-assert.strictEqual(z.code, 'unsupported');
-assert.match(z.message, /\.zip archive, which this path does not unpack/);
-assert.doesNotMatch(z.message, /zip archives of those/);
-assert.doesNotMatch(checkUpload({ name: 'x.exe', size: 10 }, { zip: false }).message, /zip archives/);
-ok('zip: accepted with expansion, refused with a reason without it');
+// .zip is accepted on every path since Phase 3: the web Vault expands it in
+// the browser, everything else unpacks it at ingest. The old zip:false
+// option is tolerated and changes nothing.
+assert.strictEqual(checkUpload({ name: 'production.zip', size: 10 }), null);
+assert.strictEqual(checkUpload({ name: 'production.zip', size: 10 }, { zip: false }), null);
+assert.match(checkUpload({ name: 'x.exe', size: 10 }, { zip: false }).message, /zip archives of those/);
+ok('zip: accepted everywhere (unpacked at ingest where the browser did not)');
 
 // --- text_status vocabulary ---------------------------------------------------
 assert.deepStrictEqual(Object.values(TEXT_STATUS).sort(),
-  ['binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'ocr_pending', 'portfolio', 'unsupported']);
+  ['archive', 'binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'ocr_pending', 'portfolio', 'unsupported']);
 for (const s of Object.values(TEXT_STATUS)) {
   const d = describeTextStatus(s);
   assert(d.label && d.label.length > 8, `${s} label`);
