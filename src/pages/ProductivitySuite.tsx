@@ -75,7 +75,7 @@ const PRODUCTS: Product[] = [
     name: 'FileSaver',
     tagline: 'Capture files and chats from anywhere and route them into your workspace.',
     accent: '#7dd3fc',
-    href: 'https://filesaver-app.vercel.app',
+    href: 'https://filesaver.ai',
   },
 ];
 
