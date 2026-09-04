@@ -144,13 +144,25 @@ async function fetchDocs(sb, matterId, apply) {
 }
 
 async function fetchStuckJobs(sb, cutoff) {
+  // processing_jobs has no updated_at (it has claimed_at / heartbeat_at).
+  // Until 2026-09-04 this select named updated_at, PostgREST answered 42703,
+  // and the silent `return []` below meant the WORKER alert could never fire
+  // — a monitor blind spot found while watching a requeue drain. A running
+  // job whose heartbeat is fresh is working, not stuck (a 480-page OCR takes
+  // longer than the staleness window); only jobs with no recent heartbeat
+  // — or queued past the window — count.
   const { data, error } = await sb.from('processing_jobs')
-    .select('id, job_type, status, created_at, updated_at, payload')
+    .select('id, job_type, status, created_at, claimed_at, heartbeat_at, payload')
     .in('status', ['queued', 'running'])
     .lt('created_at', cutoff)
     .limit(200);
-  if (error) return [];   // table may not exist in older environments
-  return data || [];
+  if (error) {
+    // Say so rather than hiding it: "no stuck jobs" must not be the answer to
+    // "the query failed".
+    console.error(`(stuck-job check failed: ${error.message})`);
+    return [];
+  }
+  return (data || []).filter((j) => !(j.status === 'running' && (j.heartbeat_at || j.claimed_at || '') > cutoff));
 }
 
 // The audit's headline class, as one RPC (migration 059): every `ready`
@@ -229,9 +241,8 @@ async function resolveMatter(sb, code) {
 // is a worse problem than the one it solves.
 // -----------------------------------------------------------------------------
 async function autoFix(sb, rows, report) {
-  const targets = rows
-    .filter((r) => describe(r.cls).retryable && !MUTED.reasons.includes(r.cls))
-    .slice(0, MAX_FIX);
+  const eligible = rows.filter((r) => describe(r.cls).retryable && !MUTED.reasons.includes(r.cls));
+  const targets = eligible.slice(0, MAX_FIX);
   if (!targets.length) return console.log('\n--fix: nothing safely retryable.');
 
   console.log(`\n--fix: requeueing ${targets.length} document(s) (cap ${MAX_FIX})`);
@@ -263,8 +274,11 @@ async function autoFix(sb, rows, report) {
     return;
   }
   console.log(`  queued ${queued}${queued < targets.length ? ` of ${targets.length} (${targets.length - queued} failed or already in flight)` : ''}. The worker picks these up within a poll cycle (~5s).`);
-  if (report.total > MAX_FIX) {
-    console.log(`  ${report.total - MAX_FIX} remain — re-run --fix, or raise --max-fix.`);
+  // Count only what a re-run would actually queue. This used to print
+  // report.total, which includes the thousands of known-benign rows, and so
+  // said "4127 remain" after queueing everything retryable.
+  if (eligible.length > MAX_FIX) {
+    console.log(`  ${eligible.length - MAX_FIX} more retryable remain — re-run --fix, or raise --max-fix.`);
   }
 }
 
