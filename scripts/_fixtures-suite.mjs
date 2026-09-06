@@ -54,42 +54,72 @@ export async function scanPdfPages(n, { tag = '' } = {}) {
 }
 
 // A large born-digital record: `pages` typed pages (every one searchable)
-// padded with incompressible JPEG photographs on every k-th page until the
-// file is at least `targetBytes`. The images are embedded as-is (DCTDecode),
-// so the PDF is big on disk and cheap to build. Exercises the resumable
-// upload path (≥ 50 MB), the worker's download, pdf-parse on a big file and
-// a large passage insert — the "200 MB record" of gate G7.
-export async function bigRecordPdf({ pages = 400, targetBytes = 200 * 1024 * 1024, tag = '' } = {}) {
+// padded with `photos` incompressible JPEG photographs so the file lands
+// around `targetBytes`. Exercises the resumable upload path (≥ 50 MB), the
+// worker's download, pdf-parse on a big file and a large passage insert —
+// the "200 MB record" of gate G7.
+//
+// Written STRAIGHT TO DISK as raw PDF syntax, one object at a time, and
+// cached at `outPath` for the next night. pdf-lib would hold the whole file
+// (and two or three copies of it) in memory; on 2026-09-06 that got the
+// suite killed on a PC with 3 GB free. This writer's peak is one JPEG.
+// Upload it with fs.openAsBlob(outPath) so the bytes stream from disk too.
+export async function bigRecordPdfFile(outPath, { pages = 400, targetBytes = 200 * 1024 * 1024, photos = 10 } = {}) {
+  try {
+    const st = fs.statSync(outPath);
+    if (st.size >= targetBytes * 0.75) return { path: outPath, size: st.size, cached: true };
+  } catch { /* build it */ }
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
   const { default: sharp } = await import('sharp');
-  const { PDFDocument, StandardFonts } = await import('pdf-lib');
-  const doc = await PDFDocument.create();
-  const font = await doc.embedFont(StandardFonts.Helvetica);
-  const LETTER = [612, 792];
-  // One noise photograph ≈ 18–22 MB at 4200×4200 q100. Make as many as needed.
-  const photoBytes = async () => {
-    const side = 4200;
+  // A noise JPEG at q100 4:4:4 measures ≈ 2.8 bytes/pixel (2026-09-06: ten
+  // 3800² photos made a 418 MB file); size the square so `photos` of them
+  // land on the target.
+  const side = Math.max(1000, Math.round(Math.sqrt(targetBytes / photos / 2.8)));
+  const fd = fs.openSync(outPath, 'w');
+  let offset = 0;
+  const offsets = [];                   // offsets[n] = byte offset of object n
+  const w = (chunk) => { const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'latin1'); fs.writeSync(fd, b); offset += b.length; };
+  const obj = (n, body) => { offsets[n] = offset; w(`${n} 0 obj\n${body}\nendobj\n`); };
+  const esc = (s) => String(s).replace(/[\\()]/g, (c) => '\\' + c).replace(/[^\x20-\x7e]/g, '?');
+
+  // Object numbers, fixed up front so references can be written before the
+  // objects they point to: 1 catalog, 2 pages, 3 font, 4..3+photos images,
+  // then two per page (page, content).
+  const IMG0 = 4;
+  const PAGE0 = IMG0 + photos;
+  const pageObj = (p) => PAGE0 + 2 * (p - 1);
+  const every = Math.max(1, Math.floor(pages / photos));
+
+  w('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  const kids = Array.from({ length: pages }, (_, i) => `${pageObj(i + 1)} 0 R`).join(' ');
+  obj(2, `<< /Type /Pages /Kids [ ${kids} ] /Count ${pages} >>`);
+  obj(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  for (let k = 0; k < photos; k++) {
     const raw = crypto.randomBytes(side * side * 3);
-    return sharp(raw, { raw: { width: side, height: side, channels: 3 } }).jpeg({ quality: 100, chromaSubsampling: '4:4:4' }).toBuffer();
-  };
-  const photos = [];
-  let padded = 0;
-  while (padded < targetBytes) {
-    const jpg = await photoBytes();
-    photos.push(await doc.embedJpg(jpg));
-    padded += jpg.length;
+    const jpg = await sharp(raw, { raw: { width: side, height: side, channels: 3 } }).jpeg({ quality: 100, chromaSubsampling: '4:4:4' }).toBuffer();
+    offsets[IMG0 + k] = offset;
+    w(`${IMG0 + k} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${side} /Height ${side} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);
+    w(jpg);
+    w('\nendstream\nendobj\n');
   }
-  const every = Math.max(1, Math.floor(pages / photos.length));
   let used = 0;
   for (let p = 1; p <= pages; p++) {
-    const page = doc.addPage(LETTER);
-    if (p % every === 0 && used < photos.length) {
-      page.drawImage(photos[used++], { x: 36, y: 300, width: 540, height: 400 });
-    }
-    const lines = [`Page ${p} of ${pages} ${tag}`.trim(), `The ${wordForPage(p)} exhibit is discussed on this page.`, ...proseLines(p, 10)];
-    let y = 740;
-    for (const l of lines) { page.drawText(l, { x: 72, y, size: 11, font }); y -= 16; }
+    const withPhoto = p % every === 0 && used < photos ? used++ : -1;
+    const lines = [`Page ${p} of ${pages}`, `The ${wordForPage(p)} exhibit is discussed on this page.`, ...proseLines(p, 10)];
+    let content = 'BT /F1 11 Tf 72 740 Td 16 TL\n' + lines.map((l) => `(${esc(l)}) Tj T*`).join('\n') + '\nET\n';
+    if (withPhoto >= 0) content += `q 540 0 0 400 36 300 cm /Im${withPhoto} Do Q\n`;
+    const xobj = withPhoto >= 0 ? ` /XObject << /Im${withPhoto} ${IMG0 + withPhoto} 0 R >>` : '';
+    obj(pageObj(p), `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >>${xobj} >> /Contents ${pageObj(p) + 1} 0 R >>`);
+    obj(pageObj(p) + 1, `<< /Length ${Buffer.byteLength(content, 'latin1')} >>\nstream\n${content}endstream`);
   }
-  return Buffer.from(await doc.save({ useObjectStreams: false }));
+  const count = PAGE0 + 2 * pages;
+  const xref = offset;
+  w(`xref\n0 ${count}\n0000000000 65535 f \n`);
+  for (let n = 1; n < count; n++) w(`${String(offsets[n]).padStart(10, '0')} 00000 n \n`);
+  w(`trailer\n<< /Size ${count} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  fs.closeSync(fd);
+  return { path: outPath, size: fs.statSync(outPath).size, cached: false };
 }
 
 // A PDF portfolio: a cover sheet with two attached PDFs (the wrapper is

@@ -46,6 +46,7 @@ import { handleFileDocument, handleCheckIngestStatus } from '../lib/mcp-core.mjs
 import { JOB_PRIORITY } from '../lib/ingest-core.mjs';
 import { uploadResumable, shouldUploadResumable } from '../lib/tus-upload.mjs';
 import * as F from './_fixtures-suite.mjs';
+import { seededRecord, SUITE_BUCKET, SUITE_RECORD_OBJECT, SUITE_RECORD_PAGES } from './_seed-suite-record.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -108,33 +109,54 @@ const made = { docs: [], folders: [] };
 const timings = {}; // label → { bytes, uploadMs, queuedAt, readyAt, pipelineMs, status }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fileAndQueue({ label, title, filename, bytes, contentType, priority = JOB_PRIORITY.NORMAL }) {
+// Insert the row, upload the bytes, and (unless enqueue:false) queue the job.
+// The queue → ready clock starts at enqueue, never at upload: this PC's
+// upload bandwidth is not what the suite measures.
+// `bytes` for the small fixtures (uploaded from here); `copyFrom` for the big
+// record, which is copied SERVER-SIDE from the object _seed-suite-record.mjs
+// put in place once — this PC's uplink (≈ 50 KB/s on 2026-09-06) is not what
+// the suite measures, and 200 MB through it took an hour. `filePath` streams
+// a local file through a file-backed Blob when a real upload is wanted.
+async function fileAndQueue({ label, title, filename, bytes = null, filePath = null, copyFrom = null, size: knownSize = null, contentType, priority = JOB_PRIORITY.NORMAL, enqueue = true }) {
+  const size = bytes ? bytes.length : filePath ? fs.statSync(filePath).size : knownSize;
   const { data: row, error } = await supabase.from('documents').insert({
     matterspace_id: matter.id, title, doc_type: 'other', source_filename: filename,
-    file_size_bytes: bytes.length, processing_status: 'pending', created_by: CREATED_BY,
+    file_size_bytes: size, processing_status: 'pending', created_by: CREATED_BY,
   }).select('id').single();
   if (error) throw new Error(`insert ${title}: ${error.message}`);
   made.docs.push(row.id);
   const storagePath = `${matter.id}/${row.id}/${filename.replace(/[^a-zA-Z0-9._-]+/g, '_')}`;
   const t0 = Date.now();
-  if (shouldUploadResumable(bytes.length)) {
+  let how = 'uploaded';
+  if (copyFrom) {
+    const { error: cpErr } = await supabase.storage.from(SUITE_BUCKET).copy(copyFrom, storagePath);
+    if (cpErr) throw new Error(`copy ${title}: ${cpErr.message}`);
+    how = 'copied (server-side)';
+  } else if (shouldUploadResumable(size)) {
+    const blob = bytes ? new Blob([bytes]) : await fs.openAsBlob(filePath);
     await uploadResumable({
       supabaseUrl: env.VITE_SUPABASE_URL, token: env.SUPABASE_SERVICE_ROLE_KEY, apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      bucket: 'vault-documents', objectName: storagePath, blob: new Blob([bytes]), contentType,
+      bucket: SUITE_BUCKET, objectName: storagePath, blob, contentType,
     });
+    how = 'uploaded (resumable)';
   } else {
-    const { error: upErr } = await supabase.storage.from('vault-documents').upload(storagePath, bytes, { contentType, upsert: true });
+    const { error: upErr } = await supabase.storage.from(SUITE_BUCKET).upload(storagePath, bytes ?? fs.readFileSync(filePath), { contentType, upsert: true });
     if (upErr) throw new Error(`upload ${title}: ${upErr.message}`);
   }
   const uploadMs = Date.now() - t0;
   await supabase.from('documents').update({ storage_path: storagePath }).eq('id', row.id);
-  const { error: qErr } = await supabase.from('processing_jobs').insert({
-    matterspace_id: matter.id, job_type: 'ingest_document', payload: { document_id: row.id, suite: tag }, priority,
-  });
-  if (qErr) throw new Error(`enqueue ${title}: ${qErr.message}`);
-  timings[label] = { id: row.id, bytes: bytes.length, uploadMs, queuedAt: Date.now(), readyAt: null, pipelineMs: null, status: 'pending', resumable: shouldUploadResumable(bytes.length) };
-  console.log(`  ${stamp()} queued ${label.padEnd(14)} ${(bytes.length / 1048576).toFixed(bytes.length > 1048576 ? 1 : 2)} MB, upload ${(uploadMs / 1000).toFixed(1)} s${timings[label].resumable ? ' (resumable)' : ''}`);
+  timings[label] = { id: row.id, bytes: size, uploadMs, queuedAt: null, readyAt: null, pipelineMs: null, status: 'uploaded', how, priority };
+  console.log(`  ${stamp()} ${how.padEnd(20)} ${label.padEnd(12)} ${(size / 1048576).toFixed(size > 1048576 ? 1 : 2)} MB in ${(uploadMs / 1000).toFixed(1)} s`);
+  if (enqueue) await enqueueJob(label);
   return row.id;
+}
+async function enqueueJob(label) {
+  const t = timings[label];
+  const { error } = await supabase.from('processing_jobs').insert({
+    matterspace_id: matter.id, job_type: 'ingest_document', payload: { document_id: t.id, suite: tag }, priority: t.priority,
+  });
+  if (error) throw new Error(`enqueue ${label}: ${error.message}`);
+  t.queuedAt = Date.now(); t.status = 'pending';
 }
 
 const TERMINAL = new Set(['ready', 'error', 'held']);
@@ -245,23 +267,32 @@ try {
   const { count: rowsAfter } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('matterspace_id', matter.id);
   check('G4', rowsBefore === rowsAfter, 'no row was created by the refusals');
 
-  // ---- G8: contention — six BULK scans first, then one NORMAL text file -----------------
-  // The bulk fixtures are OCR-bound (12 scanned pages each, ~10–25 s of Gemini
-  // per document) so both workers are genuinely busy for a couple of rounds;
-  // born-digital PDFs clear in seconds and prove nothing. The single upload
-  // is queued after them at NORMAL priority and must be picked up as soon as
-  // a lane frees — long before the batch is done.
+  // ---- G8: contention — ten BULK scans first, then one NORMAL text file -----------------
+  // The bulk fixtures are OCR-bound (12 scanned pages each, ~7–15 s of Gemini
+  // per document — one call per document, so page count barely matters and
+  // it is the COUNT of documents that keeps both lanes busy for several
+  // rounds); born-digital PDFs clear in seconds and prove nothing. The single
+  // upload is queued after them at NORMAL priority and must be picked up as
+  // soon as a lane frees — long before the batch is done.
   console.log('\n[G8] bulk production vs a single upload');
   const { count: depth } = await supabase.from('processing_jobs').select('id', { count: 'exact', head: true }).in('status', ['queued', 'running']);
   console.log(`  queue depth before: ${depth || 0} job(s) queued/running`);
+  // Upload everything first, then release the six bulk jobs together and the
+  // single two seconds later — so the batch really is queued as a batch,
+  // however slow this PC's uplink is on the night.
+  const BULK_N = 10;
   const bulkLabels = [];
-  for (let i = 1; i <= 6; i++) {
+  for (let i = 1; i <= BULK_N; i++) {
     const label = `bulk${i}`;
     bulkLabels.push(label);
-    await fileAndQueue({ label, title: `Suite bulk ${i} ${tag}`, filename: `suite-bulk-${i}-${tag}.pdf`, bytes: await F.scanPdfPages(12, { tag: `bulk${i}` }), contentType: 'application/pdf', priority: JOB_PRIORITY.BULK });
+    await fileAndQueue({ label, title: `Suite bulk ${i} ${tag}`, filename: `suite-bulk-${i}-${tag}.pdf`, bytes: await F.scanPdfPages(12, { tag: `bulk${i}` }), contentType: 'application/pdf', priority: JOB_PRIORITY.BULK, enqueue: false });
   }
-  await sleep(3000);
-  await fileAndQueue({ label: 'single', title: `Suite single ${tag}`, filename: `suite-single-${tag}.txt`, bytes: F.controlTxt({ tag: 'single' }), contentType: 'text/plain', priority: JOB_PRIORITY.NORMAL });
+  await fileAndQueue({ label: 'single', title: `Suite single ${tag}`, filename: `suite-single-${tag}.txt`, bytes: F.controlTxt({ tag: 'single' }), contentType: 'text/plain', priority: JOB_PRIORITY.NORMAL, enqueue: false });
+  for (const label of bulkLabels) await enqueueJob(label);
+  console.log(`  ${stamp()} released ${BULK_N} bulk jobs`);
+  await sleep(2000);
+  await enqueueJob('single');
+  console.log(`  ${stamp()} released the single upload`);
   const g8 = await waitAll([...bulkLabels.map((label) => ({ label, budgetMs: 8 * 60_000 })), { label: 'single', budgetMs: 8 * 60_000 }]);
   {
     const single = timings.single;
@@ -270,8 +301,8 @@ try {
     const batchMs = lastBulk === Infinity ? null : lastBulk - Math.min(...bulkLabels.map((l) => timings[l].queuedAt));
     check('G8', g8.single?.processing_status === 'ready' && single.readyAt < lastBulk,
       `single upload ready ${(single.pipelineMs / 1000).toFixed(0)} s after queueing — ${lastBulk === Infinity ? 'bulk never finished' : `${((lastBulk - single.readyAt) / 1000).toFixed(0)} s before the bulk batch finished (batch took ${(batchMs / 1000).toFixed(0)} s)`}`);
-    check('G8', single.pipelineMs < 120_000, `single upload's queue→ready under 2 min (${(single.pipelineMs / 1000).toFixed(0)} s) with 6 bulk scans queued ahead of it`);
-    check('G8', bulkOk, `all 6 bulk scans finished (${bulkLabels.map((l) => `${(timings[l].pipelineMs / 1000).toFixed(0)}s`).join(', ')})`);
+    check('G8', single.pipelineMs < 120_000, `single upload's queue→ready under 2 min (${(single.pipelineMs / 1000).toFixed(0)} s) with ${BULK_N} bulk scans queued ahead of it`);
+    check('G8', bulkOk, `all ${BULK_N} bulk scans finished (${bulkLabels.map((l) => `${(timings[l].pipelineMs / 1000).toFixed(0)}s`).join(', ')})`);
   }
 
   // ---- The corpus: queue everything, heaviest first ---------------------------------
@@ -282,9 +313,12 @@ try {
   if (SKIP_HEAVY) {
     skip('G7', '--skip-heavy');
   } else {
-    console.log(`  ${stamp()} building the 200 MB record…`);
-    const big = await F.bigRecordPdf({ pages: 400, tag });
-    await q('record200', 10 * 60_000, { title: `Suite 200 MB record ${tag}`, filename: `suite-record-${tag}.pdf`, bytes: big, contentType: 'application/pdf' });
+    const seeded = await seededRecord(supabase);
+    if (seeded) {
+      await q('record200', 10 * 60_000, { title: `Suite 200 MB record ${tag}`, filename: `suite-record-${tag}.pdf`, copyFrom: SUITE_RECORD_OBJECT, size: seeded.size, contentType: 'application/pdf' });
+    } else {
+      check('G7', false, `record200: the seeded fixture ${SUITE_BUCKET}/${SUITE_RECORD_OBJECT} is missing — run: node scripts/_seed-suite-record.mjs`);
+    }
     await q('text300', 3 * 60_000, { title: `Suite 300-page brief ${tag}`, filename: `suite-300pp-${tag}.pdf`, bytes: await F.textPdfPages(300, { tag }), contentType: 'application/pdf' });
     await q('scan50', 5 * 60_000, { title: `Suite 50-page scan ${tag}`, filename: `suite-scan50-${tag}.pdf`, bytes: await F.scanPdfPages(50, { tag }), contentType: 'application/pdf' });
   }
@@ -326,8 +360,9 @@ try {
   // ---- G7 timings ------------------------------------------------------------------
   if (!SKIP_HEAVY) {
     console.log('\n[G7] time-to-searchable');
-    for (const [label, pages, budget, wantResumable] of [['text300', 300, 3, false], ['scan50', 50, 5, false], ['record200', 400, 10, true]]) {
+    for (const [label, pages, budget] of [['text300', 300, 3], ['scan50', 50, 5], ['record200', SUITE_RECORD_PAGES, 10]]) {
       const d = rows[label]; const t = timings[label];
+      if (!t) continue;                               // not queued this run (reason already recorded)
       if (!d) { check('G7', false, `${label}: no row`); continue; }
       const n = await passageCount(d.id);
       const pagesSeen = await distinctPages(d.id);
@@ -335,8 +370,7 @@ try {
       const last = await pageHasWord(d.id, pages, F.wordForPage(pages));
       const okContent = d.processing_status === 'ready' && !d.metadata?.text_status && !d.metadata?.ocr_pending && n >= pages && pagesSeen === pages && first && last;
       check(label === 'scan50' ? 'G1' : 'G0', okContent, `${label}: ${d.processing_status}, ${n} passages over ${pagesSeen}/${pages} pages, p.1 "${F.wordForPage(1)}" ${first ? 'found' : 'NOT found'}, p.${pages} "${F.wordForPage(pages)}" ${last ? 'found' : 'NOT found'}${d.metadata?.ocr_pending ? ', ocr_pending=' + JSON.stringify(d.metadata.ocr_pending).slice(0, 80) : ''}${d.processing_error ? ' | ' + d.processing_error.slice(0, 80) : ''}`);
-      check('G7', t.pipelineMs != null && t.pipelineMs < budget * 60_000 && d.processing_status === 'ready', `${label}: queue→ready ${t.pipelineMs == null ? 'never' : (t.pipelineMs / 1000).toFixed(0) + ' s'} (budget ${budget} min; upload ${(t.uploadMs / 1000).toFixed(0)} s${t.resumable ? ', resumable' : ''})`);
-      if (wantResumable) check('G7', t.resumable && t.bytes >= 50 * 1024 * 1024, `${label}: ${(t.bytes / 1048576).toFixed(0)} MB went through the resumable (TUS) path`);
+      check('G7', t.pipelineMs != null && t.pipelineMs < budget * 60_000 && d.processing_status === 'ready', `${label}: queue→ready ${t.pipelineMs == null ? 'never' : (t.pipelineMs / 1000).toFixed(0) + ' s'} (budget ${budget} min; ${t.how} in ${(t.uploadMs / 1000).toFixed(0)} s${label === 'record200' ? `, ${(t.bytes / 1048576).toFixed(0)} MB — the browser's resumable path is proved by _smoke-resumable-upload.mjs` : ''})`);
     }
   }
 
@@ -549,7 +583,7 @@ for (const [g, title] of Object.entries(GATES)) {
 }
 L.push('');
 L.push('Timings (queue → ready):');
-for (const [label, t] of Object.entries(timings)) L.push(`  ${label.padEnd(12)} ${String((t.bytes / 1048576).toFixed(t.bytes > 1048576 ? 1 : 2)).padStart(7)} MB  upload ${String((t.uploadMs / 1000).toFixed(1)).padStart(6)} s  pipeline ${t.pipelineMs == null ? '   —  ' : String((t.pipelineMs / 1000).toFixed(0)).padStart(4) + ' s'}  ${t.status}${t.resumable ? '  (resumable)' : ''}`);
+for (const [label, t] of Object.entries(timings)) L.push(`  ${label.padEnd(12)} ${String((t.bytes / 1048576).toFixed(t.bytes > 1048576 ? 1 : 2)).padStart(7)} MB  ${t.how.padEnd(20)} ${String((t.uploadMs / 1000).toFixed(1)).padStart(6)} s  pipeline ${t.pipelineMs == null ? '   —  ' : String((t.pipelineMs / 1000).toFixed(0)).padStart(4) + ' s'}  ${t.status}`);
 if (failures.length) { L.push(''); L.push('Failures:'); for (const f of failures) L.push(`  - ${f}`); }
 const report = L.join('\n');
 console.log('\n' + '='.repeat(100) + '\n' + report + '\n' + '='.repeat(100));
