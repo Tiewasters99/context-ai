@@ -231,12 +231,22 @@ try {
       'check_ingest_status: searchable by words, semantic_search:false, note says vectors are owed', (st?.note || '').slice(0, 120));
 
     // Search still finds it, on words, with the endpoint's note.
+    // The search half always runs HERE, in-process. With the route configured
+    // (or simulated) the note is the endpoint's own answer; with the keys not
+    // in this checkout's .env (typical for --deployed) the route is unready and
+    // the note is the seal's steady-state "not sent to an outside provider"
+    // line — correct for this process, and not what the worker just proved.
     const found = await handleSearch(supabase, { q: marker, matter: matterId, limit: 5 }, {});
     const hits = Array.isArray(found?.results) ? found.results : [];
     const hit = hits.some((h) => JSON.stringify(h).includes(marker));
     const noteText = String(found?.note ?? '');
     check(hit, 'sealed search finds the passage by its words', `${hits.length} hit(s)`);
-    check(/not in service/.test(noteText), 'and the search note says the endpoint is not in service', noteText.slice(0, 140));
+    if (routeReady(sage, process.env)) {
+      check(/not in service/.test(noteText), 'and the search note says the endpoint is not in service', noteText.slice(0, 140));
+    } else {
+      check(/not sent to an outside embedding provider|full-text/i.test(noteText),
+        'and the search note says the query stayed inside the seal (route not configured in this checkout — the worker\'s note was proved above)', noteText.slice(0, 120));
+    }
   }
 } catch (e) {
   check(false, `${mode} section threw`, e.message);
