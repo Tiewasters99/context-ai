@@ -475,6 +475,7 @@ try {
     const visible = /^Attempt 1 of 3 failed/.test(note) || d?.processing_status === 'error';
     check('G4', visible && note.length > 20, `corrupt PDF: first attempt failed visibly in ${((Date.now() - t0) / 1000).toFixed(0)} s — status=${d?.processing_status} note="${note.slice(0, 100)}"`);
     check('G5', visible, 'corrupt PDF did not sit silently: the failure note appeared within 2 min');
+    timings.corrupt.status = visible ? 'first attempt failed visibly (not waited to exhaustion)' : `no note (${d?.processing_status})`;
   }
 
   // ---- G5 summary -----------------------------------------------------------------------
@@ -553,10 +554,24 @@ try {
 // ---- G9: the monitor, after cleanup ----------------------------------------------------------
 if (flag('--no-g9')) skip('G9', '--no-g9');
 else {
+  // The plan's wording: "zero BLOCKING with an UNEXPLAINED reason". A
+  // malformed PDF or a zero-byte upload awaiting Eden's decision is explained
+  // (the monitor names the class and the next step, and mails it every six
+  // hours — that backlog is Phase 6). An "Unclassified failure" is not: no
+  // rule matched, so nobody can act on it. That is what fails the gate.
   console.log('\n[G9] monitor');
   const r = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'ingest-monitor.mjs'), '--quiet'], { cwd: ROOT, encoding: 'utf8', timeout: 5 * 60_000 });
-  const tail = String(r.stdout || '').split(/\r?\n/).filter(Boolean).slice(-3).join(' / ');
-  check('G9', r.status === 0, r.status === 0 ? 'ingest-monitor --quiet exit 0: nothing needs attention' : `ingest-monitor exit ${r.status}: ${(tail || String(r.stderr || '').slice(0, 200)) || 'no output'}`);
+  const out = String(r.stdout || '');
+  const unclassified = Number((/\[BLOCKING\] Unclassified failure — (\d+) document/.exec(out) || [])[1] || 0);
+  const decisions = Number((/(\d+) need a decision from you/.exec(out) || [])[1] || 0);
+  const blocking = [...out.matchAll(/\[BLOCKING\] ([^—\n]+) — (\d+) document/g)].map((m) => `${m[1].trim()} ×${m[2]}`);
+  if (r.status === 2 || r.error) check('G9', false, `ingest-monitor crashed: ${(String(r.stderr || r.error?.message || '').split(/\r?\n/).find(Boolean) || 'no output').slice(0, 200)}`);
+  else if (r.status === 0) check('G9', true, 'ingest-monitor --quiet exit 0: nothing needs attention');
+  else {
+    check('G9', unclassified === 0, unclassified === 0
+      ? `monitor: every blocking item is explained with a next step — ${decisions} document(s) await a decision (${blocking.join(', ')}); that backlog is Phase 6, not a pipeline fault`
+      : `monitor: ${unclassified} UNCLASSIFIED failure(s) — no rule explains them; ${decisions} document(s) await a decision in all (${blocking.join(', ')})`);
+  }
 }
 skip('G10', 'manual: iPhone Files-app upload of a scan and a photo (per the plan memo)');
 
