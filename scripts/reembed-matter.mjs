@@ -118,6 +118,7 @@ if (countErr) die(`count: ${countErr.message}`);
 
 if (!count) {
   log('\nEvery passage in this matter is already in the right space. Nothing to do.');
+  if (!dryRun) await settlePendingRecords();
   process.exit(0);
 }
 const target = Math.min(count, limit);
@@ -168,6 +169,39 @@ const { count: remaining } = await supabase
   .eq('summary_level', 0)
   .or(`embedding.is.null,embedding_model.neq.${route.model}`);
 if (remaining) log(`${remaining} still out of space — re-run to continue.`);
+await settlePendingRecords();
+
+// -- 5. Settle the records ---------------------------------------------------
+// A document ingested while the endpoint was parked carries
+// metadata.embedding_pending (lib/ingest-core.mjs, 2026-09-06). Once every one
+// of its passages has a vector in this space the record is stale — drop it so
+// the Vault and check_ingest_status stop saying vectors are owed. Runs after
+// the backfill, and also when there was nothing to backfill: an interrupted
+// earlier run may have filled the vectors without reaching this step.
+async function settlePendingRecords() {
+  const { data: docs, error } = await supabase
+    .from('documents')
+    .select('id, metadata')
+    .in('matterspace_id', scope)
+    .not('metadata->embedding_pending', 'is', null)
+    .limit(1000);
+  if (error) die(`settle: ${error.message}`);
+  let settled = 0;
+  for (const d of docs ?? []) {
+    const { count: owed, error: cErr } = await supabase
+      .from('passages')
+      .select('id', { count: 'exact', head: true })
+      .eq('document_id', d.id)
+      .or(`embedding.is.null,embedding_model.neq.${route.model}`);
+    if (cErr) die(`settle ${d.id}: ${cErr.message}`);
+    if (owed) continue;
+    const { embedding_pending: _ep, ...rest } = d.metadata || {};
+    const { error: uErr } = await supabase.from('documents').update({ metadata: rest }).eq('id', d.id);
+    if (uErr) die(`settle ${d.id}: ${uErr.message}`);
+    settled += 1;
+  }
+  if (settled) log(`${settled} document(s) no longer owe vectors — embedding_pending cleared.`);
+}
 
 // ---------------------------------------------------------------------------
 async function resolveMatter(key_) {

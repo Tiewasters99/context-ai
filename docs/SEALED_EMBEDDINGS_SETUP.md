@@ -95,11 +95,27 @@ to run it:
   bill is what it is.
 - **Up only while working sealed matters** — delete/recreate the endpoint (the
   model package makes this a few clicks, config is not lost). While it is
-  down, the code degrades exactly the way the seal already behaves: sealed
-  ingest of TEXT still succeeds (indexed for text search, embeddings backfill
-  later via `reembed-matter`), and sealed SEARCH answers on full text with a
-  note saying the embedding step was unavailable. Nothing errors, nothing
-  falls back to another provider, nothing is lost.
+  down the SageMaker runtime answers `400 NO_SUCH_ENDPOINT`, and since
+  2026-09-06 the code treats that as the *parked state*, not a failure
+  (`lib/embed-routes.mjs`, `EmbedRouteUnavailableError`):
+  - **Sealed ingest finishes.** Text is extracted and chunked locally and
+    indexed for full-text search; the passages are stored with null vectors
+    and the document records `metadata.embedding_pending` (route, model,
+    passages owed, the endpoint's answer, when). The Vault and
+    `check_ingest_status` say "searchable by words — awaiting sealed
+    embeddings". No job attempts are burned, and nothing goes to another
+    provider.
+  - **Sealed search answers on full text** with a note in the endpoint's own
+    words. Exact words rank normally; a paraphrase may not surface.
+  - **When the endpoint is back**, `node scripts/reembed-matter.mjs --matter
+    <short_code>` fills the vectors and clears `embedding_pending` on every
+    document whose passages are all in space.
+
+  Proof: `node scripts/_verify-embed-hold.mjs` (offline, fetch stubbed) and
+  `node scripts/_verify-embed-hold.mjs --live <sealed fixture matter uuid>`
+  (this checkout's pipeline against prod, one fictional .txt, cleaned up).
+  Before this the worker burned three attempts and marked the document
+  `error` — which is what the audit fixture hit on 2026-09-05.
 
 Start with the endpoint up only when needed; move to always-on when sealed
 work is daily.
