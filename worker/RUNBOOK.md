@@ -149,6 +149,27 @@ for the worker — the bytes land in the same bucket path. `node
 scripts/_smoke-resumable-upload.mjs test-box` drives it against the real
 bucket with an interruption.
 
+## The nightly suite — "100% ready" is a measurement
+
+`node scripts/ingest-suite.mjs test-box --email` (Phase 5, 2026-09-06) files
+~30 generated fixtures — every kind a practitioner uploads: born-digital and
+scanned PDFs, a mixed one, a 300-page brief, a 50-page scan, a 200 MB record
+over the resumable path, a PDF portfolio, a .zip, an .eml with attachments,
+.docx / .xlsx / .epub / .md / .txt, a photographed page, an image-only PDF, a
+TIFF photo, a SPOKEN mp3 and mp4 (Windows text-to-speech + ffmpeg), a silent
+recording, a 3D asset, a blank file, a corrupt PDF — into Test Box through the
+DEPLOYED pipeline, asserts the plan's gates G1–G9 (plus formats and media),
+deletes everything it made, runs the monitor, and emails the report. Each run
+appends a line to `logs/ingest-suite.jsonl`; the report counts consecutive
+green nights. **Three green nights running = 100% ready.**
+
+Task Scheduler runs it daily at 03:00 as "Contextspaces Ingestion Suite"
+(stdout in `logs/ingest-suite.log`). Dev flags: `--skip-heavy` (no 300 pp /
+50 pp / 200 MB), `--no-g6` (skip the in-process outage section), `--no-g9`
+(skip the monitor), `--keep` (leave the rows for inspection). Fixtures are in
+`scripts/_fixtures-suite.mjs`; add a kind there and a check in the suite.
+G10 (iPhone) is manual and is reported as such.
+
 ## Troubleshooting
 
 - **Docs stuck in "pending" > 1 min** → no worker is running. Start one
