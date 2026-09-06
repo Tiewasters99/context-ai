@@ -170,6 +170,15 @@ Task Scheduler runs it daily at 03:00 as "Contextspaces Ingestion Suite"
 `scripts/_fixtures-suite.mjs`; add a kind there and a check in the suite.
 G10 (iPhone) is manual and is reported as such.
 
+The 200 MB record is not uploaded nightly — the machine running the suite
+may sit on a slow uplink, and bandwidth is not what the suite measures. Seed
+it once with `node scripts/_seed-suite-record.mjs` (streams a generated
+400-page PDF to `vault-documents/_fixtures/suite-record-400p.pdf`, resumable
+across interruptions); each night the suite copies that object server-side
+into the run's document. Until it is seeded, G7 fails loudly saying so. The
+browser's resumable upload path is proved separately by
+`scripts/_smoke-resumable-upload.mjs`.
+
 ## Troubleshooting
 
 - **Docs stuck in "pending" > 1 min** → no worker is running. Start one
