@@ -190,3 +190,24 @@ browser's resumable upload path is proved separately by
   `update processing_jobs set status='queued', claimed_by=null where id='...';`
 - **Retry a failed document** → the Vault's Retry button re-fires
   `/api/ingest`, which re-queues heavy files (dedupe prevents doubles).
+
+## Phase 6 — data repair, by script (2026-09-07)
+
+The monitor's backlog is worked with two scripts, both `--dry-run` first:
+
+- `node scripts/_repair-corrupt-pdfs.mjs --all|--matter <code>|--ids <id,…>`
+  — every "File is malformed" PDF. The pipeline now reads a rejected file four
+  ways (pdf-parse twice — its first call in a fresh process fails on some
+  files — modern pdfjs, a pdf-lib rewrite), so most re-run from the original
+  bytes; only a file every parser refuses is rewritten through PyMuPDF
+  (text-preserving, or rasterized and OCR'd). 22/22 on 2026-09-07.
+- `node scripts/_p6-repair.mjs <step>` — `status`, `ready-empty` (PDFs filed
+  ready with no passages and no reason → worker), `binary-assets` (3D assets
+  holding vertex text → worker → `binary_stored`), `relabel` (unclassified
+  rows whose cause is plain: no bytes, a `~$` lock file), `web-captures`
+  (saved CM/ECF screens indexed as documents → error with the reason),
+  `delete --ids` (rows Eden has ruled junk; the only destructive step).
+
+A serverless run that cannot parse a PDF now hands it to this worker instead
+of failing it (`isPdfStructureError` in `api/ingest.mjs` and the MCP's
+`file_document`); the worker's job log shows `reason: parser` on those rows.

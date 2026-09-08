@@ -26,7 +26,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { processDocument, planPdfOcr, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest } from '../lib/ingest-core.mjs';
+import { processDocument, planPdfOcr, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest, isPdfStructureError } from '../lib/ingest-core.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 
@@ -183,6 +183,14 @@ export default async function handler(req, res) {
         .update({ processing_status: HELD_STATUS, processing_error: heldReason(err) })
         .eq('id', doc.id);
       return json(res, 409, { error: 'sealed_pipe', held: true, message: err.message });
+    }
+    // A PDF the serverless parser rejected goes to the worker, whose parsers
+    // read what pdf-parse's 2017 build will not (isPdfStructureError). The
+    // Vault keeps polling the row either way; only a file the worker rejects
+    // too ends in 'error'.
+    if (ext === '.pdf' && isPdfStructureError(err)) {
+      const queued = await enqueueForWorker(sb, doc);
+      if (queued) return json(res, 202, { ...queued, reason: 'parser', note: err.message?.slice(0, 120) });
     }
     // Mark the document as error so the UI shows it. processDocument may
     // have already set this for the 'no passages' case; our update is

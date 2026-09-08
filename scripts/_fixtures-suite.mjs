@@ -205,6 +205,26 @@ export const mdFixture = ({ tag = '' } = {}) => Buffer.from(`# Notes ${tag}\n\nT
 export const blankTxt = () => Buffer.from('   \n\n\t \n   \n', 'utf8');
 export const controlTxt = ({ tag = '' } = {}) => Buffer.from(
   `Control document ${tag}.\n\nThis born-digital text mentions a garnet clasp and exists so the suite has a searchable control.\n`, 'utf8');
+// A screenplay in Fountain markup: title page, scene headings, action, dialogue
+// and a transition. Every element must land inside passages' passage_type
+// vocabulary — a real .fountain failed that check constraint from June to
+// September 2026, unclassified.
+export const fountainFixture = ({ tag = '' } = {}) => Buffer.from([
+  `Title: Suite Screenplay ${tag}`.trim(), 'Author: Fixture', '',
+  'INT. RECORD ROOM - DAY', '',
+  'A clerk lifts a verdigris ledger from the shelf and blows off the dust.', '',
+  'CLERK', 'This one mentions a verdigris ledger. File it.', '',
+  'ARCHIVIST', '(squinting)', 'Under which case?', '',
+  'CUT TO:', '',
+  'EXT. COURTHOUSE STEPS - CONTINUOUS', '',
+  'The archivist carries the ledger down the steps.', '',
+].join('\n'), 'utf8');
+// Rich Text as Westlaw and Lexis hand it out: a font table, a colour table, a
+// paragraph with a \u escape, an ignorable destination.
+export const rtfFixture = ({ tag = '' } = {}) => Buffer.from(
+  `{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\froman Times New Roman;}}{\\colortbl;\\red0\\green0\\blue0;}` +
+  `\\f0\\fs24 Memorandum ${tag}\\par\nThe rich-text memo mentions a heliotrope ledger and a \\u8220?quoted\\u8221? phrase.\\par\n` +
+  `{\\*\\generator Fixture 1.0}}`, 'utf8');
 export const objAsset = () => Buffer.from(
   ['# fixture cube', 'v 0 0 0', 'v 1 0 0', 'v 1 1 0', 'v 0 1 0', 'v 0 0 1', 'v 1 0 1', 'v 1 1 1', 'v 0 1 1',
     'f 1 2 3 4', 'f 5 6 7 8', 'f 1 2 6 5', 'f 2 3 7 6', 'f 3 4 8 7', 'f 4 1 5 8', ''].join('\n'), 'utf8');

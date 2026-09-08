@@ -22,7 +22,8 @@ export type TextStatus =
   | 'binary_stored'
   | 'unsupported'
   | 'ocr_pending'
-  | 'archive';
+  | 'archive'
+  | 'generated';
 
 export const TEXT_STATUS: Readonly<{
   IMAGE_ONLY: 'image_only';
@@ -33,6 +34,7 @@ export const TEXT_STATUS: Readonly<{
   UNSUPPORTED: 'unsupported';
   OCR_PENDING: 'ocr_pending';
   ARCHIVE: 'archive';
+  GENERATED: 'generated';
 }>;
 
 export function describeTextStatus(status: string | null | undefined): { label: string; detail: string };
@@ -68,7 +70,8 @@ export function formatBytes(n: number | null | undefined): string;
 export const SUPPORTED_TYPES_SUMMARY: string;
 
 export interface UploadRefusal {
-  code: 'too_large' | 'unsupported';
+  code: 'too_large' | 'unsupported' | 'lock_file' | 'empty';
   message: string;
 }
 export function checkUpload(file: { name: string; size: number }, opts?: { zip?: boolean }): UploadRefusal | null;
+export function isOfficeLockFile(name: string | null | undefined): boolean;

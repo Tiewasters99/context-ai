@@ -14,13 +14,14 @@
 //     --keep         leave everything in the matter (debugging)
 //
 // Gates (the plan memo's G1–G10, plus two the plan implies):
-//   G0  Formats: docx / xlsx / epub / md / txt / photographed page are indexed and searchable
+//   G0  Formats: docx / xlsx / epub / md / txt / rtf / fountain / photographed page are indexed and searchable
 //   G1  Mixed PDF (typed + scanned pages): every page searchable, cited by its true page number
 //   G2  Containers: PDF portfolio, .zip, .eml — children filed and searchable; wrapper stored with reason
 //   G3  Stored with a reason: image-only PDF, photo TIFF, silent recording, 3D asset, blank text
 //   GA  Audio / video: a SPOKEN mp3 and mp4 are transcribed and searchable by their words
-//   G4  Refused or failed with a cause: oversize and unsupported at selection time (no bytes move),
-//       duplicate refused with the filed copy named, corrupt PDF fails visibly on the first attempt
+//   G4  Refused or failed with a cause: oversize, unsupported, Office lock file and empty file at
+//       selection time (no bytes move), duplicate refused with the filed copy named, corrupt PDF
+//       fails visibly on the first attempt
 //   G5  Nothing stuck: every upload reaches a terminal state within its budget
 //   G6  Provider outage (OCR down): typed pages index, scanned pages queue for retry with the reason;
 //       when OCR is back the retry clears them. Runs IN-PROCESS on this checkout's lib (the deployed
@@ -82,12 +83,12 @@ console.log(`Ingestion suite ${startedAt.toISOString()} — matter "${matter.nam
 
 // ---- The ledger ----------------------------------------------------------------
 const GATES = {
-  G0: 'Formats: docx / xlsx / epub / md / txt / photographed page indexed and searchable',
+  G0: 'Formats: docx / xlsx / epub / md / txt / rtf / fountain / photographed page indexed and searchable',
   G1: 'Mixed PDF: every page searchable, cited by its true page number',
   G2: 'Containers: portfolio / zip / eml children filed and searchable',
   G3: 'Stored with a reason: image-only PDF, TIFF photo, silent recording, 3D asset, blank text',
   GA: 'Audio / video: spoken mp3 + mp4 transcribed and searchable',
-  G4: 'Refused or failed with a cause: oversize, unsupported, duplicate, corrupt',
+  G4: 'Refused or failed with a cause: oversize, unsupported, lock file, empty, duplicate, corrupt',
   G5: 'Nothing stuck: every upload terminal within its budget',
   G6: 'Provider outage: typed pages index, scans queue for retry, retry clears them (in-process)',
   G7: 'Time-to-searchable: 300 pp < 3 min, 50-pp scan < 5 min, 200 MB < 10 min',
@@ -257,6 +258,10 @@ try {
   console.log('\n[G4] selection-time refusals');
   const r3 = checkUpload({ name: 'giant-record.pdf', size: VAULT_MAX_BYTES + 1 });
   check('G4', r3?.code === 'too_large' && /up to 500 MB/.test(r3.message || ''), `oversize refused at selection: "${(r3?.message || JSON.stringify(r3)).slice(0, 90)}"`);
+  const r4 = checkUpload({ name: '~$Petersburg Timeline.docx', size: 162 });
+  check('G4', r4?.code === 'lock_file' && /lock file/.test(r4.message || ''), `Office lock file refused at selection: "${(r4?.message || JSON.stringify(r4)).slice(0, 90)}"`);
+  const r5 = checkUpload({ name: 'chat-export.md', size: 0 });
+  check('G4', r5?.code === 'empty' && /0 bytes/.test(r5.message || ''), `empty file refused at selection: "${(r5?.message || JSON.stringify(r5)).slice(0, 90)}"`);
   const { count: rowsBefore } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('matterspace_id', matter.id);
   try {
     await handleFileDocument(supabase, { matter: matter.id, filename: `suite-${tag}.exe`, content: 'MZ' + 'x'.repeat(64) }, { openaiApiKey: env.OPENAI_API_KEY });
@@ -331,6 +336,8 @@ try {
   await q('epub', 5 * 60_000, { title: `Suite e-book ${tag}`, filename: `suite-book-${tag}.epub`, bytes: await F.epubFixture({ tag }), contentType: 'application/epub+zip' });
   await q('md', 5 * 60_000, { title: `Suite notes md ${tag}`, filename: `suite-notes-${tag}.md`, bytes: F.mdFixture({ tag }), contentType: 'text/markdown' });
   await q('control', 5 * 60_000, { title: `Suite control ${tag}`, filename: `suite-control-${tag}.txt`, bytes: F.controlTxt({ tag }), contentType: 'text/plain' });
+  await q('rtf', 5 * 60_000, { title: `Suite rich text ${tag}`, filename: `suite-memo-${tag}.rtf`, bytes: F.rtfFixture({ tag }), contentType: 'application/rtf' });
+  await q('fountain', 5 * 60_000, { title: `Suite screenplay ${tag}`, filename: `suite-screenplay-${tag}.fountain`, bytes: F.fountainFixture({ tag }), contentType: 'text/plain' });
   await q('jpgscan', 5 * 60_000, { title: `Suite photographed page ${tag}`, filename: `suite-page-${tag}.jpg`, bytes: await F.jpgScan({ tag }), contentType: 'image/jpeg' });
   await q('imageonly', 5 * 60_000, { title: `Suite image-only ${tag}`, filename: `suite-image-only-${tag}.pdf`, bytes: await F.imageOnlyPdf(), contentType: 'application/pdf' });
   await q('tiff', 5 * 60_000, { title: `Suite photo tiff ${tag}`, filename: `suite-photo-${tag}.tiff`, bytes: await F.tiffBlank(), contentType: 'image/tiff' });
@@ -428,6 +435,8 @@ try {
   await expectIndexed('G0', 'epub', rows.epub, 'emerald');
   await expectIndexed('G0', 'md', rows.md, 'topaz');
   await expectIndexed('G0', 'control txt', rows.control, 'garnet');
+  await expectIndexed('G0', 'rtf', rows.rtf, 'heliotrope');
+  await expectIndexed('G0', 'fountain screenplay', rows.fountain, 'verdigris', { minPassages: 4 });
   await expectIndexed('G0', 'photographed page (jpg → OCR)', rows.jpgscan, 'onyx');
 
   // ---- G3 stored with a reason -------------------------------------------------------
