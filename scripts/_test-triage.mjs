@@ -25,6 +25,13 @@ const LIVE = [
   ['Scanned PDF — OCR not configured (429 page(s), 31 chars of text). Set GOOGLE_API_KEY where this ingest runs, then Retry.', 'ocr_needed'],
   ['insert passages: canceling statement due to statement timeout', 'db_timeout'],
   ['Scanned PDF — OCR not configured (12 page(s), 31 chars of text). Set GOOGLE_API_KEY where this ingest runs, then Retry.', 'ocr_needed'],
+  // 2026-09-07 (Phase 6): the wording ingest-core writes for a Word lock file, a court web page
+  // and a .docx whose zip ends early — plus the raw errors those rows carried before.
+  ['"~$tersburg Timeline.docx" is a temporary Office lock file, not a document — Word writes it beside an open file and it holds no content.', 'lock_file'],
+  ['This is a court website page ("Case Search"), not the filing — CM/ECF saves its search and login screens as HTML when the document itself needs a PACER login.', 'web_capture'],
+  ["The Word file could not be opened (Corrupted zip: can't find end of central directory) — it was cut off during upload or is not a real .docx.", 'corrupt_file'],
+  ["Corrupted zip: can't find end of central directory", 'corrupt_file'],
+  ['Invalid PDF structure', 'corrupt_file'],
   ['', 'other'],
   ['something nobody has seen before', 'other'],
 ];

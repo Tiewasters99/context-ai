@@ -26,8 +26,9 @@ for (const e of BINARY_ASSET_EXTENSIONS) assert(ACCEPTED_EXTENSIONS.includes(e),
 for (const e of PLAIN_TEXT_EXTENSIONS) assert(ACCEPTED_EXTENSIONS.includes(e), `${e} accepted`);
 assert(ACCEPTED_EXTENSIONS.includes('.zip'));
 for (const e of ['.obj', '.fbx', '.glb', '.gltf', '.stl', '.3ds', '.blend']) assert(BINARY_ASSET_EXTENSIONS.includes(e), `${e} is a 3D asset`);
-for (const e of ['.exe', '.lnk', '.sys', '.download', '.doc', '.rtf']) assert(!ACCEPTED_EXTENSIONS.includes(e), `${e} refused`);
-ok('accepted list = supported + plain-text + 3D + zip; exe/lnk/doc/rtf are not on it');
+for (const e of ['.exe', '.lnk', '.sys', '.download', '.doc']) assert(!ACCEPTED_EXTENSIONS.includes(e), `${e} refused`);
+assert(SUPPORTED_EXTENSIONS.includes('.rtf'), '.rtf is read (lib/rtf-text.mjs, 2026-09-07)');
+ok('accepted list = supported + plain-text + 3D + zip; exe/lnk/doc are not on it; rtf is');
 
 // ingest-core re-exports the same arrays (identity, not copies), so no surface
 // can drift from the pipeline.
@@ -63,11 +64,22 @@ ok('too_large: names the file, its size, and the cap, and says what to do');
 const exe = checkUpload({ name: 'setup.exe', size: 10 });
 assert.strictEqual(exe.code, 'unsupported');
 assert.match(exe.message, /"setup\.exe" is a \.exe file, which the Vault can't read/);
-assert.match(exe.message, /Supported: PDF, Word \(\.docx\)/);
+assert.match(exe.message, /Supported: PDF, Word \(\.docx, \.rtf\)/);
 const doc = checkUpload({ name: 'memo.DOC', size: 10 });
 assert.strictEqual(doc.code, 'unsupported');
 assert.match(doc.message, /Save the legacy Word file as \.docx/);
 ok('unsupported: names the extension, lists the supported types, hints for .doc');
+
+const lock = checkUpload({ name: '~$tersburg Timeline.docx', size: 162 });
+assert.strictEqual(lock.code, 'lock_file');
+assert.match(lock.message, /temporary Office lock file, not a document/);
+assert.strictEqual(checkUpload({ name: 'C:\\Users\\eq\\~$brief.docx', size: 162 }).code, 'lock_file', 'a path still names the lock file');
+assert.strictEqual(checkUpload({ name: 'Notes ~$ draft.docx', size: 162 }), null, 'only the ~$ PREFIX marks a lock file');
+const empty = checkUpload({ name: 'create.md', size: 0 });
+assert.strictEqual(empty.code, 'empty');
+assert.match(empty.message, /is empty \(0 bytes\)/);
+assert.strictEqual(checkUpload({ name: 'create.md' }), null, 'an unknown size is not "empty"');
+ok('lock_file and empty: refused at selection with the reason (P6, 2026-09-07)');
 
 // Size is checked before type: an oversize unsupported file is refused for
 // size (the more expensive mistake to let through).
@@ -84,7 +96,7 @@ ok('zip: accepted everywhere (unpacked at ingest where the browser did not)');
 
 // --- text_status vocabulary ---------------------------------------------------
 assert.deepStrictEqual(Object.values(TEXT_STATUS).sort(),
-  ['archive', 'binary_stored', 'image_only', 'media_no_transcript', 'no_text', 'ocr_pending', 'portfolio', 'unsupported']);
+  ['archive', 'binary_stored', 'generated', 'image_only', 'media_no_transcript', 'no_text', 'ocr_pending', 'portfolio', 'unsupported']);
 for (const s of Object.values(TEXT_STATUS)) {
   const d = describeTextStatus(s);
   assert(d.label && d.label.length > 8, `${s} label`);
@@ -124,5 +136,33 @@ assert.strictEqual(
 assert.strictEqual(describe('ocr_needed').severity, 'blocking');
 assert.strictEqual(classifyError('no passages extracted'), 'no_text', 'legacy rows keep their class');
 ok('"OCR not configured" → ocr_needed (blocking); legacy "no passages extracted" unchanged');
+
+// --- Phase 6 (2026-09-07): the extractors behind the new G0 fixtures -------------
+const { rtfToText } = await import('../lib/rtf-text.mjs');
+const rtf = '{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\froman Times New Roman;}}{\\colortbl;\\red0\\green0\\blue0;}' +
+  '\\f0\\fs24 Memorandum\\par The memo mentions a heliotrope ledger, caf\\\'e9 and a \\u8220?quoted\\u8221? phrase.\\par{\\*\\generator Fixture 1.0}}';
+const rtfText = rtfToText(Buffer.from(rtf, 'latin1'));
+assert.match(rtfText, /^Memorandum\nThe memo mentions a heliotrope ledger, café and a “quoted” phrase\.$/);
+assert(!/Times New Roman|generator|\\par/.test(rtfText), 'font table, generator and control words are not text');
+const [rtfPage] = await core.extractPages(Buffer.from(rtf, 'latin1'), '.rtf');
+assert.strictEqual(rtfPage.pageNumber, 1);
+assert.match(rtfPage.text, /heliotrope ledger/);
+ok('rtf: control words, tables and \\* destinations dropped; \\\'hh and \\uN decoded; extractPages routes .rtf');
+
+const ALLOWED_PASSAGE_TYPES = new Set(['qa_pair', 'monologue', 'colloquy', 'exhibit_reference', 'section_heading', 'chapter_heading', 'footnote', 'summary']);
+const screenplay = 'Title: Test\nAuthor: Fixture\n\nINT. ROOM - DAY\n\nA clerk lifts a verdigris ledger.\n\nCLERK\nFile it.\n\nCUT TO:\n\nEXT. STEPS - CONTINUOUS\n\nShe leaves.\n';
+const fountainPassages = await core.chunkFountain(screenplay);
+assert(fountainPassages.length >= 5, `screenplay yields passages (${fountainPassages.length})`);
+for (const p of fountainPassages) assert(ALLOWED_PASSAGE_TYPES.has(p.passage_type), `passage_type "${p.passage_type}" is inside the check constraint (migration 007)`);
+assert(fountainPassages.some((p) => p.metadata?.element === 'scene_heading' && p.passage_type === 'section_heading'), 'scene headings are section headings, and remember they are scene headings');
+assert(fountainPassages.some((p) => p.metadata?.element === 'character_dialogue' && p.speaker === 'CLERK'), 'dialogue keeps its speaker');
+ok('fountain: every passage_type satisfies the passages check constraint; the screenplay element is kept in metadata');
+
+const loginPage = '<html><head><title>Case Search</title></head><body><a>Case Search</a> <a>Calendar</a> <a>Logout</a> <div>PACER Service Center</div><div>Change Client</div></body></html>';
+await assert.rejects(() => core.extractPages(Buffer.from(loginPage), '.html'), /court website page \("Case Search"\), not the filing/);
+const [htmlPage] = await core.extractPages(Buffer.from('<html><body><h1>Opinion</h1><p>The court held &amp; ordered.</p><script>x()</script></body></html>'), '.html');
+assert.strictEqual(htmlPage.text, 'Opinion\nThe court held & ordered.');
+assert(core.isPdfStructureError(new Error('bad XRef entry')) && core.isPdfStructureError(new Error('Invalid PDF structure')) && !core.isPdfStructureError(new Error('embed 429')));
+ok('html: tags stripped, a CM/ECF screen refused with the reason; isPdfStructureError names the parser rejections');
 
 console.log(`\nPASS (${n} checks)`);
