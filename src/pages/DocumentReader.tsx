@@ -142,6 +142,22 @@ type Match = { page: number; index: number };
 // Vertical gap between page slots in the continuous stack.
 const PAGE_GAP = 16;
 
+// Two small lookups for the companion's provenance walk, typed at the
+// boundary so the walk's loop variable does not feed back into the query
+// builder's inference.
+async function passageCountOf(documentId: string): Promise<number> {
+  const { count } = await supabase
+    .from('passages')
+    .select('id', { count: 'exact', head: true })
+    .eq('document_id', documentId);
+  return count ?? 0;
+}
+async function sourceDocumentOf(documentId: string): Promise<string | null> {
+  const { data } = await supabase.from('documents').select('metadata').eq('id', documentId).maybeSingle();
+  const meta = (data as { metadata?: { source_document_id?: string | null } | null } | null)?.metadata;
+  return meta?.source_document_id ?? null;
+}
+
 export default function DocumentReader({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
   const params = useParams<{ id: string }>();
   const id = propId ?? params.id;
@@ -1086,6 +1102,27 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       .then(({ count }) => { if (!stale) setPassageCount(count ?? 0); });
     return () => { stale = true; };
   }, [id]);
+  // For an unindexed copy, the nearest ancestor that IS indexed — a copy of
+  // a copy points at a copy, so the chain is walked back, a few hops at
+  // most, to the one whose text can be searched.
+  const [searchableSourceId, setSearchableSourceId] = useState<string | null>(null);
+  useEffect(() => {
+    const start = doc?.source_document_id;
+    if (passageCount !== 0 || !start) { setSearchableSourceId(null); return; }
+    let stale = false;
+    (async () => {
+      let cur: string | null = start;
+      for (let hop = 0; cur && hop < 4; hop += 1) {
+        const indexed = (await passageCountOf(cur)) > 0;
+        if (stale) return;
+        if (indexed) { setSearchableSourceId(cur); return; }
+        cur = await sourceDocumentOf(cur);
+        if (stale) return;
+      }
+      if (!stale) setSearchableSourceId(null);
+    })();
+    return () => { stale = true; };
+  }, [doc?.source_document_id, passageCount]);
   useEffect(() => {
     const mid = doc?.matterspace_id;
     if (!mid) { setMatterName(null); return; }
@@ -1142,12 +1179,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         }))
         : undefined,
       indexed: passageCount === null ? undefined : passageCount > 0,
-      sourceDocumentId: doc.source_document_id ?? undefined,
+      sourceDocumentId: searchableSourceId ?? undefined,
       unindexedReason: passageCount === 0
         ? (doc.text_status === 'generated' ? 'generated' : 'not-ingested')
         : undefined,
     });
-  }, [doc, matterName, page, totalPages, visiblePages, pageTexts, fileKind, passageCount]);
+  }, [doc, matterName, page, totalPages, visiblePages, pageTexts, fileKind, passageCount, searchableSourceId]);
   useEffect(() => () => {
     // Leaving: take the document out of the context, unless another view
     // has already put its own there.
