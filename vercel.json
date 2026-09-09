@@ -4,6 +4,9 @@
     "api/mcp.mjs": {
       "maxDuration": 60
     },
+    "api/sandbox.mjs": {
+      "maxDuration": 120
+    },
     "api/health.mjs": {
       "maxDuration": 10
     },

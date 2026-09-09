@@ -33,7 +33,10 @@ export default function MainLayout() {
   }, []);
 
   return (
-    <div className="flex h-screen">
+    // 100dvh where the browser has it: on a phone, 100vh is the viewport
+    // with the browser's own bars collapsed, so the bottom of the shell —
+    // and the tab bar fixed to it — could sit under Safari's toolbar.
+    <div className="flex h-screen supports-[height:100dvh]:h-dvh">
       {!onVault && <AmbientControls />}
 
       {/* Sidebar: in document flow on desktop; an off-canvas drawer on phones. */}
@@ -127,8 +130,12 @@ function MobileTabBar({
   const tab = 'flex flex-col items-center justify-center gap-0.5 flex-1 h-full text-[10px] font-medium transition-colors';
   const idle = 'text-white/50';
   const active = 'text-[#e8b84a]';
+  // The Student Hub's open book hides this bar while it is up: the book's
+  // own controls live in the same strip of the screen, and at z-40 this
+  // would stand over them (HubReader's body.hub-reader-open rule).
   return (
     <nav
+      data-mobile-tab-bar=""
       className="fixed bottom-0 inset-x-0 z-40 h-14 flex items-stretch border-t border-[rgba(255,255,255,0.1)] backdrop-blur-[30px]"
       style={{ backgroundColor: 'rgba(8, 8, 14, 0.92)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
