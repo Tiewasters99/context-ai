@@ -717,34 +717,62 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // as plain text. Selection copy over the PDF text layer is intercepted
   // in the content pane below for the same reason — the painted layer's
   // styling is not the document's.
-  const [copyState, setCopyState] = useState<'idle' | 'busy' | 'done'>('idle');
+  const [copyState, setCopyState] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
+  // The whole document's text, extracted once per document and kept:
+  // extracting a long opinion outlives the browser's user-activation
+  // window, and the clipboard write after it is refused — the click "did
+  // nothing". With the text cached, the next click writes at once.
+  const docTextRef = useRef<{ id: string | undefined; text: string; html: string } | null>(null);
+  // The toolbar's copy button copies the SELECTION when there is one, and the
+  // whole document only when nothing is selected. Until 2026-09-08 it always
+  // copied the whole document — and, since its mousedown was not prevented,
+  // the click first collapsed the highlight the user had just made.
   const handleCopyText = useCallback(async () => {
-    if (copyState !== 'idle' || loadState !== 'ready') return;
+    if (copyState === 'busy' || loadState !== 'ready') return;
+    const sel = window.getSelection();
+    const selected = sel && !sel.isCollapsed ? sel.toString() : '';
+    if (selected.trim()) {
+      try {
+        await writeClipboard(selected, selectionHtml(selected));
+        setCopyState('done');
+      } catch {
+        setCopyState('failed');
+      }
+      window.setTimeout(() => setCopyState('idle'), 2000);
+      return;
+    }
     setCopyState('busy');
     try {
-      let text = '';
-      let html = '';
-      if (fileKind === 'pdf' && pdfDocRef.current) {
-        text = await pdfDocumentText(
-          pdfDocRef.current as Parameters<typeof pdfDocumentText>[0],
-        );
-        html = reflowedHtml(text);
-      } else if (docHtml) {
-        const full = (titlePageHtml ?? '') + docHtml;
-        text = htmlPlainText(full);
-        html = fileKind === 'docx' ? full : selectionHtml(text);
+      let cached = docTextRef.current && docTextRef.current.id === id ? docTextRef.current : null;
+      if (!cached) {
+        let text = '';
+        let html = '';
+        if (fileKind === 'pdf' && pdfDocRef.current) {
+          text = await pdfDocumentText(
+            pdfDocRef.current as Parameters<typeof pdfDocumentText>[0],
+          );
+          html = reflowedHtml(text);
+        } else if (docHtml) {
+          const full = (titlePageHtml ?? '') + docHtml;
+          text = htmlPlainText(full);
+          html = fileKind === 'docx' ? full : selectionHtml(text);
+        }
+        if (!text) {
+          setCopyState('idle');
+          return;
+        }
+        cached = { id, text, html };
+        docTextRef.current = cached;
       }
-      if (!text) {
-        setCopyState('idle');
-        return;
-      }
-      await writeClipboard(text, html);
+      await writeClipboard(cached.text, cached.html);
       setCopyState('done');
-      window.setTimeout(() => setCopyState('idle'), 2000);
     } catch {
-      setCopyState('idle');
+      // Usually the activation window closed during extraction; the text is
+      // cached now, so the next click writes immediately.
+      setCopyState('failed');
     }
-  }, [copyState, loadState, fileKind, docHtml, titlePageHtml]);
+    window.setTimeout(() => setCopyState('idle'), 2000);
+  }, [copyState, loadState, fileKind, docHtml, titlePageHtml, id]);
 
   // ── Print ───────────────────────────────────────────────────────────
   // A PDF prints as itself: the original file into a hidden same-origin
@@ -1621,18 +1649,23 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           )}
           <div className="w-px h-5 bg-white/10 mx-1" />
           <button
+            // Prevent the mousedown default so the text the user selected is
+            // still selected when the click copies it.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => void handleCopyText()}
             disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml)}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${copyState === 'failed' ? 'text-red-400' : copyState === 'done' ? 'text-emerald-400' : 'text-white/70'}`}
             title={
               copyState === 'done'
                 ? 'Copied — paste into Word or anywhere'
-                : copyState === 'busy'
-                  ? 'Copying…'
-                  : 'Copy the whole document as clean text'
+                : copyState === 'failed'
+                  ? 'The copy did not go through — click again'
+                  : copyState === 'busy'
+                    ? 'Copying…'
+                    : 'Copy the selected text — or the whole document as clean text when nothing is selected'
             }
           >
-            {copyState === 'done' ? <Check size={15} /> : <Copy size={15} />}
+            {copyState === 'done' ? <Check size={15} /> : copyState === 'failed' ? <X size={15} /> : <Copy size={15} />}
           </button>
           <button
             onClick={() => void handlePrint()}
@@ -1953,6 +1986,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           x={selectionMenu.x}
           y={selectionMenu.y}
           onPick={(c) => void saveAnnotation(c)}
+          onCopy={() => void copySelection()}
           onNote={() => {
             setNoteComposer({
               x: selectionMenu.x,
@@ -2421,12 +2455,14 @@ function SelectionMenu({
   x,
   y,
   onPick,
+  onCopy,
   onNote,
   onCancel,
 }: {
   x: number;
   y: number;
   onPick: (color: AnnotationColor) => void;
+  onCopy: () => void;
   onNote: () => void;
   onCancel: () => void;
 }) {
@@ -2449,6 +2485,13 @@ function SelectionMenu({
         />
       ))}
       <div className="w-px h-4 bg-white/15 mx-0.5" />
+      <button
+        onClick={onCopy}
+        className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
+        title="Copy the selected text"
+      >
+        <Copy size={14} />
+      </button>
       <button
         onClick={onNote}
         className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
