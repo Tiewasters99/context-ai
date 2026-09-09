@@ -153,7 +153,17 @@ function sanitizeContext(c) {
     documentTitle: pick(c.documentTitle),
     page: num(c.page),
     pageCount: num(c.pageCount),
-    pageText: pick(c.pageText, 3000),
+    pages: Array.isArray(c.pages)
+      ? c.pages
+        .slice(0, 2)
+        .map((p) => (p && typeof p === 'object'
+          ? { page: num(p.page), share: typeof p.share === 'number' ? Math.max(0, Math.min(1, p.share)) : undefined, text: pick(p.text, 3000) }
+          : null))
+        .filter((p) => p && p.page)
+      : undefined,
+    indexed: typeof c.indexed === 'boolean' ? c.indexed : undefined,
+    sourceDocumentId: pick(c.sourceDocumentId, 64),
+    unindexedReason: c.unindexedReason === 'generated' || c.unindexedReason === 'not-ingested' ? c.unindexedReason : undefined,
   };
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
 }
