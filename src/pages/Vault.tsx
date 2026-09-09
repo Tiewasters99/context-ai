@@ -7,6 +7,7 @@ import SandboxPanel from '@/components/vault/SandboxPanel';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import DocumentEditor from '@/components/vault/DocumentEditor';
 import GeneratedDocsPanel from '@/components/vault/GeneratedDocsPanel';
+import DocumentReader from '@/pages/DocumentReader';
 import MusicLibrary from '@/components/layout/MusicLibrary';
 import { type MusicTrack, youtubeEmbedUrl } from '@/lib/musicTracks';
 import ShareModal from '@/components/serverspace/ShareModal';
@@ -77,6 +78,12 @@ export default function Vault() {
   const matterKey = searchParams.get('matter');
   const [matter, setMatter] = useState<MatterRef | null>(null);
   const [matterError, setMatterError] = useState<string | null>(null);
+  // A document open in the reader OVER the Vault. Until 2026-09-08 a PDF
+  // navigated to the reader page, and its close button walked history back
+  // to the Vault's entrance — the file list, its scroll and the panel were
+  // gone, and the user re-entered and found their place again each time.
+  // The list now stays mounted underneath; closing returns to it as it was.
+  const [readerDocId, setReaderDocId] = useState<string | null>(null);
 
   // Matter tree state — same shape as the main sidebar so users can
   // switch matters without leaving the Vault.
@@ -627,10 +634,11 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} matterId={matter?.id} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF or DOCX opens in the
-          // full-screen DocumentReader (pages, search, annotations). The
-          // inline DocumentEditor modal handles text-editable formats
+          // full-screen DocumentReader (pages, search, annotations), laid
+          // over this list so closing it lands back here. The inline
+          // DocumentEditor modal handles text-editable formats
           // (md/txt/code/csv/…) where in-place editing is the point, and
           // ephemeral session uploads, which don't have a documents-table
           // row yet for the reader to look up.
@@ -641,7 +649,7 @@ export default function Vault() {
             file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
             name.endsWith('.docx') ||
             name.endsWith('.fountain');
-          if (file.matterspace_id && isReadable) navigate(`/app/document/${file.id}`);
+          if (file.matterspace_id && isReadable) setReaderDocId(file.id);
           else setOpenFile(file);
         }} />;
       case 'workbench':
@@ -1080,6 +1088,11 @@ export default function Vault() {
           onClose={() => setOpenFile(null)}
           onSaved={handleDocumentSaved}
         />
+      )}
+      {readerDocId && (
+        <div className="fixed inset-0 z-[70]" role="dialog" aria-label="Document reader">
+          <DocumentReader id={readerDocId} onClose={() => setReaderDocId(null)} />
+        </div>
       )}
       {shareTarget && (
         <ShareModal

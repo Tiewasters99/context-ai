@@ -1409,9 +1409,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             onClick={() => {
-              // In a canvas panel, closing means taking the card off the
-              // canvas — there is no history to walk back through.
-              if (embedded) { onClose?.(); return; }
+              // A host that opened this reader in place (a canvas card, or
+              // the Vault's overlay over its file list) closes it itself —
+              // there is no history to walk back through, and walking it
+              // would drop the user outside the surface they were in.
+              if (onClose) { onClose(); return; }
+              if (embedded) return;
               // In a fresh tab (opened from the Bucketizer or a shared link)
               // there is no history to go back to — land on the document's
               // matter instead of silently doing nothing.
