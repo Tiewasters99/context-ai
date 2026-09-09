@@ -140,7 +140,20 @@ function safeJsonParse(s) {
 // oversized or oddly-typed reaches the system prompt.
 function sanitizeContext(c) {
   if (!c || typeof c !== 'object') return undefined;
-  const pick = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined);
-  const out = { route: pick(c.route), tab: pick(c.tab), matterName: pick(c.matterName) };
-  return out.route || out.tab || out.matterName ? out : undefined;
+  const pick = (v, max = 200) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+  const num = (v) => (Number.isInteger(v) && v > 0 ? v : undefined);
+  const out = {
+    route: pick(c.route),
+    tab: pick(c.tab),
+    matterName: pick(c.matterName),
+    // The reader's companion context: the document open in front of the
+    // user, the page, and that page's text — bounded, since it is prompt,
+    // not record.
+    documentId: pick(c.documentId, 64),
+    documentTitle: pick(c.documentTitle),
+    page: num(c.page),
+    pageCount: num(c.pageCount),
+    pageText: pick(c.pageText, 3000),
+  };
+  return Object.values(out).some((v) => v !== undefined) ? out : undefined;
 }

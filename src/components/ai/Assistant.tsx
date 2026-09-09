@@ -31,6 +31,15 @@ const SUGGESTIONS = [
   'What kind of tools do you have to help me?',
 ];
 
+// With a book open in the reader, the panel is a companion at the same
+// table: the suggestions are about the work, and the page in front of the
+// reader travels with every message (see orchestrator-context).
+const READING_SUGGESTIONS = [
+  'What should I know about this work before reading on?',
+  'What is happening on this page?',
+  'What echoes or themes should I watch for here?',
+];
+
 // Friendly pen names for the header, from the model ids the server emits
 // (PENS in lib/assistant-core.mjs). An unknown id shows as itself — truth
 // beats pretty.
@@ -46,10 +55,23 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
-  const { id: matterId } = useParams();
+  const { id: routeId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  // The URL names a matter only on a Matterspace page. In the reader it
+  // names a document — the reader publishes its matter through the context.
+  const routeMatterId = location.pathname.startsWith('/app/matterspace/') ? routeId : undefined;
+  const matterId = routeMatterId ?? getOrchestratorContext().matterId;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // What the reader has open, snapshotted when the panel opens, so the
+  // opening screen speaks to the book rather than to the workspace.
+  const [reading, setReading] = useState<{ title?: string; page?: number } | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    const ctx = getOrchestratorContext();
+    setReading(ctx.documentId ? { title: ctx.documentTitle, page: ctx.page } : null);
+  }, [isOpen]);
   const [pendingSubMatter, setPendingSubMatter] = useState<{
     context: NewMatterContext;
     initialName: string;
@@ -224,7 +246,9 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       const token = session?.access_token;
       if (!token) throw new Error('You need to be signed in to use the assistant.');
 
-      const boundMatterId = commandMatterRef.current?.id ?? matterId;
+      // A command's matter first; else the page's — read now, not at render,
+      // since the reader publishes its matter after its document loads.
+      const boundMatterId = commandMatterRef.current?.id ?? routeMatterId ?? getOrchestratorContext().matterId;
       const boundCharterId = charterRef.current?.id;
       const sessionKey = `${boundMatterId ?? ''}|${boundCharterId ?? ''}`;
       const res = await fetch('/api/assistant', {
@@ -472,7 +496,13 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           ))}
           {messages.length === 1 && !loading && (
             <div className="flex flex-col items-start gap-1.5 pt-1">
-              {SUGGESTIONS.map((s) => (
+              {reading && (
+                <p className="text-[11px] text-white/45 leading-snug mb-1">
+                  Reading <span className="text-[#e8d9b8]">“{reading.title ?? 'this document'}”</span>
+                  {reading.page ? `, p. ${reading.page}` : ''}. Select a passage on the page and choose Ask to bring it here.
+                </p>
+              )}
+              {(reading ? READING_SUGGESTIONS : SUGGESTIONS).map((s) => (
                 <button
                   key={s}
                   type="button"

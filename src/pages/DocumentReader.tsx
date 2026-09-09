@@ -23,6 +23,7 @@ import {
   Pencil,
   Scissors,
   MoreHorizontal,
+  MessageCircle,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -34,6 +35,8 @@ import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import PdfPageEditor from '@/components/vault/PdfPageEditor';
 import ModalPortal from '@/components/ui/ModalPortal';
+import { setOrchestratorContext, clearOrchestratorContext, getOrchestratorContext } from '@/lib/orchestrator-context';
+import { runInAssistant } from '@/lib/assistant-bus';
 import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import { useConnections } from '@/hooks/useConnections';
@@ -213,6 +216,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // slot's in-flight task is tracked and cancelled per page number.
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const textLayerRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // One overlay per slot for search hits, drawn over the page at full
+  // strength — the text layer itself sits at a quarter opacity so its
+  // transparent glyphs never show, which also made any tint on its spans
+  // all but invisible.
+  const hitLayerRefs = useRef<(HTMLDivElement | null)[]>([]);
   const renderedKeyRef = useRef(new Map<number, string>());
   const renderTasksRef = useRef(new Map<number, { cancel(): void }>());
   const stackRef = useRef<HTMLDivElement | null>(null);
@@ -597,6 +605,69 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     return () => { cancelled = true; };
   }, [loadState, fileKind, id]);
 
+  // Search hits, drawn as boxes over the words. Each occurrence of the
+  // query in a rendered text layer becomes a Range; its client rects,
+  // taken relative to the page box, become positioned divs in the slot's
+  // hit overlay — so a hit is the word, not the span it sits in, and the
+  // boxes ride along when the page is zoomed. The current match is marked,
+  // and scrolled into view once, when the match changes.
+  const matchesRef = useRef<Match[]>([]);
+  const matchIdxRef = useRef(0);
+  const searchQueryRef = useRef('');
+  const scrollToMatchRef = useRef(-1);
+  const paintHits = useCallback((p: number): HTMLElement | null => {
+    const layer = textLayerRefs.current[p - 1];
+    const hits = hitLayerRefs.current[p - 1];
+    if (!layer || !hits) return null;
+    hits.replaceChildren();
+    const q = searchQueryRef.current.trim().toLowerCase();
+    if (!q) return null;
+    const onPage = matchesRef.current.map((m, i) => ({ ...m, i })).filter((m) => m.page === p);
+    if (!onPage.length) return null;
+    const currentOrdinal = onPage.findIndex((m) => m.i === matchIdxRef.current);
+    const box = layer.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    let ordinal = 0;
+    let currentEl: HTMLElement | null = null;
+    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const hay = (node.textContent ?? '').toLowerCase();
+      let at = hay.indexOf(q);
+      while (at !== -1) {
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + q.length);
+        const isCurrent = ordinal === currentOrdinal;
+        for (const r of Array.from(range.getClientRects())) {
+          if (!r.width || !r.height) continue;
+          const el = document.createElement('div');
+          el.className = isCurrent ? 'search-hit current' : 'search-hit';
+          el.style.left = `${((r.left - box.left) / box.width) * 100}%`;
+          el.style.top = `${((r.top - box.top) / box.height) * 100}%`;
+          el.style.width = `${(r.width / box.width) * 100}%`;
+          el.style.height = `${(r.height / box.height) * 100}%`;
+          hits.appendChild(el);
+          if (isCurrent && !currentEl) currentEl = el;
+        }
+        ordinal += 1;
+        at = hay.indexOf(q, at + q.length);
+      }
+    }
+    return currentEl;
+  }, []);
+  const revealIfCurrent = useCallback((el: HTMLElement | null) => {
+    if (!el || scrollToMatchRef.current < 0 || scrollToMatchRef.current !== matchIdxRef.current) return;
+    scrollToMatchRef.current = -1;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, []);
+  useEffect(() => {
+    matchesRef.current = matches;
+    matchIdxRef.current = matchIdx;
+    searchQueryRef.current = searchQuery;
+    scrollToMatchRef.current = matches.length ? matchIdx : -1;
+    for (const p of Array.from(renderedKeyRef.current.keys())) revealIfCurrent(paintHits(p));
+  }, [matches, matchIdx, searchQuery, paintHits, revealIfCurrent]);
+
   // Paint the slots near the viewport; free the ones left far behind so a
   // long case never holds hundreds of live canvases. A page repaints only
   // when its render key (scale, highlight state) changes.
@@ -628,6 +699,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       }
       const layer = textLayerRefs.current[p - 1];
       if (layer) layer.innerHTML = '';
+      hitLayerRefs.current[p - 1]?.replaceChildren();
       renderedKeyRef.current.delete(p);
     }
 
@@ -680,9 +752,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         await textLayer.render();
         if (cancelled) return;
         renderTasksRef.current.delete(p);
-        const hl = highlightFor(p);
-        if (hl) highlightTextLayerMatches(layerEl, hl);
         renderedKeyRef.current.set(p, key);
+        revealIfCurrent(paintHits(p));
       } catch {
         // Cancellation or a render race; a later pass repaints the slot.
         renderTasksRef.current.delete(p);
@@ -697,7 +768,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     }
 
     return () => { cancelled = true; };
-  }, [page, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches]);
+  }, [page, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
 
   // On unmount, stop whatever pdfjs still has in flight.
   useEffect(() => () => {
@@ -916,6 +987,79 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // sidebar, find, zoom — and the rest waits behind one "more" button.
   const [moreOpen, setMoreOpen] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  // The companion. The Assistant is scoped to this document's matter and
+  // told which document is open, which page, and what that page says — so
+  // "what is this passage saying?" needs no preamble. The reader publishes
+  // that context here (the route names a document, not a matter) and the
+  // panel reads it when a message is sent.
+  const [matterName, setMatterName] = useState<string | null>(null);
+  const [pageText, setPageText] = useState('');
+  useEffect(() => {
+    const mid = doc?.matterspace_id;
+    if (!mid) { setMatterName(null); return; }
+    let stale = false;
+    void supabase
+      .from('matterspaces')
+      .select('name')
+      .eq('id', mid)
+      .maybeSingle()
+      .then(({ data }) => { if (!stale) setMatterName(data?.name ?? null); });
+    return () => { stale = true; };
+  }, [doc?.matterspace_id]);
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') { setPageText(''); return; }
+    const cached = pageTextCacheRef.current[page - 1];
+    if (cached !== undefined) { setPageText(cached); return; }
+    const pdf = pdfDocRef.current as {
+      getPage(n: number): Promise<{ getTextContent(): Promise<{ items: { str?: string }[] }> }>;
+    } | null;
+    if (!pdf) return;
+    let stale = false;
+    pdf.getPage(page)
+      .then((pg) => pg.getTextContent())
+      .then((content) => {
+        const text = content.items.map((i) => i.str || '').join(' ');
+        pageTextCacheRef.current[page - 1] = text;
+        if (!stale) setPageText(text);
+      })
+      .catch(() => { /* a page without text leaves the companion its title */ });
+    return () => { stale = true; };
+  }, [page, loadState, fileKind, id]);
+  useEffect(() => {
+    if (!doc) return;
+    setOrchestratorContext({
+      matterId: doc.matterspace_id ?? undefined,
+      matterName: matterName ?? undefined,
+      documentId: doc.id,
+      documentTitle: doc.title,
+      page: fileKind === 'pdf' ? page : undefined,
+      pageCount: fileKind === 'pdf' && totalPages ? totalPages : undefined,
+      pageText: pageText ? pageText.replace(/\s+/g, ' ').trim().slice(0, 3000) : undefined,
+    });
+  }, [doc, matterName, page, totalPages, pageText, fileKind]);
+  useEffect(() => () => {
+    // Leaving: take the document out of the context, unless another view
+    // has already put its own there.
+    if (getOrchestratorContext().documentId === id) clearOrchestratorContext();
+  }, [id]);
+
+  // Ask about the book, or about a passage. With a quote the question is
+  // put outright, framed so the answer reads it rather than acts on it;
+  // without one the panel opens scoped to the book, for whatever the
+  // reader wants to ask.
+  const askAbout = useCallback((quote?: string) => {
+    if (!doc) return;
+    const where = fileKind === 'pdf' ? `p. ${page} of “${doc.title}”` : `“${doc.title}”`;
+    const q = quote?.replace(/\s+/g, ' ').trim();
+    runInAssistant({
+      matterId: doc.matterspace_id ?? undefined,
+      matterName: matterName ?? undefined,
+      prompt: q
+        ? `On ${where}: “${q.slice(0, 1200)}” — What is this passage saying, and what does it connect to?`
+        : undefined,
+    });
+  }, [doc, fileKind, page, matterName]);
   const handleDownload = useCallback(async () => {
     if (!doc?.storage_path || downloading) return;
     setDownloading(true);
@@ -1242,6 +1386,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const setCanvasEl = useCallback((p: number, el: HTMLCanvasElement | null) => {
     canvasRefs.current[p - 1] = el;
   }, []);
+  const setHitLayerEl = useCallback((p: number, el: HTMLDivElement | null) => {
+    hitLayerRefs.current[p - 1] = el;
+  }, []);
   const setTextLayerEl = useCallback((p: number, el: HTMLDivElement | null) => {
     textLayerRefs.current[p - 1] = el;
   }, []);
@@ -1552,6 +1699,16 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           )}
           {!(isMobile && searchOpen) && (
           <>
+          {doc && (
+            <button
+              onClick={() => askAbout()}
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
+              title="Ask about this book — the Assistant, with this page in front of it"
+              aria-label="Ask about this book"
+            >
+              <MessageCircle size={15} />
+            </button>
+          )}
           <button
             onClick={() => {
               const base = fitPage ? renderedScale : zoom;
@@ -1807,6 +1964,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     currentUserId={user?.id ?? null}
                     setCanvasEl={setCanvasEl}
                     setTextLayerEl={setTextLayerEl}
+                    setHitLayerEl={setHitLayerEl}
                     onRemove={removeAnnotationCb}
                     onOpenNote={openNoteAt}
                     onOpenRef={openRefAt}
@@ -1937,6 +2095,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         <ReaderMenu
           at={ctxMenu}
           hasSelection={ctxMenu.hasSelection}
+          onAskSel={() => askAbout(window.getSelection()?.toString() ?? '')}
           canDownload={!downloading && !!doc?.storage_path}
           canDrive={hasDriveConnection && !driveExporting && !!doc?.storage_path}
           printing={printing}
@@ -1952,6 +2111,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         <SelectionMenu
           x={selectionMenu.x}
           y={selectionMenu.y}
+          onAsk={() => {
+            askAbout(selectionMenu.anchorText);
+            window.getSelection()?.removeAllRanges();
+            setSelectionMenu(null);
+          }}
           onPick={(c) => void saveAnnotation(c)}
           onNote={() => {
             setNoteComposer({
@@ -2090,21 +2254,6 @@ function selectWordNearPoint(layer: HTMLElement, x: number, y: number): boolean 
   return true;
 }
 
-// Walk the rendered text-layer spans on the current page and tint any span
-// whose content contains the query. Lightweight v1; doesn't isolate the
-// *specific* match instance within a span, just the spans that contain at
-// least one occurrence.
-function highlightTextLayerMatches(container: HTMLElement, query: string) {
-  if (!query) return;
-  const q = query.toLowerCase();
-  const spans = container.querySelectorAll<HTMLElement>('span');
-  spans.forEach((span) => {
-    if (span.textContent?.toLowerCase().includes(q)) {
-      span.style.backgroundColor = 'rgba(255, 234, 160, 0.55)';
-      span.style.color = 'inherit';
-    }
-  });
-}
 
 // One page's slot in the continuous stack: margin rails flanking a
 // fixed-size page box holding the canvas, the annotation overlay, and the
@@ -2124,6 +2273,7 @@ const PageSlot = memo(function PageSlot({
   currentUserId,
   setCanvasEl,
   setTextLayerEl,
+  setHitLayerEl,
   onRemove,
   onOpenNote,
   onOpenRef,
@@ -2137,6 +2287,7 @@ const PageSlot = memo(function PageSlot({
   currentUserId: string | null;
   setCanvasEl: (p: number, el: HTMLCanvasElement | null) => void;
   setTextLayerEl: (p: number, el: HTMLDivElement | null) => void;
+  setHitLayerEl: (p: number, el: HTMLDivElement | null) => void;
   onRemove: (id: string) => void;
   onOpenNote: (n: Annotation, a: { x: number; y: number }) => void;
   onOpenRef: (link: IncomingLink, a: { x: number; y: number }) => void;
@@ -2168,6 +2319,11 @@ const PageSlot = memo(function PageSlot({
         <div
           ref={(el) => setTextLayerEl(p, el)}
           className="textLayer absolute inset-0"
+        />
+        <div
+          ref={(el) => setHitLayerEl(p, el)}
+          className="search-hits absolute inset-0 pointer-events-none"
+          aria-hidden="true"
         />
       </div>
       <NotesRail
@@ -2320,12 +2476,13 @@ function ReaderMoreMenu({ anchor, items, onClose }: {
   );
 }
 
-function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onCopySel, onCopyDoc, onPrint, onDownload, onDrive, onClose }: {
+function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onAskSel, onCopySel, onCopyDoc, onPrint, onDownload, onDrive, onClose }: {
   at: { x: number; y: number };
   hasSelection: boolean;
   canDownload: boolean;
   canDrive: boolean;
   printing: boolean;
+  onAskSel: () => void;
   onCopySel: () => void;
   onCopyDoc: () => void;
   onPrint: () => void;
@@ -2334,6 +2491,7 @@ function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onCopyS
   onClose: () => void;
 }) {
   const items: { icon: React.ReactNode; label: string; run: () => void; disabled?: boolean }[] = [
+    { icon: <MessageCircle size={14} />, label: 'Ask about this passage', run: onAskSel, disabled: !hasSelection },
     { icon: <Copy size={14} />, label: 'Copy', run: onCopySel, disabled: !hasSelection },
     { icon: <FileText size={14} />, label: 'Copy the whole document', run: onCopyDoc },
     { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: onPrint, disabled: printing },
@@ -2420,12 +2578,14 @@ function AnnotationsOverlay({
 function SelectionMenu({
   x,
   y,
+  onAsk,
   onPick,
   onNote,
   onCancel,
 }: {
   x: number;
   y: number;
+  onAsk: () => void;
   onPick: (color: AnnotationColor) => void;
   onNote: () => void;
   onCancel: () => void;
@@ -2455,6 +2615,14 @@ function SelectionMenu({
         title="Add a margin note"
       >
         <StickyNote size={14} />
+      </button>
+      <button
+        onClick={onAsk}
+        className="h-5 px-1 inline-flex items-center gap-1 rounded text-[#e8b84a]/85 hover:text-[#e8b84a] transition text-[11px] font-medium"
+        title="Ask the Assistant about this passage"
+      >
+        <MessageCircle size={14} />
+        Ask
       </button>
       <div className="w-px h-4 bg-white/15 mx-0.5" />
       <button
@@ -2515,6 +2683,20 @@ function ReaderStyle({ theme }: { theme: Theme }) {
       }
       .textLayer .markedContent { display: contents; }
       .textLayer ::selection { background: ${selectionBg}; }
+      /* Search hits: the words themselves, lit at full strength over the
+         page; the current match stronger, with a ring. Multiply keeps the
+         ink readable through the color. */
+      .search-hits { z-index: 2; }
+      .search-hit {
+        position: absolute;
+        background: rgba(255, 214, 0, 0.6);
+        border-radius: 2px;
+        mix-blend-mode: multiply;
+      }
+      .search-hit.current {
+        background: rgba(255, 150, 0, 0.8);
+        box-shadow: 0 0 0 2px rgba(255, 120, 0, 0.95);
+      }
       /* The reading pane's scrollbar wears the reader's theme — the app-wide
          white-on-dark bar washes out on parchment. The thumb rides the whole
          case; the step arrows move it a line at a time (hold to crawl). */
