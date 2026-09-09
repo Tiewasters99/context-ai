@@ -21,6 +21,8 @@ import {
   Printer,
   FileText,
   Pencil,
+  Scissors,
+  MoreHorizontal,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -30,6 +32,8 @@ import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSideb
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PdfPageEditor from '@/components/vault/PdfPageEditor';
+import ModalPortal from '@/components/ui/ModalPortal';
 import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import { useConnections } from '@/hooks/useConnections';
@@ -903,6 +907,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   }, [id, doc, driveExporting]);
 
   const [downloading, setDownloading] = useState(false);
+
+  // The page editor — cut, rotate, reorder, or put in pages from another
+  // copy — and the note left after it saves the edited copy beside this one.
+  const [pageEditorOpen, setPageEditorOpen] = useState(false);
+  const [savedCopy, setSavedCopy] = useState<{ filename: string; documentId?: string; downloadUrl?: string } | null>(null);
+  // On a phone the toolbar keeps only what a thumb needs — close, the
+  // sidebar, find, zoom — and the rest waits behind one "more" button.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const handleDownload = useCallback(async () => {
     if (!doc?.storage_path || downloading) return;
     setDownloading(true);
@@ -1405,8 +1418,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         />
       )}
 
-      <div className="flex items-center justify-between gap-2 px-3 h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+      <div className="flex items-center justify-between gap-2 px-3 h-12 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
+        {/* On a phone the find box takes the row. The title's node stays —
+            its text is set by hand, not by React — and is only hidden. */}
+        <div className={`flex items-center gap-2 min-w-0 flex-1 ${isMobile && searchOpen ? 'hidden' : ''}`}>
           <button
             onClick={() => {
               // A host that opened this reader in place (a canvas card, or
@@ -1454,7 +1469,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             title="Click to rename this document"
             className="text-sm text-[var(--color-text-bright)] truncate outline-none rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.08)] focus:overflow-visible focus:text-clip transition-colors empty:before:content-['Document'] empty:before:text-white/30"
           />
-          {doc && (
+          {doc && !isMobile && (
             <button
               onClick={startDocRename}
               className="p-1 rounded-md text-white/35 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.06)] transition-colors shrink-0"
@@ -1465,11 +1480,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className={`flex items-center gap-1 ${isMobile && searchOpen ? 'flex-1 min-w-0' : 'shrink-0'}`}>
           {fileKind === 'pdf' && (
             <>
               {searchOpen ? (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 flex-1 min-w-0">
                   <input
                     autoFocus
                     type="text"
@@ -1484,7 +1499,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                       }
                     }}
                     placeholder="Find in document…"
-                    className="h-8 w-44 rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-2 text-xs text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]"
+                    className={`h-8 ${isMobile ? 'flex-1 min-w-0' : 'w-44'} rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-2 text-xs text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]`}
+                    // 16px on a phone, so iOS Safari doesn't zoom the page on focus.
+                    style={isMobile ? { fontSize: 16 } : undefined}
                   />
                   {matches.length > 0 ? (
                     <span className="text-[10px] text-white/55 tabular-nums px-1">
@@ -1533,6 +1550,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               <div className="w-px h-5 bg-white/10 mx-1" />
             </>
           )}
+          {!(isMobile && searchOpen) && (
+          <>
           <button
             onClick={() => {
               const base = fitPage ? renderedScale : zoom;
@@ -1558,6 +1577,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             <ZoomIn size={15} />
           </button>
+          {!isMobile && (
+          <>
           {fileKind === 'pdf' && (
             <button
               onClick={() => setFitPage((v) => !v)}
@@ -1578,6 +1599,16 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
+          {fileKind === 'pdf' && !embedded && (
+            <button
+              onClick={() => setPageEditorOpen(true)}
+              disabled={loadState !== 'ready' || !doc?.storage_path}
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Edit pages — cut, rotate, reorder, or put in pages from another copy; saved as a new PDF"
+            >
+              <Scissors size={15} />
+            </button>
+          )}
           {!embedded && (
             <CoverModeToggle
               hasCover={!!doc?.cover_url}
@@ -1636,8 +1667,72 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             {theme === 'parchment' ? <Moon size={15} /> : <Sun size={15} />}
           </button>
+          </>
+          )}
+          {isMobile && (
+            <div className="relative">
+              <button
+                ref={moreBtnRef}
+                onClick={() => setMoreOpen((v) => !v)}
+                className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+                  moreOpen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+                }`}
+                title="More"
+                aria-label="More actions"
+                aria-expanded={moreOpen}
+              >
+                <MoreHorizontal size={15} />
+              </button>
+              {moreOpen && (
+                <ReaderMoreMenu
+                  anchor={moreBtnRef.current}
+                  onClose={() => setMoreOpen(false)}
+                  items={[
+                    ...(fileKind === 'pdf' ? [
+                      { icon: <Scan size={14} />, label: fitPage ? 'Fit page is on' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
+                    ] : []),
+                    { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
+                    ...(fileKind === 'pdf' && !embedded ? [
+                      { icon: <Scissors size={14} />, label: 'Edit pages', run: () => setPageEditorOpen(true), disabled: loadState !== 'ready' || !doc?.storage_path },
+                    ] : []),
+                    { icon: <FileText size={14} />, label: 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml) },
+                    { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
+                    { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
+                    ...(hasDriveConnection ? [
+                      { icon: <HardDrive size={14} />, label: 'Save to Google Drive', run: () => void handleDriveExport(), disabled: driveExporting || !doc?.storage_path },
+                    ] : []),
+                    { icon: theme === 'parchment' ? <Moon size={14} /> : <Sun size={14} />, label: theme === 'parchment' ? 'Dark mode' : 'Light mode', run: () => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment')) },
+                  ]}
+                />
+              )}
+            </div>
+          )}
+          </>
+          )}
         </div>
       </div>
+
+      {savedCopy && (
+        <div className="flex items-center gap-3 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-[#4ade80]/10 text-[#4ade80]">
+          <span className="flex-1 min-w-0 truncate">Saved the edited copy "{savedCopy.filename}" beside this document.</span>
+          {savedCopy.documentId && (
+            <button
+              onClick={() => navigate(`/app/document/${savedCopy.documentId}`)}
+              className="underline hover:no-underline shrink-0"
+            >
+              Open it
+            </button>
+          )}
+          {savedCopy.downloadUrl && (
+            <a href={savedCopy.downloadUrl} target="_blank" rel="noreferrer" className="underline hover:no-underline shrink-0">
+              Download
+            </a>
+          )}
+          <button onClick={() => setSavedCopy(null)} className="opacity-70 hover:opacity-100" aria-label="Dismiss">
+            <X size={12} />
+          </button>
+        </div>
+      )}
 
       {driveBanner && (
         <div
@@ -1831,6 +1926,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       )}
         </div>
       </div>
+      {pageEditorOpen && doc && (
+        <PdfPageEditor
+          doc={doc}
+          onClose={() => setPageEditorOpen(false)}
+          onSaved={({ filename, downloadUrl, documentId }) => setSavedCopy({ filename, downloadUrl, documentId })}
+        />
+      )}
       {ctxMenu && (
         <ReaderMenu
           at={ctxMenu}
@@ -2165,6 +2267,59 @@ export function PageRail({ page, total, theme, onPage }: {
 }
 
 // The reader's context menu — its own verbs where the browser's menu stood.
+// The phone toolbar's "more": the actions that do not fit beside the page,
+// dropped under the button that opened them. Portalled to <body> and placed
+// from the button's rectangle — the toolbar clips its overflow and, with
+// its backdrop blur, would contain a fixed child too. Closes on a tap
+// anywhere else or on Escape.
+function ReaderMoreMenu({ anchor, items, onClose }: {
+  anchor: HTMLElement | null;
+  items: { icon: React.ReactNode; label: string; run: () => void; disabled?: boolean }[];
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const away = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (ref.current?.contains(t) || anchor?.contains(t)) return;
+      onClose();
+    };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [anchor, onClose]);
+  const rect = anchor?.getBoundingClientRect();
+  const top = rect ? rect.bottom + 4 : 56;
+  const right = rect ? Math.max(8, window.innerWidth - rect.right) : 8;
+  return (
+    <ModalPortal>
+    <div
+      ref={ref}
+      role="menu"
+      className="fixed z-[80] w-60 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
+      style={{ top, right }}
+    >
+      {items.map((it) => (
+        <button
+          key={it.label}
+          role="menuitem"
+          disabled={it.disabled}
+          onClick={() => { it.run(); onClose(); }}
+          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-white/80 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span className="shrink-0 opacity-80">{it.icon}</span>
+          <span className="flex-1">{it.label}</span>
+        </button>
+      ))}
+    </div>
+    </ModalPortal>
+  );
+}
+
 function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onCopySel, onCopyDoc, onPrint, onDownload, onDrive, onClose }: {
   at: { x: number; y: number };
   hasSelection: boolean;

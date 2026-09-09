@@ -95,10 +95,29 @@ async function compressPage(file: File): Promise<Blob> {
     return file;
   }
 }
+/** A picked image as a page — the page editor takes pages in this way. */
+export const pageImageBlob = compressPage;
+
+/** How many pages a PDF has — opened for the count and closed again. */
+export async function pdfPageCount(file: File): Promise<number> {
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url,
+  ).toString();
+  const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer(), ...PDFJS_DOC_PARAMS }).promise;
+  try {
+    return pdf.numPages;
+  } finally {
+    await pdf.destroy();
+  }
+}
 
 /** Render a scanned PDF's pages to JPEG blobs, one at a time (memory-safe
- *  for big vFlat exports — only ever one page's canvas alive). */
-export async function* pdfPageBlobs(file: File): AsyncGenerator<{ blob: Blob; n: number; total: number }> {
+ *  for big vFlat exports — only ever one page's canvas alive). `only`
+ *  names the pages wanted, 1-based and in the order given; absent, every
+ *  page in order. */
+export async function* pdfPageBlobs(file: File, only?: number[]): AsyncGenerator<{ blob: Blob; n: number; total: number }> {
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -109,7 +128,10 @@ export async function* pdfPageBlobs(file: File): AsyncGenerator<{ blob: Blob; n:
     ...PDFJS_DOC_PARAMS,
   }).promise;
   try {
-    for (let i = 1; i <= pdf.numPages; i++) {
+    const wanted = only
+      ? only.filter((n) => Number.isInteger(n) && n >= 1 && n <= pdf.numPages)
+      : Array.from({ length: pdf.numPages }, (_, i) => i + 1);
+    for (const i of wanted) {
       const page = await pdf.getPage(i);
       const base = page.getViewport({ scale: 1 });
       const scale = PAGE_LONG_EDGE / Math.max(base.width, base.height);
@@ -134,6 +156,10 @@ export async function* pdfPageBlobs(file: File): AsyncGenerator<{ blob: Blob; n:
 /* ========================= upload ========================= */
 
 const pagePath = (prefix: string, n: number) => `${prefix}/page_${String(n).padStart(4, '0')}.jpg`;
+
+/** One page image into the scan bucket, at a path of the caller's choosing
+ *  under their own folder — the page editor's way in. */
+export { uploadOne as uploadPageBlob };
 
 async function uploadOne(path: string, blob: Blob): Promise<void> {
   for (let attempt = 0; ; attempt++) {
@@ -253,14 +279,31 @@ export async function ocrPages(
   for (let i = 0; i < total; i++) {
     if (!have.has(i + 1)) pending.push({ path: pagePaths[i], n: i + 1 });
   }
-  let done = total - pending.length;
+  const done = total - pending.length;
   onProgress({ stage: 'ocr', done, total });
   if (!pending.length) return texts;
 
+  const read = await transcribePages(pending, (n) => onProgress({ stage: 'ocr', done: done + n, total }), signal);
+  for (const [n, text] of read) texts[n - 1] = text;
+  return texts;
+}
+
+/** Page images through /api/student-hub-ocr, in batches. Each entry's `n`
+ *  is its number in the caller's own sequence and its text comes back
+ *  under it; the endpoint leaves a transcription sidecar beside every page
+ *  it reads. */
+export async function transcribePages(
+  pages: { path: string; n: number }[],
+  onProgress?: (done: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<Map<number, string>> {
+  const read = new Map<number, string>();
+  if (!pages.length) return read;
   const token = await authToken();
   const batches: { path: string; n: number }[][] = [];
-  for (let i = 0; i < pending.length; i += OCR_BATCH) batches.push(pending.slice(i, i + OCR_BATCH));
+  for (let i = 0; i < pages.length; i += OCR_BATCH) batches.push(pages.slice(i, i + OCR_BATCH));
 
+  let done = 0;
   let next = 0;
   const worker = async () => {
     while (next < batches.length) {
@@ -274,9 +317,9 @@ export async function ocrPages(
         });
         if (res.ok) {
           const body = (await res.json()) as { pages: { n: number; text: string }[] };
-          for (const p of body.pages) texts[p.n - 1] = p.text;
+          for (const p of body.pages) read.set(p.n, p.text);
           done += batch.length;
-          onProgress({ stage: 'ocr', done, total });
+          onProgress?.(done, pages.length);
           break;
         }
         const detail = await res.text();
@@ -288,7 +331,7 @@ export async function ocrPages(
     }
   };
   await Promise.all(Array.from({ length: Math.min(2, batches.length) }, worker));
-  return texts;
+  return read;
 }
 
 /* ===================== any-text intake ===================== */

@@ -8,12 +8,9 @@ import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
-import ActivityFeed, { describe, relativeTime } from '@/components/activity/ActivityFeed';
 import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
-import { useActivityFeed } from '@/hooks/useActivityFeed';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
-import PracticeDocket from '@/components/docket/PracticeDocket';
 
 const quickActions = [
   { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace' as const },
@@ -27,7 +24,6 @@ export default function Dashboard() {
   // Shared query — same cache as the sidebar. Mutations from either view
   // invalidate and both refetch.
   const { data: serverspaces = [], isLoading: loadingServerspaces } = useServerspaces();
-  const { data: activity = [] } = useActivityFeed(undefined);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
@@ -46,7 +42,7 @@ export default function Dashboard() {
     try {
       if (url) localStorage.setItem(DASH_COVER_KEY, url);
       else localStorage.removeItem(DASH_COVER_KEY);
-    } catch {}
+    } catch { /* a blocked store costs the backdrop, nothing more */ }
   }, []);
 
   // Create a matter or sub-matter from the dashboard tree. NewMatterModal
@@ -135,11 +131,6 @@ export default function Dashboard() {
           <DoorOpen size={21} className="text-[#e8b84a] shrink-0" strokeWidth={1.75} />
           Welcome back, {displayName}
         </h1>
-        <p className="text-[15px] text-[#e8b84a] mt-1.5 tracking-wide font-medium truncate">
-          {activity.length > 0
-            ? `${describe(activity[0])} · ${relativeTime(activity[0].occurred_at)}`
-            : "Here's what's happening in your Contextspace."}
-        </p>
         {!isMobile && (
           <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
         )}
@@ -252,30 +243,18 @@ export default function Dashboard() {
           </div>
         </section>
 
-        {/* The Practice Docket — every working thread, one linear sheet,
-            deadline-first. Sits BELOW Serverspaces by explicit request
-            (2026-08-10, repeated): navigation first, then the working
-            sheet. Do not move it back above without asking. */}
-        <section className="mt-8">
-          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Docket</h2>
-          <PracticeDocket />
-        </section>
+        {/* The home stops at what is coming. The Practice Docket and the
+            cross-matter activity feed used to follow here; both came off on
+            2026-09-08 at Eden's request — read past, not read. The docket
+            component (components/docket) and the feed (a matter's Updates
+            tab) remain. Do not put them back here without asking. */}
 
-        {/* Quick Actions */}
         {/* Upcoming deadlines across all matters */}
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">
             Upcoming deadlines
           </h2>
           <UpcomingDeadlines matterNames={matterNames} />
-        </section>
-
-        {/* Recent activity across all matters */}
-        <section className="mt-8">
-          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">
-            Recent activity
-          </h2>
-          <ActivityFeed matterNames={matterNames} maxItems={10} />
         </section>
 
         <div className="grid grid-cols-1 gap-3 mt-10">

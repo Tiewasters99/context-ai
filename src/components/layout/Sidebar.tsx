@@ -15,12 +15,6 @@ import {
   UserPlus,
   Folder,
   LayoutGrid,
-  Scale,
-  GraduationCap,
-  Landmark,
-  CalendarDays,
-  Pin,
-  PinOff,
   Lock,
 } from 'lucide-react';
 import {
@@ -41,8 +35,6 @@ import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces
 import { ensureMySecureSpace } from '@/lib/securechat';
 import { runInAssistant } from '@/lib/assistant-bus';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
-import { useOptionalCanvas } from '@/hooks/useCanvas';
-import { CALENDAR_CARD_ID, cardKey } from '@/lib/canvas';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import ShareModal from '@/components/serverspace/ShareModal';
@@ -292,28 +284,26 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           {!collapsed && <span>My Contextspace</span>}
         </Link>
 
-        {/* Calendar — deadlines, entries, list due dates, Google imports.
-            The pin beside it summons the calendar as a card on the canvas
-            without navigating anywhere, which is the point of it: you want
-            the day's shape up beside your lists, not instead of them. */}
-        <div className="flex items-center gap-1 mt-px">
-          <Link
-            to="/app/calendar"
-            className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors flex-1 min-w-0 ${
-              isActive('/app/calendar')
-                ? 'bg-[#16161d] text-white font-medium'
-                : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-            }`}
-          >
-            <CalendarDays size={15} className="shrink-0" strokeWidth={1.75} />
-            {!collapsed && <span>Calendar</span>}
-          </Link>
-          {!collapsed && <CalendarCanvasToggle />}
-        </div>
+        {/* The Assistant — the one door to everything else: it explains how
+            the place works and, on request, does the work. It sits up here
+            with the rooms rather than down with the account plumbing. */}
+        <button
+          onClick={() => onToggleAssistant?.()}
+          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            assistantOpen
+              ? 'bg-[rgba(212,160,84,0.08)] text-[#e8b84a]'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+        >
+          <Bot size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Assistant</span>}
+        </button>
 
-        {/* Document Builder is still a stub (route works at
-            /app/document-builder) — it returns to the nav when it does
-            something. */}
+        {/* The top level is deliberately short (2026-09-08): home, the
+            Assistant, the Suite. Calendar, the Mediation Center, the Student
+            Hub and The Office keep their routes and are reached from the
+            Productivity Suite — every tool a room, not every room a door.
+            The Document Builder is still a stub (/app/document-builder). */}
 
         {/* Productivity Suite */}
         <Link
@@ -326,45 +316,6 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         >
           <LayoutGrid size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Productivity Suite</span>}
-        </Link>
-
-        {/* Mediation Center */}
-        <Link
-          to="/app/mediation"
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
-            isActive('/app/mediation')
-              ? 'bg-[#16161d] text-white font-medium'
-              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-          }`}
-        >
-          <Scale size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Mediation Center</span>}
-        </Link>
-
-        {/* Student Hub */}
-        <Link
-          to="/app/student-hub"
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
-            isActive('/app/student-hub')
-              ? 'bg-[#16161d] text-white font-medium'
-              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-          }`}
-        >
-          <GraduationCap size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Student Hub</span>}
-        </Link>
-
-        {/* The Office — the public face of the workspace */}
-        <Link
-          to="/app/office"
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
-            isActive('/app/office')
-              ? 'bg-[#16161d] text-white font-medium'
-              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-          }`}
-        >
-          <Landmark size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>The Office</span>}
         </Link>
 
         {/* Serverspaces Header */}
@@ -536,20 +487,8 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         </DndContext>
       </nav>
 
-      {/* Bottom Actions */}
+      {/* Bottom Actions — account plumbing, not rooms. */}
       <div className="border-t border-[rgba(255,255,255,0.06)] p-2.5 space-y-px">
-        <button
-          onClick={() => onToggleAssistant?.()}
-          className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
-            assistantOpen
-              ? 'bg-[rgba(212,160,84,0.08)] text-[#e8b84a]'
-              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-          }`}
-        >
-          <Bot size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>AI Assistant</span>}
-        </button>
-
         <Link
           to="/app/connections"
           className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
@@ -623,7 +562,6 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
   );
 }
 
-
 // "Drop here to make top-level under this serverspace" zone. The whole
 // expanded matter-list area becomes a droppable; nested matter-row
 // droppables (inside MatterNode) take priority via pointerWithin, so
@@ -661,7 +599,6 @@ function ServerspaceDropZone({
     </div>
   );
 }
-
 
 interface MatterNodeProps {
   node: MatterTreeNode;
@@ -846,33 +783,3 @@ function MatterNode({
   );
 }
 
-// Puts the calendar on the canvas (or takes it off) without leaving the page
-// you are on. The calendar is a global card, so once it is up it follows you
-// from matter to matter instead of belonging to whichever one you pinned it in.
-function CalendarCanvasToggle() {
-  const canvas = useOptionalCanvas();
-  if (!canvas) return null;
-  const pinned = canvas.isPinned('calendar', CALENDAR_CARD_ID);
-  return (
-    <button
-      onClick={() =>
-        pinned
-          ? canvas.unpin(cardKey('calendar', CALENDAR_CARD_ID))
-          : canvas.pin({ kind: 'calendar', id: CALENDAR_CARD_ID, title: 'Calendar' })
-      }
-      className={`p-1.5 mr-1 rounded-md shrink-0 transition-colors ${
-        pinned
-          ? 'text-[#e8b84a] hover:text-[#f5d178] hover:bg-[rgba(255,255,255,0.06)]'
-          : 'text-white/35 hover:text-white hover:bg-[rgba(255,255,255,0.06)]'
-      }`}
-      title={
-        pinned
-          ? 'Calendar is on the canvas — click to take it off'
-          : 'Put the calendar on the canvas, beside whatever you are working in'
-      }
-      aria-label={pinned ? 'Remove calendar from canvas' : 'Add calendar to canvas'}
-    >
-      {pinned ? <Pin size={13} strokeWidth={2} /> : <PinOff size={13} strokeWidth={2} />}
-    </button>
-  );
-}

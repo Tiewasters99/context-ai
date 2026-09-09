@@ -115,6 +115,72 @@ export async function getPageUrls(paths: string[]): Promise<string[]> {
     .filter((u): u is string => !!u);
 }
 
+/** The transcription the OCR pass leaves beside each page image — the
+ *  sidecar api/student-hub-ocr writes at {folder}/ocr/{name}.txt. */
+export function pageTextPath(imagePath: string): string {
+  const cut = imagePath.lastIndexOf('/');
+  const name = imagePath.slice(cut + 1).replace(/\.(jpe?g|png|webp)$/i, '');
+  return `${imagePath.slice(0, cut)}/ocr/${name}.txt`;
+}
+
+// What each page says, once read: a reading's pages are asked for by the
+// book, the page editor and the assistant, and none should fetch what
+// another already has.
+const pageTextCache = new Map<string, string>();
+
+/** What each of a session's scanned pages says, in page order — the OCR
+ *  sidecars, fetched once and remembered for the tab. A page whose sidecar
+ *  is missing or unreadable reads as '' rather than failing the set. */
+export async function getPageTexts(paths: string[]): Promise<string[]> {
+  const texts = new Array<string>(paths.length).fill('');
+  const pending: number[] = [];
+  paths.forEach((p, i) => {
+    const known = pageTextCache.get(p);
+    if (known !== undefined) texts[i] = known; else pending.push(i);
+  });
+  let next = 0;
+  const worker = async () => {
+    while (next < pending.length) {
+      const i = pending[next++];
+      const { data } = await supabase.storage.from(SCAN_BUCKET).download(pageTextPath(paths[i]));
+      if (!data) continue;
+      texts[i] = (await data.text()).trim();
+      pageTextCache.set(paths[i], texts[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, pending.length) }, worker));
+  return texts;
+}
+
+/** Remember what a page says — for pages just transcribed, so the next
+ *  reader need not fetch what this one already holds. */
+export function rememberPageText(path: string, text: string): void {
+  pageTextCache.set(path, text);
+}
+
+/** Take pages the student cut out of the account — their images and their
+ *  OCR sidecars — unless another reading still turns them (a chapter's
+ *  items share its folder, and a page can be filed in two). Best-effort by
+ *  contract: a failure leaves an unused image behind, never a broken
+ *  reading, so callers may swallow it. */
+export async function removeScanPages(paths: string[]): Promise<void> {
+  if (!paths.length) return;
+  const { data, error } = await supabase
+    .from('student_hub_sessions')
+    .select('pages')
+    .not('pages', 'is', null);
+  if (error) throw new Error(error.message);
+  const inUse = new Set<string>();
+  for (const row of (data ?? []) as { pages: string[] | null }[]) {
+    for (const p of row.pages ?? []) inUse.add(p);
+  }
+  const objects = paths.filter((p) => !inUse.has(p)).flatMap((p) => [p, pageTextPath(p)]);
+  for (let i = 0; i < objects.length; i += 100) {
+    const { error: rmErr } = await supabase.storage.from(SCAN_BUCKET).remove(objects.slice(i, i + 100));
+    if (rmErr) throw new Error(rmErr.message);
+  }
+}
+
 /* ============================ CRUD ============================ */
 
 export async function listTexts(): Promise<StudyText[]> {
@@ -236,7 +302,7 @@ export async function updateSession(
   id: string,
   patch: Partial<Pick<StudySession,
     'title' | 'citation' | 'source_label' | 'brief' | 'outline' | 'model_id' |
-    'notes' | 'highlights' | 'annotations' | 'resources'>>,
+    'notes' | 'highlights' | 'annotations' | 'resources' | 'pages' | 'reading'>>,
 ): Promise<void> {
   const { error } = await supabase
     .from('student_hub_sessions')
