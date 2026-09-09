@@ -49,6 +49,11 @@ const READER_CSS = `
   color: #e6dcc3;
 }
 .hub-reader button { font-family: inherit; color: inherit; }
+/* On a phone the workspace's bottom tab bar (MainLayout) stands in the same
+   strip as the book's controls and, at z-index 40, over them — so the
+   reader hides it while it is open. The office's Reading Room has no such
+   bar; there the rule finds nothing. */
+body.hub-reader-open [data-mobile-tab-bar] { display: none; }
 
 /* The chrome takes the height its title and citation need — the page box
    below it is measured, not assumed, so it gives back whatever is left.
@@ -429,7 +434,9 @@ const READER_CSS = `
 .hub-reader.parchment .hub-reader-no-results { color: rgba(42, 30, 16, 0.5); }
 
 /* On a phone every control is a thumb's target: 44px minimum, the slider
-   given its hit area as padding so the track itself stays a hairline. */
+   given its hit area as padding so the track itself stays a hairline. The
+   bottom offsets clear the home indicator where the page runs under it
+   (the Reading Room's viewport-fit: cover). */
 @media (max-width: 768px) {
   /* On a phone the title runs the full width beneath the corner buttons
      rather than in the sliver between them — two lines at most, never
@@ -439,13 +446,13 @@ const READER_CSS = `
   .hub-reader-corner { top: 0.45rem; right: 0.45rem; gap: 0.3rem; }
   .hub-reader-corner-btn { width: 44px; height: 44px; }
   .hub-reader-goto { width: 4em; padding: 0.55rem 0.5rem; }
-  .hub-reader-area { bottom: 128px; }
+  .hub-reader-area { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
   .hub-reader-nav { width: 44px; height: 44px; opacity: 0.7; }
   .hub-reader-nav.left { left: 0.4rem; }
   .hub-reader-nav.right { right: 0.4rem; }
-  .hub-reader-controls { bottom: 0.6rem; right: 0.6rem; gap: 0.2rem; padding: 0.3rem; }
+  .hub-reader-controls { bottom: calc(0.6rem + env(safe-area-inset-bottom, 0px)); right: 0.6rem; gap: 0.2rem; padding: 0.3rem; }
   .hub-reader-btn { width: 44px; height: 44px; }
-  .hub-reader-pager { bottom: calc(0.6rem + 58px); gap: 0.5rem; padding: 0.3rem 0.7rem; }
+  .hub-reader-pager { bottom: calc(0.6rem + 58px + env(safe-area-inset-bottom, 0px)); gap: 0.5rem; padding: 0.3rem 0.7rem; }
   .hub-reader-start, .hub-reader-search-close { width: 44px; height: 44px; }
   .hub-reader-slider { height: 28px; background: transparent; }
   .hub-reader-slider::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: rgba(42, 30, 16, 0.2); }
@@ -479,6 +486,11 @@ export interface HubReaderProps {
    *  paper goes dark and the ink light; a print — a slide, a plate — keeps
    *  its colors whatever the light. */
   pageTone?: 'scan' | 'print';
+  /** What each scanned page says, in page order — the OCR pass's
+   *  transcriptions — so the glass can search a scan and turn straight to
+   *  the page. Undefined when the host has none to give (the office's
+   *  Reading Room); null while they are still being read. */
+  pageTexts?: string[] | null;
   /** A slide deck: one card per page, typeset from the deck's own text —
    *  the office's Reader has the slides' words but never the file. */
   slides?: ReaderSlide[] | null;
@@ -537,7 +549,7 @@ function write(key: string, value: string): void {
 }
 
 export function HubReader({
-  title, reflowed, pageUrls, pageTone = 'scan', slides, coverUrl, sessionId, onClose, onAskAssistant, onReady, turnTo,
+  title, reflowed, pageUrls, pageTone = 'scan', pageTexts, slides, coverUrl, sessionId, onClose, onAskAssistant, onReady, turnTo,
 }: HubReaderProps) {
   // A deck reads like a scanned book — a page is a page, whatever it holds.
   const slideCount = slides?.length ?? 0;
@@ -605,7 +617,12 @@ export function HubReader({
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = previous; };
+    // The class the workspace's phone tab bar hides on (see the CSS).
+    document.body.classList.add('hub-reader-open');
+    return () => {
+      document.body.style.overflow = previous;
+      document.body.classList.remove('hub-reader-open');
+    };
   }, []);
 
   /* ---------------- Measurement ---------------- */
@@ -778,6 +795,53 @@ export function HubReader({
   const hitLength = needle.trim().length;
   const marking = searchOpen && hitLength >= 2 ? hits : [];
 
+  // A scan is searched page by page, through its transcriptions: a mark
+  // cannot land on a page image, so a hit is a page to turn to and the
+  // words around it. The office's Reading Room brings no transcriptions,
+  // and its scanned books keep the glass out of the corner.
+  const scanSearch = paged && !!pageUrls?.length && pageTexts !== undefined;
+  const searchable = !paged || scanSearch;
+  const pageHits = useMemo(() => {
+    const q = needle.trim().toLowerCase();
+    const out: { page: number; at: number }[] = [];
+    if (!scanSearch || !pageTexts || q.length < 2) return out;
+    for (let p = 0; p < pageTexts.length && out.length < 200; p += 1) {
+      const hay = pageTexts[p].toLowerCase();
+      let from = 0;
+      while (out.length < 200) {
+        const at = hay.indexOf(q, from);
+        if (at === -1) break;
+        out.push({ page: p, at });
+        from = at + q.length;
+      }
+    }
+    return out;
+  }, [scanSearch, pageTexts, needle]);
+
+  // Every hit as a line of the results: the page it is on, the words
+  // around it, and the page to turn to.
+  const results = useMemo(() => {
+    const around = (text: string, at: number) => {
+      const from = Math.max(0, at - 40);
+      const to = Math.min(text.length, at + hitLength + 40);
+      return {
+        before: (from > 0 ? '…' : '') + text.slice(from, at).replace(/\s+/g, ' '),
+        match: text.slice(at, at + hitLength),
+        after: text.slice(at + hitLength, to).replace(/\s+/g, ' ') + (to < text.length ? '…' : ''),
+      };
+    };
+    if (scanSearch) {
+      const texts = pageTexts ?? [];
+      return pageHits.map(({ page, at }, hit) => ({
+        key: `${page}:${at}`, hit, target: coverPages + page, page: page + 1, ...around(texts[page] ?? '', at),
+      }));
+    }
+    return hits.map((at, hit) => {
+      const target = coverPages + (pageMap[paragraphAt(paras, at)] ?? 0);
+      return { key: String(at), hit, target, page: Math.max(1, target - coverPages + 1), ...around(reflowed, at) };
+    });
+  }, [scanSearch, pageHits, pageTexts, hits, hitLength, coverPages, pageMap, paras, reflowed]);
+
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setQuery('');
@@ -845,7 +909,7 @@ export function HubReader({
           number typed plain. The search overlay takes the corner over. */}
       {!searchOpen && (
         <div className="hub-reader-corner">
-          {!paged && (
+          {searchable && (
             <button
               type="button"
               className="hub-reader-corner-btn"
@@ -1106,7 +1170,7 @@ export function HubReader({
             </svg>
           )}
         </button>
-        {!paged && (
+        {searchable && (
           <>
             <div className="hub-reader-divider" />
             <button
@@ -1166,35 +1230,29 @@ export function HubReader({
             />
             <button type="button" onClick={closeSearch} className="hub-reader-search-close" aria-label="Close the search">×</button>
           </div>
-          {hits.length > 0 && (
+          {results.length > 0 && (
             <div className="hub-reader-results">
-              {hits.map((at, i) => {
-                const index = paragraphAt(paras, at);
-                const target = coverPages + (pageMap[index] ?? 0);
-                const from = Math.max(0, at - 40);
-                const to = Math.min(reflowed.length, at + hitLength + 40);
-                return (
-                  <button
-                    key={at}
-                    type="button"
-                    className="hub-reader-result"
-                    onClick={() => { setActiveHit(i); goTo(target); }}
-                  >
-                    <span className="hub-reader-result-page">p.{Math.max(1, target - coverPages + 1)}</span>
-                    <span className="hub-reader-result-text">
-                      {from > 0 ? '…' : ''}
-                      {reflowed.slice(from, at).replace(/\s+/g, ' ')}
-                      <mark className="hub-reader-mark">{reflowed.slice(at, at + hitLength)}</mark>
-                      {reflowed.slice(at + hitLength, to).replace(/\s+/g, ' ')}
-                      {to < reflowed.length ? '…' : ''}
-                    </span>
-                  </button>
-                );
-              })}
+              {results.map((r) => (
+                <button
+                  key={r.key}
+                  type="button"
+                  className="hub-reader-result"
+                  onClick={() => { setActiveHit(r.hit); goTo(r.target); }}
+                >
+                  <span className="hub-reader-result-page">p.{r.page}</span>
+                  <span className="hub-reader-result-text">
+                    {r.before}
+                    <mark className="hub-reader-mark">{r.match}</mark>
+                    {r.after}
+                  </span>
+                </button>
+              ))}
             </div>
           )}
-          {needle.trim().length >= 2 && hits.length === 0 && (
-            <p className="hub-reader-no-results">Nothing found</p>
+          {hitLength >= 2 && results.length === 0 && (
+            <p className="hub-reader-no-results">
+              {scanSearch && pageTexts === null ? 'Reading your pages…' : 'Nothing found'}
+            </p>
           )}
         </div>
       )}
