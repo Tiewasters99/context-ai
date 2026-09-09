@@ -92,6 +92,10 @@ type DocMeta = {
   page_count: number | null;
   cover_url: string | null;
   matterspace_id: string | null;
+  /** 'generated' for a deliverable filed without passages (an edited PDF). */
+  text_status?: string | null;
+  /** For an edited copy: the indexed original it was made from. */
+  source_document_id?: string | null;
 };
 
 type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'unsupported';
@@ -137,6 +141,22 @@ type Match = { page: number; index: number };
 
 // Vertical gap between page slots in the continuous stack.
 const PAGE_GAP = 16;
+
+// Two small lookups for the companion's provenance walk, typed at the
+// boundary so the walk's loop variable does not feed back into the query
+// builder's inference.
+async function passageCountOf(documentId: string): Promise<number> {
+  const { count } = await supabase
+    .from('passages')
+    .select('id', { count: 'exact', head: true })
+    .eq('document_id', documentId);
+  return count ?? 0;
+}
+async function sourceDocumentOf(documentId: string): Promise<string | null> {
+  const { data } = await supabase.from('documents').select('metadata').eq('id', documentId).maybeSingle();
+  const meta = (data as { metadata?: { source_document_id?: string | null } | null } | null)?.metadata;
+  return meta?.source_document_id ?? null;
+}
 
 export default function DocumentReader({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
   const params = useParams<{ id: string }>();
@@ -313,7 +333,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -493,6 +513,48 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
   useEffect(() => { pageStateRef.current = page; }, [page]);
 
+  // The pages actually on screen, most visible first, by overlap with the
+  // viewport. The rail's "current page" is a single point 40% down the
+  // screen, which on a zoomed page can name the next page while the reader
+  // is still on this one; the companion is told what is truly in view.
+  const [visiblePages, setVisiblePages] = useState<{ page: number; share: number }[]>([]);
+  const slotBandsRef = useRef<{ top: number; bottom: number }[] | null>(null);
+  useEffect(() => {
+    slotBandsRef.current = slotTops && pageDims
+      ? slotTops.map((top, i) => ({ top, bottom: top + pageDims[i].h * renderedScale }))
+      : null;
+  }, [slotTops, pageDims, renderedScale]);
+  const visibleKeyRef = useRef('');
+  const computeVisible = useCallback(() => {
+    const el = contentRef.current;
+    const bands = slotBandsRef.current;
+    if (!el || !bands) return;
+    const top = el.scrollTop;
+    const bottom = top + el.clientHeight;
+    const vh = Math.max(1, el.clientHeight);
+    const seen: { page: number; share: number }[] = [];
+    for (let i = 0; i < bands.length; i++) {
+      const b = bands[i];
+      if (b.bottom < top) continue;
+      if (b.top > bottom) break;
+      const overlap = Math.min(b.bottom, bottom) - Math.max(b.top, top);
+      if (overlap > 0) seen.push({ page: i + 1, share: overlap / vh });
+    }
+    seen.sort((a, b) => b.share - a.share);
+    const pick = seen.filter((s) => s.share >= 0.15).slice(0, 2);
+    // Shares are coarsened so a scroll of a few pixels does not re-render.
+    const key = pick.map((s) => `${s.page}:${Math.round(s.share * 20)}`).join(',');
+    if (key !== visibleKeyRef.current) {
+      visibleKeyRef.current = key;
+      setVisiblePages(pick.map((s) => ({ page: s.page, share: Math.round(s.share * 20) / 20 })));
+    }
+  }, []);
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') return;
+    const frame = requestAnimationFrame(computeVisible);
+    return () => cancelAnimationFrame(frame);
+  }, [page, slotTops, loadState, fileKind, computeVisible]);
+
   // Every control that names a page — rail, slider, thumbnails, outline,
   // search, deep links, arrow keys — lands here: set the indicator and
   // scroll the stack. Hand-scrolling flows the other way (scroll → page)
@@ -524,6 +586,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         }
         p = Math.max(1, p);
         if (p !== pageStateRef.current) setPage(p);
+        computeVisible();
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -531,7 +594,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [loadState, fileKind]);
+  }, [loadState, fileKind, computeVisible]);
 
   // Restore the last-read page — or honor a ?page= deep link (the in-app
   // assistant opens documents to a cited page) — once the stack can be
@@ -1022,7 +1085,44 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // that context here (the route names a document, not a matter) and the
   // panel reads it when a message is sent.
   const [matterName, setMatterName] = useState<string | null>(null);
-  const [pageText, setPageText] = useState('');
+  const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
+  // Whether anything of this document is indexed. An edited copy is filed
+  // without passages, and an import can fail or stall; from the model's
+  // side both look like an ordinary document until a search comes back
+  // empty — so the count is checked here and stated up front.
+  const [passageCount, setPassageCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    let stale = false;
+    setPassageCount(null);
+    void supabase
+      .from('passages')
+      .select('id', { count: 'exact', head: true })
+      .eq('document_id', id)
+      .then(({ count }) => { if (!stale) setPassageCount(count ?? 0); });
+    return () => { stale = true; };
+  }, [id]);
+  // For an unindexed copy, the nearest ancestor that IS indexed — a copy of
+  // a copy points at a copy, so the chain is walked back, a few hops at
+  // most, to the one whose text can be searched.
+  const [searchableSourceId, setSearchableSourceId] = useState<string | null>(null);
+  useEffect(() => {
+    const start = doc?.source_document_id;
+    if (passageCount !== 0 || !start) { setSearchableSourceId(null); return; }
+    let stale = false;
+    (async () => {
+      let cur: string | null = start;
+      for (let hop = 0; cur && hop < 4; hop += 1) {
+        const indexed = (await passageCountOf(cur)) > 0;
+        if (stale) return;
+        if (indexed) { setSearchableSourceId(cur); return; }
+        cur = await sourceDocumentOf(cur);
+        if (stale) return;
+      }
+      if (!stale) setSearchableSourceId(null);
+    })();
+    return () => { stale = true; };
+  }, [doc?.source_document_id, passageCount]);
   useEffect(() => {
     const mid = doc?.matterspace_id;
     if (!mid) { setMatterName(null); return; }
@@ -1035,37 +1135,56 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       .then(({ data }) => { if (!stale) setMatterName(data?.name ?? null); });
     return () => { stale = true; };
   }, [doc?.matterspace_id]);
+  // The text of each page on screen, from the PDF's own text layer (the
+  // same cache the search fills). Fetched as pages come into view.
   useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') { setPageText(''); return; }
-    const cached = pageTextCacheRef.current[page - 1];
-    if (cached !== undefined) { setPageText(cached); return; }
+    if (loadState !== 'ready' || fileKind !== 'pdf') { setPageTexts({}); return; }
     const pdf = pdfDocRef.current as {
       getPage(n: number): Promise<{ getTextContent(): Promise<{ items: { str?: string }[] }> }>;
     } | null;
     if (!pdf) return;
     let stale = false;
-    pdf.getPage(page)
-      .then((pg) => pg.getTextContent())
-      .then((content) => {
+    const wanted = visiblePages.map((v) => v.page);
+    void Promise.all(wanted.map(async (p) => {
+      const cached = pageTextCacheRef.current[p - 1];
+      if (cached !== undefined) return [p, cached] as const;
+      try {
+        const content = await (await pdf.getPage(p)).getTextContent();
         const text = content.items.map((i) => i.str || '').join(' ');
-        pageTextCacheRef.current[page - 1] = text;
-        if (!stale) setPageText(text);
-      })
-      .catch(() => { /* a page without text leaves the companion its title */ });
+        pageTextCacheRef.current[p - 1] = text;
+        return [p, text] as const;
+      } catch {
+        return [p, ''] as const; // a page without text leaves the companion its number
+      }
+    })).then((entries) => {
+      if (!stale) setPageTexts(Object.fromEntries(entries));
+    });
     return () => { stale = true; };
-  }, [page, loadState, fileKind, id]);
+  }, [visiblePages, loadState, fileKind, id]);
   useEffect(() => {
     if (!doc) return;
+    const pdf = fileKind === 'pdf';
     setOrchestratorContext({
       matterId: doc.matterspace_id ?? undefined,
       matterName: matterName ?? undefined,
       documentId: doc.id,
       documentTitle: doc.title,
-      page: fileKind === 'pdf' ? page : undefined,
-      pageCount: fileKind === 'pdf' && totalPages ? totalPages : undefined,
-      pageText: pageText ? pageText.replace(/\s+/g, ' ').trim().slice(0, 3000) : undefined,
+      page: pdf ? (visiblePages[0]?.page ?? page) : undefined,
+      pageCount: pdf && totalPages ? totalPages : undefined,
+      pages: pdf
+        ? visiblePages.map((v) => ({
+          page: v.page,
+          share: v.share,
+          text: (pageTexts[v.page] ?? '').replace(/\s+/g, ' ').trim().slice(0, 2500) || undefined,
+        }))
+        : undefined,
+      indexed: passageCount === null ? undefined : passageCount > 0,
+      sourceDocumentId: searchableSourceId ?? undefined,
+      unindexedReason: passageCount === 0
+        ? (doc.text_status === 'generated' ? 'generated' : 'not-ingested')
+        : undefined,
     });
-  }, [doc, matterName, page, totalPages, pageText, fileKind]);
+  }, [doc, matterName, page, totalPages, visiblePages, pageTexts, fileKind, passageCount, searchableSourceId]);
   useEffect(() => () => {
     // Leaving: take the document out of the context, unless another view
     // has already put its own there.
@@ -1076,9 +1195,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // put outright, framed so the answer reads it rather than acts on it;
   // without one the panel opens scoped to the book, for whatever the
   // reader wants to ask.
-  const askAbout = useCallback((quote?: string) => {
+  const pageOfNode = useCallback((node: Node | null | undefined): number | undefined => {
+    if (!node) return undefined;
+    const i = textLayerRefs.current.findIndex((el) => !!el && el.contains(node));
+    return i >= 0 ? i + 1 : undefined;
+  }, []);
+  const askAbout = useCallback((quote?: string, atPage?: number) => {
     if (!doc) return;
-    const where = fileKind === 'pdf' ? `p. ${page} of “${doc.title}”` : `“${doc.title}”`;
+    const p = atPage ?? visiblePages[0]?.page ?? page;
+    const where = fileKind === 'pdf' ? `p. ${p} of “${doc.title}”` : `“${doc.title}”`;
     const q = quote?.replace(/\s+/g, ' ').trim();
     runInAssistant({
       matterId: doc.matterspace_id ?? undefined,
@@ -1087,7 +1212,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         ? `On ${where}: “${q.slice(0, 1200)}” — What is this passage saying, and what does it connect to?`
         : undefined,
     });
-  }, [doc, fileKind, page, matterName]);
+  }, [doc, fileKind, page, matterName, visiblePages]);
   const handleDownload = useCallback(async () => {
     if (!doc?.storage_path || downloading) return;
     setDownloading(true);
@@ -2128,7 +2253,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         <ReaderMenu
           at={ctxMenu}
           hasSelection={ctxMenu.hasSelection}
-          onAskSel={() => askAbout(window.getSelection()?.toString() ?? '')}
+          onAskSel={() => {
+            const sel = window.getSelection();
+            askAbout(sel?.toString() ?? '', pageOfNode(sel?.anchorNode));
+          }}
           canDownload={!downloading && !!doc?.storage_path}
           canDrive={hasDriveConnection && !driveExporting && !!doc?.storage_path}
           printing={printing}
@@ -2145,7 +2273,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           x={selectionMenu.x}
           y={selectionMenu.y}
           onAsk={() => {
-            askAbout(selectionMenu.anchorText);
+            askAbout(selectionMenu.anchorText, selectionMenu.page);
             window.getSelection()?.removeAllRanges();
             setSelectionMenu(null);
           }}
