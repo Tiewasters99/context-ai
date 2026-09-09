@@ -15,6 +15,10 @@
 //                                                                   results usually <1h)
 //   node scripts/bucketize.mjs --matter fleming --concurrency 4
 //   node scripts/bucketize.mjs --matter fleming --doc <uuid>       (one doc)
+//   node scripts/bucketize.mjs --matter fleming --batch --exclude-title "CONDENSED|LINKED EXHIBITS|errata|TXT FILE"
+//                                                                  (skip a reporter's duplicate transcript copies)
+//
+// Scope is the matter AND its sub-matters (2026-09-09), like search.
 //
 // Env (./.env): VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY
 
@@ -57,6 +61,21 @@ if (!args.matter) die('Missing --matter');
 const matter = await resolveMatter(args.matter);
 log(`Matter: ${matter.name} (${matter.id})  |  model: ${MODEL}`);
 
+// The tree belongs to the matter, but the documents it files can sit in
+// sub-matters: Fleming keeps its depositions (126) and medical records (93)
+// in two of them, and until 2026-09-09 this scope read the matter's own rows
+// only — no deposition was ever a candidate. Same expansion search uses.
+const { data: descRows, error: descErr } = await supabase.rpc('matterspace_descendants', { p_root: matter.id });
+if (descErr) die(`matter scope: ${descErr.message}`);
+const matterIds = (descRows ?? []).map((r) => r.id);
+if (!matterIds.includes(matter.id)) matterIds.push(matter.id);
+log(`Scope: this matter${matterIds.length > 1 ? ` + ${matterIds.length - 1} sub-matter(s)` : ''}`);
+
+// --exclude-title <regex>: leave out documents whose title matches — the
+// duplicate copies a court reporter ships (CONDENSED, LINKED EXHIBITS, errata,
+// a one-page TXT), so one transcript is classified once.
+const EXCLUDE_TITLE = args['exclude-title'] ? new RegExp(String(args['exclude-title']), 'i') : null;
+
 // The tree.
 const { data: nodes, error: nodesErr } = await supabase
   .from('bucketizer_nodes')
@@ -80,13 +99,18 @@ if (args.doc) {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase.from('documents')
       .select('id, title, doc_type, metadata')
-      .eq('matterspace_id', matter.id)
+      .in('matterspace_id', matterIds)
       .eq('processing_status', 'ready')
       .order('id')
       .range(from, from + 999);
     if (error) die(error.message);
     docs.push(...data);
     if (data.length < 1000) break;
+  }
+  if (EXCLUDE_TITLE) {
+    const before = docs.length;
+    for (let i = docs.length - 1; i >= 0; i--) if (EXCLUDE_TITLE.test(docs[i].title || '')) docs.splice(i, 1);
+    log(`Excluded by title (--exclude-title): ${before - docs.length}`);
   }
   const classified = new Set();
   for (let i = 0; i < docs.length; i += 200) {

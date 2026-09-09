@@ -226,17 +226,24 @@ interface DocRow {
 }
 
 /**
- * Ready documents in the matter that haven't been examined yet — no
- * classification rows AND no "no buckets fit" sentinel (without the
- * sentinel, zero-assignment docs would be re-classified on every run).
+ * Ready documents in the matter AND its sub-matters that haven't been
+ * examined yet — no classification rows AND no "no buckets fit" sentinel
+ * (without the sentinel, zero-assignment docs would be re-classified on
+ * every run). The tree belongs to the matter, but the documents it files can
+ * sit in sub-matters (Fleming's depositions and medical records do); until
+ * 2026-09-09 this read the matter's own rows only, and no deposition was
+ * ever a candidate. The same expansion search uses.
  */
 export async function listUnclassifiedDocs(matterId: string): Promise<DocRow[]> {
+  const { data: descRows } = await supabase.rpc('matterspace_descendants', { p_root: matterId });
+  const matterIds = ((descRows ?? []) as { id: string }[]).map((r) => r.id);
+  if (!matterIds.includes(matterId)) matterIds.push(matterId);
   const docs: DocRow[] = [];
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase
       .from('documents')
       .select('id, title, doc_type, metadata')
-      .eq('matterspace_id', matterId)
+      .in('matterspace_id', matterIds)
       .eq('processing_status', 'ready')
       .order('id')
       .range(from, from + 999);
