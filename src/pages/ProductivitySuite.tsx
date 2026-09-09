@@ -17,6 +17,12 @@ interface Product {
 
 const PRODUCTS: Product[] = [
   {
+    name: 'Calendar',
+    tagline: 'Deadlines, entries and list due dates across every matter, in one view — with Google Calendar imports. Pin it to the canvas to keep the day\u2019s shape up beside your work.',
+    accent: '#8fd3c8',
+    to: '/app/calendar',
+  },
+  {
     name: 'The Office',
     tagline: 'The public face of your workspace: a walkable, photoreal office. Drag documents onto its shelves and practice areas — visitors browse the library; nothing leaves the vault.',
     accent: '#d8b87a',
@@ -59,6 +65,12 @@ const PRODUCTS: Product[] = [
     status: 'New',
   },
   {
+    name: 'Mediation Center',
+    tagline: 'A tireless, impartial AI mediator at the center of your dispute, holding each side\u2019s confidences — and a licensed attorney at the end, reviewing and documenting what the parties agree.',
+    accent: '#c9a0dc',
+    to: '/app/mediation',
+  },
+  {
     name: 'Discovery',
     tagline: 'Intake, review, tag, Bates-stamp, and produce documents — incoming and outgoing.',
     accent: '#d4a054',
@@ -90,7 +102,7 @@ export default function ProductivitySuite() {
     <div className="max-w-3xl mx-auto px-8 py-12">
       <h1 className="font-display text-[28px] tracking-tight text-white">Productivity Suite</h1>
       <p className="text-[13px] text-white/45 mt-1.5 mb-9">
-        Grapheon's tools, gathered in one place. Each is also a standalone product at its own address.
+        Every room in Contextspaces, gathered in one place. Several are also standalone products at their own address.
       </p>
       <div className="space-y-3">
         {PRODUCTS.map((p) => (

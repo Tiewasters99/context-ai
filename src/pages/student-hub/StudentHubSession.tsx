@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { converse } from '@/lib/llm';
 import {
-  getSession, updateSession, deleteSession, listMessages, addMessage, clearMessages, getPageUrls, listAllReadings,
-  generateBrief, generateOutline, professorSystem, professorHistory, formatTranscript,
+  getSession, updateSession, deleteSession, listMessages, addMessage, clearMessages, getPageUrls, getPageTexts,
+  listAllReadings, generateBrief, generateOutline, professorSystem, professorHistory, formatTranscript,
   type StudySession, type StudyMessage, type Highlight, type Resource, type OutlineAnnotations,
 } from '@/lib/student-hub';
+import type { PageEditResult } from '@/lib/student-hub-pages';
 import { T } from '@/components/student-hub/theme';
 import {
   HubStyles, CaseCaption, HubTab, GreenButton, OxButton, QuietControl, ErrorNote,
@@ -16,6 +17,7 @@ import { PageWithHighlights } from '@/components/student-hub/PageWithHighlights'
 import { StudyPanel, type GroupSeed } from '@/components/student-hub/StudyPanel';
 import { InteractiveOutline } from '@/components/student-hub/InteractiveOutline';
 import { HubReader } from '@/components/student-hub/HubReader';
+import { ScanPagesEditor } from '@/components/student-hub/ScanPagesEditor';
 import { reflowReading, readingParagraphs, findQuote } from '@/lib/student-hub-reflow';
 import { getTextCoverUrls, useTemplateCover } from '@/lib/student-hub-covers';
 import {
@@ -114,11 +116,21 @@ export default function StudentHubSession() {
   const [pagesError, setPagesError] = useState('');
   // The book, opened full-screen over the study surface.
   const [readerOpen, setReaderOpen] = useState(false);
+  // The pages, being edited: cut out, or taken in from another copy.
+  const [editingPages, setEditingPages] = useState(false);
+  // What each scanned page says — the OCR sidecars, fetched when the book
+  // or the page editor first needs them and kept for the reading. The
+  // book's glass searches them, the assistant's "take me there" lands on
+  // the page that says it, and the editor rebuilds the reading from them.
+  const [pageTexts, setPageTexts] = useState<string[] | null>(null);
+  const pageTextsFor = useRef<string[] | null>(null);
   // The assistant's "take me there", handed to the open book.
   const [turnTo, setTurnTo] = useState<{ page?: number; quote?: string; nonce: number } | null>(null);
   // Its cover: page one of the text's first scan where there is one, and the
   // shelf's own plate for this title where there isn't.
   const [scanCover, setScanCover] = useState<string | null>(null);
+  // Bumped when the pages change, so a cut front matter changes the cover.
+  const [coverVersion, setCoverVersion] = useState(0);
   const plateCover = useTemplateCover(session?.title ?? '');
   const coverUrl = scanCover ?? plateCover;
 
@@ -161,6 +173,20 @@ export default function StudentHubSession() {
     return () => { stale = true; };
   }, [session?.pages]);
 
+  // The pages' transcriptions, once something needs them — one fetch per
+  // set of pages, never cancelled (the store keeps them for the next time).
+  useEffect(() => {
+    const pages = session?.pages;
+    if (!pages?.length || !(readerOpen || editingPages)) return;
+    if (pageTextsFor.current === pages) return;
+    pageTextsFor.current = pages;
+    setPageTexts(null);
+    getPageTexts(pages)
+      .then((texts) => { if (pageTextsFor.current === pages) setPageTexts(texts); })
+      // A failed fetch leaves the book its estimate; the next opening tries again.
+      .catch(() => { if (pageTextsFor.current === pages) pageTextsFor.current = null; });
+  }, [session?.pages, readerOpen, editingPages]);
+
   // The cover the reader opens on, resolved as soon as the reading is known so
   // that the book is ready before the student asks for it.
   useEffect(() => {
@@ -172,7 +198,7 @@ export default function StudentHubSession() {
       // A cover that will not sign costs the book its plate, nothing more.
       .catch(() => { /* the template plate stands in */ });
     return () => { stale = true; };
-  }, [session?.text_id]);
+  }, [session?.text_id, coverVersion]);
 
   // Arriving with ?read=1 — the shelf cover, the book page's door, or a
   // fresh upload — opens the book as soon as it can be opened: at once for a
@@ -379,21 +405,36 @@ export default function StudentHubSession() {
 
   /* ------------- The assistant takes the student there ------------- */
 
-  // A text reading turns to the quote exactly; a scanned one gets the page
-  // estimated from where the quote falls in the transcription — the images
-  // themselves hold no offsets to aim at.
+  // A text reading turns to the quote exactly. A scanned one turns to the
+  // page whose transcription says it, once the pages' transcriptions are in
+  // hand; before they are (or when the quote runs across a page break), to
+  // the page estimated from where the quote falls in the reading as a whole.
   const handleTurnTo = useCallback((quote: string) => {
     if (!session) return;
     if (session.pages?.length) {
-      const found = findQuote(readingText, quote);
-      const frac = found ? found.at / Math.max(1, readingText.length) : 0;
-      const page = Math.max(1, Math.min(session.pages.length, Math.round(frac * (session.pages.length - 1)) + 1));
+      const exact = pageTexts ? pageTexts.findIndex((t) => !!findQuote(t, quote)) : -1;
+      let page = exact + 1;
+      if (exact < 0) {
+        const found = findQuote(readingText, quote);
+        const frac = found ? found.at / Math.max(1, readingText.length) : 0;
+        page = Math.max(1, Math.min(session.pages.length, Math.round(frac * (session.pages.length - 1)) + 1));
+      }
       setTurnTo({ page, nonce: Date.now() });
     } else {
       setTurnTo({ quote, nonce: Date.now() });
     }
     setReaderOpen(true);
-  }, [session, readingText]);
+  }, [session, readingText, pageTexts]);
+
+  // The pages as the editor left them: the reading, its highlights and the
+  // transcriptions follow, and the cover is looked up again.
+  const pagesEdited = useCallback((result: PageEditResult) => {
+    pageTextsFor.current = result.pages;
+    setPageTexts(result.texts);
+    setSession((s) => (s ? { ...s, pages: result.pages, reading: result.reading, highlights: result.highlights } : s));
+    setEditingPages(false);
+    setCoverVersion((v) => v + 1);
+  }, []);
 
   const lowerReading = useMemo(() => readingText.toLowerCase(), [readingText]);
   const matches = useMemo(() => {
@@ -870,16 +911,31 @@ export default function StudentHubSession() {
                       <QuietControl onClick={() => changeZoom(0.25)} disabled={zoom >= 3} aria-label="Larger pages">A+</QuietControl>
                     </span>
                     <QuietControl
-                      onClick={() => setMarking((v) => !v)}
+                      onClick={() => { setMarking((v) => !v); setEditingPages(false); }}
                       style={marking ? { background: T.brass, color: T.paper, borderColor: T.brass } : undefined}
                       title="Drag on a page to highlight; click a highlight for its note or to remove it"
                     >
                       {marking ? '✎ highlighting — drag on the page' : '✎ highlight'}
                     </QuietControl>
+                    <QuietControl
+                      onClick={() => { setEditingPages((v) => !v); setMarking(false); }}
+                      style={editingPages ? { background: T.oxblood, color: T.paper, borderColor: T.oxblood } : undefined}
+                      title="Cut pages out of this reading, or put in pages from another copy"
+                    >
+                      {editingPages ? '✂ editing the pages' : '✂ edit pages'}
+                    </QuietControl>
                   </div>
                 )}
-                {searchBar}
-                {searchOpen && query.trim().length >= 2 && (
+                {editingPages && pageUrls && (
+                  <ScanPagesEditor
+                    session={session}
+                    pageUrls={pageUrls}
+                    onSaved={pagesEdited}
+                    onClose={() => setEditingPages(false)}
+                  />
+                )}
+                {!editingPages && searchBar}
+                {!editingPages && searchOpen && query.trim().length >= 2 && (
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ fontFamily: T.sans, fontSize: 11, color: T.faint, marginBottom: 4 }}>
                       {snippets.length
@@ -901,6 +957,7 @@ export default function StudentHubSession() {
                     ))}
                   </div>
                 )}
+                {!editingPages && (
                 <div style={{ overflowX: zoom > 1 ? 'auto' : 'visible' }}>
                   {pageUrls?.map((url, i) => (
                     <figure key={i} style={{ margin: '0 0 18px', width: `${zoom * 100}%` }}>
@@ -928,6 +985,7 @@ export default function StudentHubSession() {
                     </figure>
                   ))}
                 </div>
+                )}
               </>
             ) : (
               <>
@@ -1277,6 +1335,7 @@ export default function StudentHubSession() {
           title={session.title}
           reflowed={session.pages?.length ? '' : readingText}
           pageUrls={session.pages?.length ? pageUrls : null}
+          pageTexts={session.pages?.length ? pageTexts : undefined}
           coverUrl={coverUrl}
           sessionId={session.id}
           onClose={() => { setReaderOpen(false); setTurnTo(null); }}

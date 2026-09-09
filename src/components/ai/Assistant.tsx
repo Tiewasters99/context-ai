@@ -16,9 +16,20 @@ interface AssistantProps {
 const welcomeMessage: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  content: "Hi — I'm the Orchestrator. Ask me how anything here works, what's in your documents, or to do something for you.",
+  content: "Ask me anything — how this place works, what's in your documents, or something you'd like done. I explain first; I act when you ask.",
   timestamp: new Date(),
 };
+
+// The opening screen's suggestions. A fresh panel is a blank box, and a
+// blank box teaches nothing; these show the kind of thing worth asking.
+// They are plain questions the Orchestrator answers by explaining — none
+// of them starts an action.
+const SUGGESTIONS = [
+  'Can you help me prepare a summary judgment brief?',
+  'How can you help me prepare for trial?',
+  'Does Contextspaces connect to a public-facing site?',
+  'What kind of tools do you have to help me?',
+];
 
 // Friendly pen names for the header, from the model ids the server emits
 // (PENS in lib/assistant-core.mjs). An unknown id shows as itself — truth
@@ -459,6 +470,20 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               </div>
             </div>
           ))}
+          {messages.length === 1 && !loading && (
+            <div className="flex flex-col items-start gap-1.5 pt-1">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => void send(s)}
+                  className="max-w-[85%] px-3 py-1.5 rounded-xl border border-[rgba(232,184,74,0.35)] text-left text-[13px] text-[#e8d9b8] hover:bg-[rgba(232,184,74,0.08)] hover:border-[rgba(232,184,74,0.6)] transition-colors"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
           {searching && (
             <div className="flex justify-start">
               <div className="max-w-[85%] px-3 py-2 rounded-xl rounded-bl-sm text-sm italic bg-[rgba(20,20,30,0.8)] text-[#8a8693]">
