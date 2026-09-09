@@ -24,7 +24,10 @@ interface SearchResponse {
   note?: string;
 }
 
-export default function ContentSearch({ matterId }: { matterId?: string }) {
+// `onOpen`: when the host can show the document in place (the Vault's reader
+// overlay), a hit opens there and the list stays put; otherwise the hit
+// navigates to the reader page.
+export default function ContentSearch({ matterId, onOpen }: { matterId?: string; onOpen?: (documentId: string) => void }) {
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
@@ -95,7 +98,7 @@ export default function ContentSearch({ matterId }: { matterId?: string }) {
             hits.map((h) => (
               <button
                 key={h.passage_id}
-                onClick={() => navigate(`/app/document/${h.document_id}`)}
+                onClick={() => (onOpen ? onOpen(h.document_id) : navigate(`/app/document/${h.document_id}`))}
                 className="w-full text-left px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.07)] hover:border-[rgba(232,184,74,0.35)] hover:bg-[rgba(232,184,74,0.04)] transition-colors"
               >
                 <div className="flex items-center gap-2 mb-1">
