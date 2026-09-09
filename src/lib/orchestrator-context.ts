@@ -11,6 +11,16 @@ export interface OrchestratorPageContext {
   tab?: string;
   /** Display name of the matter being viewed. */
   matterName?: string;
+  /** The matter the view belongs to when the URL does not name one — the
+   *  reader's route names a document, not its matter. */
+  matterId?: string;
+  /** The document open in the reader, and the page in front of the user. */
+  documentId?: string;
+  documentTitle?: string;
+  page?: number;
+  pageCount?: number;
+  /** That page's text, bounded, so the companion can discuss what is on screen. */
+  pageText?: string;
 }
 
 let current: OrchestratorPageContext = {};
