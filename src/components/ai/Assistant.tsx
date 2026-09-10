@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { X, Send } from 'lucide-react';
+import { X, Send, Maximize2, Minimize2 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
@@ -63,6 +63,16 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const routeMatterId = location.pathname.startsWith('/app/matterspace/') ? routeId : undefined;
   const matterId = routeMatterId ?? getOrchestratorContext().matterId;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // A wider panel for a real conversation — a toggle, not a mode: the
+  // sidebar width suits a question in passing; a discussion wants room to
+  // read. Remembered on this machine.
+  const [wide, setWide] = useState(() => {
+    try { return localStorage.getItem('cs.assistant.wide') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('cs.assistant.wide', wide ? '1' : '0'); } catch { /* a blocked store forgets the width, nothing more */ }
+  }, [wide]);
 
   // What the reader has open, snapshotted when the panel opens, so the
   // opening screen speaks to the book rather than to the workspace.
@@ -397,7 +407,9 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       )}
 
       <div
-        className={`fixed top-0 right-0 h-full w-[88vw] sm:w-80 max-w-[22rem] border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out backdrop-blur-[30px] ${
+        className={`fixed top-0 right-0 h-full ${
+          wide ? 'w-[94vw] sm:w-[min(860px,82vw)] max-w-none' : 'w-[88vw] sm:w-80 max-w-[22rem]'
+        } border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-[transform,width] duration-300 ease-in-out backdrop-blur-[30px] ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
@@ -423,12 +435,24 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               </span>
             )}
           </h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setWide((v) => !v)}
+              className="hidden sm:inline-flex p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
+              title={wide ? 'Back to the sidebar width' : 'Widen for a longer conversation'}
+              aria-label={wide ? 'Narrow the panel' : 'Widen the panel'}
+              aria-pressed={wide}
+            >
+              {wide ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Where the panel is scoped. For SecureChat (a born-sealed room)
@@ -476,15 +500,17 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           </div>
         )}
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {/* Messages. Wide, the column is capped and centred so lines stay
+            readable, and the type steps up a size. */}
+        <div className={`flex-1 overflow-y-auto py-4 space-y-3 ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
+          <div className={wide ? 'max-w-3xl mx-auto space-y-3' : 'space-y-3'}>
           {messages.map((msg) => (
             <div
               key={msg.id}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
+                className={`${wide ? 'max-w-[80%] px-4 py-2.5 text-[15px]' : 'max-w-[85%] px-3 py-2 text-sm'} rounded-xl leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-indigo-600 text-white rounded-br-sm'
                     : 'bg-[rgba(20,20,30,0.8)] text-[#e8e4de] rounded-bl-sm'
@@ -522,6 +548,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             </div>
           )}
           <div ref={messagesEndRef} />
+          </div>
         </div>
 
         {/* Move confirmation (M2.2) — gated write, inline so it stays in context */}
@@ -551,8 +578,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         )}
 
         {/* Input */}
-        <div className="px-4 py-3 border-t border-[rgba(255,255,255,0.08)]">
-          <div className="flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2">
+        <div className={`py-3 border-t border-[rgba(255,255,255,0.08)] ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
+          <div className={`flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2 ${wide ? 'max-w-3xl mx-auto' : ''}`}>
             <input
               type="text"
               value={input}
