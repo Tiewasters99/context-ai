@@ -567,6 +567,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (tops && el) el.scrollTo({ top: Math.max(0, tops[clamped - 1] - 8) });
   }, [totalPages]);
 
+  // The rail's thumb, and its drag: the scroll position as a fraction of
+  // the document's scroll range, in both directions.
+  const [scrollFraction, setScrollFraction] = useState(0);
+  const seekTo = useCallback((f: number) => {
+    const el = contentRef.current;
+    if (!el) return;
+    el.scrollTo({ top: Math.min(1, Math.max(0, f)) * Math.max(0, el.scrollHeight - el.clientHeight) });
+  }, []);
+
   // Derive the current page while the user scrolls: the page whose band
   // holds the point 40% down the viewport.
   useEffect(() => {
@@ -587,6 +596,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         p = Math.max(1, p);
         if (p !== pageStateRef.current) setPage(p);
         computeVisible();
+        const range = el.scrollHeight - el.clientHeight;
+        const f = range > 0 ? el.scrollTop / range : 0;
+        setScrollFraction((prev) => (Math.abs(prev - f) < 0.002 ? prev : f));
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -1473,6 +1485,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       });
       if (ann) {
         setAnnotations((prev) => [...prev, ann]);
+        // A highlight is easy to regret and, until now, hard to take back:
+        // the × on it shows on hover, which a finger never does. Offer undo
+        // for a moment, and keep the order for Ctrl/⌘-Z.
+        createdRef.current.push(ann.id);
+        setUndoable({ id: ann.id, color, at: Date.now() });
       }
       // Clear selection + popover regardless of success.
       window.getSelection()?.removeAllRanges();
@@ -1485,8 +1502,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     const ok = await deleteAnnotation(annId);
     if (ok) {
       setAnnotations((prev) => prev.filter((a) => a.id !== annId));
+      createdRef.current = createdRef.current.filter((x) => x !== annId);
+      setUndoable((u) => (u?.id === annId ? null : u));
     }
   }, []);
+
+  // Undo: the last highlight made in this sitting. The toast offers it for
+  // eight seconds after each highlight; Ctrl-Z / ⌘-Z takes them back in
+  // order for as long as the reader stays open.
+  const createdRef = useRef<string[]>([]);
+  const [undoable, setUndoable] = useState<{ id: string; color: AnnotationColor; at: number } | null>(null);
+  useEffect(() => {
+    if (!undoable) return;
+    const t = window.setTimeout(() => setUndoable((u) => (u?.at === undoable.at ? null : u)), 8000);
+    return () => window.clearTimeout(t);
+  }, [undoable]);
+  const undoLastHighlight = useCallback(() => {
+    const last = createdRef.current[createdRef.current.length - 1];
+    if (last) void removeAnnotation(last);
+  }, [removeAnnotation]);
 
   // Rename — the document title in the toolbar is editable in place, with
   // the pencil making it visible (the matter-heading idiom). The empty
@@ -1624,10 +1658,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
       else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); }
+      else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        if (createdRef.current.length) { e.preventDefault(); undoLastHighlight(); }
+      }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goPrev, goNext, toggleFullscreen]);
+  }, [goPrev, goNext, toggleFullscreen, undoLastHighlight]);
 
   // ────────────────────────────────────────────────────────────────────
   // Search (PDF only). On submit, scan every page's text content for the
@@ -2004,7 +2041,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                   onClose={() => setMoreOpen(false)}
                   items={[
                     ...(fileKind === 'pdf' ? [
-                      { icon: <Scan size={14} />, label: fitPage ? 'Fit page is on' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
+                      { icon: <Scan size={14} />, label: fitPage ? '✓ Fit the whole page' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
                     ] : []),
                     { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
                     ...(fileKind === 'pdf' && !embedded ? [
@@ -2198,9 +2235,31 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             <PageRail
               page={page}
               total={totalPages}
+              fraction={scrollFraction}
               theme={theme}
-              onPage={gotoPage}
+              onSeek={seekTo}
             />
+          )}
+          {undoable && (
+            <div
+              role="status"
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl text-[12px] text-white/85"
+            >
+              <span>Highlighted in {undoable.color}.</span>
+              <button
+                onClick={() => void removeAnnotation(undoable.id)}
+                className="font-semibold text-[#e8b84a] hover:underline"
+              >
+                Undo
+              </button>
+              <button
+                onClick={() => setUndoable(null)}
+                className="text-white/45 hover:text-white"
+                aria-label="Dismiss"
+              >
+                ×
+              </button>
+            </div>
           )}
           </div>
 
@@ -2523,11 +2582,18 @@ const ANNOTATION_DOT: Record<AnnotationColor, string> = {
 // ground with the native bar; its ink follows the reader's theme, so it
 // reads on parchment as plainly as by lamplight. Exported for the harness
 // probes; the reader is its only product surface.
-export function PageRail({ page, total, theme, onPage }: {
+// The rail is a scrollbar for the whole document — the one a finger can
+// find. Its thumb is the scroll position, and dragging it moves through
+// pages and through a page alike; it used to snap to page tops, so on a
+// phone with the page taller than the screen the bottom of every page
+// was out of reach. The page number is derived from the scroll, as ever.
+export function PageRail({ page, total, fraction, theme, onSeek }: {
   page: number;
   total: number;
+  /** Scroll position as a fraction of the document's scroll range. */
+  fraction: number;
   theme: Theme;
-  onPage: (p: number) => void;
+  onSeek: (fraction: number) => void;
 }) {
   const railRef = useRef<HTMLDivElement | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -2535,27 +2601,26 @@ export function PageRail({ page, total, theme, onPage }: {
   const THUMB = 56;
   const dark = theme === 'dark';
 
-  const pageAt = (clientY: number): number => {
+  const fractionAt = (clientY: number): number => {
     const el = railRef.current;
-    if (!el) return page;
+    if (!el) return fraction;
     const r = el.getBoundingClientRect();
     const usable = r.height - THUMB;
-    if (usable <= 0) return page;
-    const frac = Math.min(1, Math.max(0, (clientY - r.top - THUMB / 2) / usable));
-    return 1 + Math.round(frac * (total - 1));
+    if (usable <= 0) return fraction;
+    return Math.min(1, Math.max(0, (clientY - r.top - THUMB / 2) / usable));
   };
 
   return (
     <div
       ref={railRef}
-      className="w-[15px] shrink-0 relative cursor-pointer touch-none select-none"
+      className="reader-rail w-[15px] shrink-0 relative cursor-pointer touch-none select-none"
       style={{ background: dark ? 'rgba(255,255,255,0.07)' : 'rgba(42,30,16,0.10)' }}
       onPointerDown={(e) => {
         (e.currentTarget as Element).setPointerCapture(e.pointerId);
         setDragging(true);
-        onPage(pageAt(e.clientY));
+        onSeek(fractionAt(e.clientY));
       }}
-      onPointerMove={(e) => { if (dragging) onPage(pageAt(e.clientY)); }}
+      onPointerMove={(e) => { if (dragging) onSeek(fractionAt(e.clientY)); }}
       onPointerUp={() => setDragging(false)}
       onPointerCancel={() => setDragging(false)}
       onPointerEnter={() => setHover(true)}
@@ -2571,7 +2636,7 @@ export function PageRail({ page, total, theme, onPage }: {
         className="absolute left-[2px] right-[2px] rounded-full"
         style={{
           height: THUMB,
-          top: `calc(${(page - 1) / Math.max(1, total - 1)} * (100% - ${THUMB}px))`,
+          top: `calc(${Math.min(1, Math.max(0, fraction))} * (100% - ${THUMB}px))`,
           background: dragging
             ? '#e8b84a'
             : hover
@@ -2724,7 +2789,7 @@ function AnnotationsOverlay({
             {i === 0 && !isNote && (
               <button
                 onClick={(e) => { e.stopPropagation(); onRemove(ann.id); }}
-                className="absolute -top-2 -right-2 w-4 h-4 rounded-full bg-black/70 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                className="ann-remove absolute -top-2 -right-2 w-4 h-4 rounded-full bg-black/70 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
                 title="Remove highlight"
               >
                 ×
@@ -2857,6 +2922,19 @@ function ReaderStyle({ theme }: { theme: Theme }) {
       /* Search hits: the words themselves, lit at full strength over the
          page; the current match stronger, with a ring. Multiply keeps the
          ink readable through the color. */
+      /* On a touch screen nothing hovers: the × that takes a highlight back
+         is always shown, and big enough for a finger; so is the rail. */
+      @media (hover: none) {
+        .reader-rail { width: 24px !important; }
+        .ann-remove {
+          opacity: 1 !important;
+          width: 22px !important;
+          height: 22px !important;
+          font-size: 13px !important;
+          top: -11px !important;
+          right: -11px !important;
+        }
+      }
       .search-hits { z-index: 2; }
       .search-hit {
         position: absolute;
