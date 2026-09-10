@@ -28,7 +28,7 @@ import {
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
-import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
+import { openStoredPdf } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
@@ -77,12 +77,6 @@ import {
   writeClipboard,
 } from '@/lib/reader-copy';
 
-// pdfjs worker URL — same pattern as src/lib/extract.ts. Resolved at build
-// time by Vite from the installed pdfjs-dist package.
-const PDFJS_WORKER_URL = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
 
 type DocMeta = {
   id: string;
@@ -92,6 +86,8 @@ type DocMeta = {
   page_count: number | null;
   cover_url: string | null;
   matterspace_id: string | null;
+  /** Saves a HEAD request when the PDF is opened by ranges. */
+  file_size_bytes?: number | null;
   /** 'generated' for a deliverable filed without passages (an edited PDF). */
   text_status?: string | null;
   /** For an edited copy: the indexed original it was made from. */
@@ -333,7 +329,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -383,27 +379,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         return;
       }
 
-      const { data: blob, error: dlErr } = await supabase.storage
-        .from('vault-documents')
-        .download(data.storage_path);
-      if (cancelled) return;
-      if (dlErr || !blob) {
-        setErrorMsg(dlErr?.message || 'Failed to download the file.');
-        setLoadState('error');
-        return;
+      // A PDF is opened by ranges, page by page, so a scanned book paints
+      // its first page in a second instead of after the whole file has
+      // arrived (src/lib/pdf-source.ts). Everything else is small and comes
+      // down whole.
+      let blob: Blob | null = null;
+      let arrayBuffer: ArrayBuffer | null = null;
+      if (kind !== 'pdf') {
+        const { data: dl, error: dlErr } = await supabase.storage
+          .from('vault-documents')
+          .download(data.storage_path);
+        if (cancelled) return;
+        if (dlErr || !dl) {
+          setErrorMsg(dlErr?.message || 'Failed to download the file.');
+          setLoadState('error');
+          return;
+        }
+        blob = dl;
+        arrayBuffer = await dl.arrayBuffer();
+        if (cancelled) return;
       }
-
-      const arrayBuffer = await blob.arrayBuffer();
-      if (cancelled) return;
 
       try {
         if (kind === 'pdf') {
-          const pdfjsLib = await import('pdfjs-dist');
-          pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-          const pdf = await pdfjsLib.getDocument({
-            data: arrayBuffer,
-            ...PDFJS_DOC_PARAMS,
-          }).promise;
+          const pdf = await openStoredPdf(data.storage_path, { sizeBytes: data.file_size_bytes ?? null });
           if (cancelled) return;
           pdfDocRef.current = pdf;
           // Page 1's size stands in for every slot until the dims sweep
@@ -422,7 +421,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           // the parser hand us back semantic HTML (h3 scene headings,
           // .dialogue divs, h4 character names, p action/dialogue) — our
           // CSS does the Courier / centred-name / indented-dialogue layout.
-          const text = await blob.text();
+          const text = await (blob as Blob).text();
           if (cancelled) return;
           const parsed = new Fountain().parse(text, true);
           setTitlePageHtml(parsed.html?.title_page ?? null);
@@ -431,14 +430,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           setPage(1);
         } else if (kind === 'pptx') {
           // PPTX — one card per slide, single scrollable deck.
-          const html = await pptxDeckHtml(arrayBuffer);
+          const html = await pptxDeckHtml(arrayBuffer as ArrayBuffer);
           if (cancelled) return;
           setDocHtml(html);
           setTotalPages(1);
           setPage(1);
         } else if (kind === 'text') {
           // Plain text — the book as filed, one scrollable page.
-          const text = await blob.text();
+          const text = await (blob as Blob).text();
           if (cancelled) return;
           setDocHtml(plainTextHtml(text));
           setTotalPages(1);
@@ -446,7 +445,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         } else {
           // DOCX — convert to HTML once. Word has no page concept, so we
           // treat it as a single scrollable document.
-          const result = await mammoth.convertToHtml({ arrayBuffer });
+          const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer as ArrayBuffer });
           if (cancelled) return;
           setDocHtml(result.value);
           setTotalPages(1);

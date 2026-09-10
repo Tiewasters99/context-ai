@@ -2,9 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { X, RotateCw, Trash2, Undo2, Loader2, Check, Plus } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { downloadVaultDocument } from '@/lib/vault-persist';
 import { sandboxApi } from '@/lib/sandbox-api';
-import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
+import { openStoredPdf } from '@/lib/pdf-source';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import ModalPortal from '@/components/ui/ModalPortal';
 
@@ -16,12 +15,6 @@ import ModalPortal from '@/components/ui/ModalPortal';
 //
 // Thumbnails are rendered as tiles scroll into view, one page at a time, so
 // a 400-page scan opens at once and costs only the pages looked at.
-
-// Same worker resolution pattern as DocumentReader / extract.ts.
-const PDFJS_WORKER_URL = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
 
 const THUMB_W = 132;
 const INSERT_CAP = 60;
@@ -112,15 +105,12 @@ export default function PdfPageEditor({ doc, onClose, onSaved }: Props) {
   /* ---------------- The PDFs, opened once each ---------------- */
 
   const pdfsRef = useRef(new Map<string, Promise<PDFDocumentProxy>>());
+  // Opened by ranges (pdf-source.ts): the grid of a 300-page scan appears
+  // at once, and only the pages whose thumbnails are looked at are fetched.
   const openPdf = useCallback((docId: string, storagePath: string) => {
     let p = pdfsRef.current.get(docId);
     if (!p) {
-      p = (async () => {
-        const blob = await downloadVaultDocument(storagePath);
-        const pdfjsLib = await import('pdfjs-dist');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_URL;
-        return pdfjsLib.getDocument({ data: await blob.arrayBuffer(), ...PDFJS_DOC_PARAMS }).promise;
-      })();
+      p = openStoredPdf(storagePath);
       pdfsRef.current.set(docId, p);
       p.catch(() => pdfsRef.current.delete(docId));
     }
