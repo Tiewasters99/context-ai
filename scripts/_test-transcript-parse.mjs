@@ -103,7 +103,8 @@ const veritext = [
 const vt = chunkPages([{ pageNumber: 9, text: veritext }]);
 const vtQa = vt.filter((p) => p.passage_type === 'qa_pair');
 assert(vtQa.length >= 2 && vt.every((p) => p.passage_type !== 'monologue'), `a Veritext page is a transcript (${vt.length} passages, ${vtQa.length} Q/A, no prose)`);
-assert(vt.every((p) => p.witness_name === 'FELIX EZEKWE'), `the witness comes from the name line before the oath (${JSON.stringify([...new Set(vt.map((p) => p.witness_name))])})`);
+assert(vtQa.every((p) => p.witness_name === 'FELIX EZEKWE'), `the witness comes from the name line before the oath (${JSON.stringify([...new Set(vt.map((p) => p.witness_name))])})`);
+assert(vt.every((p) => p.passage_type !== 'qa_pair' || /^(Q|A)\./.test(p.text)), 'the reporter\'s cue and the call are headings, not testimony');
 assert(vtQa.every((p) => p.line_start >= 1 && p.line_end <= 24 && p.metadata?.line_numbers === 'inferred'), 'line numbers are positional and flagged as inferred');
 assert.strictEqual(vtQa[0].line_start, 6, 'first Q is the sixth text line');
 assert(!/·/.test(vt.map((p) => p.text).join('')), 'middle-dot spacing is read as spaces');
