@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Outlet, useNavigate, useLocation, NavLink } from 'react-router-dom';
 import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot } from 'lucide-react';
 import Sidebar from './Sidebar';
@@ -115,9 +116,25 @@ export default function MainLayout() {
         <MobileTabBar onToggleAssistant={() => setAssistantOpen((v) => !v)} assistantOpen={assistantOpen} />
       )}
 
-      <Assistant isOpen={assistantOpen} onClose={() => setAssistantOpen(false)} />
+      <IntoFullscreen>
+        <Assistant isOpen={assistantOpen} onClose={() => setAssistantOpen(false)} />
+      </IntoFullscreen>
     </div>
   );
+}
+
+// When a view takes the browser full screen (the reader does), only that
+// element is shown; the Assistant, a sibling, vanished with the rest of the
+// app — which defeats a companion. While an element is full screen, the
+// panel is rendered inside it.
+function IntoFullscreen({ children }: { children: ReactNode }) {
+  const [host, setHost] = useState<Element | null>(() => document.fullscreenElement);
+  useEffect(() => {
+    const onChange = () => setHost(document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  return host ? createPortal(children, host) : <>{children}</>;
 }
 
 function MobileTabBar({
