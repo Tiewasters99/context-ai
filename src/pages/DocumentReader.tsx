@@ -24,11 +24,12 @@ import {
   Scissors,
   MoreHorizontal,
   MessageCircle,
+  Loader2,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
-import { openStoredPdf } from '@/lib/pdf-source';
+import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
@@ -163,6 +164,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
 
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');
+  // What the loader is doing right now, for the card shown while it works.
+  const [loadProgress, setLoadProgress] = useState<PdfOpenProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
   const [docHtml, setDocHtml] = useState<string | null>(null);
@@ -310,6 +313,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (!id) return;
     let cancelled = false;
     setLoadState('loading');
+    setLoadProgress(null);
     setErrorMsg(null);
     setDocHtml(null);
     pageTextCacheRef.current = [];
@@ -386,6 +390,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       let blob: Blob | null = null;
       let arrayBuffer: ArrayBuffer | null = null;
       if (kind !== 'pdf') {
+        setLoadProgress({ stage: 'downloading', loaded: 0, total: data.file_size_bytes ?? null });
         const { data: dl, error: dlErr } = await supabase.storage
           .from('vault-documents')
           .download(data.storage_path);
@@ -402,7 +407,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
 
       try {
         if (kind === 'pdf') {
-          const pdf = await openStoredPdf(data.storage_path, { sizeBytes: data.file_size_bytes ?? null });
+          const pdf = await openStoredPdf(data.storage_path, {
+            sizeBytes: data.file_size_bytes ?? null,
+            onProgress: (p) => { if (!cancelled) setLoadProgress(p); },
+          });
           if (cancelled) return;
           pdfDocRef.current = pdf;
           // Page 1's size stands in for every slot until the dims sweep
@@ -517,6 +525,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // screen, which on a zoomed page can name the next page while the reader
   // is still on this one; the companion is told what is truly in view.
   const [visiblePages, setVisiblePages] = useState<{ page: number; share: number }[]>([]);
+  // Pages in view that may still be waiting on their bytes show a spinner
+  // in the blank paper until the canvas covers it.
+  const visibleSet = useMemo(() => new Set(visiblePages.map((v) => v.page)), [visiblePages]);
   const slotBandsRef = useRef<{ top: number; bottom: number }[] | null>(null);
   useEffect(() => {
     slotBandsRef.current = slotTops && pageDims
@@ -2139,7 +2150,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             }}
           >
             {loadState === 'loading' && (
-              <p className="mt-10 text-[13px] text-white/50">Loading document…</p>
+              <LoadingCard title={doc?.title ?? null} progress={loadProgress} pageCount={doc?.page_count ?? null} />
             )}
             {loadState === 'error' && (
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
@@ -2152,6 +2163,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     p={i + 1}
                     w={d.w * renderedScale}
                     h={d.h * renderedScale}
+                    pending={visibleSet.has(i + 1)}
                     annotations={annotations}
                     incomingLinks={incomingLinks}
                     isMobile={isMobile}
@@ -2483,10 +2495,71 @@ function selectWordNearPoint(layer: HTMLElement, x: number, y: number): boolean 
 // page number. Memoized because the stack re-renders on every derived-page
 // change while scrolling; without this, a 600-page record rebuilds 600
 // slots per page crossed.
+// The card shown while a document opens. A spinner says work is happening;
+// the line under it says which work, and how far along when bytes are
+// countable. The blank page it replaced read as a failed import — Eden
+// waited forty seconds on a scanned book and took it for broken. After a
+// while the card says so in words: not failed, just large.
+const SLOW_AFTER_MS = 8000;
+
+function fmtMB(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
+
+function LoadingCard({ title, progress, pageCount }: {
+  title: string | null;
+  progress: PdfOpenProgress | null;
+  pageCount: number | null;
+}) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSlow(true), SLOW_AFTER_MS);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  let line = 'Finding the file…';
+  let fraction: number | null = null;
+  if (progress?.stage === 'signing') line = 'Reaching the file…';
+  else if (progress?.stage === 'fetching') {
+    line = `Opening the first pages of a ${fmtMB(progress.total)} file…`;
+  } else if (progress?.stage === 'downloading') {
+    if (progress.total) {
+      fraction = Math.min(1, progress.loaded / progress.total);
+      line = `Downloading ${fmtMB(progress.loaded)} of ${fmtMB(progress.total)}…`;
+    } else line = `Downloading… ${fmtMB(progress.loaded)} so far`;
+  } else if (progress?.stage === 'opening') {
+    line = pageCount ? `Laying out ${pageCount} pages…` : 'Laying out the pages…';
+  }
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="mt-16 w-[min(360px,90%)] rounded-xl border border-white/10 bg-black/30 px-6 py-5 text-center shadow-xl backdrop-blur"
+    >
+      <Loader2 size={28} className="mx-auto animate-spin text-[var(--color-primary)]" aria-hidden="true" />
+      <p className="mt-3 text-[14px] font-medium text-white/90 truncate">{title ? `Opening ${title}` : 'Opening document'}</p>
+      <p className="mt-1 text-[12.5px] text-white/60">{line}</p>
+      {fraction !== null && (
+        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300" style={{ width: `${Math.round(fraction * 100)}%` }} />
+        </div>
+      )}
+      {slow && (
+        <p className="mt-3 text-[12px] text-white/50">
+          Still working — a large scan can take a minute. It has not failed.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const PageSlot = memo(function PageSlot({
   p,
   w,
   h,
+  pending,
   annotations,
   incomingLinks,
   isMobile,
@@ -2501,6 +2574,8 @@ const PageSlot = memo(function PageSlot({
   p: number;
   w: number;
   h: number;
+  /** In view: show a spinner on the blank paper until the page paints. */
+  pending: boolean;
   annotations: Annotation[];
   incomingLinks: IncomingLink[];
   isMobile: boolean;
@@ -2523,7 +2598,8 @@ const PageSlot = memo(function PageSlot({
         className="relative shadow-2xl"
         style={{ width: w, height: h, backgroundColor: '#ffffff' }}
       >
-        <div className="absolute inset-0 flex items-center justify-center text-[13px] text-black/25 select-none">
+        <div className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] text-black/25 select-none">
+          {pending && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
           {p}
         </div>
         <canvas
