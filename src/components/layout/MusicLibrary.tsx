@@ -7,10 +7,12 @@
 //      persistence, no backend). The user clicks "Add YouTube", pastes a
 //      URL, names it, and it joins the grid.
 //
-// "Upload your own" still exposes a file picker for session-only playback
-// of a local audio file (handled by the parent's onUpload callback; not
-// persisted — by design, because the file blob doesn't live anywhere we
-// could re-fetch on next visit).
+//   3. Uploaded audio files, kept in the user's own folder of the public
+//      cover-images bucket (src/lib/musicTracks.ts) — so an upload is
+//      there tomorrow and on the phone, and can be put on repeat like any
+//      other track. If the upload cannot be saved (signed out, bucket
+//      refuses the file) the parent's onUpload plays it for this session
+//      only and says so.
 //
 // onSelect now passes the full MusicTrack object so the parent can branch
 // playback on track.type ('audio' uses HTMLAudioElement; 'youtube' uses an
@@ -33,6 +35,9 @@ import {
   addYouTubeTrack,
   removeUserTrack,
   isValidYouTubeUrl,
+  listUploadedTracks,
+  uploadTrack,
+  removeUploadedTrack,
 } from '@/lib/musicTracks';
 
 interface ManifestEntry {
@@ -45,6 +50,7 @@ interface ManifestEntry {
 
 interface MusicLibraryProps {
   onSelect: (track: MusicTrack) => void;
+  /** Fallback when an upload cannot be kept: play the file for this session. */
   onUpload: (file: File) => void;
   onClose: () => void;
   /** Currently-loaded track id, used to highlight the matching card. */
@@ -76,6 +82,9 @@ export default function MusicLibrary({
 }: MusicLibraryProps) {
   const [curated, setCurated] = useState<MusicTrack[]>([]);
   const [userTracks, setUserTracks] = useState<MusicTrack[]>([]);
+  const [uploaded, setUploaded] = useState<MusicTrack[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadNote, setUploadNote] = useState<string | null>(null);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAddYt, setShowAddYt] = useState(false);
@@ -93,20 +102,38 @@ export default function MusicLibrary({
       .then((data: ManifestEntry[]) => setCurated(data.map(manifestToTrack)))
       .catch((err) => setLoadError(err?.message ?? 'failed to load manifest'));
     setUserTracks(getUserTracks());
+    // Signed out (or a storage hiccup): the curated list still works, the
+    // uploads column is simply empty.
+    listUploadedTracks().then(setUploaded).catch(() => setUploaded([]));
   }, []);
 
-  const tracks = [...curated, ...userTracks];
+  const tracks = [...curated, ...userTracks, ...uploaded];
+  const ownCount = userTracks.length + uploaded.length;
   const categories = Array.from(new Set(tracks.map((t) => t.category)));
   const filtered = activeCategory
     ? tracks.filter((t) => t.category === activeCategory)
     : tracks;
 
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    onUpload(file);
-    onClose();
+    setUploadNote(null);
+    setUploading(true);
+    try {
+      const track = await uploadTrack(file);
+      setUploaded((prev) => [...prev, track]);
+      onSelect(track);
+      onClose();
+    } catch (err) {
+      // Play it anyway so the click still produces music; say why it won't
+      // be here next time.
+      const why = err instanceof Error ? err.message : 'upload failed';
+      setUploadNote(`Couldn't save "${file.name}" (${why}). Playing it for this session only.`);
+      onUpload(file);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleAddYt = () => {
@@ -126,8 +153,17 @@ export default function MusicLibrary({
     }
   };
 
-  const handleRemove = (trackId: string) => {
-    removeUserTrack(trackId);
+  const handleRemove = async (track: MusicTrack) => {
+    if (track.storagePath) {
+      try {
+        await removeUploadedTrack(track);
+        setUploaded((prev) => prev.filter((t) => t.id !== track.id));
+      } catch (err) {
+        setUploadNote(err instanceof Error ? err.message : 'Could not remove that upload.');
+      }
+      return;
+    }
+    removeUserTrack(track.id);
     setUserTracks(getUserTracks());
   };
 
@@ -149,12 +185,12 @@ export default function MusicLibrary({
             </h2>
             <p className="text-[12px] text-white/60 mt-1">
               {tracks.length} track{tracks.length !== 1 ? 's' : ''}
-              {userTracks.length > 0 && (
+              {ownCount > 0 && (
                 <>
-                  {' '}— {userTracks.length} of yours
+                  {' '}— {ownCount} of yours
                 </>
               )}
-              . Paste a YouTube URL or upload an audio file to expand the library.
+              . Paste a YouTube URL, or upload an audio file to keep in your library.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -171,10 +207,11 @@ export default function MusicLibrary({
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[rgba(232,184,74,0.12)] hover:bg-[rgba(232,184,74,0.22)] text-[#e8b84a] text-[12px] font-medium transition-colors"
-              title="Upload an audio file from your device"
+              disabled={uploading}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[rgba(232,184,74,0.12)] hover:bg-[rgba(232,184,74,0.22)] text-[#e8b84a] text-[12px] font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
+              title="Upload an audio file from your device — it stays in your library"
             >
-              <Upload size={13} /> Upload your own
+              <Upload size={13} /> {uploading ? 'Uploading…' : 'Upload your own'}
             </button>
             <button
               onClick={onClose}
@@ -186,6 +223,12 @@ export default function MusicLibrary({
           </div>
           <input ref={fileInputRef} type="file" accept="audio/*" onChange={handleFile} className="hidden" />
         </div>
+
+        {uploadNote && (
+          <p className="px-6 py-2 text-[11px] text-amber-200/90 bg-[rgba(232,184,74,0.06)] border-b border-[rgba(255,255,255,0.06)] shrink-0">
+            {uploadNote}
+          </p>
+        )}
 
         {/* Add YouTube inline form */}
         {showAddYt && (
@@ -307,9 +350,9 @@ export default function MusicLibrary({
                     </button>
                     {t.userAdded && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleRemove(t.id); }}
+                        onClick={(e) => { e.stopPropagation(); void handleRemove(t); }}
                         className="shrink-0 p-1.5 rounded text-white/30 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
-                        title="Remove from your library"
+                        title={t.storagePath ? 'Delete this upload from your library' : 'Remove from your library'}
                       >
                         <Trash2 size={13} />
                       </button>

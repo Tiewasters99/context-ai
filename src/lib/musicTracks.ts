@@ -4,16 +4,20 @@
 //   1. Curated baseline — `public/music/manifest.json`, served as a static
 //      array of {id, name, file, category, artist}. Same for every user;
 //      only changes via code commit.
-//   2. User additions — kept in this device's localStorage under MUSIC_KEY.
-//      Either an uploaded local file (handled session-only via blob URL in
-//      AmbientControls — not persisted here) or a YouTube URL the user
-//      pasted (persists across sessions because we only need the video ID).
+//   2. User additions — kept in this device's localStorage under MUSIC_KEY:
+//      YouTube URLs the user pasted (persist across sessions because we
+//      only need the video ID).
+//   3. Uploaded audio files — stored in the user's folder of the public
+//      cover-images bucket and listed from there (see the bottom of this
+//      file), so they follow the account rather than the device.
 //
 // The shape is normalized so the UI doesn't have to special-case sources.
 // `type` is the discriminator; `file` holds an audio URL for type='audio'
 // and `youtubeId` holds the 11-char YouTube video ID for type='youtube'.
 //
 // Ported (with simplifications) from Grapheon's miniverse/musicStorage.
+
+import { supabase } from '@/lib/supabase';
 
 export type TrackType = 'audio' | 'youtube';
 
@@ -33,8 +37,9 @@ export interface MusicTrack {
   // True for entries the user added on this device. Curated tracks read
   // from the manifest never have this flag.
   userAdded?: boolean;
+  /** Uploaded tracks only: the object's path in storage, so it can be removed. */
+  storagePath?: string;
 }
-
 
 // ---------------------------------------------------------------------------
 // YouTube URL parsing
@@ -137,4 +142,78 @@ export function addYouTubeTrack(input: {
 
 export function removeUserTrack(trackId: string): void {
   saveUserTracks(getUserTracks().filter((t) => t.id !== trackId));
+}
+
+
+// ---------------------------------------------------------------------------
+// Uploaded tracks — kept, not just played
+// ---------------------------------------------------------------------------
+//
+// "Upload your own" used to play the file from a blob URL and forget it when
+// the tab closed: nothing was uploaded, so nothing could be found again, put
+// on repeat tomorrow, or heard on another device. Uploads now go into the
+// user's own folder of the public cover-images bucket (the same bucket and
+// owner-folder rules the backdrop uploads use — no new bucket, no new
+// policy), and the library lists that folder. The object's name carries the
+// original filename after a timestamp, so the listing is the record.
+
+const MUSIC_BUCKET = 'cover-images';
+const MUSIC_FOLDER = 'music';
+const MAX_UPLOAD_BYTES = 40 * 1024 * 1024;
+
+async function ownUid(): Promise<string> {
+  const { data } = await supabase.auth.getUser();
+  const uid = data.user?.id;
+  if (!uid) throw new Error('Sign in to keep uploaded music.');
+  return uid;
+}
+
+function uploadedTrack(uid: string, objectName: string): MusicTrack {
+  const path = `${uid}/${MUSIC_FOLDER}/${objectName}`;
+  const { data } = supabase.storage.from(MUSIC_BUCKET).getPublicUrl(path);
+  const display = objectName.replace(/^\d+-/, '').replace(/\.[^.]+$/, '');
+  return {
+    id: `upload-${objectName}`,
+    name: display || objectName,
+    category: 'Your uploads',
+    type: 'audio',
+    file: data.publicUrl,
+    userAdded: true,
+    storagePath: path,
+  };
+}
+
+/** The tracks this user has uploaded, oldest first. */
+export async function listUploadedTracks(): Promise<MusicTrack[]> {
+  const uid = await ownUid();
+  const { data, error } = await supabase.storage
+    .from(MUSIC_BUCKET)
+    .list(`${uid}/${MUSIC_FOLDER}`, { limit: 500, sortBy: { column: 'name', order: 'asc' } });
+  if (error) throw new Error(error.message);
+  return (data ?? [])
+    .filter((o: { id?: string | null; name: string }) => o.id && /\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/i.test(o.name))
+    .map((o: { name: string }) => uploadedTrack(uid, o.name));
+}
+
+/** Upload an audio file into the user's library and return its track. */
+export async function uploadTrack(file: File): Promise<MusicTrack> {
+  if (!file.type.startsWith('audio/') && !/\.(mp3|m4a|aac|ogg|oga|opus|wav|flac|webm)$/i.test(file.name)) {
+    throw new Error('Choose an audio file (mp3, m4a, ogg, wav, flac…).');
+  }
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error('That file is over 40 MB — pick a smaller one.');
+  const uid = await ownUid();
+  const safe = file.name.replace(/[^\w .()'-]+/g, '_').slice(0, 120) || 'track';
+  const objectName = `${Date.now()}-${safe}`;
+  const { error } = await supabase.storage
+    .from(MUSIC_BUCKET)
+    .upload(`${uid}/${MUSIC_FOLDER}/${objectName}`, file, { contentType: file.type || 'audio/mpeg', upsert: false });
+  if (error) throw new Error(error.message);
+  return uploadedTrack(uid, objectName);
+}
+
+/** Take an uploaded track out of the library — the file goes too. */
+export async function removeUploadedTrack(track: MusicTrack): Promise<void> {
+  if (!track.storagePath) return;
+  const { error } = await supabase.storage.from(MUSIC_BUCKET).remove([track.storagePath]);
+  if (error) throw new Error(error.message);
 }

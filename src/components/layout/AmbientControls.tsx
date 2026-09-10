@@ -129,8 +129,10 @@ export default function AmbientControls() {
   };
 
   const handleLibraryUpload = (file: File) => {
-    // Session-only blob upload — wrap as a track shape so we go through the
-    // same loader path.
+    // Fallback only: the library uploads files to storage and hands back a
+    // persisted track through onSelect. This path plays a file the upload
+    // could not keep (signed out, storage refused it) for this session, via
+    // a blob URL, through the same loader path.
     const url = URL.createObjectURL(file);
     loadAndPlayTrack({
       id: `upload-${Date.now()}`,
