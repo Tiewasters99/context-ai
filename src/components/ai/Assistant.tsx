@@ -1,12 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { X, Send } from 'lucide-react';
+import { X, Send, Maximize2, Minimize2 } from 'lucide-react';
 import type { ChatMessage } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
 import { ASSISTANT_COMMAND_EVENT, type AssistantCommand } from '@/lib/assistant-bus';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { moveVaultDocument } from '@/lib/vault-persist';
+import { useIsMobile } from '@/hooks/useIsMobile';
+
+// Where a lifted panel sits: left/top/width/height in CSS pixels.
+type PanelBox = { left: number; top: number; width: number; height: number };
+const BOX_KEY = 'cs.assistant.box';
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 interface AssistantProps {
   isOpen: boolean;
@@ -63,6 +69,74 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const routeMatterId = location.pathname.startsWith('/app/matterspace/') ? routeId : undefined;
   const matterId = routeMatterId ?? getOrchestratorContext().matterId;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // A wider panel for a real conversation — a toggle, not a mode: the
+  // sidebar width suits a question in passing; a discussion wants room to
+  // read. Remembered on this machine.
+  const [wide, setWide] = useState(() => {
+    try { return localStorage.getItem('cs.assistant.wide') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('cs.assistant.wide', wide ? '1' : '0'); } catch { /* a blocked store forgets the width, nothing more */ }
+  }, [wide]);
+
+  // Free to move and size, like the cards elsewhere in the workspace: drag
+  // the header to lift the panel off the edge, pull its corner to size it,
+  // double-click the header to dock it again. Remembered on this machine.
+  // On a phone the panel fills the screen and none of this applies.
+  const isMobile = useIsMobile();
+  const [box, setBox] = useState<PanelBox | null>(() => {
+    try {
+      const raw = localStorage.getItem(BOX_KEY);
+      return raw ? (JSON.parse(raw) as PanelBox) : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    try {
+      if (box) localStorage.setItem(BOX_KEY, JSON.stringify(box));
+      else localStorage.removeItem(BOX_KEY);
+    } catch { /* a blocked store forgets the place, nothing more */ }
+  }, [box]);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ px: number; py: number; left: number; top: number } | null>(null);
+  const floating = !isMobile && box !== null;
+  const onHeaderDown = (e: React.PointerEvent) => {
+    if (isMobile || (e.target as HTMLElement).closest('button')) return;
+    const el = panelRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    dragRef.current = { px: e.clientX, py: e.clientY, left: r.left, top: r.top };
+    if (!box) setBox({ left: r.left, top: r.top, width: r.width, height: r.height });
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+  const onHeaderMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const left = clamp(d.left + e.clientX - d.px, 0, window.innerWidth - 160);
+    const top = clamp(d.top + e.clientY - d.py, 0, window.innerHeight - 56);
+    setBox((b) => (b ? { ...b, left, top } : b));
+  };
+  const onHeaderUp = () => { dragRef.current = null; };
+  // The corner resize is the browser's own; what it produces is remembered.
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!el || !floating) return;
+    const ro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      setBox((b) => (b && (Math.abs(b.width - r.width) > 1 || Math.abs(b.height - r.height) > 1)
+        ? { ...b, width: r.width, height: r.height }
+        : b));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [floating]);
+  const toggleWide = () => {
+    setWide((v) => !v);
+    if (box) {
+      const width = wide ? 320 : Math.min(860, window.innerWidth - box.left - 8);
+      setBox({ ...box, width });
+    }
+  };
 
   // What the reader has open, snapshotted when the panel opens, so the
   // opening screen speaks to the book rather than to the workspace.
@@ -392,17 +466,39 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
 
   return (
     <>
-      {isOpen && (
+      {/* A dimmed page behind the panel only on a phone, where the panel
+          covers it anyway; on a laptop the page stays live — the companion
+          sits beside the book, not in front of it. */}
+      {isOpen && isMobile && (
         <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
       )}
 
       <div
-        className={`fixed top-0 right-0 h-full w-[88vw] sm:w-80 max-w-[22rem] border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out backdrop-blur-[30px] ${
-          isOpen ? 'translate-x-0' : 'translate-x-full'
-        }`}
+        ref={panelRef}
+        className={
+          floating
+            ? `fixed z-50 flex flex-col shadow-2xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.1)] rounded-xl overflow-hidden ${isOpen ? '' : 'hidden'}`
+            : `fixed top-0 right-0 h-full ${
+              wide ? 'w-[94vw] sm:w-[min(860px,82vw)] max-w-none' : 'w-[88vw] sm:w-80 max-w-[22rem]'
+            } border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-[transform,width] duration-300 ease-in-out backdrop-blur-[30px] ${
+              isOpen ? 'translate-x-0' : 'translate-x-full'
+            }`
+        }
+        style={floating && box ? {
+          left: box.left, top: box.top, width: box.width, height: box.height,
+          resize: 'both', minWidth: 300, minHeight: 280, maxWidth: '96vw', maxHeight: '96vh',
+        } : undefined}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)]">
+        {/* Header — the handle. */}
+        <div
+          className={`flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)] select-none ${isMobile ? '' : 'cursor-grab active:cursor-grabbing'}`}
+          onPointerDown={onHeaderDown}
+          onPointerMove={onHeaderMove}
+          onPointerUp={onHeaderUp}
+          onPointerCancel={onHeaderUp}
+          onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button')) setBox(null); }}
+          title={isMobile ? undefined : floating ? 'Drag to move · pull the corner to size · double-click to dock' : 'Drag to lift the panel off the edge'}
+        >
           {/* Truth-in-labeling: name the model that actually answers. Before
               the first exchange we show the Tier-A default; after it, the
               server's `session` event tells us which pen the matter's tier
@@ -423,12 +519,24 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               </span>
             )}
           </h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={toggleWide}
+              className="hidden sm:inline-flex p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
+              title={wide ? 'Back to the sidebar width' : 'Widen for a longer conversation'}
+              aria-label={wide ? 'Narrow the panel' : 'Widen the panel'}
+              aria-pressed={wide}
+            >
+              {wide ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Where the panel is scoped. For SecureChat (a born-sealed room)
@@ -476,15 +584,17 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           </div>
         )}
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+        {/* Messages. Wide, the column is capped and centred so lines stay
+            readable, and the type steps up a size. */}
+        <div className={`flex-1 overflow-y-auto py-4 space-y-3 ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
+          <div className={wide ? 'max-w-3xl mx-auto space-y-3' : 'space-y-3'}>
           {messages.map((msg) => (
             <div
               key={msg.id}
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
+                className={`${wide ? 'max-w-[80%] px-4 py-2.5 text-[15px]' : 'max-w-[85%] px-3 py-2 text-sm'} rounded-xl leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-indigo-600 text-white rounded-br-sm'
                     : 'bg-[rgba(20,20,30,0.8)] text-[#e8e4de] rounded-bl-sm'
@@ -497,7 +607,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           {messages.length === 1 && !loading && (
             <div className="flex flex-col items-start gap-1.5 pt-1">
               {reading && (
-                <p className="text-[11px] text-white/45 leading-snug mb-1">
+                <p className="text-[12px] text-white/70 leading-snug mb-1">
                   Reading <span className="text-[#e8d9b8]">“{reading.title ?? 'this document'}”</span>
                   {reading.page ? `, p. ${reading.page}` : ''}. Select a passage on the page and choose Ask to bring it here.
                 </p>
@@ -507,7 +617,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                   key={s}
                   type="button"
                   onClick={() => void send(s)}
-                  className="max-w-[85%] px-3 py-1.5 rounded-xl border border-[rgba(232,184,74,0.35)] text-left text-[13px] text-[#e8d9b8] hover:bg-[rgba(232,184,74,0.08)] hover:border-[rgba(232,184,74,0.6)] transition-colors"
+                  className="max-w-[85%] px-3 py-2 rounded-xl border border-[rgba(232,184,74,0.65)] bg-[rgba(232,184,74,0.10)] text-left text-[13.5px] font-medium text-[#f5e6c4] hover:bg-[rgba(232,184,74,0.2)] hover:border-[#e8b84a] hover:text-white transition-colors"
                 >
                   {s}
                 </button>
@@ -522,6 +632,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             </div>
           )}
           <div ref={messagesEndRef} />
+          </div>
         </div>
 
         {/* Move confirmation (M2.2) — gated write, inline so it stays in context */}
@@ -551,8 +662,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         )}
 
         {/* Input */}
-        <div className="px-4 py-3 border-t border-[rgba(255,255,255,0.08)]">
-          <div className="flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2">
+        <div className={`py-3 border-t border-[rgba(255,255,255,0.08)] ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
+          <div className={`flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2 ${wide ? 'max-w-3xl mx-auto' : ''}`}>
             <input
               type="text"
               value={input}
