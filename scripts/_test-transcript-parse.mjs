@@ -110,6 +110,50 @@ assert.strictEqual(vtQa[0].line_start, 6, 'first Q is the sixth text line');
 assert(!/·/.test(vt.map((p) => p.text).join('')), 'middle-dot spacing is read as spaces');
 ok('no line numbers in the text layer: transcript mode still engages, witness found, lines inferred and flagged');
 
+// New York reporters set the witness's name letter-spaced on its own line,
+// two lines above the oath, and the text layer keeps the line numbers.
+const nyPage = [
+  ' 1', ' 2                 D E S M O N D   B L A K E,', ' 3      the Witness herein,', ' 4   called as a witness, having been first duly',
+  ' 5   sworn by a Notary Public, was examined and', ' 6   testified as follows:', ' 7   EXAMINATION BY', ' 8   MR. QUAINTON:',
+  ' 9   Q.    Captain, where were you posted on', '10   August 16, 2015?', '11   A.    AMKC, the clinic.', '12',
+  '13   Q.    Who was with you?', '14   A.    Saint-Fleur and the escort team.', '15', '16   Q.    Did you go into the pen?',
+  '17   A.    I did not.', '18', '19   Q.    Did you see anyone go in?', '20   A.    Officers went in, yes.', '21',
+  '22   Q.    Which officers?', '23   A.    I could not tell you today.', '24', '25',
+].join('\n');
+const ny = chunkPages([{ pageNumber: 12, text: nyPage }]);
+assert(ny.every((p) => p.passage_type !== 'monologue'), 'a New York page is a transcript');
+assert(ny.filter((p) => p.passage_type === 'qa_pair').every((p) => p.witness_name === 'DESMOND BLAKE'), `letter-spaced name collapses to the witness (${JSON.stringify([...new Set(ny.map((p) => p.witness_name))])})`);
+assert(ny.filter((p) => p.passage_type === 'qa_pair')[0].line_start === 9, 'testimony starts at line 9, after the call and the examiner');
+ok('letter-spaced witness name above the oath is read; the call lines are headings');
+
+// A condensed sheet: four transcript pages per PDF page, "Page N" markers,
+// the line number alone on a line and the text on the next.
+const condensed = [
+  '10 (Pages 34 to 37)', 'Page 34', '1', '     (JOON PARK, M.D. - CONFIDENTIAL TESTIMONY)', '2', '          Q.   When did you first see the patient?',
+  '3', '          A.   That morning, in the intake area of the', '4', '          clinic.', '5', '          Q.   What did he complain of?', '6',
+  '          A.   Pain in the groin.', '7', '8', '          Q.   Did you examine him?', '9', '          A.   I did a visual examination.',
+  'Page 35', '1', '     (JOON PARK, M.D. - CONFIDENTIAL TESTIMONY)', '2', '          Q.   Did you document it?', '3',
+  '          A.   I wrote what I saw.', '4', '          Q.   Which was?', '5', '          A.   Swelling.', '6', '7',
+  '          Q.   Did you order imaging?', '8', '          A.   Not that day.',
+].join('\n');
+const cd = chunkPages([{ pageNumber: 10, text: condensed }]);
+const cdQa = cd.filter((p) => p.passage_type === 'qa_pair');
+assert(cdQa.length >= 2 && cd.every((p) => p.passage_type !== 'monologue'), `a condensed sheet is a transcript (${cd.length} passages)`);
+assert(cdQa.some((p) => p.page_start === 34) && cdQa.some((p) => p.page_start === 35), `cites name the transcript page, not the sheet (${JSON.stringify([...new Set(cdQa.map((p) => p.page_start))])})`);
+assert(cdQa[0].line_start === 2 && cdQa[0].line_end >= 4, `first pair is 34:2-4 (${cdQa[0].line_start}-${cdQa[0].line_end})`);
+assert(cd.every((p) => p.witness_name === 'JOON PARK'), `the sheet header names the witness (${JSON.stringify([...new Set(cd.map((p) => p.witness_name))])})`);
+assert(!cd.some((p) => /CONFIDENTIAL TESTIMONY/.test(p.text)), 'the sheet header is not testimony');
+ok('condensed transcript: pages and lines come from the markers, witness from the header');
+
+// An interior page of a transcript with no Q./A. on it (a long answer) is
+// still testimony on the second pass; the word index after the last page is not.
+const longAnswer = Array.from({ length: 25 }, (_, i) => `${String(i + 1).padStart(2)}   and then the officers took him down the corridor toward the clinic, line ${i + 1}.`).join('\n');
+const index = Array.from({ length: 25 }, (_, i) => `${String(i + 1).padStart(2)}   corridor 41:2, 88:${i + 1}`).join('\n');
+const doc = chunkPages([{ pageNumber: 1, text: page }, { pageNumber: 2, text: longAnswer }, { pageNumber: 3, text: nyPage }, { pageNumber: 4, text: index }]);
+assert(doc.filter((p) => p.page_start === 2).every((p) => p.passage_type !== 'monologue' && p.line_start != null), 'the interior long-answer page keeps its line numbers');
+assert(doc.filter((p) => p.page_start === 4).every((p) => p.passage_type === 'monologue'), 'the word index after the last transcript page stays prose');
+ok('interior pages without Q./A. are read on the second pass; trailing index pages are not');
+
 // A page of prose with a couple of digit-led lines must still be prose.
 const prose = chunkPages([{ pageNumber: 3, text: 'The court held that the officers acted reasonably.\n1 Fed. R. Civ. P. 56.\n2 See also id. at 14.\n' + 'More discussion follows here. '.repeat(20) }]);
 assert(prose.every((p) => p.passage_type !== 'qa_pair'), 'citation footnotes are not a transcript');
