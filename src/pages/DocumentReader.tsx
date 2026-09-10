@@ -1687,31 +1687,66 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     const needle = q.toLowerCase();
     const found: Match[] = [];
 
-    for (let p = 1; p <= pdf.numPages; p++) {
-      let pageText = pageTextCacheRef.current[p - 1];
-      if (!pageText) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const pdfPage = (await pdf.getPage(p)) as any;
-        const content = await pdfPage.getTextContent();
-        pageText = (content.items as Array<{ str?: string }>)
-          .map((i) => i.str || '')
-          .join(' ');
-        pageTextCacheRef.current[p - 1] = pageText;
-      }
-      const hay = pageText.toLowerCase();
-      let i = 0;
-      let at: number;
-      while ((at = hay.indexOf(needle, i)) !== -1) {
-        found.push({ page: p, index: at });
-        i = at + needle.length;
+    // The indexed text first. It is what search reads everywhere else in
+    // the app, it is one query, and for most OCR'd books it is the only
+    // place the words exist: the scan's PDF carries no text layer at all
+    // (Brandeis's Other People's Money found nothing for "money"). Hits
+    // name the page; the boxes over the words come from the text layer
+    // when the page has one.
+    if (id) {
+      // Escape LIKE's own wildcards so "100%" finds "100%". The backslash is
+      // spelled out: it is the pattern's escape character as well.
+      const bs = String.fromCharCode(92);
+      const pattern = '%' + q.replace(new RegExp('[%_' + bs + ']', 'g'), (c) => bs + c) + '%';
+      const { data } = await supabase
+        .from('passages')
+        .select('page_start, text')
+        .eq('document_id', id)
+        .eq('summary_level', 0)
+        .ilike('text', pattern)
+        .order('page_start', { ascending: true })
+        .limit(2000);
+      for (const row of (data ?? []) as { page_start: number | null; text: string | null }[]) {
+        if (!row.page_start || !row.text) continue;
+        const hay = row.text.toLowerCase();
+        let at = hay.indexOf(needle);
+        while (at !== -1) {
+          found.push({ page: row.page_start, index: at });
+          at = hay.indexOf(needle, at + needle.length);
+        }
       }
     }
+
+    // Nothing indexed — an edited copy, say — so read the PDF's own text
+    // layer, page by page.
+    if (!found.length) {
+      for (let p = 1; p <= pdf.numPages; p++) {
+        let pageText = pageTextCacheRef.current[p - 1];
+        if (!pageText) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const pdfPage = (await pdf.getPage(p)) as any;
+          const content = await pdfPage.getTextContent();
+          pageText = (content.items as Array<{ str?: string }>)
+            .map((i) => i.str || '')
+            .join(' ');
+          pageTextCacheRef.current[p - 1] = pageText;
+        }
+        const hay = pageText.toLowerCase();
+        let i = 0;
+        let at: number;
+        while ((at = hay.indexOf(needle, i)) !== -1) {
+          found.push({ page: p, index: at });
+          i = at + needle.length;
+        }
+      }
+    }
+    found.sort((a, b) => a.page - b.page || a.index - b.index);
 
     setMatches(found);
     setMatchIdx(0);
     setSearching(false);
     if (found.length > 0) gotoPage(found[0].page);
-  }, [fileKind, gotoPage]);
+  }, [fileKind, gotoPage, id]);
 
   const goNextMatch = useCallback(() => {
     if (matches.length === 0) return;
