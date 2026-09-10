@@ -137,7 +137,12 @@ export async function openStoredPdf(
     return null;
   });
   if (byRange) {
-    report({ stage: 'opening', total: sizeBytes });
+    // With a range transport the parse itself asks for bytes (the xref at
+    // the tail, the first page's objects), and each request reports
+    // 'fetching' — the honest stage until the document opens. Announcing
+    // 'opening' here put "laying out pages" on the card two seconds before
+    // the fetching was over. Only a file that came down whole is past it.
+    if (byRange.data) report({ stage: 'opening', total: byRange.data.byteLength });
     return pdfjsLib.getDocument({ ...byRange, ...PDFJS_DOC_PARAMS }).promise;
   }
 
