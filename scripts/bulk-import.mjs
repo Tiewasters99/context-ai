@@ -473,14 +473,25 @@ function hooks(googleKey) {
   };
 }
 
+// A matter has no owner column; the owner is the workspace's user
+// (matterspaces → serverspaces → clientspaces.user_id), which is what every
+// document row's created_by must carry. Until 2026-09-16 this asked for
+// matterspaces.created_by, a column that does not exist in prod, so every
+// --run failed at the first file with "matter not found".
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 async function resolveMatterCached(supabase, cache, code) {
   if (cache.has(code)) return cache.get(code);
-  const { data, error } = await supabase
-    .from('matterspaces').select('id, name, created_by')
-    .or(`short_code.eq.${code},id.eq.${code}`).maybeSingle();
-  if (error || !data) throw new Error(`matter not found: ${code}`);
-  cache.set(code, data);
-  return data;
+  const q = supabase.from('matterspaces').select('id, name, serverspace_id');
+  const { data, error } = await (UUID_RE.test(code) ? q.eq('id', code) : q.eq('short_code', code)).maybeSingle();
+  if (error) throw new Error(`matter lookup failed for ${code}: ${error.message}`);
+  if (!data) throw new Error(`matter not found: ${code}`);
+  const { data: ss, error: ssErr } = await supabase
+    .from('serverspaces').select('clientspaces(user_id)').eq('id', data.serverspace_id).maybeSingle();
+  const owner = ss?.clientspaces?.user_id;
+  if (ssErr || !owner) throw new Error(`owner lookup failed for ${code}: ${ssErr?.message || 'no clientspace user'}`);
+  const resolved = { id: data.id, name: data.name, created_by: owner };
+  cache.set(code, resolved);
+  return resolved;
 }
 
 // Existing (filename, size) pairs in the matter, so a rerun after a partial
