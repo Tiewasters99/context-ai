@@ -11,3 +11,12 @@ Numbering is chronological by creation, not priority. Read them all when onboard
 
 - [002 — Claude.ai web OAuth regression & the Desktop-first decision](./002-claude-ai-web-oauth-regression.md) *(2026-05-14)*  
   Investigation log + decision rationale for routing "Connect to Claude" onboarding through Claude Desktop and acknowledging the upstream-Anthropic regression in the UI footnote.
+
+- [003 — Critique of the Gemini "Local Inference" Blueprint](./003-local-inference-critique-2026-09-16.md) *(2026-09-16)*  
+  Why "local on-prem inference only" is the top rung of a ladder Contextspaces already has (Tier C), not the architecture. No pivot; four adjustments (Defensible-AI sales frame, citations-verified export gate, open-weight embeddings evaluation, Tier C re-sequenced: private instance → BYOH adapter → partner appliance).
+
+- [004 — Sealed pens: what Bedrock actually permits, model by model](./004-sealed-pens-retention-ladder-2026-09-16.md) *(2026-09-16)*  
+  Astra retains flagged traffic (ZDR by account-team request); Fable 5.1 requires `aws_review` (program ZDR expires 2026-12-31); Grok 4.6 likely `none` (probe); Gemini not on Bedrock. Design change: Tier B = "allowed_modes includes none in our account", verified by `scripts/_probe-bedrock-retention.mjs`. Video is the real gap (W12).
+
+- [005 — "Defensible AI": the external frame for the Record](./005-defensible-ai-positioning.md) *(2026-09-16)*  
+  Sales language for W1/W5/W6 (insurer, bar, client as buyers); what we can and cannot say. UI stays discreet.
