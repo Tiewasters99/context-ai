@@ -66,6 +66,7 @@ const NOISE_FILE = /^(\.DS_Store|Thumbs\.db|desktop\.ini|~\$.*|\..*\.swp|.*\.tmp
 const DOC_EXTS = new Set([
   '.pdf', '.docx', '.doc', '.txt', '.md', '.rtf', '.xlsx', '.xls',
   '.pptx', '.ppt', '.eml', '.msg', '.epub', '.fountain', '.csv', '.wpd',
+  '.html', '.htm', '.json',   // the pipeline indexes these as text (PLAIN_TEXT_EXTENSIONS); social-media and chat exports are HTML
 ]);
 const IMG_EXTS = new Set([...IMAGE_EXTENSIONS, '.heic']);
 const AV_EXTS = new Set(MEDIA_EXTENSIONS);
