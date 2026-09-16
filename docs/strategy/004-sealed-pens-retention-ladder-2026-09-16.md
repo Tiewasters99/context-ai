@@ -22,7 +22,7 @@ On Bedrock the question is never whether the model vendor sees or trains on the 
 | **Grok 4.6** (GA 2026-08-18) | Not listed among models for which AWS "may be required to store inputs and outputs." The abuse-detection page says "by default, Amazon Bedrock does not store model inputs or outputs." **Inferred by omission; unconfirmed until the probe runs.** | Probe | Text + image; no video. 500K context. Reasoning effort configurable. | $2.20 / $6.60 |
 | Gemini (any) | **Not on Bedrock.** | n/a | (Google's path: Vertex AI, see §4) | n/a |
 
-Sources: AWS Bedrock *Data retention* page; *Abuse detection* page; model cards for GPT-6 Astra and Grok 4.6; all read 2026-09-16. Exact quotations are in the session record; the probe below reads the same fields live.
+Sources: AWS Bedrock *Data retention* page; *Abuse detection* page; model cards for GPT-6 Astra and Grok 4.6; all read 2026-09-16. Claude rows (prices, Opus 5 `none`): the 08-27 session records, not today's fetch. Exact quotations are in the session record; the probe below reads the same fields live.
 
 Two mechanics that matter operationally:
 
