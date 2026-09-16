@@ -317,8 +317,16 @@ async function phaseRun() {
         await appendLedger({ ...r, cloud: true, ts: new Date().toISOString() });
         return;
       }
-      const name = path.basename(r.rel);
-      if (dupes.has(`${name}|${stat.size}`) && !args['allow-dupes']) {
+      // The (filename, size) duplicate guard is meaningless for a platform export
+      // where every post is "index.html": two posts of the same byte size are not
+      // copies. A generic basename carries its folder into the filed name (so the
+      // row is identifiable) and skips the guard — the ledger already prevents a
+      // rerun from filing the same path twice. 72 of 423 Facebook posts were
+      // dropped this way on 2026-09-16 before this.
+      const base = path.basename(r.rel);
+      const generic = GENERIC_BASENAMES.has(path.basename(base, path.extname(base)).toLowerCase());
+      const name = generic ? `${path.basename(path.dirname(r.rel))}/${base}` : base;
+      if (!generic && dupes.has(`${name}|${stat.size}`) && !args['allow-dupes']) {
         counts.dupe++;
         await appendLedger({ ...r, status: 'skipped', reason: 'duplicate_in_matter', ts: new Date().toISOString() });
         return;
@@ -371,12 +379,25 @@ async function phaseRun() {
   }
 }
 
+// A platform export names every post "index.html" inside a folder that carries
+// the real identity (Facebook: 2020_06_22__22_50_40). A Vault full of "index"
+// is unusable, so a generic basename takes its title from the folder instead.
+const GENERIC_BASENAMES = new Set(['index', 'default', 'message', 'messages', 'post', 'document', 'untitled']);
+function titleFor(name) {
+  const base = path.basename(name, path.extname(name));
+  if (!GENERIC_BASENAMES.has(base.toLowerCase())) return base;
+  const folder = path.basename(path.dirname(name));
+  const m = folder.match(/^(\d{4})_(\d{2})_(\d{2})__(\d{2})_(\d{2})_(\d{2})$/);
+  if (m) return `Post ${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+  return folder && folder !== '.' ? `${folder} — ${base}` : base;
+}
+
 async function createAndUpload(supabase, { matter, full, name, ext, size }) {
   const { data: docRow, error: docErr } = await supabase
     .from('documents')
     .insert({
       matterspace_id: matter.id,
-      title: path.basename(name, path.extname(name)),
+      title: titleFor(name),
       doc_type: 'other',
       source_filename: name,
       file_size_bytes: size,
