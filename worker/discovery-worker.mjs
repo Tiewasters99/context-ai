@@ -646,7 +646,13 @@ async function ingestDocument(job) {
   if (GOOGLE_API_KEY) {
     transcribe = async (buf, { ext: mediaExt, kind, onProgress }) => {
       const { transcribeMedia, mimeForMediaExt } = await import('../lib/transcribe-gemini.mjs');
-      if (kind === 'audio') {
+      // Video too, not only audio: a whole hour of video is ~1.06M input tokens
+      // (263/s of frames + 32/s of audio), past the model's 1,048,576 ceiling —
+      // two one-hour recordings failed that way on 2026-09-16 while every
+      // shorter one passed. The segmenter takes any container ffmpeg reads and
+      // hands back 20-minute mp3 parts, so speech is what gets transcribed
+      // either way; under twenty minutes the whole file still goes as-is.
+      {
         const { transcribeInSegments } = await import('../lib/media-segments.mjs');
         const inParts = await transcribeInSegments(buf, mediaExt, {
           onProgress,
