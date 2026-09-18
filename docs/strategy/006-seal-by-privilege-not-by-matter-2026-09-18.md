@@ -56,7 +56,7 @@ The seal mechanism (egress enforced at the data; server-side refusal; the seal g
 
 ## 6. Proposed sequencing (for Eden to confirm; Opus builds)
 
-1. **Privileged container as a sealed unit** (folder-level `ai_tier` with inheritance already in place for matters; retrieval scoped to the container; outbound tools absent for sealed contexts, which the seal already enforces at matter grain). Smallest change with the largest effect.
+1. **Privileged container as a sealed unit.** Folders and sub-matters are the same container and `ai_tier` inherits downward, so a sealed sub-matter inside an open matter already exists. What does NOT exist is the isolation: a search scoped to the parent includes its descendants (`lib/mcp-core.mjs`, matterspace_descendants), so an open session can reach a sealed child today. The build is: exclude any descendant whose effective tier exceeds the session's from retrieval, grep, outline and listing; outbound-tool absence for sealed contexts already holds at matter grain and carries over. Smallest change with the largest effect, but real work, not configuration.
 2. **Classification proposal + attorney confirmation at ingestion**, recorded (extends the P1 truth/feedback loop).
 3. **SecureChat delivery to counsel** and the in-channel notice to the client.
 4. **Record rows for container membership and per-touch model/terms** (W1/W5 as specced, with the container as a new column).

@@ -1,4 +1,6 @@
 > **DRAFT TEMPLATE — for Eden's review before first use.** Goes out at the opening of every matter, with the engagement letter. Placeholders in [brackets]. Drafted 2026-09-18 from strategy memo 006. Once approved, add to the `ai-use-record` skill as a matter-opening template and produce the .docx on firm letterhead.
+>
+> **Representations in this memo that depend on unbuilt features (006 §6), do not send until they are true:** §2 says the client's chat comes to the lawyer — today sealed sessions are recorded in the matter's ledger and the lawyer can read them, but they are not delivered; §2 also implies a client-facing channel with an in-channel notice, which is item 3 of the build sequence. §6 is written to what is true today.
 
 **[FIRM LETTERHEAD]**
 
@@ -19,7 +21,7 @@ That includes ChatGPT, Claude, Gemini, Copilot, Grok, and any assistant built in
 
 **2. Use the secure channel we have opened for you.**
 
-We have set up a private workspace for this matter at [Contextspaces link]. Inside it there is a chat you can use to think through the case, ask questions, and organize what you want to tell us. Everything you write there comes to me. It runs on a model in our own account, with no retention by any vendor and no connection to the internet, your email, or anyone else's files. Use it the way you would use a call with me. What you write there is a communication to your lawyer.
+We have set up a private workspace for this matter at [Contextspaces link]. Inside it there is a chat you can use to think through the case, ask questions, and organize what you want to tell us. I will read what you write there. It runs on a model in our own account, with no retention by any vendor and no connection to the internet, your email, or anyone else's files. Use it the way you would use a call with me. What you write there is a communication to your lawyer.
 
 **3. Keep this matter's documents separate from everything else.**
 
@@ -35,7 +37,7 @@ If you have already used an AI assistant to discuss this matter, or shared our a
 
 **6. What we do on our side.**
 
-We use AI tools in our work under controlled conditions: on our own systems, with no training on your material, with retention turned off, and with your privileged documents kept in a sealed container that our other tools cannot reach. We keep a record of which tools touched which documents and under what terms. If a court, an insurer, or you ever ask how AI was used on this matter, that record is the answer.
+We use AI tools in our work, and we want you to know how. Your privileged material, meaning your communications with us and our own analysis and strategy, is kept in a sealed part of our system that runs on a model in our own account, with no vendor retention and no outside connections. The rest of the matter, meaning public filings, documents produced by the other side, and legal research, may be handled by commercial AI services under business terms that prohibit training on the material; those services may retain requests for a limited period under their own policies. We keep a record of which tools touched which documents and under what terms. If a court, an insurer, or you ever ask how AI was used on this matter, that record is the answer.
 
 Questions about any of this: call me, or ask in the secure channel.
 

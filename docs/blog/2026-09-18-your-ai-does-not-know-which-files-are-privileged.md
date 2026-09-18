@@ -1,4 +1,6 @@
 > **DRAFT — not for publication until Eden has read it end to end and verified the two case references (Heppner; Victor Stanley) against the opinions.** Drafted 2026-09-18 from strategy memo 006. Byline and venue to be decided.
+>
+> **"How we do it" is written to what is live on 2026-09-18.** Three sentences describe planned behavior and are marked [PLANNED] until built (006 §6): a sealed folder inside an otherwise open matter that open sessions cannot search; a client channel the lawyer receives; the per-document container record.
 
 # Your AI does not know which of your files are privileged
 
@@ -46,7 +48,7 @@ None of this requires the smartest model available. The privileged set in any ma
 
 ## How we do it
 
-Contextspaces runs sealed material in our own AWS account, on an open-weight model under a zero-retention setting we can read back from the account on demand, with no outbound tools and no retrieval across the seal. A sealed folder can sit inside an otherwise open matter, so the rest of the matter uses whatever model you like. Clients get a channel inside the matter that the lawyer receives. And the matter keeps a record: which container each document sat in, which model touched it under what terms, and what left the matter, to whom.
+Contextspaces runs sealed matters in our own AWS account, on an open-weight model under a zero-retention setting we can read back from the account on demand, with no outbound tools and no retrieval across the seal. Everything else runs on commercial frontier models under business terms. [PLANNED] A sealed folder will sit inside an otherwise open matter, invisible to the open sessions, so the rest of the matter uses whatever model you like. [PLANNED] Clients will get a channel inside the matter that the lawyer receives. The matter keeps a record of every session: which model, under what terms, and what left the matter, to whom. [PLANNED] The record will also show which container each document sat in.
 
 We do not say the platform preserves privilege. Privilege attaches through counsel's direction and confidentiality, not through software. What the platform gives you is the fence and the record of it, which is what a court, a carrier, or a client will ask for.
 
