@@ -20,3 +20,6 @@ Numbering is chronological by creation, not priority. Read them all when onboard
 
 - [005 — "Defensible AI": the external frame for the Record](./005-defensible-ai-positioning.md) *(2026-09-16)*  
   Sales language for W1/W5/W6 (insurer, bar, client as buyers); what we can and cannot say. UI stays discreet.
+
+- [006 — Seal by privilege class, not by matter](./006-seal-by-privilege-not-by-matter-2026-09-18.md) *(2026-09-18)*  
+  Retention is not what preserves privilege; reach is. The sealed unit becomes the privileged container (own pen, no cross-container retrieval, no outbound tools); a modest tool-capable pen suffices (Kimi K2.5 live); SecureChat as a communication to counsel; classification attorney-confirmed; the Record shows class and reach. Companion: `docs/blog/2026-09-18-…privileged.md` (DRAFT) and `docs/templates/client-memo-ai-and-privilege.md` (DRAFT).
