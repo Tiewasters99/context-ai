@@ -75,3 +75,27 @@ node scripts/_probe-bedrock-retention.mjs --region us-west-2 openai.gpt-6-astra 
 ## 6. What this does to the tier table in the pitch
 
 Nothing in the marketing changes except that it gets shorter. "Sealed matters are processed only by models that our account can run under a zero-retention mode, verified by reading the provider's own catalog, and the list is yours to see." That is a stronger sentence than naming a vendor, and it is the sentence the memo in 003 could not write.
+
+## Probe run 2026-09-18 (new IAM key; `scripts/_probe-bedrock-retention.mjs`)
+
+Account-level `data_retention`: **us-east-1 `none`** (set 08-27, confirmed); **us-west-2 `inherit`**. The catalog listing (`GET /v1/models`) and the classic `bedrock:ListFoundationModels` both return 403: the IAM user `contextspaces-bedrocck` has no listing permission, so the probe fell back to per-id GETs. Findings from those:
+
+| Region | Model | allowed_modes | Sealed-eligible | Available to this account? |
+|---|---|---|---|---|
+| us-east-1 | anthropic.claude-opus-5 | aws_review, default, none, provider_data_share | **yes** | no — "not available for this account" (model access not yet granted) |
+| us-east-1 | anthropic.claude-opus-4-8 | same | **yes** | no — same |
+| us-east-1 | anthropic.claude-sonnet-5 | same | **yes** | no — same |
+| us-east-1 | openai.gpt-5.6-sol | default, aws_review, provider_data_share | no | no |
+| us-west-2 | openai.gpt-6-astra | default, provider_data_share, aws_review | no (confirms §2) | no |
+| us-west-2 | **xai.grok-4.6** | default, aws_review, none, provider_data_share | **yes** | **yes** — effective mode `default`; set `none` in us-west-2 before use |
+
+- **Grok 4.6 in us-west-2 is the one sealed pen usable today** without another AWS trip. Its effective mode is `default`, so the sealed path must request/set `none` (Tier B gate: "allowed_modes includes none in our account", now verified for this model).
+- **Claude 5 family (Opus 5 / Opus 4.8 / Sonnet 5) is sealed-eligible by catalog terms in us-east-1** but the account has not enabled model access; that is a Bedrock console "Model access" request, then re-probe. They 404 in us-west-2 under these ids (catalogs are per Region).
+- **Second run, same day, after the IAM listing policy (`bedrock-catalog-read`: bedrock-mantle:ListModels/GetModel, bedrock:ListFoundationModels):** catalog 200 — **55 models in us-east-1, 49 in us-west-2**. What the catalog settles:
+  - **Fable is `anthropic.claude-fable-5`** (not `-5-1`), us-east-1 only; `allowed_modes = aws_review, provider_data_share`; the catalog's own note: "This model is not available under data retention mode 'none'." Confirms §3: Fable is never a sealed pen under the Tier B gate. `anthropic.claude-mythos-*` is not in the catalog.
+  - **Every current OpenAI frontier id refuses `none`**: gpt-6-astra (us-west-2 only), gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5 (+2026-04-23), gpt-5.4 (+2026-03-05). Only the open-weight `openai.gpt-oss-120b` / `-20b` / `-safeguard-*` allow `none`.
+  - **Sealed-eligible frontier-class pens (allowed_modes includes `none`)**: Anthropic **Opus 5, Opus 4.8, Opus 4.7, Sonnet 5** (us-east-1 only) and Haiku 4.5 (both Regions); **xAI Grok 4.6** (us-west-2 only) and Grok 4.3 (both); DeepSeek v3.2 / v3.1; Qwen3-235B-2507, Qwen3-Coder-480B, Qwen3-VL-235B, Qwen3-Next-80B; ZAI GLM-5 / 4.7; Kimi K2.5 / K2-Thinking; MiniMax M2.5; Mistral Large 3 (675B); Gemma 4 31B. Full list in the probe output (both Regions, 2026-09-18).
+  - **Not on bedrock-mantle at all**: Kimi K3 (only K2.5 / K2-Thinking), Amazon Nova 2 Pro / Nova Premier, TwelveLabs Pegasus 1.2 / Marengo 2.7. The mantle surface is the OpenAI-compatible catalog; Amazon's own and the video models live on the classic Bedrock runtime, so the W12 video-pen question needs a classic-API probe (`bedrock:GetFoundationModelAvailability` is now granted to the key).
+  - **Effective mode**: every us-east-1 row is `none` (account setting, 08-27); every us-west-2 row is `default` (account `inherit`). A sealed pen in us-west-2 (Grok 4.6) needs the Region's account mode set to `none` first — one `PUT /v1/data_retention` with the new key, or the console. ⚠ Setting it makes Astra/Sol/Terra/Luna/5.x calls in that Region fail (they refuse `none`), which is the intended fence.
+  - **Open**: whether Bedrock model access is enabled for the Claude 5 family in this account. The first run's per-id GETs said "not available for this account"; the catalog listing carries no availability field, so the listing does not answer it. Test = one InvokeModel/chat call, or the console's Model access page.
+- Probe fixes this run: ids containing `:` were percent-encoded in the path, which broke the SigV4 match (401); blank rows had hidden the 404/401 statuses. Both fixed.
