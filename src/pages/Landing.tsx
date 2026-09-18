@@ -131,12 +131,8 @@ export default function Landing() {
         {/* Hero — just words, no boxes */}
         <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-20">
           <h1 className="text-[56px] sm:text-[84px] font-black text-white leading-[1.02] tracking-tight text-center" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 100px rgba(0,0,0,0.8)' }}>
-            Every matter,<br />
-            <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>in context.</span>
+            Work <span className="text-[#d4a054]" style={{ textShadow: '0 4px 16px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,1), 0 0 40px rgba(212,160,84,0.4)' }}>Smart.</span>
           </h1>
-          <p className="mt-8 text-[22px] sm:text-[26px] text-white max-w-2xl mx-auto leading-relaxed text-center font-bold" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,1), 0 0 60px rgba(0,0,0,0.7)' }}>
-            The AI-native workspace for solo and small-firm litigators. Organize your matters, vault your documents, and put AI to work that cites its sources — page by page.
-          </p>
           <div className="mt-10">
             <Link
               to="/auth"
