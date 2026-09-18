@@ -93,8 +93,11 @@ for (const region of regions) {
   for (const id of wanted) {
     let m = byId.get(id) ?? null;
     if (!m || !m.data_retention) {
-      const one = await get(region, `/v1/models/${encodeURIComponent(id)}`);
-      m = one.json ?? { id, _status: one.status, _err: one.text };
+      // Raw id in the path: percent-encoding the ':' in ids like nova-2-pro-v1:0 breaks the SigV4 match (401).
+      const one = await get(region, `/v1/models/${id}`);
+      m = one.json ?? {};
+      m._status = one.status;
+      if (!m.data_retention) m._err = one.text; // 404 = wrong id for this Region's catalog; 403 = key lacks bedrock-mantle:ListModels/GetModel
     }
     const dr = m.data_retention ?? {};
     rows.push({

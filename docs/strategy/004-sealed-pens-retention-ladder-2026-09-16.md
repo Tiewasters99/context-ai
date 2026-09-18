@@ -75,3 +75,21 @@ node scripts/_probe-bedrock-retention.mjs --region us-west-2 openai.gpt-6-astra 
 ## 6. What this does to the tier table in the pitch
 
 Nothing in the marketing changes except that it gets shorter. "Sealed matters are processed only by models that our account can run under a zero-retention mode, verified by reading the provider's own catalog, and the list is yours to see." That is a stronger sentence than naming a vendor, and it is the sentence the memo in 003 could not write.
+
+## Probe run 2026-09-18 (new IAM key; `scripts/_probe-bedrock-retention.mjs`)
+
+Account-level `data_retention`: **us-east-1 `none`** (set 08-27, confirmed); **us-west-2 `inherit`**. The catalog listing (`GET /v1/models`) and the classic `bedrock:ListFoundationModels` both return 403: the IAM user `contextspaces-bedrocck` has no listing permission, so the probe fell back to per-id GETs. Findings from those:
+
+| Region | Model | allowed_modes | Sealed-eligible | Available to this account? |
+|---|---|---|---|---|
+| us-east-1 | anthropic.claude-opus-5 | aws_review, default, none, provider_data_share | **yes** | no — "not available for this account" (model access not yet granted) |
+| us-east-1 | anthropic.claude-opus-4-8 | same | **yes** | no — same |
+| us-east-1 | anthropic.claude-sonnet-5 | same | **yes** | no — same |
+| us-east-1 | openai.gpt-5.6-sol | default, aws_review, provider_data_share | no | no |
+| us-west-2 | openai.gpt-6-astra | default, provider_data_share, aws_review | no (confirms §2) | no |
+| us-west-2 | **xai.grok-4.6** | default, aws_review, none, provider_data_share | **yes** | **yes** — effective mode `default`; set `none` in us-west-2 before use |
+
+- **Grok 4.6 in us-west-2 is the one sealed pen usable today** without another AWS trip. Its effective mode is `default`, so the sealed path must request/set `none` (Tier B gate: "allowed_modes includes none in our account", now verified for this model).
+- **Claude 5 family (Opus 5 / Opus 4.8 / Sonnet 5) is sealed-eligible by catalog terms in us-east-1** but the account has not enabled model access; that is a Bedrock console "Model access" request, then re-probe. They 404 in us-west-2 under these ids (catalogs are per Region).
+- **Fable 5.1 id unknown**: `anthropic.claude-fable-5-1` and 17 variants 404 in both Regions. Nova 2 Pro / Nova Premier / Pegasus 1.2 / Marengo 2.7 / Kimi K3 likewise under guessed ids. Resolving these needs the listing permission (`bedrock-mantle:ListModels` + `bedrock:ListFoundationModels`, inline policy on the IAM user), after which the probe lists the catalog itself.
+- Probe fixes this run: ids containing `:` were percent-encoded in the path, which broke the SigV4 match (401); blank rows had hidden the 404/401 statuses. Both fixed.
