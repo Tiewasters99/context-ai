@@ -242,7 +242,7 @@ says it was written for this bug on 05-29; the rows show it was not run on these
 
 ## 7. To land this
 
-1. Review and merge the PR: `! gh pr merge <N> --merge --repo Tiewasters99/context-ai`. Vercel deploys the MCP
+1. Review and merge the PR: `! gh pr merge 153 --merge --repo Tiewasters99/context-ai` (PR #153). Vercel deploys the MCP
    (`force`, `check_ingest_status`); verify in a **new** claude.ai chat, since the tool list is cached.
 2. Deploy the worker (the swap path, `ingest_outcome`, the stamp rule), through the local IPv4 proxy if flyctl
    fails over IPv6 (see the dev-environment cautions memo).
