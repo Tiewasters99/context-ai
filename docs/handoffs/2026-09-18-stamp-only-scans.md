@@ -76,7 +76,7 @@ at the 07:38Z merge, is [inferred] from the P4 deploy record; five documents ing
 
 ## 4. The fix: before and after
 
-Commit `deb0b66`. Offline tests: `node scripts/_test-stamp-scans.mjs` (12 checks) plus the eleven existing ingestion
+Commit `deb0b66`. Offline tests: `node scripts/_test-stamp-scans.mjs` (14 checks) plus the eleven existing ingestion
 unit suites and the offline `_verify-seal-pipes`, `_verify-embed-hold`, `_verify-ocr-routes`, all exit 0 [verified].
 
 1. **Stamps are not content** (`lib/court-stamps.mjs`, new). One definition of a filing stamp: district CM/ECF (with
@@ -85,7 +85,8 @@ unit suites and the offline `_verify-seal-pipes`, `_verify-embed-hold`, `_verify
    is stamps and nothing else counts zero, a typed page counts in full. **Routing is unchanged**: `PAGE_TEXT_MIN_CHARS`
    and `pagesNeedingOcr` are untouched, so no document with a genuine text layer is sent to OCR that was not before.
 2. **OCR that reads nothing on a stamped filing is a failure, not an image.** If OCR returns no text for every target
-   page and every target page's own text is a stamp, the run throws into the existing OCR-failure branch: the pages are
+   page, and every target page's own text is a stamp or blank (a blank back page does not count against it; at least
+   one must be a stamp), the run throws into the existing OCR-failure branch: the pages are
    recorded in `ocr_pending` with the reason, the worker's sweep retries on the P2 schedule, and an exhausted record
    triages as `ocr_exhausted` (a person looks). An **unstamped** scan OCR reads nothing on is still `image_only`.
 3. **`page_count` is the PDF's.** `extractPdfPages` reads pdf.js's `numpages` and `fitToPageCount` pads missing pages
@@ -95,9 +96,13 @@ unit suites and the offline `_verify-seal-pipes`, `_verify-embed-hold`, `_verify
    searchable while queued, and the worker swaps instead of wiping (`lib/reprocess.mjs`, new): note the newest existing
    passage, run, then delete the old passages on success, or delete this run's passages and restore the row on
    failure, recording the result in `metadata.reprocess`. Both worker failure recorders already skip `ready` rows
-   (`:254`, `:302`), so a failed forced run leaves the document as it was. `scripts/reingest.mjs` uses the same swap
-   (it used to delete first). The unforced refusal now names `force`. Unforced jobs and non-ready documents behave
-   exactly as before.
+   (`:254`, `:302`), so a forced run that fails with an error leaves the document as it was [verified: unit test]. The
+   worker swaps **every** forced job, not only one that finds the row `ready`. A forced run whose worker died mid-way
+   (watchdog, OOM on a large re-run) is reclaimed with the row at `embedding`, and wiping there would take the
+   originals with it. The swap handles that case: success removes originals and the crashed run's partials; failure
+   keeps the originals (the partials stay until the next success) [verified: unit test with the crash state seeded; a
+   real worker crash was **not** exercised]. `scripts/reingest.mjs` uses the same swap (it used to delete first). The
+   unforced refusal now names `force`. Unforced jobs and non-ready documents behave exactly as before.
 5. **The record** (item 7; the Phase 2 ledger does not exist, so this is the no-migration version):
    `documents.metadata.ingest_outcome = { at, pdf_pages, ocr: not_needed|read|failed|held|not_configured, text_source:
    text_layer|ocr|mixed|none, ocr_pages: "1-2", ocr_no_text: "7" }`, written on every PDF outcome. `check_ingest_status`

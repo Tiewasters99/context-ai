@@ -126,6 +126,22 @@ const ocrReads = (words) => async () => words.map((w, i) => ({ pageNumber: i + 1
 }
 
 {
+  // A stamped order whose back page is blank (no stamp, no text): the blank
+  // page must not tip the document into image-only.
+  const withBlank = await buildPdf([
+    { scan: ['ORDER', 'The juniper motion is denied.'], stamp: ecfStamp(1, 2) },
+    { scan: ['SO ORDERED.'], stamp: ecfStamp(2, 2) },
+    { blank: true },
+  ]);
+  const db = seed();
+  await run(db, withBlank, async () => [{ pageNumber: 1, text: '' }, { pageNumber: 2, text: '' }, { pageNumber: 3, text: '' }]);
+  assert.strictEqual(docOf(db).metadata.text_status, 'ocr_pending');
+  assert.deepStrictEqual(docOf(db).metadata.ocr_pending.pages, [1, 2, 3]);
+  assert.strictEqual(passagesOf(db).length, 0);
+  ok('stamped scan with a blank back page, OCR reads nothing → still awaiting OCR, not image-only');
+}
+
+{
   const db = seed();
   await run(db, scan, async () => { throw new Error('gemini 503: simulated outage'); });
   const d = docOf(db);
@@ -217,6 +233,27 @@ const ocrReads = (words) => async () => words.map((w, i) => ({ pageNumber: i + 1
   assert.strictEqual(d.metadata.reprocess.ok, false);
   assert.match(d.metadata.reprocess.error, /simulated/);
   ok('failed re-run: the document keeps its passages and its row; the failure is recorded on it');
+}
+
+{
+  // A forced run whose worker died mid-way is reclaimed with the row at
+  // 'embedding', the originals still there and a crashed run's partial
+  // passages after them. The worker swaps every forced job, so: success
+  // removes both; failure keeps the originals.
+  const original = { id: '00000000-0000-4000-8000-0000000000b1', document_id: DOC, matterspace_id: MATTER, page_start: 1, page_end: 1, sequence_number: 0, text: 'Original indexed text.', created_at: '2026-06-01T00:00:00.000000+00:00' };
+  const partial = { id: '00000000-0000-4000-8000-0000000000b2', document_id: DOC, matterspace_id: MATTER, page_start: 1, page_end: 1, sequence_number: 0, text: 'half of a crashed run', created_at: '2026-09-18T10:00:00.000000+00:00' };
+  const crashed = () => seed({ processing_status: 'embedding', page_count: 1, metadata: {} }, [original, partial]);
+
+  const db = crashed();
+  await reprocessInPlace(db, DOC, () => run(db, scan, ocrReads(['tamarind', 'bergamot'])));
+  const texts = passagesOf(db).map((p) => p.text).join(' | ');
+  assert(!texts.includes('Original indexed text.') && !texts.includes('half of a crashed run') && /tamarind/.test(texts), 'success replaces the originals and the crashed partials');
+  assert.strictEqual(docOf(db).processing_status, 'ready');
+
+  const db2 = crashed();
+  await assert.rejects(reprocessInPlace(db2, DOC, async () => { throw new Error('embed 429: simulated'); }), /simulated/);
+  assert(passagesOf(db2).some((p) => p.text === 'Original indexed text.'), 'failure keeps the originals');
+  ok('forced run reclaimed after a crash: success replaces originals and partials; failure keeps the originals');
 }
 
 // --- ingest_document force -----------------------------------------------------------

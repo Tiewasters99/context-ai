@@ -635,12 +635,17 @@ async function ingestDocument(job) {
   const ext = doc.source_filename?.includes('.')
     ? '.' + doc.source_filename.split('.').pop().toLowerCase() : '';
 
-  // A forced re-run of a READY document swaps rather than wipes: its current
-  // passages stay searchable until the new run succeeds, and a run that fails
-  // leaves the row exactly as it was (lib/reprocess.mjs). Any other state is
-  // a document that never finished, whose partial passages are clutter — so
-  // idempotency there is the old way: clear, then run.
-  const swap = forced && doc.processing_status === 'ready';
+  // A forced re-run swaps rather than wipes: the current passages stay
+  // searchable until the new run succeeds, and a run that fails leaves the row
+  // exactly as it was (lib/reprocess.mjs). Every forced job swaps, not only
+  // one that finds the row 'ready': a forced run whose worker died mid-way
+  // (the watchdog, an OOM on an 800-page re-run) is reclaimed with the row at
+  // 'embedding', and wiping then would take the originals with it. The swap
+  // handles that too — the crashed run's partial passages are newer than the
+  // originals, so success removes both and failure keeps the originals.
+  // Unforced jobs are documents that never finished, whose partial passages
+  // are clutter — so idempotency there is the old way: clear, then run.
+  const swap = forced;
   if (!swap) await supabase.from('passages').delete().eq('document_id', docId);
 
   // OCR goes through the tier's routes (ocrProvider). Transcription stays on
