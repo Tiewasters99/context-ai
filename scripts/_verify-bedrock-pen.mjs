@@ -18,7 +18,7 @@
 //      retention mode is proven.
 import fs from 'node:fs/promises';
 import {
-  choosePen, bedrockCredsFromEnv, bedrockTurn, PENS, AssistantRefusal,
+  choosePen, bedrockCredsFromEnv, bedrockTurn, openaiCompatTurn, bedrockPenFor, PENS, AssistantRefusal,
 } from '../lib/assistant-core.mjs';
 import { signRequest } from '../lib/aws-sigv4.mjs';
 
@@ -46,13 +46,23 @@ if (fakeCreds && fakeCreds.region === 'us-east-1' && fakeCreds.sessionToken === 
 console.log('\nchoosePen');
 const KEYS = { anthropicKey: 'ak', fireworksKey: 'fk' };
 let pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: fakeCreds });
-if (pen.provider === 'aws-bedrock' && pen.escalation === false && pen.creds === fakeCreds) {
-  pass('B + Bedrock creds → aws-bedrock pen, no escalation');
-} else fail('B should prefer Bedrock', pen);
+if (pen.provider === 'aws-bedrock' && pen.route === 'chat' && pen.model === 'moonshotai.kimi-k2.5'
+  && pen.escalation === false && pen.creds === fakeCreds) {
+  pass('B + Bedrock creds (no BEDROCK_MODEL) → Kimi K2.5 on the chat route, no escalation');
+} else fail('B should prefer Bedrock / Kimi K2.5', pen);
 pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: fakeCreds, escalate: true });
+if (pen.provider === 'anthropic' && pen.escalation === true) {
+  pass('B + escalate + non-Anthropic sealed pen → recorded escalation to first-party Claude');
+} else fail('escalation with a non-frontier sealed pen must be recorded', pen);
+const opusCreds = { ...fakeCreds, model: 'anthropic.claude-opus-5' };
+pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: opusCreds });
+if (pen.provider === 'aws-bedrock' && pen.route === 'messages' && pen.model === 'anthropic.claude-opus-5') {
+  pass('BEDROCK_MODEL=anthropic.claude-opus-5 → Messages route');
+} else fail('an anthropic.* model should ride the Messages route', pen);
+pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: opusCreds, escalate: true });
 if (pen.provider === 'aws-bedrock' && pen.escalation === false) {
-  pass('B + escalate + Bedrock → still Bedrock (frontier already inside the seal, nothing to record)');
-} else fail('escalate must not leave the seal when Bedrock exists', pen);
+  pass('B + escalate + Claude on Bedrock → still Bedrock (frontier already inside the seal, nothing to record)');
+} else fail('escalate must not leave the seal when frontier Claude is the sealed pen', pen);
 pen = choosePen({ tier: 'B', ...KEYS });
 if (pen.provider === 'fireworks' && pen.escalation === false) pass('B without Bedrock → Kimi fallback unchanged');
 else fail('B fallback', pen);
@@ -184,6 +194,58 @@ try {
   globalThis.fetch = realFetch;
 }
 
+// ── 3b. the chat-route driver (Kimi K2.5 on Bedrock), offline ───────────
+console.log('\nopenaiCompatTurn on Bedrock (stubbed fetch)');
+const CHAT1 = sse([
+  { choices: [{ index: 0, delta: { role: 'assistant', content: 'Sealed and ' } }] },
+  { choices: [{ index: 0, delta: { content: 'ready.' } }] },
+  { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_01', type: 'function', function: { name: 'search', arguments: '{"query":' } }] } }] },
+  { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: '"seal"}' } }] } }] },
+  { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+  { choices: [], usage: { prompt_tokens: 12, completion_tokens: 34 } },
+]) + 'data: [DONE]\n\n';
+const chatRequests = [];
+globalThis.fetch = async (url, init = {}) => {
+  chatRequests.push({ url: String(url), init });
+  return new Response(CHAT1, { status: 200 });
+};
+try {
+  let streamed = '';
+  const kimiPen = { ...bedrockPenFor(fakeCreds), creds: fakeCreds, escalation: false };
+  const turn = await openaiCompatTurn({
+    pen: kimiPen, system: 'You are the sealed pen.', tools: TOOLS,
+    convo: [{ role: 'user', text: 'What does the seal cover?' }], onText: (t) => { streamed += t; },
+  });
+  const u = new URL(chatRequests[0].url);
+  if (u.host === 'bedrock-mantle.us-east-1.api.aws' && u.pathname === '/v1/chat/completions') {
+    pass('request goes to bedrock-mantle.us-east-1.api.aws /v1/chat/completions');
+  } else fail('chat route url', chatRequests[0].url);
+  const cauth = chatRequests[0].init.headers?.authorization ?? chatRequests[0].init.headers?.Authorization ?? '';
+  if (cauth.startsWith('AWS4-HMAC-SHA256 Credential=AKIDTEST/') && cauth.includes('/us-east-1/bedrock-mantle/aws4_request')) {
+    pass('SigV4-signed, service bedrock-mantle, our key (no bearer token)');
+  } else fail('chat route auth', cauth.slice(0, 80));
+  const cbody = JSON.parse(chatRequests[0].init.body);
+  if (cbody.model === 'moonshotai.kimi-k2.5' && cbody.stream === true && cbody.tools?.[0]?.type === 'function'
+    && cbody.tools[0].function.name === 'search' && cbody.messages[0].role === 'system') {
+    pass('body: Kimi model id, stream, function tools, system message');
+  } else fail('chat body', { model: cbody.model, stream: cbody.stream, tools: cbody.tools?.[0] });
+  if (streamed === 'Sealed and ready.') pass('text streamed through onText in order');
+  else fail('chat streamed text', streamed);
+  const tool = turn.blocks.find((b) => b.type === 'tool_use');
+  if (turn.stop === 'tool_use' && tool?.id === 'call_01' && tool.name === 'search' && tool.input?.query === 'seal') {
+    pass('tool_calls deltas assembled into a tool_use block');
+  } else fail('chat tool block', turn.blocks);
+  if (turn.usage.input === 12 && turn.usage.output === 34) pass('usage from the final chunk');
+  else fail('chat usage', turn.usage);
+  const chosts = [...new Set(chatRequests.map((r) => new URL(r.url).host))];
+  if (chosts.length === 1 && chosts[0] === 'bedrock-mantle.us-east-1.api.aws') pass(`egress witness: only ${chosts[0]} was ever contacted`);
+  else fail('unexpected egress hosts', chosts);
+} catch (err) {
+  fail('chat driver threw offline', { message: err?.message });
+} finally {
+  globalThis.fetch = realFetch;
+}
+
 // ── 4–5. live, only with real keys ──────────────────────────────────────
 let env = {};
 try {
@@ -199,7 +261,9 @@ if (!liveCreds) {
   console.log('Provision per docs/BEDROCK_CLAUDE_PEN_SETUP.md, then re-run.');
 } else {
   console.log('\nlive: retention mode (the seal claim, read with the pen\'s own key)');
-  const modelUrl = `https://bedrock-mantle.${liveCreds.region}.api.aws/v1/models/${PENS.bedrock.model}`;
+  const livePen = bedrockPenFor(liveCreds);
+  console.log(`        pen: ${livePen.label} [${livePen.route} route]`);
+  const modelUrl = `https://bedrock-mantle.${liveCreds.region}.api.aws/v1/models/${livePen.model}`;
   let retentionOk = false;
   try {
     const headers = signRequest({
@@ -229,8 +293,9 @@ if (!liveCreds) {
     console.log('\nlive: one one-line invoke');
     try {
       let text = '';
-      const turn = await bedrockTurn({
-        pen: { ...PENS.bedrock, creds: liveCreds, escalation: false },
+      const liveDriver = livePen.route === 'chat' ? openaiCompatTurn : bedrockTurn;
+      const turn = await liveDriver({
+        pen: { ...livePen, creds: liveCreds, escalation: false },
         system: 'You are a connectivity check. Obey exactly.',
         tools: [],
         convo: [{ role: 'user', text: 'Reply with exactly the single word: sealed' }],

@@ -1,5 +1,18 @@
 # Sealed chat pen: Claude Opus 5 via Bedrock, in our own AWS account
 
+> **2026-09-18 status.** The Claude 5 generation (Opus 5 / 4.8 / 4.7, Sonnet 5) is
+> account-gated on Bedrock for this account on both planes and both Regions
+> ("not available for this account… contact AWS Sales"; support case
+> 178785685000654; `docs/strategy/004`, "Invoke tests 2026-09-18"). Until AWS
+> lifts it, the sealed pen defaults to **Kimi K2.5** (`moonshotai.kimi-k2.5`) on
+> the same account under the same `data_retention_mode: none`, through the
+> OpenAI-compatible `/v1/chat/completions` route on bedrock-mantle (verified:
+> answers and drives the tool loop). Set `BEDROCK_MODEL=anthropic.claude-opus-5`
+> to return to the Messages route when access lands; nothing else changes.
+> While the sealed pen is not frontier Claude, `escalate` is a recorded
+> escalation to first-party Claude again. Everything below describes the
+> Claude configuration.
+
 Built 2026-08-27 (pen upgraded 4.8 → Opus 5 same day — Eden's call: Opus 5 is
 the stronger legal-reasoning model; 4.8 remains the Tier-A writing pen).
 Tier-B (sealed) matters chat through **Claude Opus 5 on Amazon Bedrock's

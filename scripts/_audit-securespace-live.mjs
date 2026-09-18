@@ -153,7 +153,7 @@ async function waitTerminal(id, ms = 7 * 60_000) {
     if (s?.sessionId) made.sessions.push(s.sessionId);
     if (out.status !== 200) fail(`assistant HTTP ${out.status}`, out.body);
     if (s) note(`session event: tier=${s.tier} provider=${s.provider} model=${s.model} escalation=${s.escalation}`);
-    if (s?.provider === 'aws-bedrock') pass('sealed pen = Claude via Bedrock in our AWS account');
+    if (s?.provider === 'aws-bedrock') pass(`sealed pen = ${s.model} via Bedrock in our AWS account`);
     else if (s?.provider === 'fireworks') fail('sealed pen fell to Kimi/Fireworks — Bedrock keys NOT configured on prod');
     else if (e) fail(`refused/errored: ${e.code ?? ''} ${e.message ?? e.error ?? ''}`, e);
     else fail('no session event', { status: out.status, body: out.body, events: out.events.slice(0, 3) });
@@ -165,8 +165,8 @@ async function waitTerminal(id, ms = 7 * 60_000) {
     s = ev(out.events, 'session'); e = ev(out.events, 'error');
     if (s?.sessionId) made.sessions.push(s.sessionId);
     if (s) note(`escalate:true → provider=${s.provider} model=${s.model} escalation=${s.escalation}`);
-    if (s?.provider === 'aws-bedrock' && s?.escalation === false) pass('escalate:true stays inside the seal');
-    else if (s?.provider === 'anthropic' && s?.escalation === true) fail('escalate:true LEFT the seal to api.anthropic.com (recorded escalation) — Bedrock not configured');
+    if (s?.provider === 'aws-bedrock' && s?.escalation === false) pass('escalate:true stays inside the seal (frontier Claude is the sealed pen)');
+    else if (s?.provider === 'anthropic' && s?.escalation === true) pass('escalate:true → recorded escalation to first-party Claude (the sealed Bedrock pen is not frontier Claude)');
     else fail('escalate case', { s, e });
 
     // ledger

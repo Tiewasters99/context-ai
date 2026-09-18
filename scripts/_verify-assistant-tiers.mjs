@@ -137,7 +137,8 @@ try {
   out = await ask(matter.id, PROMPT, { escalate: true });
   s = ev(out.events, 'session'); e = ev(out.events, 'error');
   if (sealedProvider === 'aws-bedrock') {
-    if (s?.provider === 'aws-bedrock' && s?.escalation === false) { pass('tier B + escalate:true → Bedrock pen, stays inside the seal (no escalation to record)'); sessions.push(s.sessionId); }
+    if (s?.provider === 'aws-bedrock' && s?.escalation === false) { pass('tier B + escalate:true → Bedrock pen, stays inside the seal (frontier Claude is the sealed pen)'); sessions.push(s.sessionId); }
+    else if (s?.provider === 'anthropic' && s?.escalation === true) { pass('tier B + escalate:true → recorded escalation (the sealed Bedrock pen is not frontier Claude)'); sessions.push(s.sessionId); }
     else fail('escalation (Bedrock-configured server)', { s, e });
   } else if (s?.provider === 'anthropic' && s?.escalation === true) {
     pass('tier B + escalate:true → frontier pen, flagged as escalation'); sessions.push(s.sessionId);
