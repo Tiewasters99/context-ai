@@ -37,7 +37,7 @@ const H = { apikey: SRK, Authorization: `Bearer ${SRK}`, 'Content-Type': 'applic
 
 // ── sign in ───────────────────────────────────────────────────────────
 let r = await j(await fetch(`${SB}/auth/v1/admin/generate_link`, {
-  method: 'POST', headers: H, body: JSON.stringify({ type: 'magiclink', email: 'equainton@gmail.com' }),
+  method: 'POST', headers: H, body: JSON.stringify({ type: 'magiclink', email: process.env.VERIFY_EMAIL || 'quaintonlaw@gmail.com' }), // the account whose workspace holds the matters (VERIFY_EMAIL overrides)
 }));
 const th = r.body?.hashed_token ?? r.body?.properties?.hashed_token;
 r = await j(await fetch(`${SB}/auth/v1/verify`, {
@@ -80,7 +80,10 @@ let out = await ask(undefined, 'ping', {}, null);
 if (out.status === 401) pass('unauthenticated request refused (401)'); else fail(`expected 401, got ${out.status}`, out.body);
 
 // ── pick a matter ─────────────────────────────────────────────────────
-const mt = await j(await fetch(`${SB}/rest/v1/matterspaces?select=id,name,ai_tier&limit=1`, { headers: H }));
+// Pick a matter THROUGH THE USER'S OWN SESSION (RLS), not the service role — the
+// assistant resolves the matter under the user's RLS, so a matter the user cannot
+// see fails with matter_not_found before any pen is chosen.
+const mt = await j(await fetch(`${SB}/rest/v1/matterspaces?select=id,name,ai_tier&order=created_at.asc&limit=1`, { headers: { apikey: ANON, Authorization: `Bearer ${jwt}` } }));
 const matter = mt.body?.[0];
 if (!matter) { console.log('no matter found'); process.exit(1); }
 const originalTier = matter.ai_tier;
