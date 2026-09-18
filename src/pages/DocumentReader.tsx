@@ -149,6 +149,23 @@ async function passageCountOf(documentId: string): Promise<number> {
     .eq('document_id', documentId);
   return count ?? 0;
 }
+// The indexed text of a document, in reading order — what ingest extracted
+// (or OCR'd). It is the copy fallback for a PDF whose own text layer is
+// empty: a scanned opinion selects nothing and pdf.js reads nothing, but
+// the words are here.
+async function indexedDocumentText(documentId: string): Promise<string> {
+  const { data } = await supabase
+    .from('passages')
+    .select('sequence_number, text')
+    .eq('document_id', documentId)
+    .eq('summary_level', 0)
+    .order('sequence_number', { ascending: true })
+    .limit(5000);
+  return ((data ?? []) as { text: string | null }[])
+    .map((p) => (p.text ?? '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
 async function sourceDocumentOf(documentId: string): Promise<string | null> {
   const { data } = await supabase.from('documents').select('metadata').eq('id', documentId).maybeSingle();
   const meta = (data as { metadata?: { source_document_id?: string | null } | null } | null)?.metadata;
@@ -874,6 +891,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // in the content pane below for the same reason — the painted layer's
   // styling is not the document's.
   const [copyState, setCopyState] = useState<'idle' | 'busy' | 'done' | 'failed'>('idle');
+  // Why the last copy failed, said in a banner: a copy that silently does
+  // nothing reads as "copy is broken" (2026-09-17). Every copy gesture —
+  // toolbar, popover, context menu — reports through copyState and this.
+  const [copyNote, setCopyNote] = useState<string | null>(null);
+  const copyResetRef = useRef<number | null>(null);
+  const settleCopy = useCallback((state: 'done' | 'failed', note: string | null = null) => {
+    setCopyState(state);
+    setCopyNote(note);
+    if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+    copyResetRef.current = window.setTimeout(() => {
+      setCopyState('idle');
+      setCopyNote(null);
+    }, state === 'failed' ? 6000 : 2000);
+  }, []);
+  const CLIPBOARD_REFUSED = 'The browser refused the clipboard write — click the page once, then copy again.';
   // The whole document's text, extracted once per document and kept:
   // extracting a long opinion outlives the browser's user-activation
   // window, and the clipboard write after it is refused — the click "did
@@ -890,14 +922,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (selected.trim()) {
       try {
         await writeClipboard(selected, selectionHtml(selected));
-        setCopyState('done');
+        settleCopy('done');
       } catch {
-        setCopyState('failed');
+        settleCopy('failed', CLIPBOARD_REFUSED);
       }
-      window.setTimeout(() => setCopyState('idle'), 2000);
       return;
     }
     setCopyState('busy');
+    setCopyNote(null);
+    let extracted = false;
     try {
       let cached = docTextRef.current && docTextRef.current.id === id ? docTextRef.current : null;
       if (!cached) {
@@ -913,22 +946,36 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           text = htmlPlainText(full);
           html = fileKind === 'docx' ? full : selectionHtml(text);
         }
-        if (!text) {
-          setCopyState('idle');
+        if (!text.trim() && id) {
+          // A scan: the PDF carries no text layer, so pdf.js read nothing.
+          // Ingest's OCR text is the document's words; copy that.
+          text = await indexedDocumentText(id);
+          html = selectionHtml(text);
+        }
+        if (!text.trim()) {
+          settleCopy(
+            'failed',
+            'Nothing to copy: this file has no text layer and no indexed text. Ingest it (OCR) and the words will be here.',
+          );
           return;
         }
         cached = { id, text, html };
         docTextRef.current = cached;
+        extracted = true;
       }
       await writeClipboard(cached.text, cached.html);
-      setCopyState('done');
+      settleCopy('done');
     } catch {
       // Usually the activation window closed during extraction; the text is
       // cached now, so the next click writes immediately.
-      setCopyState('failed');
+      settleCopy(
+        'failed',
+        extracted
+          ? 'The text is ready but the browser refused the clipboard after the wait — click Copy once more.'
+          : CLIPBOARD_REFUSED,
+      );
     }
-    window.setTimeout(() => setCopyState('idle'), 2000);
-  }, [copyState, loadState, fileKind, docHtml, titlePageHtml, id]);
+  }, [copyState, loadState, fileKind, docHtml, titlePageHtml, id, settleCopy, CLIPBOARD_REFUSED]);
 
   // ── Print ───────────────────────────────────────────────────────────
   // A PDF prints as itself: the original file into a hidden same-origin
@@ -1009,9 +1056,34 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const copySelection = useCallback(async () => {
     const sel = window.getSelection();
     const text = sel?.toString() ?? '';
-    if (!text.trim()) return;
-    await writeClipboard(text, selectionHtml(text));
-  }, []);
+    if (!text.trim()) {
+      settleCopy('failed', 'Nothing is selected — drag over the words first, then copy.');
+      return;
+    }
+    // The browser's own copy command first. It runs synchronously inside
+    // the click, needs no clipboard permission, and takes exactly the path
+    // Ctrl+C takes — the PDF intercept above, or the browser's default for a
+    // rendered .docx. The async Clipboard API is the fallback, not the
+    // route: a right-click → Copy that went through it alone came back
+    // with nothing on the clipboard for Eden (2026-09-17), and a refused
+    // write there was swallowed without a word.
+    let native = false;
+    try {
+      native = document.execCommand('copy');
+    } catch {
+      native = false;
+    }
+    if (native) {
+      settleCopy('done');
+      return;
+    }
+    try {
+      await writeClipboard(text, selectionHtml(text));
+      settleCopy('done');
+    } catch {
+      settleCopy('failed', CLIPBOARD_REFUSED);
+    }
+  }, [settleCopy, CLIPBOARD_REFUSED]);
 
   // Cover support — mirrors how Pages/Lists/Tables use CoverImage.
   // Expanded mode promotes the cover to the page background via a CSS var,
@@ -2023,7 +2095,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               copyState === 'done'
                 ? 'Copied — paste into Word or anywhere'
                 : copyState === 'failed'
-                  ? 'The copy did not go through — click again'
+                  ? (copyNote ?? 'The copy did not go through — click again')
                   : copyState === 'busy'
                     ? 'Copying…'
                     : 'Copy the selected text — or the whole document as clean text when nothing is selected'
@@ -2109,6 +2181,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         </div>
       </div>
 
+      {copyState === 'failed' && copyNote && (
+        <div className="flex items-center gap-3 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-red-400/10 text-red-300" role="status">
+          <span className="flex-1 min-w-0">{copyNote}</span>
+          <button onClick={() => { setCopyState('idle'); setCopyNote(null); }} className="opacity-70 hover:opacity-100" aria-label="Dismiss">
+            <X size={12} />
+          </button>
+        </div>
+      )}
       {savedCopy && (
         <div className="flex items-center gap-3 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-[#4ade80]/10 text-[#4ade80]">
           <span className="flex-1 min-w-0 truncate">Saved the edited copy "{savedCopy.filename}" beside this document.</span>
