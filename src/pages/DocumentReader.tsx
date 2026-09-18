@@ -1060,6 +1060,23 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       settleCopy('failed', 'Nothing is selected — drag over the words first, then copy.');
       return;
     }
+    // The browser's own copy command first. It runs synchronously inside
+    // the click, needs no clipboard permission, and takes exactly the path
+    // Ctrl+C takes — the PDF intercept above, or the browser's default for a
+    // rendered .docx. The async Clipboard API is the fallback, not the
+    // route: a right-click → Copy that went through it alone came back
+    // with nothing on the clipboard for Eden (2026-09-17), and a refused
+    // write there was swallowed without a word.
+    let native = false;
+    try {
+      native = document.execCommand('copy');
+    } catch {
+      native = false;
+    }
+    if (native) {
+      settleCopy('done');
+      return;
+    }
     try {
       await writeClipboard(text, selectionHtml(text));
       settleCopy('done');
