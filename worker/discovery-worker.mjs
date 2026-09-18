@@ -623,8 +623,11 @@ async function ingestDocument(job) {
   if (!doc.storage_path) throw new Error('document has no storage_path');
   // A ready document with a recorded text_status is stored-without-text, and
   // one with ocr_pending still owes OCR on some pages; a queued re-run of
-  // either is deliberate. Only a fully indexed document is skipped.
-  if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
+  // either is deliberate. Only a fully indexed document is skipped — unless
+  // the job was queued with force (ingest_document force: true), which is how
+  // a document indexed with the wrong text gets repaired (2026-09-18).
+  const forced = job.payload?.force === true;
+  if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending && !forced) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
   if (job.payload?.ocr_retry) log(`  ${doc.source_filename}: OCR retry ${job.payload.ocr_retry} for ${Array.isArray(doc.ocr_pending?.pages) ? doc.ocr_pending.pages.length + ' page(s)' : 'the scan'}`);
 
   await progress(job, 5, `Downloading ${doc.source_filename}`);
@@ -632,10 +635,13 @@ async function ingestDocument(job) {
   const ext = doc.source_filename?.includes('.')
     ? '.' + doc.source_filename.split('.').pop().toLowerCase() : '';
 
-  // Idempotency: a retried job (or a doc that failed mid-embed on a previous
-  // attempt) may have partial passages. Clear before re-running — same
-  // pattern as scripts/reingest.mjs.
-  await supabase.from('passages').delete().eq('document_id', docId);
+  // A forced re-run of a READY document swaps rather than wipes: its current
+  // passages stay searchable until the new run succeeds, and a run that fails
+  // leaves the row exactly as it was (lib/reprocess.mjs). Any other state is
+  // a document that never finished, whose partial passages are clutter — so
+  // idempotency there is the old way: clear, then run.
+  const swap = forced && doc.processing_status === 'ready';
+  if (!swap) await supabase.from('passages').delete().eq('document_id', docId);
 
   // OCR goes through the tier's routes (ocrProvider). Transcription stays on
   // Gemini; a recording longer than twenty minutes is cut into parts by
@@ -680,7 +686,7 @@ async function ingestDocument(job) {
 
   // Rough stage → progress mapping so the queue row tells a human story.
   const stagePct = { extracting: 20, chunking: 55, embedding: 75, ready: 99 };
-  const { passageCount } = await processDocument(supabase, {
+  const run = () => processDocument(supabase, {
     documentId: docId,
     fileBuf,
     ext,
@@ -691,6 +697,13 @@ async function ingestDocument(job) {
       progress(job, stagePct[stage] ?? 40, message).catch(() => {});
     },
   });
+  if (swap) {
+    const { reprocessInPlace } = await import('../lib/reprocess.mjs');
+    const { passageCount, replacedPassages } = await reprocessInPlace(supabase, docId, run);
+    log(`  ${doc.source_filename}: forced re-run — ${passageCount} passages, ${replacedPassages} old passage(s) replaced`);
+    return;
+  }
+  const { passageCount } = await run();
   log(`  ${doc.source_filename}: ${passageCount} passages`);
 }
 

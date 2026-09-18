@@ -5,10 +5,13 @@
 // passage cites p. 1" bug for depositions): the file is already in
 // Supabase Storage, but its passages were built with the old pipeline.
 // This script:
-//   1. Resets the document row's processing_status to 'pending'.
-//   2. Deletes all existing passages for the document.
-//   3. Re-downloads the original blob from vault-documents storage.
-//   4. Runs processDocument() with the current (fixed) ingest-core logic.
+//   1. Re-downloads the original blob from vault-documents storage.
+//   2. Runs processDocument() with the current (fixed) ingest-core logic.
+//   3. Swaps the new passages in for the old ones (lib/reprocess.mjs): the old
+//      passages are deleted only after the new run succeeds; a run that fails
+//      takes back what it wrote and restores the row as it was. (Until
+//      2026-09-18 this script deleted the passages FIRST, so a failed re-run
+//      left a good document empty.)
 //
 // Usage:
 //   node scripts/reingest.mjs <document_id> [<document_id> ...]
@@ -31,6 +34,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { reprocessInPlace } from '../lib/reprocess.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -83,17 +87,6 @@ async function reingestOne(documentId) {
   const ext = path.extname(doc.source_filename || doc.storage_path).toLowerCase();
   log(`  ext: ${ext}, bytes: ${fileBuf.length.toLocaleString()}`);
 
-  // Wipe the old passages and reset the row so processDocument can run cleanly.
-  await supabase.from('passages').delete().eq('document_id', documentId);
-  await supabase
-    .from('documents')
-    .update({
-      processing_status: 'pending',
-      processing_error: null,
-      ingested_at: null,
-    })
-    .eq('id', documentId);
-
   // Same Gemini hooks the production entry points wire, so a re-ingest can
   // never produce less than the original ingest did.
   let ocr;
@@ -109,7 +102,7 @@ async function reingestOne(documentId) {
     };
   }
 
-  const result = await processDocument(supabase, {
+  const result = await reprocessInPlace(supabase, documentId, () => processDocument(supabase, {
     documentId,
     fileBuf,
     ext,
@@ -117,8 +110,8 @@ async function reingestOne(documentId) {
     ocr,
     transcribe,
     onProgress: ({ stage, message }) => log(`  ${stage}: ${message}`),
-  });
-  log(`  ✓ ${result.passageCount} passages`);
+  }));
+  log(`  ✓ ${result.passageCount} passages (${result.replacedPassages} old passage(s) replaced)`);
   return result.passageCount;
 }
 
