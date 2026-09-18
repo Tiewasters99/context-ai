@@ -99,3 +99,29 @@ Account-level `data_retention`: **us-east-1 `none`** (set 08-27, confirmed); **u
   - **Effective mode**: every us-east-1 row is `none` (account setting, 08-27); every us-west-2 row is `default` (account `inherit`). A sealed pen in us-west-2 (Grok 4.6) needs the Region's account mode set to `none` first — one `PUT /v1/data_retention` with the new key, or the console. ⚠ Setting it makes Astra/Sol/Terra/Luna/5.x calls in that Region fail (they refuse `none`), which is the intended fence.
   - **Open**: whether Bedrock model access is enabled for the Claude 5 family in this account. The first run's per-id GETs said "not available for this account"; the catalog listing carries no availability field, so the listing does not answer it. Test = one InvokeModel/chat call, or the console's Model access page.
 - Probe fixes this run: ids containing `:` were percent-encoded in the path, which broke the SigV4 match (401); blank rows had hidden the 404/401 statuses. Both fixed.
+
+## Invoke tests 2026-09-18 (same key, after IAM grants for invoke on the classic plane)
+
+What actually answers a 5-token question, by plane, under account retention mode `none` (mantle: both Regions; classic: us-east-1):
+
+| Plane | Model / id | Result |
+|---|---|---|
+| mantle us-east-1 | `deepseek.v3.2` (`/v1/chat/completions`) | **200 "OK"** |
+| mantle us-east-1 | `openai.gpt-oss-20b` | 200 (answers; spends its budget on reasoning tokens) |
+| mantle us-east-1 | `anthropic.claude-opus-5`, `-opus-4-8`, `-sonnet-5`, `-haiku-4-5` (`/anthropic/v1/messages`) | 403 "not available for this account… contact AWS Sales"; catalog `status: unavailable` |
+| mantle us-west-2 | `xai.grok-4.6` | `/v1/responses` hangs to timeout (twice); `/v1/chat/completions` "isn't supported on this route"; `/v1/messages` 404 |
+| classic us-east-1 | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | **200 "OK"** (bare id → 400, on-demand needs the inference profile) |
+| classic us-east-1 + us-west-2 | `anthropic.claude-opus-5`, `-opus-4-8`, `-opus-4-7`, `-sonnet-5`, also `us.`/`global.` profiles | 403 "not available for this account" — while `GetFoundationModelAvailability` says AUTHORIZED + agreement AVAILABLE + entitlement AVAILABLE |
+| classic us-east-1 | `amazon.nova-lite-v1:0` (control) | 200 "OK." |
+
+Reading: the 08-28 agreements are in place and the account is entitled on paper, but AWS enforces a separate account-level gate on the
+Claude 5 generation (Opus 5, Opus 4.8, Opus 4.7, Sonnet 5) on both planes and both Regions. The only Anthropic model the account can run
+is Haiku 4.5, on the classic plane. That is an AWS Sales/support matter (case 178785685000654), not a configuration we can change.
+
+Consequences for the ladder:
+1. **Tier B today** = a sealed pen that is not Anthropic: `deepseek.v3.2` is verified end-to-end; `gpt-oss-120b`, `qwen3-235b-a22b-2507`,
+   `zai.glm-5`, `moonshotai.kimi-k2.5`, `minimax-m2.5`, `mistral-large-3-675b` are sealed-eligible by catalog and untested. `bedrockTurn`
+   speaks only the Anthropic Messages route; an OpenAI-compatible branch (`/v1/chat/completions`) plus a `BEDROCK_MODEL` override is the build.
+2. **Anthropic fallback** = Haiku 4.5 on the classic runtime (retention proof = classic `/data-retention` = `none` since 08-27) — not frontier.
+3. **Grok 4.6** stays on the bench until its mantle route works.
+4. Classic-plane retention in us-west-2 is still `inherit`; set it to `none` if a classic pen ever runs there.
