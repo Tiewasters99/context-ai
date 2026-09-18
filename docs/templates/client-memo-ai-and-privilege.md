@@ -37,7 +37,7 @@ If you have already used an AI assistant to discuss this matter, or shared our a
 
 **6. What we do on our side.**
 
-We use AI tools in our work, and we want you to know how. Your privileged material, meaning your communications with us and our own analysis and strategy, is kept in a sealed part of our system that runs on a model in our own account, with no vendor retention and no outside connections. The rest of the matter, meaning public filings, documents produced by the other side, and legal research, may be handled by commercial AI services under business terms that prohibit training on the material; those services may retain requests for a limited period under their own policies. We keep a record of which tools touched which documents and under what terms. If a court, an insurer, or you ever ask how AI was used on this matter, that record is the answer.
+We use AI tools in our work, and we want you to know how. Your privileged material, meaning your communications with us and our own analysis and strategy, is kept in a sealed part of our system that runs on a model in our own account, with no vendor retention and no outside connections. The rest of the matter, meaning public filings, documents produced by the other side, and legal research, may be handled by commercial AI services under business terms that prohibit training on the material; those services may retain requests for a limited period under their own policies. We keep a record of every AI session on this matter: which model, under what terms, and what it was asked to do. If a court, an insurer, or you ever ask how AI was used on this matter, that record is the answer.
 
 Questions about any of this: call me, or ask in the secure channel.
 
