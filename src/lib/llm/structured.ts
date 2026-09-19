@@ -2,6 +2,7 @@ import type { StructuredRequest, TokenUsage } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { llmAuthHeader } from './auth';
+import { llmErrorText } from './refusals';
 
 export interface GenerateStructuredOptions extends StructuredRequest {
   /** Model id from providers.ts (e.g. 'claude-opus-4-8'). */
@@ -50,12 +51,9 @@ export async function generateStructured<T = unknown>(options: GenerateStructure
 
   const text = await res.text();
   if (!res.ok) {
-    let detail = `Model API error (${res.status})`;
-    try {
-      const errBody = JSON.parse(text);
-      detail = errBody.error?.message || (typeof errBody.error === 'string' ? errBody.error : detail);
-    } catch { /* keep default */ }
-    throw new Error(detail);
+    let errBody: unknown = null;
+    try { errBody = JSON.parse(text); } catch { /* not JSON */ }
+    throw new Error(llmErrorText(res.status, errBody));
   }
 
   let responseJson: unknown;

@@ -19,6 +19,7 @@
 // never trusted from the client. Fails closed on missing auth config.
 
 import { gateLlmRequest } from '../lib/ai-tier-policy.mjs';
+import { sealedRouteFor } from '../lib/llm-sealed-route.mjs';
 
 const PROVIDER_ROUTES = {
   anthropic: {
@@ -75,16 +76,35 @@ export default async function handler(req, res) {
     provider,
     matterId,
   });
-  if (!gate.ok) return json(res, gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
-  const key = apiKey || process.env[route.envKey];
-  if (!key) return json(res, 400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` });
+
+  // SecureSpace sealed route (2026-09-19). A Tier-B matter admits exactly one
+  // provider — 'aws-bedrock' — and the browser cannot be trusted to pick it:
+  // only the server can read the matter's tier. So when the gate refuses a
+  // sealed matter's default pen, the sealed route is substituted here and the
+  // wire shape is translated in both directions (lib/llm-sealed-route.mjs).
+  // It returns null for every other outcome, so Tier A and Tier C reach the
+  // original forward below byte-identically. The substitution can only ever
+  // narrow: an untranslatable request or an unprovisioned sealed pen is
+  // REFUSED, never sent to the provider the client named.
+  const sealed = sealedRouteFor({ gate, provider, model, body });
+  if (sealed?.refusal) return json(res, sealed.refusal.status, sealed.refusal.body);
+  if (!sealed && !gate.ok) return json(res, gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
   if (typeof body !== 'string') return json(res, 400, { error: 'body must be a JSON string' });
 
   let upstream;
-  try {
-    upstream = await fetch(route.url(model), { method: 'POST', headers: route.headers(key), body });
-  } catch (err) {
-    return json(res, 502, { error: `proxy_error: ${err.message || 'fetch failed'}` });
+  if (sealed) {
+    upstream = await sealed.send();
+    res.setHeader('access-control-expose-headers', 'x-contextspaces-pen');
+    const penLabel = upstream.headers.get('x-contextspaces-pen');
+    if (penLabel) res.setHeader('x-contextspaces-pen', penLabel);
+  } else {
+    const key = apiKey || process.env[route.envKey];
+    if (!key) return json(res, 400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` });
+    try {
+      upstream = await fetch(route.url(model), { method: 'POST', headers: route.headers(key), body });
+    } catch (err) {
+      return json(res, 502, { error: `proxy_error: ${err.message || 'fetch failed'}` });
+    }
   }
 
   const passthroughType = upstream.headers.get('content-type') || 'application/json';
