@@ -17,6 +17,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 import { fetchStatute, fetchCase } from '../cite-check/lib/sources.mjs';
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -56,6 +57,20 @@ export default async function handler(req, res) {
   if (!cite.citation_bluebook && !cite.case_name) {
     return json(res, 400, { error: 'citation_bluebook or case_name required' });
   }
+
+  // Rate limit (migration 063). The four sources this proxies are free, so
+  // nothing is charged — but it is still OUR server making outbound requests
+  // from OUR IP on behalf of whoever signed up this morning, and a cite-check
+  // run is a loop. Four free databases rate-limiting or blocking Contextspaces
+  // is the failure this prevents.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'legal_source',
+    estimateCents: 0,
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
 
   // The SecureSpace seal. This route is a proxy to four third parties (Cornell
   // LII, eCFR, NY Senate, CourtListener), and the citation it forwards is the

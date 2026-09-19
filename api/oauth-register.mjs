@@ -12,10 +12,43 @@
 // a client is to revoke the access tokens it holds (refresh tokens'
 // signatures invalidate when the secret rotates).
 
+// Rate limit (2026-09-19, migration 063): this is the ONLY unauthenticated
+// endpoint in the product, and every call mints a client_id that is valid
+// until MCP_OAUTH_SECRET rotates. Anyone on the internet can POST it in a
+// loop. So unlike every other handler — which allows the request when the
+// meter cannot answer, because refusing a lawyer's work to protect a budget is
+// the worse failure — this one FAILS CLOSED: if the limiter exists and cannot
+// answer, the registration is refused.
+//
+// One carve-out, stated plainly: if the RPC is not deployed at all (migration
+// 063 not yet pasted), refusing every registration would break connector
+// sign-up with no security gained, so the per-instance limiter below holds the
+// line until the migration lands. It is one serverless isolate's memory and
+// therefore weak — it is a bridge, not the design.
+
 import { signJwt, getOauthSecret } from '../lib/oauth-jwt.mjs';
+import { consumeIpUsage, clientIp } from '../lib/usage-meter.mjs';
 
 const MAX_REDIRECT_URIS = 10;
 const ALLOWED_GRANT_TYPES = new Set(['authorization_code', 'refresh_token']);
+// Registration metadata is a handful of URIs; anything larger is not a client.
+const MAX_BODY_BYTES = 64 * 1024;
+
+// The bridge limiter: per isolate, per IP, per hour.
+const FALLBACK_MAX_PER_HOUR = 20;
+const fallbackHits = new Map();
+function fallbackAllows(ip) {
+  const hour = Math.floor(Date.now() / 3_600_000);
+  const key = `${hour}:${ip}`;
+  // The map only ever holds the current hour's keys.
+  if (fallbackHits.size > 5000) fallbackHits.clear();
+  for (const k of fallbackHits.keys()) {
+    if (!k.startsWith(`${hour}:`)) fallbackHits.delete(k);
+  }
+  const n = (fallbackHits.get(key) || 0) + 1;
+  fallbackHits.set(key, n);
+  return n <= FALLBACK_MAX_PER_HOUR;
+}
 
 export default async function handler(req, res) {
   // CORS
@@ -27,6 +60,35 @@ export default async function handler(req, res) {
     res.statusCode = 405;
     res.setHeader('content-type', 'application/json');
     return res.end(JSON.stringify({ error: 'method_not_allowed' }));
+  }
+
+  const ip = clientIp(req);
+  const limit = await consumeIpUsage({
+    supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+    serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    ip,
+    kind: 'oauth_register',
+  });
+  if (limit.undeployed) {
+    if (!fallbackAllows(ip)) {
+      res.setHeader('retry-after', '3600');
+      return json(res, 429, {
+        error: 'too_many_requests',
+        error_description: 'Too many registration requests from this address. Try again later.',
+      });
+    }
+  } else if (!limit.allowed) {
+    res.setHeader('retry-after', String(limit.retryAfterSeconds || 3600));
+    return json(res, 429, {
+      error: 'too_many_requests',
+      error_description: limit.message || 'Too many registration requests from this address. Try again later.',
+    });
+  }
+
+  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+  const bodyLimit = limit.maxRequestBytes || MAX_BODY_BYTES;
+  if (Buffer.byteLength(rawBody, 'utf8') > bodyLimit) {
+    return json(res, 413, { error: 'invalid_client_metadata', error_description: 'registration request too large' });
   }
 
   let secret;

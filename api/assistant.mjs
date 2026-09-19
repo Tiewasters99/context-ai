@@ -24,7 +24,9 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { runAssistantStream, bedrockCredsFromEnv } from '../lib/assistant-core.mjs';
+import { runAssistantStream, bedrockCredsFromEnv, PENS } from '../lib/assistant-core.mjs';
+import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -89,6 +91,29 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'messages (non-empty array) required' });
   }
 
+  // The spend cap (migration 063). Checked HERE, before a single SSE byte
+  // goes out: once the stream has started the only way to say no is an
+  // `error` event, and a budget refusal deserves a real status code the UI can
+  // route on. The estimate is one round's worth — the loop may take up to six,
+  // but this path reconciles against the real token counts below, so the
+  // pre-charge only has to be conservative enough to stop a user who is
+  // already over.
+  const bearer = userToken;
+  const meterUrl = SUPABASE_URL;
+  const meter = await consumeUsage({
+    supabaseUrl: meterUrl,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer,
+    kind: 'assistant',
+    estimateCents: estimateLlmCents({
+      provider: 'anthropic',
+      model: PENS.anthropic.model,
+      bodyText: JSON.stringify(messages).slice(0, 400_000),
+      maxOutputTokens: 4096,
+    }),
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
+
   // Stream the answer as Server-Sent Events. All validation above this point
   // returns a normal JSON status; once we start the stream we can only signal
   // failures as `error` events.
@@ -118,11 +143,35 @@ export default async function handler(req, res) {
       charterId,
     });
     emit({ type: 'done', ...result });
+    // Reconcile the estimate against what the turn really cost. The pens'
+    // prices are the ledger's own (PENS[*].pricePerM in lib/assistant-core),
+    // so the meter and the ai_sessions ledger can never disagree about a
+    // number. Best effort: a failure here must not spoil a delivered answer.
+    if (meter.eventId && result?.usage) {
+      await recordActualUsage({
+        supabaseUrl: meterUrl,
+        serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        eventId: meter.eventId,
+        cents: penCents(result.model, result.provider, result.usage),
+        model: result.model || null,
+        meta: { route: 'assistant', provider: result.provider || null, tier: result.tier || null, tokens: result.usage },
+      });
+    }
   } catch (err) {
     emit({ type: 'error', message: err?.message || 'assistant_failed' });
   } finally {
     res.end();
   }
+}
+
+/** The pen's own list price where the model is one of ours; the shared table otherwise. */
+function penCents(model, provider, usage) {
+  const pen = Object.values(PENS).find((p) => p.model === model);
+  if (pen?.pricePerM) {
+    const usd = ((usage.input || 0) * pen.pricePerM.input + (usage.output || 0) * pen.pricePerM.output) / 1e6;
+    return Math.max(0, Math.ceil(usd * 100));
+  }
+  return centsForTokens(model, provider, usage);
 }
 
 
