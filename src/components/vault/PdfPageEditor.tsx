@@ -169,6 +169,10 @@ export default function PdfPageEditor({ doc, onClose, onSaved }: Props) {
     card.style.top = `${Math.min(Math.max(8, r2.top), Math.max(8, h - r2.height - 8))}px`;
   }, [cardRef, isMobile]);
 
+  // A menu item or the view's close button unmounts under the pointer and
+  // takes the focus with it; hand it back so Esc and the arrows still work.
+  const refocus = () => cardRef.current?.focus({ preventScroll: true });
+
   const pickTileSize = (s: TileSize) => {
     setTileSize(s);
     try { localStorage.setItem(TILE_SIZE_KEY, s); } catch { /* private mode */ }
@@ -785,7 +789,7 @@ export default function PdfPageEditor({ doc, onClose, onSaved }: Props) {
                 <button className={`${barBtn} hover:text-red-300`} onClick={() => toggleDelete(viewer)} title={viewTile.deleted ? 'Keep this page' : 'Cut this page'}>
                   {viewTile.deleted ? <><Undo2 size={13} /> Keep</> : <><Trash2 size={13} /> Cut</>}
                 </button>
-                <button className={`${barBtn} ml-auto`} onClick={() => setViewer(null)} title="Back to all pages (Esc)" aria-label="Back to all pages"><X size={14} /></button>
+                <button className={`${barBtn} ml-auto`} onClick={() => { setViewer(null); refocus(); }} title="Back to all pages (Esc)" aria-label="Back to all pages"><X size={14} /></button>
               </div>
               <div
                 className="relative flex-1 min-h-0 flex items-center justify-center p-3"
@@ -893,7 +897,7 @@ export default function PdfPageEditor({ doc, onClose, onSaved }: Props) {
                 <button
                   key={item.label}
                   role="menuitem"
-                  onClick={() => { setMenu(null); item.run(); }}
+                  onClick={() => { setMenu(null); item.run(); refocus(); }}
                   className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left hover:bg-white/[0.07] hover:text-white"
                 >
                   <span className="text-white/55">{item.icon}</span>
