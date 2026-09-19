@@ -19,8 +19,13 @@ const TIER_B = {
   '{{tierCode}}': 'TIER B',
   '{{tierName}}': 'SEALED',
 };
+// The Tier-B pen menu, as a client should read it. Updated 2026-09-19 when
+// Fireworks left the sealed set: the sealed pen is a model in our own AWS
+// account under zero data retention, and first-party Claude is reachable
+// only as a per-call recorded escalation. Nothing else serves a sealed
+// matter \u2014 if the sealed pen is unavailable, the answer is a refusal.
 const MODELS = [
-  { name: 'Kimi K3', host: 'Fireworks \u00b7 US \u00b7 zero retention' },
+  { name: 'Sealed pen', host: 'our own AWS account \u00b7 zero data retention' },
   { name: 'Claude Opus', host: 'escalation \u00b7 logged per call' },
 ];
 
