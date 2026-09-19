@@ -9,15 +9,20 @@ import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
+import { canOpenSurface, type SurfaceId } from '@/lib/plan';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 
-const quickActions = [
-  { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace' as const },
+// `surface` is the entry in lib/plan.ts that decides who sees the action.
+// Creating a serverspace is the one onboarding step in the product, so it is
+// core and everybody gets it; the filter below exists so that the next quick
+// action cannot reach a free account without someone deciding it should.
+const quickActions: { label: string; icon: typeof Plus; action: 'new-serverspace'; surface: SurfaceId }[] = [
+  { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace', surface: 'serverspaces' },
 ];
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, plan } = useAuth();
   const navigate = useNavigate();
   const displayName = user?.user_metadata?.display_name ?? 'there';
 
@@ -258,7 +263,7 @@ export default function Dashboard() {
         </section>
 
         <div className="grid grid-cols-1 gap-3 mt-10">
-          {quickActions.map((a) => (
+          {quickActions.filter((a) => canOpenSurface(a.surface, plan)).map((a) => (
             <button
               key={a.label}
               onClick={() => { if (a.action === 'new-serverspace') setShowNewServerspace(true); }}
