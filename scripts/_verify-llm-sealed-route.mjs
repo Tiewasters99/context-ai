@@ -256,6 +256,24 @@ console.log('\nTier B — an OpenAI-shaped caller (the Editor on its Kimi route)
   if (nonBedrock().length === 0) pass('egress witness: api.fireworks.ai was NOT contacted'); else fail('a non-Bedrock host was contacted', nonBedrock());
 }
 
+console.log('\nTier B — an OpenAI-shaped STREAMING caller (the Workbench on GPT-4o)');
+{
+  withBedrock();
+  const res = await call({
+    tier: 'B', provider: 'openai', model: 'gpt-4o',
+    body: JSON.stringify({ model: 'gpt-4o', max_tokens: 4096, temperature: 0.7, stream: true, messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }] }),
+    upstream: bedrockOk(CANNED_TEXT),
+  });
+  // openaiAdapter.parseStreamEvent / isStreamDone (adapters.ts:84-93).
+  const text = res.text().split('\n').filter((l) => l.startsWith('data: ')).map((l) => l.slice(6).trim())
+    .filter((d) => d !== '[DONE]')
+    .map((d) => { try { return JSON.parse(d).choices?.[0]?.delta?.content ?? ''; } catch { return ''; } })
+    .join('');
+  eq('response: generate.ts reassembles the answer through the OpenAI adapter', text, 'The lease is responsive.');
+  if (res.text().includes('data: [DONE]')) pass('response: the stream ends with [DONE], which the OpenAI adapter recognises'); else fail('no [DONE] terminator', res.text().slice(-120));
+  if (nonBedrock().length === 0) pass('egress witness: api.openai.com was NOT contacted'); else fail('a non-Bedrock host was contacted', nonBedrock());
+}
+
 console.log('\nTier B — the Bedrock Messages route (BEDROCK_MODEL=anthropic.*)');
 {
   withBedrock();
@@ -303,6 +321,16 @@ console.log('\nTier B naming a non-sealed provider — never forwarded');
     if (!providerHosts().includes(forbidden)) pass(`tier B + ${provider} → ${forbidden} never contacted`);
     else fail(`${forbidden} was contacted on a sealed matter`, providerHosts());
   }
+  // The Moonshot sandbox is refused on EVERY matter-bound call, Tier A
+  // included. Sealing a matter must not make it more permissive than leaving
+  // it open, so it keeps the gate's own refusal rather than being substituted.
+  const m = await call({
+    tier: 'B', provider: 'moonshot', model: 'kimi-k3',
+    body: JSON.stringify({ model: 'kimi-k3', max_tokens: 4096, stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+  });
+  eq('tier B + moonshot → still 403 tier_violation, NOT substituted', [m.statusCode, m.json()?.error], [403, 'tier_violation']);
+  if (providerRequests().length === 0) pass('tier B + moonshot → egress witness: ZERO requests'); else fail('something was contacted', providerHosts());
+
   // Gemini's generateContent shape has no faithful translation; it is refused,
   // not approximated.
   const g = await call({
