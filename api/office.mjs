@@ -16,17 +16,96 @@
 // original file, no storage path, no download; the volume is capped so the
 // longest works trail off into "the rest stays in the vault."
 //
-// Auth: none (public, read-only). Runs on the service role because the
-// office tables have owner-only RLS — publishing is the explicit act of
-// setting published=true in the app, so serving those rows anonymously is
-// the feature, not a leak. CORS is open so the office front end can live
-// on any origin (today a local depth-parallax build; later its own domain).
+// Auth: none (public, read-only), but the room is NOT the whole database.
+// It runs on the service role because the office tables have owner-only
+// RLS, and the service role sees every tenant — so the one thing that
+// decides whose room this is cannot come from the caller. It comes from
+// the server: OFFICE_DEFAULT_OWNER_ID names the single owner whose
+// published office is public. Every query here is scoped to that owner,
+// and the rows are filtered again in memory before anything is shaped
+// (selectRoom / selectBook below) so a widened query can never widen the
+// room. Publishing in the app (published=true) says "show this in MY
+// office"; it does not, by itself, make anything public — a second
+// tenant's published items are invisible here, in the listing and in
+// ?book= alike, and become public only if the operator deliberately
+// points OFFICE_DEFAULT_OWNER_ID at them.
+//
+// Unconfigured is CLOSED, never open: with no valid OFFICE_DEFAULT_OWNER_ID
+// the office answers 503 and shows nothing at all.
+//
+// CORS is open so the office front end can live on any origin (today a
+// local depth-parallax build; later its own domain).
 
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// ---- whose room this is, and what belongs in it -------------------------
+// Pure, network-free, and exported so scripts/_verify-office-tenancy.mjs can
+// drive them with two owners' rows and prove the filtering.
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
+
+// The room's owner comes from the environment, never from the request.
+// Missing or malformed closes the office rather than opening it to everyone.
+export function resolveRoomOwner(env = process.env) {
+  const raw = (env.OFFICE_DEFAULT_OWNER_ID ?? '').toString().trim();
+  if (!raw) return { ok: false, reason: 'unset' };
+  if (!isUuid(raw)) return { ok: false, reason: 'invalid' };
+  return { ok: true, ownerId: raw.toLowerCase() };
+}
+
+const ownedBy = (ownerId, row) =>
+  Boolean(row) && typeof row.owner_id === 'string' && row.owner_id.toLowerCase() === ownerId;
+
+// The manifest: this owner's published items, on this owner's shelves.
+// Input order is the DB's order (sort_order, created_at) and is preserved.
+export function selectRoom({ ownerId, sections = [], items = [], jackets = new Map(), pages = new Map() }) {
+  if (!isUuid(ownerId)) return [];
+  const owner = ownerId.toLowerCase();
+  const bySection = {};
+  for (const it of items) {
+    if (!ownedBy(owner, it) || it.published !== true) continue;
+    (bySection[it.section_id] ??= []).push({
+      id: it.id,
+      title: it.title,
+      author: it.author,
+      excerpt: it.excerpt,
+      spine: it.spine,
+      cover: jackets.get(it.id) ?? null,
+      pages: pages.get(it.id)?.length ?? 0,
+      // whether ?book= will answer for this item — the document id itself
+      // stays behind the glass
+      readable: Boolean(it.document_id),
+    });
+  }
+  return sections
+    .filter((s) => ownedBy(owner, s))
+    .map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      title: s.title,
+      blurb: s.blurb,
+      items: bySection[s.id] ?? [],
+    }))
+    // an empty shelf is a back-office fact, not a public one
+    .filter((s) => s.items.length > 0);
+}
+
+// The reading room: the same rule as the listing, applied to one item.
+// Anything that is not this owner's published, readable item is simply
+// not on the shelves — one answer for missing, unpublished, and foreign.
+export function selectBook({ ownerId, item }) {
+  if (!isUuid(ownerId)) return null;
+  if (!ownedBy(ownerId.toLowerCase(), item)) return null;
+  if (item.published !== true) return null;
+  if (!item.document_id) return null;
+  return item;
+}
 
 // Jackets. A cover is the one image the glass lets through — it is what a
 // bookshop window shows. At publish time the app captures page one of a
@@ -85,6 +164,14 @@ export default async function handler(req, res) {
     return;
   }
 
+  // Whose office is open to the public. No owner, no office.
+  const room = resolveRoomOwner();
+  if (!room.ok) {
+    res.status(503).json({ error: 'The office is not open' });
+    return;
+  }
+  const ownerId = room.ownerId;
+
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -92,17 +179,25 @@ export default async function handler(req, res) {
   // ---- the reading room: ?book=<office_item_id> ---------------------------
   const bookId = (req.query?.book ?? '').toString().trim();
   if (bookId) {
-    const { data: item, error: itemError } = await supabase
+    // Validated before it reaches a service-role query: only a uuid can be
+    // an office item, and an unshaped string is not a filter we will run.
+    if (!isUuid(bookId)) {
+      res.status(404).json({ error: 'No such book on the shelves' });
+      return;
+    }
+    const { data: row, error: itemError } = await supabase
       .from('office_items')
       .select('id, title, author, document_id, published, owner_id')
       .eq('id', bookId)
+      .eq('owner_id', ownerId)
       .eq('published', true)
       .maybeSingle();
     if (itemError) {
       res.status(500).json({ error: itemError.message });
       return;
     }
-    if (!item || !item.document_id) {
+    const item = selectBook({ ownerId, item: row });
+    if (!item) {
       res.status(404).json({ error: 'No such book on the shelves' });
       return;
     }
@@ -143,7 +238,7 @@ export default async function handler(req, res) {
       chars += text.length;
       pages.push({ n: p.sequence_number, page: p.page_start ?? null, text });
     }
-    const images = await officeImages(supabase, [item.owner_id]);
+    const images = await officeImages(supabase, [ownerId]);
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     res.status(200).json({
       id: item.id,
@@ -161,12 +256,14 @@ export default async function handler(req, res) {
   const [sections, items] = await Promise.all([
     supabase
       .from('office_sections')
-      .select('id, kind, title, blurb, sort_order')
+      .select('id, kind, title, blurb, sort_order, owner_id')
+      .eq('owner_id', ownerId)
       .order('sort_order')
       .order('created_at'),
     supabase
       .from('office_items')
-      .select('id, section_id, title, author, excerpt, spine, sort_order, document_id, owner_id')
+      .select('id, section_id, title, author, excerpt, spine, sort_order, document_id, owner_id, published')
+      .eq('owner_id', ownerId)
       .eq('published', true)
       .order('sort_order')
       .order('created_at'),
@@ -176,32 +273,14 @@ export default async function handler(req, res) {
     return;
   }
 
-  const images = await officeImages(supabase, (items.data ?? []).map((it) => it.owner_id));
-  const bySection = {};
-  for (const it of items.data ?? []) {
-    (bySection[it.section_id] ??= []).push({
-      id: it.id,
-      title: it.title,
-      author: it.author,
-      excerpt: it.excerpt,
-      spine: it.spine,
-      cover: images.jackets.get(it.id) ?? null,
-      pages: images.pages.get(it.id)?.length ?? 0,
-      // whether ?book= will answer for this item — the document id itself
-      // stays behind the glass
-      readable: Boolean(it.document_id),
-    });
-  }
-  const out = (sections.data ?? [])
-    .map((s) => ({
-      id: s.id,
-      kind: s.kind,
-      title: s.title,
-      blurb: s.blurb,
-      items: bySection[s.id] ?? [],
-    }))
-    // an empty shelf is a back-office fact, not a public one
-    .filter((s) => s.items.length > 0);
+  const images = await officeImages(supabase, [ownerId]);
+  const out = selectRoom({
+    ownerId,
+    sections: sections.data ?? [],
+    items: items.data ?? [],
+    jackets: images.jackets,
+    pages: images.pages,
+  });
 
   // Let Vercel's edge cache absorb visitor traffic; a minute of staleness
   // is invisible next to the act of curating a library.
