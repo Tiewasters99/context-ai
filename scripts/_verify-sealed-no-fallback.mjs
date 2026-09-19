@@ -219,6 +219,21 @@ try {
   else fail('the escalation went ahead', hosts());
 } finally { restore(); }
 
+// A failure on the ESCALATION pen must NOT wear the sealed refusal's words:
+// that turn is deliberately outside the seal, so "the sealed pen could not
+// answer" and "no other model was asked" would both be false of it.
+witness(async () => new Response('{"type":"error","error":{"message":"bad request"}}', {
+  status: 400, headers: { 'content-type': 'application/json' },
+}));
+try {
+  const { ev } = await run({ tier: 'B', bedrockCreds: CREDS, escalate: true });
+  const e = ev('error');
+  if (e && e.code !== 'sealed_pen_error') pass('a failure on the escalation pen is NOT dressed up as a sealed-pen refusal');
+  else fail('escalation failure mislabelled', e);
+  if (!/never handed to a provider outside the seal/.test(e?.message ?? '')) pass('and does not claim the turn stayed inside the seal');
+  else fail('escalation failure copy is untrue', e?.message);
+} finally { restore(); }
+
 // ── 5/6. the other tiers are untouched ──────────────────────────────────
 console.log('\nTier A and Tier C unchanged');
 {
