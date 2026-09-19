@@ -310,12 +310,13 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             The Document Builder is still a stub (/app/document-builder).
 
             Plan gating (2026-09-19): because of that, every entry on this
-            rail — My Contextspace, Assistant, Productivity Suite,
-            Serverspaces, SecureSpaces, Connections, Settings — is CORE in
-            lib/plan.ts, so there is nothing here to hide and no filter to
-            write. If a non-core room is ever promoted to the rail, give it a
-            surface in lib/plan.ts and wrap its entry in
-            surfacePresentation(...) — do not re-decide it here. */}
+            rail is core — My Contextspace, the Assistant panel and the
+            SecureSpaces shelf have no gated route at all, and the Productivity
+            Suite, Connections and Settings are core surfaces in lib/plan.ts.
+            So there is nothing here to hide and no filter to write. If a
+            non-core room is ever promoted to the rail, give it a surface in
+            lib/plan.ts and wrap its entry in surfacePresentation(...) — do
+            not re-decide it here. */}
 
         {/* Productivity Suite */}
         <Link

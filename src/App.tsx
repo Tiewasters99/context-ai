@@ -81,13 +81,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 // lib/plan.ts — and asking it here means a new route is reachable by default
 // and only becomes gated when someone lists it there.
 //
-// It waits for the plan rather than guessing: redirecting on an unread plan
-// would bounce a workshop account off its own deep link on every cold load.
+// A path that is open to everyone never waits for the plan: the dashboard, a
+// matter, the Vault and the Suite render the moment the session is known, as
+// they always have. Only a path that some plan closes has to know the plan
+// first — and there it waits rather than guessing, because redirecting on an
+// unread plan would bounce a workshop account off its own deep link on every
+// cold load.
 function PlanRoute({ children }: { children: React.ReactNode }) {
-  const { plan, planLoading, loading } = useAuth();
+  const { plan, planLoading } = useAuth();
   const location = useLocation();
 
-  if (loading || planLoading) {
+  if (canOpenPath(location.pathname, 'free')) {
+    return <>{children}</>;
+  }
+
+  if (planLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <Spinner size="lg" />
