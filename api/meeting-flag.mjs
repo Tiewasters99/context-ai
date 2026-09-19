@@ -14,6 +14,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
+import { consumeUsage, recordActualUsage } from '../lib/usage-meter.mjs';
+import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
+
 const MODEL = process.env.CLAUDE_FLAG_MODEL || 'claude-opus-4-7';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -92,6 +95,23 @@ ${transcript}
 
 ${alreadyText ? `Already flagged (do not repeat):\n- ${alreadyText}\n\n` : ''}Return the JSON array now.`;
 
+  // Spend cap (migration 063). This one runs on a TIMER against a growing
+  // transcript, so it is the endpoint most likely to drain a budget while
+  // nobody is looking. Its refusal keeps this route's existing contract —
+  // silent, empty flags, a 200 — because a background scanner must not throw a
+  // 429 into a meeting the user is running. `throttled` is there for anyone
+  // debugging why the flags went quiet.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'meeting',
+    estimateCents: estimateLlmCents({
+      provider: 'anthropic', model: MODEL, bodyText: userText, maxOutputTokens: 1024,
+    }),
+  });
+  if (!meter.allowed) return json(res, 200, { flags: [], throttled: true, reason: meter.reason });
+
   const client = new Anthropic({ apiKey });
   try {
     const response = await client.messages.create({
@@ -109,6 +129,21 @@ ${alreadyText ? `Already flagged (do not repeat):\n- ${alreadyText}\n\n` : ''}Re
     });
     const block = response.content.find((b) => b.type === 'text');
     const text = block && 'text' in block ? block.text : '[]';
+    // Anthropic reports exact token counts here, so the conservative estimate
+    // is corrected to the truth before the answer is returned.
+    if (meter.eventId && response.usage) {
+      await recordActualUsage({
+        supabaseUrl: SUPABASE_URL,
+        serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        eventId: meter.eventId,
+        cents: centsForTokens(MODEL, 'anthropic', {
+          input: (response.usage.input_tokens || 0) + (response.usage.cache_creation_input_tokens || 0),
+          output: response.usage.output_tokens || 0,
+        }),
+        model: MODEL,
+        meta: { route: 'meeting-flag' },
+      });
+    }
     return json(res, 200, { flags: parseFlags(text) });
   } catch (err) {
     return json(res, 200, { flags: [], error: err?.message || 'flag failed' });

@@ -16,6 +16,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { ocrImages } from '../lib/ocr-gemini.mjs';
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateOcrCents } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -66,6 +68,19 @@ export default async function handler(req, res) {
       return json(res, 400, { error: `bad page entry: ${JSON.stringify(p)}` });
     }
   }
+
+  // Spend cap (migration 063). The page count is exact and the route is known
+  // (Gemini Flash, lib/ocr-gemini.mjs), so the estimate is the cost and there
+  // is nothing to reconcile. A casebook is hundreds of pages driven through
+  // this endpoint in batches of eight — precisely the loop a cap is for.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'ocr',
+    estimateCents: estimateOcrCents(pages.length, { route: 'gemini' }),
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
 
   const images = [];
   for (const p of pages) {

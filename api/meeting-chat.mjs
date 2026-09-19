@@ -16,6 +16,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateLlmCents } from '../lib/usage-prices.mjs';
+
 const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-7';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -112,6 +115,26 @@ export default async function handler(req, res) {
   }
 
   const transcript = (body.transcript || '').trim();
+
+  // Spend cap (migration 063), before the stream starts — this route sends a
+  // whole meeting transcript to Opus on every turn, with an 8,192-token
+  // answer and web search attached, which is among the most expensive single
+  // calls in the product. Checked here so a refusal is a status code rather
+  // than a half-written answer.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'meeting',
+    estimateCents: estimateLlmCents({
+      provider: 'anthropic',
+      model: MODEL,
+      bodyText: transcript + JSON.stringify(body.messages || []),
+      maxOutputTokens: 8192,
+    }),
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
+
   const system = transcript
     ? [
         { type: 'text', text: SYSTEM_INSTRUCTIONS },
