@@ -114,11 +114,26 @@ export default function GrokConnect() {
             workflow you point it at — same toolset Claude and Gemini get.
           </p>
 
+          <div className="mt-5 max-w-2xl rounded-lg border border-[#f0c850]/35 bg-[#f0c850]/5 px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">Not yet verified by us.</strong>{' '}
+            Contextspaces speaks one protocol to every client, and Claude and
+            ChatGPT both reach it. But nobody here has completed a round trip
+            from Grok to a working list of your matters, so treat the steps
+            below as what the protocol requires rather than as a walkthrough
+            someone has followed. If a menu doesn't match what you see, it is
+            this page that is out of date, not your account.
+          </div>
+
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-            Grok only sees what your token authorises — and Contextspaces' RLS
-            gates per-matter access regardless of which AI is asking. Revoke
-            any token at any time and access stops immediately.
+            A connector token carries your own access — no more, no less.
+            There is no per-matter setting on a token: whatever your
+            Contextspaces account can open, a client holding the token can
+            open, except matters kept in a SecureSpace, which are invisible to
+            every outside connector. It can read, search, file new documents
+            and organise them; it cannot delete a document or overwrite an
+            original. Revoke a token below and it stops working on the next
+            request.
           </div>
         </header>
 

@@ -1,7 +1,14 @@
 // The Connections surface — one home for every integration between
 // Contextspaces and the tools a lawyer works in.
 //
-// Claude Desktop (outbound) — state derived from connector_tokens.
+// Claude (outbound) — we can only see half of this. A connector token
+//   leaves a row in connector_tokens, so "Connected via token" is a fact we
+//   can check. An OAuth connection does not: /api/oauth-approve mints a
+//   stateless signed code and /api/oauth-token a stateless JWT, and neither
+//   writes a row anywhere. So there is nothing for this page to read, and it
+//   must not pretend otherwise — a user who just connected claude.ai over
+//   OAuth used to be told "Not connected". A true Connected badge needs the
+//   grants table planned for the revocation work.
 // Gmail and Google Calendar (inbound) — live OAuth connections, state
 //   from the connections table (migration 026); both run through the
 //   same /api/google-connect + /api/google-callback flow.
@@ -18,7 +25,12 @@ import {
   type Connection,
 } from '@/hooks/useConnections';
 
-type ConnState = 'connected' | 'not_connected' | 'needs_attention' | 'coming_soon';
+type ConnState =
+  | 'connected'
+  | 'token_active'
+  | 'not_connected'
+  | 'needs_attention'
+  | 'coming_soon';
 type GoogleKind = 'gmail' | 'google_calendar' | 'google_drive';
 
 function StateBadge({ state }: { state: ConnState }) {
@@ -26,6 +38,16 @@ function StateBadge({ state }: { state: ConnState }) {
     return (
       <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#4ade80]/15 text-[#4ade80]">
         Connected
+      </span>
+    );
+  }
+  // Narrower than "Connected", and true: a live connector token exists.
+  // It says nothing about whether any client is actually using it, and
+  // nothing about OAuth connections, which leave no record to read.
+  if (state === 'token_active') {
+    return (
+      <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#4ade80]/15 text-[#4ade80]">
+        Connected via token
       </span>
     );
   }
@@ -117,8 +139,9 @@ function GoogleConnectionRow({
 }
 
 // An outbound assistant connection (Claude, ChatGPT, Gemini, Grok) — a row
-// that navigates to a per-client setup page. Only Claude reports live state
-// today, so the badge is optional.
+// that navigates to a per-client setup page. The badge is optional and stays
+// omitted unless we have a fact to show: nothing about these connections is
+// recorded server-side except the connector tokens this account has issued.
 function AssistantRow({
   name,
   blurb,
@@ -185,7 +208,9 @@ export default function Connections() {
   const { data: connections = [] } = useConnections();
   const invalidateConnections = useConnectionsInvalidate();
 
-  const [claudeState, setClaudeState] = useState<ConnState>('not_connected');
+  // undefined = no badge. The only Claude state we can prove is a live
+  // connector token; anything else would be a guess printed as a fact.
+  const [claudeState, setClaudeState] = useState<ConnState | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
     () => {
@@ -213,7 +238,9 @@ export default function Connections() {
     }
   }, []);
 
-  // Claude Desktop state — derived from connector_tokens.
+  // connector_tokens is the only readable signal. A live row means a token
+  // is out there and will authenticate; no row means only that no token was
+  // issued — an OAuth connection made from inside Claude is invisible here.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -227,7 +254,7 @@ export default function Connections() {
           !t.revoked_at &&
           (!t.expires_at || new Date(t.expires_at).getTime() > now),
       );
-      setClaudeState(live ? 'connected' : 'not_connected');
+      setClaudeState(live ? 'token_active' : undefined);
     })();
     return () => {
       cancelled = true;
@@ -287,9 +314,11 @@ export default function Connections() {
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-xl leading-relaxed">
             One home for every connection between Contextspaces and the tools
-            you already work in. Connect once — Contextspaces keeps each
-            connection alive in the background, so you never handle a key or a
-            token yourself.
+            you already work in. Gmail, Calendar and Drive connect once and are
+            kept alive in the background. An AI assistant connects one of two
+            ways: over OAuth, where it signs in to Contextspaces itself and you
+            never see a token, or with a connector token you generate here and
+            paste into it.
           </p>
         </header>
 
@@ -314,9 +343,13 @@ export default function Connections() {
 
         <div className="flex flex-col gap-2">
           <AssistantRow
-            name="Claude Desktop"
+            name="Claude"
             state={claudeState}
-            blurb="Let Claude search your matters and cite them while you draft."
+            blurb={
+              claudeState === 'token_active'
+                ? 'A connector token is live. Connections Claude made over OAuth are managed in Claude.'
+                : 'Connect or manage in Claude — sign-in happens in the AI client, so Contextspaces has no status to show.'
+            }
             onClick={() => navigate('/app/connections/claude')}
           />
 
