@@ -67,25 +67,24 @@ export default async function handler(req, res) {
   const transcript = (body?.transcript || '').trim();
   if (transcript.length < 200) return json(res, 200, { flags: [] });
 
-  // The SecureSpace seal, same rule as /api/meeting-chat: Anthropic is a
-  // permitted (recorded) provider on Tier B, and no provider at all on Tier C.
-  // This route runs on a timer against the live transcript, so an ungated Tier
-  // C meeting would have been egressing continuously, unprompted.
-  if (body?.meeting_id) {
-    const { data: meeting } = await sb
-      .from('meetings').select('matterspace_id').eq('id', body.meeting_id).maybeSingle();
-    if (meeting?.matterspace_id) {
-      const { matterTierWithClient } = await import('../lib/ai-tier-policy.mjs');
-      let tier;
-      try {
-        tier = await matterTierWithClient(sb, meeting.matterspace_id);
-      } catch {
-        tier = null;
-      }
-      // Silent by design: this is a background scanner the user did not ask
-      // for, and an empty flag list is its normal quiet answer.
-      if (!tier || tier === 'C') return json(res, 200, { flags: [], sealed: true });
-    }
+  // The SecureSpace seal, the same decision as /api/meeting-chat and through
+  // the same policy function (lib/meeting-seal.mjs → providerAllowed). This
+  // route runs on a TIMER against the live transcript, so until 2026-09-19 a
+  // sealed meeting was egressing the whole transcript to first-party Anthropic
+  // every 90 seconds, unprompted and unrecorded — the tier was read and then
+  // acted on for Tier C only.
+  //
+  // Quiet by design: this is a background scanner the user did not ask for, and
+  // an empty flag list is its normal answer, so the refusal keeps the shape the
+  // client already handles and carries the reason alongside it for anything
+  // that wants to show it. Nothing is contacted — the return happens before the
+  // Anthropic client is constructed.
+  const { meetingModelDecision } = await import('../lib/meeting-seal.mjs');
+  const seal = await meetingModelDecision(sb, body?.meeting_id, { provider: 'anthropic' });
+  if (!seal.ok) {
+    return json(res, 200, {
+      flags: [], sealed: true, tier: seal.tier, reason: seal.code, message: seal.message,
+    });
   }
 
   const alreadyText = (body?.alreadyFlagged || []).slice(-20).join('\n- ');
