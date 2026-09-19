@@ -3,8 +3,9 @@
 //
 // OFFLINE (always runs, no network):
 //   1. bedrockCredsFromEnv — PASTE and missing values mean "unprovisioned".
-//   2. choosePen matrix — the Bedrock pen wins Tier B, escalation becomes
-//      moot, the fallbacks still work, and neither C nor A is affected.
+//   2. choosePen matrix — the Bedrock pen is the ONLY Tier-B pen, escalation
+//      becomes moot when it is frontier Claude, a server without it refuses
+//      rather than falling back, and neither C nor A is affected.
 //   3. The bedrockTurn driver against a stubbed global fetch: wire shape
 //      (host, path, SigV4 service, anthropic-version, body), SSE
 //      accumulation (text, tool_use input, thinking + signature), verbatim
@@ -63,11 +64,19 @@ pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: opusCreds, escalate: true })
 if (pen.provider === 'aws-bedrock' && pen.escalation === false) {
   pass('B + escalate + Claude on Bedrock → still Bedrock (frontier already inside the seal, nothing to record)');
 } else fail('escalate must not leave the seal when frontier Claude is the sealed pen', pen);
-pen = choosePen({ tier: 'B', ...KEYS });
-if (pen.provider === 'fireworks' && pen.escalation === false) pass('B without Bedrock → Kimi fallback unchanged');
-else fail('B fallback', pen);
+// 2026-09-19: there is no Fireworks fallback any more. A sealed matter on a
+// server without the Bedrock pen is REFUSED, even with anthropic and
+// fireworks keys sitting right there (lib/ai-tier-policy.mjs). Full coverage
+// of the no-fallback rule lives in scripts/_verify-sealed-no-fallback.mjs.
+try {
+  choosePen({ tier: 'B', ...KEYS });
+  fail('B without Bedrock must refuse — a key for another provider is not a sealed pen');
+} catch (err) {
+  if (err instanceof AssistantRefusal && err.code === 'sealed_pen_unavailable') pass('B without Bedrock → refusal, never Fireworks');
+  else fail('wrong refusal', { code: err.code, message: err.message });
+}
 pen = choosePen({ tier: 'B', ...KEYS, escalate: true });
-if (pen.provider === 'anthropic' && pen.escalation === true) pass('B without Bedrock + escalate → recorded escalation unchanged');
+if (pen.provider === 'anthropic' && pen.escalation === true) pass('B without Bedrock + explicit escalate → recorded escalation unchanged');
 else fail('B escalation fallback', pen);
 try {
   choosePen({ tier: 'B', anthropicKey: 'ak' });

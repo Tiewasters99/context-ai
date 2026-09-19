@@ -30,7 +30,7 @@ Contextspaces has the right shape: per-matter seal, three tiers (A frontier, B s
 | Mandatory click-to-verify citations before export | Not built. Maps cleanly onto W6 document-state gates. **Adopt** (Part 5). |
 | Defensible AI supervision log for carriers and bars | W1 append-only hash-chained ledger + W5 the matter's Record. Ranked CRITICAL already. The memo's framing is better sales language than ours. **Adopt the framing.** |
 | Constrained JSON decoding | Provider adapters handle structured output; irrelevant to hallucination (Part 4.5). |
-| Open-weight models to cut cost | Kimi K3 already a pen (Editor; Tier B fallback on Fireworks). BYOK tier exists, so token cost is the user's at the low end. |
+| Open-weight models to cut cost | Kimi already a pen — K2.5 inside the seal on Bedrock, K3 on Fireworks as a **Tier A** Editor choice (the Fireworks Tier-B fallback was removed 2026-09-19). BYOK tier exists, so token cost is the user's at the low end. |
 | Local inference for everyone | Not planned as the architecture. Planned as Tier C and as the 08-13 Ollama adapter (step 1) and Silo Matter (step 2). |
 | Hardware-as-a-service appliance at $249/mo | Not planned. Recommend never as our own lease book (Part 6). |
 
@@ -136,6 +136,7 @@ No architectural pivot. The memo describes, at its best, the shape Contextspaces
 Two honest concessions, because they are where the memo's suspicion is right today:
 
 - Tier B's allowlist still carries first-party `anthropic` (30-day retention) as a recorded escalation fallback for servers where the Bedrock pen is unprovisioned. The 09-10 roadmap already lists dropping it once the Bedrock pen is live-verified. Do that.
+  > **Done 2026-09-19.** Dropped, along with Fireworks. Tier B is `{aws-bedrock}`; an unprovisioned server refuses a sealed matter rather than serving it from outside the seal. The concession above is no longer owed.
 - Per the 08-25 research recorded in the seal-pipes memory, Anthropic's strongest models (Fable and Mythos 5) did not permit retention mode `none` on Bedrock; only Opus and Sonnet did. Re-verify before any client conversation, but as recorded, the strongest frontier model is unavailable inside the seal. That is a real limit of the contractual rung and worth stating plainly rather than hiding.
 
 The positioning line that answers the memo in one sentence is already in the Offering Memorandum's verification thesis: the answer to model risk is model neutrality plus a verifiable corpus that any model can be made to check and a human reviews, not the exclusion of the most capable models from the room.

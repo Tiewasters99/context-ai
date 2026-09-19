@@ -1,6 +1,10 @@
 export type AiTier = 'A' | 'B' | 'C';
 
-export function providerAllowed(tier: string, provider: string): boolean;
+export function providerAllowed(
+  tier: string,
+  provider: string,
+  opts?: { escalation?: boolean },
+): boolean;
 export function isEscalation(tier: string, provider: string): boolean;
 export function isSealedTier(tier: string | null | undefined): boolean;
 export function strongerTier(a: string | null | undefined, b: string | null | undefined): AiTier;
