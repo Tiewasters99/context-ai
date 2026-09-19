@@ -103,6 +103,28 @@ export async function mixedPdf({ marker4 = 'marmalade', marker5 = 'quixotic', ta
   ]);
 }
 
+// A scanned court filing as CM/ECF serves it (2026-09-18): every page a raster
+// with the body in the pixels only, and the court's header stamp burned on as
+// real text — the one line pdf-parse can read. Two such orders were indexed as
+// their stamps and nothing else. `words[i]` is the word a test looks for on
+// page i + 1 after OCR. The docket number is fictional.
+export const STAMP_CASE = 'Case 1:23-cv-04567-ABC';
+export function ecfStamp(page, of, docNo = 53) {
+  return `${STAMP_CASE}     Document ${docNo}     Filed 02/25/26     Page ${page} of ${of}`;
+}
+export async function stampedScanPdf({ words = ['tamarind', 'bergamot'], docNo = 53, tag = '' } = {}) {
+  const n = words.length;
+  return buildPdf(words.map((w, i) => ({
+    scan: [
+      i === 0 ? `ORDER ${tag}`.trim() : `Page ${i + 1} ${tag}`.trim(),
+      `The motion concerning the ${w} schedule is granted in part.`,
+      'The parties shall confer and submit a joint letter.',
+      'SO ORDERED.',
+    ],
+    stamp: ecfStamp(i + 1, n, docNo),
+  })));
+}
+
 // ---- Containers (Phase 3, gate G2) ------------------------------------------
 
 // A .zip from a plan of { path: bytes }. Directory entries are implied by the
