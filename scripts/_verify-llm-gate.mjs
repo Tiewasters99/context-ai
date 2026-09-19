@@ -3,8 +3,18 @@
 //   1. no token            -> 401
 //   2. token, no matter    -> passes through to a real (tiny) model call
 //   3. token + Tier-B matter + moonshot -> 403 tier_violation
-//   4. token + Tier-B matter + fireworks -> allowed
+//   4. token + Tier-B matter + fireworks -> 403 tier_violation (since
+//      2026-09-19: Tier B's only allowed provider is aws-bedrock, which
+//      /api/llm does not route at all, so EVERY browser-driven model call
+//      bound to a sealed matter is refused here — the Editor, Bucketizer,
+//      cite-check and Moot Bench included. Sealed chat lives at
+//      /api/assistant, which holds the Bedrock pen.)
+//   5. token + Tier-B matter + anthropic -> 403 tier_violation (there is no
+//      implicit escalation: the only escalation is /api/assistant's explicit
+//      per-request `escalate` flag, which is recorded)
 // Temporarily re-tiers one matter to B (service role) and RESTORES it.
+// The offline counterpart of cases 3–5 (no server, no secrets) is
+// scripts/_verify-sealed-no-fallback.mjs.
 import fs from 'node:fs/promises';
 
 const txt = await fs.readFile('C:/Users/equai/context-ai/.env', 'utf8');
@@ -72,13 +82,26 @@ try {
   if (g.status === 403 && g.body?.error === 'tier_violation') pass('sealed matter refuses moonshot (403 tier_violation)');
   else fail(`expected 403 tier_violation, got ${g.status}`, g.body);
 
-  // ── 4. sealed matter + fireworks -> allowed ─────────────────────────
+  // ── 4. sealed matter + fireworks -> 403 ─────────────────────────────
+  // Fireworks left the Tier-B set on 2026-09-19: its zero retention is real
+  // but its US hosting was never established, so it cannot carry a seal.
   g = await j(await fetch(API, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${jwt}` },
     body: JSON.stringify({ provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k2p6', body: tiny('accounts/fireworks/models/kimi-k2p6'), matterId: matter.id }),
   }));
-  if (g.status === 200 && g.body?.choices) pass('sealed matter allows the sealed pen (fireworks)');
-  else fail('sealed pen refused on sealed matter', { status: g.status, body: g.body });
+  if (g.status === 403 && g.body?.error === 'tier_violation') pass('sealed matter refuses fireworks (403 tier_violation)');
+  else fail('fireworks is no longer a sealed pen — expected 403', { status: g.status, body: g.body });
+
+  // ── 5. sealed matter + first-party anthropic -> 403 ─────────────────
+  // This route records nothing, so it can never earn an escalation. A
+  // sealed matter's text must not reach a 30-day-retention endpoint because
+  // some other key happened to be missing.
+  g = await j(await fetch(API, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${jwt}` },
+    body: JSON.stringify({ provider: 'anthropic', model: 'claude-opus-4-8', body: tiny('claude-opus-4-8'), matterId: matter.id }),
+  }));
+  if (g.status === 403 && g.body?.error === 'tier_violation') pass('sealed matter refuses first-party anthropic (403 tier_violation)');
+  else fail('first-party anthropic must not serve a sealed matter — expected 403', { status: g.status, body: g.body });
 } finally {
   await fetch(`${SB}/rest/v1/matterspaces?id=eq.${matter.id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ ai_tier: originalTier }) });
   const check = await j(await fetch(`${SB}/rest/v1/matterspaces?id=eq.${matter.id}&select=ai_tier`, { headers: H }));
