@@ -9,8 +9,9 @@
 //   1. no token                      → 401
 //   2. matter at tier A              → session event provider=anthropic; done
 //   3. same matter sealed to B       → the sealed pen: provider=aws-bedrock
-//      (Claude in our own AWS account, zero retention) when the server has
-//      its key, else provider=fireworks (Kimi K3)
+//      (our own AWS account, zero retention). That is the ONLY sealed pen
+//      since 2026-09-19 — a server without the BEDROCK_ keys refuses
+//      (sealed_pen_unavailable); run with --skip-b to assert that instead.
 //   3b. B + escalate:true            → aws-bedrock + escalation=false when
 //      Bedrock served step 3 (frontier already inside the seal — nothing to
 //      record); else provider=anthropic, escalation=true
@@ -27,7 +28,7 @@ for (const line of txt.split('\n')) {
 }
 const SB = env.VITE_SUPABASE_URL, SRK = env.SUPABASE_SERVICE_ROLE_KEY, ANON = env.VITE_SUPABASE_ANON_KEY;
 const API = process.argv[2] || 'https://www.contextspaces.ai/api/assistant';
-const SKIP_B = process.argv.includes('--skip-b'); // when no FIREWORKS key is configured on the target
+const SKIP_B = process.argv.includes('--skip-b'); // when the target has no BEDROCK_ keys: assert the refusal instead of an answer
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -89,7 +90,10 @@ if (!matter) { console.log('no matter found'); process.exit(1); }
 const originalTier = matter.ai_tier;
 console.log(`test matter: "${matter.name}" (tier ${originalTier})\n`);
 const PROMPT = 'Reply with exactly the single word: ready. Do not use any tools.';
-const SEALED_PENS = new Set(['aws-bedrock', 'fireworks']);
+// The sealed set is exactly one provider: a model in our own AWS account
+// under data_retention_mode=none. If a sealed matter is ever answered by
+// anything else, that is the bug this harness exists to catch.
+const SEALED_PENS = new Set(['aws-bedrock']);
 let sealedProvider = null; // which pen actually served step 3
 const sessions = [];
 const setTier = (t) => fetch(`${SB}/rest/v1/matterspaces?id=eq.${matter.id}`, { method: 'PATCH', headers: H, body: JSON.stringify({ ai_tier: t }) });
@@ -112,9 +116,9 @@ try {
   }
 
   // ── 3. tier B → the sealed pen ──────────────────────────────────────
-  // aws-bedrock (Claude, our AWS account, zero retention) when the server
-  // has BEDROCK_ keys; fireworks (Kimi K3) otherwise. The session event
-  // tells us which pen this server actually holds.
+  // aws-bedrock (our own AWS account, zero retention) — and nothing else.
+  // A server without the BEDROCK_ keys refuses (--skip-b asserts that);
+  // it does NOT quietly serve another provider.
   await setTier('B');
   if (SKIP_B) {
     out = await ask(matter.id, PROMPT);
