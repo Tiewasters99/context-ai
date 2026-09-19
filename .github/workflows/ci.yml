@@ -1,0 +1,132 @@
+name: CI
+
+# Every pull request, and every push that lands on main, gets the same
+# mechanical check Eden used to run by hand. Nothing here needs a secret: the
+# offline harnesses either stub fetch, or run the real migration files inside
+# PGlite (Postgres compiled to WASM), or just read source files and compare.
+#
+# What deliberately does NOT run here, and why, is written down in docs/CI.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    name: build + offline harnesses
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Nothing in this job drives a browser. Puppeteer is only used by LIVE
+      # harnesses (scripts/_verify-reader-pagination.mjs), which never run
+      # here, so skipping the Chromium download keeps `npm ci` short.
+      PUPPETEER_SKIP_DOWNLOAD: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 22
+        uses: actions/setup-node@v4
+        with:
+          # package.json engines says ">=22" and worker/Dockerfile pins
+          # node:22-slim, so 22 is the version the repo actually targets.
+          # It must stay >= 22.18: three harnesses import .ts modules from
+          # src/ and rely on Node's built-in type stripping.
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript build
+        run: npx tsc -b
+
+      - name: Vite build
+        run: npx vite build
+
+      # Lint is NON-BLOCKING on purpose. On main at b97d6c6 `npm run lint`
+      # reports 68 problems (60 errors, 8 warnings) — almost all
+      # react-hooks/set-state-in-effect and no-explicit-any in src/. Making it
+      # blocking today would fail every PR for pre-existing debt, and
+      # mass-fixing it belongs in its own change. When the count reaches zero,
+      # delete the continue-on-error line and this comment.
+      - name: ESLint (non-blocking — 60 pre-existing errors on main)
+        run: npm run lint
+        continue-on-error: true
+
+      # PGlite is a harness-only dependency: --no-save keeps it out of
+      # package.json exactly as the local drill does. Versions are pinned so a
+      # CI run and a local run execute the same Postgres.
+      - name: Install PGlite (harness-only, never a repo dependency)
+        run: npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9
+
+      # ---- offline harnesses -------------------------------------------
+      # `if: ${{ !cancelled() }}` so one red harness does not hide the rest;
+      # the job still fails, but the log shows every result.
+
+      - name: SecureSpace — seal pipes (stubbed fetch, egress witness)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-seal-pipes.mjs
+
+      - name: SecureSpace — Bedrock pen (offline sections; live section skips without keys)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-bedrock-pen.mjs
+
+      - name: SecureSpace — voyage-4 SageMaker route (SigV4 + request shape)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-voyage-route.mjs
+
+      - name: SecureSpace — sealed-embedding HOLD
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-embed-hold.mjs
+
+      - name: Agents — charter narrowing rule (offline part)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-agent-charter.mjs
+
+      - name: Agents — tool menu vs server charters
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-agent-tools.mjs
+
+      - name: Migration 057 — job priority (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-job-priority.mjs
+
+      - name: Migration 058 — recovery sweep at scale (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-recovery-sweep.mjs
+
+      - name: Migration 059 — ready_but_empty (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ready-but-empty.mjs
+
+      - name: Migration 060 — 'held' is terminal (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-held-status.mjs
+
+      - name: Migration 061 — search is model-scoped (PGlite + pgvector)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-model-scope.mjs
+
+      - name: Reader — reflow
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-reflow.mjs
+
+      - name: Reader — findQuote locator
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-findquote.mjs
+
+      # reader-copy.ts imports through the vite '@/' alias, which plain node
+      # cannot resolve; scripts/_node-src-loader.mjs teaches it to.
+      - name: Reader — clean copy extraction
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
