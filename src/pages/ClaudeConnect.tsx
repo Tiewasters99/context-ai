@@ -130,10 +130,11 @@ export default function ClaudeConnect() {
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
             Connect Contextspaces to{' '}
-            <strong className="text-[var(--color-text-bright)]">Claude Desktop</strong>{' '}
-            and the matters you've already loaded become part of any Claude
-            conversation — no uploading, no copy-pasting, no re-explaining the
-            case. Once Desktop Claude is enabled, you can:
+            <strong className="text-[var(--color-text-bright)]">Claude</strong>{' '}
+            — on the web, in the desktop app, or in Claude Code — and the
+            matters you've already loaded become part of any Claude
+            conversation: no uploading, no copy-pasting, no re-explaining the
+            case. Once the connector is in place, you can:
           </p>
           <ul className="mt-5 space-y-2.5 text-[var(--color-text-secondary)] leading-relaxed max-w-2xl">
             <li className="flex gap-3">
@@ -147,7 +148,7 @@ export default function ClaudeConnect() {
               <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
               <span>
                 <strong className="text-[var(--color-text-bright)]">Analyze cases</strong>{' '}
-                in matters you've shared with Claude.
+                in any matter your Contextspaces account can open.
               </span>
             </li>
             <li className="flex gap-3">
@@ -182,28 +183,119 @@ export default function ClaudeConnect() {
             <li className="flex gap-3">
               <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
               <span>
-                <strong className="text-[var(--color-text-bright)]">Perform agentic tasks</strong>{' '}
-                on your behalf — with any additional permissions you authorize.
+                <strong className="text-[var(--color-text-bright)]">File and organize work product</strong>{' '}
+                — create matters and folders, file new documents, move and
+                copy what's already stored, and assemble exhibits into one
+                PDF, all without leaving the conversation.
               </span>
             </li>
           </ul>
-          <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
-            <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-            Claude only sees the matters or sub-matters you specifically
-            authorize. If you like, you can grant access to your entire
-            Contextspace — or to just the smallest sub-matter. Your choice.
-            Revoke or modify permissions at any time.
+          <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed space-y-3">
+            <p>
+              <strong className="text-[var(--color-text-bright)]">What Claude can reach.</strong>{' '}
+              A connection carries your own access — no more, and no less.
+              Claude sees the matters your Contextspaces account can open,
+              reading the database as you do. There is no per-matter setting
+              to configure, and none to forget: if you can open it, so can a
+              connected Claude.
+            </p>
+            <p>
+              <strong className="text-[var(--color-text-bright)]">Except sealed matters.</strong>{' '}
+              A matter kept in a SecureSpace is invisible to every outside
+              connector. It does not appear in a matter list, it is left out
+              of a search that spans your workspace, and a direct request for
+              anything inside it is refused. Sealed work stays in the room.
+            </p>
+            <p>
+              <strong className="text-[var(--color-text-bright)]">What it can change.</strong>{' '}
+              Claude can file new documents, create matters and folders, move
+              and copy what is stored, and produce edited <em>copies</em> of a
+              PDF. It cannot delete a document or a matter, and it never
+              overwrites an original — every edit is filed as a new document.
+            </p>
+            <p>
+              <strong className="text-[var(--color-text-bright)]">Ending access.</strong>{' '}
+              A token you generate below can be revoked here, and stops
+              working on the next request. A connection Claude made over OAuth
+              is ended by removing the connector in Claude; tokens it already
+              holds stay valid until they expire (12 hours, and up to 30 days
+              for the refresh token).
+            </p>
           </div>
         </header>
 
-        {/* Desktop-first walkthrough */}
-        <section className="mb-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        {/* Primary path — the OAuth custom connector, no token involved */}
+        <section className="mb-6 rounded-lg border border-[var(--color-primary)]/40 bg-[var(--color-surface)] p-6">
           <h2
-            className="text-lg font-semibold text-[var(--color-text-bright)] mb-4"
+            className="text-lg font-semibold text-[var(--color-text-bright)] mb-2"
             style={{ fontFamily: 'Playfair Display Variable, serif' }}
           >
-            Claude Desktop, in three steps
+            Claude on the web — nothing to paste
           </h2>
+          <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-4">
+            claude.ai connects over OAuth. Claude sends you to Contextspaces to
+            sign in, you approve once, and Claude holds the credential itself —
+            there is no token to copy and none to keep safe. This is the
+            shortest path, and the one to prefer.
+          </p>
+          <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
+              <span>
+                In Claude's connector settings, add a custom connector with
+                this URL:
+                <span className="mt-2 flex items-center gap-2 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-3 py-2">
+                  <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
+                    {MCP_ENDPOINT_URL}
+                  </code>
+                  <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
+                </span>
+                <span className="block mt-2 text-xs text-[var(--color-text-muted)]">
+                  We don't name Claude's own menus here — Anthropic moves them
+                  between releases, and a wrong instruction is worse than
+                  none. Look for connectors in Claude's settings.
+                </span>
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
+              <span>
+                Claude opens a Contextspaces page in your browser. Sign in if
+                you aren't already — email and password, or the Google or
+                Apple account you signed up with.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
+              <span>
+                Read the consent screen. It names the client asking, the
+                account it will act as, and lists what it can do — read and
+                search your matters, file new documents, create folders, move
+                and copy what's stored, produce edited copies of PDFs — and
+                what it cannot: delete anything, overwrite an original, or see
+                a sealed matter. Approve, and the tools are live in Claude.
+              </span>
+            </li>
+          </ol>
+          <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
+            Use the address exactly as written, <code className="font-mono">www</code> and all:
+            some MCP clients drop the Authorization header when a host
+            redirects, and the bare domain redirects to this one.
+          </p>
+        </section>
+
+        {/* Token path — for clients that take a bearer header */}
+        <section className="mb-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+          <h2
+            className="text-lg font-semibold text-[var(--color-text-bright)] mb-2"
+            style={{ fontFamily: 'Playfair Display Variable, serif' }}
+          >
+            Claude Desktop and Claude Code — with a token
+          </h2>
+          <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-4">
+            Clients that take a bearer header instead of signing in use a
+            connector token you generate here.
+          </p>
           <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
@@ -230,12 +322,9 @@ export default function ClaudeConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
-                In Claude Desktop, open{' '}
-                <strong className="text-[var(--color-text-bright)]">
-                  Settings → Connectors → Add custom connector
-                </strong>
-                . Paste the URL and the token, name it{' '}
-                <em>Contextspaces</em>, and save. That's it.
+                In Claude Desktop's settings, add a custom connector, paste
+                the URL and the token, name it <em>Contextspaces</em>, and
+                save.
               </span>
             </li>
           </ol>
@@ -351,21 +440,11 @@ export default function ClaudeConnect() {
               {' '}— handy for terminal-first workflows.
             </p>
             <p>
-              <strong className="text-[var(--color-text-bright)]">claude.ai on the web</strong>{' '}
-              is temporarily unavailable as a connector target. Anthropic shipped
-              a regression in April that prevents any third-party MCP server —
-              including their own Salesforce integration — from connecting
-              through the web Custom Connector UI. Tracking{' '}
-              <a
-                href="https://github.com/anthropics/claude-ai-mcp/issues/155"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[var(--color-primary)] hover:underline"
-              >
-                upstream
-              </a>
-              ; Contextspaces will re-enable web support automatically as soon
-              as the fix ships — no action needed on your end.
+              <strong className="text-[var(--color-text-bright)]">Every client shares one endpoint.</strong>{' '}
+              The URL above is the whole integration. A client that can sign
+              in uses OAuth; a client that wants a header uses a token from
+              this page. Either way it reaches the same tools, as you, under
+              the same rules.
             </p>
           </div>
         </section>
