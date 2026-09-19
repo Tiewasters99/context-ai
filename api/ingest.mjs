@@ -116,6 +116,13 @@ export default async function handler(req, res) {
   // public.usage_monthly_pages (migration 063) is where the pages that were
   // actually read can be read back per user per month. True per-page metering
   // needs a usage_consume call inside the worker once #153 lands.
+  //
+  // So the CENTS charged here are the inline ones only — embedding the text,
+  // plus one OCR call for a scanned page that arrived as a JPEG or PNG. A
+  // scanned PDF leaves for the worker a few lines below without this function
+  // calling any provider, and charging it here for pages nobody has counted
+  // would refuse ordinary uploads to bill for work that happens elsewhere.
+  const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
   const ingestMeter = await consumeUsage({
     supabaseUrl: SUPABASE_URL,
     anonKey: SUPABASE_ANON_KEY,
@@ -123,7 +130,7 @@ export default async function handler(req, res) {
     kind: 'ingest',
     estimateCents: estimateIngestCents({
       bytes: doc.file_size_bytes || 0,
-      pageCount: doc.page_count ?? null,
+      ocrableImage: OCRABLE_IMAGE_EXTENSIONS.includes(ext0),
     }),
   });
   if (!ingestMeter.allowed) return sendUsageRefusal(res, ingestMeter);
@@ -134,7 +141,6 @@ export default async function handler(req, res) {
   // UI polls documents.processing_status either way, so queueing is invisible
   // to the caller. Files below the thresholds keep the fast inline path and
   // don't depend on worker uptime at all.
-  const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
   if (needsWorkerIngest(ext0, doc.file_size_bytes)) {
     const queued = await enqueueForWorker(sb, doc);
     if (queued) return json(res, 202, queued);

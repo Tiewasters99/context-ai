@@ -116,11 +116,12 @@ export default async function handler(req, res) {
   // bandwidth and our function-seconds — but charged nothing.
   const byok = Boolean(apiKey);
   const requestedOut = outputAllowanceOf(body, provider);
+  const estimateOutput = Math.min(requestedOut ?? 4096, ESTIMATE_OUTPUT_CAP);
   const estimateCents = byok ? 0 : estimateLlmCents({
     provider,
     model,
     bodyText: body,
-    maxOutputTokens: Math.min(requestedOut ?? 4096, ESTIMATE_OUTPUT_CAP),
+    maxOutputTokens: estimateOutput,
   });
 
   const meter = await consumeUsage({
@@ -140,7 +141,8 @@ export default async function handler(req, res) {
   }
 
   // The output clamp. Per tier, from the same table as the budget.
-  const { body: sendBody } = clampMaxTokens(body, provider, meter.maxOutputTokens);
+  const clamp = clampMaxTokens(body, provider, meter.maxOutputTokens);
+  const sendBody = clamp.body;
 
   let upstream;
   try {
@@ -186,10 +188,31 @@ export default async function handler(req, res) {
       if (done) break;
       res.write(Buffer.from(value));
     }
-    return res.end();
+    res.end();
+    await settleClampedStream();
+    return;
   }
   const text = await upstream.text();
-  return res.end(text);
+  res.end(text);
+  await settleClampedStream();
+  return;
+
+  // A streamed turn reports no token counts we are willing to parse, so its
+  // estimate stands — but if the clamp cut the output allowance down, the
+  // estimate was priced on an allowance the provider was never given. Correct
+  // it to what was actually sent. One extra RPC, only when the clamp bit.
+  async function settleClampedStream() {
+    if (byok || !meter.eventId || !clamp.clamped) return;
+    if (clamp.applied == null || clamp.applied >= estimateOutput) return;
+    await recordActualUsage({
+      supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+      serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      eventId: meter.eventId,
+      cents: estimateLlmCents({ provider, model, bodyText: body, maxOutputTokens: clamp.applied }),
+      model,
+      meta: { provider, route: 'llm', streamed: true, clamped_to: clamp.applied },
+    });
+  }
 }
 
 function json(res, status, obj) {

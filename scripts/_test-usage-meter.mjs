@@ -25,6 +25,7 @@ import {
   estimateLlmCents,
   estimateTtsCents,
   estimateOcrCents,
+  estimateIngestCents,
 } from '../lib/usage-prices.mjs';
 
 const ENV = { supabaseUrl: 'https://db.example.test', anonKey: 'anon-key' };
@@ -90,6 +91,23 @@ test('estimates round UP and are never negative', () => {
   const small = estimateLlmCents({ provider: 'anthropic', model: 'claude-opus-5', bodyText: 'hi', maxOutputTokens: 100 });
   const large = estimateLlmCents({ provider: 'anthropic', model: 'claude-opus-5', bodyText: 'hi', maxOutputTokens: 8192 });
   assert.ok(large > small);
+});
+
+test('ordinary uploads are not priced out of the month', () => {
+  // The free wallet is 1,500 cents. An earlier draft guessed a page count from
+  // the file size and charged every guessed page at the Anthropic-vision rate,
+  // which billed this 900 KB PDF 880 cents — 59% of the month for about a cent
+  // of real embedding, while the scanned PDF it was aimed at had already been
+  // routed to the worker. This is the regression test for that.
+  const pdf = estimateIngestCents({ bytes: 900_000, ocrableImage: false });
+  assert.ok(pdf <= 5, `a 900 KB born-digital PDF should cost pennies, got ${pdf}c`);
+  const docx = estimateIngestCents({ bytes: 15_000_000, ocrableImage: false });
+  assert.ok(docx <= 20, `a 15 MB document should not exceed any plan's month, got ${docx}c`);
+  // A scanned page that arrived as an image is one inline OCR call — the only
+  // provider call this function makes for a picture — so it costs something
+  // where a text file of no size costs nothing.
+  assert.equal(estimateIngestCents({ bytes: 0, ocrableImage: false }), 0);
+  assert.ok(estimateIngestCents({ bytes: 0, ocrableImage: true }) > 0);
 });
 
 // ---------------------------------------------------------------------------
