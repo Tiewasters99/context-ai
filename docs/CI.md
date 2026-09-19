@@ -76,6 +76,32 @@ have. Run them by hand from a checkout that does.
 | `_verify-reflow-spacing.mjs` | Fetches a real book from prod `/api/office`, and shells out to `git` to build the `origin/main` comparison. |
 | `_verify-ocr-routes.mjs` | Its plan-only mode does run offline, but it asserts nothing and always exits 0 — it just reports which OCR routes this environment has keys for. The proof is `--live`, which needs keys and costs money. Not a gate. |
 
+### Offline, but not yet a gate — the `_test-*` probes
+
+These ten were run once on `main` at `b97d6c6` with no `.env` present and all
+exit 0. They are not in the workflow yet: the ones marked **prints only** have
+no failure path — they exit 0 whatever they find, so adding them would buy a
+green tick and no signal. Each needs an exit code before it becomes a step;
+that is a follow-up, not this change.
+
+| Probe | Exits non-zero on failure? |
+| --- | --- |
+| `_test-desk-text.mjs` | yes |
+| `_test-docx-redline.mjs` | yes |
+| `_test-rate-limit.mjs` | yes |
+| `_test-triage.mjs` | yes |
+| `_test-pdf-portfolio.mjs` | yes |
+| `_test-embed-shrink.mjs` | **prints only** |
+| `_test-transcript-parse.mjs` | **prints only** |
+| `_test-ingest-containers.mjs` | **prints only** |
+| `_test-ingest-ocr.mjs` | **prints only** |
+| `_test-ocr-routes.mjs` | **prints only** (stubbed hosts) |
+
+The rest of `scripts/` is live by construction and belongs in the table above:
+`_test-ingest-formats.mjs`, `_test-tiff-ocr.mjs` and `_test-kimi-editor.mjs`
+read `.env` (the last calls Fireworks and Moonshot), and every `_smoke-*.mjs`
+runs against prod.
+
 Two corrections to the ship-readiness audit of 2026-09-19
 (`02-securespace.md`, Definition of Done item 1): it lists `_verify-llm-gate`
 and `_verify-mcp-seal` among the harnesses to run in CI. Both are LIVE — each
