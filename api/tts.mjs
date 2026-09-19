@@ -10,6 +10,9 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateTtsCents } from '../lib/usage-prices.mjs';
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const MAX_CHARS = 4000;
@@ -44,6 +47,19 @@ export default async function handler(req, res) {
 
   const text = String(req.body?.text ?? '').slice(0, MAX_CHARS).trim();
   if (!text) return json(res, 400, { error: 'empty_text' });
+
+  // Spend cap (migration 063). Speech is billed per character, so the estimate
+  // IS the cost — there is nothing to reconcile afterwards. The rate window
+  // matters more than the money here: a loop calling this endpoint is what
+  // turns a 6-cent feature into a bill.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'tts',
+    estimateCents: estimateTtsCents(text.length),
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
 
   const speak = (body) =>
     fetch('https://api.openai.com/v1/audio/speech', {

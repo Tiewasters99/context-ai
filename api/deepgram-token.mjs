@@ -18,6 +18,9 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateDeepgramSessionCents } from '../lib/usage-prices.mjs';
+
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 
@@ -81,6 +84,21 @@ export default async function handler(req, res) {
       }
     }
   }
+
+  // Spend cap (migration 063), after the seal check so a refused meeting is
+  // never charged. This endpoint hands out a credential rather than doing the
+  // work, so what is metered is the SESSION it opens, charged at a
+  // conservative assumed length. That is the honest shape of the exposure:
+  // the minutes are spent on Deepgram's side, out of this function's sight,
+  // and the only moment we can say no is now.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'transcribe',
+    estimateCents: estimateDeepgramSessionCents(),
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
 
   const grantRes = await fetch('https://api.deepgram.com/v1/auth/grant', {
     method: 'POST',
