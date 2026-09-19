@@ -1,11 +1,18 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import type { User, Session, AuthError } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { asPlan, type Plan } from '@/lib/plan'
 
 interface AuthContextType {
   user: User | null
   session: Session | null
   loading: boolean
+  /** The account's plan, from profiles.pricing_tier. null until it is known. */
+  plan: Plan | null
+  /** True while the profile row for the current session is still being read. */
+  planLoading: boolean
+  /** The plan that sees every surface — Eden's own account. */
+  isWorkshop: boolean
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>
   signUpWithEmail: (email: string, password: string, displayName: string) => Promise<{ error: AuthError | null }>
   signInWithGoogle: () => Promise<{ error: AuthError | null }>
@@ -20,6 +27,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [plan, setPlan] = useState<Plan | null>(null)
+  const [planLoading, setPlanLoading] = useState(true)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -36,6 +45,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe()
   }, [])
+
+  // The plan is read once per session, keyed on the user id — a token refresh
+  // fires onAuthStateChange again with the same id and must not re-fetch.
+  //
+  // Until the row is in, `plan` stays null and `planLoading` is true, and the
+  // surfaces that read it render nothing rather than a frozen tile that
+  // vanishes a moment later. Anything unexpected — no row yet on a brand-new
+  // signup, an RLS refusal, a network failure — settles on 'free', the
+  // focused core: a failed read must never be a way in.
+  useEffect(() => {
+    const uid = user?.id
+    if (!uid) {
+      setPlan(null)
+      setPlanLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setPlan(null)
+    setPlanLoading(true)
+
+    void (async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('pricing_tier')
+        .eq('id', uid)
+        .maybeSingle()
+      if (cancelled) return
+      if (error) console.error('plan:', error.message)
+      setPlan(asPlan(data?.pricing_tier))
+      setPlanLoading(false)
+    })()
+
+    return () => { cancelled = true }
+  }, [user?.id])
 
   const signInWithEmail = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
@@ -87,6 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         session,
         loading,
+        plan,
+        planLoading,
+        isWorkshop: plan === 'workshop',
         signInWithEmail,
         signUpWithEmail,
         signInWithGoogle,
