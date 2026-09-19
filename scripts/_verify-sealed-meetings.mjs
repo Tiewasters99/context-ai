@@ -251,7 +251,9 @@ try {
   check(sent?.system?.[1]?.text?.includes('<meeting_transcript>') && sent.system[1].text.includes('Reyes:'),
     'the transcript still travels in the <meeting_transcript> block', sent?.system?.[1]?.text?.slice(0, 60));
   check(sent?.system?.[1]?.cache_control?.type === 'ephemeral', 'the transcript is still an ephemeral cache breakpoint', sent?.system?.[1]?.cache_control);
-  check(sent?.tools?.[0]?.name === 'web_search', 'web_search is still attached on an unsealed meeting', sent?.tools);
+  check(sent?.output_config?.effort === 'high', 'same effort setting', sent?.output_config);
+  check(sent?.tools?.[0]?.name === 'web_search' && sent.tools[0].type === 'web_search_20260209' && sent.tools[0].max_uses === 5,
+    'web_search is still attached on an unsealed meeting, same tool version and budget', sent?.tools);
   check(sent?.messages?.[0]?.content === 'What should I push back on?', 'the chat history is still forwarded', sent?.messages);
   check(res.text.includes('Push back on the 3.1 figure.'), 'the answer still streams back to the client', res.text);
   check(res.statusCode === 200, 'status 200', res.statusCode);
