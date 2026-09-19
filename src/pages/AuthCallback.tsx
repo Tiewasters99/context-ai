@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Spinner from '@/components/ui/Spinner';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,17 +19,27 @@ export default function AuthCallback() {
   const { user, loading } = useAuth();
   const [waited, setWaited] = useState(false);
 
+  // Reading the parked request consumes it, so this effect must decide
+  // exactly once. It runs more than once in practice: onAuthStateChange
+  // fires INITIAL_SESSION and then SIGNED_IN with different session
+  // objects, and StrictMode double-invokes effects in development. A
+  // second pass would find an empty stash and send the visitor to /app,
+  // overriding the redirect the first pass just made.
+  const routed = useRef(false);
+
   useEffect(() => {
     const t = setTimeout(() => setWaited(true), 4000);
     return () => clearTimeout(t);
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    if (loading || routed.current) return;
     if (user) {
+      routed.current = true;
       const pending = takeAuthorizeRequest();
       navigate(pending ? `${AUTHORIZE_PATH}${pending}` : '/app', { replace: true });
     } else if (waited) {
+      routed.current = true;
       navigate('/auth?error=oauth_failed', { replace: true });
     }
   }, [loading, user, waited, navigate]);

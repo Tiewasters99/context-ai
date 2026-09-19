@@ -274,7 +274,7 @@ export default function OAuthAuthorize() {
         </ul>
         <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider pt-2">It will NOT be able to:</p>
         <ul className="space-y-1.5 text-[12px] text-white/80">
-          <li className="flex items-start gap-2"><X size={12} className="text-red-300 shrink-0 mt-0.5" /> Delete a document, a matter or a passage. There is no tool that deletes your work.</li>
+          <li className="flex items-start gap-2"><X size={12} className="text-red-300 shrink-0 mt-0.5" /> Delete a document or a matter. There is no tool that deletes your work.</li>
           <li className="flex items-start gap-2"><X size={12} className="text-red-300 shrink-0 mt-0.5" /> Overwrite a stored original. Every edit is filed as a new document; the source stays exactly as it was.</li>
           <li className="flex items-start gap-2"><X size={12} className="text-red-300 shrink-0 mt-0.5" /> See a sealed (SecureSpace) matter. Sealed matters are invisible to every outside connector.</li>
           <li className="flex items-start gap-2"><X size={12} className="text-red-300 shrink-0 mt-0.5" /> See matters you aren't a member of — it reads the database as you, under the same rules as your own browser session.</li>
@@ -282,9 +282,10 @@ export default function OAuthAuthorize() {
         </ul>
       </div>
       <p className="text-[11px] text-white/40 mb-4">
-        To end this access, remove the Contextspaces connector in {clientName}. Tokens already issued stay
-        valid until they expire — 12 hours, and up to 30 days for the refresh token. Revoking one
-        connection from inside Contextspaces is not built yet.
+        To end this access, remove the Contextspaces connector in {clientName}, which is what stops it
+        asking for more. A token already issued stays valid for 12 hours, and the renewal token that
+        comes with it is replaced each time the client uses it — so access ends when the client stops,
+        not on a fixed date. Revoking one connection from inside Contextspaces is not built yet.
       </p>
       {submitError && (
         <p className="text-[12px] text-red-300 mb-3 flex items-start gap-1.5">

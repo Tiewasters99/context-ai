@@ -217,9 +217,11 @@ export default function ClaudeConnect() {
               <strong className="text-[var(--color-text-bright)]">Ending access.</strong>{' '}
               A token you generate below can be revoked here, and stops
               working on the next request. A connection Claude made over OAuth
-              is ended by removing the connector in Claude; tokens it already
-              holds stay valid until they expire (12 hours, and up to 30 days
-              for the refresh token).
+              is ended by removing the connector in Claude — that is what stops
+              it asking for more. A token it already holds stays valid for 12
+              hours, and the renewal token that comes with it is replaced each
+              time it is used, so access ends when the client stops rather
+              than on a fixed date.
             </p>
           </div>
         </header>
@@ -579,12 +581,8 @@ function NewTokenModal({
 
         {/* What to do */}
         <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-          In Claude Desktop, open{' '}
-          <strong className="text-[var(--color-text-bright)]">
-            Settings → Connectors → Add custom connector
-          </strong>
-          . Paste the two values below, name it{' '}
-          <em>Contextspaces</em>, and save.
+          In Claude Desktop's settings, add a custom connector, paste the two
+          values below, name it <em>Contextspaces</em>, and save.
         </p>
 
         {/* Endpoint URL */}
