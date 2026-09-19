@@ -1,8 +1,13 @@
+import type { Plan } from './plan';
+
 // Core enums
 export type SpaceType = 'contextspace' | 'serverspace' | 'matterspace';
 export type ContentType = 'page' | 'list' | 'database' | 'document';
 export type AssistantMode = 'blind' | 'observer' | 'collaborative';
-export type PricingTier = 'free' | 'pro' | 'max';
+// The column is profiles.pricing_tier; what each value lets you see lives in
+// lib/plan.ts, which is the single definition. 'workshop' arrived with
+// migration 062.
+export type PricingTier = Plan;
 export type MemberRole = 'owner' | 'admin' | 'member' | 'viewer';
 
 // Entities

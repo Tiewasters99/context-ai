@@ -118,19 +118,34 @@ export default function GeminiConnect() {
             same toolset Claude gets, no copy-pasting between surfaces.
           </p>
           <div className="mt-5 max-w-2xl rounded-lg border border-[#f0c850]/35 bg-[#f0c850]/5 px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-            <strong className="text-[var(--color-text-bright)]">Heads-up:</strong>{' '}
-            Google is sunsetting the legacy Gemini CLI for Google One and
-            unpaid tiers on <strong>2026-06-18</strong>. Antigravity is the
-            replacement — same models, same MCP protocol, slightly different
-            config file. If you're still on Gemini CLI, the legacy snippet is
-            at the bottom of this page.
+            <strong className="text-[var(--color-text-bright)]">Not yet verified by us.</strong>{' '}
+            Contextspaces speaks one protocol to every client, and Claude and
+            ChatGPT both reach it. But nobody here has completed a round trip
+            from Gemini to a working list of your matters, so treat the steps
+            below as what the protocol requires rather than as a walkthrough
+            someone has followed. If a menu doesn't match what you see, it is
+            this page that is out of date, not your account.
+          </div>
+
+          <div className="mt-5 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">If you're on the legacy Gemini CLI:</strong>{' '}
+            Google set <strong>2026-06-18</strong> as the retirement date for
+            Google One and unpaid tiers — a date now past. Antigravity is the
+            replacement: same models, same MCP protocol, slightly different
+            config file. The legacy snippet is still in the token dialog if
+            your install predates the switch.
           </div>
 
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-            Gemini only sees what your token authorises — and Contextspaces' RLS
-            gates per-matter access regardless of which AI is asking. Revoke
-            any token at any time and access stops immediately.
+            A connector token carries your own access — no more, no less.
+            There is no per-matter setting on a token: whatever your
+            Contextspaces account can open, a client holding the token can
+            open, except matters kept in a SecureSpace, which are invisible to
+            every outside connector. It can read, search, file new documents
+            and organise them; it cannot delete a document or overwrite an
+            original. Revoke a token below and it stops working on the next
+            request.
           </div>
         </header>
 
@@ -341,8 +356,8 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
           Paste the JSON below (under <em>Advanced</em>) into{' '}
           <code className="font-mono text-xs">~/.gemini/config/mcp_config.json</code>{' '}
           and run <code className="font-mono">agy</code>. If you're still on
-          the legacy Gemini CLI (sunsetting 2026-06-18 for free tiers), see
-          the legacy snippet near the bottom of this dialog.
+          the legacy Gemini CLI (retirement date for free tiers was
+          2026-06-18), see the legacy snippet near the bottom of this dialog.
         </p>
 
         <div className="mb-4">
@@ -386,7 +401,7 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
                 className="mt-4 text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5"
               >
                 <ChevronRight size={12} className={`transition-transform ${showLegacy ? 'rotate-90' : ''}`} />
-                Legacy Gemini CLI snippet (sunsets 2026-06-18 for free tiers)
+                Legacy Gemini CLI snippet (free-tier retirement date: 2026-06-18)
               </button>
               {showLegacy && (
                 <div className="mt-3">

@@ -16,6 +16,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateLlmCents } from '../lib/usage-prices.mjs';
+
 const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-7';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -74,44 +77,54 @@ export default async function handler(req, res) {
   }
 
   // The SecureSpace seal. The transcript below is the meeting itself, verbatim,
-  // and this route has never consulted a tier — it went straight to Anthropic
-  // with a web_search tool attached. Two things follow from the tier policy
-  // (lib/ai-tier-policy.mjs), which already has an answer for this provider:
+  // and it is about to be handed to first-party Anthropic. Whether that may
+  // happen at all is decided by the tier policy, through the SAME function the
+  // /api/llm gate calls (providerAllowed, lib/ai-tier-policy.mjs) — one policy,
+  // not a second one written out here.
   //
-  //   Tier C (silo)  — no cloud provider is permitted. Refuse.
-  //   Tier B (sealed) — Anthropic IS permitted, as a recorded escalation. The
-  //                     model call stands; what does not is web_search, which
-  //                     would turn the transcript into queries against the open
-  //                     web. Dropped for sealed meetings.
+  // What this replaces: the route used to read the tier and act on it only for
+  // Tier C. A Tier-B (SEALED) meeting set a flag that dropped `web_search` and
+  // then sent the whole transcript to api.anthropic.com regardless — no
+  // escalation, no record. Since Tier B admits nothing but the sealed Bedrock
+  // route (2026-09-19), a sealed meeting is now refused here and NOTHING is
+  // contacted: the refusal is returned before any provider client exists.
   //
-  // The meeting id is what binds this to a matter (meetings.matterspace_id,
-  // migration 019). Without one there is nothing to check — the same rule
-  // /api/llm applies to an unbound draft.
-  let sealedMeeting = false;
-  if (body.meeting_id) {
-    const { data: meeting } = await sb
-      .from('meetings').select('matterspace_id').eq('id', body.meeting_id).maybeSingle();
-    if (meeting?.matterspace_id) {
-      const { matterTierWithClient } = await import('../lib/ai-tier-policy.mjs');
-      let tier;
-      try {
-        tier = await matterTierWithClient(sb, meeting.matterspace_id);
-      } catch {
-        tier = null;
-      }
-      if (!tier || tier === 'C') {
-        return json(res, 403, {
-          error: 'tier_violation',
-          message: tier === 'C'
-            ? 'This meeting is in a Tier C (Silo) matter: no cloud model may see the transcript.'
-            : 'The tier of this meeting could not be read, so the transcript was not sent anywhere.',
-        });
-      }
-      sealedMeeting = tier === 'B';
-    }
+  // lib/meeting-seal.mjs holds the lookup, shared with /api/meeting-flag, and
+  // fails closed — an unreadable tier or a meeting row that does not resolve is
+  // a refusal, not a pass. A meeting bound to no matter stays open, which is
+  // the rule /api/llm applies to an unbound draft.
+  const { meetingModelDecision } = await import('../lib/meeting-seal.mjs');
+  const seal = await meetingModelDecision(sb, body.meeting_id, { provider: 'anthropic' });
+  if (!seal.ok) {
+    return json(res, seal.status, { error: seal.code, tier: seal.tier, message: seal.message });
   }
+  // Kept for the day a zero-retention arrangement puts a first-party provider
+  // back into Tier B's set (the Anthropic org ZDR request of 2026-09-18): the
+  // model call would be admitted again, but web_search still must not run — its
+  // queries are drawn from the transcript and they leave for the open web.
+  const sealedMeeting = seal.sealed;
 
   const transcript = (body.transcript || '').trim();
+
+  // Spend cap (migration 063), before the stream starts — this route sends a
+  // whole meeting transcript to Opus on every turn, with an 8,192-token
+  // answer and web search attached, which is among the most expensive single
+  // calls in the product. Checked here so a refusal is a status code rather
+  // than a half-written answer.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'meeting',
+    estimateCents: estimateLlmCents({
+      provider: 'anthropic',
+      model: MODEL,
+      bodyText: transcript + JSON.stringify(body.messages || []),
+      maxOutputTokens: 8192,
+    }),
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
+
   const system = transcript
     ? [
         { type: 'text', text: SYSTEM_INSTRUCTIONS },

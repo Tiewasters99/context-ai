@@ -15,7 +15,10 @@
 //
 // Gates (the plan memo's G1–G10, plus two the plan implies):
 //   G0  Formats: docx / xlsx / epub / md / txt / rtf / fountain / photographed page are indexed and searchable
-//   G1  Mixed PDF (typed + scanned pages): every page searchable, cited by its true page number
+//   G1  Mixed PDF (typed + scanned pages): every page searchable, cited by its true page number;
+//       a CM/ECF-stamped scan (the stamp is the only text layer) is OCR'd, its body indexed on its
+//       own pages, page_count = the PDF's, no passage is a stamp alone, and the row records that
+//       OCR read it (metadata.ingest_outcome) — the 2026-09-18 stamp-only defect
 //   G2  Containers: PDF portfolio, .zip, .eml — children filed and searchable; wrapper stored with reason
 //   G3  Stored with a reason: image-only PDF, photo TIFF, silent recording, 3D asset, blank text
 //   GA  Audio / video: a SPOKEN mp3 and mp4 are transcribed and searchable by their words
@@ -26,6 +29,10 @@
 //   G6  Provider outage (OCR down): typed pages index, scanned pages queue for retry with the reason;
 //       when OCR is back the retry clears them. Runs IN-PROCESS on this checkout's lib (the deployed
 //       worker's OCR cannot be broken on cue), so it proves the code, not the deployment.
+//   GR  Repair: a document stored in the May 2026 state (ready, page_count 1, one passage holding
+//       only its CM/ECF stamps) is refused a plain re-run, then re-run in place: the stamp passage
+//       is swapped for the OCR'd body, page_count becomes the PDF's. In-process like G6 (--no-g6
+//       skips both); the queue half (force on the deployed worker) is _test-stamp-scans.mjs.
 //   G7  Time-to-searchable, queue → ready: 300-page text PDF < 3 min; 50-page scan < 5 min;
 //       200 MB record (resumable upload) < 10 min
 //   G8  One tenant's bulk production never blocks another's single upload: six BULK-priority
@@ -47,6 +54,8 @@ import { handleFileDocument, handleCheckIngestStatus } from '../lib/mcp-core.mjs
 import { JOB_PRIORITY } from '../lib/ingest-core.mjs';
 import { uploadResumable, shouldUploadResumable } from '../lib/tus-upload.mjs';
 import * as F from './_fixtures-suite.mjs';
+import { stampedScanPdf, ecfStamp } from './_fixtures-ingest.mjs';
+import { isStampOnlyText } from '../lib/court-stamps.mjs';
 import { seededRecord, SUITE_BUCKET, SUITE_RECORD_OBJECT, SUITE_RECORD_PAGES } from './_seed-suite-record.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -91,6 +100,7 @@ const GATES = {
   G4: 'Refused or failed with a cause: oversize, unsupported, lock file, empty, duplicate, corrupt',
   G5: 'Nothing stuck: every upload terminal within its budget',
   G6: 'Provider outage: typed pages index, scans queue for retry, retry clears them (in-process)',
+  GR: 'Repair: a ready document indexed as its filing stamps is re-run in place and swapped (in-process)',
   G7: 'Time-to-searchable: 300 pp < 3 min, 50-pp scan < 5 min, 200 MB < 10 min',
   G8: 'Bulk never blocks a single upload (priority + two workers)',
   G9: 'Monitor green means green',
@@ -328,6 +338,7 @@ try {
     await q('scan50', 5 * 60_000, { title: `Suite 50-page scan ${tag}`, filename: `suite-scan50-${tag}.pdf`, bytes: await F.scanPdfPages(50, { tag }), contentType: 'application/pdf' });
   }
   await q('mixed', 5 * 60_000, { title: `Suite mixed ${tag}`, filename: `suite-mixed-${tag}.pdf`, bytes: await F.mixedPdf({ tag }), contentType: 'application/pdf' });
+  await q('stamped', 5 * 60_000, { title: `Suite stamped scan ${tag}`, filename: `suite-stamped-scan-${tag}.pdf`, bytes: await stampedScanPdf({ words: ['tamarind', 'bergamot'], tag }), contentType: 'application/pdf' });
   await q('portfolio', 5 * 60_000, { title: `Suite portfolio ${tag}`, filename: `suite-portfolio-${tag}.pdf`, bytes: await F.portfolioPdf({ tag }), contentType: 'application/pdf' });
   await q('zip', 5 * 60_000, { title: `Suite archive ${tag}`, filename: `suite-archive-${tag}.zip`, bytes: await F.archiveFixture({ tag }), contentType: 'application/zip' });
   await q('eml', 5 * 60_000, { title: `Suite email ${tag}`, filename: `suite-email-${tag}.eml`, bytes: await F.emlFixture({ tag }), contentType: 'message/rfc822' });
@@ -391,6 +402,22 @@ try {
       const p1 = await pageHasWord(d.id, 1, 'memorandum'); const p4 = await pageHasWord(d.id, 4, 'marmalade'); const p5 = await pageHasWord(d.id, 5, 'quixotic');
       check('G1', d.processing_status === 'ready' && n > 0 && !d.metadata?.text_status && !d.metadata?.ocr_pending && d.page_count === 5 && p1 && p4 && p5,
         `mixed: ${d.processing_status}, ${n} passages over ${d.page_count} pages; p.1 typed ${p1}, p.4 "marmalade" ${p4}, p.5 "quixotic" ${p5}; ocr_pending=${JSON.stringify(d.metadata?.ocr_pending || null).slice(0, 60)}${d.processing_error ? ' | ' + d.processing_error.slice(0, 80) : ''}`);
+    }
+  }
+  {
+    // The 2026-09-18 defect: a scan whose only text layer is the CM/ECF stamp
+    // was indexed as the stamp, page_count from the extractor, marked ready.
+    const d = rows.stamped;
+    if (!d) check('G1', false, 'stamped: no row');
+    else {
+      const { data: texts } = await supabase.from('passages').select('text').eq('document_id', d.id);
+      const stampOnly = (texts || []).filter((p) => isStampOnlyText(p.text)).length;
+      const p1 = await pageHasWord(d.id, 1, 'tamarind'); const p2 = await pageHasWord(d.id, 2, 'bergamot');
+      check('G1', d.processing_status === 'ready' && !d.metadata?.text_status && !d.metadata?.ocr_pending && d.page_count === 2 && p1 && p2 && stampOnly === 0,
+        `CM/ECF-stamped scan: ${d.processing_status}, page_count ${d.page_count} (the PDF has 2), p.1 "tamarind" ${p1}, p.2 "bergamot" ${p2}, ${stampOnly} passage(s) that are a stamp alone${d.metadata?.text_status ? ', text_status=' + d.metadata.text_status : ''}${d.processing_error ? ' | ' + d.processing_error.slice(0, 80) : ''}`);
+      const o = d.metadata?.ingest_outcome;
+      check('G1', o?.ocr === 'read' && o?.text_source === 'ocr' && o?.pdf_pages === 2,
+        `CM/ECF-stamped scan: the row records that OCR read it — ingest_outcome ${o ? `${o.ocr}/${o.text_source}, ${o.pdf_pages} pp, OCR pages ${o.ocr_pages}` : 'ABSENT (the deployed worker predates 2026-09-18 — deploy it)'}`);
     }
   }
 
@@ -494,8 +521,8 @@ try {
   }
 
   // ---- G6: provider outage, in-process ----------------------------------------------------
-  if (flag('--no-g6')) skip('G6', '--no-g6');
-  else if (!present(env.OPENAI_API_KEY) || !present(env.GOOGLE_API_KEY)) skip('G6', 'OPENAI_API_KEY / GOOGLE_API_KEY not in this checkout\'s .env');
+  if (flag('--no-g6')) { skip('G6', '--no-g6'); skip('GR', '--no-g6'); }
+  else if (!present(env.OPENAI_API_KEY) || !present(env.GOOGLE_API_KEY)) { skip('G6', 'OPENAI_API_KEY / GOOGLE_API_KEY not in this checkout\'s .env'); skip('GR', 'OPENAI_API_KEY / GOOGLE_API_KEY not in this checkout\'s .env'); }
   else {
     console.log('\n[G6] provider outage (in-process, this checkout\'s lib)');
     const { processDocument } = await import('../lib/ingest-core.mjs');
@@ -537,6 +564,35 @@ try {
     await runLocal(f2, await F.imageOnlyPdf(), `suite-outage-scan-${tag}.pdf`, brokenOcr);
     d = await readDoc(f2);
     check('G6', d?.processing_status === 'ready' && d.metadata?.text_status === TEXT_STATUS.OCR_PENDING && (await passageCount(f2)) === 0, `OCR down: image-only PDF stored as ocr_pending (not error, not image_only) — text_status=${d?.metadata?.text_status}`);
+
+    // ---- GR: repair a document stored in the May 2026 state ------------------------------
+    console.log('\n[GR] repair in place (in-process, this checkout\'s lib)');
+    const { reprocessInPlace } = await import('../lib/reprocess.mjs');
+    const { handleIngestDocument } = await import('../lib/mcp-core.mjs');
+    const { EMBEDDING_MODEL } = await import('../lib/ingest-core.mjs');
+    const grBytes = await stampedScanPdf({ words: ['quince', 'sorrel'], tag: `gr${tag}` });
+    const g = await insertLocal(`Suite stamp-only repair ${tag}`, `suite-stamp-repair-${tag}.pdf`, grBytes, 'application/pdf');
+    // What ECF 53 looked like: one passage holding both pages' stamps, page 1,
+    // page_count 1, ready, no record of how it was read.
+    const { error: seedErr } = await supabase.from('passages').insert({
+      document_id: g, matterspace_id: matter.id, sequence_number: 0, page_start: 1, page_end: 1,
+      text: `${ecfStamp(1, 2)}\n\n${ecfStamp(2, 2)}`, passage_type: 'monologue', metadata: {},
+      embedding: null, embedding_model: EMBEDDING_MODEL, summary_level: 0,
+    });
+    await supabase.from('documents').update({ processing_status: 'ready', page_count: 1, ingested_at: new Date().toISOString(), metadata: {} }).eq('id', g);
+    const refused = await handleIngestDocument(supabase, { document_id: g });
+    check('GR', !seedErr && refused.status === 'ready' && /force: true/.test(refused.note || ''), `a plain re-run of a ready document is refused and the refusal names force: "${(refused.note || seedErr?.message || '').slice(0, 60)}…"`);
+    try {
+      const res = await reprocessInPlace(supabase, g, () => processDocument(supabase, { documentId: g, fileBuf: grBytes, ext: '.pdf', openaiApiKey: env.OPENAI_API_KEY, ocr: makeOcrProvider(env) }));
+      d = await readDoc(g);
+      const { data: texts } = await supabase.from('passages').select('text').eq('document_id', g);
+      const stampOnly = (texts || []).filter((p) => isStampOnlyText(p.text)).length;
+      const q1 = await pageHasWord(g, 1, 'quince'); const q2 = await pageHasWord(g, 2, 'sorrel');
+      check('GR', d?.processing_status === 'ready' && d.page_count === 2 && q1 && q2 && stampOnly === 0 && res.replacedPassages === 1 && d.metadata?.reprocess?.ok === true && d.metadata?.ingest_outcome?.text_source === 'ocr',
+        `re-run in place: page_count 1 → ${d?.page_count}, p.1 "quince" ${q1}, p.2 "sorrel" ${q2}, ${res.replacedPassages} stamp passage(s) replaced, ${stampOnly} left, outcome ${d?.metadata?.ingest_outcome?.ocr}/${d?.metadata?.ingest_outcome?.text_source}`);
+    } catch (err) {
+      check('GR', false, `re-run in place threw: ${err.message.slice(0, 160)}`);
+    }
   }
 } catch (err) {
   failures.push(`suite crashed: ${err.message}`);

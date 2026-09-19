@@ -29,6 +29,8 @@ import { createClient } from '@supabase/supabase-js';
 import { processDocument, planPdfOcr, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest, isPdfStructureError } from '../lib/ingest-core.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateIngestCents } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -84,7 +86,7 @@ export default async function handler(req, res) {
   // Look up the document. RLS rejects this if the user doesn't have access.
   const { data: doc, error: docErr } = await sb
     .from('documents')
-    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+    .select('id, storage_path, source_filename, processing_status, matterspace_id, file_size_bytes, page_count, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
     .eq('id', documentId)
     .maybeSingle();
   if (docErr) return json(res, 500, { error: `lookup: ${docErr.message}` });
@@ -100,13 +102,45 @@ export default async function handler(req, res) {
     return json(res, 200, { ok: true, alreadyReady: true });
   }
 
+  // Spend cap (migration 063) — AFTER the alreadyReady short-circuit, so the
+  // Vault's polling never spends budget, and BEFORE the file is downloaded or
+  // queued, so a refusal costs nothing.
+  //
+  // What can be metered here is only what is knowable at request time: the
+  // declared file size, and page_count when a previous pass filled it in. The
+  // real cost of ingestion is per OCR page and per minute of audio, and both
+  // are discovered inside lib/ingest-core.mjs and the Fly worker, which this
+  // change deliberately does not touch (PR #153 is open on those files). So
+  // this is a REQUEST-RATE and declared-size gate, not a page meter: the
+  // hourly window is what stops a 5,000-file production, and
+  // public.usage_monthly_pages (migration 063) is where the pages that were
+  // actually read can be read back per user per month. True per-page metering
+  // needs a usage_consume call inside the worker once #153 lands.
+  //
+  // So the CENTS charged here are the inline ones only — embedding the text,
+  // plus one OCR call for a scanned page that arrived as a JPEG or PNG. A
+  // scanned PDF leaves for the worker a few lines below without this function
+  // calling any provider, and charging it here for pages nobody has counted
+  // would refuse ordinary uploads to bill for work that happens elsewhere.
+  const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
+  const ingestMeter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'ingest',
+    estimateCents: estimateIngestCents({
+      bytes: doc.file_size_bytes || 0,
+      ocrableImage: OCRABLE_IMAGE_EXTENSIONS.includes(ext0),
+    }),
+  });
+  if (!ingestMeter.allowed) return sendUsageRefusal(res, ingestMeter);
+
   // Heavy-job routing: files this function cannot finish inside the 60s
   // serverless budget go to the always-on worker via the processing_jobs
   // queue (worker/discovery-worker.mjs, job_type ingest_document). The Vault
   // UI polls documents.processing_status either way, so queueing is invisible
   // to the caller. Files below the thresholds keep the fast inline path and
   // don't depend on worker uptime at all.
-  const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
   if (needsWorkerIngest(ext0, doc.file_size_bytes)) {
     const queued = await enqueueForWorker(sb, doc);
     if (queued) return json(res, 202, queued);

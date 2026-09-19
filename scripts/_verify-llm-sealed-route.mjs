@@ -28,9 +28,18 @@
 //      exactly the shape src/lib/llm/generate.ts and structured.ts parse.
 //   7. Tier A                        → byte-identical forward, unchanged.
 //   8. Tier C                        → refused, zero requests, unchanged.
+//   9. The spend cap (PR #161, migration 063) meets the seal: an over-budget
+//      sealed turn is refused before the pen is asked; a meter that is not
+//      deployed yet fails OPEN without ever widening the route; the tier's
+//      max_tokens ceiling reaches the substituted body; and the turn is
+//      priced at the pen that answered, not at the model the browser named.
+//
+// The meter's RPC is stubbed here too (usage_consume / usage_record_actual),
+// so the cents this handler charges are asserted rather than assumed.
 
 import handler from '../api/llm.mjs';
 import { sealedRouteFor, SEALED_PROVIDER } from '../lib/llm-sealed-route.mjs';
+import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -63,6 +72,42 @@ const withoutBedrock = () => {
   delete process.env.BEDROCK_MODEL;
 };
 
+// ── the spend cap (migration 063), stubbed ──────────────────────────────
+// The DEFAULT answer is the permissive one — allowed, no ceiling, no size
+// limit — so every assertion written before the cap existed still describes
+// exactly what /api/llm sends. Only the cases that are about the cap set
+// their own. `p_cents_estimate` and `p_cents_actual` are recorded, because
+// what a sealed turn COSTS is now part of what this harness proves.
+const METER_ALLOW = { mode: 'allow', eventId: 'ev-1' };
+let meter = METER_ALLOW;
+let meterCalls = [];
+const consumeArgs = () => meterCalls.find((c) => c.fn === 'usage_consume')?.args ?? null;
+const actualArgs = () => meterCalls.find((c) => c.fn === 'usage_record_actual')?.args ?? null;
+
+function meterRpc(url, init) {
+  const args = (() => { try { return JSON.parse(init.body || '{}'); } catch { return {}; } })();
+  if (url.endsWith('/rpc/usage_consume')) {
+    meterCalls.push({ fn: 'usage_consume', args });
+    if (meter.mode === 'undeployed') {
+      return new Response(JSON.stringify({ code: 'PGRST202', message: 'Could not find the function' }), { status: 404 });
+    }
+    if (meter.mode === 'refuse') {
+      return new Response(JSON.stringify({
+        allowed: false, status: 402, reason: 'budget_exhausted',
+        message: "You've reached this month's included AI usage. It resets at the start of next month.",
+      }), { status: 200 });
+    }
+    return new Response(JSON.stringify({
+      allowed: true, status: 200, reason: 'ok',
+      event_id: meter.eventId ?? 'ev-1',
+      max_output_tokens: meter.maxOutputTokens ?? null,
+      max_request_bytes: meter.maxRequestBytes ?? null,
+    }), { status: 200 });
+  }
+  meterCalls.push({ fn: 'usage_record_actual', args });
+  return new Response(JSON.stringify({ ok: true }), { status: 200 });
+}
+
 // ── the witness ─────────────────────────────────────────────────────────
 let requests = [];
 const safeHost = (u) => { try { return new URL(u).host; } catch { return u; } };
@@ -72,6 +117,7 @@ const nonBedrock = () => providerHosts().filter((h) => !h.startsWith('bedrock-ma
 
 function witness(tier, upstream) {
   requests = [];
+  meterCalls = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     requests.push({ url: u, host: safeHost(u), init });
@@ -79,6 +125,7 @@ function witness(tier, upstream) {
     if (u.includes('/rest/v1/matterspaces')) {
       return new Response(JSON.stringify([{ id: 'm-1', parent_matterspace_id: null, ai_tier: tier }]), { status: 200 });
     }
+    if (u.includes('/rest/v1/rpc/')) return meterRpc(u, init);
     if (upstream) return upstream(u, init);
     throw new Error(`unexpected host: ${u}`);
   };
@@ -99,11 +146,12 @@ function fakeRes() {
   };
 }
 
-async function call({ tier, provider, model, body, upstream, matterId = 'm-1' }) {
+async function call({ tier, provider, model, body, upstream, matterId = 'm-1', meter: m = METER_ALLOW, apiKey }) {
+  meter = m;
   witness(tier, upstream);
   const res = fakeRes();
   await handler(
-    { method: 'POST', headers: { authorization: 'Bearer tok' }, body: { provider, model, body, matterId } },
+    { method: 'POST', headers: { authorization: 'Bearer tok' }, body: { provider, model, body, matterId, apiKey } },
     res,
   );
   return res;
@@ -397,6 +445,137 @@ console.log('\nTier A and Tier C unchanged');
     upstream: () => sseResponse(sse([{ type: 'message_stop' }])),
   });
   eq('no matter bound → unchanged forward', [u.statusCode, providerHosts()[0]], [200, 'api.anthropic.com']);
+}
+
+// ── the spend cap meets the seal (PR #161 × PR #163) ────────────────────
+// A real-sized Bucketizer classify: ~116 KB of document text. The existing
+// fixtures are too small for the mispricing to show — at 500 tokens both
+// rates round to one cent — and this is the case that was worth real money.
+const BIG_DOC = 'The tenant shall not sublet the premises without consent. '.repeat(2000);
+const BIG_TOOL_BODY = JSON.stringify({
+  model: 'claude-opus-4-8',
+  max_tokens: 4000,
+  stream: false,
+  system: 'Classify the document.',
+  tools: [{ name: 'file_bucket', description: 'File the document.', input_schema: SCHEMA }],
+  tool_choice: { type: 'tool', name: 'file_bucket' },
+  messages: [{ role: 'user', content: BIG_DOC }],
+});
+const CANNED_TOOL_BIG = sse([
+  { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_a', function: { name: 'file_bucket', arguments: '{"node_id":"n-7"}' } }] } }] },
+  { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 38_000, completion_tokens: 2_400 } },
+  '[DONE]',
+]);
+
+console.log('\nTier B x the spend cap — a sealed turn is priced at the pen that answers');
+{
+  withBedrock();
+  const res = await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: BIG_TOOL_BODY,
+    upstream: bedrockOk(CANNED_TOOL_BIG),
+    apiKey: 'sk-ant-the-callers-own-key', // a sealed turn is never BYOK — see below
+  });
+  eq('status 200 — the classify was served', res.statusCode, 200);
+
+  const sealedEstimate = estimateLlmCents({
+    provider: 'aws-bedrock', model: 'moonshotai.kimi-k2.5',
+    bodyText: BIG_TOOL_BODY, maxOutputTokens: 16_000, // 4,000 asked + thinking headroom
+  });
+  const asBrowserNamed = estimateLlmCents({
+    provider: 'anthropic', model: 'claude-opus-4-8',
+    bodyText: BIG_TOOL_BODY, maxOutputTokens: 4_000,
+  });
+  eq('pre-charge: priced at the sealed pen, on the allowance it will actually ask for', consumeArgs()?.p_cents_estimate, sealedEstimate);
+  if (sealedEstimate < asBrowserNamed) pass(`pre-charge: ${sealedEstimate}c, not the ${asBrowserNamed}c the browser's model would have cost`);
+  else fail('the sealed estimate is not below the model the browser named', { sealedEstimate, asBrowserNamed });
+  if ((consumeArgs()?.p_cents_estimate ?? 0) > 0) pass('pre-charge: a caller-supplied apiKey does NOT buy a free sealed turn — the tokens are spent on OUR account');
+  else fail('a sealed turn was treated as BYOK and charged nothing', consumeArgs());
+
+  eq("actuals: reconciled at the sealed pen's rate (38,000 in / 2,400 out)", actualArgs()?.p_cents_actual, 3);
+  eq('actuals: the same tokens at the browser-named model — the ~8x overcharge this reconciliation removes',
+    centsForTokens('claude-opus-4-8', 'anthropic', { input: 38_000, output: 2_400 }), 25);
+  eq('actuals: the ledger records the model that actually answered', actualArgs()?.p_model, 'moonshotai.kimi-k2.5');
+  eq('actuals: and keeps what the browser asked for, so the substitution is not lost from the record',
+    [actualArgs()?.p_meta?.sealed, actualArgs()?.p_meta?.client_model], [true, 'claude-opus-4-8']);
+  if (nonBedrock().length === 0) pass('egress witness: bedrock-mantle and nothing else'); else fail('a non-Bedrock host was contacted', nonBedrock());
+}
+
+console.log('\nTier B x the spend cap — over budget: refused, and the sealed pen is never asked');
+{
+  withBedrock();
+  const res = await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_TOOL_BODY,
+    upstream: bedrockOk(CANNED_TOOL), meter: { mode: 'refuse' },
+  });
+  eq('402 budget_exhausted', [res.statusCode, res.json()?.error], [402, 'budget_exhausted']);
+  if (/included AI usage/i.test(res.json()?.message ?? '')) pass("the refusal is the wallet's sentence, in plain language");
+  else fail('wrong refusal copy', (res.json()?.message ?? '').slice(0, 140));
+  if (providerRequests().length === 0) pass('egress witness: ZERO provider requests — the sealed pen was not asked either');
+  else fail('a provider was contacted on an over-budget turn', providerHosts());
+  eq('it was still priced as the SEALED turn it would have been, not as Opus', consumeArgs()?.p_cents_estimate,
+    estimateLlmCents({ provider: 'aws-bedrock', model: 'moonshotai.kimi-k2.5', bodyText: ANTHROPIC_TOOL_BODY, maxOutputTokens: 16_000 }));
+}
+
+console.log('\nTier B x the spend cap — the meter is not deployed: fail OPEN, never wider than the seal');
+{
+  withBedrock();
+  const res = await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_STREAM_BODY,
+    upstream: bedrockOk(CANNED_TEXT), meter: { mode: 'undeployed' },
+  });
+  eq('status 200 — nobody is refused because migration 063 is not pasted yet', res.statusCode, 200);
+  const up = providerRequests();
+  if (up.length === 1) pass('exactly ONE upstream request'); else fail('expected exactly one upstream request', up.map((r) => r.url));
+  eq('and it went to the sealed endpoint, not to the provider the browser named', up[0]?.host, 'bedrock-mantle.us-east-1.api.aws');
+  if (nonBedrock().length === 0) pass('egress witness: a cap that FAILED OPEN did not skip the seal');
+  else fail('a non-Bedrock host was contacted after the meter failed open', nonBedrock());
+  eq('the pen that answered is still named in a header', res.headers['x-contextspaces-pen'], 'Kimi K2.5 (Bedrock, our AWS account, zero retention)');
+  if (!actualArgs()) pass('nothing to reconcile: no event was opened, so none is corrected'); else fail('actuals were recorded for an unmetered turn', actualArgs());
+}
+
+console.log("\nTier B x the spend cap — the tier's max_tokens ceiling reaches the substituted request");
+{
+  withBedrock();
+  const res = await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_TOOL_BODY,
+    upstream: bedrockOk(CANNED_TOOL), meter: { mode: 'allow', eventId: 'ev-1', maxOutputTokens: 8192 },
+  });
+  eq("the sealed body carries the PLAN's ceiling, not the adapter's own 16,000", JSON.parse(providerRequests()[0].init.body).max_tokens, 8192);
+  eq('status 200', res.statusCode, 200);
+  await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_TOOL_BODY,
+    upstream: bedrockOk(CANNED_TOOL), meter: { mode: 'allow', eventId: 'ev-1', maxOutputTokens: 32_768 },
+  });
+  eq("a ceiling above the adapter's own budget leaves it alone", JSON.parse(providerRequests()[0].init.body).max_tokens, 16_000);
+}
+
+console.log('\nTier A x the spend cap — byte-identical to main, clamp included');
+{
+  withBedrock(); // credentials present, and they must not hijack an unsealed matter
+  const anthropicOk = (u) => {
+    if (u === 'https://api.anthropic.com/v1/messages') {
+      return sseResponse(sse([{ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } }, { type: 'message_stop' }]));
+    }
+    throw new Error(`unexpected host: ${u}`);
+  };
+  const res = await call({ tier: 'A', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_STREAM_BODY, upstream: anthropicOk });
+  eq('no ceiling → the body is forwarded BYTE-IDENTICALLY', providerRequests()[0]?.init?.body, ANTHROPIC_STREAM_BODY);
+  eq('200', res.statusCode, 200);
+  eq('priced at the model the caller actually reaches — unchanged', consumeArgs()?.p_cents_estimate,
+    estimateLlmCents({ provider: 'anthropic', model: 'claude-opus-4-8', bodyText: ANTHROPIC_STREAM_BODY, maxOutputTokens: 4096 }));
+  eq('no sealed meta on an unsealed turn', consumeArgs()?.p_kind, 'llm');
+
+  const oversized = JSON.stringify({ model: 'claude-opus-4-8', max_tokens: 64_000, stream: true, system: 's', messages: [{ role: 'user', content: 'hi' }] });
+  const c = await call({
+    tier: 'A', provider: 'anthropic', model: 'claude-opus-4-8', body: oversized,
+    upstream: anthropicOk, meter: { mode: 'allow', eventId: 'ev-1', maxOutputTokens: 8192 },
+  });
+  const forwarded = JSON.parse(providerRequests()[0].init.body);
+  eq('with a ceiling → max_tokens clamped on the forwarded body', forwarded.max_tokens, 8192);
+  eq('...and nothing else about the body changed', Object.keys(forwarded).sort(), ['max_tokens', 'messages', 'model', 'stream', 'system']);
+  eq('a clamped STREAM is reconciled down to the allowance actually sent', actualArgs()?.p_meta?.clamped_to, 8192);
+  if (!c.headers['x-contextspaces-pen']) pass('tier A → still no sealed substitution, with or without a ceiling');
+  else fail('tier A was routed through the seal', c.headers);
 }
 
 console.log('\nThe adapter fails closed on its own');

@@ -22,7 +22,17 @@ export interface SealedPen {
 
 export type SealedRoute =
   | { refusal: { status: number; body: SealedRefusalBody } }
-  | { pen: SealedPen; provider: 'aws-bedrock'; send: () => Promise<Response> };
+  | {
+      pen: SealedPen;
+      provider: 'aws-bedrock';
+      /**
+       * The output allowance the sealed request will ask for, before the
+       * caller's plan ceiling. /api/llm prices the turn on it.
+       */
+      maxOutputTokens: number;
+      /** `maxOutputTokens` is the caller's plan ceiling, applied last. */
+      send: (opts?: { maxOutputTokens?: number | null }) => Promise<Response>;
+    };
 
 export function sealedRouteFor(opts: {
   gate: { ok: boolean; error?: string; tier?: AiTier | null; status?: number };

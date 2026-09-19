@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { CanvasProvider } from '@/hooks/useCanvas';
@@ -50,6 +50,7 @@ import AuthCallback from '@/pages/AuthCallback';
 import AuthConfirm from '@/pages/AuthConfirm';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
+import { canOpenPath } from '@/lib/plan';
 
 const queryClient = new QueryClient();
 
@@ -70,6 +71,40 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
   if (!user && !DEV_BYPASS_AUTH) {
     return <Navigate to="/auth" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+// The plan gate. It wraps the three signed-in shells rather than each of the
+// forty-odd routes, because what a path costs is decided in one place —
+// lib/plan.ts — and asking it here means a new route is reachable by default
+// and only becomes gated when someone lists it there.
+//
+// A path that is open to everyone never waits for the plan: the dashboard, a
+// matter, the Vault and the Suite render the moment the session is known, as
+// they always have. Only a path that some plan closes has to know the plan
+// first — and there it waits rather than guessing, because redirecting on an
+// unread plan would bounce a workshop account off its own deep link on every
+// cold load.
+function PlanRoute({ children }: { children: React.ReactNode }) {
+  const { plan, planLoading } = useAuth();
+  const location = useLocation();
+
+  if (canOpenPath(location.pathname, 'free')) {
+    return <>{children}</>;
+  }
+
+  if (planLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (!canOpenPath(location.pathname, plan)) {
+    return <Navigate to="/app" replace />;
   }
 
   return <>{children}</>;
@@ -98,7 +133,9 @@ export default function App() {
               path="/app"
               element={
                 <ProtectedRoute>
-                  <MainLayout />
+                  <PlanRoute>
+                    <MainLayout />
+                  </PlanRoute>
                 </ProtectedRoute>
               }
             >
@@ -142,7 +179,9 @@ export default function App() {
               path="/discovery"
               element={
                 <ProtectedRoute>
-                  <DiscoveryLayout />
+                  <PlanRoute>
+                    <DiscoveryLayout />
+                  </PlanRoute>
                 </ProtectedRoute>
               }
             >
@@ -158,7 +197,9 @@ export default function App() {
               path="/connect"
               element={
                 <ProtectedRoute>
-                  <ConnectLayout />
+                  <PlanRoute>
+                    <ConnectLayout />
+                  </PlanRoute>
                 </ProtectedRoute>
               }
             >
