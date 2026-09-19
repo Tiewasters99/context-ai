@@ -32,10 +32,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Use Node 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           # package.json engines says ">=22" and worker/Dockerfile pins
           # node:22-slim, so 22 is the version the repo actually targets.
