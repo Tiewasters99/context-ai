@@ -30,10 +30,10 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-// The sealed pens (SecureSpace Tier B). Both optional at boot: with neither,
-// sealed matters are refused with a plain message — never silently escalated.
-// When the Bedrock creds exist they win: frontier Claude, zero retention,
-// our own AWS account (docs/BEDROCK_CLAUDE_PEN_SETUP.md).
+// The sealed pen (SecureSpace Tier B) is Bedrock and only Bedrock: a model in
+// our own AWS account under zero retention (docs/BEDROCK_CLAUDE_PEN_SETUP.md).
+// Optional at boot — without it a sealed matter is refused in plain language,
+// never served by another provider. Fireworks: passed and ignored since 09-19.
 const BEDROCK_CREDS = bedrockCredsFromEnv();
 const FIREWORKS_API_KEY = process.env.FIREWORKS_API_KEY;
 

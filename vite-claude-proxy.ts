@@ -245,9 +245,9 @@ export default function llmProxy(): Plugin {
           const result = await runAssistantStream({
             supabase: sb,
             anthropicKey: ANTHROPIC_API_KEY,
-            // The sealed pens (SecureSpace Tier B); optional — with neither,
-            // sealed matters are refused, never silently escalated. Bedrock
-            // (our own AWS account, zero retention) wins when configured.
+            // The sealed pen (SecureSpace Tier B) is Bedrock alone — our own
+            // AWS account, zero retention. Without it a sealed matter is
+            // refused. Fireworks: passed and ignored since 2026-09-19.
             fireworksKey: process.env.FIREWORKS_API_KEY,
             bedrockCreds: bedrockCredsFromEnv(),
             openaiApiKey: OPENAI_API_KEY,
