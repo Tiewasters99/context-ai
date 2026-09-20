@@ -19,7 +19,7 @@ those are listed under [Deliberately not in CI](#deliberately-not-in-ci).
 | Lint | `npm run lint` | **Non-blocking** — see below. |
 | PGlite | `npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9` | Harness-only; `--no-save` keeps it out of `package.json`. |
 
-Then the fourteen offline harnesses, one step each, each with
+Then the offline harnesses, one step each, each with
 `if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |
@@ -38,9 +38,10 @@ Then the fourteen offline harnesses, one step each, each with
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
+| `_verify-matter-record.mjs` | The Record's read side: the sub-matter roll-up, paging past 1,000 rows, a plain line for every event kind (and for one it has never heard of), the sealed-route wording, the attorney's cells left empty, a byte-identical markdown export, a `.docx` that opens, the not-deployed state and a tampered chain. | Synthetic events and an in-memory Supabase stub, both built inside the harness; `node --import ./scripts/_node-src-loader.mjs` for the `src/` imports. |
 
-All fourteen were executed on `main` at `b97d6c6` before the workflow was
-written; all fourteen exit 0. The PGlite harnesses finish in ~1.5 s each.
+The first fourteen were executed on `main` at `b97d6c6` before the workflow
+was written; all fourteen exit 0. The PGlite harnesses finish in ~1.5 s each.
 
 ### Lint is non-blocking, for now
 

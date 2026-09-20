@@ -3,9 +3,21 @@
 // the Dashboard cross-matter feed (matterId undefined). React Query dedupes
 // by key, so calling this hook from several components with the same args
 // issues a single network request.
+//
+// A matter's Updates are the matter's AND its sub-matters'. Until 2026-09-20
+// this filtered on `.eq('matter_id', matterId)`, so opening a parent matter
+// showed nothing that happened inside it — the same bug migration 012 fixed
+// for search. `matterspace_descendants` expands the tree (SECURITY INVOKER,
+// so it only ever returns matters the caller can already see), and the read
+// is paged, because PostgREST answers at most 1,000 rows however large a
+// limit is asked for.
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { matterDescendantIds, readAllPages } from '@/lib/matter-record/fetch';
+import type { RecordClient, SelectBuilder } from '@/lib/matter-record/types';
+
+const client = supabase as unknown as RecordClient;
 
 export interface ActivityEvent {
   matter_id: string;
@@ -19,19 +31,37 @@ export interface ActivityEvent {
 
 type RawEvent = Omit<ActivityEvent, 'actor_name'>;
 
+const COLUMNS = 'matter_id, event_type, actor_id, occurred_at, ref_id, title';
+
 export function useActivityFeed(matterId: string | undefined, limit = 60) {
   return useQuery({
     queryKey: ['activity_feed', matterId ?? 'all', limit],
     queryFn: async (): Promise<ActivityEvent[]> => {
-      let q = supabase
-        .from('activity_feed')
-        .select('matter_id, event_type, actor_id, occurred_at, ref_id, title')
-        .order('occurred_at', { ascending: false })
-        .limit(limit);
-      if (matterId) q = q.eq('matter_id', matterId);
-      const { data, error } = await q;
-      if (error) throw error;
-      const events = (data ?? []) as RawEvent[];
+      // Order on (occurred_at, ref_id) so paging is a total order and no row
+      // can appear on two pages while another appears on none.
+      const build = (): SelectBuilder<RawEvent> => {
+        const query = client
+          .from('activity_feed')
+          .select<RawEvent>(COLUMNS)
+          .order('occurred_at', { ascending: false })
+          .order('ref_id', { ascending: false });
+        return query;
+      };
+
+      let events: RawEvent[] = [];
+      if (matterId) {
+        const ids = await matterDescendantIds(client, matterId);
+        const { rows, error } = await readAllPages<RawEvent>(
+          () => build().in('matter_id', ids),
+          limit,
+        );
+        if (error) throw new Error(error.message ?? 'Failed to load activity');
+        events = rows;
+      } else {
+        const { rows, error } = await readAllPages<RawEvent>(build, limit);
+        if (error) throw new Error(error.message ?? 'Failed to load activity');
+        events = rows;
+      }
 
       // Resolve actor display names in one batched query. If profiles RLS
       // hides other users, those simply fall back to a null name and the
