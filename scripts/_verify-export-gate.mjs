@@ -80,7 +80,7 @@ const { default: extDocuments } = await import('../api/ext/documents.mjs');
 const { default: extMatters } = await import('../api/ext/matters.mjs');
 const { encrypt } = await import('../lib/connections-crypto.mjs');
 const {
-  checkExport, exportsAreRecorded, exportEventKind, recordExport,
+  checkExport, exportsAreRecorded, exportEventKind, recordExport, exportedNote,
   exportConfirmMessage, EXPORT_SERVICES, __setLedgerForTests,
 } = await import('../lib/export-gate.mjs');
 const { createClient } = await import('@supabase/supabase-js');
@@ -290,7 +290,15 @@ async function loadMainCopy(rel) {
   try {
     const onMain = execFileSync('git', ['show', `origin/main:${rel}`], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
       .replace(/\r\n/g, '\n');
-    check(stripped === onMain, `${rel}: the stripped file IS main's file, byte for byte`);
+    // Once this lands, main carries the gate too and there is nothing left to
+    // compare against — the identity claim belongs to the PR that introduced
+    // it. The control below still runs; it is simply no longer also a proof
+    // that the stripped file is what shipped before.
+    if (onMain.includes('gate:start')) {
+      skip(`${rel}: compare the stripped file to origin/main`, 'main carries the gate now');
+    } else {
+      check(stripped === onMain, `${rel}: the stripped file IS main's file, byte for byte`);
+    }
   } catch {
     skip(`${rel}: compare the stripped file to origin/main`, 'the base ref is not fetched here');
   }
@@ -430,6 +438,9 @@ try {
     const out = await recordExport({ userId: 'user-1', tier: 'B', matterId: 'm', documentId: 'd', title: 't', destination: { service: 'google_drive' } });
     check(out.recorded === false && out.reason === 'ledger_error',
       'a ledger that throws does not blow up the export — it degrades to a log line and says recorded:false');
+    const note = exportedNote({ destination: { service: 'google_drive' }, recorded: false, reason: 'ledger_error' });
+    check(/could not be written/i.test(note) && !/not written to any record yet/i.test(note),
+      'and the user is told the record FAILED, not that records do not exist yet', note);
   }
   __setLedgerForTests(null);
   check(exportEventKind({ service: 'gmail', delivery: 'draft' }) === 'file.exported',

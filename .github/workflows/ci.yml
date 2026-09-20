@@ -133,10 +133,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
-      # Its negative control compares each gated handler, with the gate block
-      # stripped out, to `git show origin/main:<path>`. actions/checkout does
-      # not fetch the base ref, so that one comparison prints SKIP here and
-      # every other check still runs; it is asserted locally before a push.
+      # Its negative control reconstructs main's handlers by deleting the
+      # marked gate block, then watches them leak. One extra assertion —
+      # "the reconstruction IS origin/main's file" — only means anything
+      # before the gate lands, so it prints SKIP where the base ref is not
+      # fetched (a PR checkout) or already carries the gate (main).
       - name: SecureSpace — export gate (egress witness + negative control)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-export-gate.mjs
