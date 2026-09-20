@@ -72,6 +72,12 @@
 -- is retired leaves one stale row that every reader ignores by age. Keeping
 -- history here would make the hot path a growing table for no operational
 -- gain — the history that matters is in the monitor's digest.
+--
+-- queue_depth / oldest_queued_at are a place for a worker to record what it
+-- SAW, and the worker deliberately leaves them null: a beat must be one write
+-- and nothing else, and ingest_worker_status() computes both numbers from
+-- processing_jobs itself, where they are authoritative. They exist so a future
+-- worker-side snapshot does not need another migration.
 -- ---------------------------------------------------------------------------
 create table if not exists public.worker_heartbeats (
   worker_id        text primary key,
