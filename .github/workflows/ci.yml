@@ -132,3 +132,11 @@ jobs:
       - name: Reader — clean copy extraction
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
+
+      # Its negative control compares each gated handler, with the gate block
+      # stripped out, to `git show origin/main:<path>`. actions/checkout does
+      # not fetch the base ref, so that one comparison prints SKIP here and
+      # every other check still runs; it is asserted locally before a push.
+      - name: SecureSpace — export gate (egress witness + negative control)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-export-gate.mjs
