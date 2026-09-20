@@ -27,7 +27,7 @@ does not run here and nothing in `ci.yml` depends on it.
 | Lint | `npm run lint` | **Non-blocking** — see below. |
 | PGlite | `npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9` | Harness-only; `--no-save` keeps it out of `package.json`. |
 
-Then the fourteen offline harnesses, one step each, each with
+Then the sixteen offline harnesses, one step each, each with
 `if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |

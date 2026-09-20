@@ -64,6 +64,10 @@ const STUCK_DOCUMENT_MINUTES = 30;
 // A long queue is not an outage. It is worth saying out loud, and worth saying
 // differently from a dead worker, because the fix is different.
 const DEEP_QUEUE = 50;
+// Both network probes abort here. vercel.json caps this function at 10 s, and
+// they run concurrently, so 6 s leaves room for the handler's own work while
+// still being long enough that a merely slow database is not reported as down.
+const PROBE_TIMEOUT_MS = 6000;
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -98,20 +102,14 @@ export default async function handler(req, res) {
     checks.oauth_sign_verify = false;
   }
 
-  // Database reachable (anon key, no user data — RLS applies regardless).
-  const t0 = Date.now();
-  try {
-    const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-    const r = await fetch(`${url}/rest/v1/matterspaces?select=id&limit=1`, {
-      headers: { apikey: process.env.VITE_SUPABASE_ANON_KEY || '' },
-    });
-    checks.database = { reachable: r.ok || r.status === 401 || r.status === 400, status: r.status, ms: Date.now() - t0 };
-  } catch (e) {
-    checks.database = { reachable: false, error: e.message?.slice(0, 120), ms: Date.now() - t0 };
-  }
-
-  // Is anything actually processing uploads? (migration 066)
-  checks.ingestion = await ingestionHealth();
+  // The two network probes run CONCURRENTLY and each carries its own abort.
+  // vercel.json gives this function maxDuration 10: run sequentially, an
+  // unbounded reachability fetch plus the ingestion RPC could push a slow
+  // moment past the cap, and a Vercel 504 on the triage endpoint would read as
+  // "the whole server is down" to a connector that is in fact fine.
+  const [database, ingestion] = await Promise.all([databaseReachable(), ingestionHealth()]);
+  checks.database = database;
+  checks.ingestion = ingestion;
 
   // OAuth discovery serves on this host (what MCP clients fetch first).
   checks.oauth_metadata_url = `https://${host}/.well-known/oauth-authorization-server`;
@@ -142,6 +140,21 @@ export default async function handler(req, res) {
   }, null, 2));
 }
 
+// Database reachable (anon key, no user data — RLS applies regardless).
+async function databaseReachable() {
+  const t0 = Date.now();
+  try {
+    const url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const r = await fetch(`${url}/rest/v1/matterspaces?select=id&limit=1`, {
+      headers: { apikey: process.env.VITE_SUPABASE_ANON_KEY || '' },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    return { reachable: r.ok || r.status === 401 || r.status === 400, status: r.status, ms: Date.now() - t0 };
+  } catch (e) {
+    return { reachable: false, error: e.message?.slice(0, 120), ms: Date.now() - t0 };
+  }
+}
+
 // Aggregate ingestion liveness, through 066's argument-free SECURITY DEFINER
 // function called with the ANON key — the same key a logged-out browser has,
 // so this endpoint can never see more than the function is willing to tell
@@ -167,7 +180,7 @@ async function ingestionHealth() {
         accept: 'application/json',
       },
       body: JSON.stringify({ p_alive_minutes: WORKER_ALIVE_MINUTES }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
     if (r.status === 404) {
       return { available: false, degraded: false, reason: 'migration 066 is not applied yet (ingest_worker_status missing)' };
