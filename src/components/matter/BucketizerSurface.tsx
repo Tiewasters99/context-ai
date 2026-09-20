@@ -2,8 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown, ChevronRight, Check, X, Plus, Trash2, Loader2,
   Sparkles, FolderTree, ArrowUp, ArrowDown, FileText, Play, Square,
+  Quote, Scale,
 } from 'lucide-react';
 import DocumentPicker from '@/components/matter/DocumentPicker';
+import BucketizerEvidence from '@/components/matter/BucketizerEvidence';
+import BucketizerEvidenceRunDialog from '@/components/matter/BucketizerEvidenceRunDialog';
+import BucketizerOutlineDialog from '@/components/matter/BucketizerOutlineDialog';
+import {
+  countUnconfirmedEvidence, estimateEvidencePass, listEvidencePairs,
+  retryFailedPairs, runEvidenceForMatter,
+  type EvidenceEstimate, type EvidenceProgress, type PairInventory,
+} from '@/lib/bucketizer/evidence';
 import {
   fetchTree, createNode, updateNode, deleteNode,
   generateTreeFromPleadings, listUnclassifiedDocs, classifyDocuments,
@@ -60,6 +69,21 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // ---- the evidence lane --------------------------------------------------
+  // From a confirmed classification to the passages that support it, and from
+  // those to the filed outline. Quoted before it runs, resumable, and every
+  // quotation checked against the stored passage before it is written.
+  const [pendingEvidence, setPendingEvidence] =
+    useState<{ inventory: PairInventory; estimate: EvidenceEstimate } | null>(null);
+  const [preparingEvidence, setPreparingEvidence] = useState(false);
+  const [evidenceRun, setEvidenceRun] = useState<EvidenceProgress | null>(null);
+  const [evidenceReport, setEvidenceReport] = useState<EvidenceProgress | null>(null);
+  const [pairsTodo, setPairsTodo] = useState<number | null>(null);
+  const [unconfirmedEvidence, setUnconfirmedEvidence] = useState(0);
+  const [showOutline, setShowOutline] = useState(false);
+  const [evidenceBump, setEvidenceBump] = useState(0);
+  const evidenceAbort = useRef<AbortController | null>(null);
+
   const reload = useCallback(async () => {
     try {
       const [tree, cts] = await Promise.all([fetchTree(matterId), fetchNodeCounts(matterId)]);
@@ -71,15 +95,37 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     }
   }, [matterId]);
 
+  /**
+   * How much evidence work is outstanding.
+   *
+   * Both reads fail plainly until migration 068 is applied, which is a setup
+   * state rather than a broken tab: the counters simply go quiet and the tree,
+   * the classifier and the review queue carry on working.
+   */
+  const refreshEvidenceCounts = useCallback(async () => {
+    try {
+      const [inventory, unconfirmed] = await Promise.all([
+        listEvidencePairs(matterId),
+        countUnconfirmedEvidence(matterId),
+      ]);
+      setPairsTodo(inventory.todo.length);
+      setUnconfirmedEvidence(unconfirmed);
+    } catch {
+      setPairsTodo(null);
+    }
+  }, [matterId]);
+
   useEffect(() => {
     setNodes(null);
     setSelectedId(null);
     setNodeDocs(null);
+    setEvidenceReport(null);
     void reload();
     void listUnclassifiedDocs(matterId)
       .then((d) => setUnclassifiedCount(d.length))
       .catch(() => setUnclassifiedCount(null));
-  }, [matterId, reload]);
+    void refreshEvidenceCounts();
+  }, [matterId, reload, refreshEvidenceCounts]);
 
   const loadNodeDocs = useCallback(async (nodeId: string) => {
     const page = await fetchClassificationsForNode(nodeId);
@@ -183,6 +229,57 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       if (selectedId) void loadNodeDocs(selectedId).catch(() => {});
     }
   }, [matterId, nodes, pending, selectedId, loadNodeDocs]);
+
+  // ---- evidence -----------------------------------------------------------
+
+  /** Step one: count the pairings and price them. Nothing is spent here. */
+  const handlePrepareEvidence = useCallback(async (retryFailed = false) => {
+    setPreparingEvidence(true);
+    setError(null);
+    setEvidenceReport(null);
+    try {
+      if (retryFailed) await retryFailedPairs(matterId);
+      const inventory = await listEvidencePairs(matterId);
+      setPairsTodo(inventory.todo.length);
+      setPendingEvidence({ inventory, estimate: estimateEvidencePass(inventory) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not work out what is left to read.');
+    } finally {
+      setPreparingEvidence(false);
+    }
+  }, [matterId]);
+
+  /** Step two: the person clicked through the estimate. */
+  const handleRunEvidence = useCallback(async () => {
+    const run = pendingEvidence;
+    if (!run || !nodes?.length) return;
+    setPendingEvidence(null);
+    const controller = new AbortController();
+    evidenceAbort.current = controller;
+    setEvidenceRun({
+      done: 0, total: run.inventory.todo.length, current: '', items: 0, empty: 0,
+      failed: 0, dropped: 0, called: 0, pausedMessage: null, retryAfterSeconds: null, notes: [],
+    });
+    try {
+      const final = await runEvidenceForMatter({
+        matterId,
+        pairs: run.inventory.todo,
+        nodes,
+        signal: controller.signal,
+        onProgress: setEvidenceRun,
+      });
+      // A pause, a dropped quotation or a pairing that could not be read is
+      // something the attorney has to know about, so it stays on screen.
+      if (final.pausedMessage || final.notes.length || final.failed) setEvidenceReport(final);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The evidence pass failed.');
+    } finally {
+      setEvidenceRun(null);
+      evidenceAbort.current = null;
+      await refreshEvidenceCounts();
+      setEvidenceBump((n) => n + 1);
+    }
+  }, [matterId, nodes, pendingEvidence, refreshEvidenceCounts]);
 
   // ---- node edits ---------------------------------------------------------
 
@@ -320,6 +417,47 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
             Classify new documents{unclassifiedCount != null ? ` (${unclassifiedCount})` : ''}
           </button>
         )}
+        {roots.length > 0 && !classifying && !evidenceRun && (
+          <button
+            onClick={() => void handlePrepareEvidence()}
+            disabled={preparingEvidence || pairsTodo === null}
+            title={pairsTodo === null
+              ? 'Needs migration 068_bucketizer_evidence.sql'
+              : 'Read the confirmed documents for the passages that support each issue'}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-300 hover:bg-sky-500/20 disabled:opacity-50"
+          >
+            {preparingEvidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <Quote className="w-4 h-4" />}
+            Find evidence{pairsTodo != null ? ` (${pairsTodo})` : ''}
+          </button>
+        )}
+        {roots.length > 0 && !classifying && !evidenceRun && (
+          <button
+            onClick={() => setShowOutline(true)}
+            title="Build the trial outline and file it into the matter"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-[#d4a054]/40 bg-[#d4a054]/10 px-3 py-1.5 text-sm text-[#d4a054] hover:bg-[#d4a054]/20"
+          >
+            <Scale className="w-4 h-4" /> Outline
+          </button>
+        )}
+        {evidenceRun && (
+          <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300">
+            <Loader2 className="w-4 h-4 animate-spin text-sky-300" />
+            {evidenceRun.done}/{evidenceRun.total} · {evidenceRun.items} quotations
+            {evidenceRun.dropped > 0 && (
+              <span className="text-orange-300" title="Quotations that were not in the stored passage word for word">
+                · {evidenceRun.dropped} dropped
+              </span>
+            )}
+            {evidenceRun.failed > 0 && <span className="text-orange-300">· {evidenceRun.failed} failed</span>}
+            <span className="max-w-[240px] truncate text-zinc-500">{evidenceRun.current}</span>
+            <button
+              onClick={() => evidenceAbort.current?.abort()}
+              className="ml-1 text-zinc-400 hover:text-zinc-200" title="Stop"
+            >
+              <Square className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
         {classifying && (
           <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300">
             <Loader2 className="w-4 h-4 animate-spin text-emerald-300" />
@@ -347,6 +485,9 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       </div>
 
       {runReport && <RunReport report={runReport} onDismiss={() => setRunReport(null)} />}
+      {evidenceReport && (
+        <EvidenceReport report={evidenceReport} onDismiss={() => setEvidenceReport(null)} />
+      )}
 
       {/* Empty state */}
       {roots.length === 0 && !generating && (
@@ -402,6 +543,8 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
                 docs={nodeDocs}
                 docsNotice={nodeDocsNotice}
                 busy={busy}
+                evidenceBump={evidenceBump}
+                onEvidenceChanged={() => void refreshEvidenceCounts()}
                 onSave={saveNodePatch}
                 onDecide={handleDecide}
                 onManualAdd={() => setShowManualAdd(true)}
@@ -416,6 +559,24 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
           estimate={pending.estimate}
           onCancel={() => setPending(null)}
           onConfirm={() => void handleClassifyAll()}
+        />
+      )}
+
+      {pendingEvidence && (
+        <BucketizerEvidenceRunDialog
+          estimate={pendingEvidence.estimate}
+          failed={pendingEvidence.inventory.failed}
+          onCancel={() => setPendingEvidence(null)}
+          onConfirm={() => void handleRunEvidence()}
+          onRetryFailed={() => { setPendingEvidence(null); void handlePrepareEvidence(true); }}
+        />
+      )}
+
+      {showOutline && (
+        <BucketizerOutlineDialog
+          matterId={matterId}
+          unconfirmedEvidence={unconfirmedEvidence}
+          onClose={() => setShowOutline(false)}
         />
       )}
 
@@ -581,6 +742,66 @@ function RunReport({ report, onDismiss }: { report: ClassifyProgress; onDismiss:
   );
 }
 
+/**
+ * What the evidence pass has to say for itself.
+ *
+ * The number that matters most here is DROPPED — quotations the model gave
+ * that are not in the stored passage word for word. They were discarded rather
+ * than corrected, and an attorney reading a thin bucket deserves to know that
+ * is why it is thin.
+ */
+function EvidenceReport({
+  report, onDismiss,
+}: { report: EvidenceProgress; onDismiss: () => void }) {
+  const paused = Boolean(report.pausedMessage);
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-sm ${paused
+      ? 'border-[#d4a054]/40 bg-[#d4a054]/10 text-[#d4a054]'
+      : 'border-orange-500/30 bg-orange-500/10 text-orange-200'}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {paused && (
+            <>
+              <p className="font-medium">Paused — {report.done} of {report.total} pairings read.</p>
+              <p className="mt-0.5 text-xs opacity-90">{report.pausedMessage}</p>
+              {report.retryAfterSeconds != null && (
+                <p className="mt-0.5 text-xs opacity-75">
+                  Try again in about {Math.ceil(report.retryAfterSeconds / 60)} minute
+                  {Math.ceil(report.retryAfterSeconds / 60) === 1 ? '' : 's'}.
+                </p>
+              )}
+              <p className="mt-1 text-xs opacity-75">
+                Everything already read is saved, and none of it will be charged again.
+              </p>
+            </>
+          )}
+          {!paused && (
+            <p className="font-medium">
+              {report.items} quotation{report.items === 1 ? '' : 's'} recorded
+              {report.dropped > 0 && (
+                <> · {report.dropped} discarded for not matching the stored text word for word</>
+              )}
+              {report.failed > 0 && (
+                <> · {report.failed} pairing{report.failed === 1 ? '' : 's'} could not be read</>
+              )}
+            </p>
+          )}
+          {report.notes.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5 text-xs opacity-90">
+              {report.notes.slice(0, 8).map((n, i) => <li key={i}>· {n}</li>)}
+              {report.notes.length > 8 && <li>· and {report.notes.length - 8} more</li>}
+            </ul>
+          )}
+        </div>
+        <button className="shrink-0 opacity-70 hover:opacity-100" onClick={onDismiss}>
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 function TreeNode({
@@ -667,13 +888,17 @@ function TreeNode({
 // ---------------------------------------------------------------------------
 
 function NodeDetail({
-  node, docs, docsNotice, busy, onSave, onDecide, onManualAdd,
+  node, docs, docsNotice, busy, evidenceBump, onEvidenceChanged,
+  onSave, onDecide, onManualAdd,
 }: {
   node: BucketNode;
   docs: ClassifiedDoc[] | null;
   /** Set only when the bucket holds more documents than are listed. */
   docsNotice: string | null;
   busy: boolean;
+  /** Bumped when a run finishes, to re-read this node's evidence. */
+  evidenceBump: number;
+  onEvidenceChanged: () => void;
   onSave: (nodeId: string, patch: { label?: string; description?: string }) => Promise<void>;
   onDecide: (c: ClassifiedDoc, decision: 'confirmed' | 'rejected') => Promise<void>;
   onManualAdd: () => void;
@@ -715,6 +940,18 @@ function NodeDetail({
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Save
         </button>
       )}
+
+      {/* The evidence comes FIRST, above the documents it was drawn from.
+          A bucket's documents are the working list; its quoted testimony is
+          the work product, and it is what goes into the outline. */}
+      <div className="border-t border-white/10 pt-3">
+        <h4 className="mb-2 text-sm font-medium text-zinc-300">Evidence</h4>
+        <BucketizerEvidence
+          key={`${node.id}:${evidenceBump}`}
+          nodeId={node.id}
+          onChanged={onEvidenceChanged}
+        />
+      </div>
 
       <div className="flex items-center justify-between border-t border-white/10 pt-3">
         <h4 className="text-sm font-medium text-zinc-300">

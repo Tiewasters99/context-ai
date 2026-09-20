@@ -33,6 +33,7 @@ import {
 } from './classify-run';
 import type { MergedAssignment, WindowPassage } from './windows';
 import { estimateRun, type EstimateDoc, type RunEstimate } from './estimate';
+import { isFiledOutline } from './outline-model';
 
 export const BUCKETIZER_DEFAULT_MODEL = 'claude-opus-4-8';
 
@@ -304,7 +305,11 @@ export async function listUnclassifiedDocs(matterId: string): Promise<DocRow[]> 
     );
     for (const row of rows) classified.add(row.document_id);
   }
-  return docs.filter((d) => !classified.has(d.id) && !d.metadata?.bucketizer?.no_buckets_at);
+  return docs.filter((d) => !classified.has(d.id)
+    && !d.metadata?.bucketizer?.no_buckets_at
+    // A trial outline this matter filed earlier is not evidence about the
+    // matter. See `isFiledOutline` for why excluding it is not cosmetic.
+    && !isFiledOutline(d.title));
 }
 
 // ---------------------------------------------------------------------------
