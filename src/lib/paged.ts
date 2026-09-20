@@ -102,7 +102,14 @@ export async function fetchPaged<T>(
     if (batch.length < pageSize) break;
 
     if (rows.length >= ceiling) {
-      truncated = true;
+      // The ceiling stopped the loop — but it only *truncated* the list if
+      // there were rows left to have. A list whose length happens to equal
+      // its ceiling is whole, and telling that reader "showing the first
+      // 2,000 of more" is the same false note as saying nothing when rows
+      // are missing, pointed the other way. With a server count in hand we
+      // know; without one, assume there is more (the loop never saw a short
+      // page, so it has no evidence either way).
+      truncated = serverTotal === null || serverTotal > rows.length;
       break;
     }
   }

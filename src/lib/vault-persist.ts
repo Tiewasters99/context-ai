@@ -10,6 +10,15 @@
 
 import { supabase } from './supabase';
 import type { VaultFile } from './vault-types';
+// The matter-tree document read, paged past PostgREST's 1,000-row cap. It
+// lives in its own module because it takes the client as an argument, which
+// is what lets an offline harness drive the real query.
+import {
+  fetchMatterDocumentRows,
+  type DocumentsSource,
+  type FetchMatterDocumentsOptions,
+  type VaultDocumentRow,
+} from './vault-documents';
 // The pipeline's own accepted-types list and storage cap (lib/ingest-formats.mjs
 // is dependency-free and shared with the Node side), so the pre-upload
 // refusals here can never drift from what /api/ingest actually handles.
@@ -94,16 +103,26 @@ export async function resolveMatter(key: string): Promise<MatterRef | null> {
 
 // -----------------------------------------------------------------------------
 // Hydrate the file list for a matter from the documents table.
+//
+// Both reads are paged (see vault-documents.ts). They return the rows they
+// hold AND what the server says exists, because those two numbers are only
+// the same while the list is whole — and a list that is short without saying
+// so is the bug this pagination exists to remove.
 // -----------------------------------------------------------------------------
-export async function listMatterDocuments(matterspaceId: string): Promise<VaultFile[]> {
-  const data = await withRetries('list documents', () =>
-    supabase
-      .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
-      .eq('matterspace_id', matterspaceId)
-      .order('created_at', { ascending: false }),
-  );
-  return (data || []).map((d) => documentToVaultFile(d));
+
+export interface VaultFileList {
+  files: VaultFile[];
+  /** What the server counts in these matters — exact, even if `files` is windowed. */
+  total: number;
+  /** The ceiling stopped the read. The surface owes the reader `showingOf()`. */
+  truncated: boolean;
+}
+
+export async function listMatterDocuments(
+  matterspaceId: string,
+  options: FetchMatterDocumentsOptions = {},
+): Promise<VaultFileList> {
+  return listMatterDocumentsRecursive([matterspaceId], new Map(), options);
 }
 
 // Hydrate from a set of matter ids (parent + descendants). Each row carries
@@ -111,16 +130,19 @@ export async function listMatterDocuments(matterspaceId: string): Promise<VaultF
 export async function listMatterDocumentsRecursive(
   matterIds: string[],
   nameById: Map<string, string>,
-): Promise<VaultFile[]> {
-  if (matterIds.length === 0) return [];
-  const data = await withRetries('list documents', () =>
-    supabase
-      .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
-      .in('matterspace_id', matterIds)
-      .order('created_at', { ascending: false }),
+  options: FetchMatterDocumentsOptions = {},
+): Promise<VaultFileList> {
+  if (matterIds.length === 0) return { files: [], total: 0, truncated: false };
+  const { rows, total, truncated } = await fetchMatterDocumentRows(
+    supabase as unknown as DocumentsSource,
+    matterIds,
+    options,
   );
-  return (data || []).map((d) => documentToVaultFile(d, nameById.get(d.matterspace_id)));
+  return {
+    files: rows.map((d: VaultDocumentRow) => documentToVaultFile(d, nameById.get(d.matterspace_id))),
+    total,
+    truncated,
+  };
 }
 
 function documentToVaultFile(doc: {
@@ -383,6 +405,102 @@ export function watchDocumentStatus(
       held: data.processing_status === 'held' || undefined,
     });
     if (uiStatus === 'indexed' || uiStatus === 'error') return;
+    timer = setTimeout(tick, intervalMs);
+  };
+  tick();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
+/** One document's share of a batched status tick. */
+export interface DocumentStatusRow {
+  documentId: string;
+  update: DocumentStatusUpdate;
+}
+
+/** Ids per request. Keeps the `in(...)` filter inside a sane URL length. */
+const STATUS_CHUNK = 200;
+
+/**
+ * Follow MANY documents' pipeline status with one request per chunk.
+ *
+ * The Vault opened one `watchDocumentStatus` poll per unfinished document on
+ * hydration, and that was survivable only because the list itself stopped at
+ * PostgREST's 1,000 rows. With the list paged, a matter caught mid-bulk-ingest
+ * would have opened thousands of two-second polls and the tab would have spent
+ * its life in the network queue — the pagination fix would have traded a silent
+ * truncation for a frozen browser. One `.in('id', …)` per 200 ids does the same
+ * work, and an id leaves the set the moment it reaches a terminal state, so the
+ * traffic falls away as the pipeline finishes.
+ *
+ * Updates arrive in batches so the caller writes state once per chunk instead
+ * of once per document. A document that a successful query does not return is
+ * gone (deleted, or no longer visible) and is reported as such, exactly as the
+ * single-document watcher does — never left spinning.
+ */
+export function watchDocumentStatuses(
+  documentIds: string[],
+  onUpdate: (rows: DocumentStatusRow[]) => void,
+  intervalMs = 2000,
+): () => void {
+  const pending = new Set(documentIds);
+  if (pending.size === 0) return () => {};
+
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const tick = async () => {
+    if (stopped) return;
+    const ids = Array.from(pending);
+    for (let i = 0; i < ids.length && !stopped; i += STATUS_CHUNK) {
+      const chunk = ids.slice(i, i + STATUS_CHUNK);
+      const { data, error } = await supabase
+        .from('documents')
+        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+        .in('id', chunk);
+      if (stopped) return;
+      // A transient failure is not an answer about any document: keep them
+      // all pending and ask again on the next tick.
+      if (error) continue;
+
+      const rows = (data ?? []) as {
+        id: string;
+        processing_status: string;
+        processing_error: string | null;
+        text_status?: string | null;
+        ocr_pending?: unknown;
+      }[];
+      const seen = new Set(rows.map((r) => r.id));
+      const updates: DocumentStatusRow[] = [];
+
+      for (const row of rows) {
+        const status = mapStatus(row.processing_status);
+        updates.push({
+          documentId: row.id,
+          update: {
+            status,
+            errorMessage: row.processing_error || undefined,
+            stage: stageOf(row.processing_status),
+            textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
+            ocrPending: row.processing_status === 'ready' && row.ocr_pending && typeof row.ocr_pending === 'object'
+              ? (row.ocr_pending as OcrPending) : undefined,
+            held: row.processing_status === 'held' || undefined,
+          },
+        });
+        if (status === 'indexed' || status === 'error') pending.delete(row.id);
+      }
+      for (const id of chunk) {
+        if (seen.has(id)) continue;
+        updates.push({ documentId: id, update: { status: 'error', errorMessage: 'document disappeared' } });
+        pending.delete(id);
+      }
+
+      if (updates.length) onUpdate(updates);
+    }
+    if (stopped || pending.size === 0) return;
     timer = setTimeout(tick, intervalMs);
   };
   tick();
