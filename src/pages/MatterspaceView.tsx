@@ -6,10 +6,12 @@ import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
 import ActivityFeed from '@/components/activity/ActivityFeed';
+import RecordTab from '@/components/record/RecordTab';
 import MatterCalendar from '@/components/matter/MatterCalendar';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
+import AiPauseControl from '@/components/matter/AiPauseControl';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import { setOrchestratorContext, clearOrchestratorContext } from '@/lib/orchestrator-context';
@@ -22,9 +24,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
+const tabs = ['Updates', 'Record', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Calendar'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
@@ -288,6 +290,15 @@ export default function MatterspaceView() {
           </div>
           {matter && (
             <div className="flex items-center gap-2 shrink-0">
+              {/* "Pause all AI on this matter". It sits first because when it
+                  is on it is the most important fact on the page, and because
+                  it is the control a user reaches for in a hurry. The seal's
+                  own control lives in the sidebar (drag to the SecureSpaces
+                  shelf), not here — this is the matter's toolbar, which is
+                  where the roadmap's "one toggle beside Seal in the matter
+                  menu" actually lands today. It renders nothing at all until
+                  migration 070 is applied. */}
+              <AiPauseControl matterId={matter.id} matterName={matter.name} />
               <button
                 onClick={enterDiscovery}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
@@ -377,6 +388,9 @@ export default function MatterspaceView() {
         {activeTab === 'Updates' && matter && (
           <ActivityFeed matterId={matter.id} />
         )}
+        {activeTab === 'Record' && matter && (
+          <RecordTab matter={{ id: matter.id, name: matter.name }} />
+        )}
         {activeTab === 'Calendar' && matter && (
           <MatterCalendar matterId={matter.id} />
         )}
@@ -389,7 +403,7 @@ export default function MatterspaceView() {
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Calendar' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

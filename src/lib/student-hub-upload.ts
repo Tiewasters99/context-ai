@@ -15,6 +15,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { generateStructured } from '@/lib/llm';
+import { parseServerRefusal } from '@/lib/llm/refusals';
 import { DEFAULT_MODEL_ID, SCAN_BUCKET } from '@/lib/student-hub';
 import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
@@ -322,11 +323,16 @@ export async function transcribePages(
           onProgress?.(done, pages.length);
           break;
         }
-        const detail = await res.text();
+        // 402 (the month's AI budget) and 429 (the rate window) both carry a
+        // sentence written for a person; so does a sealed refusal. This used
+        // to paste 200 characters of the raw body into the message.
+        const refusal = await parseServerRefusal(res);
         if (attempt >= 2 || (res.status < 500 && res.status !== 429)) {
-          throw new Error(`Reading pages failed (${res.status}): ${detail.slice(0, 200)}`);
+          throw new Error(refusal.message);
         }
-        await sleep(2000 * (attempt + 1));
+        // When the server said how long the window has left, wait that long
+        // rather than guessing — retrying early just spends another attempt.
+        await sleep(refusal.retryAfterSeconds ? refusal.retryAfterSeconds * 1000 : 2000 * (attempt + 1));
       }
     }
   };

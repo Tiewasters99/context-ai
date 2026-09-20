@@ -1,35 +1,49 @@
-// A sealed meeting's transcript never leaves the seal.
-// (SecureSpace Tier B/C; the gap found while reviewing PR #159.)
+// A sealed meeting's transcript never leaves the seal — and, since 2026-09-20,
+// a sealed meeting still gets an ANSWER, from the pen inside the seal.
 //
 //   node scripts/_verify-sealed-meetings.mjs
 //
 // Entirely OFFLINE and secret-free: no .env is read, `fetch` is replaced by a
-// witness that answers for Supabase and records every request, and the two
-// endpoint handlers are driven directly with a fake req/res. Every key in this
-// file is a fake string. CI-ready — exits non-zero on failure.
+// witness that answers for Supabase and for bedrock-mantle and records every
+// request, and the two endpoint handlers are driven directly with a fake
+// req/res. Every key in this file is a fake string. CI-ready — exits non-zero
+// on failure.
 //
-// The finding under test: /api/meeting-chat and /api/meeting-flag both send a
-// meeting's VERBATIM transcript to first-party Anthropic. Both read the
-// matter's tier and both acted on it only for Tier C — a Tier-B (SEALED)
-// meeting merely dropped the `web_search` tool and sent the transcript anyway,
-// with no escalation and nothing written to the record. /api/meeting-flag does
-// it on a 90-second timer, so the leak ran unprompted for as long as the
-// meeting did.
+// PART ONE (PR #162) — the leak. /api/meeting-chat and /api/meeting-flag both
+// sent a meeting's VERBATIM transcript to first-party Anthropic. Both read the
+// matter's tier and both acted on it only for Tier C; /api/meeting-flag did it
+// on a 90-second timer, so the leak ran unprompted for as long as the meeting.
 //
-//   1. Tier B          → refusal, and ZERO requests to any provider. The only
-//                        host contacted is the Supabase stub — the tier lookup
-//                        itself.
-//   2. Tier C          → unchanged in outcome (refused), now through the same
-//                        policy function.
-//   3. Tier unreadable → refusal. So is a meeting row that does not resolve:
-//                        a seal we cannot read is a seal (a deliberate
-//                        tightening — the old code treated it as unbound).
-//   4. Tier A          → EXACTLY the request the routes made before this
-//                        change: same model, same system blocks, same
-//                        transcript wrapper, same tools, same messages.
+//   1. Tier B          → first-party Anthropic is never contacted.
+//   2. Tier C          → refused.
+//   3. Tier unreadable → refused. So is a meeting row that does not resolve.
+//   4. Tier A          → EXACTLY the request the routes made before: same
+//                        model, system blocks, transcript wrapper, tools.
 //   5. No matter bound → unchanged, open.
-//   6. The policy      → providerAllowed('B','anthropic') is false, which is
-//                        why case 1 refuses. One policy, not a second copy.
+//   6. The policy      → providerAllowed('B','anthropic') is false.
+//
+// PART TWO (2026-09-20) — Eden's decision: "sealed chat should be answered by
+// Kimi with whatever agentic harness Kimi can run inside the sealed space."
+// A Tier-B meeting is no longer refused; it is answered by the sealed pen
+// through lib/assistant-core.mjs's own agentic loop.
+//
+//   7.  Sealed + pen present → EXACTLY bedrock-mantle is contacted, SigV4
+//                        signed, transcript included, in-seal tools only, no
+//                        web_search, and zero requests to any other provider.
+//   8.  Sealed + no creds → refusal (503 sealed_pen_unavailable), zero
+//                        provider requests, and the refusal is still RECORDED.
+//   9.  Sealed + pen 403 → refusal (502 sealed_pen_error), exactly ONE request.
+//   10. Over-long transcript → the most recent window, DISCLOSED in the answer.
+//   11. The record    → ai_sessions + ai_messages, with model, provider,
+//                        tokens and cost: a sealed meeting leaves the same
+//                        record as a sealed chat.
+//   12. Metering      → priced at the sealed pen, not at Opus; a refusal is
+//                        not charged at all.
+//   13. meeting-flag  → STILL quiet on a sealed matter, even with the pen
+//                        configured. The decision covers the question a person
+//                        asks, not a timer.
+//   14. Negative control → main's handler, run against these expectations,
+//                        fails them.
 
 // ── env, BEFORE the handlers are imported ────────────────────────────────
 // The handlers read these at module scope. Set here so the harness is
@@ -37,17 +51,24 @@
 // environment is overwritten rather than used.
 const SUPABASE_URL = 'https://stub.supabase.test';
 const SUPA_HOST = 'stub.supabase.test';
+const BEDROCK_HOST = 'bedrock-mantle.us-east-1.api.aws';
 process.env.VITE_SUPABASE_URL = SUPABASE_URL;
 process.env.SUPABASE_URL = SUPABASE_URL;
 process.env.VITE_SUPABASE_ANON_KEY = 'anon-stub-not-a-key';
 process.env.ANTHROPIC_API_KEY = 'sk-ant-stub-not-a-key';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-stub-not-a-key';
 delete process.env.CLAUDE_MODEL;
 delete process.env.CLAUDE_FLAG_MODEL;
+delete process.env.BEDROCK_MODEL;
+delete process.env.OPENAI_API_KEY;
 
 const { default: meetingChat } = await import('../api/meeting-chat.mjs');
 const { default: meetingFlag } = await import('../api/meeting-flag.mjs');
 const { meetingModelDecision, meetingRefusalMessage } = await import('../lib/meeting-seal.mjs');
 const { providerAllowed } = await import('../lib/ai-tier-policy.mjs');
+const { estimateLlmCents } = await import('../lib/usage-prices.mjs');
+const { transcriptWindow, windowNotice, buildSealedMeetingMessages, SEALED_PEN_CONTEXT_TOKENS } =
+  await import('../lib/meeting-sealed-chat.mjs');
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -56,6 +77,7 @@ const fail = (m, d) => {
   failures++;
 };
 const check = (cond, m, d) => (cond ? pass(m) : fail(m, d));
+const skip = (m) => console.log(`  SKIP  ${m}`);
 
 // A transcript long enough for /api/meeting-flag's 200-character floor, and
 // recognisable if it ever shows up somewhere it should not.
@@ -66,24 +88,44 @@ const TRANSCRIPT = [
   'Calder: Then one of us is reading a different document, and we should stop here.',
 ].join('\n');
 
+// A meeting longer than the sealed pen can hold. The first and last lines are
+// unique so the harness can prove which part travelled.
+const LONG_FIRST = 'Reyes: OPENING-MARKER — this is the first thing anyone said today.';
+const LONG_LAST = 'Calder: CLOSING-MARKER — and that is where we should leave it.';
+const LONG_TRANSCRIPT = [
+  LONG_FIRST,
+  ...Array.from({ length: 9_000 }, (_, i) => `Speaker ${i % 3}: Filler line ${i} — routine discussion of the schedule, the budget and the open items.`),
+  LONG_LAST,
+].join('\n');
+
 // ── the witness ──────────────────────────────────────────────────────────
 // Installed for every case. It answers as Supabase (so the real supabase-js
-// client, and therefore the real tier lookup, runs unmodified) and records
-// every request either handler makes. A sealed case must show no provider host
-// at all.
+// client, and therefore the real tier walk and the real ledger writes, run
+// unmodified) and as bedrock-mantle, and records every request. A sealed case
+// must show no host but Supabase and — when a pen is configured — bedrock.
 const realFetch = globalThis.fetch;
 let requests = [];
 let world = {};
 
 function install(w = {}) {
-  world = { tier: 'B', meeting: 'bound', ...w };
+  world = { tier: 'B', meeting: 'bound', bedrock: 'absent', meter: 'allow', ledger: 'ok', session: 'ok', messages: 'ok', ...w };
   requests = [];
+  if (world.bedrock === 'absent') {
+    delete process.env.BEDROCK_AWS_ACCESS_KEY_ID;
+    delete process.env.BEDROCK_AWS_SECRET_ACCESS_KEY;
+    delete process.env.BEDROCK_REGION;
+  } else {
+    process.env.BEDROCK_AWS_ACCESS_KEY_ID = 'AKIA-STUB-NOT-A-KEY';
+    process.env.BEDROCK_AWS_SECRET_ACCESS_KEY = 'stub-secret-not-a-key';
+    process.env.BEDROCK_REGION = 'us-east-1';
+  }
   globalThis.fetch = async (input, init = {}) => {
     const url = typeof input === 'string' ? input : (input?.url ?? String(input));
     const host = hostOf(url);
-    requests.push({ url, host, method: (init.method || 'GET').toUpperCase(), body: init.body });
-    if (host === SUPA_HOST) return supabaseAnswer(url);
+    requests.push({ url, host, method: (init.method || 'GET').toUpperCase(), body: init.body, headers: init.headers || {} });
+    if (host === SUPA_HOST) return supabaseAnswer(url, init);
     if (host === 'api.anthropic.com') return anthropicAnswer(init);
+    if (host === BEDROCK_HOST) return bedrockAnswer();
     return jsonRes(500, { error: 'unexpected_host', host });
   };
 }
@@ -92,13 +134,43 @@ const hostOf = (u) => { try { return new URL(u).host; } catch { return String(u)
 const hosts = () => [...new Set(requests.map((r) => r.host))];
 const providerHosts = () => hosts().filter((h) => h !== SUPA_HOST);
 const anthropicCalls = () => requests.filter((r) => r.host === 'api.anthropic.com');
+const bedrockCalls = () => requests.filter((r) => r.host === BEDROCK_HOST);
 const sentBody = (i = 0) => { try { return JSON.parse(anthropicCalls()[i].body); } catch { return null; } };
+const bedrockBody = (i = 0) => { try { return JSON.parse(bedrockCalls()[i].body); } catch { return null; } };
+const supaCalls = (path, method = 'POST') => requests.filter((r) => r.host === SUPA_HOST && r.url.includes(path) && r.method === method);
+const rpcBody = (fn) => { const c = supaCalls(`/rpc/${fn}`); try { return JSON.parse(c[c.length - 1].body); } catch { return null; } };
 
 const jsonRes = (status, obj) => new Response(JSON.stringify(obj), {
   status, headers: { 'content-type': 'application/json' },
 });
 
-function supabaseAnswer(url) {
+// The three PostgREST error bodies this harness needs, spelled the way
+// Postgres and PostgREST actually spell them — because lib/ledger.mjs's
+// isNotDeployed() reads the code and the message, and a stub that invented its
+// own wording would test the stub rather than the classifier.
+const RLS_REFUSED = (table) => ({
+  code: '42501',
+  message: `new row violates row-level security policy for table "${table}"`,
+  details: null,
+  hint: null,
+});
+// _ledger_append_checked's own refusal (064:459-461): a real write failure.
+const LEDGER_REFUSED = {
+  code: '42501',
+  message: 'matter matter-1 is not accessible',
+  details: null,
+  hint: null,
+};
+// Migration 064 merged but not yet pasted into the database — the state PR
+// #170 promises behaves exactly as today, never as a withheld answer.
+const LEDGER_NOT_DEPLOYED = {
+  code: 'PGRST202',
+  message: 'Could not find the function public.ledger_append(p_actor_kind, p_actor_label, p_actor_ref, p_kind, p_matter, p_payload, p_serverspace, p_session) in the schema cache',
+  details: null,
+  hint: null,
+};
+
+function supabaseAnswer(url, init) {
   if (url.includes('/auth/v1/user')) {
     return jsonRes(200, {
       id: 'user-1', aud: 'authenticated', role: 'authenticated', email: 'stub@example.test',
@@ -116,6 +188,40 @@ function supabaseAnswer(url) {
     if (world.tier === 'error') return jsonRes(500, { message: 'tier lookup failed (stub)', code: 'XX000' });
     return jsonRes(200, [{ id: 'matter-1', parent_matterspace_id: null, ai_tier: world.tier }]);
   }
+  // The privileged record (migration 051). .insert().select().single() wants
+  // the OBJECT representation PostgREST returns under the object accept header.
+  if (url.includes('/rest/v1/ai_sessions')) {
+    if ((init.method || 'GET').toUpperCase() === 'POST') {
+      if (world.session === 'fail') return jsonRes(403, RLS_REFUSED('ai_sessions'));
+      return jsonRes(201, { id: 'session-1', matterspace_id: 'matter-1', tier: world.tier, status: 'open' });
+    }
+    return jsonRes(200, [{ id: 'session-1', matterspace_id: 'matter-1', tier: world.tier, status: 'open' }]);
+  }
+  if (url.includes('/rest/v1/ai_messages')) {
+    if ((init.method || 'GET').toUpperCase() === 'POST') {
+      if (world.messages === 'fail') return jsonRes(403, RLS_REFUSED('ai_messages'));
+      return jsonRes(201, []);
+    }
+    return jsonRes(200, []);
+  }
+  // The matter's Record (migration 064). W1's strict mode reads the OUTCOME of
+  // this call, so the stub has to be able to answer three different ways —
+  // written, refused, and not deployed — or the harness cannot tell a
+  // withholding from a wiring mistake.
+  if (url.includes('/rpc/ledger_append')) {
+    if (world.ledger === 'fail') return jsonRes(403, LEDGER_REFUSED);
+    if (world.ledger === 'absent') return jsonRes(404, LEDGER_NOT_DEPLOYED);
+    // What public.ledger_append() returns: the row it appended.
+    return jsonRes(200, { id: 'event-1', seq: 1, hash: 'f'.repeat(64), chain_key: 'matter-1' });
+  }
+  // The spend cap (migration 063).
+  if (url.includes('/rpc/usage_consume')) {
+    if (world.meter === 'refuse') {
+      return jsonRes(200, { allowed: false, status: 402, reason: 'budget_exhausted', message: 'That would take this month past its limit.' });
+    }
+    return jsonRes(200, { allowed: true, event_id: 'usage-event-1', max_output_tokens: null, max_request_bytes: null });
+  }
+  if (url.includes('/rpc/usage_record_actual')) return jsonRes(200, { ok: true });
   return jsonRes(404, { message: 'no stub route', url });
 }
 
@@ -148,6 +254,22 @@ function anthropicAnswer(init) {
     ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 8 } }],
     ['message_stop', { type: 'message_stop' }],
   ].map(([ev, data]) => `event: ${ev}\ndata: ${JSON.stringify(data)}\n\n`).join('');
+  return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
+// The sealed pen: bedrock-mantle's OpenAI-compatible chat route, the shape
+// lib/assistant-core.mjs's openaiCompatTurn reads.
+const SEALED_ANSWER = 'Push back on the 3.1 figure — the term sheet is the document that controls.';
+function bedrockAnswer() {
+  if (world.bedrock === '403') {
+    return new Response(JSON.stringify({ message: 'AccessDeniedException (stub)' }), {
+      status: 403, headers: { 'content-type': 'application/json' },
+    });
+  }
+  const sse = [
+    { choices: [{ index: 0, delta: { role: 'assistant', content: SEALED_ANSWER } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1200, completion_tokens: 30 } },
+  ].map((d) => `data: ${JSON.stringify(d)}\n\n`).join('') + 'data: [DONE]\n\n';
   return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
@@ -199,52 +321,55 @@ function readsLikeARefusal(msg) {
 }
 
 try {
-  // ── 1. /api/meeting-chat on a SEALED matter ───────────────────────────
-  console.log('\n/api/meeting-chat — Tier B (SEALED)');
-  install({ tier: 'B' });
+  // ── 1. /api/meeting-chat on a SEALED matter, NO sealed pen ────────────
+  console.log('\n/api/meeting-chat — Tier B (SEALED), no sealed pen on this server');
+  install({ tier: 'B', bedrock: 'absent' });
   let res = await call(meetingChat, chatBody());
-  check(res.statusCode === 403, 'refused with 403', { status: res.statusCode, body: res.text });
-  check(res.json?.error === 'tier_violation', "the code is 'tier_violation' — the shape /api/llm already returns", res.json);
+  check(res.statusCode === 503, 'refused with 503 — the status /api/llm returns for the same condition', { status: res.statusCode, body: res.text });
+  check(res.json?.error === 'sealed_pen_unavailable', "the code is 'sealed_pen_unavailable' — choosePen's own, not a second vocabulary", res.json);
   check(res.json?.tier === 'B', 'the refusal names the tier', res.json);
   check(readsLikeARefusal(res.json?.message), 'the refusal is a plain-language sentence, not a bare code', res.json?.message);
   check(providerHosts().length === 0, 'egress witness: ZERO provider requests — no model saw the transcript', hosts());
   check(!res.text.includes('Reyes:'), 'no part of the transcript is echoed back in the refusal');
   check(requests.every((r) => !String(r.body ?? '').includes('Reyes:')), 'the transcript appears in NO outbound request body');
+  check(supaCalls('/rest/v1/ai_sessions').length === 1, 'the refusal is RECORDED — a session row was opened before the pen was chosen', supaCalls('/rest/v1/ai_sessions').length);
+  check(supaCalls('/rpc/usage_consume').length === 0, 'a refusal is not charged: the meter was never called', supaCalls('/rpc/usage_consume').length);
 
   // ── 2. Tier C ─────────────────────────────────────────────────────────
   console.log('\n/api/meeting-chat — Tier C (SILO)');
-  install({ tier: 'C' });
+  install({ tier: 'C', bedrock: 'ok' });
   res = await call(meetingChat, chatBody());
-  check(res.statusCode === 403, 'refused with 403', { status: res.statusCode });
+  check(res.statusCode === 403, 'refused with 403 — a Silo has no sealed pen either', { status: res.statusCode });
   check(readsLikeARefusal(res.json?.message), 'plain-language refusal', res.json?.message);
-  check(providerHosts().length === 0, 'egress witness: ZERO provider requests', hosts());
+  check(providerHosts().length === 0, 'egress witness: ZERO provider requests — the Bedrock pen is NOT a Silo route', hosts());
 
   // ── 3. The tier cannot be determined ──────────────────────────────────
   console.log('\n/api/meeting-chat — the seal cannot be read (fail closed)');
-  install({ tier: 'error' });
+  install({ tier: 'error', bedrock: 'ok' });
   res = await call(meetingChat, chatBody());
   check(res.statusCode === 403, 'a tier lookup that fails is a refusal, not a pass', { status: res.statusCode });
   check(res.json?.tier === null, 'the refusal admits the tier is unknown', res.json);
-  check(providerHosts().length === 0, 'egress witness: ZERO provider requests', hosts());
+  check(providerHosts().length === 0, 'egress witness: ZERO provider requests — not even to the sealed pen', hosts());
 
-  install({ meeting: 'error' });
+  install({ meeting: 'error', bedrock: 'ok' });
   res = await call(meetingChat, chatBody());
   check(res.statusCode === 403 && res.json?.error === 'meeting_unresolved',
     'a meeting row that errors is a refusal (tightened 2026-09-19)', res.json);
   check(providerHosts().length === 0, 'egress witness: ZERO provider requests', hosts());
 
-  install({ meeting: 'missing' });
+  install({ meeting: 'missing', bedrock: 'ok' });
   res = await call(meetingChat, chatBody());
   check(res.statusCode === 403 && res.json?.error === 'meeting_unresolved',
     'a meeting the caller cannot see under RLS is a refusal', res.json);
   check(providerHosts().length === 0, 'egress witness: ZERO provider requests', hosts());
 
   // ── 4. Tier A — byte-for-byte the request made before this change ─────
-  console.log('\n/api/meeting-chat — Tier A (unchanged)');
-  install({ tier: 'A' });
+  console.log('\n/api/meeting-chat — Tier A (unchanged, pen configured or not)');
+  install({ tier: 'A', bedrock: 'ok' });
   res = await call(meetingChat, chatBody());
   const sent = sentBody();
   check(anthropicCalls().length === 1, 'exactly one request to Anthropic', requests.map((r) => r.host));
+  check(bedrockCalls().length === 0, 'the sealed pen does not hijack an unsealed meeting', hosts());
   check(sent?.model === 'claude-opus-4-7', 'same model as before', sent?.model);
   check(sent?.max_tokens === 8192 && sent?.thinking?.type === 'adaptive', 'same max_tokens and adaptive thinking', { max_tokens: sent?.max_tokens, thinking: sent?.thinking });
   check(Array.isArray(sent?.system) && sent.system.length === 2, 'system is still instructions + transcript', sent?.system?.length);
@@ -257,6 +382,11 @@ try {
   check(sent?.messages?.[0]?.content === 'What should I push back on?', 'the chat history is still forwarded', sent?.messages);
   check(res.text.includes('Push back on the 3.1 figure.'), 'the answer still streams back to the client', res.text);
   check(res.statusCode === 200, 'status 200', res.statusCode);
+  const aMeter = rpcBody('usage_consume');
+  check(aMeter?.p_kind === 'meeting' && aMeter.p_cents_estimate === estimateLlmCents({
+    provider: 'anthropic', model: 'claude-opus-4-7',
+    bodyText: TRANSCRIPT + JSON.stringify(chatBody().messages), maxOutputTokens: 8192,
+  }), 'Tier A is still priced at Opus, on the same estimate as before', aMeter);
 
   // ── 5. A meeting bound to no matter ───────────────────────────────────
   console.log('\n/api/meeting-chat — nothing to seal (unchanged)');
@@ -264,13 +394,13 @@ try {
   res = await call(meetingChat, chatBody());
   check(anthropicCalls().length === 1, 'a meeting in no matter is answered, as before', requests.map((r) => r.host));
 
-  install({ tier: 'B' });
+  install({ tier: 'B', bedrock: 'ok' });
   res = await call(meetingChat, chatBody({ meeting_id: undefined }));
   check(anthropicCalls().length === 1, 'no meeting id: an unbound draft, answered as /api/llm would', requests.map((r) => r.host));
 
   // ── 6. /api/meeting-flag — the timer, which ran unprompted ────────────
   console.log('\n/api/meeting-flag — Tier B (SEALED)');
-  install({ tier: 'B' });
+  install({ tier: 'B', bedrock: 'absent' });
   res = await call(meetingFlag, flagBody());
   check(res.statusCode === 200 && Array.isArray(res.json?.flags) && res.json.flags.length === 0,
     'answers with the empty flag list the client already handles', res.json);
@@ -306,17 +436,310 @@ try {
   check(res.json?.flags?.[0]?.type === 'contradiction', 'flags still come back parsed', res.json);
   check(res.json?.sealed === undefined, 'and an unsealed answer is not labelled sealed', res.json);
 
-  // ── 7. Why it refuses: the policy, not a second copy of it ────────────
-  console.log('\nThe policy behind the refusal');
-  check(providerAllowed('B', 'anthropic') === false, "providerAllowed('B','anthropic') is false — the one fact both routes now consult");
+  // ── 7. Why it refuses first: the policy, not a second copy of it ──────
+  console.log('\nThe policy behind the route');
+  check(providerAllowed('B', 'anthropic') === false, "providerAllowed('B','anthropic') is false — why the sealed arm is entered at all");
   check(providerAllowed('C', 'anthropic') === false, "providerAllowed('C','anthropic') is false");
   check(providerAllowed('A', 'anthropic') === true, "providerAllowed('A','anthropic') is true — Tier A untouched");
-  check(providerAllowed('B', 'aws-bedrock') === true, 'the sealed route itself stays open, for whoever wires meetings to it');
+  check(providerAllowed('B', 'aws-bedrock') === true, 'aws-bedrock on B is the one open door, and the sealed meeting now uses it');
   const thrower = { from: () => { throw new Error('client exploded'); } };
   const decision = await meetingModelDecision(thrower, 'meeting-1', { provider: 'anthropic' })
     .then((d) => d, (err) => ({ ok: 'threw', err: err.message }));
   check(decision.ok === 'threw' || decision.ok === false, 'a lookup that throws never returns "send it"', decision);
   check(meetingRefusalMessage('B') !== meetingRefusalMessage('C'), 'a Silo matter and a sealed matter are told different, true things');
+  check(meetingRefusalMessage('B').includes('sealed pen answers it inside the seal'),
+    'the Tier-B sentence (which the FLAG surface shows) now tells the user chat still works');
+  check(meetingRefusalMessage('B', { sealedChat: false }).includes('not available on this server'),
+    'and says the opposite when there is no sealed route to offer');
+
+  // ══════════════════════════════════════════════════════════════════════
+  // PART TWO — the sealed pen answers the meeting (2026-09-20)
+  // ══════════════════════════════════════════════════════════════════════
+
+  console.log('\n/api/meeting-chat — Tier B (SEALED) with the sealed pen configured');
+  install({ tier: 'B', bedrock: 'ok' });
+  res = await call(meetingChat, chatBody());
+  const sealedSent = bedrockBody();
+  check(res.statusCode === 200, 'the sealed meeting is ANSWERED, not refused', { status: res.statusCode, body: res.text.slice(0, 200) });
+  check(res.text.includes(SEALED_ANSWER), "the sealed pen's answer streams back to the browser", res.text.slice(0, 120));
+  check(bedrockCalls().length === 1, 'exactly one request to the sealed pen', requests.map((r) => r.host));
+  check(providerHosts().length === 1 && providerHosts()[0] === BEDROCK_HOST,
+    'egress witness: bedrock-mantle and NOTHING else — first-party Anthropic was never contacted', hosts());
+  check(bedrockCalls()[0].url.endsWith('/v1/chat/completions'), 'the OpenAI-compatible bedrock-mantle route, as the pen table says', bedrockCalls()[0]?.url);
+  check(String(bedrockCalls()[0].headers?.authorization || '').startsWith('AWS4-HMAC-SHA256'),
+    'SigV4-signed with our own AWS credentials — no bearer token, no provider key', Object.keys(bedrockCalls()[0].headers || {}));
+  check(sealedSent?.model === 'moonshotai.kimi-k2.5', 'answered by the sealed pen named in the pen table', sealedSent?.model);
+  check(JSON.stringify(sealedSent).includes('Reyes:'), 'the transcript IS included — the meeting is what the question is about');
+  check(sealedSent?.messages?.[0]?.role === 'system' && /SECURESPACE/i.test(sealedSent.messages[0].content),
+    'the system prompt tells the pen it is the sealed pen on a sealed matter', sealedSent?.messages?.[0]?.content?.slice(-200));
+  check(sealedSent?.messages?.[1]?.content?.includes('<meeting_transcript>'),
+    'the transcript rides a framing turn, so the real question stays the last user message');
+  check(sealedSent?.messages?.[sealedSent.messages.length - 1]?.content === 'What should I push back on?',
+    'the last user message is the question the user actually asked', sealedSent?.messages?.[sealedSent.messages.length - 1]);
+
+  const toolNames = (sealedSent?.tools || []).map((t) => t.function?.name);
+  check(toolNames.length > 0, 'the pen is offered tools — this is the agentic harness, not a single shot', toolNames);
+  check(!toolNames.includes('web_search'), 'NO web_search: the one tool that would leave the seal is not in this harness at all', toolNames);
+  check(['search', 'grep', 'get_passage', 'get_outline'].every((n) => toolNames.includes(n)),
+    'the in-seal retrieval tools ARE offered: search, grep, get_passage, get_outline', toolNames);
+  check(!JSON.stringify(sealedSent).includes('sk-ant-'), 'no Anthropic key is anywhere near this request');
+
+  // The record — item 2's real test: a sealed meeting leaves what a sealed chat leaves.
+  console.log('\n/api/meeting-chat — the record a sealed meeting leaves');
+  const msgPosts = supaCalls('/rest/v1/ai_messages');
+  let assistantRow = null;
+  for (const p of msgPosts) { try { const b = JSON.parse(p.body); if (b.role === 'assistant') assistantRow = b; } catch { /* ignore */ } }
+  check(supaCalls('/rest/v1/ai_sessions').length === 1, 'an ai_sessions row is opened for the turn', supaCalls('/rest/v1/ai_sessions').length);
+  check(msgPosts.length === 2, 'two ai_messages rows: the question and the answer', msgPosts.length);
+  check(assistantRow?.model === 'moonshotai.kimi-k2.5' && assistantRow?.provider === 'aws-bedrock',
+    'the row names the pen that answered — model AND provider', assistantRow);
+  check(assistantRow?.input_tokens === 1200 && assistantRow?.output_tokens === 30,
+    'with the token counts the pen reported', { in: assistantRow?.input_tokens, out: assistantRow?.output_tokens });
+  check(typeof assistantRow?.estimated_cost === 'number' && assistantRow.estimated_cost > 0,
+    "and the pen's own price — the ledger line, not just a log", assistantRow?.estimated_cost);
+  check(assistantRow?.within_policy === true, 'within_policy: the sealed pen is what the tier permits', assistantRow?.within_policy);
+  check(!String(assistantRow?.content?.text || '').includes('Reyes:'), 'the recorded answer is an answer, not a transcript dump');
+
+  // Metering — item 6.
+  console.log('\n/api/meeting-chat — the sealed turn is metered at the sealed pen');
+  const sealedMeter = rpcBody('usage_consume');
+  const penCents = estimateLlmCents({
+    provider: 'aws-bedrock', model: 'moonshotai.kimi-k2.5',
+    bodyText: TRANSCRIPT + JSON.stringify(chatBody().messages), maxOutputTokens: 4096,
+  });
+  const opusCents = estimateLlmCents({
+    provider: 'anthropic', model: 'claude-opus-4-7',
+    bodyText: TRANSCRIPT + JSON.stringify(chatBody().messages), maxOutputTokens: 8192,
+  });
+  check(sealedMeter?.p_kind === 'meeting', "still metered as a 'meeting'", sealedMeter?.p_kind);
+  check(sealedMeter?.p_cents_estimate === penCents, "pre-charge: the SEALED PEN's rate, on the allowance the harness asks for", { got: sealedMeter?.p_cents_estimate, want: penCents });
+  check(penCents < opusCents, 'which is less than pricing it as the Opus this route used to name', { pen: penCents, opus: opusCents });
+  const actual = rpcBody('usage_record_actual');
+  check(actual?.p_model === 'moonshotai.kimi-k2.5', 'reconciled against the model that actually answered', actual);
+  check(actual?.p_meta?.sealed === true && actual?.p_meta?.route === 'meeting-chat', 'and the ledger row says it was a sealed meeting turn', actual?.p_meta);
+
+  // Over budget — the pen is never asked.
+  install({ tier: 'B', bedrock: 'ok', meter: 'refuse' });
+  res = await call(meetingChat, chatBody());
+  check(res.statusCode === 402, 'over budget: refused with the wallet\'s own status', { status: res.statusCode, body: res.text.slice(0, 120) });
+  check(bedrockCalls().length === 0, 'egress witness: ZERO requests — the sealed pen was not asked either', hosts());
+
+  // ── 8b. W1 strict mode on the MEETING path (PR #170 × PR #165) ────────
+  // On a sealed matter the answer is held until the Record has it
+  // (lib/assistant-core.mjs:473-486, :753-766). The meeting route reaches
+  // that code through the same runAssistantStream as /api/assistant, so the
+  // three outcomes have to be true HERE too — and the middle one is the whole
+  // point of the seal: an answer that could not be written down is not
+  // delivered. Each case differs from the last ONLY in what the database
+  // says, so a pass is about strict mode and not about the wiring.
+  console.log('\n/api/meeting-chat — the Record gates the sealed answer (migration 064 strict mode)');
+
+  // (i) The Record is written → the meeting is answered, and the row is real.
+  install({ tier: 'B', bedrock: 'ok', ledger: 'ok' });
+  res = await call(meetingChat, chatBody());
+  const led = rpcBody('ledger_append');
+  check(res.statusCode === 200 && res.text.includes(SEALED_ANSWER),
+    'recorded → the sealed meeting is ANSWERED', { status: res.statusCode, body: res.text.slice(0, 160) });
+  check(supaCalls('/rpc/ledger_append').length === 1,
+    'exactly one event is appended for the turn', supaCalls('/rpc/ledger_append').length);
+  check(led?.p_kind === 'completion.received', "the event kind is 'completion.received'", led?.p_kind);
+  check(led?.p_matter === 'matter-1' && led?.p_session === 'session-1',
+    "it is on the MEETING'S matter chain, and names the session", { matter: led?.p_matter, session: led?.p_session });
+  check(led?.p_actor_kind === 'user', 'the actor is the person who asked, not a charter or the worker', led?.p_actor_kind);
+  check(led?.p_payload?.tier === 'B' && led?.p_payload?.provider === 'aws-bedrock'
+    && led?.p_payload?.model === 'moonshotai.kimi-k2.5' && led?.p_payload?.within_policy === true,
+    'the payload names the tier and the pen that answered', led?.p_payload);
+  check(led?.p_payload?.input_tokens === 1200 && led?.p_payload?.output_tokens === 30
+    && led?.p_payload?.answer_chars === SEALED_ANSWER.length,
+    'with the pen\'s tokens, and the answer measured rather than copied', led?.p_payload);
+  check(!JSON.stringify(led).includes('Reyes:') && !JSON.stringify(led).includes(SEALED_ANSWER),
+    'METADATA ONLY — neither the transcript nor the answer is in the Record row', JSON.stringify(led).slice(0, 200));
+
+  // (ii) The Record REFUSES the write → the answer is withheld. Not a pen
+  //      failure: the pen was reached and did answer, and the text is dropped.
+  install({ tier: 'B', bedrock: 'ok', ledger: 'fail' });
+  res = await call(meetingChat, chatBody());
+  check(res.statusCode === 502 && res.json?.error === 'exchange_unrecorded',
+    'the Record write FAILS → the answer is withheld, with the sealed vocabulary', { status: res.statusCode, body: res.json });
+  check(res.json?.tier === 'B' && typeof res.json?.message === 'string'
+    && res.json.message.includes('could not be recorded')
+    && res.json.message.includes('nothing was kept'),
+    'and a plain sentence that is true of what happened, not a bare code', res.json?.message);
+  check(!res.text.includes(SEALED_ANSWER), 'ZERO text released: the answer the pen produced never reaches the browser', res.text.slice(0, 160));
+  check(!res.text.includes('Reyes:'), 'and no part of the transcript comes back in the refusal');
+  check(bedrockCalls().length === 1,
+    'the pen WAS asked — this is a withholding, not a driver failure', requests.map((r) => r.host));
+  check(anthropicCalls().length === 0, 'egress witness: no fallback to another provider when the Record fails', hosts());
+
+  // (iii) 064 merged but not yet pasted → behave exactly as before PR #170.
+  //       This is the state between merging and running the SQL, and it must
+  //       not withhold a single answer (lib/ledger.mjs, "not deployed is not
+  //       failed"; PR #170 §1).
+  for (const err of ['absent']) {
+    install({ tier: 'B', bedrock: 'ok', ledger: err });
+    res = await call(meetingChat, chatBody());
+    check(res.statusCode === 200 && res.text.includes(SEALED_ANSWER),
+      'ledger NOT DEPLOYED (PGRST202) → answered exactly as before #170', { status: res.statusCode, body: res.text.slice(0, 160) });
+    check(bedrockCalls().length === 1, 'one call to the sealed pen, as before', requests.map((r) => r.host));
+    check(supaCalls('/rest/v1/ai_sessions').length === 1 && supaCalls('/rest/v1/ai_messages').length === 2,
+      'and the 051 record is still written — only the 064 half is missing',
+      { sessions: supaCalls('/rest/v1/ai_sessions').length, messages: supaCalls('/rest/v1/ai_messages').length });
+  }
+
+  // (iv) The session row itself cannot be opened → refused BEFORE the pen.
+  install({ tier: 'B', bedrock: 'ok', session: 'fail' });
+  res = await call(meetingChat, chatBody());
+  check(res.statusCode === 502 && res.json?.error === 'exchange_unrecorded',
+    'no ai_sessions row → the turn is refused, not answered', { status: res.statusCode, body: res.json });
+  check(bedrockCalls().length === 0,
+    'and refused BEFORE any provider is contacted — the transcript never left', requests.map((r) => r.host));
+  check(requests.every((r) => !String(r.body ?? '').includes('Reyes:')),
+    'the transcript appears in NO outbound request body');
+
+  // (v) The 051 half fails instead of the 064 half. Both halves are "the
+  //     exchange was not recorded", and the user must not be able to tell
+  //     which table let them down — the answer is withheld either way.
+  install({ tier: 'B', bedrock: 'ok', messages: 'fail' });
+  res = await call(meetingChat, chatBody());
+  check(res.statusCode === 502 && res.json?.error === 'exchange_unrecorded',
+    'the ai_messages row cannot be appended → withheld, exactly as a failed events row is', { status: res.statusCode, body: res.json });
+  check(!res.text.includes(SEALED_ANSWER), 'ZERO text released for the 051 half too', res.text.slice(0, 120));
+  check(bedrockCalls().length === 1, 'and the pen was asked — again a withholding, not a driver failure', requests.map((r) => r.host));
+
+  // ── 9. The sealed pen rejects the request ─────────────────────────────
+  console.log('\n/api/meeting-chat — the sealed pen REJECTS the request (403)');
+  install({ tier: 'B', bedrock: '403' });
+  res = await call(meetingChat, chatBody());
+  check(res.statusCode === 502 && res.json?.error === 'sealed_pen_error',
+    "a provider failure inside the seal is a refusal in the product's voice", { status: res.statusCode, body: res.json });
+  check(typeof res.json?.message === 'string' && res.json.message.includes('No other model was asked'),
+    'the copy promises what is actually true: no OTHER provider was asked', res.json?.message);
+  check(!String(res.json?.message).includes('Nothing was sent'),
+    'and does NOT claim nothing was sent — the sealed provider WAS reached', res.json?.message);
+  check(bedrockCalls().length === 1, 'exactly one request — no retry, and no second pen', requests.map((r) => r.host));
+  check(anthropicCalls().length === 0, 'egress witness: no fallback to Anthropic after the failure', hosts());
+
+  // ── 10. An over-long transcript ───────────────────────────────────────
+  console.log('\n/api/meeting-chat — a transcript longer than the sealed pen can hold');
+  install({ tier: 'B', bedrock: 'ok' });
+  res = await call(meetingChat, chatBody({ transcript: LONG_TRANSCRIPT }));
+  const longSent = JSON.stringify(bedrockBody());
+  check(res.statusCode === 200, 'the long meeting is still answered', res.statusCode);
+  check(res.text.startsWith('This answer covers only the most recent part of the meeting'),
+    'the answer OPENS by disclosing the window — never a silent truncation', res.text.slice(0, 120));
+  check(/\d+ of \d+ transcript lines/.test(res.text), 'and says how much, in lines', res.text.slice(0, 200));
+  check(!/\bminutes\b/.test(res.text.slice(0, 300)),
+    'in lines rather than minutes, because no timestamp reaches the server (renderTranscriptForClaude drops start/end)');
+  check(longSent.includes('CLOSING-MARKER'), 'the most recent part of the meeting DID travel');
+  check(!longSent.includes('OPENING-MARKER'), 'the part that did not fit was NOT sent');
+  check(longSent.includes('ONLY PART OF THE TRANSCRIPT IS ATTACHED'),
+    'and the pen is told so too, so it cannot pretend to have read the rest');
+
+  // The window itself, measured directly.
+  console.log('\nThe window — measured against the pen, not invented');
+  const wFits = transcriptWindow(TRANSCRIPT, { messages: [] });
+  check(wFits.windowed === false && wFits.text === TRANSCRIPT, 'a short transcript is passed whole, untouched');
+  check(windowNotice(wFits) === null, 'and nothing is disclosed, because nothing was left out');
+  const wLong = transcriptWindow(LONG_TRANSCRIPT, { messages: [] });
+  check(wLong.windowed === true && wLong.keptLines < wLong.totalLines, 'a long one is windowed', { kept: wLong.keptLines, total: wLong.totalLines });
+  check(wLong.text.endsWith(LONG_LAST), 'the window keeps the END of the meeting — what the room is talking about now');
+  check(wLong.budgetTokens < SEALED_PEN_CONTEXT_TOKENS,
+    "the budget is the pen's context MINUS the system prompt, the tools, the history, the answer and one round of tool output",
+    { budget: wLong.budgetTokens, context: SEALED_PEN_CONTEXT_TOKENS });
+  check(windowNotice(wLong).includes('not sent and I have not read it'), 'the disclosure says plainly what was not read', windowNotice(wLong));
+  const framed = buildSealedMeetingMessages({ transcript: 'x', messages: [{ role: 'user', content: 'q' }], windowed: false });
+  check(framed[0].role === 'user' && framed[framed.length - 1].content === 'q',
+    'the framing turn leads and the question stays last — the ledger reads like a chat');
+  check(framed[0].content.includes('relay_feedback') && framed[0].content.includes('NO effect from here'),
+    'the pen is told which tools do nothing from a meeting panel (relay_feedback writes across matters)');
+
+  // A malformed turn: history with no question in it.
+  install({ tier: 'B', bedrock: 'ok' });
+  res = await call(meetingChat, chatBody({ messages: [{ role: 'assistant', content: 'Ask anything.' }] }));
+  check(res.statusCode === 400 && res.json?.error === 'no_question',
+    'a history with no question is refused, so the transcript never lands in the ledger as a user turn', res.json);
+  check(bedrockCalls().length === 0, 'egress witness: ZERO requests for a turn with nothing to answer', hosts());
+
+  // ── 13. The flag timer is NOT covered by the decision ─────────────────
+  console.log('\n/api/meeting-flag — still quiet on a sealed matter, pen or no pen');
+  install({ tier: 'B', bedrock: 'ok' });
+  res = await call(meetingFlag, flagBody());
+  check(res.statusCode === 200 && res.json?.sealed === true && res.json?.flags?.length === 0,
+    'a configured sealed pen does NOT switch on unprompted flagging', res.json);
+  check(providerHosts().length === 0,
+    'egress witness: ZERO requests — nothing is sent to any model on a timer nobody asked for', hosts());
+
+  // ── 14. Negative control — main's handler against these expectations ──
+  console.log('\nNegative control — main\'s /api/meeting-chat against the new expectations');
+  const { execSync } = await import('node:child_process');
+  const { writeFileSync, unlinkSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const baselinePath = fileURLToPath(new URL('../api/.baseline-meeting-chat.mjs', import.meta.url));
+  // WHICH baseline (repaired 2026-09-20). This control used to take
+  // `origin/main` on faith. PR #165 then MERGED the sealed arm to main, so
+  // `origin/main:api/meeting-chat.mjs` now contains the very behaviour the
+  // control is supposed to lack, and the control silently stopped controlling
+  // for anything — it failed as though the feature were missing.
+  //
+  // The baseline is therefore derived rather than named: the PARENT of the
+  // commit that ADDED lib/meeting-sealed-chat.mjs is, by construction, the
+  // newest tree that is genuinely "before this change" — and it still carries
+  // PR #162's refusal, which is the behaviour being controlled against. The
+  // named refs stay as fallbacks for a checkout with no such history, and each
+  // is filtered by CONTENT so a ref that already has the sealed arm is
+  // rejected instead of quietly inverting the control.
+  const candidates = [];
+  try {
+    const added = execSync('git log --reverse --format=%H --diff-filter=A -- lib/meeting-sealed-chat.mjs', {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim().split('\n')[0];
+    // `~1`, never `^`: execSync goes through cmd.exe on Windows, where `^` is
+    // the escape character and `<sha>^` silently resolves to `<sha>` itself —
+    // which would hand this control the very commit it is controlling against.
+    if (added) candidates.push(`${added}~1`);
+  } catch { /* shallow clone: no history to walk */ }
+  candidates.push('origin/main', 'main', 'HEAD~1');
+
+  let baselineSrc = null;
+  for (const ref of candidates) {
+    let src = null;
+    try {
+      src = execSync(`git show ${ref}:api/meeting-chat.mjs`, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch { continue; }
+    if (/meeting-sealed-chat/.test(src)) {
+      console.log(`  (${ref} already carries the sealed arm — not a baseline)`);
+      continue;
+    }
+    baselineSrc = src;
+    console.log(`  (baseline: ${ref})`);
+    break;
+  }
+  if (!baselineSrc) {
+    skip('no baseline ref available (shallow clone) — negative control not run');
+  } else {
+    try {
+      // Written INSIDE api/ so its ../lib imports resolve the way the real
+      // handler's do. Deleted again below, pass or fail.
+      writeFileSync(baselinePath, baselineSrc);
+      const { default: baseline } = await import(`${new URL('../api/.baseline-meeting-chat.mjs', import.meta.url).href}?t=${Date.now()}`);
+      install({ tier: 'B', bedrock: 'ok' });
+      const before = await call(baseline, chatBody());
+      check(before.statusCode !== 200, 'main REFUSES a sealed meeting (it has no sealed arm) — the behaviour this PR changes', before.statusCode);
+      check(bedrockCalls().length === 0, 'main never contacts the sealed pen', hosts());
+      check(!before.text.includes(SEALED_ANSWER), 'and therefore returns no answer to the question');
+      const wouldFail = before.statusCode !== 200 && bedrockCalls().length === 0;
+      check(wouldFail, 'negative control HOLDS: run against main, every Part Two expectation above fails');
+      // And the case that must NOT have changed:
+      install({ tier: 'A', bedrock: 'ok' });
+      const beforeA = await call(baseline, chatBody());
+      install({ tier: 'A', bedrock: 'ok' });
+      const afterA = await call(meetingChat, chatBody());
+      check(beforeA.text === afterA.text && beforeA.statusCode === afterA.statusCode,
+        'Tier A: this PR and main produce the identical response', { before: beforeA.statusCode, after: afterA.statusCode });
+    } finally {
+      try { unlinkSync(baselinePath); } catch { /* already gone */ }
+    }
+  }
 } finally {
   restore();
 }

@@ -9,6 +9,14 @@ on every PR.
 needs `.env`. A harness that needs a key or a live database is not in CI —
 those are listed under [Deliberately not in CI](#deliberately-not-in-ci).
 
+**The other workflow.** `.github/workflows/ingest-nightly.yml` is scheduled,
+not per-PR: an hourly liveness watch (no secrets), a six-hourly ingestion
+monitor and the nightly ingestion suite (both secret-bearing, and both skipping
+with a notice when the secrets are absent). It is documented on its own in
+[docs/INGEST_MONITORING.md](INGEST_MONITORING.md) — including which repository
+secrets to add and the trade-off in putting a service-role key in GitHub. It
+does not run here and nothing in `ci.yml` depends on it.
+
 ## What runs
 
 | Step | Command | Notes |
@@ -19,7 +27,16 @@ those are listed under [Deliberately not in CI](#deliberately-not-in-ci).
 | Lint | `npm run lint` | **Non-blocking** — see below. |
 | PGlite | `npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9` | Harness-only; `--no-save` keeps it out of `package.json`. |
 
-Then the twenty-two offline harnesses, one step each, each with
+Then the offline harnesses, one step each, each with
+`if: ${{ !cancelled() }}` so a red one does not hide the rest (the count is
+left out of this sentence on purpose — it went stale twice in a week; count
+the `run:` lines in `ci.yml`):
+Then the twenty-three offline harnesses, one step each, each with
+Then the twenty-four offline harnesses, one step each, each with
+Then the twenty-five offline harnesses, in twenty-four steps — the two
+Bucketizer evidence harnesses share one — each with `if: ${{ !cancelled() }}`
+so a red one does not hide the rest:
+Then the twenty-three offline harness steps, one step each, each with
 `if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |
@@ -46,16 +63,36 @@ Then the twenty-two offline harnesses, one step each, each with
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
+| `_verify-matter-record.mjs` | The Record's read side: the sub-matter roll-up, paging past 1,000 rows, a plain line for every event kind (and for one it has never heard of), the sealed-route wording, the attorney's cells left empty, a byte-identical markdown export, a `.docx` that opens, the not-deployed state and a tampered chain. | Synthetic events and an in-memory Supabase stub, both built inside the harness; `node --import ./scripts/_node-src-loader.mjs` for the `src/` imports. |
+| `_verify-ledger-account.mjs` | Migration 072 — a cross-matter connector call is recorded on the account chain and fanned out into each matter it read from, with neither record revealing the other's matters; `ai_sessions` / `ai_messages` are immutable; 072 no-ops without 064. | PGlite, twice over: once on a database that has 064 (the negative control runs first, on 064 alone) and once on a clean one that never saw it. The real `lib/ledger.mjs` is driven through a supabase-shaped adapter, so the redaction is tested as it runs. |
+| `_verify-discovery-pipeline.mjs` | A document production survives the queue that was rewritten around it: intake → tag → privilege log → Bates → package → delivery, over 030 + 032 + 044 + 045 + 055 + 057 + 058 + 059 + 060 executed in order. Gapless and re-runnable numbering, the lock guard, `package_sha256` against the stored bytes, withheld items absent from the package and present in the log. | PGlite for the real migrations, an in-memory Map for storage, the real `lib/discovery/*` engine. The worker cannot be imported (top-level script, service-role key, poll loop), so its orchestration is transcribed and the last section greps `worker/discovery-worker.mjs` for the invariants it transcribes. Those guards are a superset test and a WARN, never a check that reddens on somebody else's fix. |
+| `_verify-ingest-day-one.mjs` | Day one for a new paying user: accepted/refused types, serverless-budget routing, the suite's deadlines and checkpoint, digest privacy. Runs `_verify-ocr-routes.mjs` as a child and asserts its exit code. | Pure computation plus stubbed fetch; reads no `.env`. |
+| `_verify-worker-heartbeat.mjs` | Migration 066 — the worker heartbeat, the aggregate liveness functions, **two tenants each seeing only their own queue numbers**, the worker hunk swallowing every kind of heartbeat failure, the sentence the Vault shows, and the nightly workflow's own YAML. | PGlite for the migration; a stub client for the worker hunk; Node type stripping for `src/lib/ingest-service-notice.ts`; and it spawns `ingest-suite.mjs --dry-run`, which exits before the first request. |
+| `_verify-bucketizer-scale.mjs` | Whole-document windowing, the resumable run, the meter pause, the deterministic merge, and the paged read shared with Discovery. | Same; the model, the database and PostgREST all arrive as injected deps. |
+| `_verify-bucketizer-evidence.mjs` | Migration 068 — `bucketizer_evidence`, the pair-level run state, and the cascade that takes a quotation with its passage when a document is re-ingested. | PGlite. Shares one CI step with the harness below. |
+| `_verify-bucketizer-outline.mjs` | Verbatim quotation (a span the stored passage does not hold is dropped, never repaired), citations that degrade where the record has no line numbers, gaps-first assembly, a byte-identical `.md` on a re-run, and a real `.docx` read back with the repo's own docx library. | Same as `_verify-reader-copy.mjs`; every effect is an injected dep. |
+| `_validate-cover-manifest.mjs` + `_test-cover-gating.mjs` | The cover picker: `core-covers.json` is sorted, points only at files that exist and are under the size cap, and holds no filename the exclusion list bars; then the gate itself — core for every plan but `workshop`, core while the plan is still loading, and **nothing** (never everything) if the allow-list will not load. | One step, two commands. Both read files off disk; the second imports `src/lib/covers.ts` via Node type stripping, which is why that module has no `@/` imports and no React. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
-written. Seven of the last eight arrived with PRs #156–#163, each proving
+written. Seven of the next eight arrived with PRs #156–#163, each proving
 something the workflow was not yet watching — the seal, the spend cap, profile
 privacy, Office tenancy. The eighth, `_test-stamp-scans.mjs`, predates #155 and
 was simply missed: it appeared in neither table here. All eight were added at
 `0ed288d`, where each was run from a checkout with no `.env` and each exits 0.
 `_verify-bedrock-pen.mjs` changed after #155 and was re-run at `0ed288d` too:
-still green. The PGlite harnesses finish in ~1.4–2.2 s each; the eight added
-here cost about 5.5 s of harness time in total.
+still green. The last two — `_verify-ingest-day-one.mjs` and
+`_verify-worker-heartbeat.mjs` — came with the ingestion work of 2026-09-19/20
+and were each run from a checkout with no `.env` before being added here. The
+PGlite harnesses finish in ~1.4–2.2 s each.
+still green. The three Bucketizer harnesses came with PRs #168 and #177 and
+were each run from a checkout with no `.env`. The PGlite harnesses finish in
+~1.4–2.2 s each; the eight added at `0ed288d` cost about 5.5 s of harness time
+in total.
+
+`_verify-matter-record.mjs` arrived with the Record's read side: 87 checks,
+run from a checkout with no `.env`, exit 0, about a second. It builds its own
+synthetic events and its own Supabase stub, so it needs neither PGlite nor a
+network.
 
 ### Lint is non-blocking, for now
 
@@ -95,6 +132,7 @@ for the same reason as before: they sign in and spend money.
 | `_verify-reader-pagination.mjs` | Puppeteer against a running dev server. |
 | `_verify-reflow-spacing.mjs` | Fetches a real book from prod `/api/office`, and shells out to `git` to build the `origin/main` comparison. |
 | `_verify-ocr-routes.mjs` | Its plan-only mode does run offline, but it asserts nothing and always exits 0 — it just reports which OCR routes this environment has keys for. The proof is `--live`, which needs keys and costs money. Not a gate. |
+| `worker/e2e-live-test.mjs` | Drives a whole document production through the **deployed** Fly worker against prod, with the service role: uploads to `discovery-files`, enqueues `intake_files`, stamps, packages, downloads. Every run permanently spends Bates numbers in the sandbox matter (`bates_registry` is `ON DELETE RESTRICT` by design), so `--cleanup` can never fully undo it. `--plan` prints the whole procedure and touches nothing; `scripts/_verify-discovery-pipeline.mjs` is the offline stand-in that CI runs instead. |
 
 ### Offline, but not yet a gate — the `_test-*` probes
 

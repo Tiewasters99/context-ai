@@ -32,7 +32,7 @@
       "maxDuration": 60
     },
     "api/meeting-chat.mjs": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "api/meeting-flag.mjs": {
       "maxDuration": 30
