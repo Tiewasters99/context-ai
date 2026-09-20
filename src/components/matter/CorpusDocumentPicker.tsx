@@ -47,13 +47,26 @@ type Props = {
   onPicked: (picked: PickedCorpusDocument) => void;
 };
 
-/** Ready documents in one matter, paged past the 1,000-row cap. */
-async function fetchReadyDocs(matterId: string): Promise<Doc[]> {
-  const all: Doc[] = [];
-  for (let from = 0; ; from += 1000) {
-    const { data, error } = await supabase
+const PAGE = 1000;
+
+/** At most this many document rows in the DOM; the filter reaches the rest. */
+const VISIBLE_DOCS = 300;
+
+/**
+ * Ready documents in one matter, paged past PostgREST's 1,000-row cap.
+ *
+ * `onPage` receives each page as it lands, in order, so the first documents
+ * reach the screen after one round trip instead of after all of them: a
+ * matter with ~7,000 documents (DeCamara) spent 13 s showing nothing but a
+ * search box, which reads as a prompt to type a document's name. The first
+ * page carries the total, so the remaining ranges go out together rather
+ * than one after another. Returning false from `onPage` stops the fetch.
+ */
+async function fetchReadyDocs(matterId: string, onPage: (rows: Doc[]) => boolean | void): Promise<void> {
+  const page = (from: number, withCount: boolean) =>
+    supabase
       .from('documents')
-      .select('id, title, source_filename')
+      .select('id, title, source_filename', withCount ? { count: 'exact' } : undefined)
       .eq('matterspace_id', matterId)
       .eq('processing_status', 'ready')
       .order('title', { ascending: true })
@@ -61,12 +74,23 @@ async function fetchReadyDocs(matterId: string): Promise<Doc[]> {
       // repeated PACER filename), and rows the ORDER BY calls equal swap
       // between `.range()` pages — duplicating some and dropping others.
       .order('id')
-      .range(from, from + 999);
-    if (error) throw new Error(error.message);
-    all.push(...((data ?? []) as Doc[]));
-    if (!data || data.length < 1000) break;
+      .range(from, from + PAGE - 1);
+
+  const first = await page(0, true);
+  if (first.error) throw new Error(first.error.message);
+  const firstRows = (first.data ?? []) as Doc[];
+  if (onPage(firstRows) === false) return;
+
+  const total = first.count ?? firstRows.length;
+  if (firstRows.length < PAGE || total <= PAGE) return;
+
+  const rest = await Promise.all(
+    Array.from({ length: Math.ceil(total / PAGE) - 1 }, (_, i) => page((i + 1) * PAGE, false)),
+  );
+  for (const p of rest) {
+    if (p.error) throw new Error(p.error.message);
+    if (onPage((p.data ?? []) as Doc[]) === false) return;
   }
-  return all;
 }
 
 /** id → node lookup for one serverspace's tree. */
@@ -143,8 +167,10 @@ export default function CorpusDocumentPicker({
     setDocs([]);
     void (async () => {
       try {
-        const loaded = await fetchReadyDocs(currentMatter.id);
-        if (!cancelled) setDocs(loaded);
+        await fetchReadyDocs(currentMatter.id, (rows) => {
+          if (cancelled) return false; // checked per page: state is set mid-fetch now
+          setDocs((prev) => [...prev, ...rows]);
+        });
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -187,9 +213,14 @@ export default function CorpusDocumentPicker({
     .map((d) => ({ id: d.id, title: d.title || d.source_filename || 'Untitled document' }))
     .filter((r) => !q || r.title.toLowerCase().includes(q));
 
+  const shownDocRows = docRows.slice(0, VISIBLE_DOCS);
+
   const header = currentMatter?.name ?? space?.name ?? title;
   const crumbs = space ? [space.name, ...path.slice(0, -1).map((c) => c.name)] : [];
-  const busy = isLoading || docsLoading || !seeded;
+  // Only the serverspaces and the matter tree gate the list — both are
+  // already in memory. Documents arrive underneath them as they load; they
+  // must never hold back the sub-matter a lawyer is reaching for.
+  const busy = isLoading || !seeded;
 
   return (
     <div
@@ -276,7 +307,7 @@ export default function CorpusDocumentPicker({
           {/* Matter levels: sub-matters first (the sidebar's tree), then this matter's ready documents */}
           {space && !busy && (
             <>
-              {folderRows.length === 0 && docRows.length === 0 && !error && (
+              {folderRows.length === 0 && docRows.length === 0 && !docsLoading && !error && (
                 <p className="text-[12px] text-white/40 py-8 text-center">
                   {currentMatter ? 'Nothing here — no sub-matters, no ready documents.' : 'No matters in this serverspace.'}
                 </p>
@@ -296,7 +327,7 @@ export default function CorpusDocumentPicker({
                       </button>
                     </li>
                   ))}
-                  {docRows.map((row) => (
+                  {shownDocRows.map((row) => (
                     <li key={row.id}>
                       <button
                         onClick={() => void pickDocument(row.id)}
@@ -310,6 +341,16 @@ export default function CorpusDocumentPicker({
                     </li>
                   ))}
                 </ul>
+              )}
+              {docsLoading && currentMatter && (
+                <p className="text-[12px] text-white/40 py-3 text-center">
+                  {docs.length > 0 ? `Loading documents… ${docs.length.toLocaleString()} so far` : 'Loading documents…'}
+                </p>
+              )}
+              {!docsLoading && docRows.length > shownDocRows.length && (
+                <p className="text-[12px] text-white/35 py-3 text-center">
+                  Showing {shownDocRows.length.toLocaleString()} of {docRows.length.toLocaleString()} documents — type to narrow.
+                </p>
               )}
             </>
           )}
