@@ -427,13 +427,21 @@ console.log('\n2. Paging: PostgREST answers 1,000 rows, the reader asks again');
     'no row is read twice and none is skipped',
   );
 
+  const cappedClient = clientFor(many);
   const capped = await fetchMatterRecord(
-    client,
+    cappedClient,
     { id: PARENT, name: 'Fixture Matter' },
     { ceiling: 1500 },
   );
   check(capped.truncated === true, 'a ceiling is reported, not hidden');
   check(capped.totalEvents === 2500, 'the reader counts what it did not show', `${capped.totalEvents}`);
+  // The export tells the reader the chain check still covered everything, so
+  // a matter whose entries all fall past the ceiling must still be checked.
+  check(
+    cappedClient.calls.rpcs.filter((c) => c.fn === 'verify_chain').length === 3,
+    'when the read stops at a ceiling, every matter’s chain is still checked',
+    `${cappedClient.calls.rpcs.filter((c) => c.fn === 'verify_chain').length} of 3`,
+  );
   const md = renderMatterRecordMarkdown(assembleMatterRecord(capped, CONTEXT, null));
   check(md.includes('Showing 1500 of 2500 entries'), 'the export says "showing N of M"');
 }

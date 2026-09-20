@@ -305,9 +305,13 @@ export async function fetchMatterRecord(
   const leftBehind =
     truncated && totalEvents !== null ? totalEvents > events.length : truncated;
 
-  // Verify only the chains that actually hold events for this reader.
+  // Verify the chains that hold events for this reader. When the read stopped
+  // at a ceiling, "the chains we saw" is not the same set as "the chains there
+  // are" — a sub-matter whose entries all fall past the ceiling would go
+  // unchecked while the export claims the check covered everything — so in
+  // that case every matter is asked. A chain with no rows checks 0 and passes.
   const chainIds = new Set(events.map((e) => e.chain_key));
-  const chainMatters = matters.filter((m) => chainIds.has(m.id));
+  const chainMatters = leftBehind ? matters : matters.filter((m) => chainIds.has(m.id));
   const { chains, notDeployed } = await verifyChains(
     client,
     chainMatters.length > 0 ? chainMatters : [],
