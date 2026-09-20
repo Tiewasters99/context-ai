@@ -48,13 +48,14 @@ Then the twenty-two offline harnesses, one step each, each with
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
-written. The last eight arrived with PRs #156–#163, each proving something the
-workflow was not yet watching — the seal, the spend cap, profile privacy, Office
-tenancy — and were added here at `0ed288d`, where all eight were run from a
-checkout with no `.env` and all eight exit 0. `_verify-bedrock-pen.mjs` changed
-after #155 and was re-run at `0ed288d` too: still green. The PGlite harnesses
-finish in ~1.5–2.2 s each; the eight added here cost about 5.5 s of harness time
-in total.
+written. Seven of the last eight arrived with PRs #156–#163, each proving
+something the workflow was not yet watching — the seal, the spend cap, profile
+privacy, Office tenancy. The eighth, `_test-stamp-scans.mjs`, predates #155 and
+was simply missed: it appeared in neither table here. All eight were added at
+`0ed288d`, where each was run from a checkout with no `.env` and each exits 0.
+`_verify-bedrock-pen.mjs` changed after #155 and was re-run at `0ed288d` too:
+still green. The PGlite harnesses finish in ~1.4–2.2 s each; the eight added
+here cost about 5.5 s of harness time in total.
 
 ### Lint is non-blocking, for now
 
