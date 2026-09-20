@@ -411,6 +411,51 @@ export interface DocumentStatusUpdate {
   held?: boolean;
 }
 
+// -----------------------------------------------------------------------------
+// Is the pipeline actually running? (migration 066)
+//
+// watchDocumentStatus below polls one row every 2 s and will do so forever —
+// which is the right behaviour while the pipeline is working and exactly the
+// wrong one when it is not. Before this, a worker outage looked identical to a
+// slow scan: a spinner, no words, no end. The person's reasonable conclusion
+// is that they did something wrong, so they delete the document and upload it
+// again, which queues a second copy behind the first.
+//
+// `ingest_status_for_me()` is the answer, and it is deliberately narrow: no
+// arguments, SECURITY INVOKER, so RLS and auth.uid() decide what it can count.
+// It returns the caller's OWN queue numbers and the GLOBAL liveness facts —
+// never another tenant's anything.
+//
+// Every failure path returns null, and null means "behave exactly as before".
+// That covers the case that matters most in the next few days: 066 is not
+// pasted yet, PostgREST answers PGRST202, and the Vault must carry on
+// unchanged rather than showing an error about its own health check.
+// -----------------------------------------------------------------------------
+import type { IngestServiceStatus } from './ingest-service-notice';
+export type { IngestServiceStatus, IngestServiceNotice } from './ingest-service-notice';
+export { ingestServiceNotice, WORKER_SILENT_SECONDS, PROCESSING_PATIENCE_SECONDS } from './ingest-service-notice';
+
+export async function fetchIngestServiceStatus(): Promise<IngestServiceStatus | null> {
+  try {
+    const { data, error } = await supabase.rpc('ingest_status_for_me');
+    if (error || !data) return null;
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const num = (v: unknown): number | null =>
+      v === null || v === undefined ? null : Number.isFinite(Number(v)) ? Number(v) : null;
+    return {
+      workerAlive: row.worker_alive === true,
+      secondsSinceBeat: num(row.seconds_since_beat),
+      queueDepth: num(row.queue_depth) ?? 0,
+      oldestQueuedSeconds: num(row.oldest_queued_seconds),
+      myProcessing: num(row.my_processing) ?? 0,
+      myOldestSeconds: num(row.my_oldest_seconds),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function watchDocumentStatus(
   documentId: string,
   onUpdate: (update: DocumentStatusUpdate) => void,

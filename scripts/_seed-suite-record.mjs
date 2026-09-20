@@ -28,16 +28,43 @@ export const SUITE_RECORD_PAGES = 400;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const env = Object.fromEntries(
-  fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)
-    .filter((l) => /^[A-Z_]+=/.test(l))
-    .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
-);
-const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+// Same contract as scripts/ingest-suite.mjs, which imports this module: `.env`
+// when there is one, the process environment otherwise. Before 2026-09-20 this
+// readFileSync threw ENOENT at IMPORT time, so merely importing the suite
+// required a checkout with production secrets on disk — which is why the
+// nightly run could only ever happen on Eden's laptop.
+const env = (() => {
+  let fromFile = {};
+  try {
+    fromFile = Object.fromEntries(
+      fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)
+        .filter((l) => /^[A-Z_]+=/.test(l))
+        .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
+    );
+  } catch { /* no .env: the environment is the only source, which is correct on CI */ }
+  const fromEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([, v]) => typeof v === 'string' && v !== ''),
+  );
+  return { ...fromFile, ...fromEnv };
+})();
+// Built on FIRST USE, not at import. supabase-js throws "supabaseUrl is
+// required" from its constructor, so a module-level client made this file
+// impossible to import without credentials — and the suite imports it before
+// it has parsed its own flags. Nothing that only reads a flag should need a
+// key.
+let _supabase = null;
+function supabaseClient() {
+  if (!_supabase) {
+    _supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY,
+      { auth: { persistSession: false, autoRefreshToken: false } });
+  }
+  return _supabase;
+}
 const force = process.argv.includes('--force');
 
 /** { size } when the seeded object exists, else null. */
-export async function seededRecord(sb = supabase) {
+export async function seededRecord(sb = null) {
+  sb = sb || supabaseClient();
   const dir = path.posix.dirname(SUITE_RECORD_OBJECT);
   const name = path.posix.basename(SUITE_RECORD_OBJECT);
   const { data, error } = await sb.storage.from(SUITE_BUCKET).list(dir, { search: name });

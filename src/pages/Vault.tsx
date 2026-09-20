@@ -26,8 +26,10 @@ import {
   deleteVaultDocument,
   moveVaultDocument,
   triggerIngest,
+  fetchIngestServiceStatus,
   type MatterRef,
   type DocumentStatusUpdate,
+  type IngestServiceStatus,
   type DocumentStatusRow,
 } from '@/lib/vault-persist';
 import { showingOf } from '@/lib/paged';
@@ -74,6 +76,10 @@ export default function Vault() {
   // (zip entries skipped, move/delete errors). One slot; new notices replace
   // old ones.
   const [vaultNotice, setVaultNotice] = useState<{ kind: 'warn' | 'err'; text: string } | null>(null);
+  // Whether anything is actually processing (migration 066). Null until asked,
+  // and null again on any failure — null means "say nothing new", so a Vault
+  // running against a database without 066 behaves exactly as it does today.
+  const [ingestService, setIngestService] = useState<IngestServiceStatus | null>(null);
   const [generatedDocs, setGeneratedDocs] = useState<VaultFile[]>([]);
   const [openFile, setOpenFile] = useState<VaultFile | null>(null);
 
@@ -296,6 +302,26 @@ export default function Vault() {
       cleanups.forEach((c) => c());
     };
   }, [matter, matterScope, applyDocUpdates]);
+
+  // Is anything actually processing? Asked only while this matter has a
+  // document that has not reached a terminal state — the one window in which
+  // the answer changes what the person sees — and then once a minute, against
+  // a worker that beats once a minute. When nothing is pending the state is
+  // dropped, so a stale "paused" can never outlive the outage that caused it.
+  const hasPendingDocs = useMemo(
+    () => vaultFiles.some((f) => f.status === 'uploading' || f.status === 'indexing'),
+    [vaultFiles],
+  );
+  useEffect(() => {
+    if (!matter || !hasPendingDocs) { setIngestService(null); return; }
+    let cancelled = false;
+    const ask = () => {
+      fetchIngestServiceStatus().then((s) => { if (!cancelled) setIngestService(s); });
+    };
+    ask();
+    const timer = setInterval(ask, 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [matter, hasPendingDocs]);
 
   const formatSize = (bytes: number) =>
     bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
@@ -658,7 +684,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} matterId={matter?.id} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF or DOCX opens in the
           // full-screen DocumentReader (pages, search, annotations), laid
           // over this list so closing it lands back here. The inline
