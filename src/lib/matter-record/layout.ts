@@ -149,11 +149,11 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
   out.push({
     type: 'p',
     text:
-      'This is a mechanical account of what was done to this matter inside Contextspaces, ' +
-      'assembled from the matter’s Record: an append-only, hash-chained list of recorded acts. ' +
-      'Each entry is chained to the one before it, so an entry cannot be altered or removed ' +
-      'without the chain failing to verify. No part of this document was written by a model; ' +
-      'every figure below is copied from a recorded entry.',
+      'This is a mechanical account of what was done on this matter inside Contextspaces, ' +
+      'assembled from the matter’s Record. The Record is tamper-evident: each entry is sealed to ' +
+      'the one before it, so any later change, removal or insertion of an entry would be detected ' +
+      'when the Record is checked. Entries cannot be edited or deleted. No part of this document ' +
+      'was written by a model; every figure below is copied from a recorded entry.',
   });
   out.push({
     type: 'p',
@@ -165,7 +165,7 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
   if (doc.notDeployed) {
     out.push({
       type: 'note',
-      text: 'The Record is not enabled in this installation yet, so there is nothing to report.',
+      text: 'Recording has not been switched on for this account yet, so there is nothing to report.',
     });
   }
   if (doc.error) {
@@ -177,8 +177,8 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
       text:
         `Showing ${doc.integrity.entriesShown} of ${
           doc.integrity.entriesTotal ?? 'an unknown number of'
-        } entries — this export stops at ${doc.integrity.ceiling}. The chain check below still ` +
-        'covers every entry, because it runs in the database.',
+        } entries — this export stops at ${doc.integrity.ceiling}. The integrity check below still ` +
+        'covers every entry, including the ones this export does not list.',
     });
   }
 
@@ -262,6 +262,88 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     });
   }
 
+  // 2b ----------------------------------------------------------------------
+  // Inside the session index rather than as a section of its own: these are
+  // AI uses on this matter, and the numbering of the sections below is
+  // referred to elsewhere in this document.
+  out.push({ type: 'h3', text: 'Feature AI calls — model calls made by a feature, outside a chat session' });
+  out.push({
+    type: 'p',
+    text:
+      'Bucketizer, Cite-Check, the Editor, Deck Composer, the AI Workbench and Moot Bench call a ' +
+      'model directly rather than through a chat session, so they have no session above. One row ' +
+      'here is one feature on one model at one confidentiality tier, with every call it made on ' +
+      'this matter summed. The counts are of calls, not of documents.',
+  });
+  if (doc.featureCalls.length === 0) {
+    out.push({
+      type: 'p',
+      text:
+        'None recorded. A feature’s model call is recorded in the same way as everything else ' +
+        'here; where a matter shows none, either no feature was used on it or this part of the ' +
+        'product had not been switched on for this account at the time.',
+    });
+  } else {
+    out.push({
+      type: 'table',
+      headers: ['Feature and act', 'Model', 'Route', 'Tier', 'Calls', 'Refused', 'Did not finish', 'Input tokens', 'Output tokens', 'Estimated cost', 'First', 'Last'],
+      rows: doc.featureCalls.map((f) => [
+        f.title,
+        f.model,
+        f.route,
+        f.tier,
+        String(f.calls),
+        f.refused === 0 ? '0' : `${f.refused} (${f.refusedReasons})`,
+        String(f.unfinished + f.failed),
+        f.tokensReportedFor === 0 ? 'not reported' : String(f.inputTokens),
+        f.tokensReportedFor === 0 ? 'not reported' : String(f.outputTokens),
+        f.tokensReportedFor === 0 ? 'not reported' : money(f.cost, f.costRecorded),
+        f.firstUse,
+        f.lastUse,
+      ]),
+    });
+    const streamed = doc.featureCalls.reduce((n, f) => n + f.streamed, 0);
+    const partial = doc.featureCalls.filter((f) => f.tokensReportedFor < f.calls - f.refused);
+    if (streamed > 0 || partial.length > 0) {
+      out.push({
+        type: 'note',
+        text:
+          'Where a model streams its answer back word by word, it reports no token count that ' +
+          'this product is willing to record as fact, so those calls show "not reported" rather ' +
+          'than an estimate. The calls themselves are recorded in full either way.',
+      });
+    }
+    const refusedTotal = doc.featureCalls.reduce((n, f) => n + f.refused, 0);
+    if (refusedTotal > 0) {
+      out.push({
+        type: 'p',
+        text:
+          `${refusedTotal} of these calls ${refusedTotal === 1 ? 'was' : 'were'} refused. A refused ` +
+          'call reached no model at all: the reason is recorded beside it, and nothing was sent.',
+      });
+    }
+    const unfinishedTotal = doc.featureCalls.reduce((n, f) => n + f.unfinished, 0);
+    if (unfinishedTotal > 0) {
+      out.push({
+        type: 'p',
+        text:
+          `${unfinishedTotal} ${unfinishedTotal === 1 ? 'call was' : 'calls were'} recorded as asked ` +
+          'and never recorded as answered. The model was contacted; what came back, if anything, ' +
+          'was not recorded. They are counted under “Did not finish” above and are not counted as ' +
+          'answers anywhere in this document.',
+      });
+    }
+  }
+  out.push({
+    type: 'pairs',
+    rows: [
+      ['Purpose of these runs (counsel)', ATTORNEY_CELL],
+      ['Confidential input (counsel)', ATTORNEY_CELL],
+      ['Output relied on (counsel)', ATTORNEY_CELL],
+      ['Initials', ATTORNEY_CELL],
+    ],
+  });
+
   // 3 -----------------------------------------------------------------------
   out.push({ type: 'h2', text: '3. Connector activity — tool calls by connected AI clients' });
   if (doc.connectors.length === 0) {
@@ -300,8 +382,8 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     out.push({
       type: 'note',
       text:
-        'This is also what is shown before migration 072 is applied, when an entry of this kind ' +
-        'cannot exist yet.',
+        'This is also what is shown where account-wide recording has not been switched on for ' +
+        'this account, in which case an entry of this kind cannot exist yet.',
     });
   } else {
     const n = doc.accountWideReads;
@@ -334,10 +416,10 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     out.push({
       type: 'p',
       text:
-        'None recorded. Export, send and delivery events are part of the Record’s vocabulary and ' +
-        'are written by the export lane; until that change is in this installation, a download or ' +
-        'an email of a document leaves no entry here. Absence of a row is therefore not evidence ' +
-        'that nothing left the matter.',
+        'None recorded. Exports, sends and deliveries are recorded in the same way as everything ' +
+        'else here, but the part of the product that writes them has not been switched on for ' +
+        'this account yet — so a download or an email of a document leaves no entry here. The ' +
+        'absence of an entry is therefore not evidence that nothing left the matter.',
     });
   } else {
     out.push(lineTable(doc.exports, true));
@@ -380,17 +462,46 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
       ],
       ['First entry', doc.integrity.firstEntryAt ?? '—'],
       ['Last entry', doc.integrity.lastEntryAt ?? '—'],
-      ['First entry hash', doc.integrity.firstHash ?? '—'],
-      ['Last entry hash', doc.integrity.lastHash ?? '—'],
+      ['Seal of the first entry', doc.integrity.firstHash ?? '—'],
+      ['Seal of the last entry', doc.integrity.lastHash ?? '—'],
       ['Prepared', doc.integrity.generatedAt],
       ['Prepared by', doc.integrity.generatedBy],
     ],
   });
   out.push({ type: 'p', text: doc.integrity.meaning });
+  out.push({
+    type: 'p',
+    text:
+      'The seals above are the digital fingerprints of the first and last entries in this ' +
+      'export. Anyone holding a later copy of this Record can compare them and confirm it is ' +
+      'the same Record, with the same entries, in the same order.',
+  });
+  out.push({ type: 'h3', text: 'How this Record can be relied on' });
+  out.push({
+    type: 'p',
+    text:
+      'Entries are written automatically, as the work happens: each AI answer, each model call a ' +
+      'feature made, each tool a connected assistant ran, each change to who can see the matter, ' +
+      'and each change to its confidentiality tier. Nobody can edit or delete an entry once it ' +
+      'is written — not a member of the matter, not the firm, and not Contextspaces; repairing ' +
+      'an entry would require a deliberate, visible change to the database itself, which the ' +
+      'check below is designed to expose.',
+  });
+  out.push({
+    type: 'p',
+    text:
+      'The check reads every entry in order and re-verifies the seal linking it to the entry ' +
+      'before it. “Intact” means every seal matched, so no entry has been altered, removed or ' +
+      'inserted since it was written. It does not mean the entries are complete: the Record ' +
+      'shows what was recorded, and an act the product did not record would not appear here at ' +
+      'all. Work done on this matter outside Contextspaces is not recorded and cannot be ' +
+      'inferred from its absence. Nothing in this document is a legal characterisation of the ' +
+      'Record or of its use in any proceeding.',
+  });
   if (doc.integrity.chains.length > 0) {
     out.push({
       type: 'table',
-      headers: ['Matter', 'Chain', 'Entries checked', 'Result'],
+      headers: ['Matter', 'Record', 'Entries checked', 'Result'],
       rows: doc.integrity.chains.map((c) => [
         c.matterName,
         c.matterId,
@@ -399,7 +510,8 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
           ? 'could not be checked from this account'
           : c.ok
             ? 'intact'
-            : `fails at entry ${c.firstBadSeq ?? '?'}`,
+            : `the check fails at entry ${c.firstBadSeq ?? '?'} — entries from that point on `
+              + 'cannot be relied on until this is explained',
       ]),
     });
   }
@@ -412,8 +524,8 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     out.push({
       type: 'p',
       text:
-        'No jurisdiction was selected for this export. The rules matrix bundled with this ' +
-        'installation can print the forum court’s, the licensing state’s or a national guidance ' +
+        'No jurisdiction was selected for this export. The rules matrix that comes with ' +
+        'Contextspaces can print the forum court’s, the licensing state’s or a national guidance ' +
         'entry’s rule text here verbatim; select one when exporting.',
     });
   }
@@ -452,11 +564,11 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
   out.push({
     type: 'bullets',
     items: [
-      'A connected assistant’s search that names no matter touches many matters at once. It is ' +
-        'recorded once migration 072 is applied: this matter’s Record then gains one entry for ' +
+      'A connected assistant’s search that names no matter touches many matters at once. Where ' +
+        'account-wide recording has been switched on, this matter’s Record gains one entry for ' +
         'each such search that returned passages from this matter, and that entry says nothing ' +
-        'about any other matter it may also have read. Before 072 is applied such a search ' +
-        'leaves no entry anywhere and does not appear here.',
+        'about any other matter it may also have read. Where it has not, such a search leaves no ' +
+        'entry anywhere and does not appear here.',
       'Work done on this matter outside Contextspaces — a browser chat, another firm’s tool, a ' +
         'local model — is not recorded and cannot be inferred from its absence.',
       'Document-level attestations, the citation verification log and the corrections log are ' +

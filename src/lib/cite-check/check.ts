@@ -95,6 +95,7 @@ async function rateConfidence(
     signal: opts.signal,
     // The payload carries the proposition verbatim from the draft.
     matterId: opts.matterId,
+    feature: 'citecheck.check',
     system: RATE_SYSTEM,
     userContent: payload,
     toolName: 'record_rating',

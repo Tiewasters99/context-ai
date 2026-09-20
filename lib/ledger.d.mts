@@ -10,6 +10,7 @@
 
 export type LedgerEventKind =
   | 'tool.invoked'
+  | 'completion.requested'
   | 'completion.received'
   | 'file.exported'
   | 'file.sent'
@@ -19,6 +20,7 @@ export type LedgerEventKind =
   | 'acl.changed'
   | 'seal.changed'
   | 'connector.registered'
+  | 'connector.connected'
   | 'connector.revoked'
   | 'ai.paused'
   | 'ai.resumed'
@@ -35,6 +37,8 @@ export interface LedgerActor {
 export interface LedgerResult {
   ok: boolean;
   notDeployed?: boolean;
+  /** notDeployed for the narrower reason that the kind is not in the CHECK yet. */
+  kindNotAdmitted?: boolean;
   id?: string | null;
   seq?: number | null;
   hash?: string | null;
@@ -46,7 +50,9 @@ export const EVENT_TYPES: readonly LedgerEventKind[];
 export const NIL_CHAIN: string;
 
 export function isNotDeployed(error: unknown): boolean;
+export function isKindNotAdmitted(error: unknown, kind: string): boolean;
 export function redact(obj: unknown, depth?: number): unknown;
+export function uuidList(value: unknown, max?: number): string[] | { items: number } | null;
 
 /** `supabase` is a supabase-js client — typed loosely so this plain-JS
  *  module does not drag the SDK types into its callers. */
