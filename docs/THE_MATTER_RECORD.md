@@ -117,6 +117,14 @@ leaves the process:
 * `query` is kept (it is the single most useful line in a tool record) but
   hard-truncated to 200 characters.
 
+> **Note for W1, found while building 072.** The `search` tool's argument is
+> `q`, not `query`, so the special case above never fires for it: on an
+> ordinary matter-scoped search `args.q` is stored **verbatim** up to the
+> general 256-character limit rather than truncated to 200. That is inside
+> the matter the searcher was working in, so it is not a leak, and 072 does
+> not change it — but it is the reason 072's cross-matter rows use
+> `shapeOnly()` rather than `redact()`.
+
 Migration 064 then caps the whole payload at 8 KB, replacing anything larger
 with `{truncated: true, original_bytes, keys[]}`.
 

@@ -240,6 +240,44 @@ await asSuperuser();
     'and lib/ledger.mjs knows it too, so record() will not refuse it before the RPC');
 }
 
+console.log('\n--- B1b. 064\'s own triggers, through the delegate ----------------');
+{
+  // The ambiguity argument above is only worth as much as this section. After
+  // 072, every one of 064's database-written events goes _ledger_write →
+  // _ledger_write_scoped(…, null) → the new invariant trigger. If any of that
+  // were wrong, adding a person to a matter would fail — in the product, not
+  // here. So exercise all three, after 072, and look at where they landed.
+  await asSuperuser();
+  const ERIC = await signup('eric@example.test', 'Eric');
+  const M4 = await newMatter('Trigger check matter');
+  const NIL = '00000000-0000-0000-0000-000000000000';
+  const newest = async () =>
+    (await q(`select chain_key, kind, matterspace_id, serverspace_id, payload
+                from public.events order by ts desc, seq desc limit 1`))[0];
+
+  const acl = await attempt(
+    `insert into public.matterspace_members (matterspace_id, user_id, role) values ($1,$2,'member')`,
+    [M4, ERIC]);
+  check(acl === null, 'a matter membership can still be granted after 072', acl?.message?.slice(0, 60));
+  let e = await newest();
+  check(e.kind === 'acl.changed' && e.chain_key === M4,
+    "and its acl.changed lands on that matter's own chain", `chain ${e.chain_key === M4 ? 'M4' : e.chain_key}`);
+
+  const sacl = await attempt(
+    `insert into public.serverspace_members (serverspace_id, user_id, role) values ($1,$2,'member')`,
+    [s1.id, ERIC]);
+  check(sacl === null, 'so can a serverspace membership', sacl?.message?.slice(0, 60));
+  e = await newest();
+  check(e.kind === 'acl.changed' && e.chain_key === NIL && e.serverspace_id === s1.id,
+    "and its acl.changed still lands on 064's nil chain, which 072 left legal");
+
+  const seal = await attempt(`update public.matterspaces set ai_tier = 'B' where id = $1`, [M4]);
+  check(seal === null, 'and a matter can still be sealed', seal?.message?.slice(0, 60));
+  e = await newest();
+  check(e.kind === 'seal.changed' && e.chain_key === M4 && e.payload.new_tier === 'B',
+    "with seal.changed on the matter's chain — the delegate is not a detour");
+}
+
 // The adapter: a supabase-shaped client backed by this database, so the REAL
 // lib/ledger.mjs runs against the REAL migration. Nothing is re-implemented.
 const clientFor = (uid) => ({
