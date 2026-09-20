@@ -2,6 +2,14 @@
 //
 // Returns the documents in one matter, for the Chrome extension's
 // document picker. Auth: csp_* connector token.
+//
+// SecureSpace, 2026-09-20 — what this endpoint does and does not expose.
+// Titles, filenames, sizes and status. NO passage text, NO page images, NO
+// storage path, and NO signed URL: nothing here can be turned into the
+// document's content. The bytes leave through /api/ext/push-to-drive, which
+// is gated. As on /api/ext/matters, the seal is therefore MARKED rather than
+// enforced — the extension is the user's own tool — and the marking fails
+// closed: if the tier cannot be read, the matter is reported sealed.
 
 import {
   authenticateConnectorToken,
@@ -10,6 +18,8 @@ import {
   json,
   handleAuthError,
 } from '../../lib/connector-token-auth.mjs';
+
+import { fetchMatterTier, isSealedTier } from '../../lib/ai-tier-policy.mjs';
 
 export default async function handler(req, res) {
   corsHeaders(res);
@@ -46,8 +56,29 @@ export default async function handler(req, res) {
     .order('created_at', { ascending: false });
   if (error) return json(res, 500, { error: `query_failed: ${error.message}` });
 
+  // The matter's EFFECTIVE tier, read with the service role — the tier is
+  // policy, not content, and an ancestor's seal must reach this listing even
+  // when the ancestor itself is invisible to the caller.
+  let tier = null;
+  let tierKnown = false;
+  try {
+    tier = await fetchMatterTier(
+      process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      matterId,
+    );
+    tierKnown = Boolean(tier);
+  } catch {
+    tierKnown = false;
+  }
+  const sealed = tierKnown ? isSealedTier(tier) : true;
+
   return json(res, 200, {
+    seal_status: tierKnown ? 'ok' : 'unknown',
+    ai_tier: tierKnown ? tier : null,
+    sealed,
     documents: (data ?? []).map((d) => ({
+      sealed,
       id: d.id,
       title: d.title,
       source_filename: d.source_filename,

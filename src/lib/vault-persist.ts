@@ -27,6 +27,9 @@ import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
 // Resumable (TUS) uploads for large files (Phase 4): the same dependency-free
 // module the Node smoke test drives against the real bucket.
 import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
+// A 402/429 from /api/ingest has no UI of its own — the upload simply never
+// finishes. reportServerRefusal puts one sentence in front of the person.
+import { reportServerRefusal } from './refusal-bus';
 
 export interface MatterRef {
   id: string;
@@ -342,18 +345,52 @@ export async function persistVaultFile(
   }
   // Don't await; the API call can take 30-60s for large docs and we want the
   // UI thread back immediately. Errors are surfaced via document status.
-  fetch('/api/ingest', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ documentId: doc.id }),
-  }).catch((err) => {
-    console.error('ingest fetch:', err);
-  });
+  void postIngest(doc.id, accessToken);
 
   return { documentId: doc.id, storagePath };
+}
+
+
+// -----------------------------------------------------------------------------
+// The one POST to /api/ingest, and the one place its refusals are handled.
+//
+// The endpoint can now answer 402 (the month's AI budget is spent) or 429 (the
+// rate window) before it writes anything at all — migration 063, PR #161. That
+// is the quietest failure in the product: the documents row was inserted by
+// this browser a moment ago and still says 'pending', the server refused
+// before it could touch it, and watchDocumentStatus polls a row that will
+// never change. The file sits in the Vault spinning for ever, and the person
+// is told nothing.
+//
+// So two things happen here. The refusal is shown once, in a sentence, through
+// the shared banner; and the row is marked 'error' with that same sentence, so
+// the Vault list is honest when the person comes back to it tomorrow. The row
+// update runs under the user's own session, exactly like every other write in
+// this file, so RLS decides whether it is allowed.
+// -----------------------------------------------------------------------------
+async function postIngest(documentId: string, accessToken: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ documentId }),
+    });
+  } catch (err) {
+    console.error('ingest fetch:', err);
+    return;
+  }
+  if (res.ok) return;
+
+  const refusal = await reportServerRefusal(res);
+  console.error('ingest refused:', refusal.status, refusal.code ?? '');
+  // Leave the row alone on a 5xx: the server may still be working, and
+  // /api/ingest writes its own 'error'/'held' status on the paths it reaches.
+  if (refusal.status >= 500) return;
+  await supabase
+    .from('documents')
+    .update({ processing_status: 'error', processing_error: refusal.message.slice(0, 500) })
+    .eq('id', documentId);
 }
 
 
@@ -643,11 +680,21 @@ export async function triggerIngest(documentId: string): Promise<void> {
   const session = (await supabase.auth.getSession()).data.session;
   const accessToken = session?.access_token;
   if (!accessToken) throw new Error('not authenticated — cannot trigger ingest');
-  await fetch('/api/ingest', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ documentId }),
-  });
+  // Clear the terminal state FIRST. Vault.tsx's retry re-subscribes
+  // watchDocumentStatus the moment it calls this, and that poll stops as soon
+  // as it reads a terminal status — so against a row still saying 'error' it
+  // would report the OLD message and stop, and a refusal written a moment
+  // later would not appear until the page was reloaded. saveDocumentText
+  // already does this for the same reason.
+  await supabase
+    .from('documents')
+    .update({ processing_status: 'pending', processing_error: null })
+    .eq('id', documentId);
+  // Same POST, same refusal handling. Retry (Vault.tsx) and re-ingest after an
+  // edit (saveDocumentText) both land here, and both used to discard the
+  // response entirely — a retry against a spent budget looked identical to a
+  // retry that worked.
+  await postIngest(documentId, accessToken);
 }
 
 
