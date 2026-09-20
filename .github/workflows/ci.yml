@@ -171,6 +171,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Runs migration 065 in PGlite AND drives api/oauth-approve.mjs,
+      # api/oauth-token.mjs and lib/oauth-grants.mjs against it through a
+      # stubbed PostgREST — no network. Guards the part that would hurt most
+      # if it broke: a pre-065 token must keep working until the cut-off, and
+      # merging before the migration is pasted must disconnect nobody.
+      - name: Migration 065 — per-connection OAuth grants (PGlite + handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-oauth-grants.mjs
       # The cover picker: the allow-list is well-formed and points at files
       # that exist, then the gating rule itself (core vs workshop vs still
       # loading, and what a failed read is allowed to offer).
