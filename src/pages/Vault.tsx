@@ -22,12 +22,15 @@ import {
   persistVaultFile,
   checkUploadAdmissible,
   watchDocumentStatus,
+  watchDocumentStatuses,
   deleteVaultDocument,
   moveVaultDocument,
   triggerIngest,
   type MatterRef,
   type DocumentStatusUpdate,
+  type DocumentStatusRow,
 } from '@/lib/vault-persist';
+import { showingOf } from '@/lib/paged';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
@@ -62,6 +65,11 @@ export default function Vault() {
   const [coverMode, setCoverMode] = useState<'full' | 'banner' | 'off'>('full');
   const [showTemplates, setShowTemplates] = useState(false);
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
+  // What the server says this matter tree holds, alongside what we hold. The
+  // two differ only when the paged read stopped at its ceiling — and when they
+  // differ the File Browser says so rather than showing a short list as if it
+  // were the whole matter.
+  const [vaultListing, setVaultListing] = useState<{ total: number; truncated: boolean } | null>(null);
   // User-visible notice for operations that previously failed silently
   // (zip entries skipped, move/delete errors). One slot; new notices replace
   // old ones.
@@ -151,7 +159,7 @@ export default function Vault() {
   };
 
   useEffect(() => {
-    if (!matterKey) { setMatter(null); setMatterError(null); return; }
+    if (!matterKey) { setMatter(null); setMatterError(null); setVaultListing(null); return; }
     let cancelled = false;
     resolveMatter(matterKey).then((m) => {
       if (cancelled) return;
@@ -225,7 +233,8 @@ export default function Vault() {
     if (matter && matterScope) {
       try {
         const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
-        setVaultFiles(refreshed);
+        setVaultFiles(refreshed.files);
+        setVaultListing({ total: refreshed.total, truncated: refreshed.truncated });
       } catch (err) {
         setVaultNotice({
           kind: 'err',
@@ -243,20 +252,35 @@ export default function Vault() {
     setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, ...u } : f));
   }, []);
 
+  // The batched form: one state write for a whole status tick, however many
+  // documents it covered.
+  const applyDocUpdates = useCallback((rows: DocumentStatusRow[]) => {
+    setVaultFiles((prev) => {
+      const byId = new Map(rows.map((r) => [r.documentId, r] as const));
+      if (!prev.some((f) => byId.has(f.id))) return prev;
+      return prev.map((f) => {
+        const row = byId.get(f.id);
+        return row ? { ...f, ...row.update } : f;
+      });
+    });
+  }, []);
+
   // Hydrate the vault file list from the documents table when a matter loads.
   useEffect(() => {
     if (!matter || !matterScope) return;
     let cancelled = false;
-    listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById).then((files) => {
+    listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById).then(({ files, total, truncated }) => {
       if (cancelled) return;
       setVaultNotice(null);
       setVaultFiles(files);
-      // Resume polling for any docs that are still mid-pipeline.
-      for (const f of files) {
-        if (f.status === 'uploading' || f.status === 'indexing') {
-          cleanups.push(watchDocumentStatus(f.id, applyDocUpdate(f.id)));
-        }
-      }
+      setVaultListing({ total, truncated });
+      // Resume polling for any docs that are still mid-pipeline — in ONE
+      // batched poll, not one request per document every two seconds. A
+      // matter caught mid-bulk-ingest can hold thousands of them.
+      const inFlight = files
+        .filter((f) => f.status === 'uploading' || f.status === 'indexing')
+        .map((f) => f.id);
+      if (inFlight.length) cleanups.push(watchDocumentStatuses(inFlight, applyDocUpdates));
     }).catch((err) => {
       // NEVER render a failed load as an empty folder — the documents are
       // still there; the query failed. Keep whatever list we had and say so.
@@ -271,7 +295,7 @@ export default function Vault() {
       cancelled = true;
       cleanups.forEach((c) => c());
     };
-  }, [matter, matterScope, applyDocUpdate]);
+  }, [matter, matterScope, applyDocUpdates]);
 
   const formatSize = (bytes: number) =>
     bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
@@ -634,7 +658,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} matterId={matter?.id} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF or DOCX opens in the
           // full-screen DocumentReader (pages, search, annotations), laid
           // over this list so closing it lands back here. The inline

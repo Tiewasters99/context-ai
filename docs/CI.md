@@ -22,6 +22,8 @@ those are listed under [Deliberately not in CI](#deliberately-not-in-ci).
 Then the twenty-five offline harnesses, in twenty-four steps — the two
 Bucketizer evidence harnesses share one — each with `if: ${{ !cancelled() }}`
 so a red one does not hide the rest:
+Then the twenty-three offline harness steps, one step each, each with
+`if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |
 | --- | --- | --- |
@@ -50,6 +52,7 @@ so a red one does not hide the rest:
 | `_verify-bucketizer-scale.mjs` | Whole-document windowing, the resumable run, the meter pause, the deterministic merge, and the paged read shared with Discovery. | Same; the model, the database and PostgREST all arrive as injected deps. |
 | `_verify-bucketizer-evidence.mjs` | Migration 068 — `bucketizer_evidence`, the pair-level run state, and the cascade that takes a quotation with its passage when a document is re-ingested. | PGlite. Shares one CI step with the harness below. |
 | `_verify-bucketizer-outline.mjs` | Verbatim quotation (a span the stored passage does not hold is dropped, never repaired), citations that degrade where the record has no line numbers, gaps-first assembly, a byte-identical `.md` on a re-run, and a real `.docx` read back with the repo's own docx library. | Same as `_verify-reader-copy.mjs`; every effect is an injected dep. |
+| `_validate-cover-manifest.mjs` + `_test-cover-gating.mjs` | The cover picker: `core-covers.json` is sorted, points only at files that exist and are under the size cap, and holds no filename the exclusion list bars; then the gate itself — core for every plan but `workshop`, core while the plan is still loading, and **nothing** (never everything) if the allow-list will not load. | One step, two commands. Both read files off disk; the second imports `src/lib/covers.ts` via Node type stripping, which is why that module has no `@/` imports and no React. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
 written. Seven of the next eight arrived with PRs #156–#163, each proving

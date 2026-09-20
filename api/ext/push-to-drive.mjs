@@ -18,6 +18,7 @@ import {
 } from '../../lib/connector-token-auth.mjs';
 
 import { decrypt } from '../../lib/connections-crypto.mjs';
+import { checkExport, sealResult } from '../../lib/export-gate.mjs'; // gate:import
 
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
@@ -63,6 +64,22 @@ export default async function handler(req, res) {
     return json(res, 413, { error: 'file_too_large', maxBytes: MAX_EXPORT_BYTES });
   }
 
+  // ── SecureSpace export gate ─────────────────────────────────── gate:start
+  // The extension is the user's own tool, but the bytes still land at Google,
+  // so the same rule applies here as in the web UI: warn once per request,
+  // record what left. The extension has no dialog of ours, so the 409 carries
+  // a code, a plain sentence and the name of the field to resend — see the PR.
+  // Runs before the connection is read, before the token exchange, and before
+  // the storage download.
+  const gate = await checkExport({
+    supabase: sb,
+    userId,
+    documentId,
+    destination: { service: 'google_drive' },
+    confirmed: body.confirm_leave_seal === true,
+  });
+  if (!gate.ok) return json(res, gate.status, gate.body);
+  // ───────────────────────────────────────────────────────────────── gate:end
   // Google Drive connection lookup.
   const { data: conn, error: connErr } = await admin
     .from('connections')
@@ -173,6 +190,7 @@ export default async function handler(req, res) {
     webViewLink: driveResult.webViewLink || null,
     name: driveResult.name || filename,
     folderName: parentFolderId ? folderName : null,
+    ...(sealResult(gate) ? { seal: sealResult(gate) } : {}), // gate:line
   });
 }
 

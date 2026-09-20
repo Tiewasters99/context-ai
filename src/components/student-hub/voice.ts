@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { parseServerRefusal } from '@/lib/llm/refusals';
 
 // One sample of silence — played inside the first real tap to unlock the
 // audio element for later programmatic playback (iOS autoplay policy).
@@ -338,8 +339,13 @@ export function useProfessorVoice() {
             body: JSON.stringify({ text: item.text }),
           });
           if (!res.ok) {
-            const detail = await res.text().catch(() => '');
-            throw new Error(`voice request failed (${res.status}) ${detail.slice(0, 120)}`);
+            // /api/tts can answer 402 (the month's budget) or 429 (the rate
+            // window) with a sentence written for a person. This used to
+            // splice 120 characters of raw JSON into the note under the
+            // professor's chair; now it reads as the server wrote it. The
+            // note is the display — no banner, or the same news appears
+            // twice on one screen.
+            throw new Error((await parseServerRefusal(res)).message);
           }
           const blob = await res.blob();
           item.url = URL.createObjectURL(blob);
