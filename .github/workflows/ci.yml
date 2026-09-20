@@ -136,3 +136,14 @@ jobs:
       - name: Migration 064 — the matter Record is append-only (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs
+
+      # The pause is a safety switch, so what it is worth is what can be
+      # demonstrated about it: every model-facing case runs with global fetch
+      # replaced by a witness and asserts the witness saw nothing. Part C is a
+      # negative control — the same scenarios where the guard is absent, where
+      # the witness MUST fire. Its git-based half needs the base branch, which
+      # a shallow checkout does not have; it says so and skips, and the
+      # portable half covers the same ground.
+      - name: Migration 070 — AI pause, every path, zero egress (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ai-pause.mjs
