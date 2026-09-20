@@ -37,6 +37,27 @@ const FLAG_INTERVAL_MS = 90_000;
 const FLAG_MIN_GROWTH_CHARS = 200;
 const FLAG_MAX_PER_SESSION = 30;
 
+/**
+ * The plain sentence inside a refusal, or null when the body is not one.
+ *
+ * /api/meeting-chat answers a refusal as JSON — `{error, tier, message}` — and
+ * the `message` is deliberately written as prose for the person in the meeting
+ * (SecureSpace seals, the sealed pen being unavailable, a spend cap). Rendering
+ * the whole envelope as `[error: {"error":"sealed_pen_unavailable",…}]` showed
+ * a lawyer a stack of JSON mid-meeting. The sentence is the product's answer;
+ * this pulls it out. Anything else still falls through to the error path.
+ */
+function refusalMessage(bodyText: string): string | null {
+  if (!bodyText) return null;
+  try {
+    const parsed = JSON.parse(bodyText) as { message?: unknown };
+    const message = typeof parsed?.message === "string" ? parsed.message.trim() : "";
+    return message || null;
+  } catch {
+    return null;
+  }
+}
+
 export default function MeetingView() {
   const { id } = useParams<{ id: string }>();
   const { session } = useAuth();
@@ -320,6 +341,20 @@ export default function MeetingView() {
         });
         if (!res.ok || !res.body) {
           const errText = await res.text();
+          // A refusal from the server is a sentence written for the person
+          // sitting in the meeting — "this matter is sealed and the sealed pen
+          // is not available on this server…" — wrapped in a JSON envelope.
+          // Show the sentence, in the assistant's own voice. The envelope, and
+          // the `[error: …]` framing, are for the console.
+          const refusal = refusalMessage(errText);
+          if (refusal) {
+            setMessages((m) => [
+              ...m,
+              { role: "assistant", content: refusal, ts: Date.now() },
+            ]);
+            setStreamingReply("");
+            return;
+          }
           throw new Error(errText || `Status ${res.status}`);
         }
         const reader = res.body.getReader();

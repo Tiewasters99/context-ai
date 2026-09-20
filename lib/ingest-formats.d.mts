@@ -69,6 +69,14 @@ export function extOf(name: string | null | undefined): string;
 export function formatBytes(n: number | null | undefined): string;
 export const SUPPORTED_TYPES_SUMMARY: string;
 
+/**
+ * Extension → the alternative a refusal names ("Save the legacy Word file as
+ * .docx and upload that."). Always begins with a space: it is appended to a
+ * sentence. Every key is a format the pipeline genuinely cannot read.
+ */
+export const UNSUPPORTED_HINTS: Readonly<Record<string, string>>;
+export function unsupportedHint(ext: string | null | undefined): string;
+
 export interface UploadRefusal {
   code: 'too_large' | 'unsupported' | 'lock_file' | 'empty';
   message: string;

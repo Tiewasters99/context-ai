@@ -1,9 +1,8 @@
 import { useState, useRef, useCallback } from 'react';
-import { FileText, X, ChevronRight, ChevronDown, Upload, Download, Loader2, Library } from 'lucide-react';
+import { FileText, X, ChevronRight, ChevronDown, FolderOpen, Download, Loader2 } from 'lucide-react';
 import { extractText } from '@/lib/extract';
 import { runCiteCheck, FLAG_GLYPH, FLAG_LABEL, type RunProgress, type CiteFlag, type ReportEntry } from '@/lib/cite-check';
-import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
-import DocumentPicker from '@/components/matter/DocumentPicker';
+import CorpusDocumentPicker, { type PickedCorpusDocument } from '@/components/matter/CorpusDocumentPicker';
 import {
   useCiteCheckRuns,
   useCiteCheckRun,
@@ -31,6 +30,13 @@ interface PendingSource {
   text: string;
   /** Set when the source is a document already ingested in the corpus. */
   documentId?: string;
+  /**
+   * A corpus document's own matter. It governs the run — the sealed-tier
+   * routing of every model call, and where the run row and authority links
+   * are filed — whatever matter this surface is open in.
+   */
+  matterId?: string;
+  matterName?: string;
 }
 
 export default function CiteCheckSurface({ matterId }: { matterId: string; matterName?: string }) {
@@ -71,22 +77,20 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
     }
   }, []);
 
-  // Check a document already ingested in the corpus — no re-upload. Loads the
-  // document's indexed passages back into one string and runs the same engine.
-  const acceptCorpusDoc = useCallback(async (docId: string) => {
+  // Check a document already ingested in the corpus — no re-upload. The
+  // picker loads the document's indexed passages back into one string; the
+  // same engine runs on it.
+  const acceptCorpusDoc = (picked: PickedCorpusDocument) => {
     setShowDocPicker(false);
     setError(null);
-    setExtracting(true);
-    try {
-      const loaded = await loadCorpusDocumentText(docId);
-      setSource({ label: loaded.title, text: loaded.text, documentId: loaded.documentId });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not load that document.');
-      setSource(null);
-    } finally {
-      setExtracting(false);
-    }
-  }, []);
+    setSource({
+      label: picked.title,
+      text: picked.text,
+      documentId: picked.documentId,
+      matterId: picked.matterId ?? undefined,
+      matterName: picked.matterName,
+    });
+  };
 
   const startRun = useCallback(async () => {
     const src: PendingSource | null = source
@@ -95,6 +99,15 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
         : null);
     if (!src) { setError('Add a brief (drop a file or paste text) first.'); return; }
 
+    // A corpus document runs under its OWN matter, never this surface's: a
+    // sub-matter can be sealed when its parent is not. Uploads and pastes
+    // belong to the matter this surface is open in.
+    const runMatterId = src.matterId ?? matterId;
+    const invalidateRuns = () => {
+      invalidate.invalidateList(matterId);
+      if (runMatterId !== matterId) invalidate.invalidateList(runMatterId);
+    };
+
     setError(null);
     setProgress({ phase: 'extracting-cites', message: 'Reading the brief…' });
     setView('running');
@@ -102,14 +115,14 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
     abortRef.current = controller;
     try {
       const result = await runCiteCheck({
-        matterId,
+        matterId: runMatterId,
         draftText: src.text,
         sourceLabel: src.label,
         documentId: src.documentId ?? null,
         onProgress: setProgress,
         signal: controller.signal,
       });
-      invalidate.invalidateList(matterId);
+      invalidateRuns();
       setActiveRunId(result.runId);
       setView('results');
       setSource(null);
@@ -117,7 +130,7 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
       setShowPaste(false);
     } catch (e) {
       if (e instanceof DOMException && e.name === 'AbortError') {
-        invalidate.invalidateList(matterId);
+        invalidateRuns();
         setView('start');
         setProgress(null);
         return;
@@ -185,9 +198,14 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
 
   // ---- Start --------------------------------------------------------------
   const canRun = !!source || pasteText.trim().length >= 40;
+  // The empty drop zone is itself the way into Contextspaces: a click
+  // anywhere on it opens the picker.
+  const zoneBrowses = !extracting && !source;
+  const openPicker = (e: React.MouseEvent) => { e.stopPropagation(); setShowDocPicker(true); };
   return (
     <div>
       <div
+        onClick={() => { if (zoneBrowses) setShowDocPicker(true); }}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => {
@@ -196,8 +214,12 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
           const f = e.dataTransfer.files?.[0];
           if (f) acceptFile(f);
         }}
-        className={`rounded-lg border border-dashed px-6 py-10 text-center transition-colors ${
-          dragOver ? 'border-[#d4a054] bg-[#d4a054]/5' : 'border-[rgba(255,255,255,0.12)]'
+        className={`group rounded-lg border border-dashed px-6 py-10 text-center transition-colors ${
+          dragOver
+            ? 'border-[#d4a054] bg-[#d4a054]/5'
+            : zoneBrowses
+              ? 'cursor-pointer border-[rgba(255,255,255,0.12)] hover:border-[#d4a054]/40 hover:bg-[rgba(255,255,255,0.015)]'
+              : 'border-[rgba(255,255,255,0.12)]'
         }`}
       >
         {extracting ? (
@@ -210,49 +232,62 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
             <FileText size={22} className="text-[#d4a054]" strokeWidth={1.5} />
             <span className="text-[15px] text-[#f5f1e8]">{source.label}</span>
             <span className="text-[13px] text-white/40">{source.text.length.toLocaleString()} characters ready</span>
+            {source.matterId && source.matterId !== matterId && (
+              <span className="text-[13px] text-[#d4a054]/80">
+                Will be filed under {source.matterName ?? 'the document’s own matter'}
+              </span>
+            )}
             <button
               onClick={() => { setSource(null); setError(null); }}
               className="mt-1 text-[13px] text-white/40 hover:text-white/70 transition-colors"
             >
-              Choose a different file
+              Choose a different brief
             </button>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-3">
-            <Upload size={22} className="text-white/30" strokeWidth={1.5} />
+            <button
+              type="button"
+              onClick={openPicker}
+              aria-label="Browse Contextspaces"
+              title="Browse Contextspaces"
+              className="p-2 -m-2 rounded-lg text-white/30 group-hover:text-[#e8b84a] hover:bg-[#e8b84a]/10 transition-colors"
+            >
+              <FolderOpen size={22} strokeWidth={1.5} />
+            </button>
             <p className="text-[15px] text-white/60">
               Drop a brief here, or{' '}
-              <button onClick={() => fileInputRef.current?.click()} className="text-[#e8b84a] hover:underline">browse</button>
+              <button type="button" onClick={openPicker} className="text-[#e8b84a] hover:underline">browse Contextspaces</button>
             </p>
-            <p className="text-[13px] text-white/30">.docx, .pdf, .txt, .md</p>
+            <p className="text-[13px] text-white/30">
+              or{' '}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                className="text-white/45 hover:text-white/75 hover:underline transition-colors"
+              >
+                upload from this computer
+              </button>
+              {' '}· .docx, .pdf, .txt, .md
+            </p>
           </div>
         )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept={ACCEPTED_EXT}
-          className="hidden"
-          onChange={(e) => { const f = e.target.files?.[0]; if (f) acceptFile(f); e.target.value = ''; }}
-        />
       </div>
-
-      <div className="mt-3 flex items-center gap-4">
-        <button
-          onClick={() => setShowDocPicker(true)}
-          className="flex items-center gap-1.5 text-[14px] text-[#e8b84a]/80 hover:text-[#e8b84a] transition-colors"
-        >
-          <Library size={14} strokeWidth={1.75} /> Check a document already in this matter
-        </button>
-      </div>
+      {/* Outside the drop zone on purpose: input.click() dispatches a click
+          that bubbles, and inside the zone it would open the picker too. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPTED_EXT}
+        className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) acceptFile(f); e.target.value = ''; }}
+      />
       {showDocPicker && (
-        <DocumentPicker
-          matterId={matterId}
+        <CorpusDocumentPicker
+          title="Choose a brief to check"
+          rootMatterId={matterId}
           onCancel={() => setShowDocPicker(false)}
-          onConfirm={(sel) => {
-            if (sel.length === 0) { setShowDocPicker(false); return; }
-            // Cite-check runs are per-brief; use the first selection.
-            void acceptCorpusDoc(sel[0].id);
-          }}
+          onPicked={acceptCorpusDoc}
         />
       )}
 

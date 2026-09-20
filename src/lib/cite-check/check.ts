@@ -4,6 +4,7 @@
 // fires on a verified mismatch.
 
 import { generateStructured } from '@/lib/llm';
+import { parseServerRefusal, ServerRefusalError, isFinalRefusal } from '@/lib/llm/refusals';
 import type { Cite, CheckFlag, CheckResult, CiteFlag } from './types';
 import {
   findByCitation,
@@ -21,6 +22,7 @@ interface LegalSourceResult {
   source_label?: string | null;
 }
 
+
 async function fetchFromFreeDb(cite: Cite, signal?: AbortSignal, matterId?: string): Promise<LegalSourceResult> {
   try {
     const res = await fetch('/api/legal-source', {
@@ -37,9 +39,21 @@ async function fetchFromFreeDb(cite: Cite, signal?: AbortSignal, matterId?: stri
       }),
       signal,
     });
-    if (!res.ok) return { found: false };
+    if (!res.ok) {
+      const refusal = await parseServerRefusal(res);
+      // A refusal is not a miss. "Not found on the free DBs" is a finding
+      // about the citation; a spent budget, a full rate window or a sealed
+      // matter is a finding about us, and flattening it into found:false
+      // would mark every remaining cite "Westlaw paste needed" and hand the
+      // lawyer a report that looks complete. Stop the run and say why.
+      if (refusal.kind !== 'other') throw new ServerRefusalError(refusal);
+      return { found: false };
+    }
     return (await res.json()) as LegalSourceResult;
-  } catch {
+  } catch (err) {
+    // Everything else — a network blip, an abort, a malformed body — keeps the
+    // old behaviour: this citation is simply unverified and the run goes on.
+    if (isFinalRefusal(err)) throw err;
     return { found: false };
   }
 }
@@ -157,6 +171,11 @@ export async function checkOne(
       rating = r.rating;
       justification = r.justification;
     } catch (err) {
+      // A spent wallet, a full rate window or a sealed matter is not a
+      // property of this citation: every remaining cite would fail the same
+      // way and the report would come out looking complete, with a hundred
+      // "rating failed" notes a reader skims past. Stop the run instead.
+      if (isFinalRefusal(err)) throw err;
       flags.push({ kind: 'rate', detail: `rating failed: ${(err as Error).message}` });
     }
   }
