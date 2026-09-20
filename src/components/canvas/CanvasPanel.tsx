@@ -9,7 +9,7 @@
 // full screen and back — the windowed rect survives the round trip.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Pin, Maximize2, Minimize2, ExternalLink, X } from 'lucide-react';
+import { Layers, Maximize2, Minimize2, ExternalLink, X } from 'lucide-react';
 import { CANVAS_FULLSCREEN_Z, MIN_H, MIN_W, type CanvasCard } from '@/lib/canvas';
 
 interface CanvasPanelProps {
@@ -218,7 +218,10 @@ export default function CanvasPanel({
         }`}
         title={stacked || maximized ? undefined : 'Drag to move · double-click for full screen'}
       >
-        <Pin size={12} className="text-[#e8b84a] shrink-0" strokeWidth={2} />
+        {/* The layers glyph, not a pin: this card is KEPT OPEN, and it still
+            drags freely. A gold pin here said "fixed in place" on a card
+            that moves — the same collision the header buttons just fixed. */}
+        <Layers size={12} className="text-[#e8b84a] shrink-0" strokeWidth={2} />
         <span className="text-[12px] text-[#f5f1e8] truncate flex-1 min-w-0">
           {card.title || 'Untitled'}
         </span>
@@ -240,13 +243,13 @@ export default function CanvasPanel({
         >
           <ExternalLink size={12} strokeWidth={2} />
         </button>
-        {/* Close is an X, like every other card. The gold pin at the left of
-            the ribbon is what says this card is pinned; a second pin icon
-            here only made people wonder which one closed it. */}
+        {/* Close is an X, like every other card. The gold layers glyph at the
+            left of the ribbon is what says this card is kept open; a second
+            icon here only made people wonder which one closed it. */}
         <button
           onClick={onUnpin}
           className="p-1 rounded hover:bg-[rgba(255,255,255,0.1)] text-white/55 hover:text-white transition-colors shrink-0"
-          title="Close — take this card off the canvas"
+          title="Close — stop keeping this card open"
         >
           <X size={13} strokeWidth={2} />
         </button>
