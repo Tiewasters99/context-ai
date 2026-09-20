@@ -146,6 +146,36 @@ export default async function handler(req, res) {
     if (queued) return json(res, 202, queued);
   }
 
+  // A RECOVERABLE STATE, written before anything heavy (2026-09-20).
+  //
+  // Everything below this line — the storage download, extraction, OCR,
+  // embedding — can be cut off mid-flight when the 60 s function budget
+  // expires, and nothing runs afterwards to record that it happened. What the
+  // row says at that moment is the only thing that can save the document, so
+  // it is written here, while there is still certainty to write.
+  //
+  // 'extracting' is what makes it recoverable: the worker's idle sweep
+  // (recover_stranded_documents, migration 058) requeues documents sitting in
+  // pending/extracting/chunking/embedding with a storage_path and no open
+  // job, and the monitor's stalled-document query keys on updated_at, which
+  // this write refreshes. Without it a re-run of a document that is already
+  // 'ready' — an image_only row, one that still owes OCR — stayed 'ready'
+  // when the function was killed: no sweep looks at a ready row, so the
+  // re-run simply never happened and nothing anywhere said so.
+  //
+  // It is written AFTER the spend cap (a refusal must cost nothing) and after
+  // the queue decision (a queued document is already marked 'pending').
+  const { error: markErr } = await sb
+    .from('documents')
+    .update({ processing_status: 'extracting', processing_error: null })
+    .eq('id', doc.id);
+  if (markErr) {
+    // Not fatal: the ingestion attempt is still worth making, and
+    // processDocument writes its own statuses. But a row that could not be
+    // marked is a row the sweep may not find, so say so in the log.
+    console.error(`inline ingest marker failed for ${doc.id}: ${markErr.message}`);
+  }
+
   // Download the file from storage. RLS on the storage bucket enforces
   // matter access; if the user can read the document row they can also
   // download the file.

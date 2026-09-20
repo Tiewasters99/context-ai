@@ -23,6 +23,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { fetchPaged } from '@/lib/paged';
 import {
   useMatterEvents,
   type MatterEvent,
@@ -236,14 +237,20 @@ export function useListDues(matterId?: string) {
   return useQuery({
     queryKey: ['calendar_list_dues', matterId ?? 'all'],
     queryFn: async (): Promise<ListDue[]> => {
-      let q = supabase
-        .from('content_items')
-        .select('id, title, content')
-        .eq('content_type', 'list');
-      if (matterId) q = q.eq('space_id', matterId).eq('space_type', 'matterspace');
-      const { data, error } = await q;
-      if (error) throw new Error(`content_items: ${error.message}`);
-      return readDues((data ?? []) as ListDueRow[]);
+      // Paged. With no matter this is every list the user can see across
+      // every matter — the read most likely of the content_items reads to
+      // pass PostgREST's 1,000 rows, and a due date in a list past the cut
+      // simply never reached the calendar. `.order('id')` is both the order
+      // and the unique tiebreaker.
+      const { rows } = await fetchPaged<ListDueRow>((from, to) => {
+        let q = supabase
+          .from('content_items')
+          .select('id, title, content')
+          .eq('content_type', 'list');
+        if (matterId) q = q.eq('space_id', matterId).eq('space_type', 'matterspace');
+        return q.order('id').range(from, to);
+      }, { label: 'content_items' });
+      return readDues(rows);
     },
   });
 }

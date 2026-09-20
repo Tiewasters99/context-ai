@@ -1,0 +1,260 @@
+name: Ingestion — nightly suite, monitor, liveness watch
+
+# Ingestion health stops depending on one laptop.
+#
+# Until now the nightly suite and the six-hourly monitor were Windows Scheduled
+# Tasks on Eden's PC. Both were being killed (LastTaskResult 0xC000013A), the
+# suite has never recorded a green night, and with the lid shut nothing watched
+# production at all. This file is the same two jobs on infrastructure that has
+# no lid, plus a third that needs no secrets whatsoever.
+#
+# THREE JOBS, DELIBERATELY DIFFERENT IN WHAT THEY COST AND WHAT THEY NEED
+#
+#   watch    hourly   · NO SECRETS. Fetches /api/health on the deployed site
+#                       and fails if the body says `"degraded": true`. That is
+#                       the whole alert: a failed workflow run, which GitHub
+#                       emails to Eden for free. It works the day this merges,
+#                       before a single secret exists.
+#   monitor  6-hourly · service role. The existing digest, unchanged except for
+#                       the new worker-liveness section.
+#   suite    nightly  · service role + provider keys. PR #169's suite, headless
+#                       on Linux, with its own deadlines, artifacts, and a
+#                       non-zero exit on pass:false.
+#
+# WITH NO SECRETS SET, THE SECRET-BEARING JOBS SKIP WITH A NOTICE AND GO GREEN.
+# A workflow that mails a red result every night for a reason nobody intends to
+# fix is a workflow that gets muted, and a muted workflow protects nothing. The
+# `secrets` context cannot be read in an `if:`, so each job maps its secrets to
+# `env:` and the steps test `env.X != ''`.
+#
+# SCHEDULES ARE UTC AND APPROXIMATE. GitHub runs scheduled workflows on the
+# DEFAULT BRANCH only — nothing here fires until this merges to main — and the
+# hosted scheduler is routinely 5–30 minutes late at the top of the hour. So
+# `watch` is a backstop that catches an outage within roughly an hour, not a
+# 10-minute SLA. The 10-minute promise is kept where it can be: the Vault tells
+# the person within ~60 s (migration 066's ingest_status_for_me), and anyone who
+# wants a 10-minute EMAIL should point a free uptime monitor at
+# https://www.contextspaces.ai/api/health with the keyword `"degraded": true`.
+# That endpoint is unauthenticated and numbers-only precisely so that this is
+# possible without handing a third party a credential.
+#
+# RUNNER MINUTES (a private repo has 2,000/month on the Free plan; every job is
+# billed by the started minute). Hourly watch ≈ 24/day, 6-hourly monitor ≈
+# 8/day, nightly suite ≈ 10/day → ≈ 1,300/month, which leaves room for CI. Make
+# `watch` half-hourly and it is ≈ 1,950 — at the edge. The cadence is the cron
+# line below and nothing else depends on it.
+
+on:
+  schedule:
+    # 07:00 UTC = 03:00 America/New_York in summer, 02:00 in winter. The hour of
+    # drift does not matter to a nightly job and cron has no time zone.
+    - cron: '0 7 * * *'      # suite
+    - cron: '20 */6 * * *'   # monitor
+    - cron: '40 * * * *'     # watch
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which job to run by hand'
+        type: choice
+        default: watch
+        options: [watch, monitor, suite, all]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Liveness watch — no secrets, no checkout, no npm.
+  #
+  # /api/health calls migration 066's ingest_worker_status() with the ANON key
+  # and reports aggregate numbers only: worker alive, seconds since the last
+  # heartbeat, queue depth, age of the oldest document that has not reached a
+  # terminal state. There is nothing tenant-shaped in it, which is what makes
+  # this job possible at all.
+  # ---------------------------------------------------------------------------
+  watch:
+    name: worker liveness (no secrets)
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '40 * * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'watch' || inputs.job == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Is ingestion degraded?
+        env:
+          # A repository variable (not a secret) may override the URL for a
+          # preview deployment. Unset is the normal case.
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+        run: |
+          set -uo pipefail
+          url="${HEALTH_URL:-https://www.contextspaces.ai/api/health}"
+          body="$(curl -fsS --max-time 25 "$url" || true)"
+          if [ -z "$body" ]; then
+            echo "::error title=Health endpoint unreachable::$url did not answer. The site itself may be down."
+            exit 1
+          fi
+          echo "$body" | jq '.checks.ingestion' || { echo "$body"; echo "::error::/api/health did not return JSON"; exit 1; }
+          available="$(echo "$body" | jq -r '.checks.ingestion.available // false')"
+          reason="$(echo "$body" | jq -r '.checks.ingestion.reason // "no reason given"')"
+          if [ "$available" != "true" ]; then
+            # "We cannot tell" is not "it is broken" — most likely migration 066
+            # is not pasted yet. A notice, never a failure: an alert that fires
+            # for a known, intended state is an alert that gets ignored.
+            echo "::notice title=Ingestion health not available::$reason"
+            exit 0
+          fi
+          if [ "$(echo "$body" | jq -r '.degraded // false')" = "true" ]; then
+            echo "::error title=Ingestion degraded::$reason"
+            exit 1
+          fi
+          echo "Ingestion healthy — $reason"
+
+  # ---------------------------------------------------------------------------
+  # 2. The monitor digest.
+  # ---------------------------------------------------------------------------
+  monitor:
+    name: ingestion monitor (service role)
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '20 */6 * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'monitor' || inputs.job == 'all'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: ingest-monitor
+      cancel-in-progress: false
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      # Whose filenames the digest may print (PR #169). Empty = nobody's.
+      INGEST_MONITOR_FILENAME_OWNERS: ${{ secrets.INGEST_MONITOR_FILENAME_OWNERS }}
+      # Optional extra recipient for URGENT digests only (a carrier
+      # email-to-SMS gateway address, for example). Routine digests never go
+      # here.
+      INGEST_ALERT_TO: ${{ secrets.INGEST_ALERT_TO }}
+      PUPPETEER_SKIP_DOWNLOAD: '1'
+    steps:
+      - name: No credentials configured — skipping
+        if: env.SUPABASE_SERVICE_ROLE_KEY == '' || env.VITE_SUPABASE_URL == ''
+        run: |
+          echo "::notice title=Monitor skipped::Add the repository secrets SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable the ingestion monitor. See docs/INGEST_MONITORING.md."
+
+      - name: Checkout
+        if: env.SUPABASE_SERVICE_ROLE_KEY != '' && env.VITE_SUPABASE_URL != ''
+        uses: actions/checkout@v5
+
+      - name: Use Node 22
+        if: env.SUPABASE_SERVICE_ROLE_KEY != '' && env.VITE_SUPABASE_URL != ''
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        if: env.SUPABASE_SERVICE_ROLE_KEY != '' && env.VITE_SUPABASE_URL != ''
+        run: npm ci
+
+      # --stale-minutes 30 is the audit's Definition of Done item 4: "no
+      # document sits non-terminal > 30 min unnoticed". Exit 1 = something needs
+      # a person, which turns this job red and sends GitHub's own failure email.
+      - name: Ingestion monitor
+        if: env.SUPABASE_SERVICE_ROLE_KEY != '' && env.VITE_SUPABASE_URL != ''
+        run: node scripts/ingest-monitor.mjs --quiet --email --stale-minutes 30
+
+  # ---------------------------------------------------------------------------
+  # 3. The nightly suite (PR #169's deadlines, checkpoint and jsonl line).
+  # ---------------------------------------------------------------------------
+  suite:
+    name: nightly ingestion suite (service role + provider keys)
+    if: >
+      (github.event_name == 'schedule' && github.event.schedule == '0 7 * * *') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'suite' || inputs.job == 'all'))
+    runs-on: ubuntu-latest
+    # Must exceed --deadline-min so the suite always ends ITSELF and writes its
+    # record, rather than being killed with the record unwritten — the exact
+    # failure of 2026-09-18, in a different uniform.
+    timeout-minutes: 75
+    concurrency:
+      group: ingest-suite
+      cancel-in-progress: false
+    env:
+      VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      SMOKE_CREATED_BY: ${{ secrets.SUITE_CREATED_BY }}
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      INGEST_MONITOR_FILENAME_OWNERS: ${{ secrets.INGEST_MONITOR_FILENAME_OWNERS }}
+      INGEST_ALERT_TO: ${{ secrets.INGEST_ALERT_TO }}
+      # The scratch matter the suite files its fixtures into. A repository
+      # VARIABLE, not a secret: a short code is not a credential, and keeping it
+      # visible means a misconfiguration is legible in the run log.
+      SUITE_MATTER: ${{ vars.SUITE_MATTER }}
+      PUPPETEER_SKIP_DOWNLOAD: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Use Node 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Runs ALWAYS, with or without secrets, and costs nothing: it resolves the
+      # flags, the log paths and which credentials are present, then exits
+      # before the first request. It is the step that catches a Windows-shaped
+      # path or a renamed env var on a Linux runner — the class of mistake that
+      # used to surface at 03:00 as an unexplained red night.
+      - name: Dry run — flags, paths and credential presence (no network)
+        run: node scripts/ingest-suite.mjs "${SUITE_MATTER:-dry-run-matter}" --dry-run
+
+      - name: Not configured — skipping the live run
+        if: env.SUPABASE_SERVICE_ROLE_KEY == '' || env.SUITE_MATTER == ''
+        run: |
+          echo "::notice title=Nightly suite skipped::Set the repository secret SUPABASE_SERVICE_ROLE_KEY (plus SUPABASE_URL, OPENAI_API_KEY, GOOGLE_API_KEY) and the repository variable SUITE_MATTER to enable the nightly run. See docs/INGEST_MONITORING.md."
+
+      # The green-night streak is counted from logs/ingest-suite.jsonl, which a
+      # fresh runner does not have — without this every night would report
+      # "green 1 night" and the three-night streak could never be reached. The
+      # cache is a convenience, not the record: the durable record is the
+      # artifact below and this workflow's own run history.
+      - name: Restore the run history (the streak lives in it)
+        if: env.SUPABASE_SERVICE_ROLE_KEY != '' && env.SUITE_MATTER != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: logs
+          key: ingest-suite-log-${{ github.run_id }}
+          restore-keys: ingest-suite-log-
+
+      # Deadlines are set well inside timeout-minutes above. Exit 1 = a gate
+      # failed, exit 2 = the suite itself could not run; either turns this job
+      # red, which is the alert.
+      - name: Nightly ingestion suite
+        if: env.SUPABASE_SERVICE_ROLE_KEY != '' && env.SUITE_MATTER != ''
+        run: node scripts/ingest-suite.mjs "$SUITE_MATTER" --email --deadline-min=45 --gate-min=12
+
+      - name: Save the run history
+        if: always() && env.SUPABASE_SERVICE_ROLE_KEY != '' && env.SUITE_MATTER != ''
+        uses: actions/cache/save@v4
+        with:
+          path: logs
+          key: ingest-suite-log-${{ github.run_id }}
+
+      # always(): a run that FAILED is the one whose record is worth keeping.
+      # The checkpoint names the gate a killed run died in.
+      - name: Upload the run record (jsonl line + checkpoint + console log)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ingest-suite-${{ github.run_id }}
+          path: |
+            logs/ingest-suite.jsonl
+            logs/ingest-suite-checkpoint.json
+          if-no-files-found: warn
+          retention-days: 30

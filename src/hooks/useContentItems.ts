@@ -6,6 +6,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { fetchPaged } from '@/lib/paged';
 
 export type ContentType = 'page' | 'list' | 'database' | 'document';
 export type SpaceType = 'matterspace' | 'serverspace' | 'clientspace';
@@ -48,16 +49,25 @@ export function useContentItems(space: SpaceRef | null, contentType: ContentType
     enabled: !!space,
     queryFn: async (): Promise<ContentItemSummary[]> => {
       if (!space) return [];
-      const { data, error } = await supabase
-        .from('content_items')
-        .select('id, title, content_type, is_locked, position, updated_at')
-        .eq('space_id', space.spaceId)
-        .eq('space_type', space.spaceType)
-        .eq('content_type', contentType)
-        .order('position', { ascending: true })
-        .order('created_at', { ascending: true });
-      if (error) throw new Error(`content_items: ${error.message}`);
-      return (data ?? []) as ContentItemSummary[];
+      // Paged past PostgREST's 1,000-row cap — a practice docket's to-do
+      // lists live here, and a big matter's list of lists can pass it.
+      // `.order('id')` is the unique tiebreaker: `position` is 0 on every
+      // row that has never been dragged, so it ties constantly, and unbroken
+      // ties let rows swap between `.range()` pages.
+      const { rows } = await fetchPaged<ContentItemSummary>(
+        (from, to) => supabase
+          .from('content_items')
+          .select('id, title, content_type, is_locked, position, updated_at')
+          .eq('space_id', space.spaceId)
+          .eq('space_type', space.spaceType)
+          .eq('content_type', contentType)
+          .order('position', { ascending: true })
+          .order('created_at', { ascending: true })
+          .order('id')
+          .range(from, to),
+        { label: 'content_items' },
+      );
+      return rows;
     },
     staleTime: 15_000,
   });

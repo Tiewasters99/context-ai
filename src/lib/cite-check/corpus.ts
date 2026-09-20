@@ -39,6 +39,11 @@ export async function loadCorpusDocumentText(documentId: string): Promise<Corpus
       .eq('document_id', documentId)
       .eq('summary_level', 0)
       .order('sequence_number', { ascending: true })
+      // The unique tiebreaker. `.range()` re-runs the query for every page,
+      // so any two rows the ORDER BY calls equal may swap between pages —
+      // which duplicates some and drops others. sequence_number is unique
+      // per document today; the loop must not depend on that.
+      .order('id')
       .range(from, from + 999);
     if (error) throw new Error(`load passages: ${error.message}`);
     if (!data || data.length === 0) break;

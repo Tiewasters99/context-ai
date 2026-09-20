@@ -558,8 +558,10 @@ await db.exec('reset role');
 // PART B — lib/ledger.mjs and the sealed strict mode
 // ===========================================================================
 console.log('\n--- lib/ledger.mjs: redaction ------------------------------------');
-const { redact, record, recordStrict, LedgerWriteError, isNotDeployed, EVENT_KINDS, _resetWarnings } =
-  await import('../lib/ledger.mjs');
+const {
+  redact, redactToolArgs, scrubArgValues, record, recordStrict, LedgerWriteError,
+  isNotDeployed, EVENT_KINDS, _resetWarnings,
+} = await import('../lib/ledger.mjs');
 
 {
   const out = redact({
@@ -587,6 +589,182 @@ const { redact, record, recordStrict, LedgerWriteError, isNotDeployed, EVENT_KIN
   const long = redact({ mystery: 'q'.repeat(5000) });
   check(typeof long.mystery === 'object' && long.mystery.chars === 5000,
     'and any long string under ANY key is replaced by its size (the default is refusal)');
+}
+
+// ---------------------------------------------------------------------------
+// The allow-list on tool arguments, driven through the REAL callTool hook.
+//
+// The Record's contract is metadata only, and redact() is a deny-list: it
+// knows `query` and did not know `q`, which is the name `search` actually
+// uses — so a lawyer's search string went verbatim into a row nobody can
+// delete. The test below plants a unique sentinel in EVERY string argument of
+// EVERY tool, drives the real hook, and greps the serialized payload. None may
+// survive: an unknown argument must default to its shape, not to its words.
+// ---------------------------------------------------------------------------
+console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ------------');
+{
+  const { TOOLS, callTool } = await import('../lib/mcp-core.mjs');
+
+  const MATTER = '11111111-1111-4111-8111-111111111111';
+  const DOC_A = '22222222-2222-4222-8222-222222222222';
+  const DOC_B = '33333333-3333-4333-8333-333333333333';
+  const QUERY = 'did he know about the side letter before the closing';
+
+  // Each sentinel is prose — it carries a space, so it can never pass for an
+  // id or an enum and the allow-list has no honest reason to keep it. The
+  // TOKEN is lowercase alphanumerics, so a handler that slugifies or
+  // lower-cases the value before quoting it back still trips the grep.
+  let n = 0;
+  const sentinels = [];
+  const sentinel = () => {
+    const token = `zzsentinel${++n}zz`;
+    sentinels.push(token);
+    return `${token} privileged prose`;
+  };
+
+  /** A value for every leaf of a tool's JSON schema; every string a sentinel. */
+  const fromSchema = (schema) => {
+    if (!schema || typeof schema !== 'object') return sentinel();
+    if (Array.isArray(schema.anyOf)) return fromSchema(schema.anyOf[schema.anyOf.length - 1]);
+    if (schema.type === 'object') {
+      const out = {};
+      for (const [k, sub] of Object.entries(schema.properties ?? {})) out[k] = fromSchema(sub);
+      return out;
+    }
+    if (schema.type === 'array') {
+      const items = schema.items;
+      if (items && Array.isArray(items.anyOf)) return items.anyOf.map(fromSchema);
+      return [fromSchema(items), fromSchema(items)];
+    }
+    if (schema.type === 'number' || schema.type === 'integer') return 7;
+    if (schema.type === 'boolean') return true;
+    return sentinel();
+  };
+
+  // A Supabase shaped like the real one and holding no database: every query
+  // resolves to an error, so each handler fails and callTool records the
+  // failure path — the path that also carries the error message.
+  const captured = [];
+  const dead = { data: null, error: { message: 'no database in this harness' }, count: null };
+  const chain = () => new Proxy(() => {}, {
+    get: (_t, prop) => (prop === 'then' ? (resolve) => resolve(dead) : () => chain()),
+    apply: () => chain(),
+  });
+  const stub = {
+    from: () => chain(),
+    storage: { from: () => chain() },
+    auth: { getUser: async () => ({ data: { user: { id: 'u-1' } }, error: null }) },
+    rpc: async (fn, params) => {
+      if (fn !== 'ledger_append') return dead;
+      captured.push(params);
+      return { data: [{ id: 'evt', seq: captured.length, hash: 'h' }], error: null };
+    },
+  };
+  const invoke = async (tool, args, actor) => {
+    captured.length = 0;
+    _resetWarnings();
+    try {
+      await callTool(stub, tool, args, { matterId: MATTER, actor });
+    } catch { /* there is no database here; the recording happens either way */ }
+    return captured.at(-1)?.p_payload ?? null;
+  };
+
+  const leaks = [];
+  for (const tool of TOOLS) {
+    const args = fromSchema(tool.inputSchema);
+    args.zz_future_argument = sentinel();   // an argument nobody has invented yet
+    const payload = await invoke(tool.name, args,
+      { kind: 'connector', ref: 'client-1', label: 'Fixture Desktop' });
+    if (!payload) { leaks.push(`${tool.name}: nothing was recorded at all`); continue; }
+    const blob = JSON.stringify(payload);
+    const hit = sentinels.filter((s) => blob.includes(s));
+    if (hit.length) leaks.push(`${tool.name}: ${hit.join(',')}`);
+  }
+  check(leaks.length === 0 && TOOLS.length === 20,
+    `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
+    leaks.join(' | '));
+
+  {
+    const p = await invoke('search', {
+      matter: 'fixture-matter', q: QUERY, limit: 7, full_text: true,
+      doc_types: ['deposition'], witnesses: ['Peloso', 'Ortega'],
+      document_ids: [DOC_A, DOC_B],
+    }, { kind: 'user', ref: 'u-1' });
+    check(p?.args?.matter === 'fixture-matter' && p?.args?.limit === 7 && p?.args?.full_text === true,
+      'the matter handle, the limit and the flag survive — the Record still says what was asked for');
+    check(Array.isArray(p?.args?.document_ids) && p.args.document_ids.length === 2
+      && p.args.document_ids[0] === DOC_A && Array.isArray(p?.document_ids),
+      'document ids survive as ids, top-level and in the arguments');
+    check(p?.args?.q?.present === true && p.args.q.length === QUERY.length
+      && !JSON.stringify(p).includes('side letter'),
+      'but the QUERY ITSELF is a length and nothing else — the hole #182 found, closed',
+      JSON.stringify(p?.args?.q));
+    check(p?.args?.doc_types?.items === 1 && p?.args?.witnesses?.items === 2,
+      'a list of witness names is its count, never the names');
+  }
+  {
+    const HEADLINE = 'Horski deposition 7/31 — outline in progress';
+    const NOTE = 'client says settle';
+    const p = await invoke('set_matter_state', {
+      matter: 'fixture-matter', status: 'urgent',
+      headline: HEADLINE, next_action: 'serve the subpoena', note: NOTE,
+    }, { kind: 'charter', ref: 'charter-1', label: 'Deposition digest' });
+    check(p?.args?.status === 'urgent', 'an enum the tool\'s own schema lists survives');
+    check(p?.args?.headline?.present === true && p.args.headline.length === HEADLINE.length
+      && p?.args?.note?.present === true && p.args.note.length === NOTE.length
+      && !JSON.stringify(p).includes('Horski') && !JSON.stringify(p).includes('settle'),
+      'while the matter\'s own words are a presence and a length',
+      JSON.stringify(p?.args?.headline));
+  }
+
+  // The second hole, found by the loop above: several handlers quote the
+  // argument back in the message they throw (resolveMatter's "No matterspace
+  // with short_code '…'"), and the payload carries that message beside the
+  // shaped arguments. Shaping the arguments alone would not have been enough.
+  {
+    const p = await invoke('list_matter_contents',
+      { matter: 'Peloso arbitration — the unsigned side letter' }, { kind: 'user', ref: 'u-1' });
+    check(p?.args?.matter?.present === true && !JSON.stringify(p).includes('side letter'),
+      'a handler that quotes an argument back into its error does not reopen the hole',
+      JSON.stringify(p?.error));
+  }
+
+  // The allow-list checks the VALUE, not only the key: a tool is free to put
+  // prose in an argument it calls `id`.
+  {
+    const shaped = redactToolArgs({
+      encoding: 'base64', doc_type: 'exhibit', type: 'bar',
+      doc_type_unknown: 'transcript', id: 'not a uuid, a sentence',
+      matter: 'Peloso v. Curtis — the 2019 arbitration', to_matter: 'sandbox_peloso',
+      document_ids: [DOC_A, 'a note about the client'], context_pages: 2, regex: false,
+      api_key: 'sk-live-abcdef',
+    });
+    check(shaped.encoding === 'base64' && shaped.doc_type === 'exhibit' && shaped.type === 'bar',
+      'enum values pass; an unlisted one would not');
+    check(shaped.id?.present === true && shaped.matter?.present === true,
+      'an id-shaped KEY holding something that is not an id does not survive');
+    check(shaped.to_matter === 'sandbox_peloso' && shaped.context_pages === 2 && shaped.regex === false,
+      'a real handle, a number and a boolean do');
+    check(shaped.document_ids?.items === 2 && !JSON.stringify(shaped).includes('client'),
+      'one non-uuid in an id list collapses the whole list to its count');
+    check(shaped.api_key === '[redacted]', 'and a secret is still a secret');
+  }
+  {
+    const twice = redact({ tool: 'set_matter_state', args: redactToolArgs({ note: 'a private note' }) });
+    check(twice.args.note.present === true && twice.args.note.length === 14,
+      'redact() runs over the result and leaves an already-shaped value alone');
+  }
+  {
+    const scrubbed = scrubArgValues(`search: syntax error in tsquery: "${QUERY}"`, { q: QUERY });
+    check(!scrubbed.includes('side letter') && scrubbed.includes('[argument]'),
+      'an error message that quotes an argument back is scrubbed before it is recorded');
+  }
+
+  // The negative control: this is what the code did before the fix.
+  check(redact({ q: QUERY }).q === QUERY,
+    'NEGATIVE CONTROL: redact() alone — the pre-fix path — stores args.q VERBATIM');
+  check(redact({ query: QUERY }).query === QUERY && redactToolArgs({ query: QUERY }).query?.present === true,
+    'and its `query` special case kept the text too; the allow-list keeps neither');
 }
 
 console.log('\n--- lib/ledger.mjs: failure modes --------------------------------');

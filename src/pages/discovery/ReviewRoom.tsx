@@ -11,6 +11,7 @@ import {
   listJobsForProduction,
   type Production, type ProductionItem, type DocumentTagDef, type ProcessingJob,
 } from '@/lib/discovery';
+import { showingOf } from '@/lib/paged';
 import { DirectionBadge, StatusBadge, TagChip, JobProgress } from './bits';
 import FloatingPanel from './FloatingPanel';
 import TagPickerPanel from './TagPickerPanel';
@@ -34,6 +35,10 @@ export default function ReviewRoom() {
   const [production, setProduction] = useState<Production | null>(null);
   const [matter, setMatter] = useState<MatterRef | null>(null);
   const [items, setItems] = useState<ProductionItem[]>([]);
+  // Set only when the paged read hit its ceiling. A production that is larger
+  // than the list shown must say so on the list itself — silently producing
+  // the first N documents of a court-ordered production is the bug.
+  const [itemsTruncated, setItemsTruncated] = useState<string | null>(null);
   const [defs, setDefs] = useState<DocumentTagDef[]>([]);
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -64,7 +69,9 @@ export default function ReviewRoom() {
 
   const refreshItems = useCallback(async () => {
     if (!id) return;
-    setItems(await listProductionItems(id));
+    const page = await listProductionItems(id);
+    setItems(page.rows);
+    setItemsTruncated(showingOf(page, 'documents'));
   }, [id]);
 
   useEffect(() => {
@@ -85,9 +92,10 @@ export default function ReviewRoom() {
         ]);
         if (cancelled) return;
         setMatter(m);
-        setItems(its);
+        setItems(its.rows);
+        setItemsTruncated(showingOf(its, 'documents'));
         setDefs(ds);
-        setSelectedId((cur) => cur ?? its[0]?.id ?? null);
+        setSelectedId((cur) => cur ?? its.rows[0]?.id ?? null);
       } catch (e) {
         if (!cancelled) setLoadError(e instanceof Error ? e.message : 'Failed to load production');
       } finally {
@@ -401,6 +409,11 @@ export default function ReviewRoom() {
               </div>
             </div>
             <div className="flex-1 overflow-y-auto min-h-0">
+              {itemsTruncated && (
+                <p className="mx-2 my-2 rounded-md border border-[#d4a054]/40 bg-[#d4a054]/10 px-2 py-1.5 text-[10.5px] leading-snug text-[#d4a054]">
+                  {itemsTruncated}
+                </p>
+              )}
               {loading && <p className="text-[11px] text-white/40 text-center py-6">Loading documents…</p>}
               {!loading && filtered.length === 0 && (
                 <p className="text-[11px] text-white/40 text-center py-6 px-4">

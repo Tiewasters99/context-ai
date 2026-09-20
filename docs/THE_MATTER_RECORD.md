@@ -75,7 +75,7 @@ W1.
 
 | kind | written by | payload |
 | --- | --- | --- |
-| `tool.invoked` | `lib/mcp-core.mjs` `callTool` | `{tool, args (redacted), document_ids[], connector, connector_client_id, charter_id, ok, refused: 'sealed'\|null, ms, error?}` |
+| `tool.invoked` | `lib/mcp-core.mjs` `callTool` | `{tool, args (allow-listed — see below), document_ids[], connector, connector_client_id, charter_id, ok, refused: 'sealed'\|null, ms, error?}` |
 | `completion.received` | `lib/assistant-core.mjs` `recordAssistant` | `{tier, provider, model, input_tokens, output_tokens, estimated_cost, within_policy, escalation, tools_used[], rounds, answer_chars, error?}` |
 | `acl.changed` | trigger on `matterspace_members` / `serverspace_members` | `{table, op: insert\|update\|delete, target_user_id, old_role, new_role, serverspace_id?}` |
 | `seal.changed` | trigger on `matterspaces.ai_tier` | `{old_tier, new_tier}` |
@@ -127,6 +127,76 @@ leaves the process:
 
 Migration 064 then caps the whole payload at 8 KB, replacing anything larger
 with `{truncated: true, original_bytes, keys[]}`.
+
+### Tool arguments — an allow-list, not a deny-list
+
+The bullets above describe `redact()`, the floor under **every** payload this
+module writes. For `tool.invoked` there is a second, stricter pass that runs
+**first**, because that is the one payload which embeds a tool's *raw*
+arguments — keys chosen by whoever writes the next tool, not by `ledger.mjs`.
+
+A deny-list is the wrong shape for that. It was also wrong in fact: `search`'s
+query argument is named **`q`**, and `redact()`'s special case is spelled
+`query`, so a search string went into the Record **verbatim** up to 256
+characters — in a row that neither its author, nor `service_role`, nor a
+superuser can ever delete. A lawyer's search string is the question counsel
+was asking; it can be privileged even when the passages it finds are not.
+
+So `redactToolArgs()` inverts the rule. A value survives only if it is safe
+**by construction**, and the *value* is checked, not just the key name:
+
+| kept | keys | only when |
+| --- | --- | --- |
+| container ids | `matter`, `to_matter`, `parent`, `serverspace`, `short_code` | the value is a uuid, or a handle matching `^[A-Za-z][A-Za-z0-9_-]{0,63}$` |
+| document / passage ids | `document_id`, `doc`, `id` | the value is a uuid |
+| id lists | `document_ids` | **every** element is a uuid (otherwise the list becomes `{items: n}`) |
+| enums | `encoding`, `doc_type`, `status`, `type` | the value is one the tool's own schema lists |
+| numbers, booleans | any key | always — neither can carry prose |
+| secrets | any key matching the secret pattern | never: `'[redacted]'` |
+| **everything else** | any other string, under any key, known or not yet invented | never: `{present: true, length: n}`. Arrays become `{items: n}` |
+
+The default is refusal, which is what makes a tool added next year safe
+without anyone remembering to come back here.
+
+Argument by argument, across the twenty tools (◆ kept, ▫ shape only):
+
+| tool | kept | shape only |
+| --- | --- | --- |
+| `list_matters` | — | — (no arguments) |
+| `list_matter_contents` | ◆ `matter` | — |
+| `search` | ◆ `matter`, `document_ids`, `limit`, `full_text` | ▫ `q`, `doc_types`, `witnesses` |
+| `get_passage` | ◆ `id`, `context_pages` | — |
+| `get_outline` | ◆ `doc`, `depth` | — |
+| `grep` | ◆ `matter`, `doc`, `regex`, `case_sensitive`, `max_matches`, `context_chars` | ▫ `pattern` |
+| `file_document` | ◆ `matter`, `encoding`, `doc_type` | ▫ `filename`, `content`, `title` |
+| `ingest_document` | ◆ `document_id`, `force` | — |
+| `check_ingest_status` | ◆ `matter`, `document_id` | — |
+| `get_media` | ◆ `document_id`, `expires_in` | — |
+| `get_matter_state` | ◆ `matter` | — |
+| `set_matter_state` | ◆ `matter`, `status` | ▫ `headline`, `next_action`, `next_action_owner`, `waiting_on`, `note` |
+| `create_matter` | ◆ `serverspace`, `parent`, `short_code` | ▫ `name`, `description` |
+| `move_document` | ◆ `document_ids`, `to_matter` | — |
+| `copy_document` | ◆ `document_ids`, `to_matter` | — |
+| `send_to_sandbox` | ◆ `document_ids` | — |
+| `assemble_documents` | ◆ `matter`, `document_ids`, `doc_type` | ▫ `filename`, `title` |
+| `edit_pdf` | ◆ `document_id` | ▫ `pages`, `rotate`, `inserts`, `filename`, `title` |
+| `create_deck` | ◆ `matter` | ▫ `title`, `subtitle`, `filename`, `accent`, `slides` |
+| `create_chart` | ◆ `matter`, `type` | ▫ `title`, `categories`, `series`, `y_label`, `x_label`, `filename` |
+
+A filename and a matter's display name are shape-only deliberately: both are
+routinely the client's name and the dispute, and the row already snapshots
+`matter_name` beside it. `pages`, `rotate` and `inserts` are shapes because
+they are not on the list, which is the point of a list.
+
+### The error beside the arguments
+
+Shaping the arguments is not sufficient on its own. Several handlers quote an
+argument back in the message they throw — `resolveMatter` raises *"No
+matterspace with short_code '…'"* — and `payload.error` carries that message.
+`scrubArgValues()` therefore removes every argument value of four characters
+or more from the error before it is recorded. `_verify-ledger.mjs` proves both
+halves: with the scrub removed, nine of the twenty tools put an argument back
+into the payload by that route.
 
 ---
 

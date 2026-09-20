@@ -12,12 +12,35 @@
 //
 // Auth: requires Supabase Bearer JWT. The route doesn't write to the DB;
 // the client is responsible for persisting messages via supabase.from(...).
+//
+// TWO ROUTES, ONE ENDPOINT (2026-09-20)
+// -----------------------------------------------------------------------------
+// Everything above describes the UNSEALED (Tier A) meeting, which is unchanged
+// down to the byte. A SEALED (Tier B) meeting takes the other arm:
+//
+//   Tier A  → first-party Claude, web_search attached, transcript in a cached
+//             system block. Exactly as before.
+//   Tier B  → the sealed pen (Kimi K2.5 in our own AWS account) through the
+//             Assistant's own agentic harness, with the matter's own tools and
+//             no web search — lib/meeting-sealed-chat.mjs. Eden's decision of
+//             2026-09-20: "sealed chat should be answered by Kimi with whatever
+//             agentic harness Kimi can run inside the sealed space."
+//   Tier C, an unreadable seal, an unresolvable meeting → refused, as PR #162
+//             left them.
+//
+// The order is the one /api/llm settled on in PR #163: seal decision FIRST,
+// then the spend cap, so the turn is priced at the pen that will actually
+// answer it and a meter that fails open can never widen the route. And the
+// sealed arm is entered only from a refusal this file has already received —
+// it never widens the seal, only decides who serves what was refused.
 
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 
-import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
-import { estimateLlmCents } from '../lib/usage-prices.mjs';
+import { sealedMeetingPlan, runSealedMeetingTurn } from '../lib/meeting-sealed-chat.mjs';
+import { meetingRefusalMessage } from '../lib/meeting-seal.mjs';
+import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-7';
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -53,8 +76,11 @@ export default async function handler(req, res) {
   }
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
 
+  // The unsealed arm's key. Missing is fatal only for THAT arm — a sealed
+  // meeting is served by our AWS credentials and holds no Anthropic key at
+  // all, so the check moved below the seal decision rather than gating the
+  // whole endpoint on a key the sealed turn must never use.
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return json(res, 500, { error: 'ANTHROPIC_API_KEY not configured' });
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return json(res, 500, { error: 'supabase_env_missing' });
   }
@@ -86,8 +112,10 @@ export default async function handler(req, res) {
   // Tier C. A Tier-B (SEALED) meeting set a flag that dropped `web_search` and
   // then sent the whole transcript to api.anthropic.com regardless — no
   // escalation, no record. Since Tier B admits nothing but the sealed Bedrock
-  // route (2026-09-19), a sealed meeting is now refused here and NOTHING is
-  // contacted: the refusal is returned before any provider client exists.
+  // route (2026-09-19), a Tier-B answer from THIS provider is refused here and
+  // api.anthropic.com is never contacted: the refusal is returned before any
+  // provider client exists. Since 2026-09-20 that refusal is not where the
+  // turn ends — it is where the sealed arm below begins.
   //
   // lib/meeting-seal.mjs holds the lookup, shared with /api/meeting-flag, and
   // fails closed — an unreadable tier or a meeting row that does not resolve is
@@ -95,16 +123,94 @@ export default async function handler(req, res) {
   // the rule /api/llm applies to an unbound draft.
   const { meetingModelDecision } = await import('../lib/meeting-seal.mjs');
   const seal = await meetingModelDecision(sb, body.meeting_id, { provider: 'anthropic' });
+
+  const transcript = (body.transcript || '').trim();
+
   if (!seal.ok) {
-    return json(res, seal.status, { error: seal.code, tier: seal.tier, message: seal.message });
+    // THE SEALED ARM. A Tier-B meeting is not the end of the road any more: it
+    // is answered by the pen that lives inside the seal, through the same
+    // agentic harness /api/assistant runs, and it leaves the same record
+    // (ai_sessions / ai_messages, with model, provider, tokens and cost).
+    // Everything else — Tier C, an unreadable seal, an unresolvable meeting —
+    // keeps PR #162's refusal exactly.
+    const plan = sealedMeetingPlan({ seal });
+    if (!plan) {
+      // No sealed route to offer (Tier C, or a policy that has stopped
+      // admitting aws-bedrock on B). Refuse, and do not promise a pen.
+      const message = seal.tier === 'B' ? meetingRefusalMessage('B', { sealedChat: false }) : seal.message;
+      return json(res, seal.status, { error: seal.code, tier: seal.tier, message });
+    }
+
+    // Priced at the pen that answers, never at the model this route used to
+    // name — the ~8× overcharge PR #163 removed from /api/llm, removed here for
+    // the same reason. A server with NO sealed pen is not metered at all: that
+    // turn is a refusal, and a refusal is free.
+    let meter = null;
+    if (plan.pen) {
+      meter = await consumeUsage({
+        supabaseUrl: SUPABASE_URL,
+        anonKey: SUPABASE_ANON_KEY,
+        bearer: userToken,
+        kind: 'meeting',
+        estimateCents: estimateLlmCents({
+          provider: 'aws-bedrock',
+          model: plan.pen.model,
+          bodyText: transcript + JSON.stringify(body.messages || []),
+          maxOutputTokens: 4096,
+        }),
+      });
+      if (!meter.allowed) return sendUsageRefusal(res, meter);
+    }
+
+    const turn = await runSealedMeetingTurn({
+      supabase: sb,
+      creds: plan.creds,
+      transcript,
+      messages: body.messages,
+      matterId: seal.matterId,
+      meetingId: body.meeting_id,
+      // Headers are set only once the turn commits to an answer, so a refusal
+      // that happens first still gets a status code and a JSON body — the
+      // shape MeetingView renders as a plain sentence.
+      onStart: () => {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'text/plain; charset=utf-8');
+        res.setHeader('cache-control', 'no-store');
+        res.setHeader('x-accel-buffering', 'no');
+      },
+      write: (s) => { try { res.write(s); } catch { /* client disconnected */ } },
+    });
+    if (turn.refusal) return json(res, turn.refusal.status, turn.refusal.body);
+    res.end();
+    // Reconcile against the tokens the pen actually reported, the way
+    // /api/assistant does. Best effort: a metering hiccup must not spoil an
+    // answer already delivered.
+    if (meter?.eventId && turn.result?.usage) {
+      await recordActualUsage({
+        supabaseUrl: SUPABASE_URL,
+        serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+        eventId: meter.eventId,
+        cents: centsForTokens(turn.result.model, turn.result.provider, turn.result.usage),
+        model: turn.result.model || null,
+        meta: {
+          route: 'meeting-chat',
+          provider: turn.result.provider || null,
+          tier: turn.result.tier || null,
+          sealed: true,
+          tokens: turn.result.usage,
+          ...(turn.window?.windowed ? { transcript_windowed: { kept: turn.window.keptLines, total: turn.window.totalLines } } : {}),
+        },
+      });
+    }
+    return;
   }
+
+  if (!apiKey) return json(res, 500, { error: 'ANTHROPIC_API_KEY not configured' });
   // Kept for the day a zero-retention arrangement puts a first-party provider
   // back into Tier B's set (the Anthropic org ZDR request of 2026-09-18): the
   // model call would be admitted again, but web_search still must not run — its
   // queries are drawn from the transcript and they leave for the open web.
   const sealedMeeting = seal.sealed;
-
-  const transcript = (body.transcript || '').trim();
 
   // Spend cap (migration 063), before the stream starts — this route sends a
   // whole meeting transcript to Opus on every turn, with an 8,192-token

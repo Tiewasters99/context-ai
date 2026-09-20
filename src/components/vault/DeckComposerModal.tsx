@@ -3,6 +3,7 @@ import { X, Loader2, Presentation, ChevronLeft, Check, FileText } from 'lucide-r
 import { supabase } from '@/lib/supabase';
 import { sandboxApi } from '@/lib/sandbox-api';
 import { generateStructured } from '@/lib/llm/structured';
+import { DEFAULT_MODEL_ID } from '@/lib/llm/providers';
 
 // Deck composer: instruction + selected sandbox documents -> the LLM
 // drafts a slide outline (structured output) -> the user reviews it ->
@@ -150,7 +151,10 @@ export default function DeckComposerModal({ box, docs, preselectedIds, onClose, 
         sections.push(`=== ${d?.title ?? id} ===\n${text || '(no extracted text)'}`);
       }
       const spec = await generateStructured<DeckSpec>({
-        modelId: 'claude-opus',
+        // Was 'claude-opus', an id findModel has never resolved — so Compose
+        // threw "Unknown model: claude-opus" every time, before any request
+        // was made. The catalog's own default, not a fourth hard-coded string.
+        modelId: DEFAULT_MODEL_ID,
         system: SYSTEM,
         userContent: `Instruction: ${instruction.trim()}\n\nSource material:\n\n${sections.join('\n\n')}`,
         toolName: 'compose_deck',
