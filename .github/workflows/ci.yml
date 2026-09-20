@@ -284,3 +284,12 @@ jobs:
       - name: Refusals — 402 / 429 / sealed read as English
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
+      # What the Assistant panel SAYS on a sealed matter before the first
+      # message: the scope strip, the pen named in advance (and corrected when
+      # the server names another), the word-search note, the pause, the
+      # starters, the matter header's door, and the panel's pin/position
+      # record. Pure modules plus narrow source assertions for the wiring — no
+      # loader needed, nothing mounted, no network.
+      - name: Assistant — a sealed matter says where it is and who answers
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-sealed-assistant-scope.mjs
