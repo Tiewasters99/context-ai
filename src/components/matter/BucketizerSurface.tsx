@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ChevronDown, ChevronRight, Check, X, Plus, Trash2, Loader2,
   Sparkles, FolderTree, ArrowUp, ArrowDown, FileText, Play, Square,
-  Quote, Scale,
+  Quote, Scale, FolderOpen, Info, ArrowLeft,
 } from 'lucide-react';
 import DocumentPicker from '@/components/matter/DocumentPicker';
+import CorpusDocumentPicker, { type PickerDocument } from '@/components/matter/CorpusDocumentPicker';
 import BucketizerEvidence from '@/components/matter/BucketizerEvidence';
 import BucketizerEvidenceRunDialog from '@/components/matter/BucketizerEvidenceRunDialog';
 import BucketizerOutlineDialog from '@/components/matter/BucketizerOutlineDialog';
@@ -15,12 +17,14 @@ import {
 } from '@/lib/bucketizer/evidence';
 import {
   fetchTree, createNode, updateNode, deleteNode,
-  generateTreeFromPleadings, listUnclassifiedDocs, classifyDocuments,
+  generateTreeFromPleadings, classifyDocuments,
   decideClassification, addManualClassification,
   fetchClassificationsForNode, fetchNodeCounts,
   estimateClassifyRun, formatCents, emptyProgress,
+  choosableIn, classifyAction, docRowsForRun, freshCandidateRows, groupChosen,
+  loadChooserInventory, reclassifyNotices, summarizeChosen, NOTHING_NEW_MESSAGE,
   type BucketNode, type NodeKind, type ClassifiedDoc, type ClassifyProgress,
-  type DocRow, type RunEstimate,
+  type DocRow, type RunEstimate, type ChooserRow,
 } from '@/lib/bucketizer';
 import { showingOf } from '@/lib/paged';
 
@@ -44,6 +48,7 @@ const CHILD_KIND: Record<NodeKind, NodeKind> = {
 };
 
 export default function BucketizerSurface({ matterId }: { matterId: string }) {
+  const navigate = useNavigate();
   const [nodes, setNodes] = useState<BucketNode[] | null>(null);
   const [counts, setCounts] = useState<Map<string, { proposed: number; confirmed: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -57,9 +62,24 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
   const [unclassifiedCount, setUnclassifiedCount] = useState<number | null>(null);
   const classifyAbort = useRef<AbortController | null>(null);
 
-  // A bulk run is quoted before it is started, never after.
-  const [pending, setPending] = useState<{ docs: DocRow[]; estimate: RunEstimate } | null>(null);
-  const [preparing, setPreparing] = useState(false);
+  // A bulk run is quoted before it is started, never after. `notices` are the
+  // sentences a re-run owes the person: what is read again, what is charged
+  // again, and what their own decisions are protected from.
+  const [pending, setPending] = useState<{
+    docs: DocRow[];
+    estimate: RunEstimate;
+    notices: string[];
+    /** The chosen documents BY NAME, grouped by the matter they live in. */
+    groups: { matterName: string; titles: string[] }[];
+  } | null>(null);
+
+  // Choosing documents by hand — the answer to "it does not open up documents".
+  const [chooserRows, setChooserRows] = useState<ChooserRow[] | null>(null);
+  const [chooserOpen, setChooserOpen] = useState(false);
+  const [openingChooser, setOpeningChooser] = useState(false);
+  // The "nothing new to classify" line is shown until it is dismissed: it is
+  // the answer to a count of zero, and a count of zero used to be silence.
+  const [nothingNewDismissed, setNothingNewDismissed] = useState(false);
   // What the last run has to say for itself: a meter pause, windows that
   // could not be used, documents left for next time.
   const [runReport, setRunReport] = useState<ClassifyProgress | null>(null);
@@ -115,17 +135,35 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     }
   }, [matterId]);
 
+  /**
+   * Every document in this matter tree, with what has happened to it — read
+   * once and used twice: the count beside step 2, and the list the chooser
+   * shows. One read, one predicate, so the number and the rows agree.
+   */
+  const refreshInventory = useCallback(async (): Promise<boolean> => {
+    try {
+      const inventory = await loadChooserInventory(matterId);
+      setChooserRows(inventory.rows);
+      setUnclassifiedCount(freshCandidateRows(inventory.rows).length);
+      return true;
+    } catch {
+      // The count goes quiet rather than claiming a number it does not have.
+      setChooserRows(null);
+      setUnclassifiedCount(null);
+      return false;
+    }
+  }, [matterId]);
+
   useEffect(() => {
     setNodes(null);
     setSelectedId(null);
     setNodeDocs(null);
     setEvidenceReport(null);
+    setNothingNewDismissed(false);
     void reload();
-    void listUnclassifiedDocs(matterId)
-      .then((d) => setUnclassifiedCount(d.length))
-      .catch(() => setUnclassifiedCount(null));
+    void refreshInventory();
     void refreshEvidenceCounts();
-  }, [matterId, reload, refreshEvidenceCounts]);
+  }, [matterId, reload, refreshInventory, refreshEvidenceCounts]);
 
   const loadNodeDocs = useCallback(async (nodeId: string) => {
     const page = await fetchClassificationsForNode(nodeId);
@@ -175,32 +213,119 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     try {
       await generateTreeFromPleadings({ matterId, pleadingDocIds: docs.map((d) => d.id) });
       await reload();
+      // The pleadings are now marked as the tree's sources, so the count of
+      // "not yet classified" drops by however many they were.
+      await refreshInventory();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Tree generation failed.');
     } finally {
       setGenerating(false);
     }
-  }, [matterId, reload]);
+  }, [matterId, reload, refreshInventory]);
 
   // ---- classification -----------------------------------------------------
 
-  /** Step one: count the work and price it. Nothing is spent here. */
-  const handlePrepareRun = useCallback(async () => {
-    if (!nodes?.length) return;
-    setPreparing(true);
+  /**
+   * Step 2 opens the list. Always.
+   *
+   * It used to count the unclassified documents and start a run on whatever
+   * the count turned out to be — and the confirmation said "Classify 1
+   * document?" without naming it. Eden uploaded a document, was asked to run
+   * one, said run, and the classifier read the COMPLAINT: his upload was
+   * still processing, and the complaint the tree was built from was the only
+   * ready document with no rows. Nothing about that click was visible until
+   * it had happened.
+   *
+   * Strict matter isolation: the picker is confined to this matter's tree,
+   * and `docRowsForRun` drops anything outside it before a run is quoted.
+   */
+  const openChooser = useCallback(async (refresh = true) => {
     setError(null);
     setRunReport(null);
+    setOpeningChooser(true);
     try {
-      const docs = await listUnclassifiedDocs(matterId);
-      setUnclassifiedCount(docs.length);
-      if (!docs.length) return;
-      setPending({ docs, estimate: estimateClassifyRun(docs, nodes) });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not work out what is left to classify.');
+      if (refresh || !chooserRows) {
+        const ok = await refreshInventory();
+        if (!ok) {
+          setError('Could not list this matter\'s documents. Reload and try again.');
+          return;
+        }
+      }
+      setChooserOpen(true);
+      // Browser Back closes the chooser instead of ejecting him from the
+      // module. The router's own state object is preserved, so react-router
+      // still recognises the entry it is on.
+      try {
+        window.history.pushState(
+          { ...(window.history.state ?? {}), bucketizerChooser: true }, '',
+        );
+      } catch { /* history is unavailable: the Back button in the ribbon still closes it */ }
     } finally {
-      setPreparing(false);
+      setOpeningChooser(false);
     }
-  }, [matterId, nodes]);
+  }, [chooserRows, refreshInventory]);
+
+  const closeChooser = useCallback(() => {
+    setChooserOpen(false);
+    if (typeof window !== 'undefined' && window.history.state?.bucketizerChooser) {
+      window.history.back();
+    }
+  }, []);
+
+  // Browser Back while the chooser is open closes the chooser.
+  useEffect(() => {
+    if (!chooserOpen) return;
+    const onPop = () => setChooserOpen(false);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [chooserOpen]);
+
+  /** The person chose documents. Same estimate dialog, same run. */
+  const handleChosen = useCallback((picked: { id: string }[]) => {
+    closeChooser();
+    const rows = chooserRows ?? [];
+    const ids = picked.map((p) => p.id);
+    const docs = docRowsForRun(rows, ids);
+    if (!nodes?.length || !docs.length) return;
+    setPending({
+      docs,
+      estimate: estimateClassifyRun(docs, nodes),
+      notices: reclassifyNotices(summarizeChosen(rows, ids)),
+      groups: groupChosen(rows, ids),
+    });
+  }, [chooserRows, nodes, closeChooser]);
+
+  /** One document, as the picker renders it: the title, and what it is. */
+  const toPickerDoc = useCallback((r: ChooserRow, withMatter = false): PickerDocument => {
+    const where = withMatter && r.matterName ? `${r.matterName} · ` : '';
+    return {
+      id: r.id,
+      title: r.title,
+      hint: r.blockedReason
+        ? `${where}${r.status} — ${r.blockedReason}`
+        : r.caution ? `${where}${r.status} · ${r.caution}` : `${where}${r.status}`,
+      disabled: Boolean(r.blockedReason),
+    };
+  }, []);
+
+  const chooserDocsFor = useCallback((id: string): Promise<PickerDocument[]> => (
+    Promise.resolve((chooserRows ?? []).filter((r) => r.matterId === id).map((r) => toPickerDoc(r)))
+  ), [chooserRows, toPickerDoc]);
+
+  /** Search the whole matter tree — title and filename, over the loaded list. */
+  const chooserSearch = useCallback((query: string): PickerDocument[] => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return (chooserRows ?? [])
+      .filter((r) => r.title.toLowerCase().includes(q))
+      .slice(0, 300)
+      .map((r) => toPickerDoc(r, true));
+  }, [chooserRows, toPickerDoc]);
+
+  /** A folder and everything under it, resolved to its choosable documents. */
+  const chooserFolder = useCallback((matterIds: string[]) => (
+    choosableIn(chooserRows ?? [], matterIds).map((r) => ({ id: r.id, title: r.title }))
+  ), [chooserRows]);
 
   /** Step two: the person clicked through the estimate. */
   const handleClassifyAll = useCallback(async () => {
@@ -225,10 +350,10 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       setClassifying(null);
       classifyAbort.current = null;
       setCounts(await fetchNodeCounts(matterId));
-      void listUnclassifiedDocs(matterId).then((d) => setUnclassifiedCount(d.length)).catch(() => {});
+      void refreshInventory();
       if (selectedId) void loadNodeDocs(selectedId).catch(() => {});
     }
-  }, [matterId, nodes, pending, selectedId, loadNodeDocs]);
+  }, [matterId, nodes, pending, selectedId, loadNodeDocs, refreshInventory]);
 
   // ---- evidence -----------------------------------------------------------
 
@@ -380,6 +505,7 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
   }
 
   const roots = byParent.get('root') ?? [];
+  const action = classifyAction(unclassifiedCount);
 
   return (
     <div className="flex flex-col gap-3 min-h-0">
@@ -390,15 +516,39 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
         </div>
       )}
 
-      {/* Toolbar */}
+      {/* Where you are, and the way back. The Bucketizer is a Productivity
+          Suite tool a matter calls into, and until now there was no way out of
+          it but the browser's own Back. */}
+      <div className="flex items-center gap-2 text-sm">
+        <button
+          onClick={() => navigate(`/app/matterspace/${encodeURIComponent(matterId)}`)}
+          className="inline-flex items-center gap-1 rounded-lg border border-white/10 px-2.5 py-1 text-xs text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
+          title="Back to the matter"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" /> Back to the matter
+        </button>
+        <span className="text-xs text-zinc-600">·</span>
+        <button
+          onClick={() => navigate('/app/bucketizer')}
+          className="text-xs text-zinc-500 hover:text-zinc-300"
+        >
+          All matters
+        </button>
+      </div>
+
+      {/* Two steps, named and in order. Step 1 builds the tree from the
+          pleadings; step 2 chooses what to file into it. They were two buttons
+          of equal weight in one row, and which one came first was not said. */}
       <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[11px] uppercase tracking-wider text-zinc-600 mr-0.5">1 · Tree</span>
         <button
           onClick={() => setShowPleadingPicker(true)}
           disabled={generating || !!classifying}
+          title="Read the pleadings and draft the claims, elements, subissues and themes"
           className="inline-flex items-center gap-1.5 rounded-lg border border-[#d4a054]/40 bg-[#d4a054]/10 px-3 py-1.5 text-sm text-[#d4a054] hover:bg-[#d4a054]/20 disabled:opacity-50"
         >
           {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-          {roots.length ? 'Regenerate from pleadings' : 'Generate tree from pleadings'}
+          {roots.length ? 'Regenerate from pleadings' : 'Build the tree from the pleadings'}
         </button>
         <button
           onClick={() => void handleAddNode(null)}
@@ -408,14 +558,22 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
           <Plus className="w-4 h-4" /> Add bucket
         </button>
         {roots.length > 0 && !classifying && (
-          <button
-            onClick={() => void handlePrepareRun()}
-            disabled={preparing}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
-          >
-            {preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            Classify new documents{unclassifiedCount != null ? ` (${unclassifiedCount})` : ''}
-          </button>
+          <>
+            <span className="ml-2 text-[11px] uppercase tracking-wider text-zinc-600">2 · Documents</span>
+            {/* The button opens the list. It never starts a run on a count. */}
+            <button
+              onClick={() => void openChooser()}
+              disabled={openingChooser}
+              title="Search this matter, highlight documents or a whole folder, then classify them"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+            >
+              {openingChooser ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderOpen className="w-4 h-4" />}
+              {action.label}
+              {action.badge && (
+                <span className="text-[11px] text-emerald-300/70">({action.badge})</span>
+              )}
+            </button>
+          </>
         )}
         {roots.length > 0 && !classifying && !evidenceRun && (
           <button
@@ -484,6 +642,14 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
         )}
       </div>
 
+      {roots.length > 0 && unclassifiedCount === 0 && !classifying && !nothingNewDismissed && (
+        <NothingNewNotice
+          onOpenVault={() => navigate(`/app/vault?matter=${encodeURIComponent(matterId)}`)}
+          onChoose={() => void openChooser()}
+          onDismiss={() => setNothingNewDismissed(true)}
+        />
+      )}
+
       {runReport && <RunReport report={runReport} onDismiss={() => setRunReport(null)} />}
       {evidenceReport && (
         <EvidenceReport report={evidenceReport} onDismiss={() => setEvidenceReport(null)} />
@@ -537,26 +703,81 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
               </p>
             )}
             {selected && (
-              <NodeDetail
-                key={selected.id}
-                node={selected}
-                docs={nodeDocs}
-                docsNotice={nodeDocsNotice}
-                busy={busy}
-                evidenceBump={evidenceBump}
-                onEvidenceChanged={() => void refreshEvidenceCounts()}
-                onSave={saveNodePatch}
-                onDecide={handleDecide}
-                onManualAdd={() => setShowManualAdd(true)}
-              />
+              <>
+                {/* Back, inside the surface: on a narrow screen the detail
+                    pane is what you are looking at, and there was no way out
+                    of it but the browser's Back. */}
+                <button
+                  onClick={() => setSelectedId(null)}
+                  className="mb-2 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> All buckets
+                </button>
+                <NodeDetail
+                  key={selected.id}
+                  node={selected}
+                  docs={nodeDocs}
+                  docsNotice={nodeDocsNotice}
+                  busy={busy}
+                  evidenceBump={evidenceBump}
+                  onEvidenceChanged={() => void refreshEvidenceCounts()}
+                  onSave={saveNodePatch}
+                  onDecide={handleDecide}
+                  onManualAdd={() => setShowManualAdd(true)}
+                />
+              </>
             )}
           </div>
         </div>
       )}
 
+      {chooserOpen && (
+        <CorpusDocumentPicker
+          title="Choose documents to classify"
+          rootMatterId={matterId}
+          confineToRoot
+          multi
+          confirmLabel="Continue"
+          loadDocuments={chooserDocsFor}
+          searchAll={chooserSearch}
+          onSelectFolder={chooserFolder}
+          toolbar={(api) => (
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/50">
+              {unclassifiedCount != null && unclassifiedCount > 0 ? (
+                <button
+                  onClick={() => api.select(
+                    freshCandidateRows(chooserRows ?? []).map((r) => ({ id: r.id, title: r.title })),
+                  )}
+                  className="rounded-md border border-white/10 px-2 py-1 text-white/70 hover:text-white hover:bg-white/5"
+                >
+                  Select everything not yet classified ({unclassifiedCount})
+                </button>
+              ) : (
+                <span className="leading-snug">{NOTHING_NEW_MESSAGE}</span>
+              )}
+              {api.selectedCount > 0 && (
+                <button onClick={api.clear} className="text-white/45 hover:text-white/80">
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={() => navigate(`/app/vault?matter=${encodeURIComponent(matterId)}`)}
+                className="ml-auto text-white/45 hover:text-white/80"
+              >
+                Open this matter&rsquo;s Vault
+              </button>
+            </div>
+          )}
+          onCancel={closeChooser}
+          onConfirmMany={handleChosen}
+        />
+      )}
+
       {pending && (
         <RunEstimateDialog
           estimate={pending.estimate}
+          notices={pending.notices}
+          groups={pending.groups}
           onCancel={() => setPending(null)}
           onConfirm={() => void handleClassifyAll()}
         />
@@ -615,16 +836,49 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
  * is biased high in the same direction the server's is.
  */
 function RunEstimateDialog({
-  estimate, onCancel, onConfirm,
+  estimate, notices, groups, onCancel, onConfirm,
 }: {
   estimate: RunEstimate;
+  /** What a re-run owes the person before it starts. Empty on a first pass. */
+  notices: string[];
+  /** The documents about to be read, BY NAME, grouped by their matter. */
+  groups: { matterName: string; titles: string[] }[];
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  // Escape cancels. Nothing is spent here, so leaving must be effortless.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-lg rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-2xl">
-        <h3 className="text-base font-medium text-zinc-100">Classify {estimate.documents.toLocaleString()} documents?</h3>
+        <h3 className="text-base font-medium text-zinc-100">
+          Classify {estimate.documents.toLocaleString()} document{estimate.documents === 1 ? '' : 's'}?
+        </h3>
+
+        {/* THE NAMES. A dialog that said "Classify 1 document?" and then read
+            the complaint is what this list exists to prevent. */}
+        {groups.length > 0 && (
+          <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+            {groups.map((g) => (
+              <div key={g.matterName} className="mb-2 last:mb-0">
+                <p className="text-[11px] uppercase tracking-wider text-zinc-500">{g.matterName}</p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {g.titles.map((t) => (
+                    <li key={t} className="flex items-start gap-1.5 text-xs text-zinc-300">
+                      <FileText className="mt-0.5 w-3 h-3 shrink-0 text-zinc-600" />
+                      <span className="min-w-0 break-words">{t}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
 
         <dl className="mt-4 space-y-2 text-sm">
           <Row label="Documents" value={estimate.documents.toLocaleString()} />
@@ -655,6 +909,12 @@ function RunEstimateDialog({
           {' '}Page counts are converted at about {estimate.assumedCharsPerPage.toLocaleString()} characters
           a page. You can stop the run at any time, and closing the tab does not lose the parts already done.
         </p>
+        {notices.length > 0 && (
+          <ul className="mt-3 space-y-1 rounded-lg border border-[#d4a054]/30 bg-[#d4a054]/[0.07] px-3 py-2 text-xs leading-relaxed text-[#d4a054]">
+            {notices.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
+        )}
+
         <p className="mt-2 text-xs leading-relaxed text-zinc-500">
           If this matter is sealed, it is served by the sealed pen inside our own AWS account,
           which costs less than the figure above — you are metered at the price of the model that
@@ -688,6 +948,53 @@ function Row({ label, value, hint }: { label: string; value: string; hint?: stri
         <span className="text-zinc-100">{value}</span>
         {hint && <p className="mt-0.5 text-[11px] text-zinc-500">{hint}</p>}
       </dd>
+    </div>
+  );
+}
+
+/**
+ * The answer to a click that used to do nothing.
+ *
+ * "Classify new documents" listed the matter's unclassified documents and, on
+ * an empty list, returned — no dialog, no message, no change on screen. Eden
+ * read the button as "choose a document", pressed it, and nothing opened. So
+ * the empty case is now a sentence and two controls: where documents come
+ * from (this matter's Vault), and how to read one again (the chooser).
+ */
+function NothingNewNotice({
+  onOpenVault, onChoose, onDismiss,
+}: {
+  onOpenVault: () => void;
+  onChoose: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-sm text-zinc-300">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex items-start gap-2 leading-relaxed">
+            <Info className="mt-0.5 w-4 h-4 shrink-0 text-zinc-500" />
+            <span>{NOTHING_NEW_MESSAGE}</span>
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 pl-6">
+            <button
+              onClick={onOpenVault}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/5"
+            >
+              <FolderTree className="w-3.5 h-3.5" /> Open this matter&rsquo;s Vault
+            </button>
+            <button
+              onClick={onChoose}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20"
+            >
+              <FolderOpen className="w-3.5 h-3.5" /> Choose documents…
+            </button>
+          </div>
+        </div>
+        <button className="shrink-0 text-zinc-500 hover:text-zinc-300" onClick={onDismiss}>
+          <X className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }
