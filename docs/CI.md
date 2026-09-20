@@ -140,7 +140,7 @@ prod run, which is a separate piece of work and needs secrets.
 
 **The rule, and it has teeth: a new offline `_verify-*` harness is added to
 `ci.yml` in the same PR that introduces it.** Between #155 and this change,
-eight PRs landed eight offline harnesses and none of them entered CI — for a
+eight PRs landed seven offline harnesses and not one of them entered CI — for a
 few days the seal's no-fallback rule, the spend cap, profile privacy and Office
 tenancy were guarded by nothing but a one-off local run on the author's
 machine, which is exactly the state CI was created to end. A harness that is
