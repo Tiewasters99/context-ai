@@ -75,6 +75,32 @@ test('the mirrored price table still matches the pens in lib/assistant-core.mjs'
   }
 });
 
+// The /api/llm sealed route (PR #163) substitutes the Bedrock pen for the
+// model the browser named, and api/llm.mjs meters the turn on the pen. That
+// only works while the pen's own id resolves to the pen's own rate here — if
+// it ever fell through to the aws-bedrock fallback, a sealed Kimi turn would
+// be billed at the Claude-on-Bedrock rate, which is the bug in miniature.
+test('a sealed turn prices at the pen that answers, not at the model the browser named', async () => {
+  const { PENS } = await import('../lib/assistant-core.mjs');
+  for (const pen of [PENS.bedrockOpen, PENS.bedrock]) {
+    assert.deepEqual(
+      ratePerMtok(pen.model, 'aws-bedrock'),
+      [pen.pricePerM.input, pen.pricePerM.output],
+      `${pen.model} does not resolve to its own rate — a sealed turn would be mispriced`,
+    );
+  }
+  // The headline: one sealed Bucketizer classify, the same tokens, both ways.
+  const usage = { input: 38_000, output: 2_400 };
+  const atThePen = centsForTokens(PENS.bedrockOpen.model, 'aws-bedrock', usage);
+  const asBrowserNamed = centsForTokens('claude-opus-4-8', 'anthropic', usage);
+  assert.equal(atThePen, 3);
+  assert.equal(asBrowserNamed, 25);
+  assert.ok(atThePen * 4 < asBrowserNamed, 'the sealed rate should be several times cheaper');
+  // A BEDROCK_MODEL nobody has listed must not be cheap by accident: the
+  // aws-bedrock fallback is the dearest sealed rate we know.
+  assert.deepEqual(ratePerMtok('some.unlisted-bedrock-model', 'aws-bedrock'), [5.5, 27.5]);
+});
+
 test('an unknown model falls back to the provider rate, never to free', () => {
   assert.deepEqual(ratePerMtok('some-model-nobody-has-heard-of', 'openai'), [5, 20]);
   assert.deepEqual(ratePerMtok(null, 'nonexistent-provider'), [5, 25]);

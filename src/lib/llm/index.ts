@@ -7,4 +7,6 @@ export type { GenerateStructuredOptions } from './structured';
 export { providers, findModel, allModels, standardModels } from './providers';
 export { adapters } from './adapters';
 export { routeRequest, estimateTokens, chunkText, selectRelevantChunks } from './router';
+export { llmErrorText } from './refusals';
+export type { LlmErrorBody } from './refusals';
 export type { LLMMessage, LLMRequest, LLMStreamCallbacks, ProviderConfig, ModelConfig, ProviderId, RoutingDecision, StructuredRequest } from './types';

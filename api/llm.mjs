@@ -29,8 +29,41 @@
 // Nothing else about the request or the response changes shape. If the meter
 // is unreachable or migration 063 is not pasted yet, the request goes through
 // and the fail-open is logged — see lib/usage-meter.mjs.
+//
+// Sealed route × spend cap, reconciled (2026-09-19). The seal (PR #163) and
+// the cap (PR #161) both land in this handler, so the order below is a
+// decision, not an accident:
+//
+//   gate → SEAL DECISION → provider key → size → estimate → meter → clamp → send
+//
+//   1. The SEAL DECISION comes first, before any cap. Two reasons. It is the
+//      only thing that knows which model will actually answer, and the
+//      pre-charge estimate has to be priced on that model — a sealed turn is
+//      served by the Bedrock pen (Kimi K2.5, $0.6/$2.5 per Mtok) and pricing
+//      it as the Opus the browser named ($5/$25) overcharged the user's
+//      wallet by roughly 8×. And the meter's own failure mode is to ALLOW: if
+//      the cap ran first and failed open, a sealed matter would sail past it
+//      into the forward below. A request the meter waved through must still
+//      be sealed, so the seal is never downstream of a check that can fail
+//      open.
+//   2. Nothing between the seal decision and the send can widen the route.
+//      Every check after it either returns, or falls through to a forward
+//      whose destination the seal already fixed — `fetch(route.url(...))` is
+//      unreachable whenever `sealed` is set. So a refused, untranslatable,
+//      over-budget or rate-limited request makes ZERO provider calls on
+//      either route.
+//   3. The provider key is still resolved before the meter, exactly as it was
+//      on main, so a server missing ANTHROPIC_API_KEY is not charged for a
+//      call it cannot make. The sealed route needs no such key — it signs
+//      with our own AWS credentials — so that check is skipped on the sealed
+//      arm rather than moved for everyone.
+//   4. The tier's max_tokens ceiling applies to BOTH routes. The unsealed
+//      forward carries the clamped body; the sealed route builds its own
+//      body after the clamp has run, so it is handed the same ceiling and
+//      clamps the allowance it builds for itself.
 
 import { gateLlmRequest } from '../lib/ai-tier-policy.mjs';
+import { sealedRouteFor } from '../lib/llm-sealed-route.mjs';
 import { consumeUsage, recordActualUsage, sendUsageRefusal, clampMaxTokens } from '../lib/usage-meter.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
@@ -98,9 +131,28 @@ export default async function handler(req, res) {
     provider,
     matterId,
   });
-  if (!gate.ok) return json(res, gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
-  const key = apiKey || process.env[route.envKey];
-  if (!key) return json(res, 400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` });
+
+  // SecureSpace sealed route (2026-09-19). A Tier-B matter admits exactly one
+  // provider — 'aws-bedrock' — and the browser cannot be trusted to pick it:
+  // only the server can read the matter's tier. So when the gate refuses a
+  // sealed matter's default pen, the sealed route is substituted here and the
+  // wire shape is translated in both directions (lib/llm-sealed-route.mjs).
+  // It returns null for every other outcome, so Tier A and Tier C reach the
+  // original forward below byte-identically. The substitution can only ever
+  // narrow: an untranslatable request or an unprovisioned sealed pen is
+  // REFUSED, never sent to the provider the client named.
+  //
+  // This sits ahead of the spend cap on purpose — see reason 1 in the header.
+  const sealed = sealedRouteFor({ gate, provider, model, body });
+  if (sealed?.refusal) return json(res, sealed.refusal.status, sealed.refusal.body);
+  if (!sealed && !gate.ok) return json(res, gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
+
+  // The provider key is the unsealed forward's, and it is resolved before the
+  // meter so a misconfigured server is not charged for a call it cannot make.
+  // The sealed route holds no provider key: it signs with our AWS credentials,
+  // and their absence was already answered above with sealed_pen_unavailable.
+  const key = sealed ? null : (apiKey || process.env[route.envKey]);
+  if (!sealed && !key) return json(res, 400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` });
   if (typeof body !== 'string') return json(res, 400, { error: 'body must be a JSON string' });
 
   const bodyBytes = Buffer.byteLength(body, 'utf8');
@@ -111,15 +163,33 @@ export default async function handler(req, res) {
     });
   }
 
+  // WHO ACTUALLY SERVES THIS TURN — and therefore whose price it is charged
+  // at. On the sealed route the browser's `provider`/`model` are a request,
+  // not a fact: the answer comes from the Bedrock pen. Billing the client's
+  // names here is what made a sealed Bucketizer classify cost ~8× its true
+  // price (the pen's rate is mirrored in lib/usage-prices.mjs from
+  // PENS[*].pricePerM, and scripts/_test-usage-meter.mjs fails on drift).
+  const billedProvider = sealed ? sealed.provider : provider;
+  const billedModel = sealed ? sealed.pen.model : model;
+
   // BYOK: the caller supplied their own provider key, so this is not our
   // money. Still metered for the RATE window — a passthrough is still our
   // bandwidth and our function-seconds — but charged nothing.
-  const byok = Boolean(apiKey);
+  //
+  // A SEALED turn is never BYOK. The client's key is not used by the sealed
+  // route — the tokens are spent on our AWS account — so a key in the body
+  // must not buy a free sealed turn.
+  const byok = Boolean(apiKey) && !sealed;
   const requestedOut = outputAllowanceOf(body, provider);
-  const estimateOutput = Math.min(requestedOut ?? 4096, ESTIMATE_OUTPUT_CAP);
+  // The sealed route rebuilds the request with its own allowance (the
+  // caller's, plus thinking headroom on a forced tool), so the estimate is
+  // priced on what will actually be asked for rather than on what the browser
+  // wrote and the sealed route then discarded.
+  const plannedOut = sealed ? sealed.maxOutputTokens : requestedOut;
+  const estimateOutput = Math.min(plannedOut ?? 4096, ESTIMATE_OUTPUT_CAP);
   const estimateCents = byok ? 0 : estimateLlmCents({
-    provider,
-    model,
+    provider: billedProvider,
+    model: billedModel,
     bodyText: body,
     maxOutputTokens: estimateOutput,
   });
@@ -140,15 +210,29 @@ export default async function handler(req, res) {
     });
   }
 
-  // The output clamp. Per tier, from the same table as the budget.
+  // The output clamp. Per tier, from the same table as the budget. The
+  // unsealed forward carries the clamped body; the sealed route is handed the
+  // ceiling itself, because it composes its own body from the translated
+  // request after this point and would otherwise escape the plan.
   const clamp = clampMaxTokens(body, provider, meter.maxOutputTokens);
   const sendBody = clamp.body;
+  // What the answer is actually allowed to be, on whichever route runs.
+  const appliedOutput = sealed
+    ? (meter.maxOutputTokens ? Math.min(sealed.maxOutputTokens, meter.maxOutputTokens) : sealed.maxOutputTokens)
+    : clamp.applied;
 
   let upstream;
-  try {
-    upstream = await fetch(route.url(model), { method: 'POST', headers: route.headers(key), body: sendBody });
-  } catch (err) {
-    return json(res, 502, { error: `proxy_error: ${err.message || 'fetch failed'}` });
+  if (sealed) {
+    upstream = await sealed.send({ maxOutputTokens: meter.maxOutputTokens });
+    res.setHeader('access-control-expose-headers', 'x-contextspaces-pen');
+    const penLabel = upstream.headers.get('x-contextspaces-pen');
+    if (penLabel) res.setHeader('x-contextspaces-pen', penLabel);
+  } else {
+    try {
+      upstream = await fetch(route.url(model), { method: 'POST', headers: route.headers(key), body: sendBody });
+    } catch (err) {
+      return json(res, 502, { error: `proxy_error: ${err.message || 'fetch failed'}` });
+    }
   }
 
   const passthroughType = upstream.headers.get('content-type') || 'application/json';
@@ -161,6 +245,10 @@ export default async function handler(req, res) {
   // A STREAM is left alone: teeing and re-parsing six providers' SSE dialects
   // to bill them is a new class of bug in the one path that must never stall,
   // so a streamed turn keeps its conservative estimate. Noted in the PR.
+  //
+  // The sealed route answers in the client's own wire shape, so `provider` is
+  // still the right key for reading the token counts back out — but the rate
+  // they are priced at is the pen's.
   const streaming = /event-stream/i.test(passthroughType) || isStreamRequest(body, provider);
   if (!streaming) {
     const text = await upstream.text();
@@ -172,9 +260,9 @@ export default async function handler(req, res) {
           supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
           serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
           eventId: meter.eventId,
-          cents: centsForTokens(model, provider, usage),
-          model,
-          meta: { provider, route: 'llm', tokens: usage },
+          cents: centsForTokens(billedModel, billedProvider, usage),
+          model: billedModel,
+          meta: { provider: billedProvider, route: 'llm', tokens: usage, ...sealedMeta(sealed, provider, model) },
         });
       }
     }
@@ -198,21 +286,32 @@ export default async function handler(req, res) {
   return;
 
   // A streamed turn reports no token counts we are willing to parse, so its
-  // estimate stands — but if the clamp cut the output allowance down, the
-  // estimate was priced on an allowance the provider was never given. Correct
-  // it to what was actually sent. One extra RPC, only when the clamp bit.
+  // estimate stands — but if the allowance the request was finally given came
+  // in under the one it was priced on, the estimate was for an answer the
+  // model was never allowed to write. Correct it to what was actually sent.
+  // One extra RPC, only when the ceiling bit — on either route.
   async function settleClampedStream() {
-    if (byok || !meter.eventId || !clamp.clamped) return;
-    if (clamp.applied == null || clamp.applied >= estimateOutput) return;
+    if (byok || !meter.eventId) return;
+    if (appliedOutput == null || appliedOutput >= estimateOutput) return;
     await recordActualUsage({
       supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
       serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
       eventId: meter.eventId,
-      cents: estimateLlmCents({ provider, model, bodyText: body, maxOutputTokens: clamp.applied }),
-      model,
-      meta: { provider, route: 'llm', streamed: true, clamped_to: clamp.applied },
+      cents: estimateLlmCents({ provider: billedProvider, model: billedModel, bodyText: body, maxOutputTokens: appliedOutput }),
+      model: billedModel,
+      meta: { provider: billedProvider, route: 'llm', streamed: true, clamped_to: appliedOutput, ...sealedMeta(sealed, provider, model) },
     });
   }
+}
+
+/**
+ * What the ledger records about a substitution. On a sealed turn the model in
+ * `usage_events` is the pen that answered, so the model the browser asked for
+ * is kept alongside it — otherwise the row would silently lose the fact that
+ * a substitution happened at all.
+ */
+function sealedMeta(sealed, clientProvider, clientModel) {
+  return sealed ? { sealed: true, client_provider: clientProvider, client_model: clientModel ?? null } : {};
 }
 
 function json(res, status, obj) {
