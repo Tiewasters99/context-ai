@@ -1,4 +1,5 @@
 import { supabase } from "../supabase";
+import { parseServerRefusal } from "../llm/refusals";
 
 export type TranscriptChunk = {
   text: string;
@@ -63,12 +64,11 @@ export class DeepgramLiveClient {
     });
     if (!tokenRes.ok) {
       // The seal's refusal carries an explanation the user should read, rather
-      // than being flattened into a status code.
-      const detail = await tokenRes.json().catch(() => null);
-      if (detail?.error === "sealed_pipe" && detail?.message) {
-        throw new Error(detail.message);
-      }
-      throw new Error(`Failed to mint Deepgram credential: ${tokenRes.status}`);
+      // than being flattened into a status code — and since PR #161 so do the
+      // month's budget (402) and the rate window (429), which land here
+      // because a transcription session is pre-charged before the credential
+      // is minted. One parser covers all three.
+      throw new Error((await parseServerRefusal(tokenRes)).message);
     }
     const { credential, scheme } = (await tokenRes.json()) as {
       credential: string;

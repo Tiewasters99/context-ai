@@ -2,7 +2,7 @@ import type { StructuredRequest, TokenUsage } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { llmAuthHeader } from './auth';
-import { llmErrorText } from './refusals';
+import { parseRefusalBody, ServerRefusalError } from './refusals';
 
 export interface GenerateStructuredOptions extends StructuredRequest {
   /** Model id from providers.ts (e.g. 'claude-opus-4-8'). */
@@ -53,7 +53,10 @@ export async function generateStructured<T = unknown>(options: GenerateStructure
   if (!res.ok) {
     let errBody: unknown = null;
     try { errBody = JSON.parse(text); } catch { /* not JSON */ }
-    throw new Error(llmErrorText(res.status, errBody));
+    // A typed throw, not a bare Error: `.message` is still the sentence, and
+    // a caller with a fallback pen or a per-item retry can now tell "the
+    // provider hiccuped" from "the wallet is empty" and stop.
+    throw new ServerRefusalError(parseRefusalBody(res.status, errBody, res.headers.get('retry-after')));
   }
 
   let responseJson: unknown;
