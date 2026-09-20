@@ -560,7 +560,7 @@ await db.exec('reset role');
 console.log('\n--- lib/ledger.mjs: redaction ------------------------------------');
 const {
   redact, redactToolArgs, scrubArgValues, record, recordStrict, LedgerWriteError,
-  isNotDeployed, EVENT_KINDS, _resetWarnings,
+  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, _resetWarnings,
 } = await import('../lib/ledger.mjs');
 
 {
@@ -814,9 +814,75 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   check(dbKinds.length === 14 && missing.length === 0,
     "the JS kind list covers every kind 064's CHECK constraint allows",
     missing.length ? `missing ${missing.join(' ')}` : `${dbKinds.length} kinds`);
-  check(ahead.every((k) => k === 'connector.connected'),
-    'and runs ahead of it only by what a later migration adds (072: connector.connected)',
+  // 072 adds connector.connected; 073 adds completion.requested. This
+  // database has only 064, so the JS list legitimately runs ahead of the
+  // constraint by exactly those two and by nothing else.
+  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested'];
+  check(ahead.every((k) => LATER_MIGRATION_KINDS.includes(k)),
+    'and runs ahead of it only by what a later migration adds (072, 073)',
     ahead.join(' ') || 'none');
+
+  // ── 073: a kind the CHECK constraint does not admit yet ──────────────────
+  // The reason this classification exists: without it, merging the code that
+  // writes completion.requested before Eden pastes 073 would make every
+  // SEALED feature call refuse, because a 23514 is a real write failure and a
+  // sealed matter withholds the answer on one. It is narrow on all three
+  // axes, and each is asserted here.
+  //
+  // The insert guard fires BEFORE the constraint (a BEFORE ROW trigger always
+  // does), so the flag _ledger_write raises is raised here too — otherwise
+  // this would test the guard rather than the vocabulary.
+  await db.exec(`set contextspaces.ledger_writing = 'on'`);
+  const pre073 = await attempt(
+    `insert into public.events (chain_key, seq, kind, actor_kind, actor_ref, payload, prev_hash, hash)
+     values ('99999999-9999-4999-8999-999999999999', 1, 'completion.requested', 'user', 'u', '{}'::jsonb, '', 'h')`);
+  check(pre073 !== null && String(pre073.code) === '23514',
+    "before 073, 'completion.requested' is refused by events_kind_check",
+    pre073 ? `${pre073.code}` : 'it was accepted');
+  check(isKindNotAdmitted(pre073, 'completion.requested'),
+    'and lib/ledger.mjs reads that as "the migration is not pasted yet", not as a failure');
+  check(!isKindNotAdmitted(pre073, 'completion.received'),
+    'but NEVER for a kind 064 itself admits — that would hide a real bug');
+  check(!isKindNotAdmitted({ code: '23514', message: 'violates check constraint "events_payload_size_check"' },
+    'completion.requested'),
+    'and never for a different constraint on the same table');
+  check(!isKindNotAdmitted({ code: '23503', message: 'events_kind_check' }, 'completion.requested'),
+    'and never for a different SQLSTATE');
+
+  // Now paste 073 and watch the same insert land.
+  await db.exec(migration('073_completion_requested.sql'));
+  const post073 = await attempt(
+    `insert into public.events (chain_key, seq, kind, actor_kind, actor_ref, payload, prev_hash, hash)
+     values ('99999999-9999-4999-8999-999999999999', 1, 'completion.requested', 'user', 'u', '{}'::jsonb, '', 'h')`);
+  check(post073 === null, 'after 073, the same row is admitted', post073?.message ?? '');
+  const [after073] = await q(
+    `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'events_kind_check'`);
+  const kinds073 = [...String(after073.def).matchAll(/'([a-z]+\.[a-z]+)'/g)].map((m) => m[1]);
+  check(EVENT_KINDS.every((k) => kinds073.includes(k)) && kinds073.length === EVENT_KINDS.length,
+    "073's list is the UNION — 064's fourteen plus 072's kind plus its own, never a subset",
+    `${kinds073.length} kinds`);
+  check(kinds073.includes('connector.connected'),
+    'so applying 073 to a 064-only database adds 072\'s kind rather than dropping anything');
+  // Nothing is cleaned up, because nothing can be: the table refuses DELETE
+  // to everybody, which is Part A's whole point. The two rows above therefore
+  // sit on a chain of their own that no other assertion in this file reads.
+  await db.exec(`set contextspaces.ledger_writing = 'off'`);
+  const guarded = await attempt(
+    `insert into public.events (chain_key, seq, kind, actor_kind, actor_ref, payload, prev_hash, hash)
+     values ('99999999-9999-4999-8999-999999999999', 2, 'completion.requested', 'user', 'u', '{}'::jsonb, '', 'h')`);
+  check(guarded !== null && String(guarded.code) === '42501',
+    'and the insert guard is back on: a direct INSERT of the new kind is refused like any other');
+
+  // uuidList: the same allow-list rule for a list a CLIENT supplied. redact()
+  // would keep every one of these strings — they are under 256 characters.
+  check(JSON.stringify(uuidList(['11111111-1111-4111-8111-111111111111'])) ===
+    JSON.stringify(['11111111-1111-4111-8111-111111111111']),
+    'uuidList keeps a list of uuids');
+  check(JSON.stringify(uuidList(['11111111-1111-4111-8111-111111111111', 'Peloso arbitration'])) ===
+    JSON.stringify({ items: 2 }),
+    'and reduces the WHOLE list to its size as soon as one element is not a uuid');
+  check(uuidList('not a list') === null && JSON.stringify(uuidList([])) === '[]',
+    'a non-list is nothing at all; an empty list is an empty list');
 }
 
 console.log('\n--- sealed strict mode (lib/assistant-core.mjs) -------------------');

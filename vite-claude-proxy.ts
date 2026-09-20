@@ -8,6 +8,16 @@ import { gateLlmRequest } from './lib/ai-tier-policy.mjs';
 // …and the sealed route it substitutes on a Tier-B matter. Mirrored here so a
 // sealed matter behaves the same under `vite dev` as it does on Vercel.
 import { sealedRouteFor } from './lib/llm-sealed-route.mjs';
+// …and the matter's Record. Mirrored for the same reason, and it is the seal's
+// reason rather than the meter's: "a sealed exchange either writes an
+// undeletable record row or the answer is withheld" is a promise about the
+// product, and a dev server that answered a sealed matter without recording it
+// would be a place where that promise is false. The SPEND CAP is deliberately
+// still not mirrored here — that one is about money, and dev spends none.
+import {
+  ledgerClientFor, newCallId, normalizeFeature,
+  recordLlmReceived, recordLlmRequested, exchangeUnrecordedRefusal,
+} from './lib/llm-record.mjs';
 
 // Absolute file: URL to the CLI's free-DB fetchers, resolved from the
 // project root (process.cwd() in the Vite config context) so the dynamic
@@ -94,6 +104,12 @@ const providerRoutes: Record<string, ProviderRoute> = {
  * Optional: pass apiKey in body for BYOK (user's own key).
  * Falls back to env var if no apiKey provided.
  */
+/** Whether the caller asked the provider to stream, whatever it calls it. */
+function asksForStream(bodyText: string, provider: string): boolean {
+  if (provider === 'google') return true;   // streamGenerateContent&alt=sse
+  try { return JSON.parse(bodyText)?.stream === true; } catch { return false; }
+}
+
 export default function llmProxy(): Plugin {
   return {
     name: 'llm-proxy',
@@ -281,7 +297,10 @@ export default function llmProxy(): Plugin {
         const chunks: Buffer[] = [];
         for await (const chunk of req) chunks.push(chunk as Buffer);
 
-        let parsed: { provider: string; model: string; body: string; apiKey?: string; matterId?: string };
+        let parsed: {
+          provider: string; model: string; body: string; apiKey?: string;
+          matterId?: string; feature?: string; documentIds?: string[];
+        };
         try {
           parsed = JSON.parse(Buffer.concat(chunks).toString());
         } catch {
@@ -308,6 +327,39 @@ export default function llmProxy(): Plugin {
           matterId: parsed.matterId,
         });
 
+        // The matter's Record, same two rows as api/llm.mjs, same order.
+        const feature = normalizeFeature(parsed.feature);
+        const callId = newCallId();
+        const bearerToken = String(req.headers['authorization'] ?? '').replace(/^bearer\s+/i, '').trim();
+        const ledger = parsed.matterId && bearerToken
+          ? ledgerClientFor({
+              supabaseUrl: process.env.VITE_SUPABASE_URL,
+              anonKey: process.env.VITE_SUPABASE_ANON_KEY,
+              bearer: bearerToken,
+            })
+          : null;
+        const actor = { kind: 'user' as const, ref: ('userId' in gate ? gate.userId : null) ?? null };
+        const startedAt = Date.now();
+        const recordFields = (penProvider: string | null, penModel: string | null, isSealed: boolean) => ({
+          matterId: parsed.matterId,
+          actor,
+          feature,
+          callId,
+          tier: gate.tier ?? null,
+          provider: penProvider,
+          model: penModel,
+          clientProvider: parsed.provider,
+          clientModel: parsed.model,
+          sealed: isSealed,
+          streaming: asksForStream(parsed.body, parsed.provider),
+          documentIds: parsed.documentIds ?? null,
+        });
+        const recordRefused = async (code: string, status: number, penProvider: string | null, penModel: string | null, isSealed: boolean) => {
+          if (!ledger) return;
+          if (!gate.ok && ['auth_required', 'auth_not_configured', 'matter_not_found'].includes(String(gate.error))) return;
+          await recordLlmRequested(ledger, { ...recordFields(penProvider, penModel, isSealed), refused: code, status }).catch(() => {});
+        };
+
         // SecureSpace sealed route — the same substitution api/llm.mjs makes:
         // a Tier-B matter is served by the sealed pen or refused, never by the
         // provider the browser named. Returns null on every other outcome, so
@@ -321,13 +373,44 @@ export default function llmProxy(): Plugin {
         if (sealed && 'refusal' in sealed) {
           res.writeHead(sealed.refusal.status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(sealed.refusal.body));
+          await recordRefused(String(sealed.refusal.body?.error ?? 'refused'), sealed.refusal.status, null, null, true);
           return;
         }
         if (!sealed && !gate.ok) {
           res.writeHead(gate.status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: gate.error, tier: gate.tier, provider: gate.provider }));
+          const onSeal = gate.tier === 'B';
+          await recordRefused(String(gate.error), gate.status, onSeal ? null : parsed.provider, onSeal ? null : parsed.model, onSeal);
           return;
         }
+
+        // Row 1 — before any provider is contacted. Strict on a sealed matter,
+        // so a dev server keeps "no record, no answer" too.
+        const penProvider = sealed ? sealed.provider : parsed.provider;
+        const penModel = sealed ? sealed.pen.model : parsed.model;
+        if (ledger) {
+          try {
+            await recordLlmRequested(ledger, {
+              ...recordFields(penProvider, penModel, Boolean(sealed)),
+              strict: gate.tier === 'B',
+            });
+          } catch {
+            const unrecorded = exchangeUnrecordedRefusal();
+            res.writeHead(unrecorded.status, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(unrecorded.body));
+            return;
+          }
+        }
+        const settleRecord = async (outcome: string, status: number) => {
+          if (!ledger) return;
+          await recordLlmReceived(ledger, {
+            ...recordFields(penProvider, penModel, Boolean(sealed)),
+            outcome,
+            status,
+            ms: Date.now() - startedAt,
+          }).catch(() => {});
+        };
+
         if (sealed) {
           const sealedRes = await sealed.send();
           res.writeHead(sealedRes.status, {
@@ -345,6 +428,7 @@ export default function llmProxy(): Plugin {
             }
           }
           res.end();
+          await settleRecord(sealedRes.ok ? 'ok' : 'provider_error', sealedRes.status);
           return;
         }
 
@@ -353,6 +437,7 @@ export default function llmProxy(): Plugin {
         if (!apiKey) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `No API key for ${parsed.provider}. Set ${route.envKey} in .env or provide your own key in Vault Settings.` }));
+          await recordRefused('no_api_key', 400, penProvider, penModel, false);
           return;
         }
 
@@ -377,9 +462,16 @@ export default function llmProxy(): Plugin {
             'Connection': 'keep-alive',
           });
           upstream.pipe(res);
+          // The status decides the outcome, not the fact that the pipe
+          // finished: a 429 body pipes through just as cleanly as an answer.
+          upstream.on('end', () => {
+            const status = upstream.statusCode ?? 200;
+            void settleRecord(status < 400 ? 'ok' : 'provider_error', status);
+          });
         } catch (err: unknown) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Proxy error: ${err instanceof Error ? err.message : 'Unknown'}` }));
+          await settleRecord('provider_error', 502);
         }
       });
     },

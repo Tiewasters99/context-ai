@@ -69,6 +69,7 @@ export default function MootSession() {
       // session.sources are matter documents when the session was built from a
       // matter (MootBench's "fromMatter" path), so the tier travels with them.
       matterId: session.matterspace_id ?? undefined,
+      feature: 'moot.generate',
       signal: ctrl.signal,
       callbacks: {
         onChunk: (t) => { text += t; setLiveText(text); },
@@ -115,6 +116,7 @@ export default function MootSession() {
       // and the arguments on each needs room.
       maxTokens: s.mode === 'colleague' ? 4096 : 1024,
       matterId: s.matterspace_id ?? undefined,
+      feature: 'moot.converse',
       signal: ctrl.signal,
       callbacks: {
         onChunk: (t) => { text += t; setLiveText(text); },

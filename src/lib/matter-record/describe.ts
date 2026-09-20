@@ -17,6 +17,13 @@
 // vocabulary in migration 064 already has kinds nothing writes yet, and a
 // Record that crashes on a row it does not recognise is worse than one that
 // says less about it.
+//
+//   3. Plain words, always. Everything in this file is read by a lawyer, a
+//      court, a bar or a client — never by an engineer. No "hash", no "chain",
+//      no "payload", no "migration", no "not deployed" reaches a reader. The
+//      underlying facts are all still stated; they are stated in English.
+//      scripts/_verify-matter-record.mjs holds the word list and fails the
+//      build if one of them comes back.
 
 import type { LedgerEvent } from './types';
 
@@ -227,6 +234,142 @@ export function toolPhrase(tool: unknown): string {
   return TOOL_PHRASES[name] ?? `used the ${name} tool`;
 }
 
+// ---------------------------------------------------------------------------
+// Features — the model calls the product makes on a lawyer's behalf
+// ---------------------------------------------------------------------------
+// `/api/llm` is one endpoint behind six surfaces, so the label the caller
+// sends is the only thing that can turn "a model was called" into an answer to
+// the question a court actually asks: what was it used FOR. The labels are an
+// allow-list validated server-side (lib/llm-record.mjs); an unrecognised one
+// arrives here as 'unspecified', which these lines say plainly rather than
+// dressing up.
+
+/** Who, in the product, the call belongs to. */
+const FEATURE_OWNERS: Record<string, string> = {
+  bucketizer: 'Bucketizer',
+  citecheck: 'Cite-Check',
+  editor: 'the Editor',
+  deck: 'Deck Composer',
+  workbench: 'the AI Workbench',
+  moot: 'Moot Bench',
+};
+
+/** What the call was doing. Past tense: these rows record what happened. */
+const FEATURE_PHRASES: Record<string, string> = {
+  'bucketizer.tree': 'proposed a structure of issues for this matter',
+  'bucketizer.classify': 'classified a document',
+  'bucketizer.evidence': 'gathered evidence for an issue',
+  'citecheck.extract': 'read the citations out of a draft',
+  'citecheck.check': 'checked a citation',
+  'editor.light': 'edited a draft',
+  'editor.plan': 'read a draft for its argument',
+  'editor.section': 'edited a section of a draft',
+  'editor.critic': 'read an edited draft as a critic',
+  deck: 'built a slide deck',
+  workbench: 'answered an instruction in the AI Workbench',
+  'moot.generate': 'prepared a bench memo',
+  'moot.converse': 'argued a moot session',
+};
+
+/** "Bucketizer", "Cite-Check" — the surface a reader would recognise. */
+export function featureOwner(feature: unknown): string {
+  const id = str(feature);
+  if (!id || id === 'unspecified') return 'A Contextspaces feature';
+  return FEATURE_OWNERS[id.split('.')[0]] ?? 'A Contextspaces feature';
+}
+
+/** "classified a document" — what the call did. */
+export function featurePhrase(feature: unknown): string {
+  const id = str(feature);
+  if (!id) return 'called a model';
+  return FEATURE_PHRASES[id] ?? 'called a model';
+}
+
+/** True for a row written by a feature's own model call, rather than by chat. */
+export function isFeatureCall(event: LedgerEvent): boolean {
+  return (
+    (event.kind === 'completion.requested' || event.kind === 'completion.received') &&
+    typeof event.payload?.feature === 'string'
+  );
+}
+
+/** How the answer arrived, for the end of a feature line. */
+function routeTail(event: LedgerEvent): string {
+  const provider = event.payload?.provider;
+  const model = str(event.payload?.model);
+  if (isSealedRoute(event.payload?.tier, provider)) {
+    return model
+      ? ` — ${model}, a sealed model in the firm’s own AWS account`
+      : ' — a sealed model in the firm’s own AWS account';
+  }
+  if (str(event.payload?.route) === 'sealed') {
+    // Tier B, but no sealed model was ever chosen — the call was refused
+    // before one could be. Saying which model was asked for would say the
+    // opposite of what happened.
+    return ' — the sealed route, before any model was chosen';
+  }
+  if (!model) return '';
+  return ` — ${model}, ${providerLabel(provider)} direct`;
+}
+
+/** Why a feature call was refused, in words rather than in codes. */
+const REFUSAL_PHRASES: Record<string, string> = {
+  tier_violation: 'the model it asked for is outside this matter’s seal',
+  ai_paused: 'AI is paused on this matter',
+  ai_pause_unknown: 'whether AI is paused could not be checked',
+  sealed_pen_unavailable: 'the sealed model is not available on this server',
+  sealed_route_untranslatable: 'the request could not be carried to the sealed model unchanged',
+  sealed_pen_error: 'the sealed model could not answer',
+  budget_exhausted: 'this month’s included AI usage is spent',
+  over_monthly_budget: 'this month’s included AI usage is spent',
+  over_kind_budget: 'this month’s included AI usage is spent',
+  over_rate_limit: 'too many requests in a short time',
+  request_too_large: 'the request was too large to send',
+  no_api_key: 'this server has no key for that model',
+};
+
+function describeFeatureRequested(event: LedgerEvent): string {
+  const who = featureOwner(event.payload?.feature);
+  const what = featurePhrase(event.payload?.feature);
+  const refused = str(event.payload?.refused);
+  if (refused) {
+    const why = REFUSAL_PHRASES[refused];
+    return `${who} asked to ${asInfinitive(what)} and was refused${why ? ` — ${why}` : ''}. Nothing was sent`;
+  }
+  return `${who} asked a model to ${asInfinitive(what)}${routeTail(event)}`;
+}
+
+function describeFeatureReceived(event: LedgerEvent): string {
+  const who = featureOwner(event.payload?.feature);
+  const what = featurePhrase(event.payload?.feature);
+  const outcome = str(event.payload?.outcome);
+  if (outcome === 'provider_error') {
+    return `${who} asked a model to ${asInfinitive(what)} and the model could not answer${routeTail(event)}`;
+  }
+  if (outcome === 'stream_error') {
+    return `${who} asked a model to ${asInfinitive(what)} and the answer stopped part-way${routeTail(event)}`;
+  }
+  return `${who} ${what}${routeTail(event)}`;
+}
+
+/** "classified a document" → "classify a document". Small, and only for these. */
+function asInfinitive(phrase: string): string {
+  const [verb, ...rest] = phrase.split(' ');
+  const base = verb
+    .replace(/^proposed$/, 'propose')
+    .replace(/^classified$/, 'classify')
+    .replace(/^gathered$/, 'gather')
+    .replace(/^read$/, 'read')
+    .replace(/^checked$/, 'check')
+    .replace(/^edited$/, 'edit')
+    .replace(/^built$/, 'build')
+    .replace(/^answered$/, 'answer')
+    .replace(/^prepared$/, 'prepare')
+    .replace(/^argued$/, 'argue')
+    .replace(/^called$/, 'call');
+  return [base, ...rest].join(' ');
+}
+
 function describeToolInvoked(event: LedgerEvent, people: People): string {
   const who = actorSentence(event, people);
   const phrase = toolPhrase(event.payload?.tool);
@@ -306,8 +449,12 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
   switch (event.kind) {
     case 'tool.invoked':
       return describeToolInvoked(event, people);
+    case 'completion.requested':
+      return describeFeatureRequested(event);
     case 'completion.received':
-      return describeCompletion(event, people);
+      // A feature's own model call and a chat answer are the same kind of row
+      // and are not the same kind of act, so they do not read alike.
+      return isFeatureCall(event) ? describeFeatureReceived(event) : describeCompletion(event, people);
     case 'acl.changed':
       return describeAcl(event, people);
     case 'seal.changed':
@@ -368,6 +515,8 @@ export function kindLabel(kind: string): string {
   switch (kind) {
     case 'tool.invoked':
       return 'Tool call';
+    case 'completion.requested':
+      return 'AI call asked';
     case 'completion.received':
       return 'AI answer';
     case 'acl.changed':
@@ -399,7 +548,7 @@ export function kindLabel(kind: string): string {
   }
 }
 
-/** The header line: what `verify_chain` said, in words that do not shout. */
+/** The header line: what the integrity check said, in words that do not shout. */
 export function chainSummary(
   chains: { ok: boolean; checked: number; firstBadSeq: number | null; matterName: string; unavailable?: boolean }[],
 ): { ok: boolean; line: string; meaning: string } {
@@ -413,7 +562,7 @@ export function chainSummary(
       ok: true,
       line: 'Record intact — nothing recorded yet',
       meaning:
-        'No acts have been written to this matter’s Record so far, so there is nothing to check.',
+        'Nothing has been recorded on this matter so far, so there is nothing to check.',
     };
   }
   if (checkable.length === 0) {
@@ -421,9 +570,10 @@ export function chainSummary(
       ok: true,
       line: 'Record shown — the integrity check could not be run here',
       meaning:
-        'The entries are listed, but the check that recomputes their hashes did not answer for ' +
-        'this account — usually because it is not in this database yet. The entries below are ' +
-        'shown as the Record holds them; their chain has not been confirmed in this view.',
+        'The entries are listed, but the check that re-verifies each entry’s seal did not answer ' +
+        'for this account — usually because it has not been switched on here yet. The entries ' +
+        'below are shown exactly as the Record holds them; they have simply not been re-verified ' +
+        'in this view.',
     };
   }
   if (bad) {
@@ -431,26 +581,26 @@ export function chainSummary(
       ok: false,
       line: `Record check failed at entry ${bad.firstBadSeq ?? '?'} in ${bad.matterName}`,
       meaning:
-        'Every entry is chained to the one before it by a hash. One entry no longer matches its hash, ' +
-        'so the chain cannot be confirmed from that point on. Entries before it still check out. ' +
-        'Nothing in the product can edit or delete an entry, so this is worth showing to whoever ' +
-        'administers the database before the Record is relied on.',
+        'Each entry is sealed to the one before it. One entry no longer matches its seal, so the ' +
+        'entries from that point on cannot be relied on until this is explained. The entries ' +
+        'before it still check out. Nothing in the product can edit or delete an entry, so this ' +
+        'should be raised with whoever administers this account before the Record is relied on.',
     };
   }
   const acrossMatters =
     checkable.length > 1 ? ` across ${checkable.length} matters` : '';
   const line = `Record intact — ${total} ${total === 1 ? 'entry' : 'entries'} verified${acrossMatters}`;
   const meaning =
-    'Each entry is chained to the one before it by a hash, and every hash was recomputed and matched. ' +
-    'The chain shows the entries have not been altered or removed since they were written.';
+    'Each entry is sealed to the one before it, and every seal was re-checked and matched. Any ' +
+    'later change to an entry, removal of one, or insertion of one would have shown up here.';
   if (unavailable.length > 0) {
     return {
       ok: true,
       line: `${line} (${unavailable.length} could not be checked)`,
       meaning:
         meaning +
-        ' Some matters could not be checked from this account — usually because the check is not ' +
-        'available in this database yet.',
+        ' Some matters could not be checked from this account — usually because the check has not ' +
+        'been switched on here yet.',
     };
   }
   return { ok: true, line, meaning };
