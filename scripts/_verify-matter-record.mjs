@@ -806,6 +806,138 @@ console.log('\n10. A tampered chain says so, plainly');
 }
 
 // ===========================================================================
+console.log('\n11. Account-wide searches: this matter’s own rows, and no other’s');
+// ===========================================================================
+// Migration 072 writes one row in every matter a matter-less `search` read
+// from. The Record must say so — and must say it from this matter's rows
+// alone, because naming another matter here would tell the reader that matter
+// exists. The isolation contract is the whole point of the section, so the
+// last case below hands the renderer a row that has been stuffed with another
+// matter's name and id in fields nothing reads.
+const OTHER_MATTER = '99999999-9999-4999-8999-999999999999';
+const OTHER_NAME = 'Zarquon Holdings v. Mirabel';
+
+function fanout(matterId, payloadOver = {}) {
+  return event('tool.invoked', {
+    matterspace_id: matterId,
+    actor_kind: 'connector',
+    actor_ref: 'client-1',
+    actor_label: 'Fixture Desktop',
+    payload: {
+      scope: 'matter',
+      via: 'account-wide search',
+      tool: 'search',
+      args: { q: { present: true, length: 60 }, limit: 5 },
+      matter_filter: false,
+      connector: true,
+      connector_client_id: 'client-1',
+      result_count: 2,
+      ok: true,
+      ms: 812,
+      ...payloadOver,
+    },
+  });
+}
+
+{
+  const line = describeEvent(fanout(PARENT), { [USER_ONE]: 'A. Fixture' });
+  check(
+    line === 'Fixture Desktop (connector) searched across every matter and read from this one',
+    'the docket line says what happened, in the file’s own voice',
+    line,
+  );
+  const refused = describeEvent(
+    fanout(PARENT, { refused: 'sealed', ok: false }), {},
+  );
+  check(
+    refused.includes('was refused') && !refused.includes('searched across every matter'),
+    'a refusal still reads as a refusal — the new line does not swallow the old ones',
+    refused,
+  );
+}
+
+{
+  // Two on the matter itself, one in each sub-matter — the count has to
+  // follow the descendants set the reader already expands.
+  const events = [
+    ...sampleEvents(),
+    fanout(PARENT),
+    fanout(PARENT),
+    fanout(CHILD_A),
+    fanout(CHILD_B),
+    // Not a fan-out row: the account roll-up, which must never be counted
+    // inside a matter's export even if one ever reached it.
+    event('tool.invoked', {
+      matterspace_id: PARENT,
+      actor_kind: 'connector',
+      actor_label: 'Fixture Desktop',
+      payload: { scope: 'account', via: 'account-wide search', tool: 'search', matters_touched: 9 },
+    }),
+    // And the hostile one: another matter's name and id, in fields the
+    // contract does not define and nothing is supposed to read.
+    fanout(CHILD_A, {
+      leaked_matter_name: OTHER_NAME,
+      other_matterspace_id: OTHER_MATTER,
+      note: `also returned passages from ${OTHER_NAME}`,
+      matters_touched: 7,
+    }),
+  ];
+  const client = clientFor(events);
+  const data = await fetchMatterRecord(client, { id: PARENT, name: 'Fixture Matter' });
+  const doc = assembleMatterRecord(data, CONTEXT, null);
+  const md = renderMatterRecordMarkdown(doc);
+
+  check(doc.accountWideReads === 5,
+    'the count is this matter’s plus its sub-matters’, and excludes the account row',
+    `${doc.accountWideReads}`);
+  check(md.includes('### Account-wide activity'), 'the export has the section');
+  check(
+    md.includes('5 searches run by a connected assistant across every matter'),
+    'and states the number for the period covered',
+  );
+  check(
+    md.includes('searched across every matter and read from this one'),
+    'the chronology carries the line too',
+  );
+  check(
+    !md.includes(OTHER_NAME) && !md.includes(OTHER_MATTER) && !md.includes('Zarquon'),
+    'NOTHING a hostile payload put in an undefined field reaches the page',
+  );
+  check(
+    !md.includes('matters_touched') && !md.includes('leaked_matter_name'),
+    'because the renderer prints the keys the contract names and no others',
+  );
+  check(
+    !/other matter/i.test(md.split('### Account-wide activity')[1]?.split('##')[0] ?? '')
+      || md.includes('not part of this matter’s Record'),
+    'and the section’s own words claim nothing about any other matter',
+  );
+}
+
+{
+  const events = sampleEvents();
+  const client = clientFor(events);
+  const data = await fetchMatterRecord(client, { id: PARENT, name: 'Fixture Matter' });
+  const doc = assembleMatterRecord(data, CONTEXT, null);
+  const md = renderMatterRecordMarkdown(doc);
+  check(doc.accountWideReads === 0, 'with no such row, the count is zero');
+  const section = md.split('### Account-wide activity')[1] ?? '';
+  check(section.includes('None recorded.'), 'and the section reads "None recorded."');
+  check(
+    section.includes('before migration 072 is applied'),
+    'saying that this is also what a database without 072 shows, rather than implying nothing happened',
+  );
+  check(
+    md.includes('recorded once migration 072 is applied'),
+    'and section 10 no longer says a cross-matter connector call records nothing',
+  );
+  check(
+    !md.includes('recorded against none of them'),
+    'the old sentence is gone',
+  );
+}
+
+// ===========================================================================
 if (process.argv.includes('--print')) {
   // --jurisdiction=<id> picks the rules entry to print; --jurisdiction=none
   // leaves section 8 as the "no jurisdiction selected" stub.

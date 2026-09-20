@@ -17,6 +17,7 @@ import {
   isoDay,
   isoMinute,
   describeEvent,
+  isAccountWideRead,
   kindLabel,
   providerLabel,
   retentionPosture,
@@ -135,6 +136,12 @@ export interface MatterRecordDoc {
   connectors: ConnectorRow[];
   inAppToolCalls: number;
   agentToolCalls: number;
+  /**
+   * How many account-wide searches read from THIS matter or one of its
+   * sub-matters, counted from this matter's own rows (migration 072). It says
+   * nothing about any other matter, because nothing it is counted from does.
+   */
+  accountWideReads: number;
   access: LineRow[];
   exports: LineRow[];
   citeRuns: CiteRunRow[];
@@ -517,6 +524,10 @@ export function assembleMatterRecord(
     connectors: connectors.rows,
     inAppToolCalls: connectors.inApp,
     agentToolCalls: connectors.agent,
+    // Counted from the rows already read for this matter and its descendants,
+    // over the period those rows cover. Never from another matter's chain,
+    // and never from the account chain — see docs/THE_MATTER_RECORD.md.
+    accountWideReads: events.filter((e) => isAccountWideRead(e)).length,
     access: events.filter((e) => ACCESS_KINDS.has(e.kind)).map((e) => toLine(e, people)),
     exports: events.filter((e) => EXPORT_KINDS.has(e.kind)).map((e) => toLine(e, people)),
     citeRuns,

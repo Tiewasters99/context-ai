@@ -50,6 +50,24 @@ function num(value: unknown): number | null {
   return null;
 }
 
+/**
+ * Migration 072 writes one row in every matter a matter-less `search` read
+ * from, marked `scope: 'matter'` and `via: 'account-wide search'`. Those two
+ * keys are a READ CONTRACT (docs/THE_MATTER_RECORD.md), not a payload
+ * convention, which is why they are named once, here.
+ */
+export const FANOUT_SCOPE = 'matter';
+export const FANOUT_VIA = 'account-wide search';
+
+/** True for a row saying "an account-wide search read from THIS matter". */
+export function isAccountWideRead(event: LedgerEvent): boolean {
+  return (
+    event.kind === 'tool.invoked' &&
+    str(event.payload?.scope) === FANOUT_SCOPE &&
+    str(event.payload?.via) === FANOUT_VIA
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Who
 // ---------------------------------------------------------------------------
@@ -220,6 +238,13 @@ function describeToolInvoked(event: LedgerEvent, people: People): string {
   }
   if (event.payload?.ok === false) {
     return `${who} ${phrase} — the call failed`;
+  }
+  // Migration 072's fan-out row: a search that named no matter at all and
+  // returned passages from this one. The row says that this matter was read
+  // from and nothing else — it carries no other matter's id, name or count,
+  // and this line adds none.
+  if (str(event.payload?.via) === FANOUT_VIA) {
+    return `${who} searched across every matter and read from this one`;
   }
   return `${who} ${phrase}`;
 }

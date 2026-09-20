@@ -291,6 +291,32 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
       `Agent-charter tool calls: ${doc.agentToolCalls}.`,
   });
 
+  // Account-wide activity (migration 072). Counted from this matter's own
+  // rows, which is the only way to say this without saying anything about a
+  // matter the reader may have no right to know exists.
+  out.push({ type: 'h3', text: 'Account-wide activity' });
+  if (doc.accountWideReads === 0) {
+    out.push({ type: 'p', text: 'None recorded.' });
+    out.push({
+      type: 'note',
+      text:
+        'This is also what is shown before migration 072 is applied, when an entry of this kind ' +
+        'cannot exist yet.',
+    });
+  } else {
+    const n = doc.accountWideReads;
+    out.push({
+      type: 'p',
+      text:
+        `${n} search${n === 1 ? '' : 'es'} run by a connected assistant across every matter that ` +
+        `account can see returned passages from this matter, or from one of its sub-matters, ` +
+        `during the period covered${
+          doc.integrity.truncated ? ' (counted over the entries shown; this read stopped at its ceiling)' : ''
+        }. What those searches returned from any other matter is not part of this matter’s Record ` +
+        'and is not stated here.',
+    });
+  }
+
   // 4 -----------------------------------------------------------------------
   out.push({ type: 'h2', text: '4. Access and seal history' });
   if (doc.access.length === 0) {
@@ -426,8 +452,11 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
   out.push({
     type: 'bullets',
     items: [
-      'A connected assistant’s search that names no matter touches many matters at once and is ' +
-        'recorded against none of them. Those calls do not appear here.',
+      'A connected assistant’s search that names no matter touches many matters at once. It is ' +
+        'recorded once migration 072 is applied: this matter’s Record then gains one entry for ' +
+        'each such search that returned passages from this matter, and that entry says nothing ' +
+        'about any other matter it may also have read. Before 072 is applied such a search ' +
+        'leaves no entry anywhere and does not appear here.',
       'Work done on this matter outside Contextspaces — a browser chat, another firm’s tool, a ' +
         'local model — is not recorded and cannot be inferred from its absence.',
       'Document-level attestations, the citation verification log and the corrections log are ' +
