@@ -38,6 +38,7 @@ import { buildCite, isTranscript, readerUrl, PDF_INDEX_PAGE_NOTE } from '../src/
 import {
   buildOutline,
   outlineFilename,
+  isFiledOutline,
   roman,
   alpha,
   DRAFT_LEGEND,
@@ -642,8 +643,24 @@ section('7. Determinism, and versioning');
     `${mdName} vs ${outlineFilename(later, '.md')}`);
   check('and the filename is safe for the filesystem and the Vault',
     !/[\\/:*?"<>|]/.test(mdName) && mdName.endsWith('.md'), mdName);
-  check('the Word copy takes the same name with a .docx tail',
-    outlineFilename(MODEL, '.docx') === mdName.replace(/\.md$/, '.docx'));
+  // persistVaultFile makes the title by stripping the extension, so two files
+  // with the same stem would sit in the Vault under one identical name.
+  check('the Word copy is distinguishable in the Vault, where titles lose the extension',
+    outlineFilename(MODEL, '.docx').replace(/\.docx$/, '') !== mdName.replace(/\.md$/, ''),
+    outlineFilename(MODEL, '.docx'));
+
+  // THE SELF-CITATION GUARD. The outline is filed and ingested on purpose, so
+  // it is an ordinary ready document and would otherwise be a classification
+  // candidate — the classifier would file it under the elements it quotes, and
+  // the next evidence pass would quote the outline quoting the deposition.
+  check('a filed outline is recognised as one, so the classifier skips it',
+    isFiledOutline(mdName.replace(/\.md$/, ''))
+    && isFiledOutline(outlineFilename(MODEL, '.docx').replace(/\.docx$/, '')),
+    mdName);
+  check('and an ordinary document that merely says "outline" is not',
+    !isFiledOutline('Outline of duties under the consent decree')
+    && !isFiledOutline('Trial Outline notes (Eden)')
+    && !isFiledOutline(null));
 }
 
 // ===========================================================================

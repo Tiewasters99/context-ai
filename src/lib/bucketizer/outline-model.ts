@@ -545,11 +545,47 @@ export function versionStamp(generatedAt: string): string {
 }
 
 /**
+ * The run of characters every filed outline's title contains.
+ *
+ * It is how the classifier knows not to file an outline into the buckets the
+ * outline itself summarises. That matters more than it sounds: a filed `.md`
+ * is ingested like any document, so without this the next "Classify new
+ * documents" would put the outline under the very elements it quotes, and the
+ * next evidence pass would quote the outline quoting the deposition — a
+ * second-hand citation wearing a first-hand one's clothes.
+ *
+ * The marker lives in the TITLE rather than in `documents.metadata` because
+ * `persistVaultFile` fires ingestion without waiting and ingestion rewrites
+ * that metadata; a flag written here a moment later would race it. The title
+ * is what `persistVaultFile` derives from the filename, and it is stable.
+ */
+export const OUTLINE_TITLE_MARKER = ' — Trial Outline ';
+
+/**
+ * Is this document one of this product's own filed outlines?
+ *
+ * Used by the classifier to keep an outline out of its own buckets. Without
+ * it, the next "Classify new documents" would file the outline under the
+ * elements it quotes, and the next evidence pass would quote the outline
+ * quoting the deposition — a citation at one remove that reads exactly like a
+ * citation to the transcript, which is the worst thing this product could put
+ * into a brief. Excluded by construction, not by the attorney noticing.
+ */
+export function isFiledOutline(title: string | null | undefined): boolean {
+  return typeof title === 'string' && title.includes(OUTLINE_TITLE_MARKER);
+}
+
+/**
  * The filed name. Dated and timed, so a re-run is a NEW version and never
  * overwrites one already filed — the duplicate guard has nothing to trip on
  * and the record of what the outline said last week survives.
+ *
+ * The Word copy carries "(Word)" because `persistVaultFile` strips the
+ * extension to make the title: without it both files would sit in the Vault
+ * under one identical name.
  */
 export function outlineFilename(model: OutlineModel, ext: '.md' | '.docx'): string {
-  const base = `${shortTitle(model.matter.title, 48)} — Trial Outline ${model.version}`;
-  return `${base.replace(/[\\/:*?"<>|]+/g, '-')}${ext}`;
+  const base = `${shortTitle(model.matter.title, 48)}${OUTLINE_TITLE_MARKER}${model.version}`;
+  const safe = base.replace(/[\\/:*?"<>|]+/g, '-');
+  return ext === '.docx' ? `${safe} (Word)${ext}` : `${safe}${ext}`;
 }

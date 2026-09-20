@@ -228,29 +228,3 @@ export function downloadOutline(result: OutlineResult): void {
   downloadBlob(new Blob([result.markdown], { type: 'text/markdown' }), result.mdFilename);
   downloadBlob(result.docx, result.docxFilename);
 }
-
-/**
- * Outlines already filed into this matter, newest first.
- *
- * Found by title, not by a metadata flag: `persistVaultFile` fires ingestion
- * without waiting, and ingestion rewrites `documents.metadata`, so a marker
- * written here a moment later would race it. The filename is the version, and
- * it is stable.
- */
-export async function listFiledOutlines(
-  matterId: string,
-  matterTitle: string,
-): Promise<{ id: string; title: string; createdAt: string }[]> {
-  const prefix = `${matterTitle.slice(0, 40)}`;
-  const { data, error } = await supabase
-    .from('documents')
-    .select('id, title, created_at')
-    .eq('matterspace_id', matterId)
-    .ilike('title', `%Trial Outline%`)
-    .order('created_at', { ascending: false })
-    .limit(25);
-  if (error) throw new Error(error.message);
-  return (data ?? [])
-    .filter((d) => String(d.title ?? '').startsWith(prefix.slice(0, 8)))
-    .map((d) => ({ id: d.id as string, title: d.title as string, createdAt: d.created_at as string }));
-}
