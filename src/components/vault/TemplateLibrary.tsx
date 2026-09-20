@@ -1,14 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+// The full-library browser. What it lists is decided by useCoverLibrary —
+// the core set for everyone, the whole of public/templates for workshop.
+// See lib/covers.ts for why, including why an empty list is the right
+// answer when the allow-list will not load.
+
+import { useState } from 'react';
 import { X, Check, RefreshCw } from 'lucide-react';
 import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
-
-interface Template {
-  id: string;
-  name: string;
-  file: string;
-  category: string;
-}
+import { useCoverLibrary } from '@/hooks/useCoverLibrary';
+import type { CoverTemplate as Template } from '@/lib/covers';
 
 interface TemplateLibraryProps {
   onSelect: (url: string) => void;
@@ -16,29 +16,10 @@ interface TemplateLibraryProps {
 }
 
 export default function TemplateLibrary({ onSelect, onClose }: TemplateLibraryProps) {
-  const [templates, setTemplates] = useState<Template[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const { covers: templates, loading, error: loadError, reload: load } = useCoverLibrary();
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
   const { cardRef, pinned, togglePin, isMobile } = useDraggableResizable('cs.vault.templateLibrary');
-
-  const load = useCallback(() => {
-    setLoading(true);
-    setLoadError(null);
-    fetch('/templates/manifest.json')
-      .then((r) => {
-        if (!r.ok) throw new Error(`manifest ${r.status}`);
-        return r.json();
-      })
-      .then((data: Template[]) => setTemplates(data))
-      .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   const categories = [...new Set(templates.map((t) => t.category))];
   const filtered = activeCategory ? templates.filter((t) => t.category === activeCategory) : templates;
@@ -118,7 +99,21 @@ export default function TemplateLibrary({ onSelect, onClose }: TemplateLibraryPr
             </div>
           )}
           {!loadError && !loading && templates.length === 0 && (
-            <p className="py-16 text-center text-[13px] text-white/50">No templates found.</p>
+            // Either the manifest really is empty, or core-covers.json did not
+            // arrive. Offering nothing is the deliberate answer to the second
+            // case (lib/covers.ts), so the copy has to work for both.
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <p className="text-[13px] text-white/60 text-center max-w-sm">
+                No backgrounds to show just now. Covers you have already set are
+                unaffected.
+              </p>
+              <button
+                onClick={load}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[rgba(255,255,255,0.08)] hover:bg-[rgba(255,255,255,0.14)] text-white text-[12px] font-medium transition-colors"
+              >
+                <RefreshCw size={13} /> Retry
+              </button>
+            </div>
           )}
           <div className="grid grid-cols-4 gap-3">
             {filtered.map((t) => (

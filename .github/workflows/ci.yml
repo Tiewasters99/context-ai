@@ -91,6 +91,22 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-embed-hold.mjs
 
+      - name: SecureSpace — a sealed matter refuses, never falls back
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-no-fallback.mjs
+
+      - name: SecureSpace — a sealed CHILD inside an open parent is not searched
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-descendants.mjs
+
+      - name: SecureSpace — a sealed meeting's transcript stays inside the seal
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-meetings.mjs
+
+      - name: SecureSpace — /api/llm sealed route (real handler, stubbed fetch)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-llm-sealed-route.mjs
+
       - name: Agents — charter narrowing rule (offline part)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-charter.mjs
@@ -119,6 +135,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-model-scope.mjs
 
+      - name: Migration 062 — profiles RLS, no email column (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-profiles-rls.mjs
+
+      - name: Migration 063 — spend cap, database half (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-usage-budget.mjs
+
+      # The handler half of the same spend cap. It is written as a node:test
+      # suite, so it needs --test; plain `node` would run it but report nothing.
+      - name: Spend cap — usage meter and prices (handler half, node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-usage-meter.mjs
+
+      - name: Office — one owner's public room, and nothing else
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-office-tenancy.mjs
+
+      - name: Ingestion — stamp-only scans reach OCR (fake Supabase, stubbed OCR)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-stamp-scans.mjs
+
       - name: Reader — reflow
         if: ${{ !cancelled() }}
         run: node scripts/_verify-reflow.mjs
@@ -136,3 +174,87 @@ jobs:
       - name: Migration 064 — the matter Record is append-only (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs
+      # The offline stand-in for worker/e2e-live-test.mjs, which cannot run here
+      # (prod database, service role). Executes 030 + 032 + 044 + 045 + 055 +
+      # 057 + 058 + 059 + 060 in PGlite and drives the real lib/discovery engine
+      # over a synthetic production with storage stubbed. It also greps the
+      # worker source for the invariants it transcribes, so a rewrite of the
+      # worker's stamp or intake loop turns this red instead of drifting away
+      # from the thing it claims to verify.
+      - name: Discovery — intake → stamp → package → deliver (PGlite, stubbed storage)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-discovery-pipeline.mjs
+      # Day one for a new paying user: which file types are accepted or
+      # refused (and whether the refusal names an alternative), whether a
+      # mid-size document may run on the 60 s serverless budget, that the
+      # nightly suite cannot hang without leaving a record, and that the
+      # monitor digest cannot mail one tenant's filenames to another account.
+      # It runs scripts/_verify-ocr-routes.mjs as a child process and asserts
+      # its exit code, so the OCR route policy is covered by this step too.
+      - name: Ingestion — day one (types, routing, suite deadlines, digest privacy, OCR routes)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ingest-day-one.mjs
+
+      # Migration 066 + the worker's heartbeat + the sentence the Vault shows
+      # while a document is processing + the nightly workflow itself. The
+      # tenant boundary is the point: two signed-in users, each seeing only
+      # their own queue numbers. It also runs `ingest-suite.mjs --dry-run` as a
+      # child process, which is how this job proves the nightly suite can be
+      # invoked on Linux with no `.env` at all.
+      - name: Ingestion — worker liveness (migration 066, PGlite + offline)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-worker-heartbeat.mjs
+      # Whole-document windowing, the resumable run, the meter pause, the
+      # deterministic merge, and the paged read shared with Discovery. Offline:
+      # the model, the database and PostgREST are all stubbed.
+      - name: Bucketizer — whole-document scale + paged reads
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-scale.mjs
+
+      # The evidence lane: verbatim quotation (a span the stored passage does
+      # not hold is dropped, never repaired), citations that degrade honestly
+      # where the record has no line numbers, gaps-first assembly, a
+      # byte-identical .md on a re-run, and a real .docx read back with the
+      # repo's own docx library. Migration 068 is EXECUTED in PGlite in the
+      # same step. Offline: the model, the database and PostgREST are stubbed.
+      - name: Bucketizer — evidence, citations and the trial outline
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_verify-bucketizer-evidence.mjs
+          node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-outline.mjs
+      # The Vault's own read, at 2,500 and 12,000 documents with every
+      # created_at tied — the dropped-folder case that makes an untiebroken
+      # `.range()` loop lose rows. Offline: PostgREST is stubbed.
+      - name: Vault — matter-tree document list, paged
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-vault-paged-reads.mjs
+      # Its negative control reconstructs main's handlers by deleting the
+      # marked gate block, then watches them leak. One extra assertion —
+      # "the reconstruction IS origin/main's file" — only means anything
+      # before the gate lands, so it prints SKIP where the base ref is not
+      # fetched (a PR checkout) or already carries the gate (main).
+      - name: SecureSpace — export gate (egress witness + negative control)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-export-gate.mjs
+      # Runs migration 065 in PGlite AND drives api/oauth-approve.mjs,
+      # api/oauth-token.mjs and lib/oauth-grants.mjs against it through a
+      # stubbed PostgREST — no network. Guards the part that would hurt most
+      # if it broke: a pre-065 token must keep working until the cut-off, and
+      # merging before the migration is pasted must disconnect nobody.
+      - name: Migration 065 — per-connection OAuth grants (PGlite + handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-oauth-grants.mjs
+      # The cover picker: the allow-list is well-formed and points at files
+      # that exist, then the gating rule itself (core vs workshop vs still
+      # loading, and what a failed read is allowed to offer).
+      - name: Covers — core set valid, and the picker gate
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_validate-cover-manifest.mjs
+          node --test scripts/_test-cover-gating.mjs
+      # The browser half of a refused request: 402 (spend cap), 429 (rate
+      # window) and the sealed 403/502/503 all become a sentence a person can
+      # read. Same loader as above — refusals.ts is a .ts module in src/.
+      - name: Refusals — 402 / 429 / sealed read as English
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs

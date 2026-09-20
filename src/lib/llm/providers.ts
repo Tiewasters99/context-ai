@@ -67,6 +67,19 @@ export const providers: ProviderConfig[] = [
   },
 ];
 
+/**
+ * The model a surface uses when it has nothing better to go on.
+ *
+ * Read from the catalog rather than written down a second time: the comment on
+ * `providers[0].models[0]` has always called that entry the fallback default,
+ * so this names the mechanism that already existed instead of adding another
+ * id someone has to remember to change. A surface that hard-codes a string
+ * can drift out of the catalog silently — DeckComposerModal asked for
+ * `'claude-opus'`, which findModel has never resolved, and threw
+ * `Unknown model: claude-opus` before it reached the proxy.
+ */
+export const DEFAULT_MODEL_ID: string = providers[0].models[0].id;
+
 export function findModel(modelId: string) {
   for (const provider of providers) {
     const model = provider.models.find((m) => m.id === modelId);

@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, X, FileText, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchPaged, showingOf } from '@/lib/paged';
 
 type DocRow = { id: string; title: string };
+
+/** Rows this picker will hold. Past it, it says how many it is showing. */
+const PICKER_CEILING = 5000;
 
 type Props = {
   matterId: string;
@@ -24,6 +28,7 @@ export default function DocumentPicker({
   const [files, setFiles] = useState<DocRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(initiallySelected),
@@ -33,16 +38,28 @@ export default function DocumentPicker({
     let cancelled = false;
     setLoading(true);
     void (async () => {
-      const { data, error } = await supabase
-        .from('documents')
-        .select('id, title')
-        .eq('matterspace_id', matterId)
-        .order('title', { ascending: true });
-      if (cancelled) return;
-      if (error) {
-        setError(error.message);
-      } else {
-        setFiles((data ?? []) as DocRow[]);
+      // Paged: an unbounded select stops at PostgREST's 1,000 rows, so a
+      // matter past that silently offered only part of itself to attach.
+      // `.order('id')` is the unique tiebreaker — titles tie constantly
+      // (every "Exhibit A", every identical PACER filename), and unbroken
+      // ties let rows swap between `.range()` pages.
+      try {
+        const { rows, total, truncated } = await fetchPaged<DocRow>(
+          (from, to) => supabase
+            .from('documents')
+            .select('id, title', from === 0 ? { count: 'exact' } : undefined)
+            .eq('matterspace_id', matterId)
+            .order('title', { ascending: true })
+            .order('id')
+            .range(from, to),
+          { ceiling: PICKER_CEILING, label: 'matter documents' },
+        );
+        if (cancelled) return;
+        setFiles(rows);
+        setNotice(showingOf({ rows, total, truncated }, 'documents'));
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'could not load documents');
       }
       setLoading(false);
     })();
@@ -115,6 +132,9 @@ export default function DocumentPicker({
             <p className="text-[12px] text-white/40 py-8 text-center">
               No documents {search ? 'matched' : 'in this matter'}.
             </p>
+          )}
+          {!loading && notice && (
+            <p className="px-3 py-2 text-[11px] text-[var(--color-primary)]">{notice}</p>
           )}
           {!loading && filtered.length > 0 && (
             <ul className="py-1">
