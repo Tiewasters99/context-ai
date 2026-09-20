@@ -2,7 +2,7 @@ import type { StructuredRequest, TokenUsage } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { llmAuthHeader } from './auth';
-import { llmErrorText } from './refusals';
+import { parseRefusalBody, ServerRefusalError, waitOutRateWindow } from './refusals';
 
 export interface GenerateStructuredOptions extends StructuredRequest {
   /** Model id from providers.ts (e.g. 'claude-opus-4-8'). */
@@ -27,6 +27,21 @@ export interface GenerateStructuredOptions extends StructuredRequest {
  * model declined to emit the tool call.
  */
 export async function generateStructured<T = unknown>(options: GenerateStructuredOptions): Promise<T> {
+  // One retry, and only for a rate window the server told us the length of.
+  // Bucketizer, cite-check and the Editor each make dozens of these calls in a
+  // row and the free tier's window is twenty a minute, so without this a long
+  // run's normal ending is to die a fifth of the way in. Sitting out the
+  // window the server named is what it asked for; everything else — a spent
+  // wallet, a sealed matter, a provider error — is thrown straight through.
+  try {
+    return await sendStructured<T>(options);
+  } catch (err) {
+    if (!(await waitOutRateWindow(err, options.signal))) throw err;
+    return sendStructured<T>(options);
+  }
+}
+
+async function sendStructured<T>(options: GenerateStructuredOptions): Promise<T> {
   const { modelId, signal, apiKey, onUsage, matterId, ...request } = options;
 
   const found = findModel(modelId);
@@ -53,7 +68,10 @@ export async function generateStructured<T = unknown>(options: GenerateStructure
   if (!res.ok) {
     let errBody: unknown = null;
     try { errBody = JSON.parse(text); } catch { /* not JSON */ }
-    throw new Error(llmErrorText(res.status, errBody));
+    // A typed throw, not a bare Error: `.message` is still the sentence, and
+    // a caller with a fallback pen or a per-item retry can now tell "the
+    // provider hiccuped" from "the wallet is empty" and stop.
+    throw new ServerRefusalError(parseRefusalBody(res.status, errBody, res.headers.get('retry-after')));
   }
 
   let responseJson: unknown;
