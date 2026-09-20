@@ -398,7 +398,14 @@ export default async function handler(req, res) {
     // would give, written out so the ordering with settleClampedStream is
     // visible. Row 1 already exists, so nothing here can withhold an answer
     // that has already gone out.
-    let outcome = 'ok';
+    //
+    // The status decides the outcome BEFORE the pipe, not after it. A provider
+    // that answers 429 or 500 still has a body, and a sealed pen that fails
+    // answers `sealed_pen_error` as a 502 JSON — both of which arrive here
+    // whenever the client asked for a stream. Starting at 'ok' and only
+    // flipping on a pipe exception would have written "the model answered"
+    // into an undeletable row for a turn the caller saw fail.
+    let outcome = upstream.ok ? 'ok' : 'provider_error';
     try {
       const reader = upstream.body.getReader();
       while (true) {

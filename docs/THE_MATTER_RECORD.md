@@ -69,9 +69,10 @@ stranger checks 0 rows rather than being told a falsehood).
 ## The vocabulary
 
 `kind` is CHECK-constrained to this list. `lib/ledger.mjs` exports the same
-list as `EVENT_KINDS`. All fourteen are legal today so that W2, W3 and W6 do
-not each have to reopen the migration; only the first eight are written by
-W1.
+list as `EVENT_KINDS`. 064 made fourteen legal at once so that W2, W3 and W6
+would not each have to reopen the migration; 072 added `connector.connected`
+and 073 added `completion.requested`, bringing it to sixteen. W1 itself writes
+only the first eight.
 
 | kind | written by | payload |
 | --- | --- | --- |

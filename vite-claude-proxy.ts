@@ -104,6 +104,12 @@ const providerRoutes: Record<string, ProviderRoute> = {
  * Optional: pass apiKey in body for BYOK (user's own key).
  * Falls back to env var if no apiKey provided.
  */
+/** Whether the caller asked the provider to stream, whatever it calls it. */
+function asksForStream(bodyText: string, provider: string): boolean {
+  if (provider === 'google') return true;   // streamGenerateContent&alt=sse
+  try { return JSON.parse(bodyText)?.stream === true; } catch { return false; }
+}
+
 export default function llmProxy(): Plugin {
   return {
     name: 'llm-proxy',
@@ -345,7 +351,7 @@ export default function llmProxy(): Plugin {
           clientProvider: parsed.provider,
           clientModel: parsed.model,
           sealed: isSealed,
-          streaming: true,
+          streaming: asksForStream(parsed.body, parsed.provider),
           documentIds: parsed.documentIds ?? null,
         });
         const recordRefused = async (code: string, status: number, penProvider: string | null, penModel: string | null, isSealed: boolean) => {
@@ -456,7 +462,12 @@ export default function llmProxy(): Plugin {
             'Connection': 'keep-alive',
           });
           upstream.pipe(res);
-          upstream.on('end', () => { void settleRecord('ok', upstream.statusCode ?? 200); });
+          // The status decides the outcome, not the fact that the pipe
+          // finished: a 429 body pipes through just as cleanly as an answer.
+          upstream.on('end', () => {
+            const status = upstream.statusCode ?? 200;
+            void settleRecord(status < 400 ? 'ok' : 'provider_error', status);
+          });
         } catch (err: unknown) {
           res.writeHead(502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: `Proxy error: ${err instanceof Error ? err.message : 'Unknown'}` }));

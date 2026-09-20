@@ -434,6 +434,25 @@ console.log('\n7. Two rows, one call — streaming and not');
     }
   }
 
+  // A STREAMED provider error. It arrives with a body and pipes through
+  // cleanly, so nothing about the pipe says it failed — only the status does.
+  // A row saying "the model answered" for a turn the caller saw fail would be
+  // a false statement in a document nobody can correct.
+  {
+    const res = await call({
+      feature: 'moot.converse', body: anthropicStreamBody(), upstream: failingUpstream,
+    });
+    const answered = rowsOfKind('completion.received')[0]?.p_payload ?? {};
+    check(res.statusCode === 429, 'a streamed turn that fails still returns the provider’s status',
+      String(res.statusCode));
+    check(answered.outcome === 'provider_error' && answered.ok === false && answered.status === 429,
+      'and the row says it failed, not that the model answered',
+      JSON.stringify({ outcome: answered.outcome, ok: answered.ok, status: answered.status }));
+    const serialised = JSON.stringify(ledgerRows);
+    check(!serialised.includes(S.error) && !serialised.includes(S.user),
+      'while the provider’s error body — which quotes the request back — stays out of the row');
+  }
+
   // The order that makes the sealed guarantee work: the row goes first.
   await call({ tier: 'B', feature: 'bucketizer.classify' });
   const firstLedgerAt = requests.findIndex((r) => r.url.endsWith('/rpc/ledger_append'));
