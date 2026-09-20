@@ -323,6 +323,17 @@ jobs:
       - name: Assistant — a sealed matter says where it is and who answers
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-sealed-assistant-scope.mjs
+      # `list_matters` is the first call every connected AI makes, and in
+      # production it answered 296 matters with 112,790 characters — more than
+      # a client will load. This drives the real handler against a synthetic
+      # workspace of the same shape and size: the compact tree fits, every
+      # visible matter is on it exactly once with its id, the optional
+      # arguments narrow it, malformed ones fall back, `format:'full'` is
+      # byte-identical to the old answer, and sealed/paused subtrees are
+      # pruned before a single document is counted (with a negative control).
+      - name: list_matters — the map fits, and nothing hidden is on it
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-list-matters.mjs
 
       # The connector page tells people to paste a command into a terminal, so
       # the command is checked whole — every flag, and the quoting that differs

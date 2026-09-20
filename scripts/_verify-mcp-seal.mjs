@@ -87,13 +87,16 @@ try {
     if (ceff === 'B') pass('child inherits the seal (effective tier B)'); else fail('child effective tier', ceff);
   }
 
-  // list_matters
-  const listed = await callTool(sb, 'list_matters', {}, CONNECTOR);
+  // list_matters. The DEFAULT shape is a compact tree since 2026-09-20; this
+  // harness asks for `format: 'full'` so it keeps testing the seal on rows it
+  // can address by id. The default TREE shape is covered offline, against the
+  // same seal, by scripts/_verify-sealed-descendants.mjs.
+  const listed = await callTool(sb, 'list_matters', { format: 'full' }, CONNECTOR);
   if (!listed.some((m) => m.id === matter.id)) pass('connector list_matters omits the sealed matter'); else fail('sealed matter listed to connector');
   if (child) {
     if (!listed.some((m) => m.id === child.id)) pass('connector list_matters omits the sealed child too'); else fail('sealed child listed to connector');
   }
-  const listedInApp = await callTool(sb, 'list_matters', {}, INAPP);
+  const listedInApp = await callTool(sb, 'list_matters', { format: 'full' }, INAPP);
   if (listedInApp.some((m) => m.id === matter.id)) pass('in-app list_matters still shows it (seal closes connectors, not the room)'); else fail('in-app list lost the matter');
 
   // keyed tools
@@ -122,7 +125,7 @@ try {
 }
 
 // ── unsealed again: connector sees it ─────────────────────────────────
-const after = await callTool(sb, 'list_matters', {}, CONNECTOR);
+const after = await callTool(sb, 'list_matters', { format: 'full' }, CONNECTOR);
 if (after.some((m) => m.id === matter.id)) pass('after restore, connector list_matters shows the matter again'); else fail('matter still hidden after restore');
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : failures + ' CHECK(S) FAILED'}`);
