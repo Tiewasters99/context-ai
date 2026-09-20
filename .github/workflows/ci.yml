@@ -170,3 +170,7 @@ jobs:
       - name: Migration 064 — the matter Record is append-only (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs
+
+      - name: Migration 072 — the account chain, fan-out isolation, immutable sessions (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ledger-account.mjs

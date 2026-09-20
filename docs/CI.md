@@ -46,6 +46,7 @@ Then the twenty-two offline harnesses, one step each, each with
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
+| `_verify-ledger-account.mjs` | Migration 072 — a cross-matter connector call is recorded on the account chain and fanned out into each matter it read from, with neither record revealing the other's matters; `ai_sessions` / `ai_messages` are immutable; 072 no-ops without 064. | PGlite, twice over: once on a database that has 064 (the negative control runs first, on 064 alone) and once on a clean one that never saw it. The real `lib/ledger.mjs` is driven through a supabase-shaped adapter, so the redaction is tested as it runs. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
 written. Seven of the last eight arrived with PRs #156–#163, each proving

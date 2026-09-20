@@ -625,7 +625,20 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
 
   const badKind = await record({ rpc: async () => ({ data: null, error: null }) }, { kind: 'nonsense' });
   check(badKind.ok === false, 'an unknown kind is refused before it reaches the database');
-  check(EVENT_KINDS.length === 14, 'the JS kind list matches the migration\'s CHECK constraint', `${EVENT_KINDS.length} kinds`);
+  // Read the constraint rather than counting to a literal: migration 072
+  // widens the vocabulary (connector.connected), and a hard-coded count
+  // would then fail for the one reason that is not a bug.
+  const [kindDef] = await q(
+    `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'events_kind_check'`);
+  const dbKinds = [...String(kindDef.def).matchAll(/'([a-z]+\.[a-z]+)'/g)].map((m) => m[1]);
+  const missing = dbKinds.filter((k) => !EVENT_KINDS.includes(k));
+  const ahead = EVENT_KINDS.filter((k) => !dbKinds.includes(k));
+  check(dbKinds.length === 14 && missing.length === 0,
+    "the JS kind list covers every kind 064's CHECK constraint allows",
+    missing.length ? `missing ${missing.join(' ')}` : `${dbKinds.length} kinds`);
+  check(ahead.every((k) => k === 'connector.connected'),
+    'and runs ahead of it only by what a later migration adds (072: connector.connected)',
+    ahead.join(' ') || 'none');
 }
 
 console.log('\n--- sealed strict mode (lib/assistant-core.mjs) -------------------');
