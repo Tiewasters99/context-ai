@@ -48,7 +48,7 @@ export async function loadChooserInventory(matterId: string): Promise<ChooserInv
       .from('documents')
       // One string literal, deliberately: supabase-js parses the select at the
       // type level, and a concatenated string comes back as `GenericStringError`.
-      .select('id, title, doc_type, page_count, metadata, processing_status, processing_error, matterspace_id, text_status:metadata->>text_status', from === 0 ? { count: 'exact' } : undefined)
+      .select('id, title, source_filename, doc_type, page_count, metadata, processing_status, processing_error, matterspace_id, text_status:metadata->>text_status', from === 0 ? { count: 'exact' } : undefined)
       .in('matterspace_id', matterIds)
       .order('id')
       .range(from, to),

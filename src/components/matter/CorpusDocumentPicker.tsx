@@ -338,7 +338,11 @@ export default function CorpusDocumentPicker({
     : docs.filter((r) => !q || r.title.toLowerCase().includes(q));
 
   const header = currentMatter?.name ?? space?.name ?? title;
-  const crumbs = space ? [space.name, ...path.slice(0, -1).map((c) => c.name)] : [];
+  // Confined, the header is always a matter name, so the picker's own purpose
+  // would never appear anywhere. It leads the crumb line instead.
+  const crumbs = confineToRoot
+    ? [title, ...path.slice(0, -1).map((c) => c.name)]
+    : space ? [space.name, ...path.slice(0, -1).map((c) => c.name)] : [];
   const busy = isLoading || docsLoading || !seeded;
 
   return (

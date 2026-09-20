@@ -28,6 +28,8 @@ import { isFiledOutline } from './outline-model';
 export interface ChooserDocument {
   id: string;
   title: string | null;
+  /** What it was uploaded as. Searched alongside the title. */
+  source_filename?: string | null;
   matterspace_id: string;
   processing_status: string;
   processing_error?: string | null;
@@ -83,6 +85,8 @@ export interface ChooserRow {
   matterId: string;
   /** That matter's name, for grouping the list and the confirmation. */
   matterName?: string;
+  /** The uploaded filename, so a search for "114-A.pdf" finds it. */
+  filename?: string | null;
   state: ChooserState;
   /**
    * A pleading this matter's tree was generated FROM. Still choosable — an
@@ -208,7 +212,7 @@ export function buildChooserRows(input: {
   for (const doc of input.documents) {
     if (!inTree.has(doc.matterspace_id)) continue;
 
-    const title = doc.title || 'Untitled document';
+    const title = doc.title || doc.source_filename || 'Untitled document';
     const agg = byDoc.get(doc.id) ?? { rows: 0, decided: 0, last: null };
     const treeSource = Boolean(doc.metadata?.bucketizer?.tree_source_at);
     const base = {
@@ -216,6 +220,7 @@ export function buildChooserRows(input: {
       title,
       matterId: doc.matterspace_id,
       matterName: input.matterNames?.get(doc.matterspace_id),
+      filename: doc.source_filename ?? null,
       treeSource,
       rows: agg.rows,
       decided: agg.decided,
@@ -436,9 +441,9 @@ export function classifyAction(unclassified: number | null): ClassifyAction {
  * can do next, and the surface renders both as controls.
  */
 export const NOTHING_NEW_MESSAGE =
-  'Nothing new to classify. Every readable document in this matter and its sub-matters '
-  + 'has already been through the classifier. Upload documents to this matter\'s Vault, '
-  + 'or choose documents to classify again.';
+  'Nothing new to classify. Everything readable here is already in the tree, was used to '
+  + 'build it, or is waiting in the chooser for you to choose it. Upload documents to this '
+  + 'matter\'s Vault, or choose documents to classify again.';
 
 // ---------------------------------------------------------------------------
 // Re-classification

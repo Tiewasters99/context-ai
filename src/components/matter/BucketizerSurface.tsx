@@ -312,12 +312,13 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     Promise.resolve((chooserRows ?? []).filter((r) => r.matterId === id).map((r) => toPickerDoc(r)))
   ), [chooserRows, toPickerDoc]);
 
-  /** Search the whole matter tree — title and filename, over the loaded list. */
+  /** Search the whole matter tree — title AND uploaded filename. */
   const chooserSearch = useCallback((query: string): PickerDocument[] => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     return (chooserRows ?? [])
-      .filter((r) => r.title.toLowerCase().includes(q))
+      .filter((r) => r.title.toLowerCase().includes(q)
+        || (r.filename ?? '').toLowerCase().includes(q))
       .slice(0, 300)
       .map((r) => toPickerDoc(r, true));
   }, [chooserRows, toPickerDoc]);
@@ -868,8 +869,10 @@ function RunEstimateDialog({
               <div key={g.matterName} className="mb-2 last:mb-0">
                 <p className="text-[11px] uppercase tracking-wider text-zinc-500">{g.matterName}</p>
                 <ul className="mt-0.5 space-y-0.5">
-                  {g.titles.map((t) => (
-                    <li key={t} className="flex items-start gap-1.5 text-xs text-zinc-300">
+                  {/* Keyed by position: three exhibits called "Exhibit A" is
+                      the normal case in a matter, not an edge case. */}
+                  {g.titles.map((t, i) => (
+                    <li key={`${g.matterName}:${i}`} className="flex items-start gap-1.5 text-xs text-zinc-300">
                       <FileText className="mt-0.5 w-3 h-3 shrink-0 text-zinc-600" />
                       <span className="min-w-0 break-words">{t}</span>
                     </li>
