@@ -171,6 +171,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Its negative control reconstructs main's handlers by deleting the
+      # marked gate block, then watches them leak. One extra assertion —
+      # "the reconstruction IS origin/main's file" — only means anything
+      # before the gate lands, so it prints SKIP where the base ref is not
+      # fetched (a PR checkout) or already carries the gate (main).
+      - name: SecureSpace — export gate (egress witness + negative control)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-export-gate.mjs
       # Runs migration 065 in PGlite AND drives api/oauth-approve.mjs,
       # api/oauth-token.mjs and lib/oauth-grants.mjs against it through a
       # stubbed PostgREST — no network. Guards the part that would hurt most
