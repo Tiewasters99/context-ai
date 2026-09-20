@@ -19,7 +19,7 @@ those are listed under [Deliberately not in CI](#deliberately-not-in-ci).
 | Lint | `npm run lint` | **Non-blocking** — see below. |
 | PGlite | `npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9` | Harness-only; `--no-save` keeps it out of `package.json`. |
 
-Then the twenty-two offline harnesses, one step each, each with
+Then the twenty-three offline harness steps, one step each, each with
 `if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |
@@ -46,6 +46,7 @@ Then the twenty-two offline harnesses, one step each, each with
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
+| `_validate-cover-manifest.mjs` + `_test-cover-gating.mjs` | The cover picker: `core-covers.json` is sorted, points only at files that exist and are under the size cap, and holds no filename the exclusion list bars; then the gate itself — core for every plan but `workshop`, core while the plan is still loading, and **nothing** (never everything) if the allow-list will not load. | One step, two commands. Both read files off disk; the second imports `src/lib/covers.ts` via Node type stripping, which is why that module has no `@/` imports and no React. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
 written. Seven of the last eight arrived with PRs #156–#163, each proving

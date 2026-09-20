@@ -166,3 +166,12 @@ jobs:
       - name: Reader — clean copy extraction
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
+
+      # The cover picker: the allow-list is well-formed and points at files
+      # that exist, then the gating rule itself (core vs workshop vs still
+      # loading, and what a failed read is allowed to offer).
+      - name: Covers — core set valid, and the picker gate
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_validate-cover-manifest.mjs
+          node --test scripts/_test-cover-gating.mjs
