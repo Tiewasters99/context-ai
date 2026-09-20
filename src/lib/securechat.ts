@@ -16,6 +16,7 @@
 // from src/lib/student-hub-export.ts.
 
 import { supabase } from '@/lib/supabase';
+import { defaultCoverFor, loadCoreCovers } from '@/lib/covers';
 
 export const SECURECHAT_MATTER_NAME = 'My SecureSpace';
 
@@ -36,6 +37,14 @@ export async function ensureMySecureSpace(
   // short_code is globally unique (it is the MCP handle) — retry with a
   // suffix on collision. The room is sealed at birth, so it never appears
   // to connectors regardless; the code exists because the column wants one.
+  // My SecureSpace is the first matter most new accounts ever open — the
+  // SecureChat button on the rail makes it for them. It used to be born with
+  // no cover, so that first room opened on an empty "Add cover" strip. Give
+  // it a core cover (lib/covers.ts); null if the allow-list is unavailable,
+  // which is the old behaviour and must never stop the room being made.
+  const core = await loadCoreCovers();
+  const cover = defaultCoverFor(SECURECHAT_MATTER_NAME, core?.core ?? null);
+
   for (let n = 0; n < 5; n++) {
     const short_code = n === 0 ? 'my-securespace' : `my-securespace-${n + 1}`;
     const { data: created, error: insErr } = await supabase
@@ -46,6 +55,7 @@ export async function ensureMySecureSpace(
         name: SECURECHAT_MATTER_NAME,
         short_code,
         ai_tier: 'B' as const,
+        cover_url: cover,
       })
       .select('id, name')
       .single();

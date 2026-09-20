@@ -171,6 +171,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # The cover picker: the allow-list is well-formed and points at files
+      # that exist, then the gating rule itself (core vs workshop vs still
+      # loading, and what a failed read is allowed to offer).
+      - name: Covers — core set valid, and the picker gate
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_validate-cover-manifest.mjs
+          node --test scripts/_test-cover-gating.mjs
       # The browser half of a refused request: 402 (spend cap), 429 (rate
       # window) and the sealed 403/502/503 all become a sentence a person can
       # read. Same loader as above — refusals.ts is a .ts module in src/.
