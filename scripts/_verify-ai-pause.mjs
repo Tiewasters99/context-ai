@@ -538,6 +538,86 @@ console.log('\n--- the sentence ------------------------------------------------
     'a pause is a POLICY HOLD, so every existing held-parking call site inherits it unchanged');
 }
 
+console.log('\n--- inheritance, in the JS walk every server path uses ----------');
+{
+  // Part A proved it in SQL. This is walkEffectivePause, which is what
+  // gateLlmRequest, the assistant, callTool, meetings and the pipeline
+  // actually call — and it must agree with the database.
+  const tree = {
+    'child': { id: 'child', parent_matterspace_id: 'parent', name: 'Depositions', ai_paused: false },
+    'parent': {
+      id: 'parent', parent_matterspace_id: null, name: 'Calder v. Atlas Freight',
+      ai_paused: true, ai_paused_at: PAUSED_ROW.ai_paused_at, ai_paused_by_name: 'Ben Rowe',
+      ai_pause_note: 'client call pending',
+    },
+    'elsewhere': { id: 'elsewhere', parent_matterspace_id: null, name: 'Unrelated', ai_paused: false },
+  };
+  const fetchRow = async (id) => tree[id] ?? null;
+  const onChild = await policy.walkEffectivePause(fetchRow, 'child');
+  check(onChild.paused === true && onChild.inherited === true && onChild.matterId === 'parent',
+    'a sub-matter of a paused matter is paused, and names the ancestor that carries it');
+  check(policy.aiPausedMessage(onChild) === EXPECTED_SENTENCE,
+    'so the sentence a sub-matter shows names the person who paused the parent');
+  const onParent = await policy.walkEffectivePause(fetchRow, 'parent');
+  check(onParent.paused === true && onParent.inherited === false, 'the parent itself is not "inherited"');
+  const onOther = await policy.walkEffectivePause(fetchRow, 'elsewhere');
+  check(onOther.paused === false, 'and an unrelated matter is untouched');
+  const orphan = await policy.walkEffectivePause(async (id) => (id === 'child' ? tree.child : null), 'child');
+  check(orphan.paused === false,
+    'a chain through a parent this caller cannot SEE stops there — it does not leak the parent\'s existence');
+}
+
+console.log('\n--- a paused CHILD inside a running parent ----------------------');
+{
+  // The hole this lane found in the seal as well as the pause: callTool's
+  // gate is keyed to the matter NAMED, and a parent-scoped search then
+  // expands to descendants that were never asked about.
+  const { handleSearch, handleGrep } = await import('../lib/mcp-core.mjs');
+  const rpcSeen = [];
+  const inCalls = [];
+  const scopeStub = {
+    from() {
+      const t = new Proxy({
+        in(col, ids) { if (col === 'matterspace_id') inCalls.push(ids); return t; },
+        limit: () => Promise.resolve({ data: [], error: null }),
+        maybeSingle: () => Promise.resolve({
+          data: { id: 'parent', name: 'Calder v. Atlas Freight', short_code: 'calder' }, error: null }),
+        then: (r) => Promise.resolve({ data: [], error: null }).then(r),
+      }, {
+        // Every other PostgREST builder method is a no-op that keeps the chain.
+        get: (target, prop) => (prop in target ? target[prop] : () => t),
+      });
+      return t;
+    },
+    rpc: async (fn, args) => {
+      rpcSeen.push({ fn, args });
+      if (fn === 'matterspace_descendants') {
+        return { data: [{ id: 'parent' }, { id: 'child' }], error: null };
+      }
+      return { data: [], error: null };
+    },
+  };
+  const exclude = new Set(['child']);
+  await handleSearch(scopeStub, { q: 'indemnity', matter: 'parent' }, { excludeMatterIds: exclude })
+    .catch(() => {});
+  const searched = rpcSeen.find((c) => c.fn === 'search_passages');
+  check(!searched || !(searched.args.p_matterspace_ids ?? []).includes('child'),
+    'a parent-scoped SEARCH does not read the excluded child\'s passages',
+    JSON.stringify(searched?.args?.p_matterspace_ids ?? 'no search issued'));
+
+  inCalls.length = 0;
+  const grep = await handleGrep(scopeStub, { pattern: 'indemnity', matter: 'parent' },
+    { excludeMatterIds: exclude }).catch((e) => ({ error: e.message }));
+  check(grep && !grep.error && inCalls.length > 0 && !inCalls.some((ids) => ids.includes('child')),
+    'and neither does GREP — both branches now filter, as the all-matters branch always did',
+    grep?.error ? grep.error : JSON.stringify(inCalls[0] ?? []));
+  // Whole scope excluded ⇒ an empty answer, not an unfiltered one.
+  const allGone = await handleSearch(scopeStub, { q: 'x', matter: 'parent' },
+    { excludeMatterIds: new Set(['parent', 'child']) }).catch(() => null);
+  check(allGone && allGone.result_count === 0,
+    'a scope that is entirely excluded answers empty rather than falling back to everything');
+}
+
 console.log('\n--- /api/llm — gateLlmRequest -----------------------------------');
 for (const tier of ['A', 'B', 'C']) {
   const restResponder = (url) => {
@@ -890,7 +970,9 @@ console.log('\n--- the base branch, if git can reach it ------------------------
       for (const n of names) {
         const buf = execFileSync('git', ['show', `${BASE_REF}:${n}`],
           { cwd: REPO, maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
-        fs.writeFileSync(path.join(baseDir, n), buf);
+        const dest = path.join(baseDir, n);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });   // lib/ has sub-folders
+        fs.writeFileSync(dest, buf);
       }
       ready = true;
     } else {
