@@ -6,14 +6,20 @@
 // client_id; the client must supply the same values that were used at
 // /authorize.
 
+import { checkRefreshGrant, ensureGrantOnApprove } from '../lib/oauth-grants.mjs';
 import { signJwt, verifyJwt, pkceS256, safeEqual, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
 // Access tokens live 12 hours: long enough that a full trial-prep day never
 // mid-session refreshes (each refresh is a chance for a mobile client to
 // fumble and strand the connector), short enough that a stolen token ages out
-// same-day. Refresh stays 30 days. Revocation story is unchanged either way —
-// these are stateless JWTs, so revocation = rotate MCP_OAUTH_SECRET (which
-// logs every client out; see lib/oauth-jwt.mjs).
+// same-day. Refresh stays 30 days.
+//
+// Revocation (migration 065): both tokens now carry `gid`, the id of the
+// oauth_grants row the approval left behind. A refresh against a revoked or
+// vanished grant is refused here; /api/mcp refuses the access token within
+// its cache window. Rotating MCP_OAUTH_SECRET is no longer the only lever,
+// and should go back to meaning what it says — suspected compromise of the
+// secret itself.
 const ACCESS_TTL_SEC = 60 * 60 * 12;       // 12 hours
 const REFRESH_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
 
@@ -84,8 +90,26 @@ export default async function handler(req, res) {
       return json(res, 400, { error: 'invalid_grant', error_description: 'pkce mismatch' });
     }
 
-    console.log('[oauth-token] success: sub=%s', codePayload.sub);
-    return issueTokens(res, secret, codePayload.sub, client_id, codePayload.scope || 'mcp', resource, issuer);
+    // The grant id normally arrives on the code, minted at /api/oauth-approve.
+    // It can be absent for one reason that matters: the code was issued while
+    // migration 065 was still unpasted. The user consented seconds ago, so
+    // minting the grant here is the same act, one step later — and it means a
+    // deploy that lands before the migration starts recording grants the
+    // moment the migration does land, without anybody reconnecting.
+    let gid = codePayload.gid || null;
+    if (!gid) {
+      const client = verifyJwt(client_id, secret);
+      const recorded = await ensureGrantOnApprove({
+        user_id: codePayload.sub,
+        client_id,
+        client_name: (client && client.typ === 'client' && client.client_name) || null,
+        scope: codePayload.scope || 'mcp',
+      });
+      gid = recorded.gid;
+    }
+
+    console.log('[oauth-token] success: sub=%s gid=%s', codePayload.sub, gid || 'none');
+    return issueTokens(res, secret, codePayload.sub, client_id, codePayload.scope || 'mcp', resource, issuer, gid);
   }
 
   if (grant === 'refresh_token') {
@@ -104,8 +128,39 @@ export default async function handler(req, res) {
       return json(res, 400, { error: 'invalid_grant', error_description: 'client_id mismatch' });
     }
 
-    console.log('[oauth-token] refresh success: sub=%s', rPayload.sub);
-    return issueTokens(res, secret, rPayload.sub, client_id, rPayload.scope || 'mcp', resource, issuer);
+    // The grant check (migration 065). This is where "revoke Claude" actually
+    // ends the connection: a refresh against a revoked grant is refused, so
+    // the client loses access for good when its 12-hour access token expires,
+    // whatever it still holds.
+    //
+    // A refresh token with no `gid` predates 065. checkRefreshGrant ADOPTS it
+    // — mints the grant the approval should have left behind and hands back
+    // its id — so Eden's existing claude.ai and ChatGPT connections keep
+    // working and become revocable at their next refresh. Adoption refuses if
+    // a grant for this client was already revoked, which is what stops a
+    // pre-revocation refresh token being replayed to walk back in. After
+    // LEGACY_NO_GID_CUTOFF_ISO a gid-less token is refused outright.
+    const client = verifyJwt(client_id, secret);
+    const check = await checkRefreshGrant({
+      gid: rPayload.gid || null,
+      user_id: rPayload.sub,
+      client_id,
+      client_name: (client && client.typ === 'client' && client.client_name) || null,
+      scope: rPayload.scope || 'mcp',
+    });
+    if (!check.ok) {
+      console.warn('[oauth-token] refresh refused: sub=%s reason=%s', rPayload.sub, check.reason);
+      return json(res, 400, {
+        error: 'invalid_grant',
+        error_description: check.reason === 'legacy_token_after_cutoff'
+          ? 'this connection predates per-connection grants and must be re-authorized'
+          : 'this connection has been revoked; reconnect from Contextspaces → Connections',
+      });
+    }
+
+    console.log('[oauth-token] refresh success: sub=%s gid=%s reason=%s',
+      rPayload.sub, check.gid || 'none', check.reason);
+    return issueTokens(res, secret, rPayload.sub, client_id, rPayload.scope || 'mcp', resource, issuer, check.gid);
   }
 
   console.warn('[oauth-token] unsupported grant_type=%s', grant);
@@ -115,11 +170,15 @@ export default async function handler(req, res) {
 // Build-time marker so we can confirm in production logs which version
 // of this file is actually serving traffic. Bump this string whenever
 // you change token shape so a stale Vercel deploy is obvious at a glance.
-const TOKEN_BUILD = '2026-07-08-ttl12h';
+const TOKEN_BUILD = '2026-09-20-grants065';
 
-function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
+function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, gid = null) {
   // Internally we sign a normal JWT carrying everything we need to
-  // verify the request at /api/mcp (iss/sub/aud/client_id/scope/exp).
+  // verify the request at /api/mcp (iss/sub/aud/client_id/scope/exp),
+  // plus `gid` — the oauth_grants row this connection belongs to, which
+  // /api/mcp checks before serving a tool call. `gid` is omitted, not
+  // nulled, when there is none, so a token issued while migration 065 is
+  // still unpasted has exactly the pre-065 payload shape.
   // The JOSE header still uses at+jwt per RFC 9068 in case any client
   // unwraps far enough to look.
   const inner = signJwt(
@@ -130,6 +189,7 @@ function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
       aud: resource,
       client_id,
       scope,
+      ...(gid ? { gid } : {}),
     },
     secret,
     ACCESS_TTL_SEC,
@@ -154,12 +214,13 @@ function issueTokens(res, secret, user_id, client_id, scope, resource, issuer) {
   // back to /api/oauth-token, which knows how to verify them, and
   // claude.ai shouldn't be introspecting refresh tokens.
   const refresh_token = signJwt(
-    { iss: issuer, typ: 'refresh', sub: user_id, client_id, scope },
+    { iss: issuer, typ: 'refresh', sub: user_id, client_id, scope, ...(gid ? { gid } : {}) },
     secret,
     REFRESH_TTL_SEC,
   );
 
-  console.log('[oauth-token] issued: build=%s sub=%s atLen=%d', TOKEN_BUILD, user_id, access_token.length);
+  console.log('[oauth-token] issued: build=%s sub=%s gid=%s atLen=%d',
+    TOKEN_BUILD, user_id, gid || 'none', access_token.length);
 
   return json(res, 200, {
     access_token,

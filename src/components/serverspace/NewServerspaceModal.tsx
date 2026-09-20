@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import ModalPortal from '@/components/ui/ModalPortal';
+import { defaultCoverFor, loadCoreCovers } from '@/lib/covers';
 
 // Single source of truth for "create a serverspace". Sidebar and Dashboard
 // both render this — the markup and behaviour were lifted verbatim from the
@@ -52,9 +53,17 @@ export default function NewServerspaceModal({ onClose, onCreated }: Props) {
     }
     setCreating(true);
     setError(null);
+    // A serverspace used to be born with cover_url null, so the first thing a
+    // new account saw inside its first space was an empty "Add cover" strip.
+    // It now opens on a core cover chosen by a stable hash of the name (see
+    // lib/covers.ts), which every plan is entitled to. If the allow-list is
+    // unavailable this is null and the old behaviour stands — a missing cover
+    // must never stop a space being created.
+    const core = await loadCoreCovers();
+    const cover = defaultCoverFor(cleanName, core?.core ?? null);
     const { data, error: insertError } = await supabase
       .from('serverspaces')
-      .insert({ clientspace_id: clientspaceId, name: cleanName })
+      .insert({ clientspace_id: clientspaceId, name: cleanName, cover_url: cover })
       .select('id')
       .maybeSingle();
     setCreating(false);

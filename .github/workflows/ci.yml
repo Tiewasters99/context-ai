@@ -91,6 +91,22 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-embed-hold.mjs
 
+      - name: SecureSpace — a sealed matter refuses, never falls back
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-no-fallback.mjs
+
+      - name: SecureSpace — a sealed CHILD inside an open parent is not searched
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-descendants.mjs
+
+      - name: SecureSpace — a sealed meeting's transcript stays inside the seal
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-meetings.mjs
+
+      - name: SecureSpace — /api/llm sealed route (real handler, stubbed fetch)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-llm-sealed-route.mjs
+
       - name: Agents — charter narrowing rule (offline part)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-charter.mjs
@@ -119,6 +135,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-model-scope.mjs
 
+      - name: Migration 062 — profiles RLS, no email column (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-profiles-rls.mjs
+
+      - name: Migration 063 — spend cap, database half (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-usage-budget.mjs
+
+      # The handler half of the same spend cap. It is written as a node:test
+      # suite, so it needs --test; plain `node` would run it but report nothing.
+      - name: Spend cap — usage meter and prices (handler half, node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-usage-meter.mjs
+
+      - name: Office — one owner's public room, and nothing else
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-office-tenancy.mjs
+
+      - name: Ingestion — stamp-only scans reach OCR (fake Supabase, stubbed OCR)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-stamp-scans.mjs
+
       - name: Reader — reflow
         if: ${{ !cancelled() }}
         run: node scripts/_verify-reflow.mjs
@@ -141,3 +179,25 @@ jobs:
       - name: SecureSpace — export gate (egress witness + negative control)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-export-gate.mjs
+      # Runs migration 065 in PGlite AND drives api/oauth-approve.mjs,
+      # api/oauth-token.mjs and lib/oauth-grants.mjs against it through a
+      # stubbed PostgREST — no network. Guards the part that would hurt most
+      # if it broke: a pre-065 token must keep working until the cut-off, and
+      # merging before the migration is pasted must disconnect nobody.
+      - name: Migration 065 — per-connection OAuth grants (PGlite + handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-oauth-grants.mjs
+      # The cover picker: the allow-list is well-formed and points at files
+      # that exist, then the gating rule itself (core vs workshop vs still
+      # loading, and what a failed read is allowed to offer).
+      - name: Covers — core set valid, and the picker gate
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_validate-cover-manifest.mjs
+          node --test scripts/_test-cover-gating.mjs
+      # The browser half of a refused request: 402 (spend cap), 429 (rate
+      # window) and the sealed 403/502/503 all become a sentence a person can
+      # read. Same loader as above — refusals.ts is a .ts module in src/.
+      - name: Refusals — 402 / 429 / sealed read as English
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs

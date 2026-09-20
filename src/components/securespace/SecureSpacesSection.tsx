@@ -69,6 +69,8 @@ interface SectionProps {
   onUnseal: (row: SecureSpaceRow) => void;
   /** Open SecureChat: the Assistant scoped to the born-sealed personal room. */
   onOpenSecureChat: () => void;
+  /** Open the "new serverspace" dialog — the one onboarding step. */
+  onCreateServerspace: () => void;
 }
 
 export default function SecureSpacesSection({
@@ -79,9 +81,15 @@ export default function SecureSpacesSection({
   onNewSecureSpace,
   onUnseal,
   onOpenSecureChat,
+  onCreateServerspace,
 }: SectionProps) {
   const rows = useMemo(() => collectSealedRows(serverspaces), [serverspaces]);
   const [spacePicker, setSpacePicker] = useState(false);
+  // Why the + did nothing. A brand-new account has no serverspace and a
+  // SecureSpace is a matter inside one, so there was nowhere to put it — and
+  // the button silently returned. Same shape PR #160 gave the SecureChat
+  // button one row below: say what is missing, then offer the step.
+  const [newSpaceNotice, setNewSpaceNotice] = useState<string | null>(null);
 
   const { setNodeRef, isOver } = useDroppable({
     id: SECURESPACES_DROP_ID,
@@ -89,7 +97,13 @@ export default function SecureSpacesSection({
   });
 
   const handleNew = () => {
-    if (serverspaces.length === 0) return;
+    if (serverspaces.length === 0) {
+      setNewSpaceNotice(
+        'A SecureSpace is a matter inside a serverspace, and you don’t have one yet.',
+      );
+      return;
+    }
+    setNewSpaceNotice(null);
     if (serverspaces.length === 1) {
       onNewSecureSpace(serverspaces[0].id, serverspaces[0].name);
     } else {
@@ -122,6 +136,25 @@ export default function SecureSpacesSection({
           <Plus size={14} strokeWidth={1.75} />
         </button>
       </div>
+
+      {newSpaceNotice && !collapsed && (
+        <div
+          className="mx-2 mt-1.5 rounded-md border px-2.5 py-2 text-[11px] leading-snug text-white/65"
+          style={{ borderColor: 'rgba(90,168,143,0.35)', backgroundColor: 'rgba(90,168,143,0.07)' }}
+        >
+          {newSpaceNotice}
+          <button
+            onClick={() => {
+              setNewSpaceNotice(null);
+              onCreateServerspace();
+            }}
+            className="block mt-1 font-medium transition-colors hover:text-[#e8b84a]"
+            style={{ color: TIER_B_COLOR }}
+          >
+            Create a serverspace →
+          </button>
+        </div>
+      )}
 
       {/* SecureChat — one click into the sealed personal room. The strongest
           claims in the product, stated in six words, both enforced
