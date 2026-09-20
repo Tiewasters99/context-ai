@@ -531,6 +531,13 @@ try {
   check(framed[0].content.includes('relay_feedback') && framed[0].content.includes('NO effect from here'),
     'the pen is told which tools do nothing from a meeting panel (relay_feedback writes across matters)');
 
+  // A malformed turn: history with no question in it.
+  install({ tier: 'B', bedrock: 'ok' });
+  res = await call(meetingChat, chatBody({ messages: [{ role: 'assistant', content: 'Ask anything.' }] }));
+  check(res.statusCode === 400 && res.json?.error === 'no_question',
+    'a history with no question is refused, so the transcript never lands in the ledger as a user turn', res.json);
+  check(bedrockCalls().length === 0, 'egress witness: ZERO requests for a turn with nothing to answer', hosts());
+
   // ── 13. The flag timer is NOT covered by the decision ─────────────────
   console.log('\n/api/meeting-flag — still quiet on a sealed matter, pen or no pen');
   install({ tier: 'B', bedrock: 'ok' });
