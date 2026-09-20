@@ -293,6 +293,25 @@ jobs:
       - name: Refusals — 402 / 429 / sealed read as English
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
+      # "Pin" on a card means FIX IN PLACE — it stops moving and resizing and
+      # reopens where it was left. The real hook, in a real DOM: drag, pin,
+      # reload, unpin, reload, plus the right-click gesture and the rule that
+      # one item's pin never leaks into the next. jsdom is installed here the
+      # way PGlite is above — --no-save, a harness dependency, never a repo one.
+      - name: Cards — Pin means fixed in place (jsdom + the real hook)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-card-pin.mjs
+      # What the Assistant panel SAYS on a sealed matter before the first
+      # message: the scope strip, the pen named in advance (and corrected when
+      # the server names another), the word-search note, the pause, the
+      # starters, the matter header's door, and the panel's pin/position
+      # record. Pure modules plus narrow source assertions for the wiring — no
+      # loader needed, nothing mounted, no network.
+      - name: Assistant — a sealed matter says where it is and who answers
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-sealed-assistant-scope.mjs
 
       # The connector page tells people to paste a command into a terminal, so
       # the command is checked whole — every flag, and the quoting that differs

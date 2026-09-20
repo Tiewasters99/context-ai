@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import ModalPortal from '@/components/ui/ModalPortal';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -138,7 +139,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const navigate = useNavigate();
   // Geometry is remembered per list, not per view type — one list left small
   // in a corner must not drag every other list into that same corner.
-  const { cardRef, toggleFullscreen } = useDraggableResizable(
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable(
     embedded || !id ? undefined : `cs.listview.card.${id}`,
     { boundToViewport: true },
   );
@@ -609,6 +610,8 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            {/* Fix in place. See the note in PageView. */}
+            {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <CanvasPinToggle kind="list" id={id} title={title || item?.title || 'Untitled List'} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>
