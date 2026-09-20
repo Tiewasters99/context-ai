@@ -1,6 +1,12 @@
 # Discovery, re-verified against today's worker (2026-09-20)
 
-**Verdict: WORKS, with 1 break fixed and 7 defects reported.**
+**Verdict: WORKS, with 1 break fixed (F0) and 9 defects reported (F1–F9).**
+
+> ⚠ **Merging does not ship the fix.** `lib/discovery/` and `worker/` run on the
+> Fly worker, which only updates with `flyctl deploy` (through the local IPv4
+> proxy — see `project_dev_environment_cautions`). A Vercel deploy on merge does
+> not touch it. Until the worker is redeployed, a production containing a
+> non-Latin filename still fails at stamping in production.
 
 `lib/discovery/` had one commit (`4a37deb`, 2026-06-11) and `worker/e2e-live-test.mjs`
 was unchanged since, while the queue underneath Discovery was rewritten for
@@ -8,12 +14,16 @@ ingestion. The 2026-09-19 audit called Discovery FRAGILE on exactly that basis:
 no evidence anyone had re-verified it. This is that evidence, obtained without
 touching production.
 
-- **Offline proof:** `node scripts/_verify-discovery-pipeline.mjs` — 96 checks,
-  all passing. The real migration files `030 + 032 + 044 + 045 + 055 + 057 + 058
-  + 059 + 060` executed in order inside PGlite, the real `lib/discovery/*`
-  engine driven end to end over a synthetic production, storage stubbed in
-  memory, and the worker's orchestration transcribed with source-grep drift
-  guards. It is a CI step.
+- **Offline proof:** `node scripts/_verify-discovery-pipeline.mjs` — 95 checks
+  passing plus 1 standing WARN (F2), locally and in CI. The real migration files `030 + 032 + 044 +
+  045 + 055 + 057 + 058 + 059 + 060` executed in order inside PGlite, the real
+  `lib/discovery/*` engine driven end to end over a synthetic production,
+  storage stubbed in memory, and the worker's orchestration transcribed with
+  source-grep drift guards. It is a CI step. The drift guards are deliberately
+  forgiving of the next builder: the dispatch check is a **superset** test, so
+  adding a job type does not turn it red, and the `--intake` heartbeat gap is a
+  **WARN** that flips to a PASS when someone fixes it rather than a check that
+  fails on the fix.
 - **Live proof, not yet taken:** `worker/e2e-live-test.mjs` has been brought up
   to today's contract and left **UNRUN**. `node worker/e2e-live-test.mjs --plan`
   prints the whole procedure and touches nothing.
@@ -84,9 +94,15 @@ The fix grades text by what it means:
   still in `production_items.original_filename` and the DAT's FILENAME column;
 - **load-bearing** text (the Bates number, an endorsement burned on the page as a
   legal designation) must read exactly as recorded, so it refuses with a message
-  naming the characters, and refuses **before** anything is drawn. The prefix is
-  constant across a production, so a bad prefix now costs zero Bates numbers
-  instead of half a range.
+  naming the characters, and refuses **before** anything is drawn.
+
+The zero-cost guarantee is complete for the **prefix** only: it is constant
+across a production, so a bad one now fails on the first document with no Bates
+numbers spent. An undrawable **endorsement** still fails at the first item
+carrying that tag, which may be item N — the refusal is clean and immediate, but
+items 1…N−1 are already in the registry. Pre-flighting endorsements before the
+stamp loop is a change to `stampProduction`, i.e. the worker, and belongs with
+F1.
 
 ### REPORTED, not fixed
 
@@ -152,9 +168,10 @@ document was left out. For a production that is a real exposure. Asserted.
 `worker:383` → `worker:1058`. `downloadFromStorage` does
 `Buffer.from(await blob.arrayBuffer())`, so the whole archive lands in memory
 before `fs.writeFile` puts it on disk; only after that does `node-stream-zip`
-read entries from the file. Measured on this machine in a clean Node 22 process,
-sampling RSS through the exact Blob → `arrayBuffer()` → `Buffer` → `writeFile`
-sequence:
+read entries from the file. Measured on this machine (Windows, **Node v24.14.0**
+— note CI and the worker image are Node 22, so treat these as indicative rather
+than the deployed figure) in a clean process, sampling RSS through the exact
+Blob → `arrayBuffer()` → `Buffer` → `writeFile` sequence:
 
 | archive | peak RSS above baseline | ratio |
 |---|---|---|
@@ -221,6 +238,12 @@ It also now refuses to guess a tenant (`DISCOVERY_E2E_SERVERSPACE` is required �
 it used to take `serverspaces.limit(1)`), skips rather than fails the corpus
 checks when there is no `OPENAI_API_KEY`, asserts 057's and 060's columns on
 every job it enqueues, continues Bates numbering from the matter's own
-high-water mark, and has a `--cleanup` that removes storage objects, corpus
+high-water mark, and has a `--cleanup` that walks the storage tree to full depth
+(the natives live a level below the item folder) and also removes the copies
+intake mirrors into `vault-documents` (`worker:579-581`), plus the corpus
 documents and job rows — and deliberately does not touch `bates_registry`,
 because a Bates number that has been assigned must never become reusable.
+
+One thing a green live run does **not** prove: it drives the worker **deployed
+on Fly**, and the fixtures are all ASCII, so it would have passed identically
+before and after the F0 fix. The offline harness is what covers the checkout.

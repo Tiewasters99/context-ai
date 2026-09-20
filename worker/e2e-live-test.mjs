@@ -42,6 +42,17 @@
 //      whose payload.local_path exists only on this laptop. It fails, and the
 //      worker sets the production to 'error' (worker:163-165).
 //
+// WHAT A PASS DOES *NOT* PROVE
+// ---------------------------------------------------------------------------
+// Queue mode drives the worker that is DEPLOYED on Fly. Worker-side code —
+// everything under lib/discovery/ and worker/ — only reaches production through
+// `flyctl deploy`, never through a Vercel merge. So a green run here says the
+// deployed image works; it says nothing about a fix sitting on main and not yet
+// deployed. The fixtures below are all ASCII, which in particular means this
+// test would have passed both before and after the 2026-09-20 WinAnsi fix in
+// lib/discovery/bates-stamp.mjs. `scripts/_verify-discovery-pipeline.mjs` is
+// what covers that, against the checkout rather than the deployment.
+//
 // WHAT IT LEAVES BEHIND, permanently
 // ---------------------------------------------------------------------------
 // Every run consumes Bates numbers in the sandbox matter and they can never be
@@ -363,9 +374,15 @@ check('production status -> review', prodAfterIntake.status === 'review', prodAf
 
 // Corpus ingestion is optional: processDocument throws without an OpenAI key
 // (lib/ingest-core.mjs:262), and a sealed matter holds it by design.
+//
+// Whose key matters. In queue mode the work ran on a Fly machine, so the
+// machine's OPENAI_API_KEY decides whether documents were linked — this
+// laptop's .env says nothing about it, and skipping on its absence would hide a
+// real failure of the deployed worker. Only --local-worker mode, where this
+// process IS the worker, may skip for a missing local key.
 const docIds = items.map((i) => i.document_id).filter(Boolean);
-if (!process.env.OPENAI_API_KEY) {
-  skip('display PDFs ingested into corpus', 'no OPENAI_API_KEY — intake stores and stamps, it does not index');
+if (LOCAL_WORKER && !process.env.OPENAI_API_KEY) {
+  skip('display PDFs ingested into corpus', 'no local OPENAI_API_KEY and this run used the local worker');
 } else if (SANDBOX_SEALED) {
   skip('display PDFs ingested into corpus', 'sandbox matter is sealed; the seal holds indexing');
 } else {
@@ -575,26 +592,40 @@ async function cleanup() {
     .select('id, name, status').eq('matterspace_id', m.id).like('name', 'E2E Test Production%');
   console.log(`cleanup: ${prods?.length ?? 0} E2E production(s) in ${m.name}`);
 
-  for (const p of prods ?? []) {
-    const { data: objs } = await supabase.storage.from('discovery-files').list(`${m.id}/${p.id}`, { limit: 1000 });
-    let removed = 0;
-    for (const dir of objs ?? []) {
-      const { data: inner } = await supabase.storage.from('discovery-files').list(`${m.id}/${p.id}/${dir.name}`, { limit: 1000 });
-      const paths = (inner ?? []).map((f) => `${m.id}/${p.id}/${dir.name}/${f.name}`);
-      if (paths.length) {
-        await supabase.storage.from('discovery-files').remove(paths);
-        removed += paths.length;
-      }
+  // Storage is nested deeper than two levels: the per-item folder holds
+  // native/<file> as well as display.pdf and stamped.pdf, so a two-level walk
+  // leaves the natives behind. Walk it properly — a Supabase list() entry with
+  // no id is a folder.
+  async function removeTree(bucket, prefix) {
+    const { data: entries, error } = await supabase.storage.from(bucket).list(prefix, { limit: 1000 });
+    if (error || !entries?.length) return 0;
+    const files = entries.filter((e) => e.id).map((e) => `${prefix}/${e.name}`);
+    let n = 0;
+    if (files.length) {
+      const { error: rmErr } = await supabase.storage.from(bucket).remove(files);
+      if (!rmErr) n += files.length;
     }
+    for (const dir of entries.filter((e) => !e.id)) n += await removeTree(bucket, `${prefix}/${dir.name}`);
+    return n;
+  }
+
+  for (const p of prods ?? []) {
+    const removed = await removeTree('discovery-files', `${m.id}/${p.id}`);
     const { data: pItems } = await supabase.from('production_items')
       .select('document_id').eq('production_id', p.id).not('document_id', 'is', null);
     const docIds = (pItems ?? []).map((i) => i.document_id);
+    // intake mirrors every ingested display PDF into vault-documents so the
+    // Reader and the MCP tools can see it (worker:579-581). Those objects are
+    // in a different bucket and would otherwise be missed entirely.
+    let mirrored = 0;
+    for (const id of docIds) mirrored += await removeTree('vault-documents', `${m.id}/${id}`);
     if (docIds.length) {
       await supabase.from('passages').delete().in('document_id', docIds);
       await supabase.from('documents').delete().in('id', docIds);
     }
     await supabase.from('processing_jobs').delete().eq('production_id', p.id);
-    console.log(`  ${p.name}: ${removed} storage object(s), ${docIds.length} corpus document(s), jobs removed`);
+    console.log(`  ${p.name}: ${removed} discovery-files object(s), ${mirrored} vault-documents object(s), `
+      + `${docIds.length} corpus document(s), jobs removed`);
   }
   console.log('\nNOT removed, deliberately:');
   console.log('  * bates_registry rows — production_id/production_item_id are ON DELETE RESTRICT');

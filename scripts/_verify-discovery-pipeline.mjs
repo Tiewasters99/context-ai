@@ -76,6 +76,14 @@ const check = (ok, label, detail = '') => {
   console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? '  — ' + detail : ''}`);
   if (!ok) failures += 1;
 };
+// A note, not a verdict. The drift guards use it for facts that are true today
+// and that another lane is expected to change: a guard that goes red when
+// someone FIXES something is a trap for the next builder, not a test.
+let warnings = 0;
+const warn = (label, detail = '') => {
+  console.log(`  WARN  ${label}${detail ? '  — ' + detail : ''}`);
+  warnings += 1;
+};
 const section = (title) => console.log(`\n--- ${title} ${'-'.repeat(Math.max(2, 62 - title.length))}`);
 
 // PGlite prints its whole bundled source on an uncaught error, which buries the
@@ -1060,27 +1068,39 @@ check(heldProdRow.status === 'processing',
 section('drift guards: the worker still matches what section 3-7 transcribes');
 const workerSrc = fs.readFileSync(path.resolve(ROOT, 'worker', 'discovery-worker.mjs'), 'utf8');
 const dispatched = [...workerSrc.matchAll(/case '([a-z_]+)': return \w+\(job\);/g)].map((m) => m[1]);
-check(dispatched.join(',') === 'intake_zip,intake_files,intake_folder,stamp_production,package_production,ingest_document',
-  'dispatch() still routes exactly the six job types this harness models', dispatched.join(','));
-check((workerSrc.match(/setProductionStatus\(prod\.id, 'review'\)/g) || []).length === 3,
-  "all three intake paths still end at production status 'review'");
+const MODELLED = ['intake_zip', 'intake_files', 'intake_folder', 'stamp_production', 'package_production', 'ingest_document'];
+// A SUPERSET check on purpose. Another lane adding a job type must not turn
+// this red; a lane REMOVING one this harness drives must.
+check(MODELLED.every((t) => dispatched.includes(t)),
+  'dispatch() still routes every job type this harness models', dispatched.join(','));
+if (dispatched.length > MODELLED.length) {
+  warn('dispatch() has job types this harness does not model yet',
+    dispatched.filter((t) => !MODELLED.includes(t)).join(', '));
+}
+check((workerSrc.match(/setProductionStatus\(prod\.id, 'review'\)/g) || []).length >= 3,
+  "every intake path still ends at production status 'review'");
 check(/order by priority desc, created_at/.test(fs.readFileSync(path.resolve(ROOT, 'supabase/migrations/057_processing_jobs_priority.sql'), 'utf8')),
   'the claim order this harness asserts is the one 057 installs');
 check(/claim_discovery_job/.test(workerSrc) && /p_worker: WORKER_ID/.test(workerSrc),
   'the worker still claims through claim_discovery_job(p_worker)');
 check(/from\('bates_registry'\)\.insert\(rows\.slice/.test(workerSrc),
   'stamping still writes bates_registry rows in batches, one row per page');
-// Known gap, asserted so the check flips the day someone fixes it.
+// A WARN, never a failure: this is a defect someone is meant to fix, and a
+// check that went red on the fix would be a trap for whoever fixed it.
 const cliBlock = workerSrc.slice(workerSrc.indexOf('async function directFolderIntake'));
-check(/status: 'running'/.test(cliBlock) && !/withHeartbeat/.test(cliBlock.slice(0, 1200)),
-  'KNOWN GAP (still present): directFolderIntake inserts its job as running and calls intakeFolder '
-  + 'outside withHeartbeat (worker:1002-1015) — only per-file progress() refreshes heartbeat_at, so a '
-  + "single slow file lets 044's reaper requeue it and a Fly worker then claims an intake_folder job "
-  + 'whose local_path exists only on the operator\'s laptop. Flip this check when it is fixed.');
+if (/status: 'running'/.test(cliBlock) && !/withHeartbeat/.test(cliBlock.slice(0, 1200))) {
+  warn('KNOWN GAP still present: directFolderIntake inserts its job as running and calls intakeFolder '
+    + 'outside withHeartbeat (worker:1002-1015) — only per-file progress() refreshes heartbeat_at, so a '
+    + "single slow file lets 044's reaper requeue it and a Fly machine then claims an intake_folder job "
+    + "whose local_path exists only on the operator's laptop");
+} else {
+  console.log('  PASS  the --intake CLI path is heartbeat-protected now (the 2026-09-20 KNOWN GAP is closed)');
+  checks += 1;
+}
 
 // ---------------------------------------------------------------------------
 await fsp.rm(tmp, { recursive: true, force: true });
 console.log(`\n${failures === 0
-  ? `Discovery pipeline verified offline: ${checks} checks passed.`
+  ? `Discovery pipeline verified offline: ${checks} checks passed${warnings ? `, ${warnings} warning(s)` : ''}.`
   : `${failures} FAILURE(S) of ${checks} checks`}\n`);
 process.exit(failures === 0 ? 0 : 1);
