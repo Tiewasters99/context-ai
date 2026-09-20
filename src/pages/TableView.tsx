@@ -4,6 +4,7 @@ import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare 
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import type { EmbeddableViewProps } from '@/lib/canvas';
@@ -101,7 +102,7 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
   const id = propId ?? params.id;
   const navigate = useNavigate();
   // Per-table geometry — see the matching note in ListView.
-  const { cardRef, toggleFullscreen } = useDraggableResizable(
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable(
     embedded || !id ? undefined : `cs.tableview.card.${id}`,
     { boundToViewport: true },
   );
@@ -375,6 +376,8 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            {/* Fix in place. See the note in PageView. */}
+            {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <CanvasPinToggle kind="table" id={id} title={title || item?.title || 'Untitled Table'} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>

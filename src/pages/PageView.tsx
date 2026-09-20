@@ -5,6 +5,7 @@ import { pageToDocxBlob, downloadBlob, safeFilename } from '@/lib/export-page';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import type { EmbeddableViewProps } from '@/lib/canvas';
@@ -22,7 +23,7 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
   const id = propId ?? params.id;
   const navigate = useNavigate();
   // Per-page geometry — see the matching note in ListView.
-  const { cardRef, toggleFullscreen, isMobile } = useDraggableResizable(
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable(
     embedded || !id ? undefined : `cs.pageview.card.${id}`,
     { boundToViewport: true },
   );
@@ -188,7 +189,7 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
       />
 
       <div ref={cardRef} className={`max-w-4xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 ${isMobile ? 'px-4 py-6' : 'px-8 pt-0 pb-8 cursor-grab select-none'}`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
-        {/* Close + drag handle + pin to canvas + fullscreen */}
+        {/* Close + drag handle + Pin (fix in place) + Keep open + fullscreen */}
         <div className="md:sticky md:top-0 z-20 flex items-center justify-between -mx-4 px-4 pt-0 md:-mx-8 md:px-8 md:pt-6 pb-3 mb-4 rounded-t-xl border-b border-[rgba(255,255,255,0.08)] bg-[rgba(10,10,18,0.95)] backdrop-blur-[30px]">
           <button
             onClick={() => (onClose ? onClose() : navigate(-1))}
@@ -208,6 +209,10 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
               <Download size={14} strokeWidth={2} />
             </button>
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            {/* Pin sits next to Keep open so the two read as the pair they
+                are. Not in a panel (the panel owns its own geometry) and not
+                on a phone, where the card does not float at all. */}
+            {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <CanvasPinToggle kind="page" id={id} title={title || item?.title || 'Untitled Page'} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>
