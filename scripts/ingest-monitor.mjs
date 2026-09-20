@@ -17,6 +17,11 @@
 //      ready_but_empty(); degrades gracefully until it is pasted. Text-bearing
 //      extensions escalate; images/media and deliberate duplicates count as
 //      known-benign. --no-empty-check skips it.
+//   5. no worker heartbeat for 10 minutes (migration 066's worker_heartbeats).
+//      Checks 1–4 all infer the worker's health from its WORK, so on a quiet
+//      night a dead worker and an empty queue are the same picture. A worker
+//      beats whether or not it has a job, so this is the only check that fires
+//      during the silence. Degrades to a note until 066 is pasted.
 //
 // What it does about it:
 //   default        report only
@@ -114,6 +119,8 @@ async function main() {
   const matterId = args.matter ? await resolveMatter(sb, args.matter) : null;
   const cutoff = new Date(Date.now() - STALE_MIN * 60_000).toISOString();
 
+  const workers = await fetchWorkerLiveness(sb);
+
   const [errored, stalled, jobs, readyEmpty, ocrPending] = await Promise.all([
     fetchDocs(sb, matterId, (q) => q.eq('processing_status', 'error')),
     fetchDocs(sb, matterId, (q) => q.in('processing_status', TRANSIENT).lt('updated_at', cutoff)),
@@ -150,13 +157,13 @@ async function main() {
   const escalate = report.groups.filter((g) => !MUTED.reasons.includes(g.cls));
   const escalatedClasses = new Set(escalate.map((g) => g.cls));
   const escalatedRows = rows.filter((r) => escalatedClasses.has(r.cls));
-  const needsAttention = escalate.some((g) => g.severity === 'blocking') || jobs.length > 0;
+  const needsAttention = escalate.some((g) => g.severity === 'blocking') || jobs.length > 0 || workers.down;
 
   if (QUIET && !needsAttention && report.total === 0) process.exit(0);
 
   const text = render({
     report, escalate, escalatedRows, jobs, matter: args.matter,
-    staleMin: STALE_MIN, emptyNote: readyEmpty.note, allowed: parseFilenameOwners(),
+    staleMin: STALE_MIN, emptyNote: readyEmpty.note, allowed: parseFilenameOwners(), workers,
   });
   if (!QUIET || needsAttention) console.log(text);
 
@@ -166,8 +173,9 @@ async function main() {
   // only signal Task Scheduler keeps. Found 2026-09-04: Gmail refused the app
   // password ("534-5.7.9 Please log in with your web browser") and every
   // scheduled run would have reported 2 with the real answer thrown away.
+  const alert = alertHeadline({ workers, stalledCount: stalled.length, staleMin: STALE_MIN });
   if (args.email && (needsAttention || !QUIET)) {
-    try { await emailDigest(text, needsAttention); }
+    try { await emailDigest(text, needsAttention, alert); }
     catch (e) { console.error(`(--email failed: ${String(e.message || e).split('\n')[0]} — digest printed above, not sent)`); }
   }
 
@@ -191,6 +199,42 @@ async function fetchDocs(sb, matterId, apply) {
     out.push(...data);
     if (data.length < 1000) return out;
   }
+}
+
+// Proof of life for the worker itself (migration 066). Every other check here
+// infers the worker's health from its WORK — which cannot distinguish "the
+// worker is down" from "nobody uploaded anything", and on a quiet night those
+// look identical. A worker beats once a minute whether or not there is a job,
+// so this is the one check that fires while the queue is empty, which is
+// exactly when the damage is being done invisibly.
+//
+// Degrades the way fetchReadyEmpty does: a missing table is "unavailable —
+// paste migration 066", never an alert. A watchdog that cries about its own
+// dependencies gets muted, and then it protects nothing.
+const WORKER_ALIVE_MINUTES = 10;
+async function fetchWorkerLiveness(sb) {
+  const { data, error } = await sb.from('worker_heartbeats')
+    .select('worker_id, machine_id, worker_release, started_at, last_beat_at, last_job_at, jobs_done')
+    .order('last_beat_at', { ascending: false })
+    .limit(20);
+  if (error) {
+    const missing = /could not find|does not exist|PGRST205|42P01|404/i.test(error.message);
+    return { available: false, down: false, rows: [], note: missing ? 'unavailable — paste migration 066' : `failed: ${error.message}` };
+  }
+  const rows = data || [];
+  const cutoff = Date.now() - WORKER_ALIVE_MINUTES * 60_000;
+  const alive = rows.filter((r) => Date.parse(r.last_beat_at) > cutoff);
+  return {
+    available: true,
+    // Never beaten at all is not "down": it is a worker that has not yet been
+    // deployed with the heartbeat. Saying "DOWN" there would make the first
+    // alert a false one, which is how an alert channel dies.
+    down: rows.length > 0 && alive.length === 0,
+    everBeaten: rows.length > 0,
+    alive: alive.length,
+    rows,
+    note: null,
+  };
 }
 
 async function fetchStuckJobs(sb, cutoff) {
@@ -417,12 +461,39 @@ export function ownerCounts(rows) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
 }
 
-export function render({ report, escalate, escalatedRows = [], jobs, matter, staleMin, emptyNote, allowed = new Set() }) {
+export function render({ report, escalate, escalatedRows = [], jobs, matter, staleMin, emptyNote, allowed = new Set(), workers = null }) {
   const L = [];
   const scope = matter ? `matter "${matter}"` : 'all matters';
   L.push(`Contextspaces ingestion health — ${scope}`);
   L.push(new Date().toISOString());
   L.push('');
+
+  // Said FIRST, and said even on an otherwise perfectly green night: a dead
+  // worker with an empty queue produces no stuck documents and no stuck jobs,
+  // so every other line below would read "healthy" while nothing at all was
+  // being processed. That silence is the failure this block exists to break.
+  if (workers && workers.available) {
+    if (workers.down) {
+      const newest = workers.rows[0];
+      const mins = newest ? Math.round((Date.now() - Date.parse(newest.last_beat_at)) / 60_000) : null;
+      L.push(`WORKER DOWN: no ingestion worker has reported in for ${mins ?? '?'} minutes.`);
+      L.push('  Nothing is being processed. Every upload since then is sitting in the queue.');
+      L.push('  Check:   flyctl status -a contextspaces-worker');
+      L.push('  Restart: flyctl machine restart -a contextspaces-worker');
+      if (newest) L.push(`  Last seen: ${newest.worker_id} (${newest.machine_id || '—'}) at ${newest.last_beat_at}`);
+      L.push('');
+    } else if (workers.everBeaten) {
+      const newest = workers.rows[0];
+      L.push(`Worker: ${workers.alive} alive · last beat ${newest.last_beat_at}${newest.worker_release ? ` · ${newest.worker_release}` : ''}`);
+      L.push('');
+    } else {
+      L.push('Worker: no heartbeat has ever been recorded — deploy the Fly worker with the 066 heartbeat.');
+      L.push('');
+    }
+  } else if (workers && workers.note) {
+    L.push(`Worker liveness: ${workers.note}`);
+    L.push('');
+  }
 
   // The headline counts only what needs eyes. Before 059 this said "All
   // documents are ready" over an index that was 60.5% searchable — the benign
@@ -483,17 +554,47 @@ export function render({ report, escalate, escalatedRows = [], jobs, matter, sta
   return L.join('\n');
 }
 
-async function emailDigest(text, needsAttention) {
+// The two conditions that are worth waking someone for — a worker that has
+// stopped, and a document nobody is processing — go out on the SAME Gmail
+// transport as the routine digest, with the fact in the SUBJECT line. No new
+// vendor, no paid tier, and nothing to rotate.
+//
+// The subject matters more than the body here: set
+//
+//   INGEST_ALERT_TO=5551234567@vtext.com        (or any other address)
+//
+// and an urgent digest also goes there. Carrier email-to-SMS gateways deliver
+// the subject and truncate the body, which is why the subject carries the
+// whole fact. Unset, everything goes where it goes today. Comma-separated for
+// more than one. Routine digests never go to this list — an alert channel that
+// carries routine traffic is an alert channel that gets muted.
+export function alertHeadline({ workers, stalledCount, staleMin }) {
+  if (workers && workers.available && workers.down) {
+    const newest = workers.rows[0];
+    const mins = newest ? Math.round((Date.now() - Date.parse(newest.last_beat_at)) / 60_000) : null;
+    return `WORKER DOWN ${mins ?? '?'}m — nothing is processing`;
+  }
+  if (stalledCount > 0) return `${stalledCount} document(s) stuck > ${staleMin}m`;
+  return null;
+}
+
+async function emailDigest(text, needsAttention, alert = null) {
   const to = process.env.GMAIL_ADDRESS;
   const pass = process.env.GMAIL_APP_PASSWORD;
   if (!to || !pass) return console.log('\n(--email skipped: GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set)');
   const { default: nodemailer } = await import('nodemailer');
   const t = nodemailer.createTransport({ service: 'gmail', auth: { user: to, pass } });
-  const subject = needsAttention
-    ? 'Contextspaces: ingestion needs attention'
-    : 'Contextspaces: ingestion healthy';
-  await t.sendMail({ from: to, to, subject, text });
-  console.log(`\nDigest emailed to ${to}`);
+  const subject = alert
+    ? `Contextspaces ALERT: ${alert}`
+    : needsAttention
+      ? 'Contextspaces: ingestion needs attention'
+      : 'Contextspaces: ingestion healthy';
+  const extra = alert
+    ? String(process.env.INGEST_ALERT_TO || '').split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+  const recipients = [to, ...extra];
+  await t.sendMail({ from: to, to: recipients.join(', '), subject, text });
+  console.log(`\nDigest emailed to ${recipients.join(', ')}`);
 }
 
 // -----------------------------------------------------------------------------

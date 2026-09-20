@@ -9,6 +9,14 @@ on every PR.
 needs `.env`. A harness that needs a key or a live database is not in CI —
 those are listed under [Deliberately not in CI](#deliberately-not-in-ci).
 
+**The other workflow.** `.github/workflows/ingest-nightly.yml` is scheduled,
+not per-PR: an hourly liveness watch (no secrets), a six-hourly ingestion
+monitor and the nightly ingestion suite (both secret-bearing, and both skipping
+with a notice when the secrets are absent). It is documented on its own in
+[docs/INGEST_MONITORING.md](INGEST_MONITORING.md) — including which repository
+secrets to add and the trade-off in putting a service-role key in GitHub. It
+does not run here and nothing in `ci.yml` depends on it.
+
 ## What runs
 
 | Step | Command | Notes |
@@ -38,9 +46,11 @@ Then the fourteen offline harnesses, one step each, each with
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
+| `_verify-ingest-day-one.mjs` | Day one for a new paying user: accepted/refused types, serverless-budget routing, the suite's deadlines and checkpoint, digest privacy. Runs `_verify-ocr-routes.mjs` as a child and asserts its exit code. | Pure computation plus stubbed fetch; reads no `.env`. |
+| `_verify-worker-heartbeat.mjs` | Migration 066 — the worker heartbeat, the aggregate liveness functions, **two tenants each seeing only their own queue numbers**, the worker hunk swallowing every kind of heartbeat failure, the sentence the Vault shows, and the nightly workflow's own YAML. | PGlite for the migration; a stub client for the worker hunk; Node type stripping for `src/lib/ingest-service-notice.ts`; and it spawns `ingest-suite.mjs --dry-run`, which exits before the first request. |
 
-All fourteen were executed on `main` at `b97d6c6` before the workflow was
-written; all fourteen exit 0. The PGlite harnesses finish in ~1.5 s each.
+All were executed before being added, each exits 0, and the PGlite harnesses
+finish in ~1.5 s each.
 
 ### Lint is non-blocking, for now
 

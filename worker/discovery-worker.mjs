@@ -48,6 +48,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import {
@@ -118,10 +119,28 @@ log(`Discovery worker ${WORKER_ID} started (poll ${POLL_MS}ms${args.once ? ', --
 let lastRecoverAt = 0;
 let lastOcrSweepAt = 0;
 
+// Proof of life (migration 066). `processing_jobs.heartbeat_at` only beats
+// while a job is held, so an idle worker and a dead one look identical — which
+// is why an uploaded document could sit in 'pending' forever with nobody
+// alerted. This writes one row per worker process, ~every 60 s and on every
+// completion. beat() is synchronous, never throws and is never awaited: a
+// heartbeat that cannot be written (066 not pasted yet, network blip) must
+// never stop the worker, and one that hangs must never stall the queue. The
+// rules live in lib/worker-heartbeat.mjs, where they can be tested.
+const heartbeat = createHeartbeat({
+  client: supabase,
+  workerId: WORKER_ID,
+  machineId: process.env.FLY_MACHINE_ID || os.hostname(),
+  release: process.env.FLY_IMAGE_REF || process.env.FLY_RELEASE_VERSION || null,
+  log,
+});
+heartbeat.beat({ force: true });
+
 for (;;) {
   const job = await claimJob();
   if (!job) {
     if (args.once) break;
+    heartbeat.beat();
     await recoverStrandedIfDue();
     await requeueOcrPendingIfDue();
     await sleep(POLL_MS);
@@ -133,6 +152,7 @@ for (;;) {
     await supabase.from('processing_jobs')
       .update({ status: 'done', progress: 100, finished_at: new Date().toISOString() })
       .eq('id', job.id);
+    heartbeat.beat({ force: true, jobDone: true });
     log(`[job ${job.id}] done`);
   } catch (err) {
     if (err?.isWatchdog) {

@@ -15,6 +15,12 @@
 //     --deadline-min=N    whole-run budget (default 60; the = form is required
 //                         because the first bare argument is the matter)
 //     --gate-min=N        per-gate budget (default 15)
+//     --dry-run           resolve flags, paths and credential PRESENCE, print
+//                         them, exit 0. No network, no database, no provider.
+//
+// Config: `.env` at the repo root when there is one, otherwise the process
+// environment — so this runs on a GitHub Actions runner (which has no `.env`)
+// exactly as it runs on a laptop. See .github/workflows/ingest-nightly.yml.
 //
 // Deadlines (2026-09-20). On 2026-09-18 this suite hung inside a gate and was
 // still hanging two and a half hours later; it wrote no line to the jsonl, so
@@ -79,11 +85,27 @@ import { withDeadline, startOverallDeadline, writeCheckpoint } from './_suite-de
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const env = Object.fromEntries(
-  fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)
-    .filter((l) => /^[A-Z_]+=/.test(l))
-    .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
-);
+// Config comes from `.env` when there is one, and from the process environment
+// otherwise — which is the whole reason this suite can now run somewhere other
+// than Eden's laptop. A GitHub Actions runner has no `.env` at all, and before
+// 2026-09-20 the readFileSync below threw ENOENT at import, so the suite could
+// only ever run from a checkout that held production secrets on disk. The
+// environment wins where both are set, because that is the direction a CI
+// secret travels.
+const env = (() => {
+  let fromFile = {};
+  try {
+    fromFile = Object.fromEntries(
+      fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)
+        .filter((l) => /^[A-Z_]+=/.test(l))
+        .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
+    );
+  } catch { /* no .env: the environment is the only source, which is correct on CI */ }
+  const fromEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([, v]) => typeof v === 'string' && v !== ''),
+  );
+  return { ...fromFile, ...fromEnv };
+})();
 const present = (v) => Boolean(v) && v !== 'PASTE';
 const argv = process.argv.slice(2);
 const flag = (f) => argv.includes(f);
@@ -95,7 +117,7 @@ const numFlag = (name, dflt) => {
   return Number.isFinite(n) && n > 0 ? n : dflt;
 };
 const matterArg = argv.find((a) => !a.startsWith('--'));
-if (!matterArg) { console.error('usage: node scripts/ingest-suite.mjs <scratch matter short_code|uuid> [--email] [--skip-heavy] [--no-g6] [--no-g9] [--keep] [--deadline-min=N] [--gate-min=N]'); process.exit(2); }
+if (!matterArg) { console.error('usage: node scripts/ingest-suite.mjs <scratch matter short_code|uuid> [--email] [--skip-heavy] [--no-g6] [--no-g9] [--keep] [--deadline-min=N] [--gate-min=N] [--dry-run]'); process.exit(2); }
 const SKIP_HEAVY = flag('--skip-heavy');
 const KEEP = flag('--keep');
 // Calibrated against the runs actually recorded in logs/ingest-suite.jsonl:
@@ -112,6 +134,30 @@ const GATE_MS = numFlag('gate-min', 15) * 60_000;
 // server-side copy of the 200 MB record is one of them; the per-gate budget
 // is what catches anything slower than this.
 const REQUEST_TIMEOUT_MS = 4 * 60_000;
+
+// --dry-run: resolve everything that can be resolved without a network — the
+// flags, the deadlines, the paths, which credentials are present — print it,
+// and stop before the first request. It exists so the workflow that runs this
+// suite on Linux can be proved to invoke it correctly WITHOUT a scratch
+// matter, a service-role key, or a single paid call: the class of failure it
+// catches is a path separator, a missing env var name, or a flag the runner
+// spells differently, all of which used to surface at 03:00 as a red night.
+// Exits 0 whatever it finds; it is a parse check, not a health check.
+if (flag('--dry-run')) {
+  const needed = ['VITE_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GMAIL_ADDRESS', 'GMAIL_APP_PASSWORD', 'SMOKE_CREATED_BY'];
+  console.log('ingest-suite --dry-run (no network, no database, no provider calls)');
+  console.log(`  platform         ${process.platform} · node ${process.versions.node}`);
+  console.log(`  repo root        ${ROOT}`);
+  console.log(`  log file         ${path.join(ROOT, 'logs', 'ingest-suite.jsonl')}`);
+  console.log(`  checkpoint       ${path.join(ROOT, 'logs', 'ingest-suite-checkpoint.json')}`);
+  console.log(`  matter argument  ${matterArg}`);
+  console.log(`  deadline         ${DEADLINE_MS / 60_000} min overall · ${GATE_MS / 60_000} min per gate`);
+  console.log(`  flags            skip-heavy=${SKIP_HEAVY} keep=${KEEP} no-g6=${flag('--no-g6')} no-g9=${flag('--no-g9')} email=${flag('--email')}`);
+  // Presence only — never a value, never a prefix, never a length.
+  for (const k of needed) console.log(`  ${k.padEnd(28)} ${present(env[k]) ? 'present' : 'ABSENT'}`);
+  process.exit(0);
+}
+
 const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
   global: { fetch: (url, init = {}) => fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) }) },

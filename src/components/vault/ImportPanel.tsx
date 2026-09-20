@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useMemo } from 'react';
 import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
+import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import ContentSearch from './ContentSearch';
 
 interface ImportPanelProps {
@@ -16,6 +17,13 @@ interface ImportPanelProps {
   onOpenDocument?: (documentId: string) => void;
   /** Persistent mode: scope content search to this matter tree. */
   matterId?: string;
+  /**
+   * Whether the ingestion pipeline is actually running (migration 066), or
+   * null when it cannot be known — which is the state before 066 is applied,
+   * and the state this panel must treat exactly as it treated everything
+   * before this prop existed: spinner, no extra words.
+   */
+  ingestService?: IngestServiceStatus | null;
 }
 
 const statusIcon = {
@@ -89,7 +97,7 @@ function friendlyIngestError(msg: string): string {
   return msg;
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -223,8 +231,23 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   const openable = (file: VaultFile) =>
     !!onOpenFile && (file.status === 'indexed' || file.status === 'error');
 
+  // One sentence, computed once for the whole panel: every document waiting on
+  // the pipeline is waiting on the same pipeline, so the answer cannot differ
+  // between rows. Null while everything is normal, and null whenever the
+  // pipeline's state cannot be known — which is what makes this change
+  // invisible until migration 066 is applied.
+  const serviceNotice = useMemo(() => ingestServiceNotice(ingestService), [ingestService]);
+
   const renderFileRow = (file: VaultFile) => {
     const canOpen = openable(file);
+    // Only on a row that is genuinely waiting on the SERVER: bytes have landed
+    // (storagePath) and no terminal state has been reached. A file still
+    // uploading from this browser is not the pipeline's business, and an
+    // ephemeral no-matter file never reaches the pipeline at all.
+    const showServiceNotice = Boolean(
+      serviceNotice && file.matterspace_id && file.storagePath &&
+      (file.status === 'uploading' || file.status === 'indexing'),
+    );
     return (
     <div
       key={file.id}
@@ -277,6 +300,16 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
         {file.status === 'uploading' && file.errorMessage && (
           <p className="text-[10px] text-[#e8b84a]/80 truncate" title={file.errorMessage}>
             {friendlyIngestError(file.errorMessage)}
+          </p>
+        )}
+        {/* Nothing is processing, or the queue is long: say which, in words,
+            rather than spinning. The alternative — an endless spinner — is
+            what makes a person delete the document and upload it again, which
+            queues a second copy behind the first. Not truncated: this one is
+            meant to be read. */}
+        {showServiceNotice && (
+          <p className={`text-[10px] ${serviceNotice!.tone === 'paused' ? 'text-[#e8b84a]/90' : 'text-white/50'}`}>
+            {serviceNotice!.text}
           </p>
         )}
       </div>

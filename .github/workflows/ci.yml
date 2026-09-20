@@ -143,3 +143,13 @@ jobs:
       - name: Ingestion — day one (types, routing, suite deadlines, digest privacy, OCR routes)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ingest-day-one.mjs
+
+      # Migration 066 + the worker's heartbeat + the sentence the Vault shows
+      # while a document is processing + the nightly workflow itself. The
+      # tenant boundary is the point: two signed-in users, each seeing only
+      # their own queue numbers. It also runs `ingest-suite.mjs --dry-run` as a
+      # child process, which is how this job proves the nightly suite can be
+      # invoked on Linux with no `.env` at all.
+      - name: Ingestion — worker liveness (migration 066, PGlite + offline)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-worker-heartbeat.mjs
