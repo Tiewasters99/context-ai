@@ -248,6 +248,15 @@ jobs:
         run: |
           node scripts/_verify-bucketizer-evidence.mjs
           node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-outline.mjs
+
+      # Choosing what to classify: one predicate behind both the count and the
+      # chooser, strict matter isolation, a sealed matter's held-but-readable
+      # documents, the pleadings the tree was built from, and what a re-run may
+      # write (never a decision, never a delete). Offline: the model and the
+      # database are stubbed and the rules themselves are pure functions.
+      - name: Bucketizer — choosing documents, and what a re-run may write
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
       # The Vault's own read, at 2,500 and 12,000 documents with every
       # created_at tied — the dropped-folder case that makes an untiebroken
       # `.range()` loop lose rows. Offline: PostgREST is stubbed.
@@ -294,3 +303,12 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-card-pin.mjs
+      # What the Assistant panel SAYS on a sealed matter before the first
+      # message: the scope strip, the pen named in advance (and corrected when
+      # the server names another), the word-search note, the pause, the
+      # starters, the matter header's door, and the panel's pin/position
+      # record. Pure modules plus narrow source assertions for the wiring — no
+      # loader needed, nothing mounted, no network.
+      - name: Assistant — a sealed matter says where it is and who answers
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-sealed-assistant-scope.mjs
