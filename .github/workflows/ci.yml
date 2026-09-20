@@ -171,6 +171,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # The offline stand-in for worker/e2e-live-test.mjs, which cannot run here
+      # (prod database, service role). Executes 030 + 032 + 044 + 045 + 055 +
+      # 057 + 058 + 059 + 060 in PGlite and drives the real lib/discovery engine
+      # over a synthetic production with storage stubbed. It also greps the
+      # worker source for the invariants it transcribes, so a rewrite of the
+      # worker's stamp or intake loop turns this red instead of drifting away
+      # from the thing it claims to verify.
+      - name: Discovery — intake → stamp → package → deliver (PGlite, stubbed storage)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-discovery-pipeline.mjs
       # Day one for a new paying user: which file types are accepted or
       # refused (and whether the refusal names an alternative), whether a
       # mid-size document may run on the 60 s serverless budget, that the
