@@ -61,11 +61,45 @@
 //      forward carries the clamped body; the sealed route builds its own
 //      body after the clamp has run, so it is handed the same ceiling and
 //      clamps the allowance it builds for itself.
+//
+// The matter's RECORD (2026-09-20, migration 064 + 073). This handler was
+// gated, sealed and metered, and it wrote NOTHING into the matter's Record —
+// so a sealed Bucketizer classification could run in production and the
+// matter's Record would not know it had happened. For a product whose pitch
+// is that a lawyer can show a court how AI was used on a matter, that is a
+// hole. A matter-bound call now writes two rows (lib/llm-record.mjs):
+//
+//   … → meter → clamp → RECORD(requested) → send → RECORD(received)
+//
+//   5. The `requested` row sits AFTER the seal decision, so it names the pen
+//      that will actually answer rather than the one the browser asked for,
+//      and AFTER the clamp, so it names the allowance that was actually
+//      granted. It sits BEFORE the send, which is the whole point: on a
+//      SEALED matter that write is strict, so "no record, no answer" is kept
+//      without buffering a stream — if it fails, the call is refused with
+//      ZERO provider requests. On an unsealed matter it is best-effort and
+//      can never be the reason a call fails.
+//   6. Every refusal this handler can issue once a matter and a signed-in
+//      caller are known — a tier violation, a paused matter (070), an
+//      untranslatable sealed request, an unprovisioned sealed pen, a spent
+//      wallet or a full rate window (402/429) — leaves a truthful `refused`
+//      row. The refusal is sent FIRST and the row written after, so recording
+//      adds no latency to a "no".
+//   7. The `received` row is always best-effort, sealed or not: by then the
+//      undeletable row already exists and the answer has already gone out.
+//
+// Nothing about what LEAVES this handler changes. The feature label rides in
+// the request envelope beside `provider`/`model`/`matterId`; the bytes
+// forwarded upstream are `body`, verbatim, exactly as before.
 
 import { gateLlmRequest } from '../lib/ai-tier-policy.mjs';
 import { sealedRouteFor } from '../lib/llm-sealed-route.mjs';
 import { consumeUsage, recordActualUsage, sendUsageRefusal, clampMaxTokens } from '../lib/usage-meter.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
+import {
+  ledgerClientFor, newCallId, normalizeFeature,
+  recordLlmReceived, recordLlmRequested, exchangeUnrecordedRefusal,
+} from '../lib/llm-record.mjs';
 
 // The ceiling that applies even when the meter cannot answer. Vercel's own
 // request limit is well under this; it exists so "the meter is down" can never
@@ -120,17 +154,44 @@ export default async function handler(req, res) {
   if (!parsed || typeof parsed !== 'object') return json(res, 400, { error: 'invalid_body' });
   const { provider, model, body, apiKey, matterId } = parsed;
 
+  // WHICH FEATURE MADE THIS CALL. A request-envelope field, never part of
+  // `body`: the bytes forwarded to the provider are `body` verbatim, so adding
+  // this changes nothing about what leaves. Validated against an allow-list
+  // server-side (lib/llm-record.mjs) — a caller must not be able to write
+  // arbitrary text into a row nobody can ever delete — and anything else is
+  // recorded as 'unspecified' rather than refused: a mislabelled call is not a
+  // reason to stop a lawyer's work.
+  const feature = normalizeFeature(parsed.feature);
+  const callId = newCallId();
+  // Ids only, and only when the client supplies them. uuidList() in
+  // lib/ledger.mjs drops the list to its size unless EVERY element is a uuid.
+  const documentIds = Array.isArray(parsed.documentIds) ? parsed.documentIds : null;
+
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
+  const bearerToken = (req.headers.authorization || '').replace(/^bearer\s+/i, '').trim();
+
   const route = PROVIDER_ROUTES[provider];
   if (!route) return json(res, 400, { error: `unknown_provider: ${provider}` });
 
   const gate = await gateLlmRequest({
-    supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
-    anonKey: process.env.VITE_SUPABASE_ANON_KEY,
+    supabaseUrl,
+    anonKey,
     serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     bearer: req.headers.authorization,
     provider,
     matterId,
   });
+
+  // The Record's client is the CALLER's, never the service role: the row's
+  // byline is auth.uid(), stamped inside the database, so a client cannot
+  // forge who it was. Null when there is no matter (a dashboard draft, the
+  // Student Hub) or no token — in which case nothing is recorded and nothing
+  // about the call changes.
+  const ledger = matterId && bearerToken
+    ? ledgerClientFor({ supabaseUrl, anonKey, bearer: bearerToken })
+    : null;
+  const actor = { kind: 'user', ref: gate.userId ?? null };
 
   // SecureSpace sealed route (2026-09-19). A Tier-B matter admits exactly one
   // provider — 'aws-bedrock' — and the browser cannot be trusted to pick it:
@@ -144,20 +205,20 @@ export default async function handler(req, res) {
   //
   // This sits ahead of the spend cap on purpose — see reason 1 in the header.
   const sealed = sealedRouteFor({ gate, provider, model, body });
-  if (sealed?.refusal) return json(res, sealed.refusal.status, sealed.refusal.body);
-  if (!sealed && !gate.ok) return json(res, gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
+  if (sealed?.refusal) return refuse(sealed.refusal.status, sealed.refusal.body);
+  if (!sealed && !gate.ok) return refuse(gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
 
   // The provider key is the unsealed forward's, and it is resolved before the
   // meter so a misconfigured server is not charged for a call it cannot make.
   // The sealed route holds no provider key: it signs with our AWS credentials,
   // and their absence was already answered above with sealed_pen_unavailable.
   const key = sealed ? null : (apiKey || process.env[route.envKey]);
-  if (!sealed && !key) return json(res, 400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` });
-  if (typeof body !== 'string') return json(res, 400, { error: 'body must be a JSON string' });
+  if (!sealed && !key) return refuse(400, { error: `no_api_key for ${provider}; set ${route.envKey} or supply your own key` }, 'no_api_key');
+  if (typeof body !== 'string') return refuse(400, { error: 'body must be a JSON string' }, 'invalid_body');
 
   const bodyBytes = Buffer.byteLength(body, 'utf8');
   if (bodyBytes > HARD_MAX_REQUEST_BYTES) {
-    return json(res, 413, {
+    return refuse(413, {
       error: 'request_too_large',
       message: `That request is ${Math.round(bodyBytes / 1048576)} MB. Send less text at a time.`,
     });
@@ -201,10 +262,17 @@ export default async function handler(req, res) {
     kind: 'llm',
     estimateCents,
   });
-  if (!meter.allowed) return sendUsageRefusal(res, meter);
+  // A spent wallet or a full rate window is a refusal like any other, and the
+  // Record says so: "Bucketizer asked to classify a document and was refused —
+  // this month's usage is spent" is a true and useful line in the account of
+  // what was done to this matter.
+  if (!meter.allowed) {
+    sendUsageRefusal(res, meter);
+    return recordRefusedRow(meter.reason || 'usage_capped', meter.status);
+  }
 
   if (meter.maxRequestBytes && bodyBytes > meter.maxRequestBytes) {
-    return json(res, 413, {
+    return refuse(413, {
       error: 'request_too_large',
       message: `That request is larger than your plan allows (${Math.round(meter.maxRequestBytes / 1024)} KB). Send less text at a time.`,
     });
@@ -221,6 +289,52 @@ export default async function handler(req, res) {
     ? (meter.maxOutputTokens ? Math.min(sealed.maxOutputTokens, meter.maxOutputTokens) : sealed.maxOutputTokens)
     : clamp.applied;
 
+  // ── THE RECORD, ROW 1 — before any provider is contacted ─────────────────
+  //
+  // This is the line that makes "no record, no answer" true of a STREAMING
+  // route. The in-app Assistant can buffer an answer and discard it; this
+  // handler cannot, so the row that has to exist is written first. It names
+  // the pen the seal decision picked, the tier, the allowance the clamp
+  // granted, and the feature that asked — everything a reader of the Record
+  // needs, and nothing the provider will send back.
+  //
+  // SEALED: strict. A real write failure refuses the call, with zero provider
+  // requests and the pre-charge settled back to nothing. "Not deployed" —
+  // including a database whose events_kind_check predates 073 — is NOT a
+  // failure, so merging this before pasting the migration changes nothing.
+  //
+  // UNSEALED: best-effort. record() warns and returns {ok:false}; the call
+  // goes on. The Record is never the reason an unsealed call fails.
+  const startedAt = Date.now();
+  const sealedMatter = gate.tier === 'B';
+  if (ledger) {
+    try {
+      await recordLlmRequested(ledger, {
+        matterId,
+        actor,
+        feature,
+        callId,
+        tier: gate.tier ?? null,
+        provider: billedProvider,
+        model: billedModel,
+        clientProvider: provider,
+        clientModel: model,
+        sealed: Boolean(sealed),
+        streaming: isStreamRequest(body, provider),
+        maxOutputTokens: appliedOutput,
+        byok,
+        documentIds,
+        strict: sealedMatter,
+      });
+    } catch {
+      // Sealed only — recordLlmRequested throws nowhere else. Nothing has been
+      // sent, and the wallet is put back before the refusal goes out.
+      await settleUnsentCharge();
+      const unrecorded = exchangeUnrecordedRefusal();
+      return json(res, unrecorded.status, unrecorded.body);
+    }
+  }
+
   let upstream;
   if (sealed) {
     upstream = await sealed.send({ maxOutputTokens: meter.maxOutputTokens });
@@ -231,7 +345,10 @@ export default async function handler(req, res) {
     try {
       upstream = await fetch(route.url(model), { method: 'POST', headers: route.headers(key), body: sendBody });
     } catch (err) {
-      return json(res, 502, { error: `proxy_error: ${err.message || 'fetch failed'}` });
+      // The request WAS made, so this is not a refusal: row 1 already says the
+      // provider was about to be asked, and row 2 says it could not be reached.
+      json(res, 502, { error: `proxy_error: ${err.message || 'fetch failed'}` });
+      return settleRecord({ outcome: 'provider_error', status: 502 });
     }
   }
 
@@ -253,8 +370,8 @@ export default async function handler(req, res) {
   if (!streaming) {
     const text = await upstream.text();
     res.end(text);
+    const usage = upstream.ok ? usageFromResponse(text, provider) : null;
     if (!byok && upstream.ok && meter.eventId) {
-      const usage = usageFromResponse(text, provider);
       if (usage) {
         await recordActualUsage({
           supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
@@ -266,23 +383,41 @@ export default async function handler(req, res) {
         });
       }
     }
+    // Row 2. The provider's own status, never its body: a 4xx routinely
+    // echoes part of the request back, and this row is undeletable.
+    await settleRecord({
+      outcome: upstream.ok ? 'ok' : 'provider_error',
+      status: upstream.status,
+      tokens: usage,
+    });
     return;
   }
 
   if (upstream.body) {
-    const reader = upstream.body.getReader();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(Buffer.from(value));
+    // A stream that stops part-way still leaves row 2 — the shape a `finally`
+    // would give, written out so the ordering with settleClampedStream is
+    // visible. Row 1 already exists, so nothing here can withhold an answer
+    // that has already gone out.
+    let outcome = 'ok';
+    try {
+      const reader = upstream.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(Buffer.from(value));
+      }
+    } catch {
+      outcome = 'stream_error';
     }
     res.end();
     await settleClampedStream();
+    await settleRecord({ outcome, status: upstream.status });
     return;
   }
   const text = await upstream.text();
   res.end(text);
   await settleClampedStream();
+  await settleRecord({ outcome: upstream.ok ? 'ok' : 'provider_error', status: upstream.status });
   return;
 
   // A streamed turn reports no token counts we are willing to parse, so its
@@ -300,6 +435,112 @@ export default async function handler(req, res) {
       cents: estimateLlmCents({ provider: billedProvider, model: billedModel, bodyText: body, maxOutputTokens: appliedOutput }),
       model: billedModel,
       meta: { provider: billedProvider, route: 'llm', streamed: true, clamped_to: appliedOutput, ...sealedMeta(sealed, provider, model) },
+    });
+  }
+
+  // ── the matter's Record ──────────────────────────────────────────────────
+  // Hoisted like settleClampedStream above, and called only after the
+  // bindings they read have been initialised.
+
+  /**
+   * Send a refusal, THEN record it. In that order deliberately: the Record
+   * must not add latency to a "no", and on Vercel the function stays alive
+   * until this handler's promise settles — the same property
+   * settleClampedStream already relies on.
+   */
+  function refuse(status, bodyObj, codeOverride) {
+    json(res, status, bodyObj);
+    const code = codeOverride
+      ?? (typeof bodyObj?.error === 'string' ? bodyObj.error : 'refused');
+    return recordRefusedRow(code, status);
+  }
+
+  /**
+   * One row for a call that was refused: the feature asked, and nothing was
+   * sent. There is no second row, because there is nothing to pair it with.
+   */
+  async function recordRefusedRow(code, status) {
+    if (!ledger) return;
+    // Not recorded, and not a gap in the Record: `ledger_append` asks the
+    // CALLER's own RLS whether the matter is visible, so a matter the caller
+    // cannot see (404) refuses the write every time, and an unauthenticated
+    // request has no byline to write under at all.
+    if (!gate.ok && (gate.error === 'auth_required'
+      || gate.error === 'auth_not_configured'
+      || gate.error === 'matter_not_found')) return;
+    const pen = penNames();
+    await recordLlmRequested(ledger, {
+      matterId,
+      actor,
+      feature,
+      callId,
+      tier: gate.tier ?? null,
+      provider: pen.provider,
+      model: pen.model,
+      clientProvider: provider,
+      clientModel: model,
+      sealed: pen.sealed,
+      streaming: isStreamRequest(body, provider),
+      byok: Boolean(apiKey) && !sealed?.pen,
+      documentIds,
+      refused: code,
+      status,
+    }).catch(() => {});
+  }
+
+  /**
+   * Who would have answered, for a row written before anyone did.
+   *
+   * On a Tier-B matter whose sealed route never resolved — the pen is not
+   * provisioned, or the request could not be carried to it unchanged — the
+   * honest answer is that the route was the seal and no model was chosen.
+   * Naming the model the browser asked for as the one that would have served
+   * it says the opposite of what happened; it is kept as `client_model`.
+   */
+  function penNames() {
+    if (sealed?.pen) return { provider: sealed.provider, model: sealed.pen.model, sealed: true };
+    if (gate.tier === 'B') return { provider: null, model: null, sealed: true };
+    return { provider, model, sealed: false };
+  }
+
+  /** Row 2. Always best-effort: the undeletable row is already written. */
+  async function settleRecord({ outcome, status, tokens = null }) {
+    if (!ledger) return;
+    await recordLlmReceived(ledger, {
+      matterId,
+      actor,
+      feature,
+      callId,
+      tier: gate.tier ?? null,
+      provider: billedProvider,
+      model: billedModel,
+      clientProvider: provider,
+      clientModel: model,
+      sealed: Boolean(sealed),
+      streaming: isStreamRequest(body, provider),
+      outcome,
+      status,
+      tokens,
+      ms: Date.now() - startedAt,
+      byok,
+    }).catch(() => {});
+  }
+
+  /**
+   * The meter pre-charges an estimate before the provider is called. A sealed
+   * call refused because its record could not be written never reaches a
+   * provider, so that charge is for work that did not happen — settled back to
+   * nothing here rather than left standing.
+   */
+  async function settleUnsentCharge() {
+    if (byok || !meter.eventId) return;
+    await recordActualUsage({
+      supabaseUrl: process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+      serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      eventId: meter.eventId,
+      cents: 0,
+      model: billedModel,
+      meta: { provider: billedProvider, route: 'llm', refused: 'exchange_unrecorded', unsent: true },
     });
   }
 }

@@ -110,6 +110,7 @@ export default function AIWorkbench({ vaultFiles, matterId, onSaveToVault }: AIW
       instruction,
       contextFiles,
       matterId,
+      feature: 'workbench',
       signal: controller.signal,
       callbacks: {
         onChunk: (text) => setOutput((prev) => prev + text),

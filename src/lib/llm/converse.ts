@@ -1,4 +1,5 @@
 import type { LLMMessage, LLMStreamCallbacks } from './types';
+import type { LlmRecordFields } from './features';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { llmAuthHeader } from './auth';
@@ -10,7 +11,7 @@ import { llmErrorText } from './refusals';
 // surfaces). Feature code passes role/content messages and never names a
 // provider — the adapter builds the wire format and parses the stream.
 
-export interface ConverseOptions {
+export interface ConverseOptions extends LlmRecordFields {
   modelId: string;
   system: string;
   messages: LLMMessage[];
@@ -22,7 +23,7 @@ export interface ConverseOptions {
 }
 
 export async function converse(options: ConverseOptions): Promise<void> {
-  const { modelId, system, messages, maxTokens = 4096, callbacks, signal, matterId } = options;
+  const { modelId, system, messages, maxTokens = 4096, callbacks, signal, matterId, feature, documentIds } = options;
 
   const found = findModel(modelId);
   if (!found) {
@@ -42,11 +43,14 @@ export async function converse(options: ConverseOptions): Promise<void> {
     res = await fetch('/api/llm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await llmAuthHeader()) },
+      // Envelope fields only — `body` is what reaches the provider, verbatim.
       body: JSON.stringify({
         provider: provider.id,
         model: model.apiModelId,
         body: requestBody,
         matterId,
+        feature,
+        documentIds,
       }),
       signal,
     });

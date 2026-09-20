@@ -163,6 +163,8 @@ export default function DeckComposerModal({ box, docs, preselectedIds, onClose, 
         maxTokens: 8000,
         // The user content above is raw passage text from these documents.
         matterId: box.id,
+        feature: 'deck',
+        documentIds: ids,
       });
       if (!spec?.slides?.length) throw new Error('The model returned no slides — try rephrasing the instruction.');
       setDeck(spec);

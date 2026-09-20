@@ -284,3 +284,14 @@ jobs:
       - name: Refusals — 402 / 429 / sealed read as English
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
+      # Migration 073: every model call a FEATURE makes through /api/llm
+      # reaches the matter's Record, and the Record reaches no provider.
+      # Drives the real handler with fetch stubbed and witnessed, so each case
+      # asserts what was contacted as well as what was written. Its negative
+      # control imports origin/main's own handler and compares the Tier-A
+      # request byte for byte; on a shallow checkout that ref is absent and
+      # the case prints SKIP. It imports src/lib/llm/features.ts, so it needs
+      # the same '@/' loader as the reader and Record harnesses above.
+      - name: The matter's Record — feature AI calls through /api/llm
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-llm-record.mjs
