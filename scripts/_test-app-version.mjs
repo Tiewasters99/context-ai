@@ -234,6 +234,9 @@ test('dismissed means dismissed', async (t) => {
     const server = serverSaying(THERE);
 
     await checkForNewerBuild('focus', { localId: HERE, fetchImpl: server, now: t0 });
+    // Guard against a polluted store: this subtest only means something if
+    // the line was genuinely up before it was dismissed.
+    assert.equal(currentUpdateNotice()?.reason, 'newer-build');
     dismissUpdateNotice();
     assert.equal(server.calls.length, 1);
 
@@ -409,6 +412,40 @@ test('a stale chunk says so, and outranks the quiet line', async (t) => {
     assert.equal(currentUpdateNotice(), null);
     announceStaleChunk();
     assert.equal(currentUpdateNotice().reason, 'stale-chunk');
+  });
+
+  await t.test('but waving it away does mute the quiet version of the same news', () => {
+    reportRemoteBuildId(THERE, 'interval', HERE);
+    announceStaleChunk();
+    assert.equal(currentUpdateNotice().buildId, THERE);
+    dismissUpdateNotice();
+    assert.equal(reportRemoteBuildId(THERE, 'interval', HERE), 'quiet');
+    assert.equal(currentUpdateNotice(), null);
+  });
+
+  await t.test('an import that failed because the wifi is off says nothing', () => {
+    // node's own `navigator` is a getter, so it is shadowed rather than set.
+    const real = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const pretend = (onLine) =>
+      Object.defineProperty(globalThis, 'navigator', { value: { onLine }, configurable: true });
+
+    pretend(false);
+    const target = new EventTarget();
+    const uninstall = installStaleChunkGuard(target);
+
+    target.dispatchEvent(new Event('vite:preloadError'));
+    const rejection = new Event('unhandledrejection');
+    rejection.reason = new TypeError('Failed to fetch dynamically imported module: /assets/x.js');
+    target.dispatchEvent(rejection);
+    assert.equal(currentUpdateNotice(), null, 'refreshing while offline lands on a blank page');
+
+    // Back online, the same failure is news again.
+    pretend(true);
+    target.dispatchEvent(new Event('vite:preloadError'));
+    assert.equal(currentUpdateNotice().reason, 'stale-chunk');
+
+    uninstall();
+    if (real) Object.defineProperty(globalThis, 'navigator', real);
   });
 
   await t.test('it announces once per failure, not once per listener call', () => {

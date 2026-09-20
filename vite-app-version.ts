@@ -23,13 +23,16 @@ export const VERSION_FILE = 'version.json'
 /**
  * The build id.
  *
- * On Vercel this is the commit being built — `VERCEL_GIT_COMMIT_SHA`, which
- * Vercel sets for every deployment, system environment variables enabled or
- * not. `GITHUB_SHA` is the same idea for a CI build of this repo. Locally
- * there is no commit to name (the working tree is usually dirty anyway), so
- * the fallback is the moment of the build: two `npm run build` runs a minute
- * apart produce different ids, which is exactly the behaviour a local test of
- * the banner needs.
+ * On Vercel this is the commit being built — `VERCEL_GIT_COMMIT_SHA`, where
+ * the project exposes system environment variables (the default). If it does
+ * not, the fallback below applies and the id is still unique per deploy, so
+ * the banner works either way; it just names a time rather than a commit.
+ * `GITHUB_SHA` is the same idea for a CI build of this repo.
+ *
+ * Locally there is no commit worth naming (the working tree is usually dirty
+ * anyway), so the fallback is the moment of the build: two `npm run build`
+ * runs a minute apart produce different ids, which is exactly the behaviour a
+ * local test of the banner needs.
  *
  * Trimmed to 12 hex characters: long enough to be unique across this repo's
  * history, short enough to read in a console.

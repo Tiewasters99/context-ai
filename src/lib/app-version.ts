@@ -115,11 +115,12 @@ export function subscribeUpdateNotice(onChange: () => void): () => void {
 
 export function dismissUpdateNotice(): void {
   if (!current) return
-  // A dismissed stale-chunk line records nothing: the next failed import is a
-  // new event and must be allowed to say so immediately.
-  if (current.reason === 'newer-build' && current.buildId) {
-    dismissedAt.set(current.buildId, Date.now())
-  }
+  // Dismissal is recorded against the build, not against the reason: waving
+  // away "this tab is out of date" and then being told the quiet version of
+  // the same news five minutes later is the nagging this is meant to avoid.
+  // It does not mute the urgent line — announceStaleChunk never consults this
+  // record, so the next failed import says so immediately.
+  if (current.buildId) dismissedAt.set(current.buildId, Date.now())
   current = null
   announce()
 }
@@ -274,10 +275,19 @@ export function installStaleChunkGuard(
 ): () => void {
   if (!target) return () => {}
 
-  const onPreloadError = () => announceStaleChunk()
+  // A dropped connection fails an import with the same words a deleted chunk
+  // does, and "refresh to continue" while the wifi is off refreshes into a
+  // blank page. When the browser is sure it is offline, say nothing: the
+  // import will be retried, and if the chunk really is gone it will fail
+  // again with the network back.
+  const offline = () => typeof navigator !== 'undefined' && navigator.onLine === false
+
+  const onPreloadError = () => {
+    if (!offline()) announceStaleChunk()
+  }
   const onRejection = (event: Event) => {
     const reason = (event as { reason?: unknown }).reason
-    if (isStaleChunkFailure(reason)) announceStaleChunk()
+    if (isStaleChunkFailure(reason) && !offline()) announceStaleChunk()
   }
 
   target.addEventListener('vite:preloadError', onPreloadError)
