@@ -95,6 +95,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-no-fallback.mjs
 
+      - name: SecureSpace — a sealed CHILD inside an open parent is not searched
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-descendants.mjs
+
       - name: SecureSpace — a sealed meeting's transcript stays inside the seal
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-meetings.mjs
@@ -175,3 +179,9 @@ jobs:
         run: |
           node scripts/_validate-cover-manifest.mjs
           node --test scripts/_test-cover-gating.mjs
+      # The browser half of a refused request: 402 (spend cap), 429 (rate
+      # window) and the sealed 403/502/503 all become a sentence a person can
+      # read. Same loader as above — refusals.ts is a .ts module in src/.
+      - name: Refusals — 402 / 429 / sealed read as English
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
