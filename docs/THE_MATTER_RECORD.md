@@ -91,12 +91,14 @@ W1.
 
 ### What is *not* recorded
 
-A tool call that resolves to **no** matter leaves no row. One chain per
-matter is the roadmap's design, and this is its consequence: a connector's
-cross-matter `search` (`matter` omitted — the commonest connector call)
-touches many matters and is invisible to every one of their Records.
-Changing that means either a `matter_ids[]` payload on the nil chain or one
-row per matter touched; it is a decision, not a bug.
+~~A tool call that resolves to **no** matter leaves no row.~~ **Closed by
+migration 072** — see "The account chain" below. A cross-matter `search`
+now writes one row on the caller's own account chain *and* one row in each
+matter it actually read from.
+
+Still not recorded: work done outside Contextspaces, and anything a
+connector did before it connected. Absence of a row is not evidence that
+nothing happened; it is evidence that nothing happened *here*.
 
 ### What a payload may never contain
 
@@ -114,6 +116,14 @@ leaves the process:
   name cannot leak prose by being unanticipated;
 * `query` is kept (it is the single most useful line in a tool record) but
   hard-truncated to 200 characters.
+
+> **Note for W1, found while building 072.** The `search` tool's argument is
+> `q`, not `query`, so the special case above never fires for it: on an
+> ordinary matter-scoped search `args.q` is stored **verbatim** up to the
+> general 256-character limit rather than truncated to 200. That is inside
+> the matter the searcher was working in, so it is not a leak, and 072 does
+> not change it — but it is the reason 072's cross-matter rows use
+> `shapeOnly()` rather than `redact()`.
 
 Migration 064 then caps the whole payload at 8 KB, replacing anything larger
 with `{truncated: true, original_bytes, keys[]}`.
@@ -299,7 +309,262 @@ it is part of what the seal promises. So on a sealed matter the answer is
 | — | `_events_insert_guard` | The roadmap relies on "no INSERT policy". That stops a signed-in user, not `service_role`, which has `BYPASSRLS`. |
 | `ai_sessions`: drop owner DELETE, cascades → SET NULL | plus its SELECT policy moved to `_ledger_visible` | Otherwise "the record survives the matter" is true of the bytes and false of the reading. |
 
-051's `"Owners update their sessions"` policy is deliberately **left alone**:
-an owner can still edit a session's `title` and `status`. That is not
-erasure and was not the audit's finding — but "the record cannot be altered"
-should not be read further than it goes. `public.events` has no such door.
+~~051's `"Owners update their sessions"` policy is deliberately left alone.~~
+**Closed by migration 072** — see "The AI session record" below.
+
+---
+
+# Migration 072 — the account chain, and the session record
+
+072 closes the two holes 064 declared in its own PR. It applies **on top of
+064**; against a database that has never seen 064 it does nothing at all and
+says so in a notice, because the whole file lives inside one guarded `DO`
+block (a `return` in a plpgsql block exits only that block, so a guard over
+top-level statements would stop nothing).
+
+## The account chain
+
+### Why the same table
+
+Same table, `public.events`, with a new kind of `chain_key`. Not a sibling
+table. Two lines of 064 decide it:
+
+* **RLS.** `_ledger_visible(matter, serverspace, actor_user)` answers TRUE on
+  its first rule when `actor_user = auth.uid()`, and when **both**
+  `matterspace_id` and `serverspace_id` are null there is no second or third
+  rule to reach. A row with `(matter null, serverspace null, actor_user = me)`
+  is therefore readable by me and by nobody else — not by a colleague in my
+  own serverspace, not by a matter's members. **072 changes no policy.**
+* **`verify_chain`.** It is INVOKER and keyed on `chain_key` alone. A chain
+  whose every row is visible to exactly one person verifies whole for that
+  person and reports `checked = 0` for everyone else — which is precisely the
+  account-chain contract, with no second verifier to drift.
+
+A sibling table would have needed its own policy set, its own grants, its own
+append-only triggers and its own verifier. The chain key of an account chain
+is the account's **own user id**, taken from `auth.uid()` inside a DEFINER
+function — never a parameter, so it cannot be aimed at anybody else's chain.
+
+### What a cross-matter call records
+
+One connector `search` with `matter` omitted now writes **1 + N** rows.
+
+**One account row**, on the caller's own chain, `kind = 'tool.invoked'`:
+
+```jsonc
+{ "scope": "account", "tool": "search",
+  "args": { "q": {"chars": 60}, "limit": 5, "doc_types": {"items": 1} },
+  "matter_filter": false,
+  "connector": true, "connector_client_id": "…", "grant_id": "…",
+  "matters_touched": 2, "matters_recorded": 2, "matters_overflow": 0,
+  "fanout_ceiling": 100, "result_count": 3, "ok": true, "ms": 812 }
+```
+
+**One row in each matter the call actually read from**, on that matter's own
+chain, `kind = 'tool.invoked'`:
+
+```jsonc
+{ "scope": "matter", "via": "account-wide search", "tool": "search",
+  "args": { "q": {"chars": 60}, … }, "matter_filter": false,
+  "connector": true, "connector_client_id": "…",
+  "result_count": 2, "ok": true, "ms": 812 }
+```
+
+`list_matters` (and any other call that resolves to no matter) writes the
+account row only. It enumerates matters; it does not read from them, and a
+row in every matter on every connector handshake would be noise in the one
+place that has to stay readable.
+
+### The isolation argument
+
+A fan-out row names only the matter it sits in — its `result_count` is that
+matter's own, and no other matter's id, name or count appears anywhere in
+it — so opening M1's Record, or exporting it for a court, cannot tell anyone
+that M3 exists. The account row lives on a chain only its owner can read and
+carries **counts rather than ids**, so the roll-up cannot become a back door
+into a list of matter names either.
+
+The **query text is dropped from both**. `redact()` keeps `query` because on
+a matter-scoped call it is the most useful line in the record; a cross-matter
+query is different in kind — "Peloso arbitration award", typed once, would
+otherwise be copied verbatim into every matter it happened to hit, putting
+one client's words into another client's record. `shapeOnly()` is used
+instead, for the account row **and** every fan-out row. This is not
+theoretical: the search tool's argument is `q`, not `query`, so `redact()`
+would have stored it verbatim.
+
+**Sealed matters** never appear on either side. `enforceConnectorSeal`
+removes them from the search scope before the query runs, so they cannot be
+in the result; `recordCrossMatter` filters `excludeMatterIds` as a second
+line. They are neither recorded as touched nor counted as touched.
+
+### The ceiling
+
+`FANOUT_CEILING = 100` distinct matters per call. A search touching 60
+matters writes 60 rows. Past 100, the first 100 (highest-ranked first) get
+rows and the account row states all three numbers — `matters_touched`,
+`matters_recorded`, `matters_overflow` — so a reader knows the per-matter
+record is partial and by exactly how much. **Nothing is ever dropped
+silently.**
+
+### The functions
+
+```
+ledger_append_account(p_kind, p_session, p_actor_kind,        INVOKER, granted
+                      p_actor_ref, p_actor_label, p_payload)
+  └─ _ledger_append_account_checked(…)                        DEFINER, granted
+       reads auth.uid() ITSELF — byline and chain key both
+       └─ _ledger_write_scoped(…, p_chain)                    DEFINER, revoked from all
+```
+
+`_ledger_write_scoped` is 064's writer body with the chain key made explicit;
+`_ledger_write` keeps its exact 064 signature and becomes a one-line delegate
+to it, so there is one implementation of lock → seq → prev_hash → hash →
+insert and the two kinds of chain cannot drift. It is a **new name** rather
+than a tenth parameter because `create or replace` with a different argument
+list makes an *overload*, and an ambiguous nine-argument call inside 064's
+`acl.changed` trigger would block every membership change in the product.
+
+Account-legal kinds: `tool.invoked`, `connector.registered`,
+`connector.connected`, `connector.revoked`, `ai.paused`, `ai.resumed`.
+`completion.received`, `acl.changed` and `seal.changed` are matter-bound by
+definition and are refused on an account chain, by the database and by
+`lib/ledger.mjs` both. **`connector.connected` is new in 072's CHECK
+constraint and is defined for PR #166 to write, not wired here.**
+
+The chain key invariant is also a **trigger**
+(`events_chain_key_invariant`), because a future writer can route around a
+function but not around a trigger. Three shapes are legal and no fourth is:
+a matter row (`chain_key = matterspace_id`); an account row
+(`matterspace_id` and `serverspace_id` null, `chain_key = actor_user_id`);
+064's nil chain for serverspace-wide acts.
+
+### From JavaScript
+
+```js
+import { recordAccount, recordCrossMatter, verifyAccountChain,
+         shapeOnly, FANOUT_VIA, FANOUT_CEILING } from './lib/ledger.mjs';
+
+// One call, from mcp-core's recording point. Does nothing for an ordinary
+// in-matter call; never throws.
+await recordCrossMatter(supabase, {
+  tool, args, result, actor, sessionId,
+  primaryMatterId,          // null ⇒ an account row is written too
+  connector, excludeMatterIds, ok, refused, ms, error,
+});
+
+// For PR #166, when it wants connector.connected / connector.revoked:
+await recordAccount(supabase, { kind: 'connector.connected', actor,
+                                payload: { client_id, client_name, grant_id } });
+```
+
+Fan-out is keyed off the **result**, never off the argument, so the in-app
+assistant sitting in M1 and calling `search` with `matter` omitted also gives
+M3 its row. (Its own M1 row is #170's; no account row is written, because the
+call does belong to a matter.)
+
+**Between the two pastes** — 064 in, 072 not yet — `ledger_append_account`
+answers `PGRST202`, which `recordAccount` classifies as **not deployed** with
+its own once-per-process warning naming 072. The fan-out rows still write:
+they are ordinary 064 matter rows. Every matter's own Record therefore stays
+true; only the account-level roll-up is missing until the second paste.
+
+## The AI session record
+
+051 gave the owner a blanket `UPDATE` policy on `ai_sessions`. Everything on
+that row except its title is provenance: which matter, whose account, which
+**tier** governed the session (stamped at creation precisely so a later
+re-tiering cannot rewrite history), and 064's `matter_name` / `owner_email` /
+`serverspace_id` snapshots. A record whose subject can edit it is not a
+record.
+
+Every write of these two tables in the repo was read before narrowing:
+
+| site | what |
+| --- | --- |
+| `lib/assistant-core.mjs:833` | `update({updated_at})` on `ai_sessions` |
+| `lib/assistant-core.mjs:839` | `insert into ai_sessions` |
+| `lib/assistant-core.mjs:879` | `insert into ai_messages` |
+| `src/` | **no writes at all** (`Assistant.tsx` only holds the id) |
+
+So exactly one column is updated by the product. **Left updatable:
+`updated_at` and `title`** — `updated_at` because the product moves it,
+`title` because the insert already sets one and a rename is a label the owner
+chose, not a record of what an AI did. Both move only through
+`ai_session_touch(p_session, p_title)` (INVOKER wrapper → DEFINER worker that
+re-checks ownership from `auth.uid()`). **Immutable after insert:** `id`,
+`matterspace_id`, `owner_id`, `tier`, `status`, `created_at`, `matter_name`,
+`owner_email`, `serverspace_id`. If the product ever needs to close a
+session, widen the function by one line — never the policy.
+
+`ai_messages` — role, content, model, provider, tokens, cost,
+`within_policy` — is **wholly immutable**. Nothing in the product updates a
+message, so nothing needs a door: the trigger refuses every `UPDATE`.
+
+Two layers, as 062 did for `profiles.pricing_tier`: the dropped policy and
+the revoked grants stop a signed-in user; a `BEFORE UPDATE` trigger stops
+`service_role` (which has `BYPASSRLS`) and a superuser (which a grant cannot
+stop either). The trigger refuses unless a transaction-local flag is up, and
+only `_ai_session_touch_checked` raises that flag, for the length of its own
+`UPDATE` — 064's own idiom for `public.events`, one table over. Even with
+the flag up, the trigger re-checks that only `title` and `updated_at`
+differ.
+
+`lib/assistant-core.mjs:833` now calls `supabase.rpc('ai_session_touch', …)`
+instead of `.update({updated_at})`, still fire-and-forget. Before 072 is
+pasted the RPC is simply absent and the call is swallowed, exactly as the
+`UPDATE`'s own failure was.
+
+---
+
+# The read contract for the Record tab and the export (PR #175)
+
+#175 needs **no new query shape** and no new migration. Two additions.
+
+**1. An "Account-wide activity" section in the Matter Record export.** For
+the export's date range, state how many account-wide connector calls touched
+**this** matter — read from this matter's own fan-out rows, and saying
+nothing about any other matter:
+
+```ts
+// per matter (or across matterspace_descendants, as the Record tab already does)
+const { count } = await supabase
+  .from('events')
+  .select('id', { count: 'exact', head: true })
+  .in('matterspace_id', matterIds)
+  .eq('kind', 'tool.invoked')
+  .eq('payload->>scope', 'matter')
+  .eq('payload->>via', 'account-wide search')
+  .gte('ts', from).lte('ts', to);
+```
+
+`payload.result_count` on each of those rows is how many passages that call
+returned **from this matter**. Suggested sentence, which is true and claims
+nothing more:
+
+> Account-wide activity — 4 searches run by a connected assistant across
+> every matter this account can see returned passages from this matter during
+> the period. Each is listed above. What those searches returned from other
+> matters is not part of this matter's Record.
+
+`scope`, `via` (`'account-wide search'`, exported as `FANOUT_VIA`) and
+`result_count` are now an **interface**, not a payload convention. A partial
+index `events_fanout_idx` exists for exactly this count.
+
+**2. The docket line for a fan-out row.** It is an ordinary `tool.invoked`
+row, so #175 already renders it; the only thing worth adding is that
+`payload.via` is present:
+
+```ts
+// one line, in the tool.invoked case of the docket's phrasing function
+if (e.payload?.via === 'account-wide search')
+  return `${who} searched across every matter and read from this one`;
+```
+
+**What #175 must NOT do:** never read another matter's chain to fill in a
+matter's Record, and never surface the account chain inside a *matter*
+export. The account chain is the person's own view of their own connectors;
+a Matter Record that quoted it would be quoting counts drawn from matters the
+reader may have no right to know exist. If an account-level surface is wanted
+later, it is its own screen, reading `verify_account_chain()` and
+`events where chain_key = account_chain_key()`.
