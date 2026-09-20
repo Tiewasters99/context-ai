@@ -24,7 +24,12 @@
 // this: ProductivitySuite, the Dashboard quick actions and <PlanRoute> in
 // App.tsx all read from this file.
 
-export type Plan = 'free' | 'pro' | 'max' | 'workshop';
+// 'basic' arrived with migration 067 (billing): Eden's instinct is three paid
+// price points, and 062 had left room for only two. It is a neutral INTERNAL
+// key — the customer-facing name is billing_plans.display_name, which is a row
+// he edits. Like free / pro / max it sees the core today; the day the tiers
+// differ, that difference belongs in SURFACES below and nowhere else.
+export type Plan = 'free' | 'basic' | 'pro' | 'max' | 'workshop';
 
 export type SurfaceTier = 'core' | 'frozen' | 'beta';
 
@@ -130,7 +135,7 @@ export function canOpenPath(pathname: string, plan: Plan | null): boolean {
   return id === null || canOpenSurface(id, plan);
 }
 
-const PLANS: readonly string[] = ['free', 'pro', 'max', 'workshop'];
+const PLANS: readonly string[] = ['free', 'basic', 'pro', 'max', 'workshop'];
 
 /** Narrow whatever came back from the profiles row; anything odd reads as free. */
 export function asPlan(value: unknown): Plan {

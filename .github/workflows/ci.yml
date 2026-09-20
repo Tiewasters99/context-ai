@@ -166,3 +166,11 @@ jobs:
       - name: Reader — clean copy extraction
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
+
+      # Migration 067 executed against PGlite on top of the REAL 062 and 063,
+      # then the real billing handlers driven against that database with Stripe
+      # and PostgREST stubbed. Offline by construction: there is no Stripe
+      # account, and this harness never opens a socket to one.
+      - name: Migration 067 — billing, credits and the webhook (PGlite + real handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-billing.mjs
