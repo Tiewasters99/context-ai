@@ -183,6 +183,12 @@ export interface ScopeDescription {
   penChip: string;
   /** The server's answer differed from the prediction — keep line 2 up. */
   corrected: boolean;
+  /**
+   * The server named a pen where the strip had predicted nothing. Worth
+   * showing — it is the first time the panel can say who answered — but it is
+   * NOT a correction: nothing was claimed, so nothing was wrong.
+   */
+  named: boolean;
   paused: boolean;
   /** Shown in place of the input when AI is paused on this matter. */
   pauseNote: string;
@@ -234,12 +240,18 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
   // Did the first reply contradict what the strip promised? Both the seal and
   // the model's name count: a sealed matter answered by another pen, or the
   // same tier answered by a different model, are each worth a visible line.
+  //
+  // A PREDICTION IS A PREREQUISITE. Where the tier could not be read the strip
+  // said only the matter's name, so a sealed first reply is news, not a
+  // correction — calling it one would invent a claim the panel never made.
+  const predicted = facts.tier === 'A' || facts.tier === 'B' || facts.tier === 'C';
   const predictedChip = facts.tier === 'B'
     ? SEALED_PEN_DEFAULT_LABEL
     : facts.tier === 'A' ? 'Opus 4.8' : '';
   const corrected = Boolean(
-    live && (liveSealed !== predictedSealed || (predictedChip !== '' && predictedChip !== penChip)),
+    live && predicted && (liveSealed !== predictedSealed || predictedChip !== penChip),
   );
+  const named = Boolean(live) && !predicted;
 
   return {
     sealed,
@@ -250,6 +262,7 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
     penNote,
     penChip,
     corrected,
+    named,
     paused: Boolean(facts.paused),
     pauseNote: facts.paused
       ? (facts.pausedSentence?.trim() || 'AI is paused on this matter. Nothing is being sent to any model.')

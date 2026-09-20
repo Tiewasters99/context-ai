@@ -211,6 +211,30 @@ test('a server answer that MATCHES the prediction is not a correction', () => {
   assert.equal(d.penNote, sealedPenSentence('Kimi K2.5'));
 });
 
+test('a reply on a matter whose tier was UNREADABLE is news, not a correction', () => {
+  // The strip had said only the matter's name, so there is nothing to correct
+  // — but the pen is now known and worth showing.
+  const d = describeScope({
+    name: 'Unread',
+    tier: null,
+    livePen: { tier: 'B', provider: 'aws-bedrock', model: SEALED_MODEL },
+  });
+  assert.equal(d.corrected, false, 'nothing was claimed, so nothing was wrong');
+  assert.equal(d.named, true);
+  assert.equal(d.sealed, true);
+  assert.equal(d.penNote, sealedPenSentence('Kimi K2.5'));
+});
+
+test('where a prediction WAS made, the reply is a correction and not merely news', () => {
+  const d = describeScope({
+    name: 'Protegera',
+    tier: 'B',
+    livePen: { tier: 'A', provider: 'anthropic', model: TIER_A_MODEL },
+  });
+  assert.equal(d.named, false);
+  assert.equal(d.corrected, true);
+});
+
 test('a different sealed model on Bedrock is named, and is a correction', () => {
   // BEDROCK_MODEL can select another pen; the strip must not keep saying K2.5.
   const d = describeScope({

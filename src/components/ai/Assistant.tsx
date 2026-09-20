@@ -722,7 +722,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                 clear
               </button>
             </div>
-            {describe.penNote && (conversationEmpty || describe.corrected) && (
+            {describe.penNote && (conversationEmpty || describe.corrected || describe.named) && (
               <p
                 className="mt-1 text-[11px] leading-snug"
                 style={{ color: describe.sealed ? 'rgba(90,168,143,0.85)' : 'rgba(255,255,255,0.5)' }}
