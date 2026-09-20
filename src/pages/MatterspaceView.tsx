@@ -12,6 +12,7 @@ import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import AiPauseControl from '@/components/matter/AiPauseControl';
+import AskAssistantButton from '@/components/ai/AskAssistantButton';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { supabase } from '@/lib/supabase';
 import { setOrchestratorContext, clearOrchestratorContext } from '@/lib/orchestrator-context';
@@ -299,6 +300,13 @@ export default function MatterspaceView() {
                   menu" actually lands today. It renders nothing at all until
                   migration 070 is applied. */}
               <AiPauseControl matterId={matter.id} matterName={matter.name} />
+              {/* The assistant's door, beside the matter's other doors. It
+                  reads the EFFECTIVE tier, so on a sealed matter — or a
+                  sub-matter of one, which opens in this same view — it says
+                  "Ask the sealed assistant" and opens the panel already
+                  scoped here. It disables itself, with the reason, when the
+                  control to its left has paused AI. */}
+              <AskAssistantButton matterId={matter.id} matterName={matter.name} />
               <button
                 onClick={enterDiscovery}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
