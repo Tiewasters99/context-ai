@@ -58,6 +58,28 @@ export function claudeDesktopConfigSnippet(token: string): string {
   );
 }
 
+// Claude Code registers MCP servers from the command line rather than from a
+// config file, so what it needs is a command, not JSON.
+//
+// Two shells, because only the quoting differs. PowerShell expands `$` inside
+// a double-quoted string, so the header there is single-quoted; bash and zsh
+// take the double-quoted form the Claude Code documentation shows.
+export type ClaudeCodeShell = 'posix' | 'powershell';
+
+// Called with no token this is the sign-in (OAuth) command: Claude Code
+// discovers the endpoint's authorization server and the user authenticates
+// from `/mcp`. Called with one, the token rides along as a bearer header.
+// Either way the URL comes from MCP_ENDPOINT_URL — never a second literal.
+export function claudeCodeAddCommand(
+  token?: string | null,
+  shell: ClaudeCodeShell = 'posix',
+): string {
+  const base = `claude mcp add --scope user --transport http contextspaces ${MCP_ENDPOINT_URL}`;
+  if (!token) return base;
+  const q = shell === 'powershell' ? "'" : '"';
+  return `${base} --header ${q}Authorization: Bearer ${token}${q}`;
+}
+
 // Legacy Gemini CLI: HTTP MCP shape with `url` (sunsets 2026-06-18 for
 // Google One / unpaid tiers — Google is unifying CLI surfaces under
 // Antigravity). Keep this snippet around for users who haven't migrated
