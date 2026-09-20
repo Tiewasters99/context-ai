@@ -43,6 +43,18 @@
     "api/mediation-webhook.mjs": {
       "maxDuration": 30
     },
+    "api/billing-checkout.mjs": {
+      "maxDuration": 30
+    },
+    "api/billing-portal.mjs": {
+      "maxDuration": 30
+    },
+    "api/billing-credits-checkout.mjs": {
+      "maxDuration": 30
+    },
+    "api/billing-webhook.mjs": {
+      "maxDuration": 30
+    },
     "api/briefing-delta.mjs": {
       "maxDuration": 30
     }
