@@ -5,6 +5,7 @@ import { useServerspaces } from '@/hooks/useServerspaces';
 import { allModels } from '@/lib/llm';
 import { extractText } from '@/lib/extract';
 import { listMatterDocumentsRecursive } from '@/lib/vault-persist';
+import { showingOf } from '@/lib/paged';
 import type { VaultFile } from '@/lib/vault-types';
 import { collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
@@ -18,6 +19,9 @@ import { GoldButton, Working, Notice, FieldLabel, INPUT_CLASS, PageHead } from '
 // pick the matter and the model, hand up the briefs) and return to past ones.
 // The shared mediation primitives are the house style for formal legal
 // surfaces; they carry no mediation-specific branding.
+
+/** Rows this picker will draw. Past it, it says how many it is showing. */
+const MOOT_DOC_CEILING = 2000;
 
 export default function MootBench() {
   const navigate = useNavigate();
@@ -47,6 +51,7 @@ export default function MootBench() {
   // sub-matters) — the preferred source: they stay inside Contextspaces and
   // scanned PDFs arrive already OCR'd.
   const [matterDocs, setMatterDocs] = useState<VaultFile[] | null>(null);
+  const [matterDocsNotice, setMatterDocsNotice] = useState<string | null>(null);
   const [pickedDocIds, setPickedDocIds] = useState<Set<string>>(new Set());
 
   const { data: serverspaces = [] } = useServerspaces();
@@ -61,15 +66,27 @@ export default function MootBench() {
   // Load the matter's document list whenever the matter changes.
   useEffect(() => {
     setPickedDocIds(new Set());
+    setMatterDocsNotice(null);
     if (!matterId) { setMatterDocs(null); return; }
     let cancelled = false;
     const ids = collectDescendantIds(serverspaces, matterId);
     const nameById = new Map(
       serverspaces.flatMap((s) => s.matterspaces.map((m) => [m.id, m.name] as const)),
     );
-    listMatterDocumentsRecursive(ids.length ? ids : [matterId], nameById)
-      .then((docs) => { if (!cancelled) setMatterDocs(docs); })
-      .catch(() => { if (!cancelled) setMatterDocs([]); });
+    // A picker, not the Vault: it draws every row it is given inside a
+    // 12-rem box, so it asks for a bounded slice of a very large matter and
+    // says what it is showing rather than painting twenty thousand
+    // checkboxes. The names are searched from the Vault, not from here.
+    listMatterDocumentsRecursive(ids.length ? ids : [matterId], nameById, { ceiling: MOOT_DOC_CEILING })
+      .then((res) => {
+        if (cancelled) return;
+        setMatterDocs(res.files);
+        setMatterDocsNotice(showingOf(
+          { rows: res.files, total: res.total, truncated: res.truncated },
+          'documents',
+        ));
+      })
+      .catch(() => { if (!cancelled) { setMatterDocs([]); setMatterDocsNotice(null); } });
     return () => { cancelled = true; };
   }, [matterId, serverspaces]);
 
@@ -250,6 +267,9 @@ export default function MootBench() {
                     );
                   })}
                 </ul>
+              )}
+              {matterDocsNotice && (
+                <p className="mt-1.5 text-[11px] text-[#d4a054]">{matterDocsNotice}</p>
               )}
             </div>
           )}

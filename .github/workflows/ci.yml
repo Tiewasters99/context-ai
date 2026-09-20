@@ -177,6 +177,13 @@ jobs:
       - name: Bucketizer — whole-document scale + paged reads
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-scale.mjs
+
+      # The Vault's own read, at 2,500 and 12,000 documents with every
+      # created_at tied — the dropped-folder case that makes an untiebroken
+      # `.range()` loop lose rows. Offline: PostgREST is stubbed.
+      - name: Vault — matter-tree document list, paged
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-vault-paged-reads.mjs
       # Its negative control reconstructs main's handlers by deleting the
       # marked gate block, then watches them leak. One extra assertion —
       # "the reconstruction IS origin/main's file" — only means anything
