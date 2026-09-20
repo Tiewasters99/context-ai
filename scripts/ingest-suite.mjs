@@ -12,9 +12,9 @@
 //     --no-g6             skip the in-process provider-outage section
 //     --no-g9             skip the monitor run at the end
 //     --keep              leave everything in the matter (debugging)
-//     --deadline-min=N    whole-run budget (default 100; the = form is required
+//     --deadline-min=N    whole-run budget (default 60; the = form is required
 //                         because the first bare argument is the matter)
-//     --gate-min=N        per-gate budget (default 20)
+//     --gate-min=N        per-gate budget (default 15)
 //
 // Deadlines (2026-09-20). On 2026-09-18 this suite hung inside a gate and was
 // still hanging two and a half hours later; it wrote no line to the jsonl, so
@@ -98,8 +98,13 @@ const matterArg = argv.find((a) => !a.startsWith('--'));
 if (!matterArg) { console.error('usage: node scripts/ingest-suite.mjs <scratch matter short_code|uuid> [--email] [--skip-heavy] [--no-g6] [--no-g9] [--keep] [--deadline-min=N] [--gate-min=N]'); process.exit(2); }
 const SKIP_HEAVY = flag('--skip-heavy');
 const KEEP = flag('--keep');
-const DEADLINE_MS = numFlag('deadline-min', 100) * 60_000;
-const GATE_MS = numFlag('gate-min', 20) * 60_000;
+// Calibrated against the runs actually recorded in logs/ingest-suite.jsonl:
+// 2.7, 3.1, 3.4 and 6.6 minutes end to end, heavy fixtures included. 60 min is
+// therefore ~9× the slowest real night and half of Task Scheduler's 2 h
+// ExecutionTimeLimit, which leaves room for a genuinely slow night while
+// putting the failure email in the mailbox an hour earlier than the kill would.
+const DEADLINE_MS = numFlag('deadline-min', 60) * 60_000;
+const GATE_MS = numFlag('gate-min', 15) * 60_000;
 // One request must never be able to hang the night. Supabase-js has no
 // timeout of its own, and a socket that stops answering (the 09-18 hang) is
 // indistinguishable from work in progress — so every PostgREST and storage

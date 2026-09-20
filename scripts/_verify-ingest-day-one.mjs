@@ -86,7 +86,7 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
   // dead text that nobody ever sees).
   for (const [ext, hint] of Object.entries(UNSUPPORTED_HINTS)) {
     assert(hint.startsWith(' '), `hint for ${ext} does not start with a space`);
-    assert(/[.!]$/.test(hint.trim()), `hint for ${ext} is not a sentence`);
+    assert(/[.!]\)?$/.test(hint.trim()), `hint for ${ext} is not a sentence`);
     assert(!ACCEPTED_EXTENSIONS.includes(ext), `${ext} has a refusal hint but is accepted`);
   }
   ok(`all ${Object.keys(UNSUPPORTED_HINTS).length} hints are sentences, and every hinted extension is one the Vault really refuses`);
@@ -308,6 +308,23 @@ console.log('\n[4] monitor digest: counts and ids, filenames only for the operat
     { owner: shortOwner(EDEN), count: 1 },
   ]);
   ok('owner counts are over every escalated row, not over the five kept as examples');
+
+  // The monitor is importable (this file just imported it) because a guard
+  // stops main() running on import. If that guard were ever wrong the other
+  // way, the script would exit 0 printing nothing — and the suite's G9 reads
+  // exit 0 as "nothing needs attention", so the health check would go dark
+  // and report itself healthy. Prove it still RUNS when run. A deliberately
+  // invalid URL and a PASTE_ key make it refuse before it opens a client, so
+  // this reaches no network and works the same in a checkout that has a real
+  // .env (loadEnv never overrides a variable that is already set).
+  const child = spawnSync(process.execPath, [path.join(__dirname, 'ingest-monitor.mjs')], {
+    encoding: 'utf8', timeout: 60_000,
+    env: { ...process.env, VITE_SUPABASE_URL: 'https://example.invalid', SUPABASE_SERVICE_ROLE_KEY: 'PASTE_NEW_KEY_HERE' },
+  });
+  const childOut = `${child.stdout || ''}${child.stderr || ''}`;
+  assert.strictEqual(child.status, 2, `ingest-monitor.mjs did not run as a script (exit ${child.status}) — a silent exit 0 would make G9 read "healthy":\n${childOut.slice(0, 400)}`);
+  assert(/PASTE_NEW/.test(childOut), `ingest-monitor.mjs ran but not far enough to check its credentials:\n${childOut.slice(0, 400)}`);
+  ok('ingest-monitor.mjs still runs its sweep when invoked as a script (exit 2 on a placeholder key) — the import guard did not turn the health check into a silent exit 0');
 
   // What the nightly suite's G9 gate parses out of this text must survive.
   const blockingRe = /\[BLOCKING\] ([^—\n]+) — (\d+) document/g;

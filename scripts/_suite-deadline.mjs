@@ -75,8 +75,13 @@ export async function withDeadline(fn, ms, { onAbandon = () => {} } = {}) {
  */
 export function startOverallDeadline(totalMs, onExpire) {
   const at = Date.now() + totalMs;
+  // Deliberately NOT unref'd. The caller always exits from its own handler, so
+  // nothing needs the process kept open — but an unref'd alarm is also the one
+  // that cannot save a hang with no other ref'd handle (a promise nobody will
+  // resolve, rather than an open socket): the loop would drain, Node would
+  // exit 0, and the night would leave no line at all. That is the exact
+  // silence this file exists to end, so the alarm holds the process open.
   const timer = setTimeout(() => { void onExpire(); }, Math.max(1, totalMs));
-  timer.unref?.();
   return {
     at,
     remainingMs: () => Math.max(0, at - Date.now()),
