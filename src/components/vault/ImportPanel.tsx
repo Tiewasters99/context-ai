@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useMemo } from 'react';
 import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
+import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import ContentSearch from './ContentSearch';
 
 interface ImportPanelProps {
@@ -16,7 +17,38 @@ interface ImportPanelProps {
   onOpenDocument?: (documentId: string) => void;
   /** Persistent mode: scope content search to this matter tree. */
   matterId?: string;
+  /**
+   * Whether the ingestion pipeline is actually running (migration 066), or
+   * null when it cannot be known — which is the state before 066 is applied,
+   * and the state this panel must treat exactly as it treated everything
+   * before this prop existed: spinner, no extra words.
+   */
+  ingestService?: IngestServiceStatus | null;
+  /**
+   * What the server says this matter tree holds. Equal to `files.length`
+   * whenever the list is whole; larger when the paged read stopped at its
+   * ceiling. The header shows THIS, because a badge that counts the rows it
+   * happens to have is the same silent lie pagination was added to remove.
+   */
+  totalCount?: number;
+  /** Set only when the read was truncated: the sentence the list owes the reader. */
+  listNotice?: string | null;
 }
+
+/**
+ * How many rows are PAINTED at once. The fetch is complete — every row is in
+ * `files` and every filter, count and total below is computed over all of
+ * them — but a row is about eight DOM nodes with its own drag handlers, and
+ * `renderFileRow` is not memoized, so a status tick re-renders every row that
+ * is on screen. Twelve thousand of them is roughly a hundred thousand nodes
+ * and a tab that stops answering. Nothing is hidden silently: the line under
+ * the list says how many of how many are drawn, the filter searches all of
+ * them, and "Show more" draws the next batch.
+ *
+ * Drawing only the rows in the viewport (virtualization) is the right answer
+ * and belongs to the planned Vault rebuild, which is replacing this panel.
+ */
+const RENDER_WINDOW = 500;
 
 const statusIcon = {
   uploading: <Loader2 size={14} className="text-[#e8b84a] animate-spin" />,
@@ -89,8 +121,9 @@ function friendlyIngestError(msg: string): string {
   return msg;
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice }: ImportPanelProps) {
   const [search, setSearch] = useState('');
+  const [shown, setShown] = useState(RENDER_WINDOW);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -213,6 +246,31 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     });
   };
 
+  // How many rows each group may draw, taken from one shared budget in group
+  // order. Every group keeps its header and its TRUE count; only the rows
+  // inside are windowed, so no folder ever vanishes from the list.
+  const groupTake = useMemo(() => {
+    if (!groups) return null;
+    let budget = shown;
+    const take = new Map<string, number>();
+    for (const g of groups) {
+      if (collapsedGroups.has(g.id)) { take.set(g.id, 0); continue; }
+      const n = Math.min(g.files.length, Math.max(0, budget));
+      take.set(g.id, n);
+      budget -= n;
+    }
+    return take;
+  }, [groups, shown, collapsedGroups]);
+
+  // Rows actually drawn, and rows there are to draw — the two numbers the
+  // "Show more" line reports.
+  const drawable = groups
+    ? groups.reduce((n, g) => n + (collapsedGroups.has(g.id) ? 0 : g.files.length), 0)
+    : filtered.length;
+  const drawn = groupTake
+    ? groups!.reduce((n, g) => n + (groupTake.get(g.id) ?? 0), 0)
+    : Math.min(shown, filtered.length);
+
   const totalSize = files.reduce((sum, f) => sum + f.sizeBytes, 0);
   const indexedCount = files.filter((f) => f.status === 'indexed').length;
   const formatSize = (bytes: number) =>
@@ -223,8 +281,23 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   const openable = (file: VaultFile) =>
     !!onOpenFile && (file.status === 'indexed' || file.status === 'error');
 
+  // One sentence, computed once for the whole panel: every document waiting on
+  // the pipeline is waiting on the same pipeline, so the answer cannot differ
+  // between rows. Null while everything is normal, and null whenever the
+  // pipeline's state cannot be known — which is what makes this change
+  // invisible until migration 066 is applied.
+  const serviceNotice = useMemo(() => ingestServiceNotice(ingestService), [ingestService]);
+
   const renderFileRow = (file: VaultFile) => {
     const canOpen = openable(file);
+    // Only on a row that is genuinely waiting on the SERVER: bytes have landed
+    // (storagePath) and no terminal state has been reached. A file still
+    // uploading from this browser is not the pipeline's business, and an
+    // ephemeral no-matter file never reaches the pipeline at all.
+    const showServiceNotice = Boolean(
+      serviceNotice && file.matterspace_id && file.storagePath &&
+      (file.status === 'uploading' || file.status === 'indexing'),
+    );
     return (
     <div
       key={file.id}
@@ -277,6 +350,16 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
         {file.status === 'uploading' && file.errorMessage && (
           <p className="text-[10px] text-[#e8b84a]/80 truncate" title={file.errorMessage}>
             {friendlyIngestError(file.errorMessage)}
+          </p>
+        )}
+        {/* Nothing is processing, or the queue is long: say which, in words,
+            rather than spinning. The alternative — an endless spinner — is
+            what makes a person delete the document and upload it again, which
+            queues a second copy behind the first. Not truncated: this one is
+            meant to be read. */}
+        {showServiceNotice && (
+          <p className={`text-[10px] ${serviceNotice!.tone === 'paused' ? 'text-[#e8b84a]/90' : 'text-white/50'}`}>
+            {serviceNotice!.text}
           </p>
         )}
       </div>
@@ -354,9 +437,23 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
           <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[11px] font-semibold text-white/80 uppercase tracking-wider">
-                Vault Files ({files.length}) · {formatSize(totalSize)} · {indexedCount} ready
+                {/* While the list is whole, `files.length` IS the exact count
+                    and it also moves the instant a file is added or removed.
+                    Once the read was truncated it is not — then the badge is
+                    the server's own count, and the size and "ready" figures
+                    are labelled as describing only what was loaded, because
+                    "19,980 ready" out of 5,000 rows is the same silent lie
+                    pointed the other way. */}
+                Vault Files ({((listNotice ? totalCount : undefined) ?? files.length).toLocaleString()})
+                {listNotice
+                  ? <> · {files.length.toLocaleString()} loaded · {formatSize(totalSize)} · {indexedCount.toLocaleString()} of those ready</>
+                  : <> · {formatSize(totalSize)} · {indexedCount.toLocaleString()} ready</>}
               </h3>
             </div>
+
+            {listNotice && (
+              <p className="mb-3 text-[11px] text-[#e8b84a]/90">{listNotice}</p>
+            )}
 
             {files.length > 5 && (
               <div className="relative mb-3">
@@ -364,7 +461,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                 <input
                   type="text"
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => { setSearch(e.target.value); setShown(RENDER_WINDOW); }}
                   placeholder="Search files..."
                   className="w-full pl-9 pr-3 py-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.03)] text-[12px] text-white placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-[#e8b84a]"
                 />
@@ -375,6 +472,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               <div className="space-y-3">
                 {groups.map((g) => {
                   const collapsed = collapsedGroups.has(g.id);
+                  const take = groupTake?.get(g.id) ?? g.files.length;
                   return (
                     <div key={g.id}>
                       <button
@@ -384,11 +482,16 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                         {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}
                         <Folder size={13} className="text-[#d4a054]" strokeWidth={1.75} />
                         <span className="text-[12px] font-medium text-[#f5f1e8] group-hover/header:text-[#e8b84a] transition-colors">{g.name}</span>
-                        <span className="text-[10px] text-white/30 ml-auto">{g.files.length}</span>
+                        <span className="text-[10px] text-white/30 ml-auto">{g.files.length.toLocaleString()}</span>
                       </button>
                       {!collapsed && (
                         <div className="space-y-0.5 pl-5">
-                          {g.files.map(renderFileRow)}
+                          {g.files.slice(0, take).map(renderFileRow)}
+                          {take < g.files.length && (
+                            <p className="pl-3 py-1 text-[10px] text-white/40">
+                              {(g.files.length - take).toLocaleString()} more in this folder — Show more below.
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -397,7 +500,25 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               </div>
             ) : (
               <div className="space-y-0.5">
-                {filtered.map(renderFileRow)}
+                {filtered.slice(0, shown).map(renderFileRow)}
+              </div>
+            )}
+
+            {/* The rows are all loaded; this is only how many are drawn. The
+                count is explicit so nobody reads the bottom of the list as
+                the bottom of the matter. */}
+            {drawn < drawable && (
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <button
+                  onClick={() => setShown((s) => s + RENDER_WINDOW)}
+                  className="px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.15)] hover:border-[#e8b84a]/50 text-white text-[11px] font-medium transition-colors"
+                >
+                  Show more
+                </button>
+                <span className="text-[11px] text-white/50">
+                  Showing {drawn.toLocaleString()} of {drawable.toLocaleString()}
+                  {search ? ' matching files' : ' files'} — all of them are loaded; type in Search files… to narrow the list.
+                </span>
               </div>
             )}
           </div>

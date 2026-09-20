@@ -472,6 +472,10 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               descendantCount: row.descendantCount,
             })
           }
+          // The same dialog the SecureChat notice offers, so the shelf's two
+          // dead ends on a brand-new account both lead to the one step that
+          // fixes them.
+          onCreateServerspace={() => setShowNewServerspace(true)}
           onOpenSecureChat={() => {
             // Find-or-create the born-sealed personal room, then hand the
             // Assistant a promptless command: MainLayout opens the panel,
