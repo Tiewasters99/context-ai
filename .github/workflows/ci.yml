@@ -171,6 +171,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Day one for a new paying user: which file types are accepted or
+      # refused (and whether the refusal names an alternative), whether a
+      # mid-size document may run on the 60 s serverless budget, that the
+      # nightly suite cannot hang without leaving a record, and that the
+      # monitor digest cannot mail one tenant's filenames to another account.
+      # It runs scripts/_verify-ocr-routes.mjs as a child process and asserts
+      # its exit code, so the OCR route policy is covered by this step too.
+      - name: Ingestion — day one (types, routing, suite deadlines, digest privacy, OCR routes)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ingest-day-one.mjs
       # Whole-document windowing, the resumable run, the meter pause, the
       # deterministic merge, and the paged read shared with Discovery. Offline:
       # the model, the database and PostgREST are all stubbed.
