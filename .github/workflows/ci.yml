@@ -132,3 +132,10 @@ jobs:
       - name: Reader — clean copy extraction
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
+
+      # Whole-document windowing, the resumable run, the meter pause, the
+      # deterministic merge, and the paged read shared with Discovery. Offline:
+      # the model, the database and PostgREST are all stubbed.
+      - name: Bucketizer — whole-document scale + paged reads
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-scale.mjs

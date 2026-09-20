@@ -9,8 +9,11 @@ import {
   generateTreeFromPleadings, listUnclassifiedDocs, classifyDocuments,
   decideClassification, addManualClassification,
   fetchClassificationsForNode, fetchNodeCounts,
+  estimateClassifyRun, formatCents,
   type BucketNode, type NodeKind, type ClassifiedDoc, type ClassifyProgress,
+  type DocRow, type RunEstimate,
 } from '@/lib/bucketizer';
+import { showingOf } from '@/lib/paged';
 
 // The Bucketizer: the matter's living case-theory tree (claims → elements →
 // subissues, plus cross-cutting themes) with documents classified into it —
@@ -45,7 +48,15 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
   const [unclassifiedCount, setUnclassifiedCount] = useState<number | null>(null);
   const classifyAbort = useRef<AbortController | null>(null);
 
+  // A bulk run is quoted before it is started, never after.
+  const [pending, setPending] = useState<{ docs: DocRow[]; estimate: RunEstimate } | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  // What the last run has to say for itself: a meter pause, windows that
+  // could not be used, documents left for next time.
+  const [runReport, setRunReport] = useState<ClassifyProgress | null>(null);
+
   const [nodeDocs, setNodeDocs] = useState<ClassifiedDoc[] | null>(null);
+  const [nodeDocsNotice, setNodeDocsNotice] = useState<string | null>(null);
   const [showManualAdd, setShowManualAdd] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -70,13 +81,24 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       .catch(() => setUnclassifiedCount(null));
   }, [matterId, reload]);
 
+  const loadNodeDocs = useCallback(async (nodeId: string) => {
+    const page = await fetchClassificationsForNode(nodeId);
+    setNodeDocs(page.rows);
+    setNodeDocsNotice(showingOf(page, 'documents'));
+  }, []);
+
   // Load the selected node's documents.
   useEffect(() => {
-    if (!selectedId) { setNodeDocs(null); return; }
+    if (!selectedId) { setNodeDocs(null); setNodeDocsNotice(null); return; }
     let cancelled = false;
     setNodeDocs(null);
+    setNodeDocsNotice(null);
     void fetchClassificationsForNode(selectedId)
-      .then((d) => { if (!cancelled) setNodeDocs(d); })
+      .then((page) => {
+        if (cancelled) return;
+        setNodeDocs(page.rows);
+        setNodeDocsNotice(showingOf(page, 'documents'));
+      })
       .catch(() => { if (!cancelled) setNodeDocs([]); });
     return () => { cancelled = true; };
   }, [selectedId]);
@@ -116,27 +138,55 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
 
   // ---- classification -----------------------------------------------------
 
-  const handleClassifyAll = useCallback(async () => {
+  /** Step one: count the work and price it. Nothing is spent here. */
+  const handlePrepareRun = useCallback(async () => {
     if (!nodes?.length) return;
-    const docs = await listUnclassifiedDocs(matterId);
-    if (!docs.length) { setUnclassifiedCount(0); return; }
+    setPreparing(true);
+    setError(null);
+    setRunReport(null);
+    try {
+      const docs = await listUnclassifiedDocs(matterId);
+      setUnclassifiedCount(docs.length);
+      if (!docs.length) return;
+      setPending({ docs, estimate: estimateClassifyRun(docs, nodes) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not work out what is left to classify.');
+    } finally {
+      setPreparing(false);
+    }
+  }, [matterId, nodes]);
+
+  /** Step two: the person clicked through the estimate. */
+  const handleClassifyAll = useCallback(async () => {
+    const run = pending;
+    if (!run || !nodes?.length) return;
+    setPending(null);
     const controller = new AbortController();
     classifyAbort.current = controller;
-    setClassifying({ done: 0, total: docs.length, currentTitle: '', proposed: 0, errors: 0 });
+    setClassifying({
+      done: 0, total: run.docs.length, currentTitle: '', proposed: 0, errors: 0,
+      windowsCalled: 0, windowsResumed: 0, docWindowsDone: 0, docWindowsTotal: 0,
+      pausedMessage: null, retryAfterSeconds: null, notes: [],
+    });
     try {
-      await classifyDocuments({
-        matterId, docs, nodes,
+      const final = await classifyDocuments({
+        matterId, docs: run.docs, nodes,
         signal: controller.signal,
         onProgress: setClassifying,
       });
+      // Kept on screen after the spinner goes: a pause, or a window that could
+      // not be used, is something the attorney has to know about.
+      if (final.pausedMessage || final.notes.length || final.errors) setRunReport(final);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Classification failed.');
     } finally {
       setClassifying(null);
       classifyAbort.current = null;
       setCounts(await fetchNodeCounts(matterId));
       void listUnclassifiedDocs(matterId).then((d) => setUnclassifiedCount(d.length)).catch(() => {});
-      if (selectedId) void fetchClassificationsForNode(selectedId).then(setNodeDocs).catch(() => {});
+      if (selectedId) void loadNodeDocs(selectedId).catch(() => {});
     }
-  }, [matterId, nodes, selectedId]);
+  }, [matterId, nodes, pending, selectedId, loadNodeDocs]);
 
   // ---- node edits ---------------------------------------------------------
 
@@ -219,12 +269,12 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       for (const d of docs) {
         await addManualClassification({ matterId, documentId: d.id, nodeId: selectedId });
       }
-      setNodeDocs(await fetchClassificationsForNode(selectedId));
+      await loadNodeDocs(selectedId);
       setCounts(await fetchNodeCounts(matterId));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not add the document.');
     }
-  }, [matterId, selectedId]);
+  }, [matterId, selectedId, loadNodeDocs]);
 
   // ---- render -------------------------------------------------------------
 
@@ -266,10 +316,11 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
         </button>
         {roots.length > 0 && !classifying && (
           <button
-            onClick={() => void handleClassifyAll()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20"
+            onClick={() => void handlePrepareRun()}
+            disabled={preparing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
           >
-            <Play className="w-4 h-4" />
+            {preparing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             Classify new documents{unclassifiedCount != null ? ` (${unclassifiedCount})` : ''}
           </button>
         )}
@@ -277,6 +328,16 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
           <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-zinc-300">
             <Loader2 className="w-4 h-4 animate-spin text-emerald-300" />
             {classifying.done}/{classifying.total} · {classifying.proposed} proposals
+            {classifying.docWindowsTotal > 1 && (
+              <span className="text-zinc-500">
+                · part {classifying.docWindowsDone}/{classifying.docWindowsTotal}
+              </span>
+            )}
+            {classifying.windowsResumed > 0 && (
+              <span className="text-emerald-400/80" title="Windows a previous run had already finished — not charged again">
+                · {classifying.windowsResumed} resumed
+              </span>
+            )}
             {classifying.errors > 0 && <span className="text-orange-300">· {classifying.errors} errors</span>}
             <span className="max-w-[220px] truncate text-zinc-500">{classifying.currentTitle}</span>
             <button
@@ -288,6 +349,8 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
           </div>
         )}
       </div>
+
+      {runReport && <RunReport report={runReport} onDismiss={() => setRunReport(null)} />}
 
       {/* Empty state */}
       {roots.length === 0 && !generating && (
@@ -341,6 +404,7 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
                 key={selected.id}
                 node={selected}
                 docs={nodeDocs}
+                docsNotice={nodeDocsNotice}
                 busy={busy}
                 onSave={saveNodePatch}
                 onDecide={handleDecide}
@@ -349,6 +413,14 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
             )}
           </div>
         </div>
+      )}
+
+      {pending && (
+        <RunEstimateDialog
+          estimate={pending.estimate}
+          onCancel={() => setPending(null)}
+          onConfirm={() => void handleClassifyAll()}
+        />
       )}
 
       {showPleadingPicker && (
@@ -365,6 +437,150 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
           onConfirm={(docs) => void handleManualAdd(docs)}
         />
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The bill, before the work.
+ *
+ * Classifying a matter used to be one model call per document, and this
+ * change makes it one call per WINDOW so that a 247-page deposition is read
+ * to the end rather than bucketed on its first thirty pages. That is more
+ * calls and more money, and a change that multiplies a bill has to say so
+ * before it runs — not in a ledger afterwards
+ * (feedback: agent-economics-deterministic-first).
+ *
+ * Every number here is arithmetic over the price table `/api/llm` actually
+ * charges from (lib/usage-prices.mjs). No rate is invented, and the estimate
+ * is biased high in the same direction the server's is.
+ */
+function RunEstimateDialog({
+  estimate, onCancel, onConfirm,
+}: {
+  estimate: RunEstimate;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-2xl">
+        <h3 className="text-base font-medium text-zinc-100">Classify {estimate.documents.toLocaleString()} documents?</h3>
+
+        <dl className="mt-4 space-y-2 text-sm">
+          <Row label="Documents" value={estimate.documents.toLocaleString()} />
+          <Row
+            label="Model calls"
+            value={estimate.windows.toLocaleString()}
+            hint={estimate.longDocuments > 0
+              ? `${estimate.longDocuments.toLocaleString()} are long enough to be read in parts (largest: ${estimate.largestDocumentWindows} parts)`
+              : 'one per document'}
+          />
+          <Row
+            label="Estimated cost"
+            value={formatCents(estimate.cents)}
+            hint={`at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
+          />
+        </dl>
+
+        <p className="mt-4 text-xs leading-relaxed text-zinc-500">
+          Every page of every document is read — long documents are split into parts and the
+          results merged, so a deposition is no longer bucketed on its opening pages.
+          {estimate.documentsWithoutPageCount > 0 && (
+            <> {estimate.documentsWithoutPageCount.toLocaleString()} document
+              {estimate.documentsWithoutPageCount === 1 ? ' has' : 's have'} no page count recorded and
+              {estimate.documentsWithoutPageCount === 1 ? ' is' : ' are'} assumed short here; if
+              {estimate.documentsWithoutPageCount === 1 ? ' it turns' : ' they turn'} out to be long,
+              the real cost will be higher than this.</>
+          )}
+          {' '}Page counts are converted at about {estimate.assumedCharsPerPage.toLocaleString()} characters
+          a page. You can stop the run at any time, and closing the tab does not lose the parts already done.
+        </p>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+          If this matter is sealed, it is served by the sealed pen inside our own AWS account,
+          which costs less than the figure above — you are metered at the price of the model that
+          actually answers.
+        </p>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 hover:bg-white/5"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20"
+          >
+            <Play className="w-4 h-4" /> Run it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-white/5 pb-2">
+      <dt className="text-zinc-400">{label}</dt>
+      <dd className="text-right">
+        <span className="text-zinc-100">{value}</span>
+        {hint && <p className="mt-0.5 text-[11px] text-zinc-500">{hint}</p>}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * What the run has to say for itself afterwards. A paused run is not a failed
+ * run — everything finished is saved, and pressing the button again picks up
+ * where it stopped without paying for any window twice.
+ */
+function RunReport({ report, onDismiss }: { report: ClassifyProgress; onDismiss: () => void }) {
+  const paused = Boolean(report.pausedMessage);
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-sm ${paused
+      ? 'border-[#d4a054]/40 bg-[#d4a054]/10 text-[#d4a054]'
+      : 'border-orange-500/30 bg-orange-500/10 text-orange-200'}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          {paused && (
+            <>
+              <p className="font-medium">Paused — {report.done} of {report.total} documents done.</p>
+              <p className="mt-0.5 text-xs opacity-90">{report.pausedMessage}</p>
+              {report.retryAfterSeconds != null && (
+                <p className="mt-0.5 text-xs opacity-75">
+                  Try again in about {Math.ceil(report.retryAfterSeconds / 60)} minute
+                  {Math.ceil(report.retryAfterSeconds / 60) === 1 ? '' : 's'}.
+                </p>
+              )}
+              <p className="mt-1 text-xs opacity-75">
+                Nothing already read is lost, and none of it will be charged again.
+              </p>
+            </>
+          )}
+          {!paused && report.errors > 0 && (
+            <p className="font-medium">
+              {report.errors} document{report.errors === 1 ? '' : 's'} could not be finished and
+              will be retried the next time you run this.
+            </p>
+          )}
+          {report.notes.length > 0 && (
+            <ul className="mt-1.5 space-y-0.5 text-xs opacity-90">
+              {report.notes.slice(0, 8).map((n, i) => <li key={i}>· {n}</li>)}
+              {report.notes.length > 8 && <li>· and {report.notes.length - 8} more</li>}
+            </ul>
+          )}
+        </div>
+        <button className="shrink-0 opacity-70 hover:opacity-100" onClick={onDismiss}>
+          <X className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }
@@ -455,10 +671,12 @@ function TreeNode({
 // ---------------------------------------------------------------------------
 
 function NodeDetail({
-  node, docs, busy, onSave, onDecide, onManualAdd,
+  node, docs, docsNotice, busy, onSave, onDecide, onManualAdd,
 }: {
   node: BucketNode;
   docs: ClassifiedDoc[] | null;
+  /** Set only when the bucket holds more documents than are listed. */
+  docsNotice: string | null;
   busy: boolean;
   onSave: (nodeId: string, patch: { label?: string; description?: string }) => Promise<void>;
   onDecide: (c: ClassifiedDoc, decision: 'confirmed' | 'rejected') => Promise<void>;
@@ -513,6 +731,12 @@ function NodeDetail({
           <Plus className="w-3.5 h-3.5" /> Add by hand
         </button>
       </div>
+
+      {docsNotice && (
+        <p className="rounded-lg border border-[#d4a054]/40 bg-[#d4a054]/10 px-3 py-2 text-xs text-[#d4a054]">
+          {docsNotice}
+        </p>
+      )}
 
       {docs === null && (
         <div className="flex items-center gap-2 py-4 text-sm text-zinc-500">
