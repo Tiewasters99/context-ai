@@ -524,6 +524,16 @@ export async function triggerIngest(documentId: string): Promise<void> {
   const session = (await supabase.auth.getSession()).data.session;
   const accessToken = session?.access_token;
   if (!accessToken) throw new Error('not authenticated — cannot trigger ingest');
+  // Clear the terminal state FIRST. Vault.tsx's retry re-subscribes
+  // watchDocumentStatus the moment it calls this, and that poll stops as soon
+  // as it reads a terminal status — so against a row still saying 'error' it
+  // would report the OLD message and stop, and a refusal written a moment
+  // later would not appear until the page was reloaded. saveDocumentText
+  // already does this for the same reason.
+  await supabase
+    .from('documents')
+    .update({ processing_status: 'pending', processing_error: null })
+    .eq('id', documentId);
   // Same POST, same refusal handling. Retry (Vault.tsx) and re-ingest after an
   // edit (saveDocumentText) both land here, and both used to discard the
   // response entirely — a retry against a spent budget looked identical to a

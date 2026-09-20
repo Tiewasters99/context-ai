@@ -296,3 +296,26 @@ export class ServerRefusalError extends Error {
 export function isFinalRefusal(err: unknown): err is ServerRefusalError {
   return err instanceof ServerRefusalError && err.refusal.kind !== 'other';
 }
+
+/** Longest window worth sitting out. Beyond this, stop and tell the person. */
+const MAX_WAIT_SECONDS = 120;
+
+/**
+ * A rate window is the one refusal that time alone fixes, and the server says
+ * how much time. Bucketizer, cite-check and the Editor all run dozens of model
+ * calls in a loop, and the free tier's window is twenty a minute — so without
+ * this, the common outcome of a long run is that it dies a fifth of the way in
+ * and the work is lost.
+ *
+ * Returns true when it has waited and the caller should try once more. False
+ * for anything that waiting cannot fix: a spent wallet, a sealed matter, a
+ * provider error, a window longer than two minutes, or an aborted run.
+ */
+export async function waitOutRateWindow(err: unknown, signal?: AbortSignal): Promise<boolean> {
+  if (!(err instanceof ServerRefusalError)) return false;
+  const { kind, retryAfterSeconds } = err.refusal;
+  if (kind !== 'rate' || !retryAfterSeconds || retryAfterSeconds > MAX_WAIT_SECONDS) return false;
+  if (signal?.aborted) return false;
+  await new Promise<void>((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
+  return !signal?.aborted;
+}

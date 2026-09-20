@@ -25,6 +25,7 @@ import {
   withoutUpsell,
   ServerRefusalError,
   isFinalRefusal,
+  waitOutRateWindow,
 } from '../src/lib/llm/refusals.ts';
 
 // ---------------------------------------------------------------------------
@@ -352,6 +353,66 @@ test('ServerRefusalError — what stops a retry and what does not', async (t) =>
     const err = new ServerRefusalError(parseRefusalBody(429, RATE_429));
     assert.equal(err.refusal.kind, 'rate');
     assert.equal(err.refusal.retryAfterSeconds, 60);
+  });
+});
+
+test('waitOutRateWindow — the one refusal time alone fixes', async (t) => {
+  const refusalOf = (status, body, header) =>
+    new ServerRefusalError(parseRefusalBody(status, body, header));
+
+  await t.test('a short window is waited out, and the caller retries', async () => {
+    const started = Date.now();
+    const waited = await waitOutRateWindow(refusalOf(429, { ...RATE_429, retry_after_seconds: 0.05 }));
+    assert.equal(waited, true);
+    assert.ok(Date.now() - started >= 40, 'it actually waited');
+  });
+
+  await t.test('a spent wallet is never waited out — time does not refill it', async () => {
+    assert.equal(await waitOutRateWindow(refusalOf(402, BUDGET_402)), false);
+  });
+
+  await t.test('a sealed matter is never waited out', async () => {
+    assert.equal(await waitOutRateWindow(refusalOf(403, TIER_VIOLATION_B)), false);
+  });
+
+  await t.test('a provider 5xx is not this function\'s business', async () => {
+    assert.equal(await waitOutRateWindow(refusalOf(500, PROVIDER_500)), false);
+  });
+
+  await t.test('a window longer than two minutes is not sat out', async () => {
+    assert.equal(
+      await waitOutRateWindow(refusalOf(429, { ...RATE_429, retry_after_seconds: 3600 })),
+      false,
+    );
+  });
+
+  await t.test('a 429 that named no seconds is not sat out blind', async () => {
+    assert.equal(await waitOutRateWindow(refusalOf(429, { error: 'over_rate_limit' })), false);
+  });
+
+  await t.test('an already-aborted run does not wait at all', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const started = Date.now();
+    assert.equal(
+      await waitOutRateWindow(refusalOf(429, { ...RATE_429, retry_after_seconds: 5 }), ac.signal),
+      false,
+    );
+    assert.ok(Date.now() - started < 200, 'it returned immediately');
+  });
+
+  await t.test('a run aborted DURING the wait does not retry', async () => {
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 20);
+    const waited = await waitOutRateWindow(
+      refusalOf(429, { ...RATE_429, retry_after_seconds: 0.1 }),
+      ac.signal,
+    );
+    assert.equal(waited, false);
+  });
+
+  await t.test('a plain Error is not a rate window', async () => {
+    assert.equal(await waitOutRateWindow(new Error('boom')), false);
   });
 });
 

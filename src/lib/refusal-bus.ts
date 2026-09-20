@@ -77,7 +77,9 @@ export function subscribeServerRefusal(onChange: () => void): () => void {
   return () => window.removeEventListener(SERVER_REFUSAL_EVENT, onChange);
 }
 
-/** Tests and the sign-out path: forget everything, including the coalescing. */
+/** Forget everything, including the coalescing window. Nothing calls this in
+ *  the app today; it is here for a test, and for a sign-out path if one ever
+ *  wants to clear the shell. */
 export function resetServerRefusals(): void {
   current = null;
   lastShownAt.clear();

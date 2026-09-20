@@ -51,11 +51,15 @@ export default function RefusalBanner() {
         ? TONES.seal
         : TONES.err;
 
+  // inset-x-4 + mx-auto rather than left-1/2 + -translate-x-1/2: a margin is
+  // inert on a translate-centred fixed element, so on a 390px phone the pill
+  // would render at its full 512px and hang off both edges with the sentence
+  // clipped. Identical on a desktop; inside the gutter on a phone.
   return (
     <div
       role="status"
       aria-live="polite"
-      className={`fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-start gap-2 max-w-lg mx-4 px-3 py-2 rounded-lg border text-xs leading-snug shadow-xl ${tone}`}
+      className={`fixed top-16 inset-x-4 mx-auto z-50 flex items-start gap-2 w-fit max-w-lg px-3 py-2 rounded-lg border text-xs leading-snug shadow-xl ${tone}`}
     >
       <span className="flex-1">{refusal.message}</span>
       <button
