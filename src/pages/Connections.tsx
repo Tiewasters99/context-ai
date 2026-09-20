@@ -1,19 +1,18 @@
 // The Connections surface — one home for every integration between
 // Contextspaces and the tools a lawyer works in.
 //
-// Claude (outbound) — we can only see half of this. A connector token
-//   leaves a row in connector_tokens, so "Connected via token" is a fact we
-//   can check. An OAuth connection does not: /api/oauth-approve mints a
-//   stateless signed code and /api/oauth-token a stateless JWT, and neither
-//   writes a row anywhere. So there is nothing for this page to read, and it
-//   must not pretend otherwise — a user who just connected claude.ai over
-//   OAuth used to be told "Not connected". A true Connected badge needs the
-//   grants table planned for the revocation work.
+// Claude (outbound) — two signals now, and they mean different things. A
+//   connector token leaves a row in connector_tokens, so "Connected via
+//   token" is a fact about a string this account issued. An OAuth approval
+//   leaves a row in oauth_grants (migration 065) — that one IS the
+//   connection, so a live grant is a true "Connected", and revoking it cuts
+//   that one client off. Before 065 an OAuth approval wrote nothing at all
+//   and this page had to stay silent (PR #157).
 // Gmail and Google Calendar (inbound) — live OAuth connections, state
 //   from the connections table (migration 026); both run through the
 //   same /api/google-connect + /api/google-callback flow.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -177,6 +176,80 @@ function AssistantRow({
   );
 }
 
+// ---------------------------------------------------------------------------
+// OAuth grants — the AI clients this account has actually approved
+// ---------------------------------------------------------------------------
+
+type Grant = {
+  id: string;
+  client_name: string;
+  created_at: string;
+  last_used_at: string | null;
+};
+
+// An AI client registers itself and picks its own name, so the only truthful
+// list is the raw client_name it sent. This table exists purely to decide
+// which of the four rows above may show a Connected badge; a name that
+// matches nothing gets no badge, and still appears in the list below under
+// whatever it called itself.
+const ASSISTANT_MATCHERS: { name: string; test: RegExp }[] = [
+  { name: 'Claude', test: /claude|anthropic/i },
+  { name: 'ChatGPT', test: /chatgpt|openai|\bgpt\b/i },
+  { name: 'Gemini', test: /gemini|antigravity|google/i },
+  { name: 'Grok', test: /grok|xai|x\.ai/i },
+];
+
+function assistantFor(clientName: string): string | null {
+  return ASSISTANT_MATCHERS.find((m) => m.test.test(clientName || ''))?.name ?? null;
+}
+
+function shortDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? null
+    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function GrantRow({
+  grant,
+  busy,
+  onRevoke,
+}: {
+  grant: Grant;
+  busy: boolean;
+  onRevoke: () => void;
+}) {
+  const connected = shortDate(grant.created_at);
+  const used = shortDate(grant.last_used_at);
+  return (
+    <div className="flex items-center gap-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4">
+      <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
+        <Plug size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="flex items-center gap-2.5">
+          <span className="text-[15px] font-medium text-[var(--color-text-bright)] truncate">
+            {grant.client_name}
+          </span>
+          <StateBadge state="connected" />
+        </span>
+        <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
+          {connected ? `Connected ${connected}.` : 'Connected.'}{' '}
+          {used ? `Last used ${used}.` : 'Not used yet.'}
+        </span>
+      </span>
+      <button
+        onClick={onRevoke}
+        disabled={busy}
+        className="text-[13px] text-[var(--color-text-secondary)] hover:text-[#f87171] transition shrink-0 disabled:opacity-50"
+      >
+        Revoke
+      </button>
+    </div>
+  );
+}
+
 const GOOGLE_INTEGRATIONS: {
   kind: GoogleKind;
   icon: typeof Mail;
@@ -208,9 +281,14 @@ export default function Connections() {
   const { data: connections = [] } = useConnections();
   const invalidateConnections = useConnectionsInvalidate();
 
-  // undefined = no badge. The only Claude state we can prove is a live
-  // connector token; anything else would be a guess printed as a fact.
-  const [claudeState, setClaudeState] = useState<ConnState | undefined>(undefined);
+  // undefined = no badge. Without a grant, the only Claude state we can
+  // prove is a live connector token; anything else would be a guess printed
+  // as a fact.
+  const [claudeTokenState, setClaudeTokenState] = useState<ConnState | undefined>(undefined);
+  // null = nothing to show — either this account has approved nothing, or
+  // migration 065 is not pasted yet and the table cannot be read. Neither is
+  // an error worth putting in front of a lawyer.
+  const [grants, setGrants] = useState<Grant[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
     () => {
@@ -254,12 +332,76 @@ export default function Connections() {
           !t.revoked_at &&
           (!t.expires_at || new Date(t.expires_at).getTime() > now),
       );
-      setClaudeState(live ? 'token_active' : undefined);
+      setClaudeTokenState(live ? 'token_active' : undefined);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // oauth_grants (migration 065) — one row per AI client this account has
+  // approved over OAuth. This is the connection itself, so a live row is a
+  // true "Connected" and revoking it ends that one client's access. If the
+  // migration is not pasted yet the select fails (PGRST205) and the section
+  // simply does not appear.
+  const loadGrants = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('oauth_grants')
+      .select('id, client_name, created_at, last_used_at')
+      .is('revoked_at', null)
+      .order('created_at', { ascending: false });
+    if (error || !data) {
+      setGrants(null);
+      return;
+    }
+    setGrants(data as Grant[]);
+  }, []);
+
+  useEffect(() => {
+    void loadGrants();
+  }, [loadGrants]);
+
+  const grantedAssistants = new Set(
+    (grants ?? []).map((g) => assistantFor(g.client_name)).filter(Boolean) as string[],
+  );
+  const assistantState = (name: string): ConnState | undefined =>
+    grantedAssistants.has(name) ? 'connected' : undefined;
+  const claudeState = assistantState('Claude') ?? claudeTokenState;
+
+  const handleRevoke = async (grant: Grant) => {
+    const label = assistantFor(grant.client_name) ?? grant.client_name;
+    if (
+      !confirm(
+        `Revoke ${grant.client_name}?\n\n` +
+          `${label} will lose access to your matters within a minute. ` +
+          `You can reconnect at any time.`,
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      // No .select() on the way back: an INSERT/UPDATE … RETURNING re-runs
+      // the SELECT policy and is the shape that has bitten this project's RLS
+      // before. The row is re-read by loadGrants() instead.
+      const { error } = await supabase
+        .from('oauth_grants')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('id', grant.id);
+      if (error) throw new Error(error.message);
+      await loadGrants();
+      setBanner({
+        kind: 'ok',
+        text: `${label} revoked. It loses access within a minute.`,
+      });
+    } catch (e) {
+      setBanner({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'Could not revoke that connection',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const handleConnect = async (kind: GoogleKind) => {
     setBusy(true);
@@ -346,27 +488,32 @@ export default function Connections() {
             name="Claude"
             state={claudeState}
             blurb={
-              claudeState === 'token_active'
-                ? 'A connector token is live. Connections Claude made over OAuth are managed in Claude.'
-                : 'Connect or manage in Claude — sign-in happens in the AI client, so Contextspaces has no status to show.'
+              claudeState === 'connected'
+                ? 'Approved over OAuth. Revoke it below to cut it off.'
+                : claudeState === 'token_active'
+                  ? 'A connector token is live. Connections Claude made over OAuth are managed in Claude.'
+                  : 'Connect or manage in Claude — sign-in happens in the AI client, so Contextspaces has no status to show.'
             }
             onClick={() => navigate('/app/connections/claude')}
           />
 
           <AssistantRow
             name="ChatGPT"
+            state={assistantState('ChatGPT')}
             blurb="Add Contextspaces as a custom connector — GPT signs in over OAuth, no token to paste."
             onClick={() => navigate('/app/connections/chatgpt')}
           />
 
           <AssistantRow
             name="Gemini"
+            state={assistantState('Gemini')}
             blurb="Same toolset for Google's Gemini — CLI today, web/desktop as MCP support rolls out."
             onClick={() => navigate('/app/connections/gemini')}
           />
 
           <AssistantRow
             name="Grok"
+            state={assistantState('Grok')}
             blurb="Connect Contextspaces to xAI's Grok via MCP — same URL, same token."
             onClick={() => navigate('/app/connections/grok')}
           />
@@ -390,6 +537,30 @@ export default function Connections() {
             );
           })}
         </div>
+
+        {grants && grants.length > 0 && (
+          <section className="mt-10">
+            <h2 className="text-[15px] font-medium text-[var(--color-text-bright)]">
+              Approved AI clients
+            </h2>
+            <p className="mt-1.5 mb-4 text-[13px] text-[var(--color-text-secondary)] max-w-xl leading-relaxed">
+              Each one signed in to Contextspaces itself and holds its own
+              access. Revoking one ends that client's access and leaves every
+              other connection alone. The name is whatever the client called
+              itself when it registered.
+            </p>
+            <div className="flex flex-col gap-2">
+              {grants.map((grant) => (
+                <GrantRow
+                  key={grant.id}
+                  grant={grant}
+                  busy={busy}
+                  onRevoke={() => handleRevoke(grant)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
           Connecting Gmail or Calendar asks Google for access; the token is

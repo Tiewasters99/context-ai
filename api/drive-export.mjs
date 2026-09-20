@@ -27,6 +27,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 import { decrypt } from '../lib/connections-crypto.mjs';
+import { checkExport, sealResult } from '../lib/export-gate.mjs'; // gate:import
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -92,6 +93,22 @@ export default async function handler(req, res) {
     });
   }
 
+  // ── SecureSpace export gate ─────────────────────────────────── gate:start
+  // Eden's rule of 2026-09-20: a sealed matter's document may leave, but never
+  // silently. This runs BEFORE the Drive connection is read, before the token
+  // exchange, and before a single byte is downloaded from storage — so a 409
+  // here is a promise about the process, not a claim in the prose: nothing was
+  // fetched and nothing was sent. The confirmation is per request and is never
+  // remembered server-side.
+  const gate = await checkExport({
+    supabase: sb,
+    userId,
+    documentId,
+    destination: { service: 'google_drive' },
+    confirmed: body.confirm_leave_seal === true,
+  });
+  if (!gate.ok) return json(res, gate.status, gate.body);
+  // ───────────────────────────────────────────────────────────────── gate:end
   // Google Drive connection lookup via service role (RLS would also work
   // but service role is simpler since we already verified the user above).
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -219,6 +236,7 @@ export default async function handler(req, res) {
     webViewLink: driveResult.webViewLink || null,
     name: driveResult.name || filename,
     folderName: parentFolderId ? folderName : null,
+    ...(sealResult(gate) ? { seal: sealResult(gate) } : {}), // gate:line
   });
 }
 

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { fetchPaged } from './paged';
 
 export type AnnotationColor = 'gold' | 'green' | 'pink' | 'blue';
 
@@ -84,16 +85,31 @@ const ANNOTATION_SELECT =
   'links:annotation_links(id, target_document_id, target_page, target_line, label, target:documents(id, title))';
 
 export async function listAnnotations(documentId: string): Promise<Annotation[]> {
-  const { data, error } = await supabase
-    .from('document_annotations')
-    .select(ANNOTATION_SELECT)
-    .eq('document_id', documentId)
-    .order('created_at', { ascending: true });
-  if (error) {
-    console.warn('[annotations load] failed:', error.message);
+  // Paged: a deposition worked through by two people carries more marks than
+  // PostgREST's 1,000-row cap, and the reader drew the first thousand of them
+  // with the later pages looking untouched. `.order('id')` is the unique
+  // tiebreaker — a highlight sweep writes several rows in the same
+  // millisecond, and ties let rows swap between `.range()` pages.
+  //
+  // The contract callers rely on is unchanged: a failure is a warning and an
+  // empty list, never a throw (Marginalia and the reader overlay treat a
+  // rejected load as a crash).
+  try {
+    const { rows } = await fetchPaged<unknown>(
+      (from, to) => supabase
+        .from('document_annotations')
+        .select(ANNOTATION_SELECT)
+        .eq('document_id', documentId)
+        .order('created_at', { ascending: true })
+        .order('id')
+        .range(from, to),
+      { label: 'annotations' },
+    );
+    return rows as Annotation[];
+  } catch (err) {
+    console.warn('[annotations load] failed:', err instanceof Error ? err.message : err);
     return [];
   }
-  return (data ?? []) as unknown as Annotation[];
 }
 
 export async function createAnnotation(args: {

@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import RefusalBanner from '@/components/ui/RefusalBanner';
 
 // Standalone shell for the Connect entry into Contextspaces. Designed to
 // feel like its own app — no sidebar, no serverspace nav, no ambient
@@ -50,6 +51,8 @@ export default function ConnectLayout() {
       <main className="flex-1 min-h-0 overflow-y-auto">
         <Outlet />
       </main>
+      {/* Its own shell, so its own copy — see DiscoveryLayout. */}
+      <RefusalBanner />
     </div>
   );
 }

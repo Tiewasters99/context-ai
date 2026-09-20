@@ -6,6 +6,7 @@ import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import CanvasLayer from '@/components/canvas/CanvasLayer';
 import AmbientControls from './AmbientControls';
+import RefusalBanner from '@/components/ui/RefusalBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
 
@@ -118,6 +119,13 @@ export default function MainLayout() {
 
       <IntoFullscreen>
         <Assistant isOpen={assistantOpen} onClose={() => setAssistantOpen(false)} />
+        {/* A server refusal — the month's budget, the rate window, a sealed
+            matter — drawn once for the whole shell. Inside IntoFullscreen for
+            the same reason the Assistant is: the Reader takes the browser
+            full screen, and a sibling of the fullscreen element is not
+            rendered, so the one sentence explaining why a step stopped would
+            vanish exactly where a long document is being read. */}
+        <RefusalBanner />
       </IntoFullscreen>
     </div>
   );

@@ -7,11 +7,35 @@
 // three nights running.
 //
 //   node scripts/ingest-suite.mjs <scratch matter short_code|uuid> [flags]
-//     --email        send the report to GMAIL_ADDRESS (the monitor's mailbox)
-//     --skip-heavy   skip the 300-page / 50-page-scan / 200 MB fixtures (dev runs)
-//     --no-g6        skip the in-process provider-outage section
-//     --no-g9        skip the monitor run at the end
-//     --keep         leave everything in the matter (debugging)
+//     --email             send the report to GMAIL_ADDRESS (the monitor's mailbox)
+//     --skip-heavy        skip the 300-page / 50-page-scan / 200 MB fixtures (dev runs)
+//     --no-g6             skip the in-process provider-outage section
+//     --no-g9             skip the monitor run at the end
+//     --keep              leave everything in the matter (debugging)
+//     --deadline-min=N    whole-run budget (default 60; the = form is required
+//                         because the first bare argument is the matter)
+//     --gate-min=N        per-gate budget (default 15)
+//     --dry-run           resolve flags, paths and credential PRESENCE, print
+//                         them, exit 0. No network, no database, no provider.
+//
+// Config: `.env` at the repo root when there is one, otherwise the process
+// environment — so this runs on a GitHub Actions runner (which has no `.env`)
+// exactly as it runs on a laptop. See .github/workflows/ingest-nightly.yml.
+//
+// Deadlines (2026-09-20). On 2026-09-18 this suite hung inside a gate and was
+// still hanging two and a half hours later; it wrote no line to the jsonl, so
+// the night has no record at all and the green-night streak counts it as
+// nothing rather than as a failure. Three things now stop that:
+//   * every gate runs under --gate-min. A gate that overruns is marked
+//     FAILED (timeout), abandoned, and the run carries on to the next one.
+//   * the whole run is under --deadline-min, which is deliberately well below
+//     the Task Scheduler ExecutionTimeLimit (2 h) so the suite ends itself,
+//     writes its report and emails it instead of being terminated silently.
+//   * logs/ingest-suite-checkpoint.json is rewritten after every gate. Task
+//     Scheduler kills with TerminateProcess (exit 0xC000013A) and Ctrl-C ends
+//     the same way — no handler of any kind runs — so a file already on disk
+//     is the only partial record that can survive it. Read it to see which
+//     gate the run died in.
 //
 // Gates (the plan memo's G1–G10, plus two the plan implies):
 //   G0  Formats: docx / xlsx / epub / md / txt / rtf / fountain / photographed page are indexed and searchable
@@ -57,23 +81,87 @@ import * as F from './_fixtures-suite.mjs';
 import { stampedScanPdf, ecfStamp } from './_fixtures-ingest.mjs';
 import { isStampOnlyText } from '../lib/court-stamps.mjs';
 import { seededRecord, SUITE_BUCKET, SUITE_RECORD_OBJECT, SUITE_RECORD_PAGES } from './_seed-suite-record.mjs';
+import { withDeadline, startOverallDeadline, writeCheckpoint } from './_suite-deadline.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
-const env = Object.fromEntries(
-  fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)
-    .filter((l) => /^[A-Z_]+=/.test(l))
-    .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
-);
+// Config comes from `.env` when there is one, and from the process environment
+// otherwise — which is the whole reason this suite can now run somewhere other
+// than Eden's laptop. A GitHub Actions runner has no `.env` at all, and before
+// 2026-09-20 the readFileSync below threw ENOENT at import, so the suite could
+// only ever run from a checkout that held production secrets on disk. The
+// environment wins where both are set, because that is the direction a CI
+// secret travels.
+const env = (() => {
+  let fromFile = {};
+  try {
+    fromFile = Object.fromEntries(
+      fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)
+        .filter((l) => /^[A-Z_]+=/.test(l))
+        .map((l) => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1).trim().replace(/^"|"$/g, '')]; }),
+    );
+  } catch { /* no .env: the environment is the only source, which is correct on CI */ }
+  const fromEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([, v]) => typeof v === 'string' && v !== ''),
+  );
+  return { ...fromFile, ...fromEnv };
+})();
 const present = (v) => Boolean(v) && v !== 'PASTE';
 const argv = process.argv.slice(2);
 const flag = (f) => argv.includes(f);
+// `--name=<n>` only: the first bare argument is the matter, so a space-separated
+// value would be read as one.
+const numFlag = (name, dflt) => {
+  const hit = argv.find((a) => a.startsWith(`--${name}=`));
+  const n = hit ? Number(hit.slice(name.length + 3)) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : dflt;
+};
 const matterArg = argv.find((a) => !a.startsWith('--'));
-if (!matterArg) { console.error('usage: node scripts/ingest-suite.mjs <scratch matter short_code|uuid> [--email] [--skip-heavy] [--no-g6] [--no-g9] [--keep]'); process.exit(2); }
+if (!matterArg) { console.error('usage: node scripts/ingest-suite.mjs <scratch matter short_code|uuid> [--email] [--skip-heavy] [--no-g6] [--no-g9] [--keep] [--deadline-min=N] [--gate-min=N] [--dry-run]'); process.exit(2); }
 const SKIP_HEAVY = flag('--skip-heavy');
 const KEEP = flag('--keep');
+// Calibrated against the runs actually recorded in logs/ingest-suite.jsonl:
+// 2.7, 3.1, 3.4 and 6.6 minutes end to end, heavy fixtures included. 60 min is
+// therefore ~9× the slowest real night and half of Task Scheduler's 2 h
+// ExecutionTimeLimit, which leaves room for a genuinely slow night while
+// putting the failure email in the mailbox an hour earlier than the kill would.
+const DEADLINE_MS = numFlag('deadline-min', 60) * 60_000;
+const GATE_MS = numFlag('gate-min', 15) * 60_000;
+// One request must never be able to hang the night. Supabase-js has no
+// timeout of its own, and a socket that stops answering (the 09-18 hang) is
+// indistinguishable from work in progress — so every PostgREST and storage
+// call this suite makes carries its own abort. Generous, because a
+// server-side copy of the 200 MB record is one of them; the per-gate budget
+// is what catches anything slower than this.
+const REQUEST_TIMEOUT_MS = 4 * 60_000;
 
-const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+// --dry-run: resolve everything that can be resolved without a network — the
+// flags, the deadlines, the paths, which credentials are present — print it,
+// and stop before the first request. It exists so the workflow that runs this
+// suite on Linux can be proved to invoke it correctly WITHOUT a scratch
+// matter, a service-role key, or a single paid call: the class of failure it
+// catches is a path separator, a missing env var name, or a flag the runner
+// spells differently, all of which used to surface at 03:00 as a red night.
+// Exits 0 whatever it finds; it is a parse check, not a health check.
+if (flag('--dry-run')) {
+  const needed = ['VITE_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'OPENAI_API_KEY', 'GOOGLE_API_KEY', 'GMAIL_ADDRESS', 'GMAIL_APP_PASSWORD', 'SMOKE_CREATED_BY'];
+  console.log('ingest-suite --dry-run (no network, no database, no provider calls)');
+  console.log(`  platform         ${process.platform} · node ${process.versions.node}`);
+  console.log(`  repo root        ${ROOT}`);
+  console.log(`  log file         ${path.join(ROOT, 'logs', 'ingest-suite.jsonl')}`);
+  console.log(`  checkpoint       ${path.join(ROOT, 'logs', 'ingest-suite-checkpoint.json')}`);
+  console.log(`  matter argument  ${matterArg}`);
+  console.log(`  deadline         ${DEADLINE_MS / 60_000} min overall · ${GATE_MS / 60_000} min per gate`);
+  console.log(`  flags            skip-heavy=${SKIP_HEAVY} keep=${KEEP} no-g6=${flag('--no-g6')} no-g9=${flag('--no-g9')} email=${flag('--email')}`);
+  // Presence only — never a value, never a prefix, never a length.
+  for (const k of needed) console.log(`  ${k.padEnd(28)} ${present(env[k]) ? 'present' : 'ABSENT'}`);
+  process.exit(0);
+}
+
+const supabase = createClient(env.VITE_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: (url, init = {}) => fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) }) },
+});
 const isUuid = /^[0-9a-f-]{36}$/i.test(matterArg);
 const { data: matter, error: mErr } = await supabase.from('matterspaces').select('id, name, short_code, serverspace_id').eq(isUuid ? 'id' : 'short_code', matterArg).single();
 if (mErr || !matter) { console.error(`matter: ${mErr?.message || 'not found'}`); process.exit(2); }
@@ -115,10 +203,142 @@ function check(gate, ok, msg) {
 }
 function skip(gate, reason) { ledger[gate].skipped = reason; console.log(`  skip [${gate}] ${reason}`); }
 
+// ---- Deadlines and the crash-survivable ledger -------------------------------------
+const CHECKPOINT_FILE = path.join(ROOT, 'logs', 'ingest-suite-checkpoint.json');
+let phaseNow = null;            // the gate currently running, for the checkpoint
+const timedOutGates = [];
+
+function gateStates() {
+  return Object.fromEntries(Object.entries(ledger).map(([g, e]) => [
+    g, e.skipped ? 'skip' : e.checks.length === 0 ? 'none' : e.checks.every((c) => c.ok) ? 'pass' : 'fail',
+  ]));
+}
+
+// Rewritten after every gate. A Task Scheduler kill (0xC000013A) runs no
+// handler at all, so this file — already on disk — is the only thing that can
+// say where the run was when it died.
+function checkpoint(extra = {}) {
+  writeCheckpoint(CHECKPOINT_FILE, {
+    run: tag, startedAt: startedAt.toISOString(), at: new Date().toISOString(),
+    matter: matter.short_code, skipHeavy: SKIP_HEAVY,
+    deadlineMin: DEADLINE_MS / 60_000, gateMin: GATE_MS / 60_000,
+    phase: phaseNow, complete: false, pass: false,
+    gates: gateStates(), timedOutGates: [...timedOutGates],
+    failures: [...failures], ...extra,
+  });
+}
+
+// Run one gate under the per-gate budget. A gate that overruns is recorded as
+// a failure with the word "timeout" in it and ABANDONED — the run continues,
+// so one wedged gate costs one gate. A gate that throws is a crash, exactly as
+// before, and is re-thrown to the outer handler.
+async function phase(gate, label, fn, { budgetMs = GATE_MS } = {}) {
+  phaseNow = `${gate} ${label}`;
+  const out = await withDeadline(fn, budgetMs, {
+    onAbandon: (err) => console.error(`  (abandoned [${gate}] ${label} later threw: ${String(err?.message || err).slice(0, 160)})`),
+  });
+  if (out.timedOut) {
+    timedOutGates.push(gate);
+    check(gate, false, `${label}: TIMED OUT after ${(out.ms / 60000).toFixed(1)} min (--gate-min=${GATE_MS / 60000}); gate abandoned, run continues`);
+  }
+  checkpoint();
+  return out;
+}
+
 // ---- Bookkeeping -----------------------------------------------------------------
 const made = { docs: [], folders: [] };
 const timings = {}; // label → { bytes, uploadMs, queuedAt, readyAt, pipelineMs, status }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- The report, written on EVERY exit path ---------------------------------------
+// Normal end, whole-run deadline, or Ctrl-C: all three land here, so the night
+// always leaves a line in logs/ingest-suite.jsonl. An abnormal end is a FAIL,
+// never an absence — a missing line reads as "the suite did not run", which is
+// how 2026-09-18 disappeared from the record it was supposed to be keeping.
+let cleanupNote = null;
+let finished = false;
+let overall = null;
+async function finishRun({ complete, reason = null, exitCode = null } = {}) {
+  if (finished) return;
+  finished = true;
+  overall?.cancel();
+  const finishedAt = new Date();
+  if (reason) failures.push(reason);
+  const pass = complete && failures.length === 0;
+  const logDir = path.join(ROOT, 'logs');
+  const logFile = path.join(logDir, 'ingest-suite.jsonl');
+  let prevStreak = 0;
+  try {
+    const lines = fs.readFileSync(logFile, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+    for (let i = lines.length - 1; i >= 0 && lines[i].pass; i--) prevStreak++;
+  } catch { /* first run */ }
+  const streak = pass ? prevStreak + 1 : 0;
+  const L = [];
+  L.push(`Ingestion suite — ${finishedAt.toISOString().slice(0, 16).replace('T', ' ')}Z — ${pass ? 'PASS' : 'FAIL'} — ${((finishedAt - startedAt) / 60000).toFixed(1)} min — run ${tag}${complete ? '' : ' — INCOMPLETE'}`);
+  L.push(pass ? (streak >= 3 ? `100% READY: green ${streak} nights running.` : `Green ${streak} night(s) running (100% ready = 3).`) : 'Streak reset.');
+  if (reason) L.push(`Ended early: ${reason} (was running: ${phaseNow || 'nothing'}).`);
+  if (timedOutGates.length) L.push(`Gates that timed out: ${[...new Set(timedOutGates)].join(', ')}.`);
+  if (cleanupNote) L.push(cleanupNote);
+  L.push('');
+  for (const [g, title] of Object.entries(GATES)) {
+    const e = ledger[g];
+    const n = e.checks.length; const bad = e.checks.filter((c) => !c.ok).length;
+    const state = e.skipped ? `SKIP (${e.skipped})` : n === 0 ? 'no checks' : bad ? `FAIL ${bad}/${n}` : `PASS ${n}/${n}`;
+    L.push(`${g.padEnd(4)} ${state.padEnd(28)} ${title}`);
+  }
+  L.push('');
+  L.push('Timings (queue → ready):');
+  for (const [label, t] of Object.entries(timings)) L.push(`  ${label.padEnd(12)} ${String((t.bytes / 1048576).toFixed(t.bytes > 1048576 ? 1 : 2)).padStart(7)} MB  ${t.how.padEnd(20)} ${String((t.uploadMs / 1000).toFixed(1)).padStart(6)} s  pipeline ${t.pipelineMs == null ? '   —  ' : String((t.pipelineMs / 1000).toFixed(0)).padStart(4) + ' s'}  ${t.status}`);
+  if (failures.length) { L.push(''); L.push('Failures:'); for (const f of failures) L.push(`  - ${f}`); }
+  const report = L.join('\n');
+  console.log('\n' + '='.repeat(100) + '\n' + report + '\n' + '='.repeat(100));
+
+  const record = {
+    at: finishedAt.toISOString(), pass, streak, minutes: Number(((finishedAt - startedAt) / 60000).toFixed(1)), run: tag, skipHeavy: SKIP_HEAVY,
+    complete, ...(reason ? { endedEarly: reason, endedDuring: phaseNow } : {}),
+    ...(timedOutGates.length ? { timedOutGates: [...new Set(timedOutGates)] } : {}),
+    gates: gateStates(),
+    timings: Object.fromEntries(Object.entries(timings).map(([l, t]) => [l, { bytes: t.bytes, uploadMs: t.uploadMs, pipelineMs: t.pipelineMs, status: t.status }])),
+    failures,
+  };
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(logFile, JSON.stringify(record) + '\n');
+  } catch (e) { console.error(`(could not write ${logFile}: ${e.message})`); }
+  writeCheckpoint(CHECKPOINT_FILE, { ...record, phase: phaseNow, reportedAt: finishedAt.toISOString() });
+
+  if (flag('--email')) {
+    const to = env.GMAIL_ADDRESS; const pw = env.GMAIL_APP_PASSWORD;
+    if (!present(to) || !present(pw)) console.log('(--email skipped: GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set)');
+    else {
+      // Bounded: a mail server that stops answering must not hold the process
+      // open past the deadline that brought us here.
+      const sent = await withDeadline(async () => {
+        const { default: nodemailer } = await import('nodemailer');
+        const t = nodemailer.createTransport({ service: 'gmail', auth: { user: to, pass: pw } });
+        await t.sendMail({ from: to, to, subject: `Ingestion suite ${finishedAt.toISOString().slice(0, 10)}: ${pass ? `PASS (green ${streak} night${streak === 1 ? '' : 's'})` : `FAIL — ${failures.length} check(s)${complete ? '' : ', INCOMPLETE'}`}`, text: report });
+      }, 90_000).catch((e) => { console.error(`(--email failed: ${String(e.message || e).split('\n')[0]})`); return { timedOut: false }; });
+      if (sent.timedOut) console.error('(--email timed out after 90 s)');
+      else console.log(`emailed ${to}`);
+    }
+  }
+  process.exit(exitCode ?? (pass ? 0 : 1));
+}
+
+// The whole-run alarm. Set well under Task Scheduler's ExecutionTimeLimit so
+// the suite ends ITSELF — with a report and an email — rather than being
+// terminated with nothing written.
+overall = startOverallDeadline(DEADLINE_MS, () => finishRun({
+  complete: false,
+  reason: `whole-run deadline of ${DEADLINE_MS / 60000} min expired`,
+}));
+
+// Ctrl-C and a `taskkill` that sends a signal. Task Scheduler's own timeout
+// does NOT come through here — it calls TerminateProcess — which is why the
+// checkpoint file exists.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) {
+  process.on(sig, () => { void finishRun({ complete: false, reason: `interrupted (${sig})` }); });
+}
 
 // Insert the row, upload the bytes, and (unless enqueue:false) queue the job.
 // The queue → ready clock starts at enqueue, never at upload: this PC's
@@ -171,9 +391,19 @@ async function enqueueJob(label) {
 }
 
 const TERMINAL = new Set(['ready', 'error', 'held']);
+// null = the row is genuinely gone. undefined = this read did not answer (an
+// aborted request, a blip): the callers poll again rather than declaring the
+// document vanished, which is what a 30-second network hiccup used to look
+// like once every request carried a timeout.
 async function readDoc(id) {
-  const { data } = await supabase.from('documents').select('id, processing_status, processing_error, page_count, matterspace_id, metadata, ingested_at').eq('id', id).maybeSingle();
-  return data;
+  try {
+    const { data, error } = await supabase.from('documents').select('id, processing_status, processing_error, page_count, matterspace_id, metadata, ingested_at').eq('id', id).maybeSingle();
+    if (error) { console.log(`  (read ${id.slice(0, 8)}: ${error.message.slice(0, 80)} — retrying)`); return undefined; }
+    return data;
+  } catch (err) {
+    console.log(`  (read ${id.slice(0, 8)}: ${String(err?.message || err).slice(0, 80)} — retrying)`);
+    return undefined;
+  }
 }
 
 // Wait for every entry ({ label, budgetMs }) to reach a terminal state, each
@@ -186,6 +416,15 @@ async function waitAll(entries) {
     for (const [label, e] of [...pending]) {
       const t = timings[label];
       const d = await readDoc(t.id);
+      if (d === undefined) {
+        // The read did not answer. Keep waiting — the budget below still
+        // applies, so a database that never answers still ends this gate.
+        if (Date.now() - t.queuedAt > e.budgetMs) {
+          t.status = 'stuck:unreadable'; rows[label] = null; pending.delete(label);
+          check('G5', false, `${label}: could not be read for ${(e.budgetMs / 60000).toFixed(0)} min`);
+        }
+        continue;
+      }
       if (!d) { rows[label] = null; pending.delete(label); check('G5', false, `${label}: row vanished`); continue; }
       if (TERMINAL.has(d.processing_status)) {
         // The pipeline's own clock (ingested_at) where it has one — polling
@@ -251,7 +490,9 @@ async function waitChild(id, budgetMs = 5 * 60_000) {
   const t0 = Date.now();
   for (;;) {
     const d = await readDoc(id);
-    if (!d || TERMINAL.has(d.processing_status) || Date.now() - t0 > budgetMs) return d;
+    const overBudget = Date.now() - t0 > budgetMs;
+    if (d === undefined) { if (overBudget) return null; await sleep(4000); continue; }
+    if (!d || TERMINAL.has(d.processing_status) || overBudget) return d;
     await sleep(4000);
   }
 }
@@ -263,8 +504,12 @@ async function expectChild(gate, label, summary, titleRe, word) {
 }
 
 // =====================================================================================
+// Shared across gates, so each one can run inside its own deadline.
+let rows = {};
+let corruptId = null;
 try {
   // ---- G4: selection-time refusals — no bytes move, no row --------------------------
+  await phase('G4', 'selection-time refusals', async () => {
   console.log('\n[G4] selection-time refusals');
   const r3 = checkUpload({ name: 'giant-record.pdf', size: VAULT_MAX_BYTES + 1 });
   check('G4', r3?.code === 'too_large' && /up to 500 MB/.test(r3.message || ''), `oversize refused at selection: "${(r3?.message || JSON.stringify(r3)).slice(0, 90)}"`);
@@ -281,6 +526,7 @@ try {
   }
   const { count: rowsAfter } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('matterspace_id', matter.id);
   check('G4', rowsBefore === rowsAfter, 'no row was created by the refusals');
+  });
 
   // ---- G8: contention — ten BULK scans first, then one NORMAL text file -----------------
   // The bulk fixtures are OCR-bound (12 scanned pages each, ~7–15 s of Gemini
@@ -289,6 +535,7 @@ try {
   // rounds); born-digital PDFs clear in seconds and prove nothing. The single
   // upload is queued after them at NORMAL priority and must be picked up as
   // soon as a lane frees — long before the batch is done.
+  await phase('G8', 'bulk vs a single upload', async () => {
   console.log('\n[G8] bulk production vs a single upload');
   const { count: depth } = await supabase.from('processing_jobs').select('id', { count: 'exact', head: true }).in('status', ['queued', 'running']);
   console.log(`  queue depth before: ${depth || 0} job(s) queued/running`);
@@ -319,8 +566,13 @@ try {
     check('G8', single.pipelineMs < 120_000, `single upload's queue→ready under 2 min (${(single.pipelineMs / 1000).toFixed(0)} s) with ${BULK_N} bulk scans queued ahead of it`);
     check('G8', bulkOk, `all ${BULK_N} bulk scans finished (${bulkLabels.map((l) => `${(timings[l].pipelineMs / 1000).toFixed(0)}s`).join(', ')})`);
   }
+  }, { budgetMs: Math.max(GATE_MS, 12 * 60_000) });
 
   // ---- The corpus: queue everything, heaviest first ---------------------------------
+  // The corpus is the long pole: 20-odd fixtures uploaded and waited on, each
+  // with its own budget inside waitAll. The gate budget here is the backstop
+  // for a wait that cannot even read the rows.
+  await phase('G5', 'corpus: queue and wait', async () => {
   console.log('\n[corpus] queueing');
   const waits = [];
   const q = async (label, budgetMs, spec) => { await fileAndQueue({ label, ...spec }); waits.push({ label, budgetMs }); };
@@ -370,12 +622,14 @@ try {
   // attempt fails visibly, with a readable cause, within a minute. It is not
   // waited to exhaustion (three attempts with backoff) — cleanup deletes it
   // and its job.
-  const corruptId = await fileAndQueue({ label: 'corrupt', title: `Suite corrupt ${tag}`, filename: `suite-corrupt-${tag}.pdf`, bytes: F.corruptPdf(), contentType: 'application/pdf' });
+  corruptId = await fileAndQueue({ label: 'corrupt', title: `Suite corrupt ${tag}`, filename: `suite-corrupt-${tag}.pdf`, bytes: F.corruptPdf(), contentType: 'application/pdf' });
 
   console.log('\n[corpus] waiting');
-  const rows = await waitAll(waits);
+  rows = await waitAll(waits);
+  }, { budgetMs: Math.max(GATE_MS, 25 * 60_000) });
 
   // ---- G7 timings ------------------------------------------------------------------
+  await phase('G7', 'time-to-searchable', async () => {
   if (!SKIP_HEAVY) {
     console.log('\n[G7] time-to-searchable');
     for (const [label, pages, budget] of [['text300', 300, 3], ['scan50', 50, 5], ['record200', SUITE_RECORD_PAGES, 10]]) {
@@ -391,8 +645,10 @@ try {
       check('G7', t.pipelineMs != null && t.pipelineMs < budget * 60_000 && d.processing_status === 'ready', `${label}: queue→ready ${t.pipelineMs == null ? 'never' : (t.pipelineMs / 1000).toFixed(0) + ' s'} (budget ${budget} min; ${t.how} in ${(t.uploadMs / 1000).toFixed(0)} s${label === 'record200' ? `, ${(t.bytes / 1048576).toFixed(0)} MB — the browser's resumable path is proved by _smoke-resumable-upload.mjs` : ''})`);
     }
   }
+  });
 
   // ---- G1 mixed --------------------------------------------------------------------
+  await phase('G1', 'mixed and stamped PDFs', async () => {
   console.log('\n[G1] mixed PDF');
   {
     const d = rows.mixed;
@@ -420,8 +676,10 @@ try {
         `CM/ECF-stamped scan: the row records that OCR read it — ingest_outcome ${o ? `${o.ocr}/${o.text_source}, ${o.pdf_pages} pp, OCR pages ${o.ocr_pages}` : 'ABSENT (the deployed worker predates 2026-09-18 — deploy it)'}`);
     }
   }
+  });
 
   // ---- G2 containers ---------------------------------------------------------------
+  await phase('G2', 'containers', async () => {
   console.log('\n[G2] containers');
   {
     const d = rows.portfolio; const pf = d?.metadata?.portfolio;
@@ -454,8 +712,10 @@ try {
     await expectChild('G2', 'eml', ea, /Disclosures/, 'magenta ledger');
     await expectChild('G2', 'eml', ea, /Forwarded scheduling note/, 'teal calendar');
   }
+  });
 
   // ---- G0 formats --------------------------------------------------------------------
+  await phase('G0', 'formats', async () => {
   console.log('\n[G0] formats');
   await expectIndexed('G0', 'docx', rows.docx, 'periwinkle');
   await expectIndexed('G0', 'xlsx', rows.xlsx, 'chartreuse');
@@ -465,8 +725,10 @@ try {
   await expectIndexed('G0', 'rtf', rows.rtf, 'heliotrope');
   await expectIndexed('G0', 'fountain screenplay', rows.fountain, 'verdigris', { minPassages: 4 });
   await expectIndexed('G0', 'photographed page (jpg → OCR)', rows.jpgscan, 'onyx');
+  });
 
   // ---- G3 stored with a reason -------------------------------------------------------
+  await phase('G3', 'stored with a reason', async () => {
   console.log('\n[G3] stored with a reason');
   await expectStored('G3', 'image-only PDF', rows.imageonly, TEXT_STATUS.IMAGE_ONLY);
   await expectStored('G3', 'photo TIFF', rows.tiff, TEXT_STATUS.IMAGE_ONLY);
@@ -478,8 +740,10 @@ try {
   await expectStored('G3', 'silent recording', rows.silent, TEXT_STATUS.MEDIA_NO_TRANSCRIPT);
   const st3 = rows.obj ? await handleCheckIngestStatus(supabase, { document_id: rows.obj.id }) : null;
   check('G3', st3?.text_status === TEXT_STATUS.BINARY_STORED && st3.searchable === false && /Kept to open or download/.test(st3.note || ''), `check_ingest_status on the .obj: searchable=false, note="${(st3?.note || '').slice(0, 60)}…"`);
+  });
 
   // ---- GA audio / video ----------------------------------------------------------------
+  await phase('GA', 'audio / video', async () => {
   if (rows.mp3 || rows.mp4) {
     console.log('\n[GA] audio / video');
     for (const label of ['mp3', 'mp4']) {
@@ -491,8 +755,10 @@ try {
         `${label}: ${d.processing_status}, ${n} transcript passage(s), "lavender" ${w1 ? 'found' : 'NOT found'}, "copper" ${w2 ? 'found' : 'NOT found'} (${(timings[label].pipelineMs / 1000).toFixed(0)} s)${d.processing_error ? ' | ' + d.processing_error.slice(0, 80) : ''}`);
     }
   }
+  });
 
   // ---- G4: duplicate + corrupt --------------------------------------------------------
+  await phase('G4', 'duplicate and corrupt', async () => {
   console.log('\n[G4] duplicate and corrupt');
   {
     const r2 = await handleFileDocument(supabase, { matter: matter.id, filename: `suite-control-${tag}.txt`, content: F.controlTxt({ tag }).toString('utf8') }, { openaiApiKey: env.OPENAI_API_KEY });
@@ -503,7 +769,9 @@ try {
     const t0 = Date.now();
     let d = null;
     while (Date.now() - t0 < 120_000) {
-      d = await readDoc(corruptId);
+      const r = await readDoc(corruptId);
+      if (r === undefined) { await sleep(4000); continue; }   // read did not answer
+      d = r;
       if (!d || d.processing_error || TERMINAL.has(d.processing_status)) break;
       await sleep(4000);
     }
@@ -513,6 +781,7 @@ try {
     check('G5', visible, 'corrupt PDF did not sit silently: the failure note appeared within 2 min');
     timings.corrupt.status = visible ? 'first attempt failed visibly (not waited to exhaustion)' : `no note (${d?.processing_status})`;
   }
+  });
 
   // ---- G5 summary -----------------------------------------------------------------------
   {
@@ -521,6 +790,7 @@ try {
   }
 
   // ---- G6: provider outage, in-process ----------------------------------------------------
+  await phase('G6', 'provider outage and repair (in-process)', async () => {
   if (flag('--no-g6')) { skip('G6', '--no-g6'); skip('GR', '--no-g6'); }
   else if (!present(env.OPENAI_API_KEY) || !present(env.GOOGLE_API_KEY)) { skip('G6', 'OPENAI_API_KEY / GOOGLE_API_KEY not in this checkout\'s .env'); skip('GR', 'OPENAI_API_KEY / GOOGLE_API_KEY not in this checkout\'s .env'); }
   else {
@@ -594,29 +864,47 @@ try {
       check('GR', false, `re-run in place threw: ${err.message.slice(0, 160)}`);
     }
   }
+  });
 } catch (err) {
   failures.push(`suite crashed: ${err.message}`);
   console.error(`\nSUITE CRASHED: ${err.stack || err.message}`);
 } finally {
   // ---- cleanup ------------------------------------------------------------------------------
+  phaseNow = 'cleanup';
+  checkpoint();
   if (KEEP) console.log('\n--keep: leaving everything in place');
   else {
-    console.log('\ncleanup');
-    const { data: rowsToDrop } = await supabase.from('documents').select('id, storage_path').in('id', made.docs);
-    const paths = (rowsToDrop || []).map((r) => r.storage_path).filter(Boolean);
-    for (let i = 0; i < paths.length; i += 100) await supabase.storage.from('vault-documents').remove(paths.slice(i, i + 100));
-    for (const id of made.docs) await supabase.from('processing_jobs').delete().eq('job_type', 'ingest_document').in('status', ['queued', 'held']).contains('payload', { document_id: id });
-    if (made.docs.length) await supabase.from('documents').delete().in('id', made.docs);
-    let removedFolders = 0;
-    for (const f of made.folders) {
-      const { count } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('matterspace_id', f);
-      if (count === 0) { await supabase.from('matterspaces').delete().eq('id', f); removedFolders++; } else console.log(`  folder ${f} kept (${count} docs)`);
+    // Under a budget like everything else: cleanup that never returns would
+    // hold the report hostage, and leaving fixtures behind (which the next
+    // run's G9 would then see) is a smaller harm than writing no record.
+    const cleaned = await withDeadline(async () => {
+      console.log('\ncleanup');
+      const { data: rowsToDrop } = await supabase.from('documents').select('id, storage_path').in('id', made.docs);
+      const paths = (rowsToDrop || []).map((r) => r.storage_path).filter(Boolean);
+      for (let i = 0; i < paths.length; i += 100) await supabase.storage.from('vault-documents').remove(paths.slice(i, i + 100));
+      for (const id of made.docs) await supabase.from('processing_jobs').delete().eq('job_type', 'ingest_document').in('status', ['queued', 'held']).contains('payload', { document_id: id });
+      if (made.docs.length) await supabase.from('documents').delete().in('id', made.docs);
+      let removedFolders = 0;
+      for (const f of made.folders) {
+        const { count } = await supabase.from('documents').select('id', { count: 'exact', head: true }).eq('matterspace_id', f);
+        if (count === 0) { await supabase.from('matterspaces').delete().eq('id', f); removedFolders++; } else console.log(`  folder ${f} kept (${count} docs)`);
+      }
+      console.log(`  removed ${made.docs.length} doc(s), ${removedFolders} folder(s), ${paths.length} stored object(s)`);
+    }, 10 * 60_000, { onAbandon: (err) => console.error(`  (abandoned cleanup later threw: ${String(err?.message || err).slice(0, 160)})`) }).catch((err) => {
+      console.error(`  cleanup failed: ${String(err?.message || err).slice(0, 200)}`);
+      return { timedOut: false };
+    });
+    if (cleaned.timedOut) {
+      cleanupNote = `cleanup TIMED OUT after 10 min — ${made.docs.length} fixture document(s) may be left in "${matter.short_code}"`;
+      failures.push(cleanupNote);
+      console.error(`  ${cleanupNote}`);
     }
-    console.log(`  removed ${made.docs.length} doc(s), ${removedFolders} folder(s), ${paths.length} stored object(s)`);
   }
+  checkpoint();
 }
 
 // ---- G9: the monitor, after cleanup ----------------------------------------------------------
+phaseNow = 'G9 monitor';
 if (flag('--no-g9')) skip('G9', '--no-g9');
 else {
   // The plan's wording: "zero BLOCKING with an UNEXPLAINED reason". A
@@ -640,54 +928,4 @@ else {
 }
 skip('G10', 'manual: iPhone Files-app upload of a scan and a photo (per the plan memo)');
 
-// ---- Report ------------------------------------------------------------------------------------
-const finishedAt = new Date();
-const pass = failures.length === 0;
-const logDir = path.join(ROOT, 'logs');
-const logFile = path.join(logDir, 'ingest-suite.jsonl');
-let prevStreak = 0;
-try {
-  const lines = fs.readFileSync(logFile, 'utf8').split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
-  for (let i = lines.length - 1; i >= 0 && lines[i].pass; i--) prevStreak++;
-} catch { /* first run */ }
-const streak = pass ? prevStreak + 1 : 0;
-const L = [];
-L.push(`Ingestion suite — ${finishedAt.toISOString().slice(0, 16).replace('T', ' ')}Z — ${pass ? 'PASS' : 'FAIL'} — ${((finishedAt - startedAt) / 60000).toFixed(1)} min — run ${tag}`);
-L.push(pass ? (streak >= 3 ? `100% READY: green ${streak} nights running.` : `Green ${streak} night(s) running (100% ready = 3).`) : 'Streak reset.');
-L.push('');
-for (const [g, title] of Object.entries(GATES)) {
-  const e = ledger[g];
-  const n = e.checks.length; const bad = e.checks.filter((c) => !c.ok).length;
-  const state = e.skipped ? `SKIP (${e.skipped})` : n === 0 ? 'no checks' : bad ? `FAIL ${bad}/${n}` : `PASS ${n}/${n}`;
-  L.push(`${g.padEnd(4)} ${state.padEnd(28)} ${title}`);
-}
-L.push('');
-L.push('Timings (queue → ready):');
-for (const [label, t] of Object.entries(timings)) L.push(`  ${label.padEnd(12)} ${String((t.bytes / 1048576).toFixed(t.bytes > 1048576 ? 1 : 2)).padStart(7)} MB  ${t.how.padEnd(20)} ${String((t.uploadMs / 1000).toFixed(1)).padStart(6)} s  pipeline ${t.pipelineMs == null ? '   —  ' : String((t.pipelineMs / 1000).toFixed(0)).padStart(4) + ' s'}  ${t.status}`);
-if (failures.length) { L.push(''); L.push('Failures:'); for (const f of failures) L.push(`  - ${f}`); }
-const report = L.join('\n');
-console.log('\n' + '='.repeat(100) + '\n' + report + '\n' + '='.repeat(100));
-
-try {
-  fs.mkdirSync(logDir, { recursive: true });
-  fs.appendFileSync(logFile, JSON.stringify({
-    at: finishedAt.toISOString(), pass, streak, minutes: Number(((finishedAt - startedAt) / 60000).toFixed(1)), run: tag, skipHeavy: SKIP_HEAVY,
-    gates: Object.fromEntries(Object.entries(ledger).map(([g, e]) => [g, e.skipped ? 'skip' : e.checks.length === 0 ? 'none' : e.checks.every((c) => c.ok) ? 'pass' : 'fail'])),
-    timings: Object.fromEntries(Object.entries(timings).map(([l, t]) => [l, { bytes: t.bytes, uploadMs: t.uploadMs, pipelineMs: t.pipelineMs, status: t.status }])),
-    failures,
-  }) + '\n');
-} catch (e) { console.error(`(could not write ${logFile}: ${e.message})`); }
-
-if (flag('--email')) {
-  const to = env.GMAIL_ADDRESS; const pw = env.GMAIL_APP_PASSWORD;
-  if (!present(to) || !present(pw)) console.log('(--email skipped: GMAIL_ADDRESS / GMAIL_APP_PASSWORD not set)');
-  else {
-    try {
-      const { default: nodemailer } = await import('nodemailer');
-      const t = nodemailer.createTransport({ service: 'gmail', auth: { user: to, pass: pw } });
-      await t.sendMail({ from: to, to, subject: `Ingestion suite ${finishedAt.toISOString().slice(0, 10)}: ${pass ? `PASS (green ${streak} night${streak === 1 ? '' : 's'})` : `FAIL — ${failures.length} check(s)`}`, text: report });
-      console.log(`emailed ${to}`);
-    } catch (e) { console.error(`(--email failed: ${String(e.message || e).split('\n')[0]})`); }
-  }
-}
-process.exit(pass ? 0 : 1);
+await finishRun({ complete: true });

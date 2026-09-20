@@ -31,6 +31,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 
 import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
+import { checkAccessGrant } from '../lib/oauth-grants.mjs';
 import { verifyJwt } from '../lib/oauth-jwt.mjs';
 import { signSupabaseUserJwt, userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 
@@ -137,7 +138,22 @@ async function authenticate(req) {
     }
     const payload = verifyJwt(inner, process.env.MCP_OAUTH_SECRET);
     if (payload && payload.typ === 'access' && payload.sub) {
-      console.log('[mcp auth] opaque ok: sub=%s', payload.sub);
+      // Per-connection grants (migration 065). The token names the
+      // oauth_grants row it belongs to; if the user has revoked that row,
+      // this client is done — without touching any other client or any
+      // other customer. Cached ≤60s per instance, so revocation takes
+      // effect within about a minute and the hot path adds no round trip.
+      // Fails CLOSED on revoked/missing, OPEN-with-log when the table is
+      // not deployed yet. A token with no `gid` predates 065; see
+      // lib/oauth-grants.mjs for that transition and its cut-off.
+      const grant = await checkAccessGrant(payload);
+      if (!grant.ok) {
+        console.warn('[mcp auth] grant refused: sub=%s reason=%s', payload.sub, grant.reason);
+        // RFC 6750 has no code for "the user revoked this"; invalid_token is
+        // what an OAuth client keys its re-authorization on.
+        throw new AuthError(401, 'invalid_token');
+      }
+      console.log('[mcp auth] opaque ok: sub=%s grant=%s', payload.sub, grant.reason);
       return payload.sub;
     }
     console.warn('[mcp auth] opaque reject:',
