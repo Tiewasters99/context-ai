@@ -10,6 +10,15 @@
 
 import { supabase } from './supabase';
 import type { VaultFile } from './vault-types';
+// The matter-tree document read, paged past PostgREST's 1,000-row cap. It
+// lives in its own module because it takes the client as an argument, which
+// is what lets an offline harness drive the real query.
+import {
+  fetchMatterDocumentRows,
+  type DocumentsSource,
+  type FetchMatterDocumentsOptions,
+  type VaultDocumentRow,
+} from './vault-documents';
 // The pipeline's own accepted-types list and storage cap (lib/ingest-formats.mjs
 // is dependency-free and shared with the Node side), so the pre-upload
 // refusals here can never drift from what /api/ingest actually handles.
@@ -18,6 +27,9 @@ import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
 // Resumable (TUS) uploads for large files (Phase 4): the same dependency-free
 // module the Node smoke test drives against the real bucket.
 import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
+// A 402/429 from /api/ingest has no UI of its own — the upload simply never
+// finishes. reportServerRefusal puts one sentence in front of the person.
+import { reportServerRefusal } from './refusal-bus';
 
 export interface MatterRef {
   id: string;
@@ -94,16 +106,26 @@ export async function resolveMatter(key: string): Promise<MatterRef | null> {
 
 // -----------------------------------------------------------------------------
 // Hydrate the file list for a matter from the documents table.
+//
+// Both reads are paged (see vault-documents.ts). They return the rows they
+// hold AND what the server says exists, because those two numbers are only
+// the same while the list is whole — and a list that is short without saying
+// so is the bug this pagination exists to remove.
 // -----------------------------------------------------------------------------
-export async function listMatterDocuments(matterspaceId: string): Promise<VaultFile[]> {
-  const data = await withRetries('list documents', () =>
-    supabase
-      .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
-      .eq('matterspace_id', matterspaceId)
-      .order('created_at', { ascending: false }),
-  );
-  return (data || []).map((d) => documentToVaultFile(d));
+
+export interface VaultFileList {
+  files: VaultFile[];
+  /** What the server counts in these matters — exact, even if `files` is windowed. */
+  total: number;
+  /** The ceiling stopped the read. The surface owes the reader `showingOf()`. */
+  truncated: boolean;
+}
+
+export async function listMatterDocuments(
+  matterspaceId: string,
+  options: FetchMatterDocumentsOptions = {},
+): Promise<VaultFileList> {
+  return listMatterDocumentsRecursive([matterspaceId], new Map(), options);
 }
 
 // Hydrate from a set of matter ids (parent + descendants). Each row carries
@@ -111,16 +133,19 @@ export async function listMatterDocuments(matterspaceId: string): Promise<VaultF
 export async function listMatterDocumentsRecursive(
   matterIds: string[],
   nameById: Map<string, string>,
-): Promise<VaultFile[]> {
-  if (matterIds.length === 0) return [];
-  const data = await withRetries('list documents', () =>
-    supabase
-      .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, processing_error, matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
-      .in('matterspace_id', matterIds)
-      .order('created_at', { ascending: false }),
+  options: FetchMatterDocumentsOptions = {},
+): Promise<VaultFileList> {
+  if (matterIds.length === 0) return { files: [], total: 0, truncated: false };
+  const { rows, total, truncated } = await fetchMatterDocumentRows(
+    supabase as unknown as DocumentsSource,
+    matterIds,
+    options,
   );
-  return (data || []).map((d) => documentToVaultFile(d, nameById.get(d.matterspace_id)));
+  return {
+    files: rows.map((d: VaultDocumentRow) => documentToVaultFile(d, nameById.get(d.matterspace_id))),
+    total,
+    truncated,
+  };
 }
 
 function documentToVaultFile(doc: {
@@ -320,18 +345,52 @@ export async function persistVaultFile(
   }
   // Don't await; the API call can take 30-60s for large docs and we want the
   // UI thread back immediately. Errors are surfaced via document status.
-  fetch('/api/ingest', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ documentId: doc.id }),
-  }).catch((err) => {
-    console.error('ingest fetch:', err);
-  });
+  void postIngest(doc.id, accessToken);
 
   return { documentId: doc.id, storagePath };
+}
+
+
+// -----------------------------------------------------------------------------
+// The one POST to /api/ingest, and the one place its refusals are handled.
+//
+// The endpoint can now answer 402 (the month's AI budget is spent) or 429 (the
+// rate window) before it writes anything at all — migration 063, PR #161. That
+// is the quietest failure in the product: the documents row was inserted by
+// this browser a moment ago and still says 'pending', the server refused
+// before it could touch it, and watchDocumentStatus polls a row that will
+// never change. The file sits in the Vault spinning for ever, and the person
+// is told nothing.
+//
+// So two things happen here. The refusal is shown once, in a sentence, through
+// the shared banner; and the row is marked 'error' with that same sentence, so
+// the Vault list is honest when the person comes back to it tomorrow. The row
+// update runs under the user's own session, exactly like every other write in
+// this file, so RLS decides whether it is allowed.
+// -----------------------------------------------------------------------------
+async function postIngest(documentId: string, accessToken: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ documentId }),
+    });
+  } catch (err) {
+    console.error('ingest fetch:', err);
+    return;
+  }
+  if (res.ok) return;
+
+  const refusal = await reportServerRefusal(res);
+  console.error('ingest refused:', refusal.status, refusal.code ?? '');
+  // Leave the row alone on a 5xx: the server may still be working, and
+  // /api/ingest writes its own 'error'/'held' status on the paths it reaches.
+  if (refusal.status >= 500) return;
+  await supabase
+    .from('documents')
+    .update({ processing_status: 'error', processing_error: refusal.message.slice(0, 500) })
+    .eq('id', documentId);
 }
 
 
@@ -438,6 +497,140 @@ export function watchDocumentStatus(
   };
 }
 
+/** One document's share of a batched status tick. */
+export interface DocumentStatusRow {
+  documentId: string;
+  update: DocumentStatusUpdate;
+}
+
+/**
+ * Ids per request. supabase-js puts `.in()` in the QUERY STRING, and a UUID
+ * costs about 39 characters once encoded — 100 ids plus the select columns
+ * sits comfortably inside the 8 KB request line the proxy in front of
+ * PostgREST will accept, where 200 does not. #168 cut the same `.in()` to 100
+ * in the same stack; this matches it rather than inventing a second number.
+ */
+const STATUS_CHUNK = 100;
+
+/**
+ * Consecutive failed ticks before the poll gives up. A transient failure must
+ * not end the watch — that is the whole reason for retrying — but retrying
+ * FOREVER is how a row spins on "processing" with nothing wrong with the
+ * document and nothing said to the person. The single-document watcher
+ * reported the error and stopped; so does this one, after about ten seconds.
+ */
+const STATUS_MAX_FAILED_TICKS = 5;
+
+/**
+ * Follow MANY documents' pipeline status with one request per chunk.
+ *
+ * The Vault opened one `watchDocumentStatus` poll per unfinished document on
+ * hydration, and that was survivable only because the list itself stopped at
+ * PostgREST's 1,000 rows. With the list paged, a matter caught mid-bulk-ingest
+ * would have opened thousands of two-second polls and the tab would have spent
+ * its life in the network queue — the pagination fix would have traded a silent
+ * truncation for a frozen browser. One `.in('id', …)` per 200 ids does the same
+ * work, and an id leaves the set the moment it reaches a terminal state, so the
+ * traffic falls away as the pipeline finishes.
+ *
+ * Updates arrive in batches so the caller writes state once per chunk instead
+ * of once per document. A document that a successful query does not return is
+ * gone (deleted, or no longer visible) and is reported as such, exactly as the
+ * single-document watcher does — never left spinning.
+ */
+export function watchDocumentStatuses(
+  documentIds: string[],
+  onUpdate: (rows: DocumentStatusRow[]) => void,
+  intervalMs = 2000,
+): () => void {
+  const pending = new Set(documentIds);
+  if (pending.size === 0) return () => {};
+
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let failedTicks = 0;
+
+  const tick = async () => {
+    if (stopped) return;
+    const ids = Array.from(pending);
+    let tickFailed = false;
+    let lastError = 'the status check kept failing';
+
+    for (let i = 0; i < ids.length && !stopped; i += STATUS_CHUNK) {
+      const chunk = ids.slice(i, i + STATUS_CHUNK);
+      const { data, error } = await supabase
+        .from('documents')
+        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+        .in('id', chunk);
+      if (stopped) return;
+      // A transient failure is not an answer about any document: keep them
+      // all pending and ask again on the next tick. It is only counted, so
+      // that a failure which never clears ends the watch instead of leaving
+      // the rows spinning (see STATUS_MAX_FAILED_TICKS).
+      if (error) { tickFailed = true; lastError = error.message; continue; }
+
+      const rows = (data ?? []) as {
+        id: string;
+        processing_status: string;
+        processing_error: string | null;
+        text_status?: string | null;
+        ocr_pending?: unknown;
+      }[];
+      const seen = new Set(rows.map((r) => r.id));
+      const updates: DocumentStatusRow[] = [];
+
+      for (const row of rows) {
+        const status = mapStatus(row.processing_status);
+        updates.push({
+          documentId: row.id,
+          update: {
+            status,
+            errorMessage: row.processing_error || undefined,
+            stage: stageOf(row.processing_status),
+            textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
+            ocrPending: row.processing_status === 'ready' && row.ocr_pending && typeof row.ocr_pending === 'object'
+              ? (row.ocr_pending as OcrPending) : undefined,
+            held: row.processing_status === 'held' || undefined,
+          },
+        });
+        if (status === 'indexed' || status === 'error') pending.delete(row.id);
+      }
+      for (const id of chunk) {
+        if (seen.has(id)) continue;
+        updates.push({ documentId: id, update: { status: 'error', errorMessage: 'document disappeared' } });
+        pending.delete(id);
+      }
+
+      if (updates.length) onUpdate(updates);
+    }
+    if (stopped) return;
+
+    failedTicks = tickFailed ? failedTicks + 1 : 0;
+    if (failedTicks >= STATUS_MAX_FAILED_TICKS) {
+      // Say so on every row still waiting, then stop. Silence here reads as
+      // "still working" forever.
+      const stuck = Array.from(pending);
+      pending.clear();
+      if (stuck.length) {
+        onUpdate(stuck.map((id) => ({
+          documentId: id,
+          update: { status: 'error' as const, errorMessage: `Couldn't check progress — ${lastError}. Reload to see where this got to.` },
+        })));
+      }
+      return;
+    }
+
+    if (pending.size === 0) return;
+    timer = setTimeout(tick, intervalMs);
+  };
+  tick();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 
 // -----------------------------------------------------------------------------
 // Move a document to a different matter. Calls /api/move-document, which
@@ -532,11 +725,21 @@ export async function triggerIngest(documentId: string): Promise<void> {
   const session = (await supabase.auth.getSession()).data.session;
   const accessToken = session?.access_token;
   if (!accessToken) throw new Error('not authenticated — cannot trigger ingest');
-  await fetch('/api/ingest', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ documentId }),
-  });
+  // Clear the terminal state FIRST. Vault.tsx's retry re-subscribes
+  // watchDocumentStatus the moment it calls this, and that poll stops as soon
+  // as it reads a terminal status — so against a row still saying 'error' it
+  // would report the OLD message and stop, and a refusal written a moment
+  // later would not appear until the page was reloaded. saveDocumentText
+  // already does this for the same reason.
+  await supabase
+    .from('documents')
+    .update({ processing_status: 'pending', processing_error: null })
+    .eq('id', documentId);
+  // Same POST, same refusal handling. Retry (Vault.tsx) and re-ingest after an
+  // edit (saveDocumentText) both land here, and both used to discard the
+  // response entirely — a retry against a spent budget looked identical to a
+  // retry that worked.
+  await postIngest(documentId, accessToken);
 }
 
 

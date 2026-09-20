@@ -5,6 +5,7 @@ import type { ChatMessage } from '@/lib/types';
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
 import { ASSISTANT_COMMAND_EVENT, type AssistantCommand } from '@/lib/assistant-bus';
+import { parseServerRefusal } from '@/lib/llm/refusals';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { moveVaultDocument } from '@/lib/vault-persist';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -345,10 +346,15 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         }),
       });
 
-      // Pre-stream failures (401, config errors) arrive as plain JSON.
+      // Pre-stream failures (401, config errors, and since PR #161 a 402 when
+      // the month's budget is spent or a 429 on the rate window) arrive as
+      // plain JSON. This used to render `data.error` — the machine code — so
+      // a lawyer stopped by the cap read the words "over_monthly_budget".
+      // parseServerRefusal prefers the sentence the server wrote. No banner
+      // here: the refusal lands in the transcript below as ⚠️ <message>, and
+      // two copies of the same news is worse than one.
       if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}) as { error?: string });
-        throw new Error(data?.error || `Request failed (${res.status})`);
+        throw new Error((await parseServerRefusal(res)).message);
       }
 
       // Parse the SSE stream: `data: {json}\n\n` per event.

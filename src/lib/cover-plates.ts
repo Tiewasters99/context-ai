@@ -26,13 +26,27 @@ let plates: string[] | null = null;
 let loading: Promise<void> | null = null;
 const watchers = new Set<() => void>();
 
-/** Fetch the library's manifest once, keep the plates, tell anyone waiting. */
+/**
+ * Fetch the library's manifest once, keep the plates, tell anyone waiting.
+ *
+ * Plates are drawn from the CORE set only (public/templates/core-covers.json),
+ * for every reader. A plate is a cover nobody chose — it is handed to a book
+ * that has none — so it is exactly the case where an unsuitable image would
+ * arrive unasked, and this module runs in reader.html, which has no session
+ * and therefore no plan to consult. If the core list will not load, a book
+ * simply goes without a plate, which is this module's existing failure mode.
+ */
 export function loadPlates(): Promise<void> {
-  loading ??= fetch('/templates/manifest.json')
-    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`manifest ${r.status}`))))
-    .then((all: Template[]) => {
+  loading ??= Promise.all([
+    fetch('/templates/manifest.json')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`manifest ${r.status}`)))),
+    fetch('/templates/core-covers.json')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`core-covers ${r.status}`)))),
+  ])
+    .then(([all, core]: [Template[], { core: string[] }]) => {
+      const allowed = new Set(core.core);
       plates = all
-        .filter((t) => COVER_CATEGORIES.has(t.category))
+        .filter((t) => COVER_CATEGORIES.has(t.category) && allowed.has(t.file))
         .map((t) => t.file)
         .sort();
     })

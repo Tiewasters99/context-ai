@@ -28,6 +28,10 @@ does not run here and nothing in `ci.yml` depends on it.
 | PGlite | `npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9` | Harness-only; `--no-save` keeps it out of `package.json`. |
 
 Then the twenty-four offline harnesses, one step each, each with
+Then the twenty-five offline harnesses, in twenty-four steps — the two
+Bucketizer evidence harnesses share one — each with `if: ${{ !cancelled() }}`
+so a red one does not hide the rest:
+Then the twenty-three offline harness steps, one step each, each with
 `if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |
@@ -56,6 +60,10 @@ Then the twenty-four offline harnesses, one step each, each with
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
 | `_verify-ingest-day-one.mjs` | Day one for a new paying user: accepted/refused types, serverless-budget routing, the suite's deadlines and checkpoint, digest privacy. Runs `_verify-ocr-routes.mjs` as a child and asserts its exit code. | Pure computation plus stubbed fetch; reads no `.env`. |
 | `_verify-worker-heartbeat.mjs` | Migration 066 — the worker heartbeat, the aggregate liveness functions, **two tenants each seeing only their own queue numbers**, the worker hunk swallowing every kind of heartbeat failure, the sentence the Vault shows, and the nightly workflow's own YAML. | PGlite for the migration; a stub client for the worker hunk; Node type stripping for `src/lib/ingest-service-notice.ts`; and it spawns `ingest-suite.mjs --dry-run`, which exits before the first request. |
+| `_verify-bucketizer-scale.mjs` | Whole-document windowing, the resumable run, the meter pause, the deterministic merge, and the paged read shared with Discovery. | Same; the model, the database and PostgREST all arrive as injected deps. |
+| `_verify-bucketizer-evidence.mjs` | Migration 068 — `bucketizer_evidence`, the pair-level run state, and the cascade that takes a quotation with its passage when a document is re-ingested. | PGlite. Shares one CI step with the harness below. |
+| `_verify-bucketizer-outline.mjs` | Verbatim quotation (a span the stored passage does not hold is dropped, never repaired), citations that degrade where the record has no line numbers, gaps-first assembly, a byte-identical `.md` on a re-run, and a real `.docx` read back with the repo's own docx library. | Same as `_verify-reader-copy.mjs`; every effect is an injected dep. |
+| `_validate-cover-manifest.mjs` + `_test-cover-gating.mjs` | The cover picker: `core-covers.json` is sorted, points only at files that exist and are under the size cap, and holds no filename the exclusion list bars; then the gate itself — core for every plan but `workshop`, core while the plan is still loading, and **nothing** (never everything) if the allow-list will not load. | One step, two commands. Both read files off disk; the second imports `src/lib/covers.ts` via Node type stripping, which is why that module has no `@/` imports and no React. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
 written. Seven of the next eight arrived with PRs #156–#163, each proving
@@ -68,6 +76,10 @@ still green. The last two — `_verify-ingest-day-one.mjs` and
 `_verify-worker-heartbeat.mjs` — came with the ingestion work of 2026-09-19/20
 and were each run from a checkout with no `.env` before being added here. The
 PGlite harnesses finish in ~1.4–2.2 s each.
+still green. The three Bucketizer harnesses came with PRs #168 and #177 and
+were each run from a checkout with no `.env`. The PGlite harnesses finish in
+~1.4–2.2 s each; the eight added at `0ed288d` cost about 5.5 s of harness time
+in total.
 
 ### Lint is non-blocking, for now
 

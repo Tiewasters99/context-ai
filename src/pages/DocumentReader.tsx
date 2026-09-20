@@ -31,6 +31,7 @@ import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
+import SealedExportDialog from '@/components/reader/SealedExportDialog';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
@@ -1116,7 +1117,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     | { kind: 'err'; text: string }
     | null
   >(null);
-  const handleDriveExport = useCallback(async () => {
+  // When the matter is sealed the server answers 409 instead of exporting, and
+  // hands back the sentence to show. Confirming re-issues the same request with
+  // confirm_leave_seal — per copy, never remembered.
+  const [sealPrompt, setSealPrompt] = useState<{ message: string } | null>(null);
+  const handleDriveExport = useCallback(async (opts?: { confirmLeaveSeal?: boolean }) => {
     if (!id || !doc?.storage_path || driveExporting) return;
     setDriveExporting(true);
     setDriveBanner(null);
@@ -1129,9 +1134,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           'content-type': 'application/json',
           authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ documentId: id, folderName: 'Contextspaces' }),
+        body: JSON.stringify({
+          documentId: id,
+          folderName: 'Contextspaces',
+          ...(opts?.confirmLeaveSeal ? { confirm_leave_seal: true } : {}),
+        }),
       });
       const body = await resp.json().catch(() => ({}));
+      if (resp.status === 409 && body.error === 'export_needs_confirmation') {
+        setSealPrompt({ message: body.message });
+        return;
+      }
       if (!resp.ok || !body.ok) {
         // Google's API returns details under body.detail.error.message — surface
         // that string when we have it so we don't show the bare code.
@@ -1152,7 +1165,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       }
       setDriveBanner({
         kind: 'ok',
-        text: `Saved to your Google Drive${body.folderName ? ` › ${body.folderName}` : ''}.`,
+        // On a sealed matter the server says, in its own words, that a copy
+        // left and whether that is recorded. Never re-worded here.
+        text: `Saved to your Google Drive${body.folderName ? ` › ${body.folderName}` : ''}.${body.seal?.note ? ` ${body.seal.note}` : ''}`,
         link: body.webViewLink ?? null,
       });
     } catch (e) {
@@ -2121,7 +2136,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           </button>
           {hasDriveConnection && (
             <button
-              onClick={handleDriveExport}
+              onClick={() => void handleDriveExport()}
               disabled={driveExporting || !doc?.storage_path}
               className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
               title={driveExporting ? 'Saving to Drive…' : 'Save to Google Drive'}
@@ -2238,6 +2253,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             <X size={12} />
           </button>
         </div>
+      )}
+
+      {sealPrompt && (
+        <SealedExportDialog
+          message={sealPrompt.message}
+          confirmLabel="Save to Google Drive"
+          busy={driveExporting}
+          onCancel={() => setSealPrompt(null)}
+          onConfirm={() => {
+            setSealPrompt(null);
+            void handleDriveExport({ confirmLeaveSeal: true });
+          }}
+        />
       )}
 
       <div className="flex-1 flex flex-row min-h-0">
