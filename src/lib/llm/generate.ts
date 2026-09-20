@@ -99,7 +99,9 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   if (!res.ok) {
     let errBody: unknown = null;
     try { errBody = await res.json(); } catch { /* no body, or not JSON */ }
-    callbacks.onError(llmErrorText(res.status, errBody));
+    // `retry-after` is the other half of a 429: the server puts the seconds
+    // in a header as well as the body, and the sentence needs the number.
+    callbacks.onError(llmErrorText(res.status, errBody, res.headers.get('retry-after')));
     return;
   }
 

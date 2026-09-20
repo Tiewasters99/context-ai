@@ -17,17 +17,7 @@ import { useEffect, useState, useRef } from 'react';
 import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical, LayoutGrid } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
-
-const featuredCovers = [
-  { id: 'abstract-painting', name: 'Abstract',        file: '/templates/abstract-painting.png' },
-  { id: 'alhambra-light',    name: 'Alhambra Light',  file: '/templates/alhambra-light.png' },
-  { id: 'algiers-bay-day',   name: 'Algiers Bay',     file: '/templates/algiers-bay-day.png' },
-  { id: 'atlantis-ruins',    name: 'Atlantis Ruins',  file: '/templates/atlantis-ruins.png' },
-  { id: 'big-bang',          name: 'Big Bang',        file: '/templates/big-bang.png' },
-  { id: 'boat-1',            name: 'Boat',            file: '/templates/boat-1.png' },
-  { id: 'ballerina-1',       name: 'Ballerina',       file: '/templates/ballerina-1.png' },
-  { id: 'alhambra-arches',   name: 'Alhambra Arches', file: '/templates/alhambra-arches.png' },
-];
+import { useCoverLibrary } from '@/hooks/useCoverLibrary';
 
 interface CoverImageProps {
   coverUrl?: string | null;
@@ -314,6 +304,10 @@ interface CoverPickerProps {
 }
 
 function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps) {
+  // The eight on show before "Browse all covers" is opened. Core for every
+  // account but workshop, which keeps the eight it has always had. Empty
+  // while the list is loading — see lib/covers.ts.
+  const { featured: featuredCovers } = useCoverLibrary();
   const [urlDraft, setUrlDraft] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -432,10 +426,12 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
 
         {/* Featured covers — sample from the template library */}
         <div className="mb-4">
+          {featuredCovers.length > 0 && (
           <div className="flex items-center gap-1.5 text-xs font-medium text-white/60 mb-3">
             <Palette size={12} />
             Featured covers
           </div>
+          )}
           <div className="grid grid-cols-4 gap-2">
             {featuredCovers.map((t) => (
               <button

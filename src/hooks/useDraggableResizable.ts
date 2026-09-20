@@ -217,12 +217,17 @@ export function useDraggableResizable(
       card.style.maxWidth = 'none';
     };
 
+    // `data-card-inert` marks a region with pointer gestures of its own (the
+    // page grid's tiles drag, right-click and double-click): the card leaves
+    // them alone, as it does a button. The listeners here are native and sit
+    // on the card, so a React stopPropagation inside it would come too late.
     const isInteractive = (t: HTMLElement) =>
       t.tagName === 'BUTTON' || t.tagName === 'A' || t.tagName === 'INPUT' ||
       t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
       t.closest('button') !== null || t.closest('a') !== null || t.closest('input') !== null ||
       t.closest('textarea') !== null || t.closest('select') !== null ||
-      t.isContentEditable || t.closest('[contenteditable="true"]') !== null;
+      t.isContentEditable || t.closest('[contenteditable="true"]') !== null ||
+      t.closest('[data-card-inert]') !== null;
 
     const onDown = (e: PointerEvent) => {
       if (isPinned.current) return; // pinned cards don't drag or resize
