@@ -231,6 +231,13 @@ async function withHeartbeat(job, run) {
   const timer = setInterval(() => {
     supabase.rpc('heartbeat_job', { p_job: job.id })
       .then(({ error }) => { if (error) log(`[job ${job.id}] heartbeat failed: ${error.message}`); });
+    // And the WORKER's own beat (066), on the same timer. Without this line a
+    // worker that is busy is a worker that is silent: the idle branch is the
+    // only other periodic caller, and a single job may run for up to
+    // JOB_TIMEOUT_MINUTES (120). A two-hour OCR would otherwise raise "WORKER
+    // DOWN" about a worker that is working — and a false alarm is how an alert
+    // channel dies.
+    heartbeat.beat();
   }, HEARTBEAT_MS);
   timer.unref?.();
   try {
