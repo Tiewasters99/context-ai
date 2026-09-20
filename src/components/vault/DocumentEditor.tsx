@@ -4,6 +4,7 @@ import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
 import { downloadVaultDocument, saveVaultDocumentText } from '@/lib/vault-persist';
 import { supabase } from '@/lib/supabase';
+import { fetchPaged } from '@/lib/paged';
 import { downloadBlob } from '@/lib/export-page';
 
 // File extensions we treat as plain text — these open in an editable textarea
@@ -75,13 +76,24 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
             // every format the server pipeline does (xlsx spreadsheets,
             // pptx, epub, OCR'd scans), which used to open as a BLANK view
             // ("spreadsheet not displaying", 2026-08-11).
-            const { data: passages } = await supabase
-              .from('passages')
-              .select('text')
-              .eq('document_id', file.id)
-              .eq('summary_level', 0)
-              .order('sequence_number', { ascending: true });
-            if (passages && passages.length > 0) {
+            // Paged. An unbounded select stops at PostgREST's 1,000 rows, so
+            // a long spreadsheet or an OCR'd deposition opened here showing
+            // its first thousand passages and NOTHING saying the rest was
+            // missing — the view simply ended mid-document. `.order('id')`
+            // is the unique tiebreaker; sequence_number is unique per
+            // document today, but the loop must not depend on that.
+            const { rows: passages } = await fetchPaged<{ text: string | null }>(
+              (from, to) => supabase
+                .from('passages')
+                .select('text')
+                .eq('document_id', file.id)
+                .eq('summary_level', 0)
+                .order('sequence_number', { ascending: true })
+                .order('id')
+                .range(from, to),
+              { label: 'document text' },
+            );
+            if (passages.length > 0) {
               text = passages.map((p) => p.text).join('\n\n');
             } else {
               const blob = await downloadVaultDocument(file.storagePath);
