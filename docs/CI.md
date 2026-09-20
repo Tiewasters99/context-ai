@@ -27,6 +27,10 @@ does not run here and nothing in `ci.yml` depends on it.
 | Lint | `npm run lint` | **Non-blocking** — see below. |
 | PGlite | `npm i --no-save @electric-sql/pglite@0.5.8 @electric-sql/pglite-pgvector@0.0.9` | Harness-only; `--no-save` keeps it out of `package.json`. |
 
+Then the offline harnesses, one step each, each with
+`if: ${{ !cancelled() }}` so a red one does not hide the rest (the count is
+left out of this sentence on purpose — it went stale twice in a week; count
+the `run:` lines in `ci.yml`):
 Then the twenty-three offline harnesses, one step each, each with
 Then the twenty-four offline harnesses, one step each, each with
 Then the twenty-five offline harnesses, in twenty-four steps — the two
@@ -59,6 +63,7 @@ Then the twenty-three offline harness steps, one step each, each with
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
+| `_verify-matter-record.mjs` | The Record's read side: the sub-matter roll-up, paging past 1,000 rows, a plain line for every event kind (and for one it has never heard of), the sealed-route wording, the attorney's cells left empty, a byte-identical markdown export, a `.docx` that opens, the not-deployed state and a tampered chain. | Synthetic events and an in-memory Supabase stub, both built inside the harness; `node --import ./scripts/_node-src-loader.mjs` for the `src/` imports. |
 | `_verify-ledger-account.mjs` | Migration 072 — a cross-matter connector call is recorded on the account chain and fanned out into each matter it read from, with neither record revealing the other's matters; `ai_sessions` / `ai_messages` are immutable; 072 no-ops without 064. | PGlite, twice over: once on a database that has 064 (the negative control runs first, on 064 alone) and once on a clean one that never saw it. The real `lib/ledger.mjs` is driven through a supabase-shaped adapter, so the redaction is tested as it runs. |
 | `_verify-discovery-pipeline.mjs` | A document production survives the queue that was rewritten around it: intake → tag → privilege log → Bates → package → delivery, over 030 + 032 + 044 + 045 + 055 + 057 + 058 + 059 + 060 executed in order. Gapless and re-runnable numbering, the lock guard, `package_sha256` against the stored bytes, withheld items absent from the package and present in the log. | PGlite for the real migrations, an in-memory Map for storage, the real `lib/discovery/*` engine. The worker cannot be imported (top-level script, service-role key, poll loop), so its orchestration is transcribed and the last section greps `worker/discovery-worker.mjs` for the invariants it transcribes. Those guards are a superset test and a WARN, never a check that reddens on somebody else's fix. |
 | `_verify-ingest-day-one.mjs` | Day one for a new paying user: accepted/refused types, serverless-budget routing, the suite's deadlines and checkpoint, digest privacy. Runs `_verify-ocr-routes.mjs` as a child and asserts its exit code. | Pure computation plus stubbed fetch; reads no `.env`. |
@@ -83,6 +88,11 @@ still green. The three Bucketizer harnesses came with PRs #168 and #177 and
 were each run from a checkout with no `.env`. The PGlite harnesses finish in
 ~1.4–2.2 s each; the eight added at `0ed288d` cost about 5.5 s of harness time
 in total.
+
+`_verify-matter-record.mjs` arrived with the Record's read side: 87 checks,
+run from a checkout with no `.env`, exit 0, about a second. It builds its own
+synthetic events and its own Supabase stub, so it needs neither PGlite nor a
+network.
 
 ### Lint is non-blocking, for now
 

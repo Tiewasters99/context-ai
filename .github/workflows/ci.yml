@@ -175,6 +175,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs
 
+      # The Record's read side lives in src/lib/matter-record/*.ts, so this one
+      # needs the same '@/' loader as the reader harness above.
+      - name: The matter's Record — roll-up, docket lines and the export
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-matter-record.mjs
       - name: Migration 072 — the account chain, fan-out isolation, immutable sessions (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger-account.mjs
