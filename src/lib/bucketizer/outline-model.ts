@@ -354,7 +354,12 @@ export function buildOutline(input: BuildOutlineInput): OutlineModel {
     };
   };
 
-  const buildSection = (node: OutlineTreeNode, number: string, depth: number): OutlineSection => {
+  const buildSection = (
+    node: OutlineTreeNode,
+    number: string,
+    depth: number,
+    isTheme = false,
+  ): OutlineSection => {
     if (node.kind === 'claim') counts.claims += 1;
     else if (node.kind === 'element') counts.elements += 1;
     else if (node.kind === 'theme') counts.themes += 1;
@@ -404,7 +409,7 @@ export function buildOutline(input: BuildOutlineInput): OutlineModel {
     });
 
     const children = (byParent.get(node.id) ?? []).map((child, i) =>
-      buildSection(child, `${number}.${levelNumber(depth + 1, i + 1)}`, depth + 1));
+      buildSection(child, `${number}.${levelNumber(depth + 1, i + 1)}`, depth + 1, isTheme));
 
     const section: OutlineSection = {
       node,
@@ -418,7 +423,13 @@ export function buildOutline(input: BuildOutlineInput): OutlineModel {
     };
 
     // --- gaps, measured on this node and everything under it ---------------
-    if (node.kind !== 'claim' || !children.length) {
+    //
+    // Themes are deliberately not gap-tested. A gap is an element or issue the
+    // case has to PROVE and currently cannot; a theme is a cross-reference a
+    // trial team keeps for its own convenience, and an empty one is a filing
+    // cabinet nobody has needed yet, not a hole in the case. Listing them here
+    // would pad the work list with things that are not work.
+    if (!isTheme && (node.kind !== 'claim' || !children.length)) {
       const confirmedHere = countDeep(section, (s) => s.confirmed.length);
       const proposedHere = countDeep(section, (s) => s.proposed.length);
       const docsHere = countDeep(section, (s) => s.documents.length);
@@ -450,7 +461,7 @@ export function buildOutline(input: BuildOutlineInput): OutlineModel {
   const themeRoots = roots.filter((n) => n.kind === 'theme');
 
   const claims = claimRoots.map((n, i) => buildSection(n, levelNumber(0, i + 1), 0));
-  const themes = themeRoots.map((n, i) => buildSection(n, `T${i + 1}`, 1));
+  const themes = themeRoots.map((n, i) => buildSection(n, `T${i + 1}`, 1, true));
 
   counts.documentsFiled = filedDocIds.size;
 

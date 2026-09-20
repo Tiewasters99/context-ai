@@ -92,6 +92,13 @@ const TRANSCRIPT_TITLE = /(\bdep(o|os|osition)?\b|transcript|examination before 
  */
 export function isTranscript(passage: CitePassage, doc: CiteDocument): boolean {
   if (passage.witness_name) return true;
+  // Line numbers on a passage are only ever set by the transcript chunker
+  // (`parseTranscriptPage`), so their presence is a fact about how the
+  // document was indexed rather than a guess about what it is. This is the
+  // branch that catches a Veritext PDF titled by date and witness — "2026-03-12
+  // - PDF - FULL SIZE - RAY OKONKWO, M.D." — which the title pattern below
+  // does not match and `doc_type` calls "other".
+  if (typeof passage.line_start === 'number' && passage.line_start > 0) return true;
   if (doc.witness_name) return true;
   if (doc.doc_type && TRANSCRIPT_DOC_TYPES.test(doc.doc_type)) return true;
   return TRANSCRIPT_TITLE.test(doc.title ?? '');

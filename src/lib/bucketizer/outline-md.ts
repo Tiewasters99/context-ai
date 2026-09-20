@@ -205,7 +205,12 @@ function renderSection(w: (line?: string) => void, section: OutlineSection, leve
     w();
   }
 
-  if (!section.confirmed.length && !section.proposed.length && !section.documents.length) {
+  // A claim with elements under it is a container, not a bucket — saying
+  // "nothing is filed here" of it would be noise on every claim in the tree.
+  // A LEAF with nothing in it is the thing the gaps section is about, and it
+  // says so again where the reader has reached it.
+  if (!section.children.length
+    && !section.confirmed.length && !section.proposed.length && !section.documents.length) {
     w('_Nothing is filed under this issue._');
     w();
   }

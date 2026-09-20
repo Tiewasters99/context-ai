@@ -3,10 +3,11 @@
 // PLAIN LITIGATION FORMAT, and nothing else: Times New Roman 12, one-inch
 // margins everywhere, headings that are bold text carrying their own numbers,
 // testimony set as indented block quotations with the citation beneath.
-// No colour, no rules, no shading, no decorative anything. The built-in Word
-// heading styles are redefined here rather than used, because Word ships them
-// as blue Calibri Light and a blue heading in a trial outline looks like a
-// slide deck.
+// No colour, no rules, no shading, no decorative anything. The headings carry
+// the outline's OWN styles rather than Word's, because Word ships Heading 1
+// through 6 as blue Calibri Light and a blue heading in a trial outline looks
+// like a slide deck (see HEADING_STYLE_IDS for why overriding them in place
+// does not work).
 //
 // The numbers (I., I.A., I.A.1.) come from the MODEL, printed into the heading
 // text — not from Word's automatic numbering. Both files are then numbered by
@@ -27,7 +28,6 @@ import {
   Document,
   Footer,
   Header,
-  HeadingLevel,
   PageNumber,
   Packer,
   Paragraph,
@@ -48,16 +48,44 @@ const TNR = 'Times New Roman';
 /** Half an inch, in twips — the block-quote indent. */
 const INDENT = 720;
 
-function headingStyle(id: string, name: string, before: number, size = SIZE_12) {
+/**
+ * The outline's own heading styles, and why they are not Word's.
+ *
+ * Redefining `Heading1` through `paragraphStyles` does NOT replace what `docx`
+ * writes: styles.xml ends up holding TWO `w:styleId="Heading1"` elements, the
+ * shipped blue Calibri Light one and the override. Duplicate style ids are
+ * invalid OOXML and which one Word honours is not something to find out from a
+ * printed trial outline. So these carry their own ids and are applied by name,
+ * with `outlineLevel` set so Word's navigation pane and any table of contents
+ * still see the structure.
+ */
+const HEADING_STYLE_IDS = [
+  'TrialOutlineHeading1', 'TrialOutlineHeading2', 'TrialOutlineHeading3',
+  'TrialOutlineHeading4', 'TrialOutlineHeading5', 'TrialOutlineHeading6',
+];
+
+function headingStyle(level: number, before: number) {
   return {
-    id,
-    name,
+    id: HEADING_STYLE_IDS[level - 1],
+    name: `Trial Outline Heading ${level}`,
     basedOn: 'Normal',
     next: 'Normal',
     quickFormat: true,
-    run: { font: TNR, size, bold: true, color: '000000' },
-    paragraph: { spacing: { before, after: 120 }, keepNext: true },
+    run: { font: TNR, size: SIZE_12, bold: true, color: '000000' },
+    paragraph: {
+      spacing: { before, after: 120 },
+      keepNext: true,
+      outlineLevel: level - 1,
+    },
   };
+}
+
+/** A heading paragraph at `level` (1-based), numbered from the model. */
+function heading(level: number, text: string): Paragraph {
+  return new Paragraph({
+    style: HEADING_STYLE_IDS[Math.min(HEADING_STYLE_IDS.length, Math.max(1, level)) - 1],
+    children: [new TextRun({ text })],
+  });
 }
 
 function plain(text: string, opts: { bold?: boolean; italics?: boolean; size?: number } = {}): Paragraph {
@@ -123,13 +151,8 @@ function evidenceParagraphs(item: OutlineEvidence, proposed: boolean): Paragraph
 }
 
 function sectionParagraphs(section: OutlineSection, depth: number): Paragraph[] {
-  const level = [
-    HeadingLevel.HEADING_1, HeadingLevel.HEADING_2,
-    HeadingLevel.HEADING_3, HeadingLevel.HEADING_4,
-  ][Math.min(3, depth)];
-
   const out: Paragraph[] = [
-    new Paragraph({ heading: level, children: [new TextRun({ text: section.heading })] }),
+    heading(Math.min(6, depth + 1), section.heading),
     new Paragraph({
       spacing: { after: 160, line: 276 },
       children: [
@@ -172,7 +195,10 @@ function sectionParagraphs(section: OutlineSection, depth: number): Paragraph[] 
     }
   }
 
-  if (!section.confirmed.length && !section.proposed.length && !section.documents.length) {
+  // See the Markdown renderer: a claim with elements under it is a container,
+  // and saying "nothing is filed here" of every claim is noise.
+  if (!section.children.length
+    && !section.confirmed.length && !section.proposed.length && !section.documents.length) {
     out.push(plain('Nothing is filed under this issue.', { italics: true }));
   }
 
@@ -253,7 +279,7 @@ export function buildOutlineDocument(model: OutlineModel): Document {
   }
 
   const c = model.counts;
-  body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'The state of the record' })] }));
+  body.push(heading(1, 'The state of the record'));
   body.push(plain(
     `${c.claims} claims, ${c.elements} elements, ${c.subissues} subissues, ${c.themes} themes. `
     + `${c.documentsFiled.toLocaleString('en-US')} documents are filed into the tree. `
@@ -270,7 +296,7 @@ export function buildOutlineDocument(model: OutlineModel): Document {
     + `${c.citeTiers.no_page} with no page.`,
   ));
 
-  body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'How this outline was built' })] }));
+  body.push(heading(1, 'How this outline was built'));
   body.push(plain(
     'Documents were classified into the case-theory tree by a model and confirmed or rejected '
     + 'by counsel. For each confirmed pairing, a model then chose which of the recorded passages '
@@ -283,7 +309,7 @@ export function buildOutlineDocument(model: OutlineModel): Document {
   ));
 
   if (model.citationNotes.length) {
-    body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'About the citations in this outline' })] }));
+    body.push(heading(1, 'About the citations in this outline'));
     for (const note of model.citationNotes) {
       body.push(new Paragraph({
         spacing: { after: 120, line: 276 },
@@ -293,7 +319,7 @@ export function buildOutlineDocument(model: OutlineModel): Document {
     }
   }
 
-  body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'What still needs evidence' })] }));
+  body.push(heading(1, 'What still needs evidence'));
   if (model.gaps.length) {
     body.push(gapsTable(model));
     body.push(plain(''));
@@ -301,16 +327,16 @@ export function buildOutlineDocument(model: OutlineModel): Document {
     body.push(plain('Every element and subissue in the tree carries confirmed evidence.'));
   }
 
-  body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'The case, claim by claim' })] }));
+  body.push(heading(1, 'The case, claim by claim'));
   if (!model.claims.length) body.push(plain('No claims in the tree yet.', { italics: true }));
   for (const claim of model.claims) body.push(...sectionParagraphs(claim, 1));
 
   if (model.themes.length) {
-    body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'Themes' })] }));
+    body.push(heading(1, 'Themes'));
     for (const theme of model.themes) body.push(...sectionParagraphs(theme, 1));
   }
 
-  body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'Witnesses cited' })] }));
+  body.push(heading(1, 'Witnesses cited'));
   if (!model.witnesses.length) {
     body.push(plain('No confirmed testimony is cited in this outline yet.', { italics: true }));
   }
@@ -327,7 +353,7 @@ export function buildOutlineDocument(model: OutlineModel): Document {
     }));
   }
 
-  body.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: 'Documents cited' })] }));
+  body.push(heading(1, 'Documents cited'));
   if (!model.documents.length) {
     body.push(plain('No document is quoted in this outline yet.', { italics: true }));
   }
@@ -375,10 +401,12 @@ export function buildOutlineDocument(model: OutlineModel): Document {
     styles: {
       default: { document: { run: { font: TNR, size: SIZE_12 } } },
       paragraphStyles: [
-        headingStyle('Heading1', 'Heading 1', 400),
-        headingStyle('Heading2', 'Heading 2', 320),
-        headingStyle('Heading3', 'Heading 3', 260),
-        headingStyle('Heading4', 'Heading 4', 220),
+        headingStyle(1, 400),
+        headingStyle(2, 320),
+        headingStyle(3, 260),
+        headingStyle(4, 220),
+        headingStyle(5, 200),
+        headingStyle(6, 200),
       ],
     },
     sections: [{

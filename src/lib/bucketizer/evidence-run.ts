@@ -130,6 +130,67 @@ export interface EvidenceNode extends EvidencePromptNode {
 }
 
 // ---------------------------------------------------------------------------
+// Resume
+// ---------------------------------------------------------------------------
+
+/** A confirmed classification row, as the pass needs to see it. */
+export interface PairCandidate extends EvidencePair {
+  /** Set once a pass has read this pairing. Null means it is still to do. */
+  evidenceRunAt: string | null;
+  evidenceFailed: string | null;
+}
+
+export interface PairPartition {
+  todo: EvidencePair[];
+  alreadyRun: number;
+  failed: number;
+  withoutPassages: number;
+}
+
+/**
+ * Which pairings a pass still has to pay for.
+ *
+ * Resume is a FACT IN THE DATABASE, not a variable in a loop: a pairing
+ * carrying `evidence_run_at` was read, and is skipped. That survives a closed
+ * tab, a different browser and a different machine — Eden works from four —
+ * and it is the same shape the classifier's per-window record takes
+ * (PR #168), for the same reason.
+ *
+ * A pairing that FAILED also carries the mark, so a second pass does not spend
+ * the same money on the same misunderstanding. Clearing it is deliberate:
+ * "retry the failures" is a button, not a side effect of pressing run again.
+ */
+export function partitionPairs(
+  candidates: PairCandidate[],
+  options: { retryFailed?: boolean } = {},
+): PairPartition {
+  const todo: EvidencePair[] = [];
+  let alreadyRun = 0;
+  let failed = 0;
+  let withoutPassages = 0;
+
+  for (const c of candidates) {
+    if (!c.passageIds.length) withoutPassages += 1;
+    if (c.evidenceRunAt) {
+      alreadyRun += 1;
+      if (c.evidenceFailed) failed += 1;
+      if (!(options.retryFailed && c.evidenceFailed)) continue;
+    }
+    todo.push({
+      classificationId: c.classificationId,
+      nodeId: c.nodeId,
+      documentId: c.documentId,
+      documentTitle: c.documentTitle,
+      docType: c.docType,
+      documentWitness: c.documentWitness ?? null,
+      passageIds: c.passageIds,
+    });
+  }
+
+  return { todo, alreadyRun, failed, withoutPassages };
+}
+
+// ---------------------------------------------------------------------------
 // One pair
 // ---------------------------------------------------------------------------
 
@@ -252,9 +313,11 @@ export async function findEvidenceForPair(input: {
   // could not be used, and it is recorded as one so the pair can be retried
   // with a different model rather than reading as reviewed and empty.
   if (!items.length && dropped > 0) {
-    const failed =
-      `none of the ${dropped} quotation${dropped === 1 ? '' : 's'} the model gave is present in the `
-      + 'stored passages word for word, so nothing was recorded. Try again, or with another model.';
+    const failed = dropped === 1
+      ? 'the quotation the model gave is not present in the stored passage word for word, '
+        + 'so nothing was recorded. Try again, or with another model.'
+      : `none of the ${dropped} quotations the model gave is present in the stored passages `
+        + 'word for word, so nothing was recorded. Try again, or with another model.';
     await deps.savePair({ pair, items: [], modelId, failed, at: now() });
     return { status: 'failed', items: 0, dropped, charged: true, notes: [`${where} — ${failed}`, ...notes] };
   }
