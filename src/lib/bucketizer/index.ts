@@ -33,7 +33,13 @@ import {
 } from './classify-run';
 import type { MergedAssignment, WindowPassage } from './windows';
 import { estimateRun, type EstimateDoc, type RunEstimate } from './estimate';
-import { isFiledOutline } from './outline-model';
+import {
+  freshCandidates,
+  planClassificationWrites,
+  sentinelAfterRun,
+  type ProposedClassification,
+} from './chooser';
+import { fetchExistingClassifications, loadChooserInventory } from './inventory';
 
 export const BUCKETIZER_DEFAULT_MODEL = 'claude-opus-4-8';
 
@@ -41,6 +47,18 @@ export { LlmCallError } from './llm-error';
 export { formatCents } from './estimate';
 export type { RunEstimate } from './estimate';
 export type { DocOutcome } from './classify-run';
+export { loadChooserInventory } from './inventory';
+export {
+  choosableIn,
+  classifyAction,
+  docRowsForRun,
+  freshCandidateRows,
+  groupChosen,
+  reclassifyNotices,
+  summarizeChosen,
+  NOTHING_NEW_MESSAGE,
+} from './chooser';
+export type { ChooserRow, ChooserState, ChosenSummary } from './chooser';
 
 export type NodeKind = 'claim' | 'element' | 'theme' | 'subissue';
 export type ClassificationStatus = 'proposed' | 'confirmed' | 'rejected';
@@ -217,6 +235,38 @@ export async function generateTreeFromPleadings(input: {
       origin: 'generated',
     }));
   }
+
+  // REMEMBER WHICH DOCUMENTS THE TREE CAME FROM.
+  //
+  // Nothing recorded this, and the omission had teeth: a pleading the tree was
+  // drawn from carries no classification rows, so it sat in "documents not yet
+  // classified" as though it were a new upload. Eden added one document, was
+  // asked to run "1 document", ran it, and the classifier read the COMPLAINT —
+  // his upload was still processing, and the complaint was the only ready
+  // document with no rows.
+  //
+  // The mark goes on `documents.metadata.bucketizer`, the blob this module
+  // already owns on that row (`run`, `coverage`, `no_buckets_at`), so no
+  // migration and no new column. It is a LABEL, not a ban: the chooser shows
+  // these documents, says what they are, and lets the attorney pick them —
+  // filing the complaint under the claims it pleads is a reasonable thing to
+  // want. It only keeps them out of "everything not yet classified".
+  //
+  // Trees generated BEFORE this shipped recorded nothing, so their pleadings
+  // are unmarked until the tree is regenerated. The chooser names every
+  // document either way, which is what stops the silent version of this.
+  for (const docId of input.pleadingDocIds) {
+    try {
+      await writeBucketizerMeta(docId, (prior) => ({
+        ...prior,
+        tree_source_at: new Date().toISOString(),
+      }));
+    } catch (e) {
+      // The tree is built and saved; failing to label its sources is not worth
+      // throwing that away. The chooser still shows the document by name.
+      console.warn('bucketizer: could not mark a tree source', docId, e);
+    }
+  }
   return created;
 }
 
@@ -262,54 +312,30 @@ export interface DocRow {
 }
 
 /**
- * Ready documents in the matter AND its sub-matters that haven't been
- * examined yet — no classification rows AND no "no buckets fit" sentinel
- * (without the sentinel, zero-assignment docs would be re-classified on
- * every run). The tree belongs to the matter, but the documents it files can
- * sit in sub-matters (Fleming's depositions and medical records do); until
- * 2026-09-09 this read the matter's own rows only, and no deposition was
- * ever a candidate. The same expansion search uses.
+ * Documents in the matter AND its sub-matters that have not been examined yet
+ * — ready, holding text, with no classification rows, no "no buckets fit"
+ * sentinel, and not one of this matter's own filed outlines.
+ *
+ * The tree belongs to the matter, but the documents it files can sit in
+ * sub-matters (Fleming's depositions and medical records do); until 2026-09-09
+ * this read the matter's own rows only, and no deposition was ever a
+ * candidate. The same expansion search uses.
+ *
+ * The predicate now lives in `chooser.ts` and is shared with the chooser's
+ * list, so the number on the button and the state printed beside each row
+ * cannot drift apart. Two consequences of that move, both deliberate:
+ *
+ *  - a ready document whose ingestion recorded that it holds NO TEXT (an
+ *    image-only scan, a recording without a transcript) is no longer counted.
+ *    It used to sit in this list forever: the button said "(5)", every run
+ *    read nothing, wrote nothing and reported nothing, and the count never
+ *    moved. It is now shown in the chooser with the reason instead;
+ *  - a document still being ingested is named in the chooser rather than
+ *    being silently absent from it.
  */
 export async function listUnclassifiedDocs(matterId: string): Promise<DocRow[]> {
-  const { data: descRows } = await supabase.rpc('matterspace_descendants', { p_root: matterId });
-  const matterIds = ((descRows ?? []) as { id: string }[]).map((r) => r.id);
-  if (!matterIds.includes(matterId)) matterIds.push(matterId);
-
-  const { rows: docs } = await fetchPaged<DocRow>(
-    (from, to) => supabase
-      .from('documents')
-      .select('id, title, doc_type, page_count, metadata')
-      .in('matterspace_id', matterIds)
-      .eq('processing_status', 'ready')
-      .order('id')
-      .range(from, to),
-    { label: 'matter documents', ceiling: 100_000 },
-  );
-
-  // The membership probe was itself capped, and it caused the exact harm it
-  // was guarding against: 200 documents can hold well over 1,000
-  // classification rows, PostgREST returned the first 1,000, and every
-  // document past the cut read back as UNCLASSIFIED — so a re-run classified
-  // it again and charged for it again. Paged, and in smaller chunks.
-  const classified = new Set<string>();
-  for (let i = 0; i < docs.length; i += 100) {
-    const ids = docs.slice(i, i + 100).map((d) => d.id);
-    const { rows } = await fetchPaged<{ document_id: string }>(
-      (from, to) => supabase
-        .from('bucketizer_classifications')
-        .select('document_id, id')
-        .in('document_id', ids)
-        .order('id')
-        .range(from, to),
-      { label: 'classification membership', ceiling: 100_000 },
-    );
-    for (const row of rows) classified.add(row.document_id);
-  }
-  return docs.filter((d) => !classified.has(d.id)
-    && !d.metadata?.bucketizer?.no_buckets_at
-    // A trial outline this matter filed earlier is not evidence about the
-    // matter. See `isFiledOutline` for why excluding it is not cosmetic.
-    && !isFiledOutline(d.title));
+  const inventory = await loadChooserInventory(matterId);
+  return freshCandidates(inventory.rows);
 }
 
 // ---------------------------------------------------------------------------
@@ -381,32 +407,76 @@ export function supabaseRunDeps(input: {
       await writeBucketizerMeta(documentId, (prior) => ({ ...prior, run }));
     },
 
+    /**
+     * Write the document's rows — and, on a document that has been classified
+     * before, write only what a re-run is allowed to.
+     *
+     * The rule, decided in `planClassificationWrites` and enforced twice: a
+     * CONFIRMED or REJECTED row is an attorney's decision and is never
+     * overwritten and never deleted; an undecided proposal is refreshed from
+     * the new read; a bucket the document is not yet in gets a new row. The
+     * `status = 'proposed'` filter rides on the UPDATE itself, so a row
+     * confirmed in another tab while this run was in flight is not overwritten
+     * by a refresh planned a minute ago.
+     */
     async finish(documentId, result): Promise<void> {
-      if (result.rows.length) {
-        const rows = result.rows.map((r: MergedAssignment) => ({
-          node_id: r.node_id,
-          confidence: r.confidence,
-          rationale: r.rationale,
-          passage_ids: r.passage_ids,
-          matterspace_id: input.matterId,
-          document_id: documentId,
-          status: 'proposed',
-          model_id: input.modelId,
-        }));
-        // `ignoreDuplicates` protects the attorney: a row they already
-        // confirmed or rejected is never overwritten by a fresh proposal.
+      const existing = await fetchExistingClassifications(documentId);
+      const proposed: ProposedClassification[] = result.rows.map((r: MergedAssignment) => ({
+        node_id: r.node_id,
+        confidence: r.confidence,
+        rationale: r.rationale,
+        passage_ids: r.passage_ids,
+      }));
+      const plan = planClassificationWrites(existing, proposed);
+
+      if (plan.insert.length) {
+        // `ignoreDuplicates` is kept for the race the plan cannot see: a row
+        // created between the read above and this insert.
         const { error } = await supabase
           .from('bucketizer_classifications')
-          .upsert(rows, { onConflict: 'document_id,node_id', ignoreDuplicates: true });
+          .upsert(
+            plan.insert.map((r) => ({
+              ...r,
+              matterspace_id: input.matterId,
+              document_id: documentId,
+              status: 'proposed',
+              model_id: input.modelId,
+            })),
+            { onConflict: 'document_id,node_id', ignoreDuplicates: true },
+          );
         if (error) throw new Error(error.message);
       }
+
+      for (const { id, row } of plan.refresh) {
+        const { error } = await supabase
+          .from('bucketizer_classifications')
+          .update({
+            confidence: row.confidence,
+            rationale: row.rationale,
+            passage_ids: row.passage_ids,
+            model_id: input.modelId,
+            proposed_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+          .eq('status', 'proposed');
+        if (error) throw new Error(error.message);
+      }
+
       // `run` is replaced by `coverage`: the working state goes, the record of
-      // how much of the document was read stays. When nothing fit, the
-      // "examined, no bucket" sentinel keeps the document out of the next run.
+      // how much of the document was read stays. The "examined, no bucket"
+      // sentinel is set only when the document ends this run in no bucket at
+      // all — and CLEARED otherwise, so a re-read that finally finds a bucket
+      // does not leave behind a flag saying nothing fitted.
+      const sentinel = sentinelAfterRun({
+        existingRows: existing.length,
+        writtenRows: result.rows.length,
+        completedAt: result.coverage.completed_at,
+      });
       await writeBucketizerMeta(documentId, (prior) => {
         const next: Record<string, unknown> = { ...prior, coverage: result.coverage };
         delete next.run;
-        if (!result.rows.length) next.no_buckets_at = result.coverage.completed_at;
+        if (sentinel) next.no_buckets_at = sentinel;
+        else delete next.no_buckets_at;
         return next;
       });
     },
@@ -540,6 +610,15 @@ export async function classifyDocuments(input: {
       });
       progress.proposed += outcome.proposed;
       progress.notes.push(...outcome.notes);
+      // A document with no passages is not an error and not a success, and it
+      // used to be neither: the run read it, wrote nothing, and said nothing.
+      // A person watching a run finish with no proposals is owed the reason.
+      if (outcome.status === 'no_text') {
+        progress.notes.push(
+          `${doc.title}: no text to read — an image-only scan, a recording, or a file still `
+          + 'awaiting OCR. It was not classified.',
+        );
+      }
       if (outcome.status === 'incomplete') progress.errors += 1;
       if (outcome.status === 'aborted') break;
     } catch (e) {
