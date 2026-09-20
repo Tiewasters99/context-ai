@@ -13,6 +13,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+import { ensureGrantOnApprove } from '../lib/oauth-grants.mjs';
 import { signJwt, verifyJwt, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -70,7 +71,29 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'invalid_redirect_uri', detail: 'redirect_uri not in registration' });
   }
 
-  // 4. Mint the authorization code. 60-second TTL.
+  // 4. Record the approval (migration 065). This is the row the Connections
+  // page reads to say "Connected" truthfully, and the row the user revokes to
+  // cut this one client off. Re-approving a client that is already connected
+  // attaches to the grant that exists rather than making a second one.
+  //
+  // It never blocks consent. If the grants table is not deployed yet, or the
+  // database is unreachable, ensureGrantOnApprove logs and returns gid = null
+  // and the flow continues exactly as it did before 065 — which is what makes
+  // it safe to deploy this code before pasting the migration.
+  const { gid, outcome } = await ensureGrantOnApprove({
+    user_id,
+    client_id,
+    client_name: client.client_name || null,
+    scope: scope || 'mcp',
+  });
+  console.log('[oauth-approve] grant %s for sub=%s client=%s',
+    gid ? `${outcome} (${gid})` : `not recorded (${outcome})`, user_id,
+    (client.client_name || 'unknown').slice(0, 40));
+
+  // 5. Mint the authorization code. 60-second TTL. `gid` rides along so the
+  // token endpoint can stamp it into the access and refresh tokens; omitted
+  // entirely when there is none, which keeps the payload byte-identical to
+  // the pre-065 shape.
   const code = signJwt(
     {
       typ: 'code',
@@ -80,12 +103,13 @@ export default async function handler(req, res) {
       code_challenge,
       resource: resource || null,
       scope: scope || 'mcp',
+      ...(gid ? { gid } : {}),
     },
     oauthSecret,
     60,
   );
 
-  // 5. Build the redirect URL.
+  // 6. Build the redirect URL.
   const url = new URL(redirect_uri);
   url.searchParams.set('code', code);
   if (state) url.searchParams.set('state', state);

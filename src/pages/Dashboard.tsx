@@ -21,6 +21,12 @@ const quickActions: { label: string; icon: typeof Plus; action: 'new-serverspace
   { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace', surface: 'serverspaces' },
 ];
 
+// What a brand-new account's very first screen looks like. A member of the
+// core set (public/templates/core-covers.json), so it is a cover every plan
+// is entitled to; named here rather than picked at random so the product
+// looks the same in every demo and every screenshot.
+const DEFAULT_DASHBOARD_COVER = '/templates/a-board-room-with-a-long-table-1.webp';
+
 export default function Dashboard() {
   const { user, plan } = useAuth();
   const navigate = useNavigate();
@@ -38,15 +44,26 @@ export default function Dashboard() {
   // per-item row to store it on, so persist the chosen URL in localStorage.
   // (Previously it had no coverUrl/onCoverChange wiring at all, so a picked
   // cover vanished immediately — the "covers aren't persistent" bug.)
+  //
+  // A brand-new account has nothing stored, and used to land on a bare
+  // "Add cover" strip — the first screen of the product, empty. It now opens
+  // on a core cover (lib/covers.ts) instead. "Hide cover" must still stick,
+  // so an explicit removal is remembered as HIDDEN_COVER rather than by
+  // deleting the key, which would only bring the default back on reload.
   const DASH_COVER_KEY = 'cs.dashboard.cover';
+  const HIDDEN_COVER = 'none';
   const [dashboardCover, setDashboardCover] = useState<string | null>(() => {
-    try { return localStorage.getItem(DASH_COVER_KEY); } catch { return null; }
+    try {
+      const raw = localStorage.getItem(DASH_COVER_KEY);
+      if (raw === HIDDEN_COVER) return null;
+      if (raw) return raw;
+    } catch { /* fall through to the default */ }
+    return DEFAULT_DASHBOARD_COVER;
   });
   const handleDashboardCover = useCallback((url: string | null) => {
     setDashboardCover(url);
     try {
-      if (url) localStorage.setItem(DASH_COVER_KEY, url);
-      else localStorage.removeItem(DASH_COVER_KEY);
+      localStorage.setItem(DASH_COVER_KEY, url ?? HIDDEN_COVER);
     } catch { /* a blocked store costs the backdrop, nothing more */ }
   }, []);
 

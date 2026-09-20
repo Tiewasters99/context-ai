@@ -1,6 +1,7 @@
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { ChevronLeft, LogOut } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import RefusalBanner from '@/components/ui/RefusalBanner';
 
 // Standalone shell for Discovery as its own product (/discovery), the sibling
 // of ConnectLayout. Same auth + database as Contextspaces underneath — but a
@@ -60,6 +61,9 @@ export default function DiscoveryLayout() {
       <main className="flex-1 min-h-0 overflow-y-auto">
         <Outlet />
       </main>
+      {/* Its own shell, so its own copy: a refusal raised in Discovery has no
+          MainLayout to draw it. */}
+      <RefusalBanner />
     </div>
   );
 }
