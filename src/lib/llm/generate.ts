@@ -3,6 +3,7 @@ import { findModel } from './providers';
 import { adapters } from './adapters';
 import { routeRequest, selectRelevantChunks, estimateTokens } from './router';
 import { llmAuthHeader } from './auth';
+import { llmErrorText } from './refusals';
 
 export interface GenerateOptions {
   modelId: string;
@@ -89,22 +90,26 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
       }),
       signal,
     });
-  } catch (err) {
+  } catch {
     if (signal?.aborted) return;
     callbacks.onError('Network error — is the dev server running?');
     return;
   }
 
   if (!res.ok) {
-    let detail = `API error (${res.status})`;
-    try {
-      const errBody = await res.json();
-      if (errBody.error?.message) detail = errBody.error.message;
-      else if (typeof errBody.error === 'string') detail = errBody.error;
-    } catch { /* use default */ }
-    callbacks.onError(detail);
+    let errBody: unknown = null;
+    try { errBody = await res.json(); } catch { /* no body, or not JSON */ }
+    // `retry-after` is the other half of a 429: the server puts the seconds
+    // in a header as well as the body, and the sentence needs the number.
+    callbacks.onError(llmErrorText(res.status, errBody, res.headers.get('retry-after')));
     return;
   }
+
+  // Which pen actually answered. On a sealed matter the server substitutes
+  // the sealed pen for the model this call named (lib/llm-sealed-route.mjs),
+  // and the caller is entitled to know that rather than be told its own
+  // request was honoured.
+  const penLabel = res.headers.get('x-contextspaces-pen');
 
   // Parse SSE stream
   const reader = res.body?.getReader();
@@ -138,6 +143,8 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   return {
     strategy: routing.strategy,
     estimatedTokens: routing.estimatedTokens,
-    message: routing.message,
+    message: penLabel
+      ? `${routing.message ?? ''} Answered by the sealed pen: ${penLabel}.`.trim()
+      : routing.message,
   };
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { fetchPaged } from '@/lib/paged';
 import { useServerspaces, useServerspacesRefresh, type Serverspace } from '@/hooks/useServerspaces';
 import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument } from '@/lib/vault-persist';
 import { sandboxApi } from '@/lib/sandbox-api';
@@ -62,14 +63,27 @@ export default function SandboxPanel() {
 
   const loadDocs = useCallback(async (boxId: string) => {
     setDocsLoading(true);
-    const { data, error: qErr } = await supabase
-      .from('documents')
-      .select('id, title, source_filename, file_size_bytes, processing_status, storage_path')
-      .eq('matterspace_id', boxId)
-      .order('created_at', { ascending: false });
+    // Paged. A box built by staging a whole matter's exhibits can pass 1,000
+    // copies, and an unbounded select would list the first 1,000 of them —
+    // which is what the Combine button would then have merged. `.order('id')`
+    // is the unique tiebreaker: staging writes many rows in one second, so
+    // created_at ties and rows would otherwise swap between pages.
+    try {
+      const { rows } = await fetchPaged<SandboxDoc>(
+        (from, to) => supabase
+          .from('documents')
+          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path')
+          .eq('matterspace_id', boxId)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, to),
+        { label: 'sandbox documents' },
+      );
+      setDocs(rows);
+    } catch (err) {
+      setError(`load documents: ${err instanceof Error ? err.message : 'unknown error'}`);
+    }
     setDocsLoading(false);
-    if (qErr) { setError(`load documents: ${qErr.message}`); return; }
-    setDocs((data ?? []) as SandboxDoc[]);
   }, []);
 
   useEffect(() => {
@@ -451,15 +465,23 @@ function AddFromMatterModal({
     setPickerDocs([]);
     if (!matterId) return;
     setLoadingDocs(true);
-    supabase
-      .from('documents')
-      .select('id, title, source_filename')
-      .eq('matterspace_id', matterId)
-      .order('title', { ascending: true })
-      .then(({ data, error: qErr }) => {
+    // Paged, with `.order('id')` as the unique tiebreaker — identical titles
+    // ("Exhibit A", a repeated PACER filename) tie constantly, and ties let
+    // rows swap between `.range()` pages.
+    fetchPaged<PickerDoc>(
+      (from, to) => supabase
+        .from('documents')
+        .select('id, title, source_filename')
+        .eq('matterspace_id', matterId)
+        .order('title', { ascending: true })
+        .order('id')
+        .range(from, to),
+      { label: 'matter documents' },
+    )
+      .then(({ rows }) => { setLoadingDocs(false); setPickerDocs(rows); })
+      .catch((err: unknown) => {
         setLoadingDocs(false);
-        if (qErr) { setError(qErr.message); return; }
-        setPickerDocs((data ?? []) as PickerDoc[]);
+        setError(err instanceof Error ? err.message : 'could not load documents');
       });
   }, [matterId]);
 

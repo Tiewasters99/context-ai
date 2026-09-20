@@ -48,18 +48,22 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import {
   sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv,
 } from '../lib/discovery/util.mjs';
-import { normalizeFile } from '../lib/discovery/normalize.mjs';
+import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
   parseDat, datLookupByFilename, emitDat, emitOpt,
 } from '../lib/discovery/loadfile.mjs';
 import {
-  stampPdf, makeSlipSheet, makeProductionLetter, makePrivilegeLogPdf,
+  stampPdf, makeSlipSheet, makeProductionLetter, makePrivilegeLogPdf, undrawableChars,
 } from '../lib/discovery/bates-stamp.mjs';
+import {
+  exceptionsCsv, exceptionReason, duplicatesCsv, reconcile, reconciliationText,
+} from '../lib/discovery/manifest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -118,10 +122,28 @@ log(`Discovery worker ${WORKER_ID} started (poll ${POLL_MS}ms${args.once ? ', --
 let lastRecoverAt = 0;
 let lastOcrSweepAt = 0;
 
+// Proof of life (migration 066). `processing_jobs.heartbeat_at` only beats
+// while a job is held, so an idle worker and a dead one look identical — which
+// is why an uploaded document could sit in 'pending' forever with nobody
+// alerted. This writes one row per worker process, ~every 60 s and on every
+// completion. beat() is synchronous, never throws and is never awaited: a
+// heartbeat that cannot be written (066 not pasted yet, network blip) must
+// never stop the worker, and one that hangs must never stall the queue. The
+// rules live in lib/worker-heartbeat.mjs, where they can be tested.
+const heartbeat = createHeartbeat({
+  client: supabase,
+  workerId: WORKER_ID,
+  machineId: process.env.FLY_MACHINE_ID || os.hostname(),
+  release: process.env.FLY_IMAGE_REF || process.env.FLY_RELEASE_VERSION || null,
+  log,
+});
+heartbeat.beat({ force: true });
+
 for (;;) {
   const job = await claimJob();
   if (!job) {
     if (args.once) break;
+    heartbeat.beat();
     await recoverStrandedIfDue();
     await requeueOcrPendingIfDue();
     await sleep(POLL_MS);
@@ -133,6 +155,7 @@ for (;;) {
     await supabase.from('processing_jobs')
       .update({ status: 'done', progress: 100, finished_at: new Date().toISOString() })
       .eq('id', job.id);
+    heartbeat.beat({ force: true, jobDone: true });
     log(`[job ${job.id}] done`);
   } catch (err) {
     if (err?.isWatchdog) {
@@ -211,6 +234,13 @@ async function withHeartbeat(job, run) {
   const timer = setInterval(() => {
     supabase.rpc('heartbeat_job', { p_job: job.id })
       .then(({ error }) => { if (error) log(`[job ${job.id}] heartbeat failed: ${error.message}`); });
+    // And the WORKER's own beat (066), on the same timer. Without this line a
+    // worker that is busy is a worker that is silent: the idle branch is the
+    // only other periodic caller, and a single job may run for up to
+    // JOB_TIMEOUT_MINUTES (120). A two-hour OCR would otherwise raise "WORKER
+    // DOWN" about a worker that is working — and a false alarm is how an alert
+    // channel dies.
+    heartbeat.beat();
   }, HEARTBEAT_MS);
   timer.unref?.();
   try {
@@ -246,6 +276,21 @@ async function holdJob(job, err) {
   await supabase.from('processing_jobs')
     .update({ status: HELD_STATUS, error: reason, finished_at: new Date().toISOString() })
     .eq('id', job.id);
+
+  // F5 (2026-09-20 re-verification): until migration 071 this function wrote
+  // nothing to `productions`, and the main loop's `continue` skips the branch
+  // that would have set the production to 'error'. A held intake therefore
+  // left the production at 'processing' with no worker, no error and nothing
+  // for the UI to say — forever. A held production is not an error and is
+  // certainly not still processing, so it says 'held' and says why.
+  if (job.production_id && String(job.job_type ?? '').startsWith('intake')) {
+    const { error: prodErr } = await supabase.from('productions')
+      .update({ status: HELD_STATUS, status_reason: `Held: ${reason}` })
+      .eq('id', job.production_id)
+      .not('status', 'in', '("stamped","packaged","delivered")');
+    if (prodErr) log(`  could not hold production ${job.production_id}: ${prodErr.message}`);
+  }
+
   const docId = job.payload?.document_id;
   if (!docId) return;
   const { error: updErr } = await supabase.from('documents')
@@ -489,14 +534,99 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   const filename = path.basename(originalPath);
   const hash = sha256(buf);
 
+  // F6 (2026-09-20 re-verification). idx_production_items_sha
+  // (matterspace_id, sha256) has existed since 030:122 and was never once
+  // queried, so two byte-identical files became two produced documents with
+  // two Bates ranges — the receiving party paying to review the same document
+  // twice, and the producing party swearing to a count that double-counts.
+  // Scoped to THIS production: a supplemental production legitimately
+  // re-produces a document, and cross-production de-duplication would be a
+  // different (and wrong) decision.
+  const { data: sameBytes, error: dupLookupErr } = await supabase.from('production_items')
+    .select('id, original_path, original_filename, sort_order, status, kind, page_count, '
+      + 'native_storage_path, display_storage_path, duplicate_of_item_id')
+    .eq('matterspace_id', prod.matterspace_id)
+    .eq('sha256', hash)
+    .eq('production_id', prod.id)
+    .order('sort_order');
+  if (dupLookupErr) throw new Error(`duplicate lookup (${filename}): ${dupLookupErr.message}`);
+  const twins = sameBytes ?? [];
+
+  // Same bytes at the same path is not a duplicate — it is this job running a
+  // second time. 044's reaper requeues a crashed intake exactly as it requeues
+  // a crashed stamp, and without this an intake that died two thirds of the
+  // way through would file every document again and label each re-filing a
+  // duplicate of its own first pass.
+  //
+  // A finished row is skipped. A row left MID-FLIGHT by the attempt that died
+  // — inserted, never marked ready — is resumed in place under its own id:
+  // skipping it would leave a 'pending' row that the manifest then has to
+  // report as an exception forever, which is a hole the retry itself created.
+  // 'ready' and 'error' are both settled: normalization is deterministic, so
+  // re-running a file that failed it would only write the same error again.
+  // 'pending' is the only state that means "an attempt died holding this".
+  const already = twins.find((t) => (t.original_path ?? t.original_filename) === originalPath);
+  if (already && already.status !== 'pending') {
+    log(`  ${filename}: already intaken in this production (${already.status}) — skipping`);
+    return;
+  }
+  const resumeId = already?.id ?? null;
+  if (resumeId) log(`  ${filename}: resuming the row a previous attempt left mid-flight`);
+
+  // Write this file's row: update the mid-flight one if there is one, insert
+  // otherwise. Either way there is exactly one row per original_path.
+  const identity = {
+    production_id: prod.id,
+    matterspace_id: prod.matterspace_id,
+    sort_order: sortOrder,
+    original_filename: filename,
+    original_path: originalPath,
+    sha256: hash,
+    file_size_bytes: buf.length,
+  };
+  const writeItem = async (fields) => {
+    if (resumeId) {
+      const { error: updErr } = await supabase.from('production_items').update(fields).eq('id', resumeId);
+      if (updErr) throw new Error(`resume production_item (${filename}): ${updErr.message}`);
+      return { id: resumeId };
+    }
+    const { data, error: insErr } = await supabase.from('production_items')
+      .insert({ ...identity, ...fields }).select().single();
+    if (insErr) throw new Error(`insert production_item (${filename}): ${insErr.message}`);
+    return data;
+  };
+
+  // An empty file is not a document that can be "produced once": every
+  // zero-byte file in existence shares one sha256, so de-duplicating them
+  // would collapse a blank .pdf and a blank .txt into the same document. They
+  // each get their own row and their own slip sheet.
+  const first = buf.length === 0 ? null
+    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
+  if (first) {
+    // The ZIP really did contain this file twice, and that is part of the
+    // record, so the row stays. It points at the first instance's stored
+    // objects — identical bytes by definition — is never stamped, and is
+    // listed in DATA/DUPLICATES.csv under the Bates number it WAS produced at.
+    await writeItem({
+      kind: first.kind,
+      page_count: first.page_count,
+      native_storage_path: first.native_storage_path,
+      display_storage_path: first.display_storage_path,
+      duplicate_of_item_id: first.id,
+      source_metadata: { duplicate_of: first.original_filename },
+      status: 'ready',
+      error: null,
+    });
+    log(`  ${filename}: byte-identical to ${first.original_filename} — produced once, listed as a duplicate`);
+    return;
+  }
+
   let norm;
   try {
     norm = await normalizeFile(buf, filename);
   } catch (err) {
-    await supabase.from('production_items').insert({
-      production_id: prod.id, matterspace_id: prod.matterspace_id,
-      sort_order: sortOrder, original_filename: filename, original_path: originalPath,
-      sha256: hash, file_size_bytes: buf.length, kind: 'native',
+    await writeItem({
+      kind: 'native', duplicate_of_item_id: null,
       status: 'error', error: `normalize: ${err.message}`,
     });
     return;
@@ -506,22 +636,16 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   const datRec = datLookup.get(filename.toLowerCase());
   const metadata = { ...norm.metadata, ...(datRec ?? {}) };
 
-  const { data: item, error: itemErr } = await supabase.from('production_items').insert({
-    production_id: prod.id,
-    matterspace_id: prod.matterspace_id,
-    sort_order: sortOrder,
-    original_filename: filename,
-    original_path: originalPath,
-    sha256: hash,
-    file_size_bytes: buf.length,
+  const item = await writeItem({
     kind: norm.kind,
     page_count: norm.pageCount,
     bates_first: datRec?.bates_first ?? null,
     bates_last: datRec?.bates_last ?? null,
     source_metadata: metadata,
+    duplicate_of_item_id: null,
     status: 'pending',
-  }).select().single();
-  if (itemErr) throw new Error(`insert production_item (${filename}): ${itemErr.message}`);
+    error: null,
+  });
 
   try {
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
@@ -623,8 +747,11 @@ async function ingestDocument(job) {
   if (!doc.storage_path) throw new Error('document has no storage_path');
   // A ready document with a recorded text_status is stored-without-text, and
   // one with ocr_pending still owes OCR on some pages; a queued re-run of
-  // either is deliberate. Only a fully indexed document is skipped.
-  if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
+  // either is deliberate. Only a fully indexed document is skipped — unless
+  // the job was queued with force (ingest_document force: true), which is how
+  // a document indexed with the wrong text gets repaired (2026-09-18).
+  const forced = job.payload?.force === true;
+  if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending && !forced) { log(`  ${doc.source_filename}: already ready, skipping`); return; }
   if (job.payload?.ocr_retry) log(`  ${doc.source_filename}: OCR retry ${job.payload.ocr_retry} for ${Array.isArray(doc.ocr_pending?.pages) ? doc.ocr_pending.pages.length + ' page(s)' : 'the scan'}`);
 
   await progress(job, 5, `Downloading ${doc.source_filename}`);
@@ -632,10 +759,18 @@ async function ingestDocument(job) {
   const ext = doc.source_filename?.includes('.')
     ? '.' + doc.source_filename.split('.').pop().toLowerCase() : '';
 
-  // Idempotency: a retried job (or a doc that failed mid-embed on a previous
-  // attempt) may have partial passages. Clear before re-running — same
-  // pattern as scripts/reingest.mjs.
-  await supabase.from('passages').delete().eq('document_id', docId);
+  // A forced re-run swaps rather than wipes: the current passages stay
+  // searchable until the new run succeeds, and a run that fails leaves the row
+  // exactly as it was (lib/reprocess.mjs). Every forced job swaps, not only
+  // one that finds the row 'ready': a forced run whose worker died mid-way
+  // (the watchdog, an OOM on an 800-page re-run) is reclaimed with the row at
+  // 'embedding', and wiping then would take the originals with it. The swap
+  // handles that too — the crashed run's partial passages are newer than the
+  // originals, so success removes both and failure keeps the originals.
+  // Unforced jobs are documents that never finished, whose partial passages
+  // are clutter — so idempotency there is the old way: clear, then run.
+  const swap = forced;
+  if (!swap) await supabase.from('passages').delete().eq('document_id', docId);
 
   // OCR goes through the tier's routes (ocrProvider). Transcription stays on
   // Gemini; a recording longer than twenty minutes is cut into parts by
@@ -680,7 +815,7 @@ async function ingestDocument(job) {
 
   // Rough stage → progress mapping so the queue row tells a human story.
   const stagePct = { extracting: 20, chunking: 55, embedding: 75, ready: 99 };
-  const { passageCount } = await processDocument(supabase, {
+  const run = () => processDocument(supabase, {
     documentId: docId,
     fileBuf,
     ext,
@@ -691,6 +826,13 @@ async function ingestDocument(job) {
       progress(job, stagePct[stage] ?? 40, message).catch(() => {});
     },
   });
+  if (swap) {
+    const { reprocessInPlace } = await import('../lib/reprocess.mjs');
+    const { passageCount, replacedPassages } = await reprocessInPlace(supabase, docId, run);
+    log(`  ${doc.source_filename}: forced re-run — ${passageCount} passages, ${replacedPassages} old passage(s) replaced`);
+    return;
+  }
+  const { passageCount } = await run();
   log(`  ${doc.source_filename}: ${passageCount} passages`);
 }
 
@@ -719,105 +861,234 @@ async function transcodeToMp3(buf, ext) {
 // ---------------------------------------------------------------------------
 // Stamping
 // ---------------------------------------------------------------------------
+// Stamping, made crash-safe (F1, 2026-09-20 re-verification).
+//
+// What used to happen: the range was re-derived from prod.bates_start on every
+// run and the registry rows were written as the loop went. Since 044 a worker
+// that dies mid-stamp is no longer wedged — the reaper requeues it — so the
+// re-run re-derived the SAME start, walked into its own half-written rows and
+// died on "Bates collision" (three times, until the budget was spent). The
+// numbers already written can never be recovered: 030:330-335 gives
+// bates_registry no DELETE policy, on purpose. One crash burned a permanent
+// hole in the matter's numbering and told nobody why.
+//
+// What happens now, in three separated phases:
+//
+//   PRE-FLIGHT  every page of every document is proved stampable — the prefix
+//               and every endorsement drawable, every display PDF readable and
+//               counted — BEFORE a single number is allocated. Anything that
+//               fails here becomes an exception (F7) and is simply not in the
+//               range. Zero numbers spent.
+//   ALLOCATE    migration 071's allocate_production_bates: one row per
+//               production, one transaction, a per-matter advisory lock, and
+//               the exact per-item plan recorded. Asking twice returns the
+//               first answer, so a re-run cannot drift.
+//   REGISTER    migration 071's register_bates_pages, per document: ON
+//               CONFLICT DO NOTHING plus a proof that every row in the range
+//               belongs to this document. Re-runnable to the byte.
+//
+// A requeued job therefore re-stamps only what is missing and produces exactly
+// the same numbers; a second production in the same matter continues from the
+// high-water mark, counting numbers already reserved as well as numbers
+// already registered.
 async function stampProduction(job) {
   const prod = await getProduction(job.production_id);
-  if (['stamped', 'packaged', 'delivered'].includes(prod.status)) {
+  if (['packaged', 'delivered'].includes(prod.status)) {
     throw new Error(`Production already ${prod.status}; create a supplemental production instead`);
   }
   if (!prod.bates_prefix && prod.bates_prefix !== '') {
     throw new Error('stamp_production: bates_prefix not configured on the production');
   }
+  // A job re-delivered after its first run finished must be a no-op, not an
+  // error — and must certainly not renumber anything.
+  const locked = prod.status === 'stamped';
 
-  const { included, excluded, endorsementsByItem } = await partitionItems(prod);
+  const { included, excluded, exceptions, duplicates, endorsementsByItem } = await partitionItems(prod);
   if (included.length === 0) throw new Error('No documents to stamp (all excluded?)');
 
-  // Total pages -> preflight the Bates range against the matter registry.
-  const totalPages = included.reduce(
-    (sum, it) => sum + (it.kind === 'native' ? 1 : (it.page_count ?? 1)), 0);
-  const startSeq = prod.bates_start ?? (await registryHighWaterMark(prod.matterspace_id)) + 1;
-  const endSeq = startSeq + totalPages - 1;
-
-  const { count: collisions } = await supabase.from('bates_registry')
-    .select('id', { count: 'exact', head: true })
-    .eq('matterspace_id', prod.matterspace_id)
-    .gte('bates_seq', startSeq)
-    .lte('bates_seq', endSeq);
-  if (collisions > 0) {
-    throw new Error(
-      `Bates collision: ${collisions} number(s) in ${formatBates(prod.bates_prefix, prod.bates_pad, startSeq)}–` +
-      `${formatBates(prod.bates_prefix, prod.bates_pad, endSeq)} already assigned in this matter`);
+  await progress(job, 1, `Checking ${included.length} document(s) before any Bates number is spent…`);
+  const { plan, failed } = await preflightStamp(prod, included, endorsementsByItem, { locked });
+  for (const f of failed) {
+    log(`  EXCEPTION ${f.item.original_filename}: ${f.reason}`);
+    exceptions.push({ ...f.item, status: 'error', error: f.reason });
+  }
+  if (plan.length === 0) {
+    throw new Error(`Nothing in this production can be stamped: all ${failed.length} document(s) failed pre-flight`);
   }
 
-  let seq = startSeq;
-  for (const [i, item] of included.entries()) {
-    await progress(job, (i / included.length) * 100,
-      `Stamping ${item.original_filename} (${formatBates(prod.bates_prefix, prod.bates_pad, seq)})`);
-    const endorsements = endorsementsByItem.get(item.id) ?? [];
-    const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
+  const { data: alloc, error: allocErr } = await supabase.rpc('allocate_production_bates', {
+    p_production: prod.id,
+    p_items: plan.map((e) => ({ item_id: e.item.id, pages: e.pages })),
+  });
+  if (allocErr) throw new Error(allocErr.message);
 
-    let pageCount;
+  const prefix = alloc.bates_prefix ?? '';
+  const pad = Number(alloc.bates_pad);
+  const slots = new Map((alloc.item_plan ?? []).map((e) => [e.item_id, e]));
+  log(`  Bates ${formatBates(prefix, pad, Number(alloc.start_seq))}–${formatBates(prefix, pad, Number(alloc.end_seq))}`
+    + ` allocated to this production (${alloc.total_pages} page(s))`);
+
+  let stamped = 0;
+  let resumed = 0;
+  for (const [i, entry] of plan.entries()) {
+    const item = entry.item;
+    const slot = slots.get(item.id);
+    if (!slot) throw new Error(`the Bates allocation has no slot for ${item.original_filename}`);
+    const seq = Number(slot.start_seq);
+    const pages = Number(slot.pages);
+    if (pages !== entry.pages) {
+      throw new Error(`${item.original_filename} was allocated ${pages} page(s) but now pre-flights at ${entry.pages}`);
+    }
+    const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
+    await progress(job, (i / plan.length) * 100, `Stamping ${item.original_filename} (${slot.bates_first})`);
+
+    // Already done by an earlier attempt? Leave it exactly as it is.
+    if (item.bates_first === slot.bates_first && item.bates_last === slot.bates_last
+        && (await registeredPagesFor(item.id)) === pages
+        && (await storageObjectExists(`${base}/stamped.pdf`))) {
+      resumed += 1;
+      continue;
+    }
+    if (locked) {
+      throw new Error(
+        `Production is already stamped, but ${item.original_filename} carries no Bates number. `
+        + 'Its numbers cannot be reassigned; produce it in a supplemental production.');
+    }
+
+    const endorsements = endorsementsByItem.get(item.id) ?? [];
     if (item.kind === 'native') {
-      const bates = formatBates(prod.bates_prefix, prod.bates_pad, seq);
       const sheet = await makeSlipSheet({
-        batesNumber: bates, filename: item.original_filename,
+        batesNumber: slot.bates_first, filename: item.original_filename,
         endorsements, position: prod.bates_position,
       });
       await uploadToStorage(`${base}/stamped.pdf`, sheet, 'application/pdf');
-      pageCount = 1;
-      await supabase.from('production_items')
-        .update({ bates_first: bates, bates_last: bates })
-        .eq('id', item.id);
     } else {
       const pdfBuf = await downloadFromStorage(item.display_storage_path);
-      const stamped = await stampPdf(pdfBuf, {
-        prefix: prod.bates_prefix, pad: prod.bates_pad, startSeq: seq,
-        position: prod.bates_position, endorsements,
+      const out = await stampPdf(pdfBuf, {
+        prefix, pad, startSeq: seq, position: prod.bates_position, endorsements,
       });
-      await uploadToStorage(`${base}/stamped.pdf`, stamped.buf, 'application/pdf');
-      pageCount = stamped.pageCount;
-      await supabase.from('production_items')
-        .update({ bates_first: stamped.batesFirst, bates_last: stamped.batesLast, page_count: pageCount })
-        .eq('id', item.id);
+      // The burned-on numbers and the registry are the same representation.
+      // If they could ever disagree, stop before either is written.
+      if (out.pageCount !== pages) {
+        throw new Error(
+          `${item.original_filename} pre-flighted at ${pages} page(s) but stamped ${out.pageCount}; `
+          + 'its range would run into the next document. Nothing was written for it.');
+      }
+      if (out.batesFirst !== slot.bates_first || out.batesLast !== slot.bates_last) {
+        throw new Error(
+          `${item.original_filename} stamped ${out.batesFirst}–${out.batesLast} but was allocated `
+          + `${slot.bates_first}–${slot.bates_last}`);
+      }
+      await uploadToStorage(`${base}/stamped.pdf`, out.buf, 'application/pdf');
     }
 
-    // Registry rows: one per page, batched. The unique constraint on
-    // (matterspace_id, bates_number) is the final authority.
-    const rows = [];
-    for (let p = 0; p < pageCount; p++) {
-      rows.push({
-        matterspace_id: prod.matterspace_id,
-        bates_number: formatBates(prod.bates_prefix, prod.bates_pad, seq + p),
-        bates_seq: seq + p,
-        production_id: prod.id,
-        production_item_id: item.id,
-        page_number: p + 1,
-      });
-    }
-    for (let off = 0; off < rows.length; off += 1000) {
-      const { error } = await supabase.from('bates_registry').insert(rows.slice(off, off + 1000));
-      if (error) throw new Error(`bates_registry insert: ${error.message}`);
-    }
-    seq += pageCount;
+    await supabase.from('production_items')
+      .update({ bates_first: slot.bates_first, bates_last: slot.bates_last, page_count: pages })
+      .eq('id', item.id);
+
+    const { error: regErr } = await supabase.rpc('register_bates_pages', {
+      p_production: prod.id, p_item: item.id, p_start_seq: seq, p_pages: pages,
+    });
+    if (regErr) throw new Error(`bates_registry: ${regErr.message}`);
+    stamped += 1;
   }
 
   await supabase.from('productions').update({
-    bates_start: startSeq,
-    bates_end: seq - 1,
+    bates_start: Number(alloc.start_seq),
+    bates_end: Number(alloc.end_seq),
     status: 'stamped',
-    locked_at: new Date().toISOString(),
+    status_reason: null,
+    locked_at: prod.locked_at ?? new Date().toISOString(),
   }).eq('id', prod.id);
 
-  log(`  stamped ${included.length} docs / ${seq - startSeq} pages ` +
-    `(${formatBates(prod.bates_prefix, prod.bates_pad, startSeq)}–${formatBates(prod.bates_prefix, prod.bates_pad, seq - 1)}); ` +
-    `${excluded.length} withheld`);
+  log(`  stamped ${stamped} doc(s)${resumed ? ` (+${resumed} already done by an earlier attempt)` : ''}`
+    + ` / ${alloc.total_pages} pages (${formatBates(prefix, pad, Number(alloc.start_seq))}–`
+    + `${formatBates(prefix, pad, Number(alloc.end_seq))}); ${excluded.length} withheld, `
+    + `${duplicates.length} duplicate(s), ${exceptions.length} exception(s)`);
 }
 
-// Split production items into produced vs withheld, and collect endorsement
-// text per item. behavior 'privileged' and 'non_responsive' exclude.
+// Prove every page of every document is stampable before a single number is
+// allocated. This is what turns F0's residual ("an undrawable endorsement
+// refuses at item N, and items 1…N−1 are already in the registry") into a
+// refusal at item 0 that costs nothing.
+//
+// It reads each display PDF to count its pages rather than trusting
+// production_items.page_count: the count decides which numbers every LATER
+// document gets, so a stale one would not merely mis-stamp this document, it
+// would shift the whole production.
+async function preflightStamp(prod, included, endorsementsByItem, { locked }) {
+  const badPrefix = undrawableChars(prod.bates_prefix ?? '');
+  if (badPrefix.length) {
+    throw new Error(
+      `Bates prefix contains character(s) a standard PDF font cannot draw: ${badPrefix.join(' ')}. `
+      + 'The page has to read exactly what bates_registry records. No number has been spent.');
+  }
+  for (const item of included) {
+    for (const text of endorsementsByItem.get(item.id) ?? []) {
+      const bad = undrawableChars(text);
+      if (bad.length) {
+        throw new Error(
+          `The endorsement "${text}" on ${item.original_filename} contains character(s) a standard PDF `
+          + `font cannot draw: ${bad.join(' ')}. An endorsement is a legal designation and must burn `
+          + 'onto the page exactly as recorded. No number has been spent.');
+      }
+    }
+  }
+
+  const plan = [];
+  const failed = [];
+  for (const item of included) {
+    if (item.kind === 'native') { plan.push({ item, pages: 1 }); continue; }
+    try {
+      if (!item.display_storage_path) throw new Error('no display PDF was stored for this document');
+      const pages = await pdfPageCount(await downloadFromStorage(item.display_storage_path));
+      if (!Number.isInteger(pages) || pages < 1) throw new Error('its display PDF has no pages');
+      if (pages !== item.page_count && !locked) {
+        await supabase.from('production_items').update({ page_count: pages }).eq('id', item.id);
+      }
+      plan.push({ item, pages });
+    } catch (err) {
+      const reason = `stamp pre-flight: ${err.message}`;
+      if (!locked) {
+        await supabase.from('production_items').update({ status: 'error', error: reason }).eq('id', item.id);
+      }
+      failed.push({ item, reason });
+    }
+  }
+  return { plan, failed };
+}
+
+async function registeredPagesFor(itemId) {
+  const { count } = await supabase.from('bates_registry')
+    .select('id', { count: 'exact', head: true })
+    .eq('production_item_id', itemId);
+  return count ?? 0;
+}
+
+async function registeredPagesForProduction(productionId) {
+  const { count } = await supabase.from('bates_registry')
+    .select('id', { count: 'exact', head: true })
+    .eq('production_id', productionId);
+  return count ?? 0;
+}
+
+// Split a production's items into the four buckets a manifest has to
+// reconcile, and collect endorsement text per item.
+//
+// Until 2026-09-20 this selected status='ready' and returned two buckets, so a
+// document that failed normalization was silently absent from the stamp, from
+// the package and from the load file — a production delivered with holes
+// nobody knew about (F7). It now reads EVERY row and accounts for each one
+// exactly once, by the precedence set out in lib/discovery/manifest.mjs:
+// exception > withheld > duplicate > produced.
+//
+// Ordered by (sort_order, id), not sort_order alone: two intake passes into
+// one production can hand out the same sort_order, and Bates numbers are
+// derived from this order.
 async function partitionItems(prod) {
   const { data: items, error: itemsErr } = await supabase.from('production_items')
-    .select('*').eq('production_id', prod.id).eq('status', 'ready')
-    .order('sort_order');
+    .select('*').eq('production_id', prod.id)
+    .order('sort_order').order('id');
   if (itemsErr) throw new Error(itemsErr.message);
 
   const { data: tags, error: tagsErr } = await supabase.from('document_tags')
@@ -843,23 +1114,34 @@ async function partitionItems(prod) {
     }
   }
 
+  const included = [];
+  const withheld = [];
+  const duplicates = [];
+  const exceptions = [];
+  for (const it of items) {
+    if (it.status !== 'ready') { exceptions.push(it); continue; }
+    if (excludedIds.has(it.id)) { withheld.push(it); continue; }
+    if (it.duplicate_of_item_id) { duplicates.push(it); continue; }
+    included.push(it);
+  }
+
   return {
-    included: items.filter((i) => !excludedIds.has(i.id)),
-    excluded: items.filter((i) => excludedIds.has(i.id)),
+    items,
+    byId: new Map(items.map((i) => [i.id, i])),
+    included,
+    excluded: withheld,
+    duplicates,
+    exceptions,
     endorsementsByItem,
     confidentialIds,
   };
 }
 
-async function registryHighWaterMark(matterspaceId) {
-  const { data } = await supabase.from('bates_registry')
-    .select('bates_seq')
-    .eq('matterspace_id', matterspaceId)
-    .order('bates_seq', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return data?.bates_seq ?? 0;
-}
+// The matter's Bates high-water mark now lives in migration 071's
+// allocate_production_bates, which takes it together with the numbers already
+// RESERVED by another production that is mid-stamp — a distinction this
+// function could not make, and the reason two productions stamping in the same
+// minute could overlap.
 
 // ---------------------------------------------------------------------------
 // Packaging
@@ -870,9 +1152,41 @@ async function packageProduction(job) {
     throw new Error(`package_production: production must be stamped first (status: ${prod.status})`);
   }
 
-  const { included, endorsementsByItem, confidentialIds } = await partitionItems(prod);
+  const {
+    items, byId, included, excluded, duplicates, exceptions, confidentialIds,
+  } = await partitionItems(prod);
   const produced = included.filter((i) => i.bates_first);
   if (produced.length === 0) throw new Error('Nothing stamped to package');
+
+  // ---- The arithmetic, BEFORE a byte of the package is written (F7).
+  //
+  //   received = produced + privileged-withheld + duplicates + exceptions
+  //
+  // plus the two independent checks the buckets cannot make for themselves:
+  // every produced document carries a Bates number, and the registry holds
+  // exactly as many rows for this production as the package claims pages.
+  // A production that does not add up is not delivered — it is stopped here,
+  // where it is still a job failure rather than a representation to a court.
+  const producedPages = produced.reduce(
+    (n, i) => n + (i.kind === 'native' ? 1 : (i.page_count ?? 1)), 0);
+  const counts = {
+    received: items.length,
+    produced: produced.length,
+    withheld: excluded.length,
+    duplicates: duplicates.length,
+    exceptions: exceptions.length,
+    unnumbered: included.length - produced.length,
+    producedPages,
+    registeredPages: await registeredPagesForProduction(prod.id),
+  };
+  const balance = reconcile(counts);
+  if (!balance.ok) {
+    await supabase.from('productions')
+      .update({ status_reason: `Packaging stopped: ${balance.problems.join('; ')}` })
+      .eq('id', prod.id);
+    throw new Error(
+      `This production does not reconcile, so it was not packaged: ${balance.problems.join('; ')}.`);
+  }
 
   const matterName = await matterNameOf(prod.matterspace_id);
   const volumeName = sanitizeStorageName(prod.name.replace(/\s+/g, '_')) || 'PRODUCTION';
@@ -924,9 +1238,39 @@ async function packageProduction(job) {
     });
   }
 
+  if (totalPages !== producedPages) {
+    throw new Error(
+      `The package holds ${totalPages} page(s) but the production reconciled at ${producedPages}; `
+      + 'it was not finalized.');
+  }
+
   await progress(job, 85, 'Writing load files and cover documents…');
   archive.append(emitDat(datRows), { name: `${volumeName}/DATA/loadfile.dat` });
   archive.append(emitOpt(datRows, volumeName), { name: `${volumeName}/DATA/loadfile.opt` });
+
+  // The exceptions report: every document taken into this production that
+  // could not be produced, by original path, hash and reason. It ships even
+  // when it is empty, because an empty one is itself a statement — and it is
+  // deliberately NOT the privilege log: nothing here was withheld as a
+  // judgment, these are documents the software could not render.
+  archive.append(exceptionsCsv(exceptions), { name: `${volumeName}/DATA/EXCEPTIONS.csv` });
+
+  archive.append(duplicatesCsv(duplicates.map((d) => {
+    const f = byId.get(d.duplicate_of_item_id);
+    return {
+      original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
+      firstFilename: f?.original_filename ?? '',
+      firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
+    };
+  })), { name: `${volumeName}/DATA/DUPLICATES.csv` });
+
+  archive.append(reconciliationText(counts, {
+    matterName,
+    productionName: prod.name,
+    batesFirst: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_start),
+    batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
+    dateStr: new Date().toISOString().slice(0, 10),
+  }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
 
   if (job.payload?.include_privilege_log) {
     const { data: entries } = await supabase.from('privilege_log_entries')
@@ -968,12 +1312,30 @@ async function packageProduction(job) {
     status: 'packaged',
   }).eq('id', prod.id);
 
-  log(`  packaged ${produced.length} docs -> ${pkgStoragePath} (sha256 ${pkgSha.slice(0, 12)}…)`);
+  for (const e of exceptions) log(`  EXCEPTION in package: ${e.original_path ?? e.original_filename} — ${exceptionReason(e)}`);
+  log(`  packaged ${produced.length} docs / ${producedPages} pages -> ${pkgStoragePath} `
+    + `(sha256 ${pkgSha.slice(0, 12)}…); ${counts.withheld} withheld, ${counts.duplicates} duplicate(s), `
+    + `${counts.exceptions} exception(s) — received ${counts.received}, reconciled`);
 }
 
 // ---------------------------------------------------------------------------
 // Direct local-disk intake (CLI mode for very large productions)
 // ---------------------------------------------------------------------------
+// F2 (2026-09-20 re-verification). This path used to insert its job as
+// `status: 'running'` and then call intakeFolder directly — NOT through
+// withHeartbeat. Only the per-file progress() call refreshed heartbeat_at, so
+// one slow file (a 2,000-page scan going through OCR) exceeded 044's
+// five-minute staleness window, the reaper requeued the job, and one of the
+// two always-on Fly machines then claimed an intake_folder job whose
+// payload.local_path is a folder on the operator's laptop. It failed on a
+// missing path, and the whole production was set to 'error'.
+//
+// Two things close it, and both are needed:
+//   * withHeartbeat, so a living intake never looks dead in the first place;
+//   * requires_worker (migration 071), so that even if it does — the laptop
+//     is closed, the process is killed — no other machine can be handed a job
+//     it has no way to run. The reaper takes such a job straight to a terminal
+//     error and writes a sentence on the production that names the machine.
 async function directFolderIntake(folder, productionId) {
   if (!productionId) die('--intake requires --production <production uuid>');
   const root = path.resolve(folder);
@@ -989,12 +1351,14 @@ async function directFolderIntake(folder, productionId) {
     status: 'running',
     claimed_by: WORKER_ID,
     claimed_at: new Date().toISOString(),
+    heartbeat_at: new Date().toISOString(),
+    requires_worker: WORKER_ID,
   }).select().single();
   if (error) die(`create job: ${error.message}`);
 
-  log(`Direct intake of ${root} into production "${prod.name}"`);
+  log(`Direct intake of ${root} into production "${prod.name}" (pinned to ${WORKER_ID})`);
   try {
-    await intakeFolder(job);
+    await withHeartbeat(job, () => intakeFolder(job));
     await supabase.from('processing_jobs')
       .update({ status: 'done', progress: 100, finished_at: new Date().toISOString() })
       .eq('id', job.id);
@@ -1007,6 +1371,9 @@ async function directFolderIntake(folder, productionId) {
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
       .eq('id', job.id);
+    await supabase.from('productions')
+      .update({ status: 'error', status_reason: `Local intake on ${WORKER_ID} failed: ${String(err.message ?? err).slice(0, 400)}` })
+      .eq('id', prod.id);
     die(err.message);
   }
 }
@@ -1021,8 +1388,24 @@ async function getProduction(id) {
   return data;
 }
 
-async function setProductionStatus(id, status) {
-  await supabase.from('productions').update({ status }).eq('id', id);
+// The reason travels with the status, and is cleared by any status that does
+// not need one. Every intake begins by setting 'processing', so a stale
+// "Held: …" or "The local intake on … stopped" never survives a re-run: the
+// sentence on the production is always about the state it is actually in.
+async function setProductionStatus(id, status, reason = null) {
+  await supabase.from('productions').update({ status, status_reason: reason }).eq('id', id);
+}
+
+// Does this object exist in the discovery-files bucket? Used by a re-run of a
+// crashed stamp to decide whether a document still needs its stamped PDF.
+async function storageObjectExists(storagePath) {
+  if (!storagePath) return false;
+  const cut = storagePath.lastIndexOf('/');
+  const dir = cut < 0 ? '' : storagePath.slice(0, cut);
+  const name = storagePath.slice(cut + 1);
+  const { data, error } = await supabase.storage.from(BUCKET).list(dir, { search: name, limit: 100 });
+  if (error) return false;
+  return (data ?? []).some((o) => o.name === name);
 }
 
 async function matterNameOf(matterspaceId) {

@@ -36,10 +36,14 @@ client-facing):
   over the global endpoint — the pen's ledger prices carry it). The global
   endpoint routes worldwide; we deliberately do not use it.
 
-The code is fully wired and fail-closed: until the credentials below exist,
-Tier B behaves exactly as it does today (Kimi K3 when `FIREWORKS_API_KEY` is
-set, refusal otherwise). **The cutover is one retention setting + one IAM user
-+ three env vars. No code changes.**
+The code is fully wired and fail-closed. **Since 2026-09-19 "fail-closed"
+means exactly that: until the credentials below exist, a Tier-B matter is
+REFUSED — in plain language, with nothing sent anywhere.** There is no
+Fireworks fallback and no implicit escalation to `api.anthropic.com`; a key
+for some other provider is not a sealed pen (Eden's decision: refuse, don't
+fall back). On a development checkout with no `BEDROCK_` keys, sealed matters
+therefore have no AI at all, and the refusal says so. **The cutover is one
+retention setting + one IAM user + three env vars. No code changes.**
 
 ## Provisioning (Eden, one time, ~20 minutes)
 
@@ -138,10 +142,17 @@ us-east-1. Bedrock is serverless — no endpoint, no instance, no quota case.
 - The **Escalate** control becomes moot: the sealed default already is the
   frontier pen, inside the seal, so `escalate: true` is answered by the same
   Bedrock pen and recorded as an ordinary (non-escalation) turn.
-- Kimi K3 / Fireworks stays wired as the fallback pen for servers without
-  the Bedrock key, and `api.anthropic.com` remains reachable from a sealed
-  matter ONLY via that fallback's recorded escalation. Removing the fallback
-  entirely is a policy decision noted in `lib/ai-tier-policy.mjs`.
+- There is **no fallback pen**. As of 2026-09-19 the Tier-B provider set is
+  exactly `{aws-bedrock}`: Kimi K3 / Fireworks is gone (its US hosting was
+  never established) and first-party `anthropic` is out of the allowlist. A
+  server without the Bedrock key refuses a sealed matter rather than serving
+  it from outside the seal, and `/api/llm` — which has no `aws-bedrock`
+  route — now refuses **every** browser-driven model call bound to a sealed
+  matter (Editor, Bucketizer, cite-check, Moot Bench). The one remaining way
+  out of the seal is the in-app Assistant's explicit per-request
+  `escalate: true`, which is written to `ai_messages` as `escalation: true`
+  and is itself refused if that record cannot be opened. Proof:
+  `node scripts/_verify-sealed-no-fallback.mjs` (offline, no secrets).
 - Pricing on the ledger: $5.50 / $27.50 per million tokens (Opus 5 lists at
   the same $5 / $25 as 4.8, plus the regional endpoint's 10% residency
   premium).

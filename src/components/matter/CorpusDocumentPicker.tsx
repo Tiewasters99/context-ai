@@ -57,6 +57,10 @@ async function fetchReadyDocs(matterId: string): Promise<Doc[]> {
       .eq('matterspace_id', matterId)
       .eq('processing_status', 'ready')
       .order('title', { ascending: true })
+      // The unique tiebreaker. Titles tie constantly ("Exhibit A", a
+      // repeated PACER filename), and rows the ORDER BY calls equal swap
+      // between `.range()` pages — duplicating some and dropping others.
+      .order('id')
       .range(from, from + 999);
     if (error) throw new Error(error.message);
     all.push(...((data ?? []) as Doc[]));

@@ -116,23 +116,42 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
     setFlash(null);
     setSubmitting(true);
     try {
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('id, email, display_name')
-        .ilike('email', trimmed)
-        .maybeSingle();
-      if (profileErr) throw new Error(profileErr.message);
+      // Turning an address into an account is the one profiles read that is
+      // NOT a co-worker read — the person is by definition not a member yet.
+      // Migration 062 closes the open profiles table and serves it through
+      // find_profile_by_email instead: exact match, one row, no email back.
+      // Until 062 is applied the function does not exist and PostgREST says
+      // PGRST202, so fall back to the old direct read — the dialog works on
+      // either side of the migration, in either merge order.
+      let profile: { id: string; display_name: string | null } | null = null;
+      const { data: viaRpc, error: rpcErr } = await supabase.rpc('find_profile_by_email', {
+        p_email: trimmed,
+      });
+      if (!rpcErr) {
+        profile = (viaRpc as { id: string; display_name: string | null }[] | null)?.[0] ?? null;
+      } else if (rpcErr.code === 'PGRST202') {
+        const { data: row, error: profileErr } = await supabase
+          .from('profiles')
+          .select('id, display_name')
+          .ilike('email', trimmed)
+          .maybeSingle();
+        if (profileErr) throw new Error(profileErr.message);
+        profile = row ?? null;
+      } else {
+        throw new Error(rpcErr.message);
+      }
       if (!profile) {
         setFormError(`No Contextspaces account for ${trimmed}. Have them sign up at contextspaces.ai first, then add them here.`);
         return;
       }
-      if (members.some((m) => m.userId === profile.id)) {
+      const foundId = profile.id;
+      if (members.some((m) => m.userId === foundId)) {
         setFormError(`${trimmed} is already a member of this ${cfg.label}.`);
         return;
       }
       const { error: insErr } = await supabase
         .from(cfg.table)
-        .insert({ [cfg.fk]: scopeId, user_id: profile.id, role });
+        .insert({ [cfg.fk]: scopeId, user_id: foundId, role });
       if (insErr) {
         if (/row-level security|permission/i.test(insErr.message)) {
           throw new Error(`Only owners and admins of this ${cfg.label} can add members.`);

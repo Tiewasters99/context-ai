@@ -8,6 +8,7 @@
  */
 
 import { generateStructured, findModel } from '@/lib/llm';
+import { isFinalRefusal } from '@/lib/llm/refusals';
 import { plannerSystem, sectionEditorSystem, lightEditorSystem, criticSystem } from './constitution';
 import { verifyEdits, applyEdits, buildNormalized, normalize } from './verifier';
 import type { RawEdit } from './verifier';
@@ -226,6 +227,11 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
     try {
       return await run();
     } catch (err) {
+      // The second pen is refused for the same reason as the first when the
+      // reason is the wallet, the rate window or the seal — swapping models
+      // does not buy more budget. Spending the round trip to be told so a
+      // second time only delays the sentence the person is waiting for.
+      if (isFinalRefusal(err)) throw err;
       if (signal?.aborted || modelId !== DEFAULT_EDITOR_MODEL || DEFAULT_EDITOR_MODEL === FALLBACK_EDITOR_MODEL) throw err;
       modelId = FALLBACK_EDITOR_MODEL;
       passNotes.push(`The Editor's usual pen was unavailable (${err instanceof Error ? err.message : String(err)}) — this pass ran on the fallback model.`);
@@ -326,6 +332,10 @@ export async function runEditorPass(manuscript: string, options: RunEditorPassOp
           });
         } catch (err) {
           if (signal?.aborted) throw err;
+          // Same reasoning as the pen fallback: once the budget is spent, every
+          // remaining section fails identically, and a manuscript returned with
+          // forty notes saying so is worse than one honest stop.
+          if (isFinalRefusal(err)) throw err;
           passNotes.push(`Section ${i + 1} (“${section.title}”) could not be edited: ${err instanceof Error ? err.message : String(err)}`);
         }
         filed++;

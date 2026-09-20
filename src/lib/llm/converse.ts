@@ -2,6 +2,7 @@ import type { LLMMessage, LLMStreamCallbacks } from './types';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { llmAuthHeader } from './auth';
+import { llmErrorText } from './refusals';
 
 // Multi-turn streaming conversation through the provider-agnostic adapter
 // layer. generate() is single-shot (one instruction + context); this is the
@@ -56,13 +57,9 @@ export async function converse(options: ConverseOptions): Promise<void> {
   }
 
   if (!res.ok) {
-    let detail = `API error (${res.status})`;
-    try {
-      const errBody = await res.json();
-      if (errBody.error?.message) detail = errBody.error.message;
-      else if (typeof errBody.error === 'string') detail = errBody.error;
-    } catch { /* use default */ }
-    callbacks.onError(detail);
+    let errBody: unknown = null;
+    try { errBody = await res.json(); } catch { /* no body, or not JSON */ }
+    callbacks.onError(llmErrorText(res.status, errBody, res.headers.get('retry-after')));
     return;
   }
 

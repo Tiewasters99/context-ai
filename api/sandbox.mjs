@@ -13,6 +13,8 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { callTool, timeoutFetch } from '../lib/mcp-core.mjs';
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { EMBED_USD_PER_MTOK } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -62,6 +64,20 @@ export default async function handler(req, res) {
   if (!action || !ALLOWED_ACTIONS.has(action)) {
     return json(res, 400, { error: `action must be one of: ${[...ALLOWED_ACTIONS].join(', ')}` });
   }
+
+  // Spend cap (migration 063). Most actions here are database and PDF work on
+  // our own compute; `search` embeds the query on the server-held OpenAI key,
+  // and assemble/deck/chart are maxDuration 120 of function time. So the cost
+  // that matters is the RATE, and the cents are a token gesture — one embedded
+  // query — rather than a pretence at measuring a document assembly.
+  const meter = await consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'sandbox',
+    estimateCents: action === 'search' ? Math.ceil((1000 / 1e6) * EMBED_USD_PER_MTOK * 100) : 0,
+  });
+  if (!meter.allowed) return sendUsageRefusal(res, meter);
 
   try {
     const result = await callTool(sb, action, args, {

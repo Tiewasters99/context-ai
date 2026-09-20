@@ -82,6 +82,10 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
   const [deleteTarget, setDeleteTarget] = useState<DeleteMatterTarget | null>(null);
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [shareTarget, setShareTarget] = useState<{ scope: 'serverspace' | 'matterspace'; id: string; name: string } | null>(null);
+  // Why SecureChat didn't open. A brand-new account has no serverspace, and
+  // the button used to do nothing at all — the one onboarding step in the
+  // product is "create a serverspace", so say that instead of nothing.
+  const [secureChatNotice, setSecureChatNotice] = useState<string | null>(null);
 
   const { data: serverspaces = [] } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
@@ -303,7 +307,16 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             Assistant, the Suite. Calendar, the Mediation Center, the Student
             Hub and The Office keep their routes and are reached from the
             Productivity Suite — every tool a room, not every room a door.
-            The Document Builder is still a stub (/app/document-builder). */}
+            The Document Builder is still a stub (/app/document-builder).
+
+            Plan gating (2026-09-19): because of that, every entry on this
+            rail is core — My Contextspace, the Assistant panel and the
+            SecureSpaces shelf have no gated route at all, and the Productivity
+            Suite, Connections and Settings are core surfaces in lib/plan.ts.
+            So there is nothing here to hide and no filter to write. If a
+            non-core room is ever promoted to the rail, give it a surface in
+            lib/plan.ts and wrap its entry in surfacePresentation(...) — do
+            not re-decide it here. */}
 
         {/* Productivity Suite */}
         <Link
@@ -459,23 +472,55 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               descendantCount: row.descendantCount,
             })
           }
+          // The same dialog the SecureChat notice offers, so the shelf's two
+          // dead ends on a brand-new account both lead to the one step that
+          // fixes them.
+          onCreateServerspace={() => setShowNewServerspace(true)}
           onOpenSecureChat={() => {
             // Find-or-create the born-sealed personal room, then hand the
             // Assistant a promptless command: MainLayout opens the panel,
             // Assistant scopes to the room, and no model call is spent
             // until the user actually says something.
             void (async () => {
-              if (serverspaces.length === 0) return;
+              if (serverspaces.length === 0) {
+                setSecureChatNotice(
+                  'SecureChat lives inside a serverspace, and you don’t have one yet.',
+                );
+                return;
+              }
+              setSecureChatNotice(null);
               try {
                 const room = await ensureMySecureSpace(serverspaces[0].id);
                 await refreshServerspaces();
                 runInAssistant({ matterId: room.id, matterName: room.name, sealed: true });
               } catch (err) {
-                console.error('SecureChat:', err instanceof Error ? err.message : err);
+                const message = err instanceof Error ? err.message : String(err);
+                console.error('SecureChat:', message);
+                setSecureChatNotice(`SecureChat could not open: ${message}`);
               }
             })();
           }}
         />
+        {secureChatNotice && !collapsed && (
+          <div
+            className="mx-2 mt-1.5 rounded-md border px-2.5 py-2 text-[11px] leading-snug text-white/65"
+            style={{ borderColor: 'rgba(90,168,143,0.35)', backgroundColor: 'rgba(90,168,143,0.07)' }}
+          >
+            {secureChatNotice}
+            {serverspaces.length === 0 && (
+              <button
+                onClick={() => {
+                  setSecureChatNotice(null);
+                  setShowNewServerspace(true);
+                }}
+                className="block mt-1 font-medium transition-colors hover:text-[#e8b84a]"
+                style={{ color: '#5aa88f' }}
+              >
+                Create a serverspace →
+              </button>
+            )}
+          </div>
+        )}
         <DragOverlay>
           {dragging && draggingMatterName && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[#1c1c26] border border-[#e8b84a]/40 text-[12px] text-[#f5f1e8] shadow-lg shadow-black/40">

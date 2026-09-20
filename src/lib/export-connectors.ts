@@ -7,6 +7,15 @@
 // The fetch + error-handling shape mirrors the original handleDriveExport in
 // DocumentReader: it POSTs to a backend endpoint with the Supabase session
 // bearer token, then maps the known error codes to friendly banner text.
+//
+// SecureSpace, 2026-09-20 — every connector in this registry goes out through
+// ONE server-side gate (lib/export-gate.mjs). When the document is in a sealed
+// matter the endpoint answers 409 `export_needs_confirmation` instead of
+// exporting, and hands back the sentence to show. `postThroughSeal` below is
+// the single place that handles it, so a connector added later — OneDrive,
+// Dropbox — inherits the behaviour without writing any of it: give it a
+// `run` that calls `postThroughSeal`, and the warning, the re-issue with
+// confirm_leave_seal, and the recorded/not-recorded note all work.
 
 import { Download, HardDrive, Mail, type LucideIcon } from 'lucide-react';
 
@@ -27,6 +36,11 @@ export interface ExportContext {
   download: () => Promise<void>;
   setBanner: (b: ExportBanner | null) => void;
   navigateToConnections: () => void;
+  // Shows the sealed-matter warning and resolves true if the user wants the
+  // copy to leave anyway. The host supplies it (SealedExportDialog); the text
+  // is the server's, never the host's. Without it a sealed export simply does
+  // not happen, and the banner says why.
+  confirmLeaveSeal?: (message: string) => Promise<boolean>;
 }
 
 export interface ExportConnector {
@@ -45,7 +59,7 @@ async function postExport(
   ctx: ExportContext,
   path: string,
   payload: Record<string, unknown>,
-): Promise<{ ok: boolean; body: any }> {
+): Promise<{ ok: boolean; status: number; body: any }> {
   const token = await ctx.getToken();
   if (!token) throw new Error('Not signed in');
   const resp = await fetch(path, {
@@ -57,7 +71,33 @@ async function postExport(
     body: JSON.stringify(payload),
   });
   const body = await resp.json().catch(() => ({}));
-  return { ok: resp.ok && !!body.ok, body };
+  return { ok: resp.ok && !!body.ok, status: resp.status, body };
+}
+
+// The one place the seal is handled on the client. A sealed matter answers 409
+// with the gate's own sentence; we show it, and only a yes re-issues the
+// request with confirm_leave_seal — per copy, never remembered.
+async function postThroughSeal(
+  ctx: ExportContext,
+  path: string,
+  payload: Record<string, unknown>,
+) {
+  const first = await postExport(ctx, path, payload);
+  if (first.status !== 409 || first.body?.error !== 'export_needs_confirmation') {
+    return { ...first, stopped: null };
+  }
+  if (!ctx.confirmLeaveSeal) return { ...first, stopped: 'no_confirmer' };
+  const proceed = await ctx.confirmLeaveSeal(String(first.body.message ?? ''));
+  if (!proceed) return { ...first, stopped: 'declined' };
+  const second = await postExport(ctx, path, { ...payload, confirm_leave_seal: true });
+  return { ...second, stopped: null };
+}
+
+// A sealed export that actually happened says so, in the server's words —
+// including whether it is written to the matter's record, which is a fact
+// about the deployment, not something this file may assume.
+function withSealNote(text: string, body: { seal?: { note?: string } }): string {
+  return body?.seal?.note ? `${text} ${body.seal.note}` : text;
 }
 
 export const EXPORT_CONNECTORS: ExportConnector[] = [
@@ -77,10 +117,15 @@ export const EXPORT_CONNECTORS: ExportConnector[] = [
     run: async (ctx) => {
       ctx.setBanner(null);
       try {
-        const { ok, body } = await postExport(ctx, '/api/drive-export', {
+        const { ok, body, stopped } = await postThroughSeal(ctx, '/api/drive-export', {
           documentId: ctx.documentId,
           folderName: 'Contextspaces',
         });
+        if (stopped === 'declined') return;
+        if (stopped === 'no_confirmer') {
+          ctx.setBanner({ kind: 'err', text: String(body.message ?? 'This matter is sealed.') });
+          return;
+        }
         if (!ok) {
           // Google's API surfaces details under body.detail.error.message —
           // prefer that string over the bare code when present.
@@ -104,7 +149,10 @@ export const EXPORT_CONNECTORS: ExportConnector[] = [
         }
         ctx.setBanner({
           kind: 'ok',
-          text: `Saved to your Google Drive${body.folderName ? ` › ${body.folderName}` : ''}.`,
+          text: withSealNote(
+            `Saved to your Google Drive${body.folderName ? ` › ${body.folderName}` : ''}.`,
+            body,
+          ),
           link: body.webViewLink ?? null,
           linkLabel: 'Open in Drive',
         });
@@ -124,10 +172,15 @@ export const EXPORT_CONNECTORS: ExportConnector[] = [
     run: async (ctx) => {
       ctx.setBanner(null);
       try {
-        const { ok, body } = await postExport(ctx, '/api/gmail-send', {
+        const { ok, body, stopped } = await postThroughSeal(ctx, '/api/gmail-send', {
           documentId: ctx.documentId,
           subject: ctx.doc?.title ?? undefined,
         });
+        if (stopped === 'declined') return;
+        if (stopped === 'no_confirmer') {
+          ctx.setBanner({ kind: 'err', text: String(body.message ?? 'This matter is sealed.') });
+          return;
+        }
         if (!ok) {
           const googleMsg =
             body?.detail?.error?.message ||
@@ -149,7 +202,10 @@ export const EXPORT_CONNECTORS: ExportConnector[] = [
         }
         ctx.setBanner({
           kind: 'ok',
-          text: 'Draft created in Gmail with the file attached — open Drafts to address and send it.',
+          text: withSealNote(
+            'Draft created in Gmail with the file attached — open Drafts to address and send it.',
+            body,
+          ),
           link: body.draftsUrl ?? null,
           linkLabel: 'Open Gmail Drafts',
         });

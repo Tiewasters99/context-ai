@@ -5,6 +5,9 @@ import type { IncomingMessage } from 'node:http';
 import type { Plugin } from 'vite';
 // The SecureSpace gate — same module the prod handler uses.
 import { gateLlmRequest } from './lib/ai-tier-policy.mjs';
+// …and the sealed route it substitutes on a Tier-B matter. Mirrored here so a
+// sealed matter behaves the same under `vite dev` as it does on Vercel.
+import { sealedRouteFor } from './lib/llm-sealed-route.mjs';
 
 // Absolute file: URL to the CLI's free-DB fetchers, resolved from the
 // project root (process.cwd() in the Vite config context) so the dynamic
@@ -245,9 +248,9 @@ export default function llmProxy(): Plugin {
           const result = await runAssistantStream({
             supabase: sb,
             anthropicKey: ANTHROPIC_API_KEY,
-            // The sealed pens (SecureSpace Tier B); optional — with neither,
-            // sealed matters are refused, never silently escalated. Bedrock
-            // (our own AWS account, zero retention) wins when configured.
+            // The sealed pen (SecureSpace Tier B) is Bedrock alone — our own
+            // AWS account, zero retention. Without it a sealed matter is
+            // refused. Fireworks: passed and ignored since 2026-09-19.
             fireworksKey: process.env.FIREWORKS_API_KEY,
             bedrockCreds: bedrockCredsFromEnv(),
             openaiApiKey: OPENAI_API_KEY,
@@ -304,9 +307,44 @@ export default function llmProxy(): Plugin {
           provider: parsed.provider,
           matterId: parsed.matterId,
         });
-        if (!gate.ok) {
+
+        // SecureSpace sealed route — the same substitution api/llm.mjs makes:
+        // a Tier-B matter is served by the sealed pen or refused, never by the
+        // provider the browser named. Returns null on every other outcome, so
+        // Tier A and Tier C fall through unchanged.
+        const sealed = sealedRouteFor({
+          gate,
+          provider: parsed.provider,
+          model: parsed.model,
+          body: parsed.body,
+        });
+        if (sealed && 'refusal' in sealed) {
+          res.writeHead(sealed.refusal.status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(sealed.refusal.body));
+          return;
+        }
+        if (!sealed && !gate.ok) {
           res.writeHead(gate.status, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: gate.error, tier: gate.tier, provider: gate.provider }));
+          return;
+        }
+        if (sealed) {
+          const sealedRes = await sealed.send();
+          res.writeHead(sealedRes.status, {
+            'Content-Type': sealedRes.headers.get('content-type') ?? 'application/json',
+            'Cache-Control': 'no-cache',
+            'X-Contextspaces-Pen': sealedRes.headers.get('x-contextspaces-pen') ?? '',
+            'Access-Control-Expose-Headers': 'x-contextspaces-pen',
+          });
+          if (sealedRes.body) {
+            const reader = sealedRes.body.getReader();
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              res.write(Buffer.from(value));
+            }
+          }
+          res.end();
           return;
         }
 
