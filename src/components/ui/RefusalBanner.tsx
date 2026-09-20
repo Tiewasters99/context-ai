@@ -5,6 +5,8 @@ import {
   dismissServerRefusal,
   subscribeServerRefusal,
 } from '@/lib/refusal-bus';
+import { dismissUpdateNotice } from '@/lib/app-version';
+import { useUpdateNotice, useVersionWatch } from '@/hooks/useAppVersion';
 
 // The one place a server refusal is drawn. Mounted once per shell
 // (MainLayout, DiscoveryLayout, ConnectLayout) and fed by refusal-bus.ts, so
@@ -30,11 +32,32 @@ import {
 // for the person: a lawyer who steps away mid-upload has to come back to the
 // reason their work stopped, not to a screen that looks fine.
 
+//
+//   news (slate)  a fourth tone, added 2026-09-20: this tab is running an
+//                 older bundle than the one deployed. Nothing failed and
+//                 nothing is owed — it is news, so it is neither gold nor
+//                 red. The stale-chunk case borrows the same tone rather
+//                 than going red, because the remedy is identical and the
+//                 person has done nothing wrong.
+//
+// A server refusal and a version notice can both be true at once. The refusal
+// wins the one slot: it explains why a step the person just took stopped, and
+// "there is a newer build" can wait the minute until it is dismissed.
+
 const TONES = {
   warn: 'bg-[#2a2412] border-[#e8b84a]/40 text-[#f0dfa8]',
   seal: 'bg-[#12211c] border-[#5aa88f]/40 text-[#bfe0d2]',
   err: 'bg-[#2a1214] border-[#f87171]/40 text-[#f8b4b4]',
+  news: 'bg-[#171c26] border-[#8aa2c8]/35 text-[#c8d6ec]',
 } as const;
+
+const SHELL =
+  // inset-x-4 + mx-auto rather than left-1/2 + -translate-x-1/2: a margin is
+  // inert on a translate-centred fixed element, so on a 390px phone the pill
+  // would render at its full 512px and hang off both edges with the sentence
+  // clipped. Identical on a desktop; inside the gutter on a phone.
+  'fixed top-16 inset-x-4 mx-auto z-50 flex items-start gap-2 w-fit max-w-lg ' +
+  'px-3 py-2 rounded-lg border text-xs leading-snug shadow-xl';
 
 export default function RefusalBanner() {
   const refusal = useSyncExternalStore(
@@ -42,33 +65,57 @@ export default function RefusalBanner() {
     currentServerRefusal,
     () => null,
   );
-  if (!refusal) return null;
+  // Every signed-in shell already mounts this component exactly once, so it
+  // is also where the tab learns that it has fallen behind. The hook does no
+  // rendering; it only asks /version.json at sensible moments.
+  const update = useUpdateNotice();
+  useVersionWatch();
 
-  const tone =
-    refusal.kind === 'budget' || refusal.kind === 'rate'
-      ? TONES.warn
-      : refusal.kind === 'sealed'
-        ? TONES.seal
-        : TONES.err;
+  if (refusal) {
+    const tone =
+      refusal.kind === 'budget' || refusal.kind === 'rate'
+        ? TONES.warn
+        : refusal.kind === 'sealed'
+          ? TONES.seal
+          : TONES.err;
 
-  // inset-x-4 + mx-auto rather than left-1/2 + -translate-x-1/2: a margin is
-  // inert on a translate-centred fixed element, so on a 390px phone the pill
-  // would render at its full 512px and hang off both edges with the sentence
-  // clipped. Identical on a desktop; inside the gutter on a phone.
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`fixed top-16 inset-x-4 mx-auto z-50 flex items-start gap-2 w-fit max-w-lg px-3 py-2 rounded-lg border text-xs leading-snug shadow-xl ${tone}`}
-    >
-      <span className="flex-1">{refusal.message}</span>
-      <button
-        onClick={dismissServerRefusal}
-        className="opacity-70 hover:opacity-100 shrink-0 mt-0.5"
-        aria-label="Dismiss"
-      >
-        <X size={12} />
-      </button>
-    </div>
-  );
+    return (
+      <div role="status" aria-live="polite" className={`${SHELL} ${tone}`}>
+        <span className="flex-1">{refusal.message}</span>
+        <button
+          onClick={dismissServerRefusal}
+          className="opacity-70 hover:opacity-100 shrink-0 mt-0.5"
+          aria-label="Dismiss"
+        >
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  if (update) {
+    // location.reload() and nothing else. No auto-reload anywhere in this
+    // path: the person may be mid-sentence in the Editor, and the Editor desk
+    // is not persisted. They choose the moment.
+    return (
+      <div role="status" aria-live="polite" className={`${SHELL} ${TONES.news}`}>
+        <span className="flex-1">{update.message}</span>
+        <button
+          onClick={() => window.location.reload()}
+          className="shrink-0 underline underline-offset-2 decoration-[#8aa2c8]/60 opacity-90 hover:opacity-100"
+        >
+          Refresh
+        </button>
+        <button
+          onClick={dismissUpdateNotice}
+          className="opacity-70 hover:opacity-100 shrink-0 mt-0.5"
+          aria-label="Dismiss"
+        >
+          <X size={12} />
+        </button>
+      </div>
+    );
+  }
+
+  return null;
 }
