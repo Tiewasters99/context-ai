@@ -311,10 +311,22 @@ create table if not exists public.billing_accounts (
   -- Stripe event.created (unix seconds) of the newest subscription-shaped
   -- event applied to this row. 0 = nothing applied yet.
   last_sub_event_at      bigint not null default 0,
+  -- A SEPARATE clock for invoice events, and the separation is not tidiness.
+  -- A plan change generates a proration invoice, so invoice.paid and
+  -- customer.subscription.updated describe the same moment with stamps a
+  -- second or two apart. Sharing one clock means whichever arrives first
+  -- silences the other — and the one that would be silenced is usually the
+  -- subscription event carrying the NEW price. Two clocks, two orderings, and
+  -- neither kind of event can hide the other.
+  last_inv_event_at      bigint not null default 0,
   last_event_id          text,
   created_at             timestamptz not null default now(),
   updated_at             timestamptz not null default now()
 );
+
+-- For a database that already has the table from an earlier paste of this file.
+alter table public.billing_accounts
+  add column if not exists last_inv_event_at bigint not null default 0;
 
 create index if not exists billing_accounts_customer_idx
   on public.billing_accounts (stripe_customer_id);
@@ -842,10 +854,12 @@ begin
 
   select * into v_acct from public.billing_accounts b where b.user_id = v_user;
 
-  -- Same ordering clock as the subscription events: an invoice event older than
-  -- the newest applied state does not get to re-open a grace window that a
-  -- later event already closed.
-  if v_acct.user_id is not null and v_created < v_acct.last_sub_event_at then
+  -- Ordered against OTHER INVOICE EVENTS only. An invoice event older than the
+  -- newest invoice already applied does not get to re-open a grace window a
+  -- later payment closed — but it is not ranked against subscription events,
+  -- because a proration invoice and the subscription update it belongs to are
+  -- the same moment and must not silence each other.
+  if v_acct.user_id is not null and v_created < v_acct.last_inv_event_at then
     v_result := jsonb_build_object('ok', true, 'stale', true, 'event_id', v_event,
       'reason', 'older_than_applied');
     update public.billing_events set outcome = v_result where event_id = v_event;
@@ -857,7 +871,7 @@ begin
 
   insert into public.billing_accounts (
     user_id, stripe_customer_id, stripe_subscription_id, last_invoice_id,
-    last_invoice_status, current_period_end, last_sub_event_at, last_event_id, updated_at)
+    last_invoice_status, current_period_end, last_inv_event_at, last_event_id, updated_at)
   values (
     v_user, v_customer, nullif(trim(coalesce(p_subscription, '')), ''), nullif(trim(coalesce(p_invoice_id, '')), ''),
     case when p_paid then 'paid' else 'payment_failed' end,
@@ -868,21 +882,25 @@ begin
     last_invoice_id        = coalesce(excluded.last_invoice_id, public.billing_accounts.last_invoice_id),
     last_invoice_status    = excluded.last_invoice_status,
     current_period_end     = coalesce(excluded.current_period_end, public.billing_accounts.current_period_end),
-    last_sub_event_at      = greatest(excluded.last_sub_event_at, public.billing_accounts.last_sub_event_at),
+    last_inv_event_at      = greatest(excluded.last_inv_event_at, public.billing_accounts.last_inv_event_at),
     last_event_id          = excluded.last_event_id,
     updated_at             = now();
 
   select p.pricing_tier into v_current from public.profiles p where p.id = v_user;
-  select b.tier_key into v_tier from public.billing_accounts b where b.user_id = v_user;
 
   if p_paid then
+    -- Only a subscription that was DUNNING recovers here. Stripe lets a
+    -- customer pay an outstanding invoice after the subscription is gone, and
+    -- that event carries a newer timestamp than the cancellation — so a
+    -- blanket "paid means restore the plan" would hand a cancelled account its
+    -- old tier back for nothing. The restore is therefore conditioned on the
+    -- status this payment actually changed.
     update public.billing_accounts
        set grace_until         = null,
-           subscription_status = case when subscription_status in ('past_due', 'unpaid')
-                                      then 'active' else subscription_status end
-     where user_id = v_user;
-    -- A recovered payment restores the plan the subscription is for, unless
-    -- this is Eden's workshop account, which is never written.
+           subscription_status = 'active'
+     where user_id = v_user and subscription_status in ('past_due', 'unpaid')
+    returning tier_key into v_tier;
+
     if v_tier is not null and v_current is distinct from 'workshop' then
       update public.profiles set pricing_tier = v_tier where id = v_user and pricing_tier <> 'workshop';
     end if;

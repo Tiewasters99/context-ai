@@ -140,7 +140,11 @@ function makeStripe(state) {
       return jsonResponse(200, {
         id,
         url: `https://checkout.stripe.test/${id}`,
-        customer: form.customer || `cus_stub_${n}`,
+        // Real Stripe returns null here when the Session was created without a
+        // `customer`: in payment mode the customer is created at COMPLETION and
+        // its id never comes back on this response. Stubbing a customer id in
+        // that case would hide exactly the bug this models.
+        customer: form.customer || null,
       });
     }
     if (u.pathname === '/v1/billing_portal/sessions') {
@@ -363,6 +367,30 @@ export async function runHandlerChecks({ db, check, makeUser, asOwner, asUser, m
     wrapped(res3.statusCode === 200 && res3.json?.matter === null, 'an untagged purchase is fine too');
   }
 
+  console.log('\n--- a pack buyer is a Stripe customer like anyone else ---------');
+  {
+    // The buyer above had never subscribed, so this is the first time anything
+    // created a customer for them. A payment-mode Session created without one
+    // would leave them with invoices at Stripe, nothing on file here, and a
+    // SECOND customer the day they subscribe.
+    await asOwner(db);
+    const packCust = (await db.query(
+      `select stripe_customer_id from public.billing_accounts where user_id = $1`, [buyer2])).rows[0];
+    wrapped(Boolean(packCust?.stripe_customer_id),
+      'buying only credits still puts the account on file as a Stripe customer',
+      packCust?.stripe_customer_id);
+
+    const packSession = stripeState.calls.filter((c) => c.path === '/v1/checkout/sessions')
+      .find((c) => c.form.mode === 'payment');
+    wrapped(packSession?.form.customer === packCust?.stripe_customer_id,
+      'and the pack Session names that customer, so the invoices land in one history');
+
+    const res = mockRes();
+    await handlePortal(mockReq({ headers: userAuth(buyer2), body: {} }), res, { fetchImpl });
+    wrapped(res.statusCode === 200,
+      'so a credits-only buyer can open the Portal and read their own invoices');
+  }
+
   console.log('\n--- the webhook ------------------------------------------------');
   const custId = (await db.query(
     `select stripe_customer_id from public.billing_accounts where user_id = $1`, [customer])).rows[0].stripe_customer_id;
@@ -478,6 +506,80 @@ export async function runHandlerChecks({ db, check, makeUser, asOwner, asUser, m
     stripeState.invoiceFails = false;
     wrapped(noInvoice.statusCode === 200 && await balanceOfUser(db, buyer2) === balBefore + 12500,
       'and if the invoice URL cannot be fetched, the credits are still granted');
+  }
+
+  console.log('\n--- one subscription per account -------------------------------');
+  {
+    // `customer` above is now on price_basic with an active subscription.
+    const callsBefore = stripeState.calls.length;
+    const res = mockRes();
+    await handleCheckout(mockReq({ headers: userAuth(customer), body: { plan_key: 'pro' } }), res, { fetchImpl });
+    wrapped(res.statusCode === 409 && res.json?.error === 'already_subscribed',
+      'a second checkout while a subscription is live is refused — it would bill the card twice',
+      `${res.statusCode} ${res.json?.error || ''}`);
+    wrapped(/Manage billing/i.test(res.json?.message || ''),
+      'and it says where plan changes actually happen', res.json?.message);
+    wrapped(stripeState.calls.length === callsBefore, 'and Stripe was never called');
+
+    // Cancelling and subscribing again is an ordinary thing to do.
+    await asOwner(db);
+    await db.query(`update public.billing_accounts set subscription_status = 'canceled' where user_id = $1`,
+      [customer]);
+    const res2 = mockRes();
+    await handleCheckout(mockReq({ headers: userAuth(customer), body: { plan_key: 'pro' } }), res2, { fetchImpl });
+    wrapped(res2.statusCode === 200, 'but re-subscribing after a cancellation is allowed');
+    await asOwner(db);
+    await db.query(`update public.billing_accounts set subscription_status = 'active' where user_id = $1`,
+      [customer]);
+  }
+
+  console.log('\n--- an invoice cannot resurrect a cancelled plan ---------------');
+  {
+    await asOwner(db);
+    const lapsed = await makeUser(db, 'free', 'lapsed@example.test');
+    await db.exec('reset role; set role service_role;');
+    await db.query(`select public.billing_link_customer($1, 'cus_lapsed')`, [lapsed]);
+    await db.query(
+      `select public.billing_apply_subscription('evt_lap1','customer.subscription.created',
+         7000, null, 'cus_lapsed', 'sub_lap', 'active', 'price_basic', 1790000000, false, null)`);
+    wrapped(await tierOfUser(db, lapsed) === 'basic', 'the account starts on a paid plan');
+    await db.exec('reset role; set role service_role;');
+    await db.query(
+      `select public.billing_apply_subscription('evt_lap2','customer.subscription.deleted',
+         8000, null, 'cus_lapsed', 'sub_lap', 'canceled', null, null, false, null)`);
+    wrapped(await tierOfUser(db, lapsed) === 'free', 'and is demoted when it is cancelled');
+
+    // Stripe lets a customer settle an outstanding invoice AFTER cancellation,
+    // and that event is newer than the cancellation.
+    await db.exec('reset role; set role service_role;');
+    await db.query(
+      `select public.billing_apply_invoice('evt_lap3','invoice.paid', 9000, null, 'cus_lapsed',
+         'sub_lap', 'in_lap', true, null, null)`);
+    wrapped(await tierOfUser(db, lapsed) === 'free',
+      'paying a stray invoice afterwards does NOT hand the plan back for free');
+  }
+
+  console.log('\n--- a proration invoice cannot swallow the upgrade -------------');
+  {
+    await asOwner(db);
+    const upgrader = await makeUser(db, 'free', 'upgrader@example.test');
+    await db.exec('reset role; set role service_role;');
+    await db.query(`select public.billing_link_customer($1, 'cus_upg')`, [upgrader]);
+    await db.query(
+      `select public.billing_apply_subscription('evt_upg1','customer.subscription.created',
+         1000, null, 'cus_upg', 'sub_upg', 'active', 'price_basic', 1790000000, false, null)`);
+    // The upgrade's proration invoice overtakes the subscription event by a
+    // second. This is the commonest real reordering there is.
+    await db.exec('reset role; set role service_role;');
+    await db.query(
+      `select public.billing_apply_invoice('evt_upg2','invoice.paid', 1200, null, 'cus_upg',
+         'sub_upg', 'in_upg', true, 1790000000, null)`);
+    await db.exec('reset role; set role service_role;');
+    await db.query(
+      `select public.billing_apply_subscription('evt_upg3','customer.subscription.updated',
+         1199, null, 'cus_upg', 'sub_upg', 'active', 'price_pro', 1790000000, false, null)`);
+    wrapped(await tierOfUser(db, upgrader) === 'pro',
+      'an invoice arriving first does not make the subscription event that carries the new price look stale');
   }
 
   console.log('\n--- a subscription session that has to fetch its subscription --');

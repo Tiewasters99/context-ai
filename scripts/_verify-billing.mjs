@@ -581,12 +581,14 @@ check(await walletOf(db, spender) === 100 && await balanceOf(db, spender) === 48
   'the allowance is exactly full and the credits are down by the remainder',
   `wallet=${await walletOf(db, spender)} credits=${await balanceOf(db, spender)}`);
 
+// Keyed by the usage event, not by "the most recent row": every row written in
+// one transaction shares a created_at, so ordering by it is a coin toss.
 const drawRow = (await db.query(
   `select delta_cents, balance_after, usage_event_id from public.usage_credit_ledger
-    where user_id = $1 and entry_kind = 'draw' order by created_at desc limit 1`, [spender])).rows[0];
-check(Number(drawRow.delta_cents) === -20 && Number(drawRow.balance_after) === 480
-  && drawRow.usage_event_id !== null,
-  'the draw is a ledger row, signed, with the balance after it and the request it paid for');
+    where user_id = $1 and entry_kind = 'draw' and usage_event_id = $2`, [spender, r.event_id])).rows[0];
+check(drawRow && Number(drawRow.delta_cents) === -20 && Number(drawRow.balance_after) === 480,
+  'the draw is a ledger row, signed, with the balance after it and the request it paid for',
+  JSON.stringify(drawRow));
 
 r = await consume(db, { cents: 200 });
 check(r.allowed === true && r.reason === 'ok_on_credits' && Number(r.credit_cents_charged) === 200
@@ -653,9 +655,15 @@ check(await balanceOf(db, recon) === 1000 && await walletOf(db, recon) === 95,
   `wallet=${await walletOf(db, recon)} credits=${await balanceOf(db, recon)}`);
 const reversal = (await db.query(
   `select entry_kind, delta_cents from public.usage_credit_ledger
-    where user_id = $1 order by created_at desc limit 1`, [recon])).rows[0];
-check(reversal.entry_kind === 'reversal' && Number(reversal.delta_cents) === 30,
-  'and the refund is a new reversal row, not an edit to the draw');
+    where user_id = $1 and usage_event_id = $2 and entry_kind = 'reversal'`,
+  [recon, split.event_id])).rows[0];
+const drawStill = (await db.query(
+  `select delta_cents from public.usage_credit_ledger
+    where user_id = $1 and usage_event_id = $2 and entry_kind = 'draw'`,
+  [recon, split.event_id])).rows[0];
+check(reversal && Number(reversal.delta_cents) === 30 && Number(drawStill?.delta_cents) === -30,
+  'and the refund is a new reversal row — the original draw still says -30',
+  `${reversal?.delta_cents} / ${drawStill?.delta_cents}`);
 const twice = (await db.query(`select public.usage_record_actual($1, 5) as r`, [split.event_id])).rows[0].r;
 check(twice.ok === false, 'reconciling the same event twice is still a no-op, not a double refund');
 

@@ -33,7 +33,7 @@
 
 import {
   json, notConfigured, corsPreflight, isConfigured, readJsonBody, verifyUser, bearerFrom,
-  pgRpc, loadPack, loadSettings, loadAccount, matterNameForBuyer, originFor,
+  loadPack, loadSettings, ensureStripeCustomer, matterNameForBuyer, originFor,
   creditLineDescription, LOG,
 } from '../lib/billing.mjs';
 import { stripeRequest, stripeConfigured } from '../lib/stripe-core.mjs';
@@ -95,13 +95,20 @@ export default async function handler(req, res, deps = {}) {
         },
       };
 
+  // The same Stripe customer a subscription would use, created here if this is
+  // the buyer's first purchase. A payment-mode Session created WITHOUT a
+  // customer makes one at completion and never tells us its id — the buyer
+  // would then have invoices at Stripe, no `stripe_customer_id` on file, no
+  // portal to read them in, and a second customer the day they subscribe.
+  const customerId = await ensureStripeCustomer(user, { fetchImpl });
+  if (!customerId) {
+    return json(res, 502, { error: 'stripe_error', message: 'Could not start checkout.' });
+  }
+
   const session = await stripeRequest('/v1/checkout/sessions', {
     body: {
       mode: 'payment',
-      customer: (await loadAccount(user.id, { fetchImpl }))?.stripe_customer_id || undefined,
-      customer_email: (await loadAccount(user.id, { fetchImpl }))?.stripe_customer_id
-        ? undefined
-        : (user.email || undefined),
+      customer: customerId,
       client_reference_id: user.id,
       line_items: [lineItem],
       // The receipt that a client pass-through rests on. Without this, a
@@ -141,13 +148,6 @@ export default async function handler(req, res, deps = {}) {
   if (!session.ok || !session.data?.url) {
     console.error(`${LOG} credit checkout failed: ${session.error}`);
     return json(res, 502, { error: 'stripe_error', message: session.error || 'Could not start checkout.' });
-  }
-
-  // Make sure the customer Stripe just created (if it did) is on file, so the
-  // webhook can resolve this account from the customer id alone.
-  const customerId = session.data.customer || null;
-  if (customerId) {
-    await pgRpc('billing_link_customer', { p_user: user.id, p_customer: customerId }, { fetchImpl });
   }
 
   return json(res, 200, {

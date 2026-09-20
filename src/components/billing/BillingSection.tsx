@@ -203,6 +203,15 @@ export default function BillingSection() {
     () => plans.find((p) => p.tier_key === tier) ?? null,
     [plans, tier],
   );
+  // While a subscription is live, changing plan is a Portal operation — Stripe
+  // prorates it there. Offering a "Switch" button here would start a SECOND
+  // subscription and bill the card twice, so the buttons go away and the panel
+  // says where to go instead.
+  const hasLiveSubscription = Boolean(
+    account?.stripe_subscription_id
+    && ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused']
+      .includes(account.subscription_status || ''),
+  );
   const purchasable = useMemo(
     () => plans.filter((p) => p.purchasable && p.active).sort((a, b) => a.sort_order - b.sort_order),
     [plans],
@@ -341,11 +350,13 @@ export default function BillingSection() {
           </div>
         ) : (
           <>
-            {purchasable.length > 0 && (
+            {hasLiveSubscription ? (
+              <div className="px-4 py-4 text-[12px] text-[var(--color-text-muted)]">
+                To change or cancel this plan, use Manage billing.
+              </div>
+            ) : purchasable.length > 0 && (
               <div className="px-4 py-4">
-                <div className="text-[11px] text-[var(--color-text-muted)]">
-                  {account?.stripe_subscription_id ? 'Change plan' : 'Plans'}
-                </div>
+                <div className="text-[11px] text-[var(--color-text-muted)]">Plans</div>
                 <div className="mt-2 space-y-1.5">
                   {purchasable.map((plan) => {
                     const isCurrent = plan.tier_key === tier;
@@ -383,7 +394,7 @@ export default function BillingSection() {
                             {busy === plan.tier_key
                               ? <Loader2 size={13} className="animate-spin" />
                               : <CreditCard size={13} />}
-                            {account?.stripe_subscription_id ? 'Switch' : 'Subscribe'}
+                            Subscribe
                           </button>
                         )}
                       </div>

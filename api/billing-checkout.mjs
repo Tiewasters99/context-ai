@@ -23,7 +23,8 @@
 
 import {
   json, notConfigured, corsPreflight, isConfigured, readJsonBody, verifyUser, bearerFrom,
-  pgRpc, loadPlan, loadSettings, loadAccount, originFor, LOG,
+  loadPlan, loadSettings, loadAccount, ensureStripeCustomer, originFor, LOG,
+  LIVE_SUBSCRIPTION_STATUSES,
 } from '../lib/billing.mjs';
 import { stripeRequest, stripeConfigured } from '../lib/stripe-core.mjs';
 
@@ -65,35 +66,27 @@ export default async function handler(req, res, deps = {}) {
     });
   }
 
+  // ---- one subscription per account ---------------------------------------
+  // A second Checkout while one is live creates a SECOND subscription at
+  // Stripe and charges the card twice. Changing plan is a Portal operation,
+  // where Stripe prorates it; this endpoint only ever STARTS a subscription.
+  const account = await loadAccount(user.id, { fetchImpl });
+  if (account?.stripe_subscription_id
+      && LIVE_SUBSCRIPTION_STATUSES.has(String(account.subscription_status || ''))) {
+    return json(res, 409, {
+      error: 'already_subscribed',
+      message: 'This account already has a subscription. Use Manage billing to change or cancel it.',
+      current_status: account.subscription_status,
+    });
+  }
+
   const settings = await loadSettings({ fetchImpl });
   const origin = originFor(req);
 
-  // ---- the Stripe customer, before anything else --------------------------
-  let customerId = (await loadAccount(user.id, { fetchImpl }))?.stripe_customer_id || null;
+  // ---- the Stripe customer, before the Session exists ----------------------
+  const customerId = await ensureStripeCustomer(user, { fetchImpl });
   if (!customerId) {
-    const created = await stripeRequest('/v1/customers', {
-      body: {
-        email: user.email || undefined,
-        metadata: { user_id: user.id, app: 'contextspaces' },
-      },
-      // A retried request must not create a second customer for the same person.
-      idempotencyKey: `cs-customer-${user.id}`,
-      fetchImpl,
-    });
-    if (!created.ok || !created.data?.id) {
-      console.error(`${LOG} customer create failed: ${created.error}`);
-      return json(res, 502, { error: 'stripe_error', message: 'Could not start checkout.' });
-    }
-    customerId = created.data.id;
-  }
-
-  const link = await pgRpc('billing_link_customer',
-    { p_user: user.id, p_customer: customerId }, { fetchImpl });
-  if (!link.ok) {
-    // Without this row the webhook cannot resolve the account, so a failure
-    // here is not something to shrug at and continue past.
-    console.error(`${LOG} could not link customer ${customerId}: ${link.error}`);
-    return json(res, 500, { error: 'link_failed', message: 'Could not start checkout.' });
+    return json(res, 502, { error: 'stripe_error', message: 'Could not start checkout.' });
   }
 
   // ---- the Checkout Session ------------------------------------------------
