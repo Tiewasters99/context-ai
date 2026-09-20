@@ -2,6 +2,18 @@
 
 **Verdict: WORKS, with 1 break fixed (F0) and 9 defects reported (F1–F9).**
 
+> **Follow-up, same day.** F1, F2, F4, F5, F6 and F7 are now fixed, in migration
+> `071_discovery_production_integrity.sql` and the Discovery job handlers —
+> stamping allocates once and registers idempotently, `--intake` is
+> heartbeat-protected and pinned to the machine that owns the folder, a Stamp or
+> Package click is promoted rather than demoted, a held intake says so on the
+> production, exact duplicates are produced once, and every document that could
+> not be produced is named in the package. **F3** (a long ZIP intake never
+> yields) is designed but not built; **F8** (ZIP intake memory) and **F9**
+> (Office/`.msg` display PDFs) are untouched and still stand as written below.
+> The findings below are left exactly as they were found — this file is the
+> record of the 2026-09-20 verification, not a status board.
+
 > ⚠ **Merging does not ship the fix.** `lib/discovery/` and `worker/` run on the
 > Fly worker, which only updates with `flyctl deploy` (through the local IPv4
 > proxy — see `project_dev_environment_cautions`). A Vercel deploy on merge does

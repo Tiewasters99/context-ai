@@ -35,12 +35,14 @@
 //      checkout's code and this machine's .env keys. On a branch that changes
 //      ingestion, that means strangers' documents are processed by unreviewed
 //      code. Only ever do this knowing the queue is empty.
-//   2. `--intake` inserts its job as status 'running' and runs outside
-//      withHeartbeat (worker/discovery-worker.mjs:1002-1015). Only per-file
-//      progress() refreshes heartbeat_at, so one slow file lets 044's reaper
-//      requeue the job — and a Fly machine then claims an intake_folder job
-//      whose payload.local_path exists only on this laptop. It fails, and the
-//      worker sets the production to 'error' (worker:163-165).
+//   2. (CLOSED 2026-09-20, migration 071 + worker.) `--intake` used to insert
+//      its job as status 'running' outside withHeartbeat, so one slow file let
+//      044's reaper requeue it and a Fly machine then claimed an intake_folder
+//      job whose payload.local_path exists only on this laptop. It now runs
+//      under withHeartbeat and carries requires_worker = this machine's
+//      WORKER_ID, which no other worker's claim will take. Verify with:
+//        select requires_worker, status from processing_jobs
+//         where job_type = 'intake_folder' order by created_at desc limit 1;
 //
 // WHAT A PASS DOES *NOT* PROVE
 // ---------------------------------------------------------------------------
@@ -93,7 +95,13 @@ WHO CAN RUN IT   Anyone with context-ai/.env holding a live
                  SUPABASE_SERVICE_ROLE_KEY. OPENAI_API_KEY is optional; without
                  it the corpus-ingestion checks SKIP rather than fail.
 
-BEFORE           1. Set DISCOVERY_E2E_SERVERSPACE to the name of YOUR
+BEFORE           0. Migration 071 must be applied, and the Fly worker must be
+                    redeployed from a checkout that has it. The stamp path's
+                    FIRST write is allocate_production_bates(); against a
+                    database without 071 the job errors immediately with
+                    "function does not exist" — having spent no Bates number,
+                    which is the point, but the run tells you nothing.
+                 1. Set DISCOVERY_E2E_SERVERSPACE to the name of YOUR
                     serverspace. The test refuses to guess.
                  2. Confirm the Fly workers are up and the queue is short:
                        select status, count(*) from processing_jobs
@@ -103,6 +111,7 @@ BEFORE           1. Set DISCOVERY_E2E_SERVERSPACE to the name of YOUR
 WHAT IT WRITES   In the sandbox matter 'Discovery Sandbox' (disc-sandbox),
                  created on first run inside your serverspace:
                    - 1 productions row + 6 production_items
+                   - 1 production_bates_allocations row (071)
                    - 7 bates_registry rows (PERMANENT — see below)
                    - up to 4 documents + their passages in that matter's corpus
                    - 4 document_tag_defs, 4 document_tags, 2 privilege_log_entries
@@ -125,12 +134,19 @@ PASS LOOKS LIKE  a line per check, then
 IF IT FAILS MIDWAY, in production
                  - Between intake and stamp: the production sits at 'review' or
                    'error' in the sandbox matter. Harmless; delete it in the UI.
-                 - DURING stamping: this is the one that costs something. The
-                   job dies part-way, bates_registry keeps the numbers already
-                   written, and a retry of the SAME start number is refused with
-                   "Bates collision" (worker:758-767). Nothing is corrupted and
-                   no other matter is affected, but those numbers are spent in
-                   the sandbox matter forever. Re-run with a higher start.
+                 - DURING stamping (changed 2026-09-20, F1): the job dies
+                   part-way, 044's reaper hands it back, and the re-run RESUMES.
+                   The range was allocated once, in one transaction, before any
+                   page was stamped (production_bates_allocations), so the
+                   re-run re-stamps only the documents that have no registry
+                   rows yet and produces byte-for-byte the same numbers. It no
+                   longer dies on "Bates collision", and no number is burned.
+                   What still costs something: if you change the production's
+                   CONTENTS (tag a document) after some numbers are registered,
+                   the next attempt refuses rather than renumbering — those
+                   numbers are spent and the honest answer is a supplemental
+                   production. If NOTHING was registered yet, the reservation is
+                   given back automatically and the new set is allocated.
                  - DURING packaging: the production stays 'stamped'. Re-running
                    package_production is safe and idempotent.
                  - The worker itself: a failed job goes to 'error' after its
@@ -554,6 +570,36 @@ const confRec = records.map(canonicalizeDatRecord)
   .find((r) => r.filename === '002_Board_Minutes.pdf');
 check('CONFIDENTIAL designation in DAT', confRec?.dat?.confidentiality === 'CONFIDENTIAL');
 
+// The accounting the package now has to carry (F7, 2026-09-20). These
+// fixtures produce cleanly, so the two CSVs are header-only — which is itself
+// the statement: nothing was left out, and it says so rather than being silent.
+const excEntry = names.find((n) => n.endsWith('DATA/EXCEPTIONS.csv'));
+check('exceptions report present', !!excEntry, names.join(', ').slice(0, 200));
+if (excEntry) {
+  const exc = (await zip.entryData(excEntry)).toString('utf8').trim().split(/\r?\n/);
+  check('exceptions report is header-only for a clean production', exc.length === 1, exc.join(' | ').slice(0, 200));
+}
+const dupEntry = names.find((n) => n.endsWith('DATA/DUPLICATES.csv'));
+check('duplicates report present', !!dupEntry);
+const recEntry = names.find((n) => n.endsWith('DATA/RECONCILIATION.txt'));
+check('reconciliation statement present', !!recEntry);
+if (recEntry) {
+  const recon = (await zip.entryData(recEntry)).toString('utf8');
+  check('the package reconciles: received = produced + withheld + duplicates + exceptions',
+    /These figures reconcile\./.test(recon), recon.split(/\r?\n/).slice(10, 18).join(' | '));
+}
+
+// The allocation row 071 writes, and its agreement with the registry.
+const { data: allocRow } = await supabase.from('production_bates_allocations')
+  .select('start_seq, end_seq, total_pages, item_plan').eq('production_id', prod.id).maybeSingle();
+check('071 recorded one Bates allocation for this production',
+  !!allocRow && Number(allocRow.total_pages) === 7,
+  allocRow ? `${allocRow.start_seq}-${allocRow.end_seq} (${allocRow.total_pages}pp)` : 'no allocation row');
+const { count: regRows } = await supabase.from('bates_registry')
+  .select('id', { count: 'exact', head: true }).eq('production_id', prod.id);
+check('the registry holds exactly the pages that were allocated',
+  regRows === Number(allocRow?.total_pages ?? -1), `${regRows} rows`);
+
 // Stamped PDF spot check: first image loads and has the right page count.
 const firstImg = await zip.entryData(images.sort()[0]);
 check('first stamped PDF loads (3pp)', (await PDFDocument.load(firstImg)).getPageCount() === 3);
@@ -628,6 +674,9 @@ async function cleanup() {
       + `${docIds.length} corpus document(s), jobs removed`);
   }
   console.log('\nNOT removed, deliberately:');
+  console.log('  * production_bates_allocations rows (071) — the reservation is the record of which');
+  console.log('    numbers this matter has spent. release_production_bates() gives one back, and');
+  console.log('    only while not a single number of it has reached bates_registry.');
   console.log('  * bates_registry rows — production_id/production_item_id are ON DELETE RESTRICT');
   console.log('    (migration 030:167-177). A Bates number that has been assigned in a matter must');
   console.log('    never be reusable; that constraint is the point of the table.');

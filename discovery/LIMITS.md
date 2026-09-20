@@ -30,12 +30,25 @@ The short version, which belongs somewhere a first-time user cannot miss:
 - **Withholds what you mark.** Tagging a document Privileged or Non-Responsive
   removes it from the produced set and, for Privileged, starts a privilege-log
   entry for it.
-- **Numbers.** Bates prefix, digit width, start number and corner. Every number
-  ever assigned in a matter is recorded and can never be reused — including
-  after a failed run. Supplemental productions continue from where the matter
-  left off.
+- **Numbers.** Bates prefix, digit width, start number and corner. A
+  production's range is reserved once, before the first page is stamped, so an
+  interrupted run picks up where it stopped and hands out exactly the same
+  numbers rather than burning them. Every number ever assigned in a matter is
+  recorded and can never be reused. Supplemental productions continue from
+  where the matter left off — including past a range another production has
+  reserved but not yet finished.
+- **De-duplicates exact copies.** Two byte-identical files in one production
+  are produced once, under one Bates number. The second copy keeps its place in
+  the record and is listed in the package as a duplicate of the first, with the
+  number it was produced at.
+- **Accounts for every document.** Anything taken in that could not be rendered
+  is recorded with a reason and listed in the package's exceptions report — by
+  original path, sha256 and reason. The package states the arithmetic:
+  *received = produced + withheld as privileged + duplicates + exceptions*. If
+  those figures do not add up, the package is not produced at all.
 - **Packages.** IMAGES, NATIVES, a Concordance `.dat` and Opticon `.opt` load
-  file, the privilege log, and a transmittal letter, in one ZIP with a recorded
+  file, an exceptions report, a duplicates report, a reconciliation statement,
+  the privilege log, and a transmittal letter, in one ZIP with a recorded
   sha256.
 - **Records delivery.** Who received it, when, by what method, and the sha256 of
   exactly what they got.
@@ -64,15 +77,22 @@ The short version, which belongs somewhere a first-time user cannot miss:
   not converted to a display PDF, so what a reviewer sees in the browser is a
   slip-sheet with the Bates number and the filename, not the document's pages.
   Download the native to read it.
-- **No deduplication.** Two identical files in one intake become two produced
-  documents with two Bates ranges. If a production needs to be de-duplicated,
-  do it before intake.
-- **Documents that fail to normalize are left out of the produced set.** They
-  are recorded on the production as errored items, but the package does not
-  contain them and nothing in the package says they were excluded. Check the
-  item list for errors before you stamp.
+- **De-duplication is exact only.** Two files are treated as the same document
+  when their bytes are identical (sha256), within one production. A document
+  that differs by a byte — a re-saved PDF, the same email collected from two
+  custodians, a near-duplicate draft — is produced as its own document.
+  Family-level and near-duplicate analysis is not in this version.
+- **Documents that fail to normalize are not produced.** They are recorded with
+  a reason and listed, by original path and hash, in the package's exceptions
+  report — so the receiving party is told what was left out — but the software
+  cannot render them and does not try again. Review the exceptions before you
+  package; a corrupt or unsupported file is a document you may still owe.
 - **No redaction.** Endorsements are stamped on pages; nothing is burned over or
   removed from a page's content.
+- **A long intake holds its place in the queue.** One ZIP is one job, so a very
+  large incoming production occupies the worker until it finishes; other work
+  in other matters waits behind it. Pressing Stamp or Package is not affected —
+  those jump ahead of queued bulk work — but a second large intake does queue.
 - **No entitlement or billing gate.** Discovery is open to anyone with access to
   the matter.
 
