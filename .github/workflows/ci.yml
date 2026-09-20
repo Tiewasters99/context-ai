@@ -293,3 +293,11 @@ jobs:
       - name: Refusals — 402 / 429 / sealed read as English
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
+
+      # The connector page tells people to paste a command into a terminal, so
+      # the command is checked whole — every flag, and the quoting that differs
+      # between bash and PowerShell. It also asserts the endpoint URL appears
+      # as one constant and is never hard-coded a second time in the page.
+      - name: Connector — the Claude Code command, character for character
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-claude-code-command.mjs
