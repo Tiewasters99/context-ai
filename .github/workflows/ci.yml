@@ -132,3 +132,7 @@ jobs:
       - name: Reader — clean copy extraction
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
+
+      - name: Migration 064 — the matter Record is append-only (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ledger.mjs
