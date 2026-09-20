@@ -529,27 +529,58 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   // second time. 044's reaper requeues a crashed intake exactly as it requeues
   // a crashed stamp, and without this an intake that died two thirds of the
   // way through would file every document again and label each re-filing a
-  // duplicate of its own first pass. Skipping makes intake idempotent.
+  // duplicate of its own first pass.
+  //
+  // A finished row is skipped. A row left MID-FLIGHT by the attempt that died
+  // — inserted, never marked ready — is resumed in place under its own id:
+  // skipping it would leave a 'pending' row that the manifest then has to
+  // report as an exception forever, which is a hole the retry itself created.
+  // 'ready' and 'error' are both settled: normalization is deterministic, so
+  // re-running a file that failed it would only write the same error again.
+  // 'pending' is the only state that means "an attempt died holding this".
   const already = twins.find((t) => (t.original_path ?? t.original_filename) === originalPath);
-  if (already) {
+  if (already && already.status !== 'pending') {
     log(`  ${filename}: already intaken in this production (${already.status}) — skipping`);
     return;
   }
+  const resumeId = already?.id ?? null;
+  if (resumeId) log(`  ${filename}: resuming the row a previous attempt left mid-flight`);
 
-  const first = twins.find((t) => t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
+  // Write this file's row: update the mid-flight one if there is one, insert
+  // otherwise. Either way there is exactly one row per original_path.
+  const identity = {
+    production_id: prod.id,
+    matterspace_id: prod.matterspace_id,
+    sort_order: sortOrder,
+    original_filename: filename,
+    original_path: originalPath,
+    sha256: hash,
+    file_size_bytes: buf.length,
+  };
+  const writeItem = async (fields) => {
+    if (resumeId) {
+      const { error: updErr } = await supabase.from('production_items').update(fields).eq('id', resumeId);
+      if (updErr) throw new Error(`resume production_item (${filename}): ${updErr.message}`);
+      return { id: resumeId };
+    }
+    const { data, error: insErr } = await supabase.from('production_items')
+      .insert({ ...identity, ...fields }).select().single();
+    if (insErr) throw new Error(`insert production_item (${filename}): ${insErr.message}`);
+    return data;
+  };
+
+  // An empty file is not a document that can be "produced once": every
+  // zero-byte file in existence shares one sha256, so de-duplicating them
+  // would collapse a blank .pdf and a blank .txt into the same document. They
+  // each get their own row and their own slip sheet.
+  const first = buf.length === 0 ? null
+    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
   if (first) {
     // The ZIP really did contain this file twice, and that is part of the
     // record, so the row stays. It points at the first instance's stored
     // objects — identical bytes by definition — is never stamped, and is
     // listed in DATA/DUPLICATES.csv under the Bates number it WAS produced at.
-    const { error: dupErr } = await supabase.from('production_items').insert({
-      production_id: prod.id,
-      matterspace_id: prod.matterspace_id,
-      sort_order: sortOrder,
-      original_filename: filename,
-      original_path: originalPath,
-      sha256: hash,
-      file_size_bytes: buf.length,
+    await writeItem({
       kind: first.kind,
       page_count: first.page_count,
       native_storage_path: first.native_storage_path,
@@ -557,8 +588,8 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
       duplicate_of_item_id: first.id,
       source_metadata: { duplicate_of: first.original_filename },
       status: 'ready',
+      error: null,
     });
-    if (dupErr) throw new Error(`insert duplicate production_item (${filename}): ${dupErr.message}`);
     log(`  ${filename}: byte-identical to ${first.original_filename} — produced once, listed as a duplicate`);
     return;
   }
@@ -567,10 +598,8 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   try {
     norm = await normalizeFile(buf, filename);
   } catch (err) {
-    await supabase.from('production_items').insert({
-      production_id: prod.id, matterspace_id: prod.matterspace_id,
-      sort_order: sortOrder, original_filename: filename, original_path: originalPath,
-      sha256: hash, file_size_bytes: buf.length, kind: 'native',
+    await writeItem({
+      kind: 'native', duplicate_of_item_id: null,
       status: 'error', error: `normalize: ${err.message}`,
     });
     return;
@@ -580,22 +609,16 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   const datRec = datLookup.get(filename.toLowerCase());
   const metadata = { ...norm.metadata, ...(datRec ?? {}) };
 
-  const { data: item, error: itemErr } = await supabase.from('production_items').insert({
-    production_id: prod.id,
-    matterspace_id: prod.matterspace_id,
-    sort_order: sortOrder,
-    original_filename: filename,
-    original_path: originalPath,
-    sha256: hash,
-    file_size_bytes: buf.length,
+  const item = await writeItem({
     kind: norm.kind,
     page_count: norm.pageCount,
     bates_first: datRec?.bates_first ?? null,
     bates_last: datRec?.bates_last ?? null,
     source_metadata: metadata,
+    duplicate_of_item_id: null,
     status: 'pending',
-  }).select().single();
-  if (itemErr) throw new Error(`insert production_item (${filename}): ${itemErr.message}`);
+    error: null,
+  });
 
   try {
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;

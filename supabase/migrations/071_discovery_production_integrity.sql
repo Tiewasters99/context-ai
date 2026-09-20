@@ -46,13 +46,21 @@
 -- If a migration numbered 064-070 also restates either of them, whichever file
 -- is pasted LAST wins; paste 071 last, or merge the two bodies by hand.
 --
--- Safe to apply before OR after the worker deploys:
---   * 071 first, old worker still running — the new columns and the allocation
---     tables are simply never written; the old direct bates_registry inserts
---     still work exactly as before, and the new claim still hands it jobs.
---   * worker first, 071 not yet applied — stampProduction's FIRST write is the
---     allocate_production_bates RPC, which does not exist, so the job errors
---     with "function does not exist" having spent nothing. It fails safe.
+-- ⚠ ORDER IS STRICT: paste 071, reload the schema, THEN deploy the worker.
+--
+--   * 071 first, old worker still running: fine. The new columns and the
+--     allocation table are simply never written, the old direct
+--     bates_registry inserts still work exactly as before, and the new claim
+--     still hands it jobs. An interactive Stamp/Package click starts getting
+--     its +10 immediately, which is the point of the trigger living here.
+--
+--   * Worker first, 071 not applied: BROKEN, not fail-safe. Stamping does fail
+--     safe — allocate_production_bates is its first write, so the job errors
+--     with "function does not exist" having spent no number — but INTAKE does
+--     not: the duplicate lookup selects duplicate_of_item_id, PostgREST
+--     answers 400, and every intake job errors. setProductionStatus writes
+--     status_reason, so no production reaches 'review'. holdJob writes 'held',
+--     which is not yet a production_status. Do not deploy the worker first.
 --
 -- Verified by scripts/_verify-discovery-pipeline.mjs, which executes THIS FILE
 -- at the end of the real 030 -> 060 chain inside PGlite and drives the whole

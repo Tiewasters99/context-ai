@@ -368,21 +368,39 @@ async function intakeOneEntry(productionId, matterId, { buf, originalPath, sortO
       where matterspace_id = $1 and sha256 = $2 and production_id = $3
       order by sort_order, id`, [matterId, hash, productionId],
   );
-  // Same bytes at the same path is this job running twice, not a duplicate.
-  if (twins.some((t) => (t.original_path ?? t.original_filename) === originalPath)) return 'skipped';
+  // A finished row is skipped; a row a crashed attempt left mid-flight is
+  // resumed under its own id, so the retry cannot create a permanent 'pending'
+  // hole for the manifest to report as an exception.
+  const already = twins.find((t) => (t.original_path ?? t.original_filename) === originalPath);
+  if (already && already.status !== 'pending') return 'skipped';
+  const resumeId = already?.id ?? null;
 
-  const firstCopy = twins.find((t) => t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
+  const writeItem = async (cols, vals) => {
+    if (resumeId) {
+      const sets = cols.map((c, i) => `${c}=$${i + 1}`).join(', ');
+      await q(`update public.production_items set ${sets} where id=$${cols.length + 1}`, [...vals, resumeId]);
+      return { id: resumeId };
+    }
+    const idCols = ['production_id', 'matterspace_id', 'sort_order', 'original_filename',
+      'original_path', 'sha256', 'file_size_bytes'];
+    const idVals = [productionId, matterId, sortOrder, filename, originalPath, hash, buf.length];
+    const all = [...idCols, ...cols];
+    const ph = all.map((_, i) => `$${i + 1}`).join(',');
+    return one(`insert into public.production_items (${all.join(',')}) values (${ph}) returning *`,
+      [...idVals, ...vals]);
+  };
+
+  // Every zero-byte file shares one sha256; they are not each other's
+  // duplicates, and collapsing a blank .pdf into a blank .txt would be a
+  // production error, not a saving.
+  const firstCopy = buf.length === 0 ? null
+    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
   if (firstCopy) {
-    await q(
-      `insert into public.production_items
-         (production_id, matterspace_id, sort_order, original_filename, original_path, sha256,
-          file_size_bytes, kind, page_count, native_storage_path, display_storage_path,
-          duplicate_of_item_id, source_metadata, status)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'ready')`,
-      [productionId, matterId, sortOrder, filename, originalPath, hash, buf.length,
-        firstCopy.kind, firstCopy.page_count, firstCopy.native_storage_path,
-        firstCopy.display_storage_path, firstCopy.id,
-        JSON.stringify({ duplicate_of: firstCopy.original_filename })],
+    await writeItem(
+      ['kind', 'page_count', 'native_storage_path', 'display_storage_path', 'duplicate_of_item_id',
+        'source_metadata', 'status', 'error'],
+      [firstCopy.kind, firstCopy.page_count, firstCopy.native_storage_path, firstCopy.display_storage_path,
+        firstCopy.id, JSON.stringify({ duplicate_of: firstCopy.original_filename }), 'ready', null],
     );
     return 'duplicate';
   }
@@ -391,25 +409,17 @@ async function intakeOneEntry(productionId, matterId, { buf, originalPath, sortO
   try {
     norm = await normalizeFile(buf, filename);
   } catch (err) {
-    await q(
-      `insert into public.production_items
-         (production_id, matterspace_id, sort_order, original_filename, original_path,
-          sha256, file_size_bytes, kind, status, error)
-       values ($1,$2,$3,$4,$5,$6,$7,'native','error',$8)`,
-      [productionId, matterId, sortOrder, filename, originalPath, hash, buf.length, `normalize: ${err.message}`],
-    );
+    await writeItem(['kind', 'duplicate_of_item_id', 'status', 'error'],
+      ['native', null, 'error', `normalize: ${err.message}`]);
     return 'error';
   }
 
   const datRec = datLookup.get(filename.toLowerCase());
   const metadata = { ...norm.metadata, ...(datRec ?? {}) };
-  const item = await one(
-    `insert into public.production_items
-       (production_id, matterspace_id, sort_order, original_filename, original_path, sha256,
-        file_size_bytes, kind, page_count, bates_first, bates_last, source_metadata, status)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending') returning *`,
-    [productionId, matterId, sortOrder, filename, originalPath, hash, buf.length, norm.kind,
-      norm.pageCount, datRec?.bates_first ?? null, datRec?.bates_last ?? null, JSON.stringify(metadata)],
+  const item = await writeItem(
+    ['kind', 'page_count', 'bates_first', 'bates_last', 'source_metadata', 'duplicate_of_item_id', 'status', 'error'],
+    [norm.kind, norm.pageCount, datRec?.bates_first ?? null, datRec?.bates_last ?? null,
+      JSON.stringify(metadata), null, 'pending', null],
   );
 
   const base = `${matterId}/${productionId}/${item.id}`;
@@ -466,6 +476,22 @@ check(countAfterPass2 === countAfterPass1 && pass2.outcomes.every((o) => o === '
   'F2/F1 sibling: a requeued intake over the same ZIP files nothing a second time — intake is idempotent',
   `${countAfterPass1} items before, ${countAfterPass2} after; outcomes ${[...new Set(pass2.outcomes)].join(',')}`);
 
+// The harder half of the same case: the attempt died BETWEEN the row's insert
+// and its "ready", leaving it mid-flight. Skipping such a row would leave a
+// 'pending' item the manifest must report as an exception forever — a hole the
+// retry itself created. It is resumed in place, under its own id.
+const midFlight = await one(
+  `update public.production_items set status='pending', native_storage_path=null, display_storage_path=null
+    where production_id=$1 and original_filename='002_Board_Minutes.pdf' returning id`, [prod.id]);
+const pass3 = await runZipIntake(prod.id, matter.id);
+const resumedRow = await one(`select id, status, display_storage_path from public.production_items where id=$1`, [midFlight.id]);
+const countAfterPass3 = Number((await one(`select count(*)::int c from public.production_items where production_id=$1`, [prod.id])).c);
+check(countAfterPass3 === countAfterPass1 && resumedRow.status === 'ready'
+  && resumedRow.display_storage_path !== null && resumedRow.id === midFlight.id,
+'a row a crashed intake left mid-flight is resumed under its own id, not skipped into a permanent '
+  + 'exception and not filed a second time as its own duplicate',
+`${countAfterPass3} items, resumed row ${resumedRow.status}; outcomes ${[...new Set(pass3.outcomes)].join(',')}`);
+
 await q(`update public.productions set status = 'review' where id = $1`, [prod.id]);
 
 const items = await q(`select * from public.production_items where production_id = $1 order by sort_order, id`, [prod.id]);
@@ -500,6 +526,10 @@ check(byName['007_Supply_Agreement_COPY.pdf'].status === 'ready'
   + 'the production really did contain it twice, and that fact stays in the record');
 check(byName['001_Supply_Agreement.pdf'].duplicate_of_item_id === null,
   'F6: the first instance is nobody\'s duplicate');
+check(byName['009_Empty_Notes.txt'].sha256 === byName['008_Corrupt_Empty.pdf'].sha256
+  && byName['009_Empty_Notes.txt'].duplicate_of_item_id === null,
+'F6: two zero-byte files share one sha256 and are NOT called duplicates of each other — '
+  + 'a blank .txt is not a copy of a blank .pdf');
 const prodAfterIntake = await one(`select status from public.productions where id = $1`, [prod.id]);
 check(prodAfterIntake.status === 'review', "production status reached 'review'", prodAfterIntake.status);
 
