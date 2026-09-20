@@ -89,6 +89,15 @@ W1.
 | `ai.paused` / `ai.resumed` | W3 | `{reason?}` |
 | `run.aborted` | W3 | `{session_id, by, round}` |
 
+### What is *not* recorded
+
+A tool call that resolves to **no** matter leaves no row. One chain per
+matter is the roadmap's design, and this is its consequence: a connector's
+cross-matter `search` (`matter` omitted — the commonest connector call)
+touches many matters and is invisible to every one of their Records.
+Changing that means either a `matter_ids[]` payload on the nil chain or one
+row per matter touched; it is a decision, not a bug.
+
 ### What a payload may never contain
 
 Document text. A prompt. A model's answer. A passage. Slide or deck copy.
@@ -219,3 +228,8 @@ it is part of what the seal promises. So on a sealed matter the answer is
 | `matterspace_id` + `matter_name` | plus `serverspace_id` | Without it the row survives matter deletion but becomes unreadable — there is nothing left for RLS to check membership against. Same column added to `ai_sessions`. |
 | — | `_events_insert_guard` | The roadmap relies on "no INSERT policy". That stops a signed-in user, not `service_role`, which has `BYPASSRLS`. |
 | `ai_sessions`: drop owner DELETE, cascades → SET NULL | plus its SELECT policy moved to `_ledger_visible` | Otherwise "the record survives the matter" is true of the bytes and false of the reading. |
+
+051's `"Owners update their sessions"` policy is deliberately **left alone**:
+an owner can still edit a session's `title` and `status`. That is not
+erasure and was not the audit's finding — but "the record cannot be altered"
+should not be read further than it goes. `public.events` has no such door.
