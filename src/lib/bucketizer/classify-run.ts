@@ -17,10 +17,15 @@
 // Progress is written to `documents.metadata.bucketizer.run` after every
 // window, using the column the classifier already writes for its
 // "examined, no bucket" sentinel. That choice costs one round-trip per window
-// and buys three things localStorage would not: it survives a different
-// browser and a different machine (Eden works from four), it is visible to the
-// worker lane that will eventually take this over, and it is per-document
-// rather than per-tab, so two tabs cannot each pay for the same window.
+// and buys two things localStorage would not: it survives a different browser
+// and a different machine (Eden works from four), and it is visible to the
+// worker lane that will eventually take this over.
+//
+// It is NOT a lock. Two tabs classifying the same matter at the same time can
+// each call the same undone window — the record makes the second tab resume
+// what the first has FINISHED, not what it is in the middle of. Closing that
+// gap needs a lease, which needs a migration; the honest position for now is
+// that this is a one-tab feature and says so here rather than in a claim.
 //
 // WHAT IS NEVER PAID FOR TWICE
 // ---------------------------------------------------------------------------
@@ -211,9 +216,29 @@ export async function classifyDocumentWindowed(input: RunDocumentInput): Promise
       });
     } catch (err) {
       if (signal?.aborted) return { ...outcome, status: 'aborted' };
-      // 402 / 429 / 413: the wallet or the rate window. Everything finished so
-      // far is saved; the run stops and the person is told when to come back.
+      // 402 / 429: the wallet or the rate window. Everything finished so far
+      // is saved; the run stops and the person is told when to come back.
       if (err instanceof LlmCallError && err.isUsagePause) throw err;
+
+      // 413: this window is too big for the plan, and will be just as big
+      // tomorrow. Recorded as a permanent failure on the window so the
+      // document can still finish on its other parts, rather than pausing a
+      // whole run behind one oversized stretch of text.
+      if (err instanceof LlmCallError && err.isPermanentForThisRequest) {
+        const refused: StoredWindow = {
+          i: window.index, done_at: now(), fp: window.firstPage, lp: window.lastPage,
+          failed: `${err.message} These pages were not classified.`,
+        };
+        run.w.push(refused);
+        doneByIndex.set(refused.i, refused);
+        await deps.saveRun(doc.id, run);
+        outcome.windowsCalled += 1;
+        outcome.windowsFailed += 1;
+        outcome.notes.push(`${doc.title}: part ${window.index + 1} of ${plan.windows.length} — ${refused.failed}`);
+        input.onWindow?.({ done: outcome.windowsResumed + outcome.windowsCalled, total: plan.windows.length, charged: true });
+        continue;
+      }
+
       transient += 1;
       outcome.notes.push(`${doc.title}: part ${window.index + 1} of ${plan.windows.length} could not be read — ${messageOf(err)}`);
       outcome.windowsCalled += 1;

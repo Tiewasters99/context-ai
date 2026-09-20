@@ -356,7 +356,7 @@ const answerOK = (call) => ({ assignments: [
 }
 
 // -- the meter says stop -----------------------------------------------------
-for (const [status, label] of [[402, 'budget spent'], [429, 'rate limited'], [413, 'request too large for the plan']]) {
+for (const [status, label] of [[402, 'budget spent'], [429, 'rate limited']]) {
   const w = makeWorld({
     passages,
     answer: answerOK,
@@ -378,6 +378,25 @@ for (const [status, label] of [[402, 'budget spent'], [429, 'rate limited'], [41
 
 check('an ordinary 500 is NOT a pause', new LlmCallError('boom', 500).isUsagePause === false);
 check('an ordinary 403 is NOT a pause', new LlmCallError('nope', 403).isUsagePause === false);
+
+// 413 is a fact about THIS window and is just as true tomorrow, so pausing on
+// it would let one oversized document block every document behind it.
+{
+  const w = makeWorld({
+    passages, answer: answerOK,
+    throwAt: (c) => (c.windowIndex === 2
+      ? new LlmCallError('That request is larger than your plan allows (256 KB).', 413, 'request_too_large', null)
+      : null),
+  });
+  const out = await classifyDocumentWindowed({ doc: DOC, nodes: NODES, deps: w.deps, modelId: 'claude-opus-4-8' });
+  check('413 does NOT pause the run — it would never succeed on a retry', new LlmCallError('x', 413).isUsagePause === false);
+  check('413 is recorded against the window and the document still finishes', out.status === 'classified');
+  check('413 is not repaired — a repair prompt is longer, not shorter',
+    w.calls.filter((c) => c.windowIndex === 2).length === 1);
+  check('413 counts as a failed window, and says the plan is the reason',
+    out.windowsFailed === 1 && out.notes.some((n) => n.includes('larger than your plan allows')), out.notes[0]);
+  check('the other windows still ran', w.calls.length === plan.windows.length);
+}
 
 // -- a window that cannot be reached leaves the document for next time -------
 {

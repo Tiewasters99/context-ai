@@ -243,7 +243,7 @@ export interface ClassifyProgress {
   notes: string[];
 }
 
-function emptyProgress(total: number): ClassifyProgress {
+export function emptyProgress(total: number): ClassifyProgress {
   return {
     done: 0, total, currentTitle: '', proposed: 0, errors: 0,
     windowsCalled: 0, windowsResumed: 0, docWindowsDone: 0, docWindowsTotal: 0,
@@ -343,7 +343,7 @@ export function supabaseRunDeps(input: {
      * rationale cites them.
      */
     async fetchPassages(documentId: string): Promise<WindowPassage[]> {
-      const { rows } = await fetchPaged<WindowPassage>(
+      const page = await fetchPaged<WindowPassage>(
         (from, to) => supabase
           .from('passages')
           .select('id, text, page_start, page_end, sequence_number')
@@ -353,7 +353,17 @@ export function supabaseRunDeps(input: {
           .range(from, to),
         { label: 'passages', ceiling: 50_000 },
       );
-      return rows;
+      // Returning a prefix here would be the very silence this whole change
+      // removes — a half-read document classified as if it were whole. Fifty
+      // thousand passages is far past any real document, so this is a refusal,
+      // and the run records it against this document and carries on.
+      if (page.truncated) {
+        throw new Error(
+          `this document has more than ${page.rows.length.toLocaleString()} passages, `
+          + 'which is past what the classifier will read in one pass; it was not classified.',
+        );
+      }
+      return page.rows;
     },
 
     async loadRun(documentId: string): Promise<StoredRun | null> {

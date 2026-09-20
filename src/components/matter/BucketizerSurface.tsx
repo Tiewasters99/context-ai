@@ -9,7 +9,7 @@ import {
   generateTreeFromPleadings, listUnclassifiedDocs, classifyDocuments,
   decideClassification, addManualClassification,
   fetchClassificationsForNode, fetchNodeCounts,
-  estimateClassifyRun, formatCents,
+  estimateClassifyRun, formatCents, emptyProgress,
   type BucketNode, type NodeKind, type ClassifiedDoc, type ClassifyProgress,
   type DocRow, type RunEstimate,
 } from '@/lib/bucketizer';
@@ -163,11 +163,7 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     setPending(null);
     const controller = new AbortController();
     classifyAbort.current = controller;
-    setClassifying({
-      done: 0, total: run.docs.length, currentTitle: '', proposed: 0, errors: 0,
-      windowsCalled: 0, windowsResumed: 0, docWindowsDone: 0, docWindowsTotal: 0,
-      pausedMessage: null, retryAfterSeconds: null, notes: [],
-    });
+    setClassifying(emptyProgress(run.docs.length));
     try {
       const final = await classifyDocuments({
         matterId, docs: run.docs, nodes,
