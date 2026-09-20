@@ -108,7 +108,7 @@ let requests = [];
 let world = {};
 
 function install(w = {}) {
-  world = { tier: 'B', meeting: 'bound', bedrock: 'absent', meter: 'allow', ledger: 'ok', session: 'ok', ...w };
+  world = { tier: 'B', meeting: 'bound', bedrock: 'absent', meter: 'allow', ledger: 'ok', session: 'ok', messages: 'ok', ...w };
   requests = [];
   if (world.bedrock === 'absent') {
     delete process.env.BEDROCK_AWS_ACCESS_KEY_ID;
@@ -595,6 +595,16 @@ try {
     'and refused BEFORE any provider is contacted — the transcript never left', requests.map((r) => r.host));
   check(requests.every((r) => !String(r.body ?? '').includes('Reyes:')),
     'the transcript appears in NO outbound request body');
+
+  // (v) The 051 half fails instead of the 064 half. Both halves are "the
+  //     exchange was not recorded", and the user must not be able to tell
+  //     which table let them down — the answer is withheld either way.
+  install({ tier: 'B', bedrock: 'ok', messages: 'fail' });
+  res = await call(meetingChat, chatBody());
+  check(res.statusCode === 502 && res.json?.error === 'exchange_unrecorded',
+    'the ai_messages row cannot be appended → withheld, exactly as a failed events row is', { status: res.statusCode, body: res.json });
+  check(!res.text.includes(SEALED_ANSWER), 'ZERO text released for the 051 half too', res.text.slice(0, 120));
+  check(bedrockCalls().length === 1, 'and the pen was asked — again a withholding, not a driver failure', requests.map((r) => r.host));
 
   // ── 9. The sealed pen rejects the request ─────────────────────────────
   console.log('\n/api/meeting-chat — the sealed pen REJECTS the request (403)');
