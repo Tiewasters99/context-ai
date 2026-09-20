@@ -95,6 +95,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-no-fallback.mjs
 
+      - name: SecureSpace — a sealed CHILD inside an open parent is not searched
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-descendants.mjs
+
       - name: SecureSpace — a sealed meeting's transcript stays inside the seal
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-meetings.mjs
