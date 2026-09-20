@@ -121,7 +121,7 @@ function tidyWitness(name: string): string {
   const [namePart, ...suffixes] = name.split(',').map((s) => s.trim()).filter(Boolean);
   const words = namePart.split(/\s+/).filter(Boolean);
   const surname = words.length ? words[words.length - 1] : namePart;
-  const cased = /^[A-Z][A-Z'’\-]+$/.test(surname)
+  const cased = /^[A-Z][A-Z'’-]+$/.test(surname)
     ? surname.charAt(0) + surname.slice(1).toLowerCase()
     : surname;
   return [cased, ...suffixes].join(', ');

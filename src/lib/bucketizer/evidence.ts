@@ -81,11 +81,11 @@ export async function fetchEvidenceForNode(nodeId: string): Promise<PagedRows<No
   const page = await fetchPaged<Record<string, unknown>>(
     (from, to) => supabase
       .from('bucketizer_evidence')
+      // One string literal, not a concatenation: supabase-js parses the select
+      // at the TYPE level, and a `+` expression degrades the whole query to
+      // `GenericStringError[]`.
       .select(
-        'id, matterspace_id, node_id, document_id, passage_id, quote, quote_offset, rationale, '
-        + 'status, position, model_id, proposed_at, decided_at, '
-        + 'documents(title, doc_type, witness_name), '
-        + 'passages(id, page_start, page_end, line_start, line_end, witness_name, metadata)',
+        'id, matterspace_id, node_id, document_id, passage_id, quote, quote_offset, rationale, status, position, model_id, proposed_at, decided_at, documents(title, doc_type, witness_name), passages(id, page_start, page_end, line_start, line_end, witness_name, metadata)',
         { count: 'exact' },
       )
       .eq('node_id', nodeId)
@@ -178,21 +178,24 @@ export async function listEvidencePairs(
     evidence_run_at: string | null; evidence_failed: string | null;
     documents: { title: string; doc_type: string | null; witness_name: string | null } | null;
   }
+  // `Record<string, unknown>` and a cast, as `fetchClassificationsForNode`
+  // does: with no generated schema types, supabase-js infers an embedded
+  // resource as an ARRAY, and PostgREST returns an object for a to-one embed.
   let rows: Row[];
   try {
-    ({ rows } = await fetchPaged<Row>(
+    const page = await fetchPaged<Record<string, unknown>>(
       (from, to) => supabase
         .from('bucketizer_classifications')
         .select(
-          'id, node_id, document_id, passage_ids, evidence_run_at, evidence_failed, '
-          + 'documents(title, doc_type, witness_name)',
+          'id, node_id, document_id, passage_ids, evidence_run_at, evidence_failed, documents(title, doc_type, witness_name)',
         )
         .eq('matterspace_id', matterId)
         .eq('status', 'confirmed')
         .order('id')
         .range(from, to),
       { label: 'confirmed classifications', ceiling: 200_000 },
-    ));
+    );
+    rows = page.rows as unknown as Row[];
   } catch (e) {
     throw friendly({ message: e instanceof Error ? e.message : String(e) });
   }
@@ -227,6 +230,23 @@ export function estimateEvidencePass(
     })),
     { modelId, provider, alreadyRun: inventory.alreadyRun },
   );
+}
+
+/**
+ * Quotations proposed and not yet decided, across the whole matter.
+ *
+ * The Outline dialog reads it to say how much of what it is about to file is
+ * still unconfirmed — and to refuse to drop the DRAFT legend while any of it
+ * is.
+ */
+export async function countUnconfirmedEvidence(matterId: string): Promise<number> {
+  const { count, error } = await supabase
+    .from('bucketizer_evidence')
+    .select('id', { count: 'exact', head: true })
+    .eq('matterspace_id', matterId)
+    .eq('status', 'proposed');
+  if (error) throw friendly(error);
+  return count ?? 0;
 }
 
 /** Clear the run mark on the pairings that failed, so they can be retried. */

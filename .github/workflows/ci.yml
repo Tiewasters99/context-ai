@@ -139,3 +139,15 @@ jobs:
       - name: Bucketizer — whole-document scale + paged reads
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-scale.mjs
+
+      # The evidence lane: verbatim quotation (a span the stored passage does
+      # not hold is dropped, never repaired), citations that degrade honestly
+      # where the record has no line numbers, gaps-first assembly, a
+      # byte-identical .md on a re-run, and a real .docx read back with the
+      # repo's own docx library. Migration 068 is EXECUTED in PGlite in the
+      # same step. Offline: the model, the database and PostgREST are stubbed.
+      - name: Bucketizer — evidence, citations and the trial outline
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_verify-bucketizer-evidence.mjs
+          node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-outline.mjs
