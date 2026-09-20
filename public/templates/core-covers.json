@@ -1,5 +1,4 @@
 {
-  "$schema": "https://contextspaces.ai/core-covers",
   "generated": "2026-09-20",
   "note": "The covers a non-workshop account is offered. Every path below was looked at, not matched on its filename. To add a cover: paste its \"file\" path from manifest.json into \"core\" (alphabetical). To remove one: delete its line — a cover already saved on an item keeps rendering either way. Then run node scripts/_validate-cover-manifest.mjs.",
   "featured": [
