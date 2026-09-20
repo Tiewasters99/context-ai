@@ -421,8 +421,23 @@ export interface DocumentStatusRow {
   update: DocumentStatusUpdate;
 }
 
-/** Ids per request. Keeps the `in(...)` filter inside a sane URL length. */
-const STATUS_CHUNK = 200;
+/**
+ * Ids per request. supabase-js puts `.in()` in the QUERY STRING, and a UUID
+ * costs about 39 characters once encoded — 100 ids plus the select columns
+ * sits comfortably inside the 8 KB request line the proxy in front of
+ * PostgREST will accept, where 200 does not. #168 cut the same `.in()` to 100
+ * in the same stack; this matches it rather than inventing a second number.
+ */
+const STATUS_CHUNK = 100;
+
+/**
+ * Consecutive failed ticks before the poll gives up. A transient failure must
+ * not end the watch — that is the whole reason for retrying — but retrying
+ * FOREVER is how a row spins on "processing" with nothing wrong with the
+ * document and nothing said to the person. The single-document watcher
+ * reported the error and stopped; so does this one, after about ten seconds.
+ */
+const STATUS_MAX_FAILED_TICKS = 5;
 
 /**
  * Follow MANY documents' pipeline status with one request per chunk.
@@ -451,10 +466,14 @@ export function watchDocumentStatuses(
 
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let failedTicks = 0;
 
   const tick = async () => {
     if (stopped) return;
     const ids = Array.from(pending);
+    let tickFailed = false;
+    let lastError = 'the status check kept failing';
+
     for (let i = 0; i < ids.length && !stopped; i += STATUS_CHUNK) {
       const chunk = ids.slice(i, i + STATUS_CHUNK);
       const { data, error } = await supabase
@@ -463,8 +482,10 @@ export function watchDocumentStatuses(
         .in('id', chunk);
       if (stopped) return;
       // A transient failure is not an answer about any document: keep them
-      // all pending and ask again on the next tick.
-      if (error) continue;
+      // all pending and ask again on the next tick. It is only counted, so
+      // that a failure which never clears ends the watch instead of leaving
+      // the rows spinning (see STATUS_MAX_FAILED_TICKS).
+      if (error) { tickFailed = true; lastError = error.message; continue; }
 
       const rows = (data ?? []) as {
         id: string;
@@ -500,7 +521,24 @@ export function watchDocumentStatuses(
 
       if (updates.length) onUpdate(updates);
     }
-    if (stopped || pending.size === 0) return;
+    if (stopped) return;
+
+    failedTicks = tickFailed ? failedTicks + 1 : 0;
+    if (failedTicks >= STATUS_MAX_FAILED_TICKS) {
+      // Say so on every row still waiting, then stop. Silence here reads as
+      // "still working" forever.
+      const stuck = Array.from(pending);
+      pending.clear();
+      if (stuck.length) {
+        onUpdate(stuck.map((id) => ({
+          documentId: id,
+          update: { status: 'error' as const, errorMessage: `Couldn't check progress — ${lastError}. Reload to see where this got to.` },
+        })));
+      }
+      return;
+    }
+
+    if (pending.size === 0) return;
     timer = setTimeout(tick, intervalMs);
   };
   tick();
