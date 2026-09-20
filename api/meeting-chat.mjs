@@ -137,7 +137,10 @@ export default async function handler(req, res) {
     if (!plan) {
       // No sealed route to offer (Tier C, or a policy that has stopped
       // admitting aws-bedrock on B). Refuse, and do not promise a pen.
-      const message = seal.tier === 'B' ? meetingRefusalMessage('B', { sealedChat: false }) : seal.message;
+      // A PAUSED matter (migration 070) answers with its own sentence — who paused
+      // it and since when — never with the generic sealed refusal.
+      const message = seal.paused ? seal.message
+        : seal.tier === 'B' ? meetingRefusalMessage('B', { sealedChat: false }) : seal.message;
       return json(res, seal.status, { error: seal.code, tier: seal.tier, message });
     }
 

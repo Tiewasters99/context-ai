@@ -22,6 +22,13 @@ interface SearchResponse {
   result_count: number;
   results: SearchHit[];
   note?: string;
+  // The server sets this whenever any matter in scope was searched WITHOUT an
+  // embedding (lib/mcp-core.mjs handleSearch → sealedSearchNote). It has
+  // always been sent and the client has always dropped it. Typed now so the
+  // one fact a lawyer needs at the top of a sealed result list — these are
+  // word matches, not meaning matches — can be shown as a chip rather than
+  // hidden in the middle of the server's longer sentence.
+  sealed_text_only?: boolean;
 }
 
 // `onOpen`: when the host can show the document in place (the Vault's reader
@@ -32,6 +39,7 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [wordOnly, setWordOnly] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +49,7 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
     setError(null);
     setHits(null);
     setNote(null);
+    setWordOnly(false);
     try {
       const out = await sandboxApi<SearchResponse>('search', {
         q: q.trim(),
@@ -49,6 +58,7 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
       });
       setHits(out.results ?? []);
       setNote(out.note ?? null);
+      setWordOnly(out.sealed_text_only === true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -56,7 +66,7 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
     }
   };
 
-  const clear = () => { setQ(''); setHits(null); setError(null); setNote(null); };
+  const clear = () => { setQ(''); setHits(null); setError(null); setNote(null); setWordOnly(false); };
 
   return (
     <div className="mt-6">
@@ -84,6 +94,17 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
       {error && (
         <p className="flex items-start gap-2 text-[12px] text-red-400 mt-2">
           <AlertCircle size={13} className="mt-0.5 shrink-0" /> {error}
+        </p>
+      )}
+      {/* The one fact first, in three words, so it is read before the list is
+          judged: inside a seal this is word matching, not meaning matching.
+          The server's fuller sentence still follows. */}
+      {wordOnly && (
+        <p
+          className="inline-flex items-center gap-1.5 text-[11px] mt-2 px-2 py-0.5 rounded-md"
+          style={{ backgroundColor: 'rgba(90,168,143,0.14)', color: '#5aa88f' }}
+        >
+          Word search only in sealed matters
         </p>
       )}
       {note && <p className="text-[11px] text-amber-400/80 mt-2">{note}</p>}
