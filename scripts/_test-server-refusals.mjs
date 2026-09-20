@@ -225,6 +225,23 @@ test('403 / 502 / 503 — the seal', async (t) => {
     assert.match(r.message, /Nothing was sent/);
   });
 
+  await t.test('503 exchange_unrecorded: the Record could not be written, so nothing was sent', () => {
+    // The one refusal whose whole point is the second half of the sentence.
+    // /api/llm writes the matter's Record BEFORE the provider is contacted, so
+    // unlike the Assistant's refusal of the same name, this one can truthfully
+    // say nothing was sent — and a lawyer reading it needs to know that.
+    const r = parseRefusalBody(503, { error: 'exchange_unrecorded', tier: 'B' });
+    assert.equal(r.kind, 'sealed');
+    assert.match(r.message, /nothing was sent/i);
+    assert.match(r.message, /no model was asked/i);
+    assert.doesNotMatch(r.message, /claude/i);
+  });
+
+  await t.test('and the server’s own sentence still wins where it sends one', () => {
+    const r = parseRefusalBody(503, { error: 'exchange_unrecorded', tier: 'B', message: 'Its own words.' });
+    assert.equal(r.message, 'Its own words.');
+  });
+
   await t.test('a sealed code is never mistaken for the wallet, whatever the status', () => {
     // A 402 that somehow carried a sealed code must still read as the seal:
     // "you are out of money" and "your client file was not sent" are not the

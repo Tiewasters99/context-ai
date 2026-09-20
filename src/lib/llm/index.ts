@@ -4,6 +4,8 @@ export { converse } from './converse';
 export type { ConverseOptions } from './converse';
 export { generateStructured } from './structured';
 export type { GenerateStructuredOptions } from './structured';
+export { LLM_FEATURES } from './features';
+export type { LlmFeature, LlmRecordFields } from './features';
 export { providers, findModel, allModels, standardModels } from './providers';
 export { adapters } from './adapters';
 export { routeRequest, estimateTokens, chunkText, selectRelevantChunks } from './router';

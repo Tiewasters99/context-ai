@@ -5,7 +5,9 @@
 //
 //   403/502/503 — the SEAL. /api/llm answers a machine code —
 //     `tier_violation`, `sealed_pen_unavailable`, `sealed_pen_error`,
-//     `sealed_route_untranslatable` (PRs #159, #163); the content pipes answer
+//     `sealed_route_untranslatable` (PRs #159, #163), `exchange_unrecorded`
+//     (the matter's Record could not be written, so nothing was sent); the
+//     content pipes answer
 //     `sealed_pipe`. A lawyer who sealed a matter and pressed Classify read
 //     the word "tier_violation" and had no idea whether their client's file
 //     had just been sent somewhere.
@@ -92,6 +94,18 @@ const SEALED_PIPE =
   'This matter is sealed (SecureSpace), so this step was not sent outside the seal. Nothing ' +
   'left the room.';
 
+// The sealed matter's Record could not be written, so the call was not made.
+// Distinct from the Assistant's own `exchange_unrecorded`, which is a sealed
+// answer that WAS produced and then discarded: on the /api/llm route the row
+// is written before the provider is contacted, so nothing was sent at all —
+// and the sentence has to stay true of that.
+const EXCHANGE_UNRECORDED =
+  'This matter is sealed (SecureSpace Tier B), and every model call on it is written into the ' +
+  'matter’s Record before the model is asked — that record is part of what the seal is for. ' +
+  'This one could not be written, so nothing was sent: no model was asked, inside the seal or ' +
+  'outside it, and no part of this matter left the room. Try again in a moment; if it keeps ' +
+  'failing, the matter’s Record needs attention.';
+
 // The wallet's own words, minus the upsell — see withoutUpsell() below. This
 // is character-for-character lib/usage-meter.mjs's fallback sentence, so a
 // server that sends no message and a server whose message we trim read alike.
@@ -109,6 +123,7 @@ const SEALED_CODES = new Set([
   'sealed_route_untranslatable',
   'sealed_pipe',
   'escalation_unrecorded',
+  'exchange_unrecorded',
 ]);
 
 /** Reasons migration 063 returns with a 402. */
@@ -159,6 +174,7 @@ function sealedText(code: string | undefined, body: LlmErrorBody): string {
     case 'sealed_pen_unavailable': return SEALED_UNAVAILABLE;
     case 'sealed_pen_error': return SEALED_ERROR;
     case 'sealed_route_untranslatable': return SEALED_UNTRANSLATABLE;
+    case 'exchange_unrecorded': return EXCHANGE_UNRECORDED;
     default: return SEALED_PIPE;
   }
 }

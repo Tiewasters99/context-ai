@@ -69,14 +69,16 @@ stranger checks 0 rows rather than being told a falsehood).
 ## The vocabulary
 
 `kind` is CHECK-constrained to this list. `lib/ledger.mjs` exports the same
-list as `EVENT_KINDS`. All fourteen are legal today so that W2, W3 and W6 do
-not each have to reopen the migration; only the first eight are written by
-W1.
+list as `EVENT_KINDS`. 064 made fourteen legal at once so that W2, W3 and W6
+would not each have to reopen the migration; 072 added `connector.connected`
+and 073 added `completion.requested`, bringing it to sixteen. W1 itself writes
+only the first eight.
 
 | kind | written by | payload |
 | --- | --- | --- |
 | `tool.invoked` | `lib/mcp-core.mjs` `callTool` | `{tool, args (allow-listed — see below), document_ids[], connector, connector_client_id, charter_id, ok, refused: 'sealed'\|null, ms, error?}` |
-| `completion.received` | `lib/assistant-core.mjs` `recordAssistant` | `{tier, provider, model, input_tokens, output_tokens, estimated_cost, within_policy, escalation, tools_used[], rounds, answer_chars, error?}` |
+| `completion.requested` | `lib/llm-record.mjs` `recordLlmRequested`, from `api/llm.mjs` — **migration 073** | `{feature, call_id, tier, provider, model, client_provider?, client_model?, route, streaming, max_output_tokens?, byok, document_ids?, refused, status?}` |
+| `completion.received` | `lib/assistant-core.mjs` `recordAssistant`, and `lib/llm-record.mjs` `recordLlmReceived` | `{tier, provider, model, input_tokens, output_tokens, estimated_cost, within_policy, escalation, tools_used[], rounds, answer_chars, error?}` — and, for a feature call, `{feature, call_id, route, streaming, outcome, ok, status, ms}` in place of the chat-only keys |
 | `acl.changed` | trigger on `matterspace_members` / `serverspace_members` | `{table, op: insert\|update\|delete, target_user_id, old_role, new_role, serverspace_id?}` |
 | `seal.changed` | trigger on `matterspaces.ai_tier` | `{old_tier, new_tier}` |
 | `file.exported` | W1 lane leaves this to the export builder | `{document_id, title, destination: download\|drive\|gmail_draft, sha256?}` |
@@ -568,3 +570,116 @@ a Matter Record that quoted it would be quoting counts drawn from matters the
 reader may have no right to know exist. If an account-level surface is wanted
 later, it is its own screen, reading `verify_account_chain()` and
 `events where chain_key = account_chain_key()`.
+
+---
+
+# Migration 073 — a feature's own model calls
+
+## The hole
+
+064 records the in-app Assistant's completions and `mcp-core`'s tool calls.
+It records nothing about **`/api/llm`** — the browser passthrough behind
+Bucketizer (tree, classify, evidence), Cite-Check (extract, check), the
+Editor's four passes, DeckComposer, the AI Workbench and Moot Bench. That
+endpoint was gated (`lib/ai-tier-policy.mjs`), sealed (`lib/llm-sealed-route.mjs`,
+#163) and metered (`lib/usage-meter.mjs`, #161/#178), and wrote nothing here.
+On 2026-09-19 a real sealed Bucketizer classification ran in production —
+21,578 in, 6,342 out, served by the sealed pen — and the matter's Record did
+not know it had happened. For a product whose pitch is that a lawyer can show
+a court how AI was used on a matter, that is a hole.
+
+## Two rows, not one
+
+`/api/llm` **streams**. The Assistant honours "no record, no answer" by
+buffering a sealed answer and discarding it if the write fails; this route
+cannot, because once the first byte has left the function there is nothing to
+discard. The ledger is append-only, so the answer is to write twice:
+
+| when | kind | strict? |
+| --- | --- | --- |
+| **before any provider is contacted** | `completion.requested` | on a **sealed** matter, yes — a real failure refuses the call with `exchange_unrecorded` and ZERO provider requests, and the meter's pre-charge is settled back to nothing. On an unsealed matter, never. |
+| after the answer has been delivered | `completion.received` | never, on either route: the undeletable row already exists and the answer has already gone out. |
+
+Both carry the same **`call_id`**, which is a read contract: the export pairs
+them so one call is one line. Three shapes are legal and each is reported as
+what it is — `requested` + `received` (an ordinary call); `received` alone
+(also an ordinary call — what every call looks like until 073 is pasted);
+`requested` alone (a **refusal** if `refused` is set and nothing was sent,
+otherwise a call that never came back, which the export counts and names).
+
+### Why a new kind rather than a phase on `completion.received`
+
+`completion.received` means *a model answered*. The first row is written when
+nothing has answered yet and may never. Reusing the kind would make every
+existing reader wrong by default — the Record tab labels that kind "AI
+answer", and the export's session index counts one exchange per row — so both
+would have to learn a payload key before they could tell a pending call from
+an answer. A kind is the honest place to say what a row **is**.
+
+### Merging before pasting 073 is safe, and the code half makes it so
+
+Until the CHECK constraint is widened, Postgres refuses `completion.requested`
+with SQLSTATE **23514** naming `events_kind_check`. That is not
+`isNotDeployed`'s family, and on a sealed matter a real write failure withholds
+the answer — so without a second classification, merging would take sealed
+Bucketizer, Cite-Check and the Editor offline. `lib/ledger.mjs`
+`isKindNotAdmitted(error, kind)` therefore treats it as **not deployed**, with
+its own once-per-process warning naming the file to paste. It is narrow on all
+three axes: the code is `23514`, the message names `events_kind_check`, **and**
+the kind is one 064's own list never had. A check violation on any other
+constraint, or on a kind legal since 064, stays a real failure.
+`scripts/_verify-ledger.mjs` asserts each axis, and that the same insert lands
+once 073 has run.
+
+## The feature label
+
+The caller sends `feature` in the **request envelope** beside `provider`,
+`model` and `matterId` — never inside `body`, which is forwarded to the
+provider verbatim. So Tier A request bytes are byte-for-byte what they were
+before this change; `scripts/_verify-llm-record.mjs` asserts that against
+`origin/main`'s own handler.
+
+The server does not trust it. `LLM_FEATURES` in `lib/llm-record.mjs` is the
+allow-list; anything else becomes `'unspecified'`, and a bad label is never a
+reason to refuse a call. `src/lib/llm/features.ts` holds the same list as a TS
+union so a typo at a call site is a build error, and the harness asserts the
+two arrays are identical.
+
+```
+bucketizer.tree   bucketizer.classify   bucketizer.evidence
+citecheck.extract citecheck.check
+editor.light      editor.plan           editor.section       editor.critic
+deck              workbench             moot.generate        moot.converse
+unspecified                                     (never claimable by a caller)
+```
+
+Two other client-supplied values are shaped server-side, because `redact()`
+keeps any string under 256 characters: `model` / `client_model` must match a
+model-id pattern or are reduced to `{present, length}`, and `document_ids`
+survive only when **every** element is a uuid (`uuidList()` in
+`lib/ledger.mjs`), otherwise `{items: n}`. A provider's own error body never
+enters a payload even truncated — a 4xx routinely echoes the request back — so
+what is recorded is `outcome` plus the HTTP `status`.
+
+## What is NOT on the account chain
+
+A `/api/llm` call with **no matter** — Student Hub, the Editor's desk on
+pasted text, a dashboard draft — is recorded nowhere, and 073 does not change
+that. It is not a contained addition: 072's `ACCOUNT_EVENT_KINDS` and
+`_ledger_append_account_checked` both refuse `completion.received` on an
+account chain *by design* ("matter-bound by definition"), so putting feature
+calls there would need a second migration widening that set — and it would put
+a person's Student Hub usage on their own permanent chain. It is a decision
+worth taking deliberately, not as a rider.
+
+## The read side
+
+`describe.ts` gains `featureOwner()` / `featurePhrase()` and a docket line per
+entry ("Bucketizer asked a model to classify a document — …" / "Bucketizer
+classified a document — …"). `assemble.ts` gains `featureCalls`: the paired
+rows, grouped by feature × model × provider × tier, with calls, refusals,
+unfinished calls, tokens, cost and first/last use. It renders inside **section
+2, "Feature AI calls"**, so no section is renumbered. The tools memo takes its
+feature blocks from those paired rows rather than from raw entries — counting
+entries would double every feature's use count — and the session index skips
+them, because a feature call belongs to no chat session.

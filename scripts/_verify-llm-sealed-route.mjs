@@ -84,8 +84,20 @@ let meterCalls = [];
 const consumeArgs = () => meterCalls.find((c) => c.fn === 'usage_consume')?.args ?? null;
 const actualArgs = () => meterCalls.find((c) => c.fn === 'usage_record_actual')?.args ?? null;
 
+// The matter's Record (migration 064 + 073) writes through the SAME PostgREST
+// host as the meter, so it has to be routed before the fall-through below:
+// without this every ledger_append counted as a usage_record_actual, and
+// actualArgs() — a .find(), i.e. the FIRST match — answered with a ledger
+// payload that has no p_cents_actual in it. Answering `ok` here keeps the
+// sealed path's "the record was written" branch true, which is the branch
+// every pre-existing case in this file was written against.
+let ledgerCalls = [];
 function meterRpc(url, init) {
   const args = (() => { try { return JSON.parse(init.body || '{}'); } catch { return {}; } })();
+  if (url.endsWith('/rpc/ledger_append')) {
+    ledgerCalls.push(args);
+    return new Response(JSON.stringify([{ id: 'ev', seq: ledgerCalls.length, hash: 'h' }]), { status: 200 });
+  }
   if (url.endsWith('/rpc/usage_consume')) {
     meterCalls.push({ fn: 'usage_consume', args });
     if (meter.mode === 'undeployed') {
@@ -118,6 +130,7 @@ const nonBedrock = () => providerHosts().filter((h) => !h.startsWith('bedrock-ma
 function witness(tier, upstream) {
   requests = [];
   meterCalls = [];
+  ledgerCalls = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     requests.push({ url: u, host: safeHost(u), init });
