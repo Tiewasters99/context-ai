@@ -59,7 +59,7 @@ export async function converse(options: ConverseOptions): Promise<void> {
   if (!res.ok) {
     let errBody: unknown = null;
     try { errBody = await res.json(); } catch { /* no body, or not JSON */ }
-    callbacks.onError(llmErrorText(res.status, errBody));
+    callbacks.onError(llmErrorText(res.status, errBody, res.headers.get('retry-after')));
     return;
   }
 

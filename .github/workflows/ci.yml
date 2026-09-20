@@ -170,3 +170,10 @@ jobs:
       - name: Reader — clean copy extraction
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
+
+      # The browser half of a refused request: 402 (spend cap), 429 (rate
+      # window) and the sealed 403/502/503 all become a sentence a person can
+      # read. Same loader as above — refusals.ts is a .ts module in src/.
+      - name: Refusals — 402 / 429 / sealed read as English
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
