@@ -24,6 +24,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { decrypt } from '../lib/connections-crypto.mjs';
+import { checkExport, sealResult } from '../lib/export-gate.mjs'; // gate:import
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -83,6 +84,21 @@ export default async function handler(req, res) {
     return json(res, 413, { error: 'file_too_large', maxBytes: MAX_EMAIL_BYTES, actualBytes: doc.file_size_bytes });
   }
 
+  // ── SecureSpace export gate ─────────────────────────────────── gate:start
+  // A draft is still a copy at Google: the attachment is uploaded to the
+  // user's mailbox and leaves the seal whether or not anyone ever addresses
+  // it. Same rule, same per-request confirmation. `delivery: 'draft'` and the
+  // absent recipient are what keep the record honest — this is recorded as an
+  // export to Google, not as a message sent to anyone.
+  const gate = await checkExport({
+    supabase: sb,
+    userId,
+    documentId,
+    destination: { service: 'gmail', delivery: 'draft' },
+    confirmed: body?.confirm_leave_seal === true,
+  });
+  if (!gate.ok) return json(res, gate.status, gate.body);
+  // ───────────────────────────────────────────────────────────────── gate:end
   // Gmail connection lookup via service role (user already verified above).
   const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -203,6 +219,7 @@ export default async function handler(req, res) {
     // Gmail has no per-draft deep link that reliably opens compose, so point
     // the user at their Drafts — the just-created draft is at the top.
     draftsUrl: 'https://mail.google.com/mail/u/0/#drafts',
+    ...(sealResult(gate) ? { seal: sealResult(gate) } : {}), // gate:line
   });
 }
 

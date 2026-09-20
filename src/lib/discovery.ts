@@ -10,6 +10,7 @@
 // polls their progress.
 
 import { supabase } from './supabase';
+import { fetchPaged, type PagedRows } from './paged';
 // Resumable (TUS) uploads for large intake files (Phase 4) — a production
 // zip is the biggest thing anyone uploads to this site.
 import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
@@ -285,19 +286,42 @@ export async function updateProduction(
 // Production items (with their tags)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function listProductionItems(productionId: string): Promise<ProductionItem[]> {
-  const { data, error } = await supabase
-    .from('production_items')
-    .select('*, document_tags(*, tag_def:document_tag_defs(*))')
-    .eq('production_id', productionId)
-    .order('sort_order', { ascending: true });
-  if (error) throw new Error(`list production items: ${error.message}`);
-  return (data ?? []).map((row: Record<string, unknown>) => {
-    const item = { ...row } as unknown as ProductionItem;
-    item.tags = ((row.document_tags as DocumentTag[] | null) ?? []);
-    delete (item as unknown as Record<string, unknown>).document_tags;
-    return item;
-  });
+/**
+ * A production's items.
+ *
+ * Paged. Unpaged, a production of more than 1,000 items quietly became a
+ * production of 1,000: PostgREST caps an unbounded select at `db-max-rows`
+ * and returns 200. Everything downstream — the review list, the tag counts,
+ * the Bates range, what gets stamped and packaged — ran on the truncated set,
+ * so a 2,500-document production would have been produced 1,000 documents
+ * short with nothing on screen to say so. For a court-ordered production that
+ * is not a display bug.
+ *
+ * `.order('id')` after `sort_order` is load-bearing: `sort_order` is an int
+ * that ties constantly (every item intake-ordered at 0), and unbroken ties
+ * let rows move between `.range()` pages — dropping some and duplicating
+ * others.
+ */
+export async function listProductionItems(productionId: string): Promise<PagedRows<ProductionItem>> {
+  const page = await fetchPaged<Record<string, unknown>>(
+    (from, to) => supabase
+      .from('production_items')
+      .select('*, document_tags(*, tag_def:document_tag_defs(*))', { count: 'exact' })
+      .eq('production_id', productionId)
+      .order('sort_order', { ascending: true })
+      .order('id')
+      .range(from, to),
+    { label: 'list production items', ceiling: 50_000 },
+  );
+  return {
+    ...page,
+    rows: page.rows.map((row) => {
+      const item = { ...row } as unknown as ProductionItem;
+      item.tags = ((row.document_tags as DocumentTag[] | null) ?? []);
+      delete (item as unknown as Record<string, unknown>).document_tags;
+      return item;
+    }),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
