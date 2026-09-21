@@ -17,6 +17,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   parseRefusalBody,
@@ -446,4 +447,79 @@ test('no refusal ever shows a machine code or raw JSON to a person', async () =>
     assert.doesNotMatch(message, /_[a-z]/, `machine code in: ${message}`);
     assert.ok(/[.!]$/.test(message.trim()), `not a sentence: ${message}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// /api/meeting-chat — row 12 of PR #171's inventory, the one left for its
+// owner. Its refusals are the seal's (lib/meeting-seal.mjs), the pause's
+// (migration 070) and the meter's, and they reach MeetingView as JSON.
+// ---------------------------------------------------------------------------
+
+const MEETING_PAUSED_403 = {
+  error: 'ai_paused',
+  tier: 'B',
+  message:
+    'AI is paused on this matter by Ben Rowe since 2026-09-20. Nothing is being sent to any model.',
+};
+
+const MEETING_PAUSE_UNKNOWN_503 = {
+  error: 'ai_pause_unknown',
+  tier: 'A',
+  message:
+    'Whether AI is paused on this matter could not be checked, so nothing was sent — a matter ' +
+    'is treated as paused until that is known. Try again in a moment.',
+};
+
+// The seal's refusal when the meeting's matter is Tier B and no sealed pen can
+// answer. No `message`: this is the case the panel's own local parser dropped.
+const MEETING_SEALED_503 = { error: 'sealed_pen_unavailable', tier: 'B' };
+
+test('a meeting refusal is a sentence in the panel, never an envelope', async (t) => {
+  const responseOf = (status, body) => new Response(JSON.stringify(body), { status });
+
+  await t.test('a paused matter names who paused it and since when', async () => {
+    const r = await parseServerRefusal(responseOf(403, MEETING_PAUSED_403));
+    assert.equal(r.message, MEETING_PAUSED_403.message);
+    assert.match(r.message, /Nothing is being sent to any model\.$/);
+  });
+
+  await t.test('an unreadable pause says nothing was sent', async () => {
+    const r = await parseServerRefusal(responseOf(503, MEETING_PAUSE_UNKNOWN_503));
+    assert.equal(r.message, MEETING_PAUSE_UNKNOWN_503.message);
+  });
+
+  await t.test('a sealed refusal with NO copy of its own still gets a sentence', async () => {
+    // The regression: MeetingView's own parser returned null here, so the
+    // panel printed `[error: {"error":"sealed_pen_unavailable","tier":"B"}]`.
+    const r = await parseServerRefusal(responseOf(503, MEETING_SEALED_503));
+    assert.equal(r.kind, 'sealed');
+    assert.match(r.message, /sealed/i);
+    assert.match(r.message, /Nothing was sent/);
+  });
+
+  await t.test('a spent wallet in a meeting loses the upsell', async () => {
+    const r = await parseServerRefusal(responseOf(402, BUDGET_402));
+    assert.equal(r.kind, 'budget');
+    assert.doesNotMatch(r.message, /upgrade/i);
+  });
+
+  await t.test('none of them shows a code or JSON punctuation', async () => {
+    for (const [status, body] of [
+      [403, MEETING_PAUSED_403], [503, MEETING_PAUSE_UNKNOWN_503],
+      [503, MEETING_SEALED_503], [402, BUDGET_402], [429, RATE_429],
+    ]) {
+      const { message } = await parseServerRefusal(responseOf(status, body));
+      assert.doesNotMatch(message, /[{}[\]]/, `JSON punctuation in: ${message}`);
+      assert.doesNotMatch(message, /_[a-z]/, `machine code in: ${message}`);
+    }
+  });
+});
+
+test('MeetingView renders the refusal rather than throwing it', () => {
+  const src = readFileSync(new URL('../src/pages/MeetingView.tsx', import.meta.url), 'utf8');
+  assert.match(src, /import \{ parseServerRefusal \} from "@\/lib\/llm\/refusals"/);
+  assert.match(src, /const refusal = await parseServerRefusal\(res\)/);
+  assert.match(src, /content: refusal\.message/);
+  // #171: the parser must not exist twice. The local copy is gone.
+  assert.doesNotMatch(src, /function refusalMessage\(/);
 });
