@@ -352,3 +352,16 @@ jobs:
       - name: Version notice — a stale tab is told, never reloaded
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-app-version.mjs
+
+      # What a big upload will cost, before it draws on the month. The
+      # arithmetic against the REAL price table (it imports lib/ocr-routes.mjs
+      # and lib/ocr-textract.mjs and fails if a mirrored rate has drifted), the
+      # four-axis threshold matrix in both directions, sealed vs unsealed
+      # rates on the same files, "the first 36 of these 400 fit", and the
+      # handler's refusal to take the browser's arithmetic on trust — plus the
+      # assertion that an ordinary upload's request body is still byte for
+      # byte the one this endpoint has always taken. Offline: no file is
+      # parsed, no provider called, no database touched.
+      - name: Upload estimate — the quote, the threshold, and the server's re-check
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-ingest-estimate.mjs

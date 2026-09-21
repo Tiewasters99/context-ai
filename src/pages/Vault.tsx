@@ -2,6 +2,9 @@ import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { X, Upload, FileText, Bot, FolderOpen, ArrowLeft, Menu, Music, Image, LayoutGrid, Maximize, Minus, EyeOff, ChevronRight, ChevronDown, Folder, Users, Plus, Trash2, UserPlus, FlaskConical } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ImportPanel from '@/components/vault/ImportPanel';
+// What a big upload will cost, shown before it draws on the month. Silent
+// below the threshold — an ordinary upload is still one gesture.
+import { useUploadEstimateGate, UPLOAD_CANCELLED_NOTICE } from '@/components/vault/UploadEstimateGate';
 import AIWorkbench from '@/components/vault/AIWorkbench';
 import SandboxPanel from '@/components/vault/SandboxPanel';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
@@ -33,6 +36,7 @@ import {
   type DocumentStatusRow,
 } from '@/lib/vault-persist';
 import { showingOf } from '@/lib/paged';
+import { checkUpload } from '../../lib/ingest-formats.mjs';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
@@ -54,6 +58,10 @@ const menuItems: { icon: typeof Upload; label: string; description: string; view
 
 export default function Vault() {
   const isMobile = useIsMobile();
+  // The upload quote. `gateUpload` answers instantly for an ordinary drop and
+  // opens `uploadEstimateDialog` only for one big enough to be worth saying
+  // something about first.
+  const { gate: gateUpload, dialog: uploadEstimateDialog } = useUploadEstimateGate();
   const [illuminated, setIlluminated] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<VaultView>('home');
@@ -381,7 +389,46 @@ export default function Vault() {
       // type the pipeline cannot read, a duplicate of a filed copy) and
       // reported together in one notice, in plain words, naming each file.
       const refused: string[] = [];
+
+      // WHAT THIS WILL COST, before it costs it (2026-09-20).
+      //
+      // A file the pipeline cannot read is not part of the quote, so the
+      // cheap, offline half of the admissibility check runs first — the same
+      // checkUpload() that checkUploadAdmissible() calls, minus the duplicate
+      // lookup, which stays inside the loop below because it depends on what
+      // the loop has already filed. Then the gate measures what is left,
+      // prices it, and shows a dialog ONLY above the threshold. Below it,
+      // this returns immediately with no declarations and the upload is
+      // exactly the upload it has always been.
+      const candidates: File[] = [];
       for (const file of arr) {
+        const early = checkUpload({ name: file.name, size: file.size });
+        if (early) refused.push(early.message);
+        else candidates.push(file);
+      }
+      // Measuring a big drop — reading each PDF's page count, each recording's
+      // length — takes a moment, and a drop where nothing happens for several
+      // seconds reads as a drop that failed.
+      if (candidates.length >= 10) {
+        setVaultNotice({ kind: 'warn', text: `Working out what these ${candidates.length.toLocaleString()} files will cost…` });
+      }
+      const gated = await gateUpload(candidates, matter.id);
+      setVaultNotice(null);
+      if (!gated) {
+        setVaultNotice({ kind: 'warn', text: UPLOAD_CANCELLED_NOTICE });
+        return;
+      }
+      if (gated.files.length < candidates.length) {
+        const held = candidates.length - gated.files.length;
+        refused.push(
+          `${held.toLocaleString()} file${held === 1 ? ' was' : 's were'} left out of this upload at your choice — ` +
+          'drop them again when there is more allowance.',
+        );
+      }
+
+      for (let gi = 0; gi < gated.files.length; gi++) {
+        const file = gated.files[gi];
+        const ingestDeclaration = gated.declarations[gi];
         const refusal = await checkUploadAdmissible(matter, file);
         if (refusal) {
           refused.push(refusal.message);
@@ -408,6 +455,7 @@ export default function Vault() {
           // 4); the row reads "Uploading… 42%" until the bytes have landed.
           let lastPct = -1;
           const { documentId, storagePath } = await persistVaultFile(matter, file, {
+            ingestDeclaration,
             onProgress: ({ pct }) => {
               if (pct === lastPct) return;
               lastPct = pct;
@@ -478,7 +526,7 @@ export default function Vault() {
         setVaultFiles((prev) => prev.map((f) => f.id === nf.id ? { ...f, status: 'error', textContent: `[Failed to extract text from ${nf.name}]` } : f));
       }
     }
-  }, [matter, applyDocUpdate]);
+  }, [matter, applyDocUpdate, gateUpload]);
 
   // Re-run server-side ingestion for a document that errored (e.g. a scanned
   // PDF that failed before OCR was wired, or a transient embed failure). Flips
@@ -1152,6 +1200,9 @@ export default function Vault() {
           onClose={() => setShareTarget(null)}
         />
       )}
+      {/* The cost of a big upload, before a byte moves. Null for every
+          ordinary drop. */}
+      {uploadEstimateDialog}
     </div>
   );
 }

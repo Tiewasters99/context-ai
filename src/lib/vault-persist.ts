@@ -24,6 +24,16 @@ import {
 // refusals here can never drift from what /api/ingest actually handles.
 import type { OcrPending } from '../../lib/ingest-formats.mjs';
 import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
+// The estimate's shared arithmetic — the same module /api/ingest re-checks
+// with, so the body this file sends and the figure the handler recomputes can
+// never come from two different ideas of what a page costs.
+import {
+  declarationFor,
+  documentNeedsConfirmation,
+  estimateUploadItem,
+  ingestRequestBody,
+  type IngestDeclaration,
+} from '../../lib/ingest-estimate.mjs';
 // Resumable (TUS) uploads for large files (Phase 4): the same dependency-free
 // module the Node smoke test drives against the real bucket.
 import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
@@ -265,6 +275,13 @@ export async function checkUploadAdmissible(matter: MatterRef, file: File): Prom
 export interface PersistOptions {
   /** Upload progress, reported only on the resumable path (files of 50 MB and up). */
   onProgress?: (p: UploadProgress) => void;
+  /**
+   * The estimate a person was shown and confirmed for THIS file, from the
+   * Vault's upload gate. Absent for every upload that never reached the
+   * threshold — and then the ingest request is byte-for-byte what it has
+   * always been.
+   */
+  ingestDeclaration?: IngestDeclaration;
 }
 
 export async function persistVaultFile(
@@ -345,7 +362,7 @@ export async function persistVaultFile(
   }
   // Don't await; the API call can take 30-60s for large docs and we want the
   // UI thread back immediately. Errors are surfaced via document status.
-  void postIngest(doc.id, accessToken);
+  void postIngest(doc.id, accessToken, opts.ingestDeclaration ?? autoDeclaration(file));
 
   return { documentId: doc.id, storagePath };
 }
@@ -368,13 +385,35 @@ export async function persistVaultFile(
 // update runs under the user's own session, exactly like every other write in
 // this file, so RLS decides whether it is allowed.
 // -----------------------------------------------------------------------------
-async function postIngest(documentId: string, accessToken: string): Promise<void> {
+/**
+ * The estimate for a file nobody was shown a dialog for.
+ *
+ * Almost every caller of persistVaultFile files a document the APP made from
+ * content already in the matter — a Record export, a combined exhibit PDF, a
+ * trial outline, a Student Hub export. There is no drop and no dialog, but the
+ * person did press the button that made the file, and /api/ingest refuses an
+ * above-threshold document that arrives with no estimate at all. So one is
+ * formed here from the file's own name and size — the only two facts available
+ * without parsing it — and only when the file is big enough for the handler to
+ * ask. A small file gets NOTHING, which is what keeps the ordinary request
+ * body unchanged.
+ */
+function autoDeclaration(file: File): IngestDeclaration | undefined {
+  const item = estimateUploadItem({ name: file.name, bytes: file.size });
+  return documentNeedsConfirmation(item) ? declarationFor(item) : undefined;
+}
+
+async function postIngest(
+  documentId: string,
+  accessToken: string,
+  declaration?: IngestDeclaration,
+): Promise<void> {
   let res: Response;
   try {
     res = await fetch('/api/ingest', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ documentId }),
+      body: ingestRequestBody(documentId, declaration),
     });
   } catch (err) {
     console.error('ingest fetch:', err);
@@ -739,7 +778,29 @@ export async function triggerIngest(documentId: string): Promise<void> {
   // edit (saveDocumentText) both land here, and both used to discard the
   // response entirely — a retry against a spent budget looked identical to a
   // retry that worked.
-  await postIngest(documentId, accessToken);
+  //
+  // A retry carries its own estimate, formed from the row rather than from a
+  // file: the document is already filed, the person can see its name and size
+  // on the row they pressed the button on, and without this a Re-run of a
+  // 900-page scan would be refused by the handler's confirmation check for
+  // want of an estimate that no dialog exists to show.
+  await postIngest(documentId, accessToken, await declarationForFiled(documentId));
+}
+
+/** The estimate for a document already in the Vault, from its own row. */
+async function declarationForFiled(documentId: string): Promise<IngestDeclaration | undefined> {
+  const { data } = await supabase
+    .from('documents')
+    .select('source_filename, file_size_bytes, page_count')
+    .eq('id', documentId)
+    .maybeSingle();
+  if (!data) return undefined;
+  const item = estimateUploadItem({
+    name: data.source_filename || '',
+    bytes: Number(data.file_size_bytes) || 0,
+    pages: Number(data.page_count) || undefined,
+  });
+  return documentNeedsConfirmation(item) ? declarationFor(item) : undefined;
 }
 
 

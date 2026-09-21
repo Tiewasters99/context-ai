@@ -31,6 +31,7 @@ import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mj
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { estimateIngestCents } from '../lib/usage-prices.mjs';
+import { verifyIngestConfirmation } from '../lib/ingest-estimate.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -100,6 +101,36 @@ export default async function handler(req, res) {
   // Only a fully indexed document is "already ready".
   if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending) {
     return json(res, 200, { ok: true, alreadyReady: true });
+  }
+
+  // A big upload must have been quoted before it is read (2026-09-20).
+  //
+  // The browser shows an estimate above a threshold and sends back what it
+  // measured. This does NOT believe the arithmetic: the cents are recomputed
+  // here from lib/usage-prices.mjs over the row's OWN file_size_bytes and
+  // source_filename, and `ack_cents` is only ever compared against them — a
+  // body claiming a penny for a 900-page scan is refused. A page count or
+  // duration that was actually measured (declared, or already on the row) is
+  // used; only when nothing was measured does the size decide, and then at the
+  // cautious end, so this never refuses an upload the browser correctly judged
+  // small. Above the threshold it requires the confirmation flag; below it the
+  // request body is the `{ documentId }` this endpoint has always taken and
+  // nothing here fires at all.
+  //
+  // The meter below remains the real enforcement. This is about a person being
+  // told the price before the work, not about trusting the client.
+  //
+  // Tier 'A' deliberately, with no tier lookup: the unsealed OCR route is the
+  // DEARER of the two, so this recomputation is the conservative one, and the
+  // page/minute triggers do not depend on the tier at all. The client quotes a
+  // sealed matter at the sealed rate because that is what the person is
+  // actually metered; this side only decides whether a quote was owed.
+  //
+  // It runs BEFORE the meter, so a refusal costs nothing.
+  const confirmation = verifyIngestConfirmation({ doc, body, tier: 'A', env: process.env });
+  if (confirmation) {
+    const { status, ...payload } = confirmation;
+    return json(res, status, payload);
   }
 
   // Spend cap (migration 063) — AFTER the alreadyReady short-circuit, so the
