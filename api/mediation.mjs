@@ -12,6 +12,66 @@
 //   matching, message relay) use the service-role client, and everything
 //   returned is sanitized by serializeCaseForParty — the other party's
 //   confidential material never reaches the caller.
+//
+// ── TWO THINGS THAT WERE MISSING UNTIL 2026-09-21 ──────────────────────────
+//
+// 1. THE PLAN. Mediation is a frozen surface (lib/surfaces.mjs): hidden from
+//    the Suite, and the route redirects. None of that reached this file, so
+//    any signed-in account could drive the whole Mediation Center with curl.
+//    requireEntitlement() now answers that, where a mediation BEGINS —
+//    `cases.create` and `join`. Deliberately not on the other actions: a case
+//    already on foot has another human being on the far side of it, and a
+//    plan change must not strand them mid-caucus. api/mediation-webhook.mjs is
+//    called by Stripe, not by a person, and is not gated at all.
+//
+// 2. THE METER. This endpoint never imported lib/usage-meter.mjs. Four
+//    runMediator() calls spend OUR Anthropic and OpenAI keys
+//    (lib/mediation-models.mjs), and a caucus is an open-ended chat: one
+//    account could have run the bill up without limit. Every one of the four
+//    is now metered BEFORE the model is contacted, charged to the
+//    authenticated caller, with the product's existing 402/429 sentences
+//    (sendUsageRefusal). Metering is INDEPENDENT of the plan gate: an
+//    entitled account and a case already on foot are both still metered.
+//
+//    There is no reconciliation pass. runMediator() returns text and not
+//    token counts, and lib/mediation-models.mjs is out of scope for this
+//    change, so the conservative pre-call estimate stands — the same choice
+//    api/student-hub-ocr.mjs makes for a route whose cost is known in advance.
+//
+// ── THE SERVICE-ROLE WRITES, AND WHAT PROTECTS EACH ────────────────────────
+//
+// Everything below the `loadCaseContext` call runs on `admin`, which bypasses
+// RLS, so ownership rests entirely on in-handler checks. The walk, action by
+// action (lib/mediation-core.mjs:129-151 is the gate for all of them — it
+// loads the case, finds the caller's own party row, and answers 403 "You are
+// not a party to this mediation." when there is none):
+//
+//   cases.create   the rollback delete acts on the id the caller's OWN
+//                  RLS-checked insert just returned.
+//   join           writes `user_id: userId` — the authenticated caller, never
+//                  a body field — behind three checks: the invite code
+//                  resolves, the caller is not the case's creator, and the
+//                  case is still 'awaiting_party'. `unique (case_id, user_id)`
+//                  and `unique (case_id, label)` (033:59-60) settle a race.
+//   case.setModel  ctx + a status allow-list. Either party may change the
+//                  mediator, which is correct: both are parties.
+//   submission     writes `.eq('id', myParty.id)` — the caller's own party row
+//                  — behind a per-kind status allow-list and a word limit.
+//   dates.*        reads and writes are keyed on myParty.id / caseRow.id.
+//   framework /    ctx + a status check + a content precondition (both
+//   day.open /     position papers on file; an accepted offer on file), and
+//   settlement.*   each is idempotent on the column it writes.
+//   chat.send      history, caucus clock and both inserted rows are keyed on
+//                  myParty.id, so one party's channel cannot be read or
+//                  written by the other.
+//   offers.file    `from_party: myParty.id`.
+//   offers.act     the offer is fetched `.eq('case_id', caseRow.id)`, so an id
+//                  from another case cannot be reached at all; withdraw and
+//                  share then require `offer.from_party === myParty.id`, and
+//                  accept requires the opposite plus `shared` and 'open'.
+//
+// No action was found writing on an id taken from the body without scoping it
+// to the case the caller is a party to.
 
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -36,6 +96,9 @@ import {
   buildSettlementPrompt,
   buildWelcomePrompt,
 } from '../lib/mediation-skill.mjs';
+import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
+import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateLlmCents } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -49,6 +112,34 @@ function json(res, status, obj) {
 
 function safeJsonParse(s) {
   try { return JSON.parse(s); } catch { return null; }
+}
+
+/**
+ * Charge one mediator turn to the caller BEFORE the model is contacted.
+ *
+ * The estimate is priced on what will actually be sent — every prompt this
+ * endpoint builds, plus the output allowance the call asks for — at the real
+ * rate for the chosen mediator (lib/usage-prices.mjs). `kind: 'mediation'` is
+ * not a seeded row in usage_budgets, so migration 063 falls back to the tier's
+ * '*' wallet and rate window (063:341-363): one bill, as it should be.
+ *
+ * Returns the meter's decision. The caller refuses with sendUsageRefusal() —
+ * the product's existing 402 (wallet spent) and 429 (too fast) sentences.
+ */
+async function meterMediatorTurn({ userToken, modelId, promptText, maxTokens }) {
+  const model = getMediatorModel(modelId);
+  return consumeUsage({
+    supabaseUrl: SUPABASE_URL,
+    anonKey: SUPABASE_ANON_KEY,
+    bearer: userToken,
+    kind: 'mediation',
+    estimateCents: estimateLlmCents({
+      provider: model?.provider || 'anthropic',
+      model: model?.apiModel || modelId,
+      bodyText: String(promptText || ''),
+      maxOutputTokens: maxTokens,
+    }),
+  });
 }
 
 export default async function handler(req, res) {
@@ -87,6 +178,14 @@ export default async function handler(req, res) {
   const body = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
   const action = String(body?.action || '');
   if (!action) return json(res, 400, { error: 'action required' });
+
+  // THE PLAN GATE, where a mediation begins. Read from the caller's profiles
+  // row on the server — never from the request. `workshop` passes; a case
+  // already on foot is untouched, so nobody is stranded mid-caucus.
+  if (action === 'cases.create' || action === 'join') {
+    const gate = await requireEntitlement(userId, 'mediation', { bearer: userToken });
+    if (!gate.ok) return sendEntitlementRefusal(res, gate);
+  }
 
   try {
     switch (action) {
@@ -417,6 +516,12 @@ export default async function handler(req, res) {
           [toPartyMaterial(myParty), toPartyMaterial(otherParty)].sort((a, b) => a.label.localeCompare(b.label))
         );
 
+        const meter = await meterMediatorTurn({
+          userToken, modelId: caseRow.mediator_model,
+          promptText: `${system}\n${user}`, maxTokens: 4096,
+        });
+        if (!meter.allowed) return sendUsageRefusal(res, meter);
+
         let framework;
         try {
           framework = await runMediator({
@@ -457,12 +562,18 @@ export default async function handler(req, res) {
           return json(res, 409, { error: `Mediation day is ${caseRow.scheduled_date} — the doors open then.` });
         }
 
+        const { system, user } = buildWelcomePrompt({ title: caseRow.title }, [
+          toPartyMaterial(myParty),
+          toPartyMaterial(otherParty),
+        ]);
+        const meter = await meterMediatorTurn({
+          userToken, modelId: caseRow.mediator_model,
+          promptText: `${system}\n${user}`, maxTokens: 1024,
+        });
+        if (!meter.allowed) return sendUsageRefusal(res, meter);
+
         let welcome;
         try {
-          const { system, user } = buildWelcomePrompt({ title: caseRow.title }, [
-            toPartyMaterial(myParty),
-            toPartyMaterial(otherParty),
-          ]);
           welcome = await runMediator({
             modelId: caseRow.mediator_model,
             system,
@@ -560,6 +671,17 @@ export default async function handler(req, res) {
           content: m.content,
         }));
         turns.push({ role: 'user', content: message });
+
+        const meter = await meterMediatorTurn({
+          userToken, modelId: caseRow.mediator_model,
+          // The cacheable prefix is the bulk of it and is charged at full
+          // price on the first turn of each window, so it belongs in the
+          // estimate. Over-estimating a cached turn is the safe direction.
+          promptText: `${built.cacheable || ''}\n${built.volatile || ''}\n`
+            + turns.map((t) => t.content).join('\n'),
+          maxTokens: 2048,
+        });
+        if (!meter.allowed) return sendUsageRefusal(res, meter);
 
         let reply;
         try {
@@ -687,6 +809,12 @@ export default async function handler(req, res) {
           [toPartyMaterial(myParty), toPartyMaterial(otherParty)].sort((a, b) => a.label.localeCompare(b.label)),
           accepted.terms
         );
+
+        const meter = await meterMediatorTurn({
+          userToken, modelId: caseRow.mediator_model,
+          promptText: `${system}\n${user}`, maxTokens: 8192,
+        });
+        if (!meter.allowed) return sendUsageRefusal(res, meter);
 
         let draft;
         try {

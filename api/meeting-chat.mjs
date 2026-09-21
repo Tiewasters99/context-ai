@@ -40,6 +40,7 @@ import { createClient } from '@supabase/supabase-js';
 import { sealedMeetingPlan, runSealedMeetingTurn } from '../lib/meeting-sealed-chat.mjs';
 import { meetingRefusalMessage } from '../lib/meeting-seal.mjs';
 import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 const MODEL = process.env.CLAUDE_MODEL || 'claude-opus-4-7';
@@ -96,6 +97,12 @@ export default async function handler(req, res) {
   });
   const { data: userData, error: userErr } = await sb.auth.getUser();
   if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
+
+  // Connect is a frozen surface (lib/surfaces.mjs). This endpoint and nothing
+  // else serves it — src/pages/MeetingView.tsx is its only caller — so the
+  // surface is unambiguous from the endpoint itself.
+  const gate = await requireEntitlement(userData.user.id, 'connect', { bearer: userToken });
+  if (!gate.ok) return sendEntitlementRefusal(res, gate);
 
   const body = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
   if (!body || !Array.isArray(body.messages) || body.messages.length === 0) {

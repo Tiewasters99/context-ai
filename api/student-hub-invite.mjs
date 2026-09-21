@@ -16,20 +16,39 @@
 // So this endpoint can only ever mail someone the group's own owner has
 // already given a seat to — it is not a general mail sender.
 //
+// Two things were missing until 2026-09-21, and they were the same thing twice:
+//
+//   1. The Student Hub is a BETA surface (lib/surfaces.mjs) — named in the
+//      Suite, not entered. This endpoint served any signed-in account.
+//   2. An UNCLAIMED seat could be re-invited without limit. Both checks above
+//      pass every time while the seat stays unclaimed, so one seat was an
+//      unmetered, un-rate-limited mail button aimed at an address of the
+//      caller's choosing — our Resend reputation, someone else's inbox.
+//
+// So: requireEntitlement() right after the session is verified, and a counted
+// cap (migration 083, `student_hub_invite_charge`) charged immediately before
+// the mail goes out — three sends per seat and twenty per owner in a rolling
+// 24 hours, counted in the database because Vercel has no shared memory.
+//
 // Response:
 //   200 { ok: true }
 //   400 { error: 'bad_request', detail }      malformed body
 //   401 { error: 'missing_bearer' | 'invalid_session' }
+//   403 { error: 'not_in_plan' }              the Student Hub is not in this plan
 //   403 { error: 'not_group_owner' | 'not_an_invited_seat' | 'seat_already_claimed' }
 //   404 { error: 'group_not_found' }
+//   429 { error: 'invite_seat_cap' | 'invite_daily_cap' | 'invite_cap_unavailable' }
 //   501 { error: 'email_not_configured' }     no RESEND_API_KEY yet
 //   502 { error: 'send_failed', detail }      Resend refused or was unreachable
+//   503 { error: 'plan_unreadable' }          the plan could not be read twice
 //
 // Env on Vercel:
 //   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY,
 //   RESEND_API_KEY, RESEND_FROM (optional override of the From line)
 
 import { createClient } from '@supabase/supabase-js';
+
+import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -67,6 +86,11 @@ export default async function handler(req, res) {
   const { data: userData, error: userErr } = await asUser.auth.getUser();
   if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
   const caller = userData.user;
+
+  // The plan, read on the server from the caller's own profiles row — never
+  // from anything the request said about itself.
+  const gate = await requireEntitlement(caller.id, 'studentHub', { bearer: userToken });
+  if (!gate.ok) return sendEntitlementRefusal(res, gate);
 
   const groupId = typeof req.body?.groupId === 'string' ? req.body.groupId.trim() : '';
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -115,6 +139,28 @@ export default async function handler(req, res) {
   // key we simply cannot announce it, and the caller says so in the panel.
   if (!apiKey) return json(res, 501, { error: 'email_not_configured' });
 
+  // ── The cap, charged before the mail goes out ────────────────────────────
+  //
+  // Counted and recorded inside one transaction by migration 083: two requests
+  // landing on two Vercel instances cannot both read "none sent yet". The row
+  // is written first, so a Resend failure does consume one of the three — the
+  // safe direction, because the other one lets a slow provider be retried
+  // without limit, which is the abuse this exists to stop.
+  //
+  // Failure policy is lib/usage-meter.mjs's consumeIpUsage, verbatim: while
+  // the function is NOT DEPLOYED the send goes through with a loud log (a
+  // merge that lands before the paste must not break invitations), and once
+  // the function exists any error refuses.
+  const charged = await chargeInvite(admin, { groupId, email, senderId: caller.id });
+  if (!charged.allowed) {
+    if (charged.retry_after_seconds) res.setHeader('retry-after', String(charged.retry_after_seconds));
+    return json(res, charged.status || 429, {
+      error: charged.reason,
+      message: charged.message,
+      retry_after_seconds: charged.retry_after_seconds ?? null,
+    });
+  }
+
   const inviter =
     (caller.user_metadata?.full_name || caller.user_metadata?.name || '').trim() ||
     caller.email ||
@@ -148,6 +194,54 @@ export default async function handler(req, res) {
     return json(res, 502, { error: 'send_failed', detail: `resend ${sendRes.status}${detail ? `: ${detail}` : ''}` });
   }
   return json(res, 200, { ok: true });
+}
+
+/**
+ * Ask migration 083 whether this seat may be mailed again, and record the send.
+ *
+ * Returns the RPC's own answer shape — { allowed, reason, status, message,
+ * retry_after_seconds } — so the handler treats a cap exactly the way it
+ * treats a spend refusal.
+ */
+export async function chargeInvite(admin, { groupId, email, senderId }) {
+  let result;
+  try {
+    result = await admin.rpc('student_hub_invite_charge', {
+      p_group: groupId,
+      p_email: email,
+      p_sender: senderId,
+    });
+  } catch (err) {
+    console.error(`[student-hub-invite] FAIL-CLOSED — invite cap threw: ${short(err?.message)}`);
+    return {
+      allowed: false, reason: 'invite_cap_unavailable', status: 429,
+      message: 'Invitations are temporarily unavailable. Try again shortly.',
+      retry_after_seconds: 60,
+    };
+  }
+  if (result?.error) {
+    const said = `${result.error.code || ''} ${result.error.message || ''}`;
+    if (/PGRST202|could not find the function|does not exist/i.test(said)) {
+      console.error('[student-hub-invite] FAIL-OPEN — the invite cap is not deployed yet; paste migration 083');
+      return { allowed: true, reason: 'cap_undeployed', status: 200 };
+    }
+    console.error(`[student-hub-invite] FAIL-CLOSED — invite cap error: ${short(said)}`);
+    return {
+      allowed: false, reason: 'invite_cap_unavailable', status: 429,
+      message: 'Invitations are temporarily unavailable. Try again shortly.',
+      retry_after_seconds: 60,
+    };
+  }
+  const answer = result?.data;
+  if (!answer || typeof answer !== 'object') {
+    console.error('[student-hub-invite] FAIL-CLOSED — the invite cap answered with nothing');
+    return {
+      allowed: false, reason: 'invite_cap_unavailable', status: 429,
+      message: 'Invitations are temporarily unavailable. Try again shortly.',
+      retry_after_seconds: 60,
+    };
+  }
+  return answer;
 }
 
 /** The invitation itself — plain words, no images, nothing to click but the Hub. */

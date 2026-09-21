@@ -17,6 +17,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { ocrImages } from '../lib/ocr-gemini.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { estimateOcrCents } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -56,6 +57,13 @@ export default async function handler(req, res) {
   const { data: userData, error: userErr } = await sb.auth.getUser();
   if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
   const uid = userData.user.id;
+
+  // The Student Hub is a beta surface (lib/surfaces.mjs): named in the Suite,
+  // not entered. This endpoint is its and nothing else's, so the surface is
+  // unambiguous — and it is the expensive one, a casebook's worth of Gemini
+  // OCR driven in batches of eight.
+  const gate = await requireEntitlement(uid, 'studentHub', { bearer: userToken });
+  if (!gate.ok) return sendEntitlementRefusal(res, gate);
 
   const pages = Array.isArray(req.body?.pages) ? req.body.pages : null;
   if (!pages?.length) return json(res, 400, { error: 'pages required' });
