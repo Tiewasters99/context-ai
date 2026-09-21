@@ -35,6 +35,11 @@ interface CanvasContextValue {
   space: CanvasSpace | null;
   /** Pinned cards, back to front — the last entry draws on top. */
   cards: CanvasCard[];
+  /** False until this user's canvas has been read out of storage. A card
+      added before then is lost in silence: the save effect below skips
+      un-hydrated state, and the load that lands a moment later replaces it.
+      Controls that add cards must stay inert while this is false. */
+  hydrated: boolean;
   isPinned: (kind: CanvasCardKind, id: string | undefined) => boolean;
   pin: (card: { kind: CanvasCardKind; id: string; title: string }) => void;
   unpin: (key: string) => void;
@@ -64,6 +69,9 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
     { hydratedFor: null, cards: [] },
   );
   const cards = canvas.cards;
+  // Read straight off the same state value the save effect guards on, so the
+  // button and the effect can never disagree about whether a write will land.
+  const hydrated = !!userId && canvas.hydratedFor === userId;
 
   // Every mutator edits the cards inside the single state value, so hydration
   // and cards can never drift apart.
@@ -183,8 +191,8 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   }, [editCards]);
 
   const value = useMemo<CanvasContextValue>(
-    () => ({ space, cards, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace }),
-    [space, cards, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace],
+    () => ({ space, cards, hydrated, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace }),
+    [space, cards, hydrated, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace],
   );
 
   return <CanvasContext.Provider value={value}>{children}</CanvasContext.Provider>;

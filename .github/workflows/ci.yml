@@ -107,6 +107,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-llm-sealed-route.mjs
 
+      # The pen's preamble, the pen table that decides who gets it, and the
+      # eval kit's guards and --dry path. Offline: the loop runs against a
+      # stubbed Supabase and a witnessed fetch, and the eval's dry run replaces
+      # fetch for its own duration. Never spends, never reads a database.
+      - name: SecureSpace — the sealed pen's preamble, and only the sealed pen's
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-preamble.mjs
+
       - name: Agents — charter narrowing rule (offline part)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-charter.mjs
@@ -134,6 +142,29 @@ jobs:
       - name: Migration 061 — search is model-scoped (PGlite + pgvector)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-model-scope.mjs
+
+      # 074 changes how stage A is RETRIEVED, so the assertion that matters is
+      # a comparison: 056, then 061, then 074 over one corpus, with every
+      # answer required to come back byte-identical. It then pushes 074's
+      # threshold GUC below the corpus and runs the whole battery again on the
+      # ANN branch, and asserts on EACH branch separately that a matter left
+      # out of the id array — the sealed/paused descendant case from #181/#179
+      # — stays out, against a negative control that proves it is reachable.
+      - name: Migration 074 — search scope router, same answers, isolation intact (PGlite + pgvector)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-scope-router.mjs
+
+      # 078 moves the access check out of the per-row policy and into the
+      # wrapper, which means the search itself runs SECURITY DEFINER. A harness
+      # running as the superuser could not tell that apart from a data leak, so
+      # this one creates `anon` / `authenticated` / `service_role` for real,
+      # enables RLS with the real policy function, and does every assertion
+      # from inside SET ROLE with request.jwt.claims set the way PostgREST sets
+      # it. The reference is 074 UNDER RLS, and the negative control deletes
+      # the wrapper's reduction and watches the forbidden matter come back.
+      - name: Migration 078 — authorize once per matter, not once per passage (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-rls-authorize.mjs
 
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
@@ -171,6 +202,35 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Migration 067 executed against PGlite on top of the REAL 062 and 063,
+      # then the real billing handlers driven against that database with Stripe
+      # and PostgREST stubbed. Offline by construction: there is no Stripe
+      # account, and this harness never opens a socket to one.
+      - name: Migration 067 — billing, credits and the webhook (PGlite + real handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-billing.mjs
+      - name: Migration 064 — the matter Record is append-only (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ledger.mjs
+
+      # The pause is a safety switch, so what it is worth is what can be
+      # demonstrated about it: every model-facing case runs with global fetch
+      # replaced by a witness and asserts the witness saw nothing. Part C is a
+      # negative control — the same scenarios where the guard is absent, where
+      # the witness MUST fire. Its git-based half needs the base branch, which
+      # a shallow checkout does not have; it says so and skips, and the
+      # portable half covers the same ground.
+      - name: Migration 070 — AI pause, every path, zero egress (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ai-pause.mjs
+      # The Record's read side lives in src/lib/matter-record/*.ts, so this one
+      # needs the same '@/' loader as the reader harness above.
+      - name: The matter's Record — roll-up, docket lines and the export
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-matter-record.mjs
+      - name: Migration 072 — the account chain, fan-out isolation, immutable sessions (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-ledger-account.mjs
       # The offline stand-in for worker/e2e-live-test.mjs, which cannot run here
       # (prod database, service role). Executes 030 + 032 + 044 + 045 + 055 +
       # 057 + 058 + 059 + 060 in PGlite and drives the real lib/discovery engine
@@ -219,6 +279,30 @@ jobs:
         run: |
           node scripts/_verify-bucketizer-evidence.mjs
           node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-outline.mjs
+
+      # Choosing what to classify: one predicate behind both the count and the
+      # chooser, strict matter isolation, a sealed matter's held-but-readable
+      # documents, the pleadings the tree was built from, and what a re-run may
+      # write (never a decision, never a delete). Offline: the model and the
+      # database are stubbed and the rules themselves are pure functions.
+      - name: Bucketizer — choosing documents, and what a re-run may write
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
+
+      # Cite-check's two model calls, held to their contracts. Inside a sealed
+      # matter both are answered by the sealed pen, which holds a forced-tool
+      # shape less literally than Claude — and the old code turned every
+      # off-contract answer into a FINDING: an unreadable extraction became
+      # "this brief cites nothing", and an unreadable rating became "medium".
+      # Asserted against the REAL call sites with /api/llm and
+      # /api/legal-source stubbed and witnessed: validate → one metered repair
+      # → "not checked", never "not found" and never verified; no citation the
+      # draft does not contain; 402 / 429 / a sealed refusal stop the run with
+      # the server's own sentence on the first turn AND on the repair turn; and
+      # the report's arithmetic reconciles (extracted = checked + not checked).
+      - name: Cite-check — output contracts, and the citation that was not checked
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-cite-check-contracts.mjs
       # The Vault's own read, at 2,500 and 12,000 documents with every
       # created_at tied — the dropped-folder case that makes an untiebroken
       # `.range()` loop lose rows. Offline: PostgREST is stubbed.
@@ -255,3 +339,105 @@ jobs:
       - name: Refusals — 402 / 429 / sealed read as English
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
+      # Migration 073: every model call a FEATURE makes through /api/llm
+      # reaches the matter's Record, and the Record reaches no provider.
+      # Drives the real handler with fetch stubbed and witnessed, so each case
+      # asserts what was contacted as well as what was written. Its negative
+      # control imports origin/main's own handler and compares the Tier-A
+      # request byte for byte; on a shallow checkout that ref is absent and
+      # the case prints SKIP. It imports src/lib/llm/features.ts, so it needs
+      # the same '@/' loader as the reader and Record harnesses above.
+      - name: The matter's Record — feature AI calls through /api/llm
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-llm-record.mjs
+      # "Pin" on a card means FIX IN PLACE — it stops moving and resizing and
+      # reopens where it was left. The real hook, in a real DOM: drag, pin,
+      # reload, unpin, reload, plus the right-click gesture and the rule that
+      # one item's pin never leaks into the next. jsdom is installed here the
+      # way PGlite is above — --no-save, a harness dependency, never a repo one.
+      - name: Cards — Pin means fixed in place (jsdom + the real hook)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-card-pin.mjs
+      # What the Assistant panel SAYS on a sealed matter before the first
+      # message: the scope strip, the pen named in advance (and corrected when
+      # the server names another), the word-search note, the pause, the
+      # starters, the matter header's door, and the panel's pin/position
+      # record. Pure modules plus narrow source assertions for the wiring — no
+      # loader needed, nothing mounted, no network.
+      - name: Assistant — a sealed matter says where it is and who answers
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-sealed-assistant-scope.mjs
+      # `list_matters` is the first call every connected AI makes, and in
+      # production it answered 296 matters with 112,790 characters — more than
+      # a client will load. This drives the real handler against a synthetic
+      # workspace of the same shape and size: the compact tree fits, every
+      # visible matter is on it exactly once with its id, the optional
+      # arguments narrow it, malformed ones fall back, `format:'full'` is
+      # byte-identical to the old answer, and sealed/paused subtrees are
+      # pruned before a single document is counted (with a negative control).
+      - name: list_matters — the map fits, and nothing hidden is on it
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-list-matters.mjs
+
+      # The connector page tells people to paste a command into a terminal, so
+      # the command is checked whole — every flag, and the quoting that differs
+      # between bash and PowerShell. It also asserts the endpoint URL appears
+      # as one constant and is never hard-coded a second time in the page.
+      - name: Connector — the Claude Code command, character for character
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-claude-code-command.mjs
+
+      # A tab left open across a deploy. Both halves of the build id (the
+      # constant compiled into the bundle, the one written to /version.json),
+      # when the line shows and when it stays quiet, the stale-chunk net, and
+      # the assertion that neither main.tsx nor the Editor reloads the tab on
+      # its own any more. Offline: fetch is a local function that counts its
+      # own calls, `window` is a bare EventTarget.
+      - name: Version notice — a stale tab is told, never reloaded
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-app-version.mjs
+
+      # OneDrive and Dropbox export. Migration 075 runs in PGlite from three
+      # drift states (026→029→075, 026→075 with 029 never applied, and no
+      # table at all); the rest drives the real connect/callback/export
+      # handlers with fetch stubbed and witnessed — least-privilege scopes,
+      # PKCE bound to a cookie rather than to the state, a cross-service state
+      # refused, Microsoft's rotating refresh token written back, the
+      # app-folder path and its never-overwrite flags, the ASCII-escaped
+      # Dropbox header, and the 503 every endpoint gives while the two apps
+      # are unregistered. **No request reaches Microsoft or Dropbox.** The
+      # seal itself is proved in the export-gate harness above, which now runs
+      # its whole table against both new destinations.
+      - name: Cloud drives — OneDrive + Dropbox export (PGlite + stubbed providers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-cloud-drives.mjs
+      # What a big upload will cost, before it draws on the month. The
+      # arithmetic against the REAL price table (it imports lib/ocr-routes.mjs
+      # and lib/ocr-textract.mjs and fails if a mirrored rate has drifted), the
+      # four-axis threshold matrix in both directions, sealed vs unsealed
+      # rates on the same files, "the first 36 of these 400 fit", and the
+      # handler's refusal to take the browser's arithmetic on trust — plus the
+      # assertion that an ordinary upload's request body is still byte for
+      # byte the one this endpoint has always taken. Offline: no file is
+      # parsed, no provider called, no database touched.
+      - name: Upload estimate — the quote, the threshold, and the server's re-check
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-ingest-estimate.mjs
+      # A refresh, a closed tab or a navigation must not cost a lawyer typed
+      # work. Three parts: the saver and the keyed draft store driven with
+      # injected timers and a fake storage (debounce, one serial writer, an
+      # unchanged document is never written, a failed save stays dirty and
+      # retries); the REAL useAutosave hook and the guard in a real DOM (the
+      # mirror lands under user+item, pagehide flushes, a second account sees
+      # none of it, `beforeunload` is attached only while something is
+      # unsaved); and narrow source assertions so a later edit that removes
+      # the wiring turns this red. Offline: no network, no React rendering of
+      # anything but a bare probe component. jsdom is installed --no-save here
+      # the same way the card-pin step above installs it.
+      - name: No lost work — autosave, drafts, and the guard
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs

@@ -1,11 +1,12 @@
 import type { LLMStreamCallbacks } from './types';
+import type { LlmRecordFields } from './features';
 import { findModel } from './providers';
 import { adapters } from './adapters';
 import { routeRequest, selectRelevantChunks, estimateTokens } from './router';
 import { llmAuthHeader } from './auth';
 import { llmErrorText } from './refusals';
 
-export interface GenerateOptions {
+export interface GenerateOptions extends LlmRecordFields {
   modelId: string;
   instruction: string;
   contextFiles: { name: string; content: string }[];
@@ -30,7 +31,7 @@ export interface GenerateResult {
 const SYSTEM_PROMPT = 'You are an AI assistant inside The Vault, a secure document workspace. The user may provide context documents and an instruction. Follow the instruction precisely, using the provided documents as reference. Produce professional, well-formatted output.';
 
 export async function generate(options: GenerateOptions): Promise<GenerateResult | undefined> {
-  const { modelId, instruction, contextFiles, callbacks, signal, matterId } = options;
+  const { modelId, instruction, contextFiles, callbacks, signal, matterId, feature, documentIds } = options;
 
   const found = findModel(modelId);
   if (!found) {
@@ -82,11 +83,16 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
     res = await fetch('/api/llm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await llmAuthHeader()) },
+      // `feature` and `documentIds` ride in the ENVELOPE, beside provider and
+      // matterId — never inside `body`, which is forwarded to the provider
+      // verbatim. What leaves the server is unchanged by recording.
       body: JSON.stringify({
         provider: provider.id,
         model: model.apiModelId,
         body: requestBody,
         matterId,
+        feature,
+        documentIds,
       }),
       signal,
     });

@@ -146,8 +146,15 @@ export default function ActivityFeed({ matterId, matterNames, maxItems }: Props)
           <div className="rounded-lg border border-[rgba(255,255,255,0.14)] overflow-hidden divide-y divide-[rgba(255,255,255,0.06)]">
             {g.items.map((e, i) => {
               const Icon = ICON[e.event_type] ?? Activity;
-              const matterLabel =
-                !matterId && matterNames ? matterNames.get(e.matter_id) : null;
+              // Which matter this row came from, when that is not the one
+              // being looked at. The dashboard's cross-matter feed labels
+              // every row from the map it holds; a matter's own Updates tab
+              // has shown its SUB-matters' rows since the roll-up fix
+              // (PR #175) and said nothing about which, so "B. Fixture
+              // uploaded Exhibit 12" could be any of four depositions.
+              const matterLabel = !matterId
+                ? (matterNames ? matterNames.get(e.matter_id) : null)
+                : e.matter_name;
               return (
                 <button
                   key={`${e.event_type}-${e.ref_id}-${e.occurred_at}-${i}`}

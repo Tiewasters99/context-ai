@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import ModalPortal from '@/components/ui/ModalPortal';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -35,6 +36,15 @@ import {
   createContentItem,
   useContentInvalidate,
 } from '@/hooks/useContentItems';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAutosave } from '@/hooks/useUnsavedGuard';
+import { saveStatusLine } from '@/lib/draft-store';
+
+/** What is saved for a list: its name and its items, written together. */
+interface ListDraft {
+  title: string;
+  items: ChecklistItem[];
+}
 
 interface ChecklistItem {
   id: string;
@@ -138,7 +148,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const navigate = useNavigate();
   // Geometry is remembered per list, not per view type — one list left small
   // in a corner must not drag every other list into that same corner.
-  const { cardRef, toggleFullscreen } = useDraggableResizable(
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable(
     embedded || !id ? undefined : `cs.listview.card.${id}`,
     { boundToViewport: true },
   );
@@ -178,6 +188,49 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   // server's.
   const savingRef = useRef(false);
 
+  // ONE writer for this list, serialized: a debounced write from typing and
+  // an immediate one from a checkbox can no longer overlap, and a failure
+  // keeps the list dirty and retries instead of vanishing into console.error.
+  const { user } = useAuth();
+  const listDraftRef = useRef<ListDraft>({ title: '', items: [] });
+  const saver = useAutosave<ListDraft>({
+    userId: user?.id,
+    itemId: id,
+    // See the note on `mirror` in useUnsavedGuard: a list item is a line, not
+    // a manuscript, and every structural edit here already lands at once.
+    mirror: false,
+    save: async (value) => {
+      if (!id) return;
+      savingRef.current = true;
+      try {
+        await updateContentItem(id, {
+          title: value.title || 'Untitled List',
+          content: { items: value.items },
+        });
+        adoptedRef.current = JSON.stringify(value.items);
+        invalidate.invalidateItem(id);
+      } finally {
+        savingRef.current = false;
+      }
+    },
+  });
+  const { change: changeDraft, adopt: adoptDraft, flush: flushDraft } = saver;
+  const dirtyRef = useRef(false);
+  dirtyRef.current = saver.status.dirty;
+
+  /** A deliberate edit — write it now. */
+  const commitNow = (patch: Partial<ListDraft>): Promise<boolean> => {
+    listDraftRef.current = { ...listDraftRef.current, ...patch };
+    changeDraft(listDraftRef.current);
+    return flushDraft();
+  };
+  /** Typing — write it when the typing stops. */
+  const commitSoon = (patch: Partial<ListDraft>) => {
+    listDraftRef.current = { ...listDraftRef.current, ...patch };
+    changeDraft(listDraftRef.current);
+  };
+
+
   useEffect(() => { itemsRef.current = items; }, [items]);
 
   useEffect(() => { hydrated.current = false; sweptFor.current = null; adoptedRef.current = null; }, [id]);
@@ -192,10 +245,15 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     const serverItems = readListContent(item.content);
     const serverJson = JSON.stringify(serverItems);
     if (serverJson === adoptedRef.current) return;
-    if (savingRef.current) return;   // our write is in flight — it wins
+    // Our write is in flight, or typed text is waiting to go: either way
+    // this copy outranks the server's echo.
+    if (savingRef.current || dirtyRef.current) return;
     adoptedRef.current = serverJson;
     setItems(serverItems);
     itemsRef.current = serverItems;
+    // This IS the server's copy: the saver's baseline, not a change.
+    listDraftRef.current = { title: item.title, items: serverItems };
+    adoptDraft(listDraftRef.current);
     if (!hydrated.current) {
       setTitle(item.title);
       if (titleRef.current) titleRef.current.textContent = item.title;
@@ -227,7 +285,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
         setTimeout(() => draftInputRef.current?.focus(), 0);
       }
     }
-  }, [item]);
+  }, [item, adoptDraft]);
 
   // Scroll the linked item into view and flash it, once the list is up.
   useEffect(() => {
@@ -259,42 +317,19 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     return () => { cancelled = true; };
   }, [spaceId, spaceType]);
 
-  const persistItems = async (next: ChecklistItem[]) => {
-    if (!id) return;
-    setSaving(true);
-    savingRef.current = true;
-    try {
-      await updateContentItem(id, { content: { items: next } });
-      adoptedRef.current = JSON.stringify(next);
-      invalidate.invalidateItem(id);
-    } catch (e) {
-      console.error('save failed', e);
-    } finally {
-      setSaving(false);
-      savingRef.current = false;
-    }
-  };
+  const persistItems = (next: ChecklistItem[]) => commitNow({ items: next });
 
-  const persistTitle = async (next: string) => {
-    if (!id) return;
-    setSaving(true);
-    savingRef.current = true;
-    try {
-      await updateContentItem(id, { title: next || 'Untitled List' });
-      invalidate.invalidateItem(id);
-    } catch (e) {
-      console.error('title save failed', e);
-    } finally {
-      setSaving(false);
-      savingRef.current = false;
-    }
-  };
+  const persistTitle = (next: string) => commitNow({ title: next });
 
   const handleTitleBlur = () => {
     const next = (titleRef.current?.textContent ?? '').trim();
     if (next === title) return;
     setTitle(next);
-    persistTitle(next);
+    void persistTitle(next);
+  };
+
+  const handleTitleInput = () => {
+    commitSoon({ title: (titleRef.current?.textContent ?? '').trim() });
   };
 
   // Returns the new item's id so callers (the bottom-input Enter handler)
@@ -361,8 +396,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
         i.id === itemId ? { ...i, linked_page_id: page.id } : i,
       );
       setItems(next);
-      await updateContentItem(item.id, { content: { items: next } });
-      invalidate.invalidateItem(item.id);
+      await persistItems(next);
       invalidate.invalidateList(
         { spaceId: item.space_id, spaceType: item.space_type },
         'page',
@@ -419,8 +453,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
       );
       setItems(next);
       itemsRef.current = next;
-      await updateContentItem(item.id, { content: { items: next } });
-      invalidate.invalidateItem(item.id);
+      await persistItems(next);
     } catch (e) {
       console.error('sub-matter setup failed', e);
     } finally {
@@ -486,6 +519,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
               ref={titleRef}
               contentEditable
               suppressContentEditableWarning
+              onInput={handleTitleInput}
               onBlur={handleTitleBlur}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); } }}
               title="Click to rename this list"
@@ -493,7 +527,10 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
             />
             <div className="flex items-center justify-between mb-4">
               <p className="text-[12px] text-white/55">
-                {saving ? 'Saving…' : `${doneCount} of ${items.length} complete · ${progress}%`}
+                {saving
+                  ? 'Saving…'
+                  : saveStatusLine(saver.status)
+                    ?? `${doneCount} of ${items.length} complete · ${progress}%`}
               </p>
               <div className="flex items-center gap-1">
                 <button
@@ -534,6 +571,12 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
                       sortable={sortMode === 'manual'}
                       onToggle={() => updateItem(it.id, { done: !it.done })}
                       onChangeText={(text) => updateItem(it.id, { text })}
+                      onTypeText={(text) => {
+                        const next = itemsRef.current.map((i) => (i.id === it.id ? { ...i, text } : i));
+                        setItems(next);
+                        itemsRef.current = next;
+                        commitSoon({ items: next });
+                      }}
                       onChangeDue={(due) => updateItem(it.id, { due: due || null })}
                       onDelete={() => deleteItem(it.id)}
                       onEnter={(currentText) => insertItemAfter(it.id, currentText)}
@@ -609,6 +652,8 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            {/* Fix in place. See the note in PageView. */}
+            {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <CanvasPinToggle kind="list" id={id} title={title || item?.title || 'Untitled List'} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>
@@ -649,6 +694,9 @@ interface SortableItemProps {
   sortable: boolean;
   onToggle: () => void;
   onChangeText: (text: string) => void;
+  /** Every keystroke. The list debounces it, so a refresh mid-word costs
+   *  nothing; onChangeText still fires on blur and flushes. */
+  onTypeText: (text: string) => void;
   onChangeDue: (due: string) => void;
   onDelete: () => void;
   onEnter: (currentText: string) => string;
@@ -659,7 +707,7 @@ interface SortableItemProps {
   subMatterDisabledReason: string | null;
 }
 
-function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
+function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onTypeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -711,8 +759,12 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
       <input
         type="text"
         value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => { if (text !== item.text) onChangeText(text); }}
+        onChange={(e) => { setText(e.target.value); onTypeText(e.target.value); }}
+        // No `text !== item.text` guard: onTypeText has already synced the
+        // item, so the guard would short-circuit blur and leave the debounce
+        // pending. Committing an unchanged value writes nothing (the saver
+        // compares signatures), so this is free and it flushes.
+        onBlur={() => onChangeText(text)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();

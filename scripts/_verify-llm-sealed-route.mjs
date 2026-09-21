@@ -40,6 +40,17 @@
 import handler from '../api/llm.mjs';
 import { sealedRouteFor, SEALED_PROVIDER } from '../lib/llm-sealed-route.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
+import { readFile } from 'node:fs/promises';
+import { SEALED_PEN_PREAMBLE_TEXT, SEALED_PEN_PREAMBLE_MARKER, SEALED_PEN_PREAMBLE_VERSION } from '../lib/pen-preambles.mjs';
+
+// The pen's preamble (lib/pen-preambles.mjs) goes in FRONT of whatever system
+// prompt the feature supplied, and the feature's prompt stays byte-identical
+// after it. Every sealed-body assertion below is written as
+// `withPreamble('<the feature's own prompt>')`, so if the preamble ever
+// stopped being applied — or were applied twice — these cases fail rather
+// than merely the ones that mention it by name.
+const withPreamble = (featurePrompt) => `${SEALED_PEN_PREAMBLE_TEXT}\n\n${featurePrompt}`;
+const markerCount = (s) => String(s).split(SEALED_PEN_PREAMBLE_MARKER).length - 1;
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -84,8 +95,20 @@ let meterCalls = [];
 const consumeArgs = () => meterCalls.find((c) => c.fn === 'usage_consume')?.args ?? null;
 const actualArgs = () => meterCalls.find((c) => c.fn === 'usage_record_actual')?.args ?? null;
 
+// The matter's Record (migration 064 + 073) writes through the SAME PostgREST
+// host as the meter, so it has to be routed before the fall-through below:
+// without this every ledger_append counted as a usage_record_actual, and
+// actualArgs() — a .find(), i.e. the FIRST match — answered with a ledger
+// payload that has no p_cents_actual in it. Answering `ok` here keeps the
+// sealed path's "the record was written" branch true, which is the branch
+// every pre-existing case in this file was written against.
+let ledgerCalls = [];
 function meterRpc(url, init) {
   const args = (() => { try { return JSON.parse(init.body || '{}'); } catch { return {}; } })();
+  if (url.endsWith('/rpc/ledger_append')) {
+    ledgerCalls.push(args);
+    return new Response(JSON.stringify([{ id: 'ev', seq: ledgerCalls.length, hash: 'h' }]), { status: 200 });
+  }
   if (url.endsWith('/rpc/usage_consume')) {
     meterCalls.push({ fn: 'usage_consume', args });
     if (meter.mode === 'undeployed') {
@@ -118,6 +141,7 @@ const nonBedrock = () => providerHosts().filter((h) => !h.startsWith('bedrock-ma
 function witness(tier, upstream) {
   requests = [];
   meterCalls = [];
+  ledgerCalls = [];
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
     requests.push({ url: u, host: safeHost(u), init });
@@ -256,7 +280,9 @@ console.log('\nTier B, Bedrock credentials PRESENT — the sealed route');
   const sent = JSON.parse(up[0].init.body);
   eq('body: model is the sealed pen, not the model the browser asked for', sent.model, 'moonshotai.kimi-k2.5');
   eq('body: streamed upstream with usage', [sent.stream, sent.stream_options?.include_usage], [true, true]);
-  eq('body: the Anthropic `system` became a system message', sent.messages[0], { role: 'system', content: 'You are an AI assistant inside The Vault…' });
+  eq('body: the Anthropic `system` became a system message, behind the pen preamble', sent.messages[0], { role: 'system', content: withPreamble('You are an AI assistant inside The Vault…') });
+  eq('body: exactly ONE preamble on it', markerCount(sent.messages[0].content), 1);
+  eq("body: the feature's own prompt is byte-identical after the preamble", sent.messages[0].content.slice(SEALED_PEN_PREAMBLE_TEXT.length + 2), 'You are an AI assistant inside The Vault…');
   eq('body: the user turn survived verbatim', sent.messages[1], { role: 'user', content: 'Summarise the lease.' });
   if (!('temperature' in sent)) pass('body: no temperature — Kimi rejects any value but 1'); else fail('temperature was sent', sent.temperature);
   eq('body: max_tokens carried over (no tool, no headroom)', sent.max_tokens, 4096);
@@ -295,7 +321,8 @@ console.log('\nTier B — an OpenAI-shaped caller (the Editor on its Kimi route)
   withBedrock();
   const res = await call({ tier: 'B', provider: 'fireworks', model: 'accounts/fireworks/models/kimi-k3', body: OPENAI_TOOL_BODY, upstream: bedrockOk(CANNED_TOOL) });
   const sent = JSON.parse(providerRequests()[0].init.body);
-  eq('body: the system message survived', sent.messages[0], { role: 'system', content: 'Edit the section.' });
+  eq('body: the system message survived, behind the pen preamble', sent.messages[0], { role: 'system', content: withPreamble('Edit the section.') });
+  eq('body: exactly ONE preamble on the OpenAI-shaped path too', markerCount(sent.messages[0].content), 1);
   eq('body: max_tokens clamped, so a caller that already added headroom does not add it twice', sent.max_tokens, 32_000);
   const json = res.json();
   eq('response: the OpenAI shape the Editor parses', openaiToolInput(json), { node_id: 'n-7', confidence: 0.9 });
@@ -337,6 +364,10 @@ console.log('\nTier B — the Bedrock Messages route (BEDROCK_MODEL=anthropic.*)
   eq('the path is the Bedrock Messages route', new URL(up.url).pathname, '/anthropic/v1/messages');
   const sent = JSON.parse(up.init.body);
   eq('body: model is the env-selected sealed pen', sent.model, 'anthropic.claude-opus-5');
+  // The other wire shape: here the preamble is a `system` FIELD, not a leading
+  // message. Both Bedrock routes carry it, once, in front of the feature's own.
+  eq('body: the pen preamble leads the `system` field, feature prompt intact behind it', sent.system, withPreamble('Classify the document.'));
+  eq('body: exactly ONE preamble on the Messages route', markerCount(sent.system), 1);
   eq('body: the tool kept its Anthropic shape', sent.tools?.[0]?.input_schema, SCHEMA);
   eq('body: the named tool_choice is preserved on this route', sent.tool_choice, { type: 'tool', name: 'file_bucket' });
   if (!('thinking' in sent)) pass('body: no `thinking` block — extended thinking fights a named tool_choice'); else fail('thinking was sent', sent.thinking);
@@ -588,6 +619,49 @@ console.log('\nThe adapter fails closed on its own');
   eq('a Tier-A refusal (the Moonshot sandbox) is not a sealed substitution', sealedRouteFor({ gate: { ok: false, status: 403, error: 'tier_violation', tier: 'A' }, provider: 'moonshot', body: ANTHROPIC_STREAM_BODY }), null);
   const bad = sealedRouteFor({ gate: { ok: false, status: 403, error: 'tier_violation', tier: 'B' }, provider: 'anthropic', body: 'not json at all' });
   eq('a body that is not JSON is refused, not forwarded', bad?.refusal?.body?.error, 'sealed_route_untranslatable');
+}
+
+// ── the pen preamble, at the level of the route itself ──────────────────
+// The cases above prove it on the wire through the real handler, on both
+// Bedrock routes. These prove what is awkward to reach that way: a feature
+// that sends no system prompt at all, idempotence, and the fact that nothing
+// in production can turn the preamble off.
+console.log('\nThe pen preamble on the sealed route');
+{
+  withBedrock();
+  const gateB = { ok: false, status: 403, error: 'tier_violation', tier: 'B', provider: 'anthropic' };
+  const routeFor = (body, opts = {}) => sealedRouteFor({ gate: gateB, provider: 'anthropic', model: 'claude-opus-4-8', body, ...opts });
+
+  eq('the route reports which instructions it will carry', routeFor(ANTHROPIC_STREAM_BODY)?.preambleVersion, SEALED_PEN_PREAMBLE_VERSION);
+  eq('and reports none when the control arm turns it off', routeFor(ANTHROPIC_STREAM_BODY, { preamble: false })?.preambleVersion, null);
+
+  // A feature that sends no system prompt at all. Before the preamble the
+  // sealed pen was told literally nothing about where it was.
+  const noSystem = JSON.stringify({
+    model: 'claude-opus-4-8', max_tokens: 4096, stream: true,
+    messages: [{ role: 'user', content: 'Summarise the lease.' }],
+  });
+  const bare = await call({ tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: noSystem, upstream: bedrockOk(CANNED_TEXT) });
+  const sentBare = JSON.parse(providerRequests()[0].init.body);
+  eq('no feature prompt → the preamble IS the system message, with no stray separator', sentBare.messages[0], { role: 'system', content: SEALED_PEN_PREAMBLE_TEXT });
+  eq('...and the call still succeeded', bare.statusCode, 200);
+
+  // Idempotence: a feature that already carries the preamble (a retry that
+  // re-sends a prompt built from a previous sealed turn) does not get a second.
+  const prefixed = JSON.stringify({
+    model: 'claude-opus-4-8', max_tokens: 4096, stream: true,
+    system: withPreamble('You are an AI assistant inside The Vault…'),
+    messages: [{ role: 'user', content: 'Summarise the lease.' }],
+  });
+  await call({ tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: prefixed, upstream: bedrockOk(CANNED_TEXT) });
+  eq('an already-prefixed prompt is NOT prefixed twice', markerCount(JSON.parse(providerRequests()[0].init.body).messages[0].content), 1);
+
+  // The opt-out is for the offline eval only. If api/llm.mjs ever learns to
+  // pass it, a sealed matter could lose its instructions in production from a
+  // code path nobody is watching — so the handler's source is read here.
+  const handlerSrc = await readFile(new URL('../api/llm.mjs', import.meta.url), 'utf8');
+  if (!/preamble/.test(handlerSrc)) pass('api/llm.mjs never passes `preamble` — the opt-out is offline-only');
+  else fail('api/llm.mjs mentions `preamble`; the production route must not be able to turn it off', handlerSrc.match(/.*preamble.*/g)?.slice(0, 3));
 }
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED\n' : `\n${failures} CHECK(S) FAILED\n`);

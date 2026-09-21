@@ -4,6 +4,10 @@ export { renderToa, renderReport } from './render';
 export {
   FLAG_GLYPH,
   FLAG_LABEL,
+  UNREADABLE_CHECK_DETAIL,
+  citesChecked,
+  citesAccountedFor,
+  tallyFlags,
   type Cite,
   type CiteFlag,
   type CheckFlag,

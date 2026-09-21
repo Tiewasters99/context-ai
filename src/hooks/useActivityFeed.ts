@@ -3,9 +3,21 @@
 // the Dashboard cross-matter feed (matterId undefined). React Query dedupes
 // by key, so calling this hook from several components with the same args
 // issues a single network request.
+//
+// A matter's Updates are the matter's AND its sub-matters'. Until 2026-09-20
+// this filtered on `.eq('matter_id', matterId)`, so opening a parent matter
+// showed nothing that happened inside it — the same bug migration 012 fixed
+// for search. `matterspace_descendants` expands the tree (SECURITY INVOKER,
+// so it only ever returns matters the caller can already see), and the read
+// is paged, because PostgREST answers at most 1,000 rows however large a
+// limit is asked for.
 
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { matterDescendantIds, readAllPages } from '@/lib/matter-record/fetch';
+import type { RecordClient, SelectBuilder } from '@/lib/matter-record/types';
+
+const client = supabase as unknown as RecordClient;
 
 export interface ActivityEvent {
   matter_id: string;
@@ -15,23 +27,59 @@ export interface ActivityEvent {
   ref_id: string;
   title: string;
   actor_name: string | null;
+  /**
+   * The name of the SUB-matter a row came from, when the feed is scoped to a
+   * matter and the row is not that matter's own. Null otherwise — including
+   * on the cross-matter dashboard feed, which labels its rows from the
+   * `matterNames` map it already holds.
+   */
+  matter_name: string | null;
 }
 
-type RawEvent = Omit<ActivityEvent, 'actor_name'>;
+type RawEvent = Omit<ActivityEvent, 'actor_name' | 'matter_name'>;
+
+const COLUMNS = 'matter_id, event_type, actor_id, occurred_at, ref_id, title';
 
 export function useActivityFeed(matterId: string | undefined, limit = 60) {
   return useQuery({
     queryKey: ['activity_feed', matterId ?? 'all', limit],
     queryFn: async (): Promise<ActivityEvent[]> => {
-      let q = supabase
-        .from('activity_feed')
-        .select('matter_id, event_type, actor_id, occurred_at, ref_id, title')
-        .order('occurred_at', { ascending: false })
-        .limit(limit);
-      if (matterId) q = q.eq('matter_id', matterId);
-      const { data, error } = await q;
-      if (error) throw error;
-      const events = (data ?? []) as RawEvent[];
+      // Order on (occurred_at, ref_id) so paging is a total order and no row
+      // can appear on two pages while another appears on none.
+      const build = (): SelectBuilder<RawEvent> => {
+        const query = client
+          .from('activity_feed')
+          .select<RawEvent>(COLUMNS)
+          .order('occurred_at', { ascending: false })
+          .order('ref_id', { ascending: false });
+        return query;
+      };
+
+      let events: RawEvent[] = [];
+      // Sub-matter names, for the label the feed puts on a row that is not
+      // this matter's own. Only asked for when the tree actually has
+      // sub-matters, so the common case costs nothing.
+      const subMatterNames = new Map<string, string>();
+      if (matterId) {
+        const ids = await matterDescendantIds(client, matterId);
+        const { rows, error } = await readAllPages<RawEvent>(
+          () => build().in('matter_id', ids),
+          limit,
+        );
+        if (error) throw new Error(error.message ?? 'Failed to load activity');
+        events = rows;
+        if (ids.length > 1) {
+          const { data: matters } = await supabase
+            .from('matterspaces')
+            .select('id, name')
+            .in('id', ids.filter((id) => id !== matterId));
+          for (const m of matters ?? []) subMatterNames.set(m.id, m.name);
+        }
+      } else {
+        const { rows, error } = await readAllPages<RawEvent>(build, limit);
+        if (error) throw new Error(error.message ?? 'Failed to load activity');
+        events = rows;
+      }
 
       // Resolve actor display names in one batched query. If profiles RLS
       // hides other users, those simply fall back to a null name and the
@@ -54,6 +102,7 @@ export function useActivityFeed(matterId: string | undefined, limit = 60) {
       return events.map((e) => ({
         ...e,
         actor_name: e.actor_id ? names.get(e.actor_id) ?? null : null,
+        matter_name: subMatterNames.get(e.matter_id) ?? null,
       }));
     },
   });

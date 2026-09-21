@@ -60,6 +60,16 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_KEY;
 process.env.GOOGLE_OAUTH_CLIENT_ID = 'stub-client-id.apps.googleusercontent.test';
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'stub-client-secret';
 process.env.CONNECTIONS_ENC_KEY = 'stub-connections-encryption-key-not-a-secret';
+// The two drives added in the OneDrive/Dropbox lane. Fake values, present only
+// so the handler is CONFIGURED and reaches the gate — an unconfigured service
+// answers 503 before the gate runs, which would make every assertion below
+// vacuous for those two paths. (scripts/_verify-cloud-drives.mjs owns the
+// unconfigured case.)
+process.env.MS_OAUTH_CLIENT_ID = 'stub-ms-client-id';
+process.env.MS_OAUTH_CLIENT_SECRET = 'stub-ms-client-secret';
+process.env.MS_OAUTH_TENANT = 'common';
+process.env.DROPBOX_APP_KEY = 'stub-dropbox-app-key';
+process.env.DROPBOX_APP_SECRET = 'stub-dropbox-app-secret';
 
 // The extension endpoints mint a short-lived user JWT (ES256). Signing is
 // local; this key is generated fresh for the run and never leaves the process.
@@ -74,6 +84,7 @@ process.env.CONNECTIONS_ENC_KEY = 'stub-connections-encryption-key-not-a-secret'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const { default: driveExport } = await import('../api/drive-export.mjs');
+const { default: cloudExport } = await import('../api/cloud-export.mjs');
 const { default: pushToDrive } = await import('../api/ext/push-to-drive.mjs');
 const { default: gmailSend } = await import('../api/gmail-send.mjs');
 const { default: extDocuments } = await import('../api/ext/documents.mjs');
@@ -81,7 +92,7 @@ const { default: extMatters } = await import('../api/ext/matters.mjs');
 const { encrypt } = await import('../lib/connections-crypto.mjs');
 const {
   checkExport, exportsAreRecorded, exportEventKind, recordExport, exportedNote,
-  exportConfirmMessage, EXPORT_SERVICES, __setLedgerForTests,
+  exportConfirmMessage, EXPORT_SERVICES, __setLedgerForTests, __setLedgerImporterForTests,
 } = await import('../lib/export-gate.mjs');
 const { createClient } = await import('@supabase/supabase-js');
 const { matterTierWithClient } = await import('../lib/ai-tier-policy.mjs');
@@ -122,6 +133,7 @@ function install(w = {}) {
     docMatter: 'matter-child',
     hideParent: true,     // RLS hides the parent from the user-scoped client
     sealRoots: 'ok',      // for /api/ext/matters
+    ledger: 'ok',         // ledger_append: 'ok' | 'fail' | 'absent'
     ...w,
   };
   requests = [];
@@ -140,6 +152,11 @@ function install(w = {}) {
     if (host === 'oauth2.googleapis.com') return jsonRes(200, { access_token: 'stub-access-token', expires_in: 3600 });
     if (host === 'www.googleapis.com') return driveAnswer(url);
     if (host === 'gmail.googleapis.com') return jsonRes(200, { id: 'draft-1', message: { id: 'msg-1' } });
+    if (host === 'login.microsoftonline.com') return jsonRes(200, { access_token: 'stub-ms-access-token', refresh_token: 'stub-ms-refresh-2', expires_in: 3600 });
+    if (host === 'graph.microsoft.com') return graphAnswer(url, init);
+    if (host === MS_UPLOAD_HOST) return jsonRes(200, { id: 'onedrive-file-1', name: DOC.source_filename, webUrl: 'https://onedrive.test/f/onedrive-file-1' });
+    if (host === 'api.dropboxapi.com') return dropboxApiAnswer(url);
+    if (host === 'content.dropboxapi.com') return dropboxContentAnswer(url);
     return jsonRes(500, { error: 'unexpected_host', host });
   };
 }
@@ -150,7 +167,28 @@ const hosts = () => [...new Set(requests.map((r) => r.host))];
 const outside = () => requests.filter((r) => r.host !== SUPA_HOST);
 const outsideHosts = () => [...new Set(outside().map((r) => r.host))];
 const storageReads = () => requests.filter((r) => r.url.includes('/storage/v1/'));
-const uploads = () => requests.filter((r) => r.url.includes('/upload/'));
+// What counts as "the bytes left the building", per provider. Google and Gmail
+// put /upload/ in the path; OneDrive sends them to a pre-authenticated session
+// URL on its own host; Dropbox posts them to a content endpoint. The session
+// START calls are deliberately not counted — the file arrives on the chunk PUT
+// (OneDrive) or the finish (Dropbox), and "exactly one upload" should mean one
+// file, not one HTTP call.
+const MS_UPLOAD_HOST = 'upload.onedrive.test';
+const pathOf = (u) => { try { return new URL(u).pathname; } catch { return String(u); } };
+const uploads = () => requests.filter((r) =>
+  r.url.includes('/upload/')
+  || r.host === MS_UPLOAD_HOST
+  || pathOf(r.url) === '/2/files/upload'
+  || pathOf(r.url) === '/2/files/upload_session/finish');
+// What actually reached the Record, as PostgREST would have received it.
+const ledgerCalls = () => requests.filter((r) => r.host === SUPA_HOST && r.url.includes('/rpc/ledger_append'));
+const ledgerBody = (i = 0) => { try { return JSON.parse(ledgerCalls()[i].body); } catch { return null; } };
+// A user-scoped client for the few checks that drive lib/export-gate directly
+// rather than through a handler. Same anon key and bearer the handlers use.
+const userClient = () => createClient(SUPABASE_URL, 'anon-stub-not-a-key', {
+  global: { headers: { Authorization: 'Bearer stub-session-jwt' } },
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 const jsonRes = (status, obj) => new Response(JSON.stringify(obj), {
   status, headers: { 'content-type': 'application/json' },
@@ -200,6 +238,23 @@ function supabaseAnswer(url, init) {
   if (url.includes('/rest/v1/rpc/matterspace_descendants')) {
     return jsonRes(200, [{ id: 'matter-child' }]);
   }
+  // The matter's Record (migration 064). Reachable here because the gate now
+  // calls the REAL lib/ledger.mjs, which goes through the real supabase-js
+  // client — so what this harness inspects is the RPC that would reach the
+  // database, not an assertion about a fake.
+  if (url.includes('/rest/v1/rpc/ledger_append')) {
+    if (world.ledger === 'fail') {
+      return jsonRes(403, { code: '42501', message: 'matter matter-child is not accessible', details: null, hint: null });
+    }
+    if (world.ledger === 'absent') {
+      return jsonRes(404, {
+        code: 'PGRST202',
+        message: 'Could not find the function public.ledger_append(...) in the schema cache',
+        details: null, hint: null,
+      });
+    }
+    return jsonRes(200, { id: 'event-1', seq: 1, hash: 'f'.repeat(64), chain_key: 'matter-child' });
+  }
   if (url.includes('/rest/v1/matterspaces')) {
     // 'error' breaks the TIER WALK only (its select is the giveaway), so the
     // case under test is a seal that cannot be read — not a database that is
@@ -224,9 +279,42 @@ function supabaseAnswer(url, init) {
     const row = all[decodeURIComponent(id ?? '')];
     if (!row) return jsonRes(200, []);
     if (row.hidden && !isServiceRole(init)) return jsonRes(200, []); // RLS
-    return jsonRes(200, [{ id: row.id, parent_matterspace_id: row.parent_matterspace_id, ai_tier: row.ai_tier }]);
+    // `name` is here for /api/cloud-export, which reads it (user-scoped) to
+    // decide the folder the copy lands in. The tier walk ignores it.
+    return jsonRes(200, [{ id: row.id, name: row.name, parent_matterspace_id: row.parent_matterspace_id, ai_tier: row.ai_tier }]);
   }
   return jsonRes(404, { message: 'no stub route', url });
+}
+
+// ── the two other drives, faked ──────────────────────────────────────────────
+// Deterministic answers only: section 9 compares the outbound requests of the
+// gated handler and main's byte for byte, so nothing here may vary per call.
+
+function graphAnswer(url, init) {
+  if (url.includes('/createUploadSession')) {
+    return jsonRes(200, { uploadUrl: `https://${MS_UPLOAD_HOST}/session/abc`, expirationDateTime: '2030-01-01T00:00:00Z' });
+  }
+  if (url.endsWith('/me/drive/special/approot')) return jsonRes(200, { id: 'approot-id' });
+  // A folder lookup: `…/items/{id}:/{name}`. The first export finds nothing
+  // and creates it; the POST to /children answers with the new folder.
+  if ((init.method || 'GET').toUpperCase() === 'POST' && url.endsWith('/children')) {
+    let name = null;
+    try { name = JSON.parse(String(init.body)).name; } catch { /* not ours */ }
+    return jsonRes(201, { id: `folder-${name}` });
+  }
+  return jsonRes(404, { error: { code: 'itemNotFound', message: 'not found (stub)' } });
+}
+
+function dropboxApiAnswer(url) {
+  if (url.includes('/oauth2/token')) return jsonRes(200, { access_token: 'stub-dbx-access-token', expires_in: 14400 });
+  if (url.includes('/2/files/create_folder_v2')) return jsonRes(200, { metadata: { id: 'dbx-folder' } });
+  if (url.includes('/2/auth/token/revoke')) return jsonRes(200, {});
+  return jsonRes(404, { error_summary: 'no stub route' });
+}
+
+function dropboxContentAnswer(url) {
+  if (url.includes('/2/files/upload_session/start')) return jsonRes(200, { session_id: 'dbx-session-1' });
+  return jsonRes(200, { id: 'id:dbx-file-1', name: DOC.source_filename, path_display: `/Contextspaces/Calder v. Atlas/${DOC.source_filename}` });
 }
 
 function driveAnswer(url) {
@@ -282,7 +370,18 @@ function stripGate(src) {
   return { stripped: out.join('\n'), removed };
 }
 
+// One handler can serve two destinations (/api/cloud-export takes the service
+// in its body), so the same file appears twice in PATHS. Reconstruct it once.
+const mainCopies = new Map();
+
 async function loadMainCopy(rel) {
+  if (mainCopies.has(rel)) return mainCopies.get(rel);
+  const loaded = await buildMainCopy(rel);
+  mainCopies.set(rel, loaded);
+  return loaded;
+}
+
+async function buildMainCopy(rel) {
   const current = readFileSync(join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
   const { stripped, removed } = stripGate(current);
   check(removed > 0, `${rel}: the gate is wired in with removable markers`, { removed });
@@ -337,9 +436,15 @@ function readsLikeAWarning(msg) {
 }
 
 const PATHS = [
-  { name: '/api/drive-export', rel: 'api/drive-export.mjs', handler: driveExport, body: (x) => ({ documentId: 'doc-1', folderName: 'Contextspaces', ...x }), call: post },
-  { name: '/api/ext/push-to-drive', rel: 'api/ext/push-to-drive.mjs', handler: pushToDrive, body: (x) => ({ documentId: 'doc-1', ...x }), call: (h, b) => post(h, b, { token: CSP_TOKEN }) },
-  { name: '/api/gmail-send', rel: 'api/gmail-send.mjs', handler: gmailSend, body: (x) => ({ documentId: 'doc-1', ...x }), call: post },
+  { name: '/api/drive-export', rel: 'api/drive-export.mjs', handler: driveExport, service: 'google_drive', party: 'Google', body: (x) => ({ documentId: 'doc-1', folderName: 'Contextspaces', ...x }), call: post },
+  { name: '/api/ext/push-to-drive', rel: 'api/ext/push-to-drive.mjs', handler: pushToDrive, service: 'google_drive', party: 'Google', body: (x) => ({ documentId: 'doc-1', ...x }), call: (h, b) => post(h, b, { token: CSP_TOKEN }) },
+  { name: '/api/gmail-send', rel: 'api/gmail-send.mjs', handler: gmailSend, service: 'gmail', party: 'Google', body: (x) => ({ documentId: 'doc-1', ...x }), call: post },
+  // The same handler, twice. /api/cloud-export takes the service in its body,
+  // so both drives run the WHOLE table below — every assertion the three
+  // Google routes get, OneDrive and Dropbox get too, including the egress
+  // witness and the negative control.
+  { name: '/api/cloud-export (onedrive)', rel: 'api/cloud-export.mjs', handler: cloudExport, service: 'onedrive', party: 'Microsoft', body: (x) => ({ service: 'onedrive', documentId: 'doc-1', ...x }), call: post },
+  { name: '/api/cloud-export (dropbox)', rel: 'api/cloud-export.mjs', handler: cloudExport, service: 'dropbox', party: 'Dropbox', body: (x) => ({ service: 'dropbox', documentId: 'doc-1', ...x }), call: post },
 ];
 
 try {
@@ -399,12 +504,20 @@ try {
   }
 
   // ── 4. Sealed and confirmed, with the ledger present ────────────────────
-  console.log('\nSealed, confirmed, and the ledger IS present (injected — lib/ledger.mjs is another lane)');
+  // The REAL lib/ledger.mjs (W1, migration 064), reached through the real
+  // supabase-js client, so what is inspected below is the RPC that would hit
+  // the database. A hand-written fake used to stand here, and it hid a defect
+  // it could not have caught: record() is `record(client, opts = {})`, whose
+  // Function.length is 1, so this module's arity guess called `record(event)`
+  // — the event where the client belongs. record() then returned
+  // {ok:false,'no supabase client'} WITHOUT throwing, and the gate answered
+  // `recorded: true`. A lawyer would have been told a sealed export was in
+  // the matter's Record while nothing had been written.
+  console.log('\nSealed, confirmed, and the ledger IS present (the real lib/ledger.mjs)');
+  __setLedgerForTests(undefined);
+  __setLedgerImporterForTests();   // the real dynamic import
   for (const p of PATHS) {
-    const written = [];
     install({ tier: 'B' });
-    __setLedgerForTests({ record: async (event) => { written.push(event); } });
-
     const warned = await p.call(p.handler, p.body());
     check(warned.json?.will_record === true, `${p.name}: will_record is true`, warned.json);
     check(/written to this matter/i.test(warned.json?.message ?? ''),
@@ -412,35 +525,111 @@ try {
 
     install({ tier: 'B' });
     const res = await p.call(p.handler, p.body({ confirm_leave_seal: true }));
-    check(res.statusCode === 200 && written.length === 1, `${p.name}: recordExport ran exactly once`, { status: res.statusCode, writes: written.length });
-    const ev = written[0] ?? {};
-    check(ev.document_id === 'doc-1' && ev.document_title === DOC.title && ev.actor === 'user-1' && typeof ev.at === 'string',
-      `${p.name}: the record says what left, from whom, and when`, ev);
-    check(ev.matter_id === 'matter-child' && ev.tier === 'B', `${p.name}: and which matter it left`, ev);
-    check(ev.destination?.service === (p.name === '/api/gmail-send' ? 'gmail' : 'google_drive') && ev.destination?.party === 'Google',
-      `${p.name}: and who received it`, ev.destination);
+    check(res.statusCode === 200 && ledgerCalls().length === 1,
+      `${p.name}: exactly one event is appended`, { status: res.statusCode, writes: ledgerCalls().length });
+    const ev = ledgerBody() ?? {};
+    check(ev.p_kind === 'file.exported', `${p.name}: recorded as a file.exported`, ev.p_kind);
+    check(ev.p_payload?.document_id === 'doc-1' && ev.p_payload?.title === DOC.title,
+      `${p.name}: the record says what left`, ev.p_payload);
+    check(ev.p_actor_kind === 'user' && ev.p_actor_ref === 'user-1',
+      `${p.name}: and from whom — the WHEN is 064's own server clock, not a client timestamp`, { kind: ev.p_actor_kind, ref: ev.p_actor_ref });
+    check(ev.p_matter === 'matter-child' && ev.p_payload?.tier === 'B',
+      `${p.name}: and which matter it left, on that matter's chain`, { matter: ev.p_matter, tier: ev.p_payload?.tier });
+    check(ev.p_payload?.destination?.service === p.service
+      && ev.p_payload?.destination?.party === p.party,
+      `${p.name}: and who received it`, ev.p_payload?.destination);
     const payload = JSON.stringify(ev);
     check(!payload.includes('CONFIDENTIAL-PAYLOAD') && !payload.includes(DOC.storage_path) && !/refresh|access_token|Bearer/i.test(payload),
       `${p.name}: METADATA ONLY — no content, no storage path, no token`, payload.slice(0, 300));
-    check(ev.destination?.recipient_domain === null, `${p.name}: no recipient address is kept`, ev.destination);
+    check(ev.p_payload?.destination?.recipient_domain === null, `${p.name}: no recipient address is kept`, ev.p_payload?.destination);
     check(res.json?.seal?.recorded === true && /recorded in the matter/i.test(res.json?.seal?.note ?? ''),
       `${p.name}: and the user is told it was recorded`, res.json?.seal);
   }
-  __setLedgerForTests(null);
 
-  // ── 5. The seam itself ──────────────────────────────────────────────────
-  console.log('\nThe ledger seam');
-  __setLedgerForTests(undefined); // un-inject: probe lib/ledger.mjs for real
+  // The write is REFUSED by the database — the gate must not claim a record.
+  // This is the case the old arity guess turned into a silent `recorded:true`.
+  console.log('\nSealed, confirmed, and the Record REFUSES the write');
+  {
+    install({ tier: 'B', ledger: 'fail' });
+    const res = await post(driveExport, { documentId: 'doc-1', confirm_leave_seal: true });
+    check(res.statusCode === 200 && uploads().length === 1,
+      'warn and record, never warn and refuse: the export still happens', { status: res.statusCode, uploads: uploads().length });
+    check(res.json?.seal?.recorded === false, 'but it is NOT reported as recorded', res.json?.seal);
+    check(/could not be written/i.test(res.json?.seal?.note ?? ''),
+      'and the banner says the record FAILED, not that records do not exist yet', res.json?.seal?.note);
+  }
+  // 064 merged but not yet pasted: absent, not failed — the honest sentence.
+  {
+    install({ tier: 'B', ledger: 'absent' });
+    const res = await post(driveExport, { documentId: 'doc-1', confirm_leave_seal: true });
+    check(res.json?.seal?.recorded === false && /not written to any record yet/i.test(res.json?.seal?.note ?? ''),
+      'ledger_append NOT DEPLOYED (PGRST202) reads as absent, not as a failure', res.json?.seal);
+  }
+
+  // ── 5. The seam itself: absent, present, present-but-broken ─────────────
+  // None of the three depends on the filesystem any more. lib/ledger.mjs now
+  // EXISTS, so "with lib/ledger.mjs absent…" was asserting nothing about the
+  // sentence it printed; the absent case is modelled by an IMPORT that
+  // rejects the way Node rejects a missing module.
+  console.log('\nThe ledger seam — all three states, none of them the filesystem');
+  const moduleNotFound = () => {
+    const err = new Error("Cannot find module './ledger.mjs' imported from lib/export-gate.mjs");
+    err.code = 'ERR_MODULE_NOT_FOUND';
+    return Promise.reject(err);
+  };
+
+  __setLedgerForTests(undefined);
+  __setLedgerImporterForTests(moduleNotFound);
   check((await exportsAreRecorded()) === false,
-    'with lib/ledger.mjs absent the probe answers false instead of throwing');
+    'ABSENT: an import that rejects with ERR_MODULE_NOT_FOUND answers false instead of throwing');
+  {
+    install({ tier: 'B' });
+    const out = await recordExport({
+      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'matter-child',
+      documentId: 'doc-1', title: DOC.title, destination: { service: 'google_drive' },
+    });
+    check(out.recorded === false && out.reason === 'ledger_absent' && ledgerCalls().length === 0,
+      'ABSENT: nothing is written, and nothing is attempted', { out: out.reason, calls: ledgerCalls().length });
+    const note = exportedNote({ destination: { service: 'google_drive' }, recorded: false, reason: 'ledger_absent' });
+    check(/not written to any record yet/i.test(note) && !/could not be written/i.test(note),
+      'ABSENT: the wording is the truthful one — no record exists to have failed', note);
+    const msg = exportConfirmMessage({ tier: 'B', destination: { service: 'google_drive' }, title: 't', willRecord: false });
+    check(/nothing logging that it did/i.test(msg) && !/written to this matter/i.test(msg),
+      'ABSENT: and the dialog promises no record it cannot keep', msg);
+  }
+
+  __setLedgerImporterForTests();   // restore the real import
+  check((await exportsAreRecorded()) === true,
+    'PRESENT: the real lib/ledger.mjs is found, and the probe says so');
+  {
+    install({ tier: 'B' });
+    const out = await recordExport({
+      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'matter-child',
+      documentId: 'doc-1', title: DOC.title, destination: { service: 'google_drive' },
+    });
+    check(out.recorded === true && ledgerCalls().length === 1,
+      'PRESENT: record() is called exactly once, and reports the write', { out: out.recorded, calls: ledgerCalls().length });
+    const ev = ledgerBody() ?? {};
+    check(ev.p_kind === 'file.exported' && ev.p_matter === 'matter-child' && ev.p_payload?.title === DOC.title,
+      'PRESENT: with the metadata, on the right chain', ev);
+    check(!JSON.stringify(ev).includes('CONFIDENTIAL-PAYLOAD') && !JSON.stringify(ev).includes(DOC.storage_path),
+      'PRESENT: and metadata ONLY');
+    const note = exportedNote({ destination: { service: 'google_drive' }, recorded: true });
+    check(/recorded in the matter/i.test(note), 'PRESENT: the banner says it is recorded', note);
+  }
+
   __setLedgerForTests({ record: async () => { throw new Error('ledger exploded'); } });
   {
-    const out = await recordExport({ userId: 'user-1', tier: 'B', matterId: 'm', documentId: 'd', title: 't', destination: { service: 'google_drive' } });
+    install({ tier: 'B' });
+    const out = await recordExport({
+      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'matter-child',
+      documentId: 'doc-1', title: DOC.title, destination: { service: 'google_drive' },
+    });
     check(out.recorded === false && out.reason === 'ledger_error',
-      'a ledger that throws does not blow up the export — it degrades to a log line and says recorded:false');
+      'THROWS: a ledger that throws does not blow up the export — it degrades to a log line and says recorded:false');
     const note = exportedNote({ destination: { service: 'google_drive' }, recorded: false, reason: 'ledger_error' });
     check(/could not be written/i.test(note) && !/not written to any record yet/i.test(note),
-      'and the user is told the record FAILED, not that records do not exist yet', note);
+      'THROWS: and the user is told the record FAILED, not that records do not exist yet', note);
   }
   __setLedgerForTests(null);
   check(exportEventKind({ service: 'gmail', delivery: 'draft' }) === 'file.exported',
@@ -506,7 +695,7 @@ try {
     const control = await p.call(MAIN[p.name], p.body());
     const controlSig = outsideSignature();
     check(gated.statusCode === 200 && control.statusCode === 200, `${p.name}: both export`, { gated: gated.statusCode, main: control.statusCode });
-    check(gatedSig === controlSig, `${p.name}: the requests to Google are byte-identical to main's`, { gated: gatedSig.slice(0, 200), main: controlSig.slice(0, 200) });
+    check(gatedSig === controlSig, `${p.name}: the requests to ${p.party} are byte-identical to the ungated file's`, { gated: gatedSig.slice(0, 200), main: controlSig.slice(0, 200) });
     check(JSON.stringify(gated.json) === JSON.stringify(control.json), `${p.name}: and so is the response body`, { gated: gated.json, main: control.json });
     check(gated.json?.seal === undefined, `${p.name}: no 'seal' key on an unsealed export`, gated.json);
   }
@@ -524,7 +713,7 @@ try {
     const res = await p.call(MAIN[p.name], p.body());
     check(res.statusCode === 200, `${p.name} on main: exports a SEALED matter's document without asking`, { status: res.statusCode });
     check(storageReads().length === 1 && uploads().length === 1,
-      `${p.name} on main: the bytes are read from storage and uploaded to Google`, { storage: storageReads().length, uploads: uploads().length });
+      `${p.name} on main: the bytes are read from storage and uploaded to ${p.party}`, { storage: storageReads().length, uploads: uploads().length });
     const sentBytes = requests.some((r) => bodySig(r.body).includes(FILE_BYTES.toString('base64')) || String(r.body ?? '').includes('CONFIDENTIAL-PAYLOAD'));
     check(sentBytes, `${p.name} on main: the document's own bytes leave the building — the checks above are not vacuous`);
   }

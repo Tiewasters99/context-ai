@@ -4,6 +4,7 @@ import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare 
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import type { EmbeddableViewProps } from '@/lib/canvas';
@@ -13,6 +14,9 @@ import {
   updateContentItem,
   useContentInvalidate,
 } from '@/hooks/useContentItems';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAutosave } from '@/hooks/useUnsavedGuard';
+import { saveStatusLine } from '@/lib/draft-store';
 
 type ColumnType = 'text' | 'number' | 'date' | 'checkbox';
 
@@ -91,6 +95,13 @@ function isColumnType(v: unknown): v is ColumnType {
   return v === 'text' || v === 'number' || v === 'date' || v === 'checkbox';
 }
 
+/** What is saved for a table: its name and its grid, written together. */
+interface TableDraft {
+  title: string;
+  columns: TableColumn[];
+  rows: TableRow[];
+}
+
 interface SortState {
   columnId: string;
   direction: 'asc' | 'desc';
@@ -101,7 +112,7 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
   const id = propId ?? params.id;
   const navigate = useNavigate();
   // Per-table geometry — see the matching note in ListView.
-  const { cardRef, toggleFullscreen } = useDraggableResizable(
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable(
     embedded || !id ? undefined : `cs.tableview.card.${id}`,
     { boundToViewport: true },
   );
@@ -112,12 +123,33 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
   const [title, setTitle] = useState('');
   const [columns, setColumns] = useState<TableColumn[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
-  const [saving, setSaving] = useState(false);
   const [sort, setSort] = useState<SortState | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const hydrated = useRef(false);
 
   useEffect(() => { hydrated.current = false; }, [id]);
+
+  // ONE writer for this table, serialized: a debounced write from typing in a
+  // cell and an immediate one from adding a row can no longer overlap, and a
+  // failure keeps the table dirty and retries.
+  const { user } = useAuth();
+  const tableDraftRef = useRef<TableDraft>({ title: '', columns: [], rows: [] });
+  const saver = useAutosave<TableDraft>({
+    userId: user?.id,
+    itemId: id,
+    // See the note on `mirror` in useUnsavedGuard: a cell holds a line, not a
+    // manuscript, and every structural edit here already lands at once.
+    mirror: false,
+    save: async (value) => {
+      if (!id) return;
+      await updateContentItem(id, {
+        title: value.title || 'Untitled Table',
+        content: { columns: value.columns, rows: value.rows },
+      });
+      invalidate.invalidateItem(id);
+    },
+  });
+  const { change: changeDraft, adopt: adoptDraft, flush: flushDraft } = saver;
 
   useEffect(() => {
     if (!item || hydrated.current) return;
@@ -126,40 +158,38 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
     setColumns(parsed.columns);
     setRows(parsed.rows);
     if (titleRef.current) titleRef.current.textContent = item.title;
+    // This IS the server's copy: the saver's baseline, not a change.
+    tableDraftRef.current = { title: item.title, columns: parsed.columns, rows: parsed.rows };
+    adoptDraft(tableDraftRef.current);
     hydrated.current = true;
-  }, [item]);
+  }, [item, adoptDraft]);
 
-  const persist = async (nextCols: TableColumn[], nextRows: TableRow[]) => {
-    if (!id) return;
-    setSaving(true);
-    try {
-      await updateContentItem(id, { content: { columns: nextCols, rows: nextRows } });
-      invalidate.invalidateItem(id);
-    } catch (e) {
-      console.error('save failed', e);
-    } finally {
-      setSaving(false);
-    }
+  /** A deliberate edit — write it now. */
+  const commitNow = (patch: Partial<TableDraft>): Promise<boolean> => {
+    tableDraftRef.current = { ...tableDraftRef.current, ...patch };
+    changeDraft(tableDraftRef.current);
+    return flushDraft();
+  };
+  /** Typing — write it when the typing stops. */
+  const commitSoon = (patch: Partial<TableDraft>) => {
+    tableDraftRef.current = { ...tableDraftRef.current, ...patch };
+    changeDraft(tableDraftRef.current);
   };
 
-  const persistTitle = async (next: string) => {
-    if (!id) return;
-    setSaving(true);
-    try {
-      await updateContentItem(id, { title: next || 'Untitled Table' });
-      invalidate.invalidateItem(id);
-    } catch (e) {
-      console.error('title save failed', e);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const persist = (nextCols: TableColumn[], nextRows: TableRow[]) =>
+    commitNow({ columns: nextCols, rows: nextRows });
+
+  const persistTitle = (next: string) => commitNow({ title: next });
 
   const handleTitleBlur = () => {
     const next = (titleRef.current?.textContent ?? '').trim();
     if (next === title) return;
     setTitle(next);
-    persistTitle(next);
+    void persistTitle(next);
+  };
+
+  const handleTitleInput = () => {
+    commitSoon({ title: (titleRef.current?.textContent ?? '').trim() });
   };
 
   const addRow = () => {
@@ -201,8 +231,13 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
     if (sort?.columnId === colId) setSort(null);
   };
 
+  // Typing in a cell. It updates the table in front of the person AND starts
+  // the clock on a save, so a refresh mid-cell no longer costs the cell.
+  // Blur still commits immediately, as it always did.
   const setCellLocal = (rowId: string, colId: string, value: string | number | boolean | null) => {
-    setRows(rows.map((r) => r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r));
+    const next = rows.map((r) => r.id === rowId ? { ...r, cells: { ...r.cells, [colId]: value } } : r);
+    setRows(next);
+    commitSoon({ columns, rows: next });
   };
 
   const persistCell = (rowId: string, colId: string, value: string | number | boolean | null) => {
@@ -269,11 +304,13 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
               ref={titleRef}
               contentEditable
               suppressContentEditableWarning
+              onInput={handleTitleInput}
               onBlur={handleTitleBlur}
               className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled_Table'] empty:before:text-white/30"
             />
             <p className="text-[11px] text-white/30 mb-6">
-              {saving ? 'Saving…' : `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`}
+              {saveStatusLine(saver.status)
+                ?? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`}
             </p>
 
             <div className="overflow-x-auto rounded-lg border border-[rgba(255,255,255,0.22)]">
@@ -375,6 +412,8 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
+            {/* Fix in place. See the note in PageView. */}
+            {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <CanvasPinToggle kind="table" id={id} title={title || item?.title || 'Untitled Table'} />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>

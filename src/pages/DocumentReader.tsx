@@ -30,6 +30,7 @@ import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { fetchPaged } from '@/lib/paged';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
@@ -39,6 +40,8 @@ import {
 } from '@/lib/document-animations';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
+import DriveExportControl from '@/components/reader/DriveExportControl';
+import { DRIVE_KINDS, DRIVE_LABEL, type DriveKind } from '@/lib/export-connectors';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
@@ -162,14 +165,22 @@ async function passageCountOf(documentId: string): Promise<number> {
 // empty: a scanned opinion selects nothing and pdf.js reads nothing, but
 // the words are here.
 async function indexedDocumentText(documentId: string): Promise<string> {
-  const { data } = await supabase
-    .from('passages')
-    .select('sequence_number, text')
-    .eq('document_id', documentId)
-    .eq('summary_level', 0)
-    .order('sequence_number', { ascending: true })
-    .limit(5000);
-  return ((data ?? []) as { text: string | null }[])
+  // PostgREST answers an unbounded read with at most db-max-rows — 1,000 here
+  // — and a 200. A client .limit(5000) does not raise it (PR #173), so "Copy
+  // the whole document" on a scanned deposition silently stopped at passage
+  // 1,000 and the lawyer pasted a truncated record with nothing saying so.
+  const { rows } = await fetchPaged<{ text: string | null }>(
+    (from, to) => supabase
+      .from('passages')
+      .select('sequence_number, text')
+      .eq('document_id', documentId)
+      .eq('summary_level', 0)
+      .order('sequence_number', { ascending: true })
+      .order('id')
+      .range(from, to),
+    { label: 'document text' },
+  );
+  return rows
     .map((p) => (p.text ?? '').trim())
     .filter(Boolean)
     .join('\n\n');
@@ -393,15 +404,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       if (kind === 'unsupported') {
         // Not a file the reader can draw — but if ingest indexed its text,
         // serve that as a text edition. The error page is the last resort.
-        const { data: passages } = await supabase
-          .from('passages')
-          .select('sequence_number, text')
-          .eq('document_id', data.id)
-          .eq('summary_level', 0)
-          .order('sequence_number', { ascending: true })
-          .limit(2000);
+        // Paged, for the same reason as indexedDocumentText above: .limit(2000)
+        // is capped at 1,000 by PostgREST, so the text edition of a long
+        // OCR'd file simply ended mid-document. The read is wrapped because
+        // fetchPaged throws and this branch sits outside the load's try — a
+        // failed read must land on the error page, never as an unhandled
+        // rejection.
+        let passages: { text: string | null }[] = [];
+        try {
+          ({ rows: passages } = await fetchPaged<{ text: string | null }>(
+            (from, to) => supabase
+              .from('passages')
+              .select('sequence_number, text')
+              .eq('document_id', data.id)
+              .eq('summary_level', 0)
+              .order('sequence_number', { ascending: true })
+              .order('id')
+              .range(from, to),
+            { label: 'document text' },
+          ));
+        } catch {
+          passages = [];
+        }
         if (cancelled) return;
-        if (passages && passages.length > 0) {
+        if (passages.length > 0) {
           setFileKind('text');
           setDocHtml(plainTextHtml(passages.map((p) => p.text ?? '').join('\n\n')));
           setTotalPages(1);
@@ -1124,16 +1150,23 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const hasDriveConnection = connections.some(
     (c) => c.kind === 'google_drive' && c.status === 'connected',
   );
+  // Every drive with a live connection, in a stable order. One of them and the
+  // toolbar control is the single button it has always been; two or three and
+  // it becomes a short menu; none and it offers the way to connect one.
+  const connectedDrives = DRIVE_KINDS.filter((kind) =>
+    connections.some((c) => c.kind === kind && c.status === 'connected'),
+  );
   const [driveExporting, setDriveExporting] = useState(false);
   const [driveBanner, setDriveBanner] = useState<
-    { kind: 'ok'; text: string; link: string | null }
+    { kind: 'ok'; text: string; link: string | null; linkLabel?: string }
     | { kind: 'err'; text: string }
     | null
   >(null);
   // When the matter is sealed the server answers 409 instead of exporting, and
   // hands back the sentence to show. Confirming re-issues the same request with
-  // confirm_leave_seal — per copy, never remembered.
-  const [sealPrompt, setSealPrompt] = useState<{ message: string } | null>(null);
+  // confirm_leave_seal — per copy, never remembered. `drive` is carried so the
+  // confirmation re-issues the export the user actually asked for.
+  const [sealPrompt, setSealPrompt] = useState<{ message: string; drive: DriveKind } | null>(null);
   const handleDriveExport = useCallback(async (opts?: { confirmLeaveSeal?: boolean }) => {
     if (!id || !doc?.storage_path || driveExporting) return;
     setDriveExporting(true);
@@ -1155,7 +1188,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       });
       const body = await resp.json().catch(() => ({}));
       if (resp.status === 409 && body.error === 'export_needs_confirmation') {
-        setSealPrompt({ message: body.message });
+        setSealPrompt({ message: body.message, drive: 'google_drive' });
         return;
       }
       if (!resp.ok || !body.ok) {
@@ -1182,6 +1215,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         // left and whether that is recorded. Never re-worded here.
         text: `Saved to your Google Drive${body.folderName ? ` › ${body.folderName}` : ''}.${body.seal?.note ? ` ${body.seal.note}` : ''}`,
         link: body.webViewLink ?? null,
+        linkLabel: 'Open in Drive',
       });
     } catch (e) {
       setDriveBanner({ kind: 'err', text: e instanceof Error ? e.message : 'Drive export failed.' });
@@ -1189,6 +1223,73 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       setDriveExporting(false);
     }
   }, [id, doc, driveExporting]);
+
+  // OneDrive and Dropbox go through /api/cloud-export — the same export gate,
+  // the same 409-then-confirm dance, a different provider at the far end.
+  // Google keeps its own path above, untouched.
+  const handleCloudExport = useCallback(async (
+    service: Exclude<DriveKind, 'google_drive'>,
+    opts?: { confirmLeaveSeal?: boolean },
+  ) => {
+    if (!id || !doc?.storage_path || driveExporting) return;
+    const label = DRIVE_LABEL[service];
+    setDriveExporting(true);
+    setDriveBanner(null);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      if (!session) throw new Error('Not signed in');
+      const resp = await fetch('/api/cloud-export', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          service,
+          documentId: id,
+          ...(opts?.confirmLeaveSeal ? { confirm_leave_seal: true } : {}),
+        }),
+      });
+      const body = await resp.json().catch(() => ({}));
+      if (resp.status === 409 && body.error === 'export_needs_confirmation') {
+        setSealPrompt({ message: body.message, drive: service });
+        return;
+      }
+      if (!resp.ok || !body.ok) {
+        const msg =
+          body.error === 'not_configured' ? `${label} is not available yet.`
+          : body.error === 'cloud_needs_reconnect' ? `Reconnect ${label} in Connections — your access expired.`
+          : body.error === 'cloud_not_connected' ? `Connect ${label} in Connections first.`
+          : body.error === 'file_too_large' ? `File is too large for ${label} export (75 MB cap).`
+          : typeof body.detail === 'string' && body.detail ? `${label}: ${body.detail}`
+          : body.error || `${label} export failed.`;
+        console.error('cloud-export failed:', body);
+        setDriveBanner({ kind: 'err', text: msg });
+        return;
+      }
+      setDriveBanner({
+        kind: 'ok',
+        // The server's own words on the seal, never re-worded here.
+        text: `Saved to your ${label}${body.folderPath ? ` › ${body.folderPath}` : ''}${
+          body.name ? ` as “${body.name}”` : ''
+        }.${body.seal?.note ? ` ${body.seal.note}` : ''}`,
+        // Dropbox is connected with one write-only scope, so it hands back no
+        // link; the banner then names the folder and offers no dead button.
+        link: body.link ?? null,
+        linkLabel: `Open in ${label}`,
+      });
+    } catch (e) {
+      setDriveBanner({ kind: 'err', text: e instanceof Error ? e.message : `${label} export failed.` });
+    } finally {
+      setDriveExporting(false);
+    }
+  }, [id, doc, driveExporting]);
+
+  // One entry point for the toolbar, the phone menu and the seal dialog.
+  const runDriveExport = useCallback((kind: DriveKind, opts?: { confirmLeaveSeal?: boolean }) => {
+    if (kind === 'google_drive') return void handleDriveExport(opts);
+    return void handleCloudExport(kind, opts);
+  }, [handleDriveExport, handleCloudExport]);
 
   const [downloading, setDownloading] = useState(false);
 
@@ -2189,16 +2290,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             <Download size={15} />
           </button>
-          {hasDriveConnection && (
-            <button
-              onClick={() => void handleDriveExport()}
-              disabled={driveExporting || !doc?.storage_path}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-              title={driveExporting ? 'Saving to Drive…' : 'Save to Google Drive'}
-            >
-              <HardDrive size={15} />
-            </button>
-          )}
+          <DriveExportControl
+            connected={connectedDrives}
+            busy={driveExporting}
+            disabled={!doc?.storage_path}
+            onExport={(kind) => runDriveExport(kind)}
+            onConnect={() => navigate('/app/connections')}
+          />
+
           <button
             onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
             className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
@@ -2237,9 +2336,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     { icon: <FileText size={14} />, label: 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml) },
                     { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
                     { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
-                    ...(hasDriveConnection ? [
-                      { icon: <HardDrive size={14} />, label: 'Save to Google Drive', run: () => void handleDriveExport(), disabled: driveExporting || !doc?.storage_path },
-                    ] : []),
+                    ...(connectedDrives.length
+                      ? connectedDrives.map((kind) => ({
+                          icon: <HardDrive size={14} />,
+                          label: `Save to ${DRIVE_LABEL[kind]}`,
+                          run: () => runDriveExport(kind),
+                          disabled: driveExporting || !doc?.storage_path,
+                        }))
+                      : [
+                          // Never nothing: a reader with no drive connected is
+                          // told the feature exists and where to switch it on.
+                          { icon: <HardDrive size={14} />, label: 'Connect a drive to export…', run: () => navigate('/app/connections') },
+                        ]),
                     { icon: theme === 'parchment' ? <Moon size={14} /> : <Sun size={14} />, label: theme === 'parchment' ? 'Dark mode' : 'Light mode', run: () => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment')) },
                   ]}
                 />
@@ -2297,7 +2405,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               rel="noreferrer"
               className="underline hover:no-underline"
             >
-              Open in Drive
+              {driveBanner.linkLabel ?? 'Open in Drive'}
             </a>
           )}
           <button
@@ -2313,12 +2421,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       {sealPrompt && (
         <SealedExportDialog
           message={sealPrompt.message}
-          confirmLabel="Save to Google Drive"
+          confirmLabel={`Save to ${DRIVE_LABEL[sealPrompt.drive]}`}
           busy={driveExporting}
           onCancel={() => setSealPrompt(null)}
           onConfirm={() => {
+            const drive = sealPrompt.drive;
             setSealPrompt(null);
-            void handleDriveExport({ confirmLeaveSeal: true });
+            runDriveExport(drive, { confirmLeaveSeal: true });
           }}
         />
       )}

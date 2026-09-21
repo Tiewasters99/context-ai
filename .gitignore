@@ -45,6 +45,12 @@ books/
 # bulk-import ledgers (local run state, per-machine)
 .import-state/
 
+# The negative control in scripts/_verify-llm-record.mjs materialises
+# origin/main's api/llm.mjs here so it can be imported at the same depth (its
+# own `../lib/...` imports must resolve). Deliberately NOT under api/, which
+# Vercel would deploy.
+.tmp-negative/
+
 # Claude Code per-clone state (permissions, agent worktrees) and the Tesseract
 # language cache that tesseract.js drops in the working directory.
 .claude/settings.local.json

@@ -13,6 +13,7 @@ import { X } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
+import PinToggle from '@/components/ui/PinToggle';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import ContextspacesCalendar from '@/components/calendar/ContextspacesCalendar';
 import { CALENDAR_CARD_ID, type EmbeddableViewProps } from '@/lib/canvas';
@@ -21,7 +22,7 @@ const COVER_KEY = 'cs.calendar.cover';
 
 export default function CalendarView({ embedded = false, onClose }: EmbeddableViewProps = {}) {
   const navigate = useNavigate();
-  const { cardRef, toggleFullscreen } = useDraggableResizable(
+  const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } = useDraggableResizable(
     embedded ? undefined : 'cs.calendar.page',
     { boundToViewport: true },
   );
@@ -70,6 +71,8 @@ export default function CalendarView({ embedded = false, onClose }: EmbeddableVi
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
+            {/* Fix in place. See the note in PageView. */}
+            {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <CanvasPinToggle kind="calendar" id={CALENDAR_CARD_ID} title="Calendar" />
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>

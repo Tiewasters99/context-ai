@@ -9,6 +9,7 @@ import { Share2, ChevronRight } from 'lucide-react';
 import type { Connection } from '@/hooks/useConnections';
 import {
   EXPORT_CONNECTORS,
+  type ConnectionKind,
   type ExportContext,
 } from '@/lib/export-connectors';
 
@@ -21,6 +22,8 @@ type Props = {
 const KIND_LABEL: Record<string, string> = {
   google_drive: 'Google Drive',
   gmail: 'Gmail',
+  onedrive: 'OneDrive',
+  dropbox: 'Dropbox',
 };
 
 export default function ExportMenu({ connections, ctx, disabled }: Props) {
@@ -47,7 +50,7 @@ export default function ExportMenu({ connections, ctx, disabled }: Props) {
     };
   }, [open]);
 
-  const isConnected = (kind?: 'google_drive' | 'gmail') =>
+  const isConnected = (kind?: ConnectionKind) =>
     !kind ||
     connections.some((c) => c.kind === kind && c.status === 'connected');
 

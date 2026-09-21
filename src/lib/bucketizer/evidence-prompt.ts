@@ -19,6 +19,7 @@
 // fails plainly instead.
 
 import { MAX_QUOTE_CHARS, MIN_QUOTE_CHARS } from './quote';
+import { buildRepairContent } from '@/lib/llm/contract';
 
 export const EVIDENCE_TOOL_NAME = 'submit_supporting_passages';
 export const EVIDENCE_TOOL_DESCRIPTION =
@@ -195,18 +196,18 @@ export function buildEvidenceRepairContent(
   reason: string,
   sent: unknown,
 ): string {
-  let shown: string;
-  try { shown = JSON.stringify(sent).slice(0, 1200); } catch { shown = String(sent).slice(0, 1200); }
-  return (
-    `${original}\n\n`
-    + `## Your previous answer could not be used\n`
-    + `Reason: ${reason}.\n`
-    + `You sent: ${shown}\n\n`
-    + `Answer again by calling the tool, with exactly this shape and nothing else:\n`
-    + `{"evidence":[{"ref":"<a ref that appears in the excerpts above, e.g. P3>",`
-    + `"quote":"<words copied character for character out of that excerpt>",`
-    + `"why":"<one sentence>"}]}\n`
-    + `If none of the excerpts supports the issue, answer {"evidence":[]}. `
-    + `Do not invent refs, and do not write a quotation that is not in the excerpt.`
-  );
+  // The prose moved to `src/lib/llm/contract.ts` when the tree and cite-check
+  // gained the same discipline. Byte-identical to what this built before.
+  return buildRepairContent({
+    original,
+    reason,
+    sent,
+    shape:
+      `{"evidence":[{"ref":"<a ref that appears in the excerpts above, e.g. P3>",`
+      + `"quote":"<words copied character for character out of that excerpt>",`
+      + `"why":"<one sentence>"}]}`,
+    rules:
+      `If none of the excerpts supports the issue, answer {"evidence":[]}. `
+      + `Do not invent refs, and do not write a quotation that is not in the excerpt.`,
+  });
 }

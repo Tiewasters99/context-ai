@@ -32,7 +32,7 @@
       "maxDuration": 60
     },
     "api/meeting-chat.mjs": {
-      "maxDuration": 60
+      "maxDuration": 300
     },
     "api/meeting-flag.mjs": {
       "maxDuration": 30
@@ -43,10 +43,34 @@
     "api/mediation-webhook.mjs": {
       "maxDuration": 30
     },
+    "api/billing-checkout.mjs": {
+      "maxDuration": 30
+    },
+    "api/billing-portal.mjs": {
+      "maxDuration": 30
+    },
+    "api/billing-credits-checkout.mjs": {
+      "maxDuration": 30
+    },
+    "api/billing-webhook.mjs": {
+      "maxDuration": 30
+    },
     "api/briefing-delta.mjs": {
       "maxDuration": 30
+    },
+    "api/cloud-export.mjs": {
+      "maxDuration": 60
     }
   },
+  "headers": [
+    {
+      "source": "/version.json",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, must-revalidate" },
+        { "key": "CDN-Cache-Control", "value": "no-store" }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/briefing/delta",
