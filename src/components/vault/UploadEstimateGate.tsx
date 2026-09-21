@@ -74,16 +74,21 @@ export function useUploadEstimateGate() {
     ]);
     const estimate = estimateUpload(items, { tier });
     const verdict = thresholdVerdict(estimate);
-    if (!verdict.over || !live.current) {
+    if (!verdict.over) {
       // Below the threshold there is no dialog, no declaration, and the
       // request that follows is byte-for-byte the one this product has always
       // sent.
       return { files, declarations: files.map(() => undefined) };
     }
+    // An above-threshold drop whose surface went away mid-measure reads as
+    // CANCELLED, not as "send it anyway": there is no longer anywhere to show
+    // the quote, and an upload nobody was quoted for is the thing this exists
+    // to prevent.
+    if (!live.current) return null;
 
     const wallet = await readUploadWallet();
     const fits = whatFits(estimate, remainingCents(wallet));
-    if (!live.current) return { files, declarations: files.map(() => undefined) };
+    if (!live.current) return null;
 
     return new Promise<GateResult | null>((resolve) => {
       const next = { files, estimate, reasons: verdict.reasons, wallet, fits, resolve };
