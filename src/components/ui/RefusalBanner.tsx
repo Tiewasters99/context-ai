@@ -14,12 +14,12 @@ import { useUpdateNotice, useVersionWatch } from '@/hooks/useAppVersion';
 // call — can still put a sentence in front of the person.
 //
 // The look is the Vault's existing floating notice (src/pages/Vault.tsx), not
-// a new visual system: same geometry, same two tones, one added. Opaque
+// a new visual system: same geometry, same two tones, two added. Opaque
 // background and a shadow rather than the translucent inline idiom, because
 // this lands over whatever route is open — including the Reader's parchment,
 // which is light.
 //
-// Three tones, and which one is used is a claim about what happened:
+// Four tones, and which one is used is a claim about what happened:
 //
 //   warn (gold)   the wallet or the rate window. Nothing is broken; the
 //                 product is doing what it was built to do.
@@ -27,18 +27,15 @@ import { useUpdateNotice, useVersionWatch } from '@/hooks/useAppVersion';
 //                 everywhere else in the app, and red here would read as
 //                 "something failed" when the seal holding is the feature.
 //   err  (red)    anything else — an expired session, a provider error.
+//   news (slate)  added 2026-09-20: this tab is running an older bundle than
+//                 the one deployed. Nothing failed and nothing is owed — it
+//                 is news, so neither gold nor red. The stale-chunk case
+//                 borrows the same tone rather than going red, because the
+//                 remedy is identical and the person has done nothing wrong.
 //
 // It is sticky until dismissed. A timer would be kinder to the eye and worse
 // for the person: a lawyer who steps away mid-upload has to come back to the
 // reason their work stopped, not to a screen that looks fine.
-
-//
-//   news (slate)  a fourth tone, added 2026-09-20: this tab is running an
-//                 older bundle than the one deployed. Nothing failed and
-//                 nothing is owed — it is news, so it is neither gold nor
-//                 red. The stale-chunk case borrows the same tone rather
-//                 than going red, because the remedy is identical and the
-//                 person has done nothing wrong.
 //
 // A server refusal and a version notice can both be true at once. The refusal
 // wins the one slot: it explains why a step the person just took stopped, and
