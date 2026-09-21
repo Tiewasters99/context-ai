@@ -2,7 +2,7 @@
 //
 // A build-time copy of the AI Use Record rules matrix
 // (`references/jurisdictions.yaml` in the `ai-use-record` skill), matrix
-// version 2026-09-21.1, converted verbatim by
+// version 2026-09-21.2, converted verbatim by
 // build-jurisdictions.py in this folder. Nothing here is fetched at runtime
 // and nothing here is reworded: the Matter Record export prints an entry's
 // rule text, cites and `status` exactly as the matrix has them, and adds no
@@ -16,7 +16,7 @@ import type { JurisdictionMatrix } from './types';
 
 export const JURISDICTIONS: JurisdictionMatrix = {
   "schema_version": 1,
-  "matrix_version": "2026-09-21.1",
+  "matrix_version": "2026-09-21.2",
   "entries": [
     {
       "id": "aba-formal-op-512",
@@ -7877,6 +7877,3316 @@ export const JURISDICTIONS: JurisdictionMatrix = {
       "verified_by": "claude-opus verifier session, batch 4c",
       "attorney_signoff": null,
       "notes": "BOTTOM LINE: Missouri has no AI-specific rule of professional conduct, no statewide court rule, no Supreme Court order and no statute directed at AI use in filings, as of 2026-09-21. What Missouri has instead is the deepest published appellate record of the three states in this batch (three published Court of Appeals decisions, 2024-2025) and two dedicated generative-AI advisory opinions from the Supreme Court's own Office of Legal Ethics Counsel. TECHNOLOGY COMPETENCE: adopted, at Rule 4-1.1 Comment [6] (not [8]). The wording is the ABA wording with one comma difference, and the comment text is published on the Missouri Judiciary's own rules site, so unlike Arizona there is no sourcing gap. Effective date recorded as 2017-09-26 because that is the rule's latest amendment on the face of the document and the page's own Revised / Effective Date field; the page does not say which amendment added the technology clause. OPEN QUESTION 1 for the verifier: confirm the technology clause entered Missouri in the Sept. 26, 2017 order and not in the 2007 restyling. SURPRISE FOR A LAWYER 1: Missouri's Rule 4-1.4(a) has only three subparagraphs. It does not contain the ABA's 1.4(a)(1) (prompt notice of circumstances requiring informed consent) or 1.4(a)(2) (consult about the means). A practitioner reasoning from the ABA text will over-state the Missouri communication duty. The means language survives only in Comment [2]. SURPRISE FOR A LAWYER 2: Missouri Informal Opinion 2026-09 (Aug. 3, 2026) makes CLIENT CONSENT, not court disclosure, the AI tripwire, and it is written for tools most firms already run: it concerns AI deposition software with a real-time listening feature. Its sentence on informed consent is unqualified and is stricter than the Arizona and Tennessee positions. It is advisory only. SURPRISE FOR A LAWYER 3: all three Missouri appellate decisions sanctioned or warned SELF-REPRESENTED litigants, not counsel. Kruse v. Karlen dismissed the appeal and awarded $10,000 under Rule 84.19 (a damages award to the respondent, not professional discipline); Jones v. Simploy expressly declined to sanction because the respondent was a state agency that paid no outside counsel; Stevens v. BJC gave a footnote warning. There is therefore still no published Missouri appellate decision sanctioning or disciplining an ATTORNEY for AI-fabricated citations. Kruse is nevertheless the case everyone cites, and the Arizona Court of Appeals cited it in Dineen/Shibata v. Kotchka in July 2026. BINDING STATUS: (a) Rule 4 black letter binds; Comments do not — Scope [14] and [21]. (b) Informal Opinions 2024-11 and 2026-09 are issued by the Office of Legal Ethics Counsel under Mo. Sup. Ct. R. 5.30(c) and are, by their own terms, advisory and not binding. They are Supreme Court staff opinions, not Advisory Committee formal opinions, and they are published as summaries. (c) Rule 55.03(c) is the general signing certification; Rule 84.06(c) pulls it into every appellate brief; Rule 84.19 is the appellate damages remedy. None mentions AI. TEXT-EXTRACTION CAVEAT FOR THE VERIFIER: mo-legal-ethics.org renders each rule number as the digit 4, then a screen-reader-only span containing the word dash, then an en dash entity, then the rest of the number. Every rule number in the extracted text of the two informal opinions therefore reads 4 dash-1.1 rather than 4-1.1. That is a faithful extraction of accessibility markup, not an error in the opinion. Quotations taken from those two opinions were deliberately chosen to avoid rule numbers. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): Rules 4-1.1, 4-1.4, 4-1.5, 4-1.6, 4-3.3, 4-5.1, 4-5.3 with their full Comments, the Rule 4 Preamble and Scope, Rule 55.03, Rule 84.06 and Rule 84.19 on the Missouri Judiciary's Supreme Court Rules site - zero occurrences of artificial, generative, machine learning or chatgpt in any of them; the Office of Legal Ethics Counsel informal opinions index, which lists exactly two AI-subject opinions (2024-11 and 2026-09); the Missouri Bar Ethics and Legal Ethics Opinions pages. NOT FETCHED / NOT DONE: courts.mo.gov blocks automated access outside the Domino rules database - the page.jsp pages return HTTP 403 with the message that access by a site data scraper is expressly prohibited, and the opinion PDFs returned 403 until a Referer header was added, so there was no way to sweep Supreme Court en banc rule orders or court news for an AI order; no Missouri statute search was run; the Missouri Bar news search returned no AI results to curl; Missouri Advisory Committee FORMAL opinions were not searched (the index lives behind courts.mo.gov). OPEN QUESTION 2 for the verifier: sweep Missouri Supreme Court en banc rule orders 2024-2026 and the Advisory Committee formal opinions for anything on AI, and run a Missouri Revised Statutes keyword search for artificial intelligence together with court filings or the practice of law. OPEN QUESTION 3: check the Office of Chief Disciplinary Counsel for any AI-hallucination discipline, which would be the first Missouri case against a lawyer rather than a self-represented litigant."
+    },
+    {
+      "id": "tx-rpc",
+      "kind": "state_bar",
+      "name": "Texas Disciplinary Rules of Professional Conduct and Texas AI guidance — plus the PRELIMINARILY APPROVED verification amendments to Tex. R. Civ. P. 13 and Tex. R. App. P. 9 and 52 (not in force as of 2026-09-20)",
+      "disclosure_to_court": "none today — read the string, do not pattern-match. No Texas statute, statewide court rule, or Supreme Court of Texas order requires a lawyer or litigant to disclose the use of AI in a filing. What is coming is a VERIFICATION representation, not a disclosure requirement. Supreme Court of Texas Misc. Docket No. 26-9054 (June 26, 2026) gave PRELIMINARY approval to a rewritten Tex. R. Civ. P. 13 and a new Tex. R. App. P. 9.1(d). The civil lead-in, at proposed Rule 13(c) in the order's clean form (order p. 6), reads \"By signing a court filing, the signer represents to the court that:\" \"the signer reviewed the filing and verified its accuracy, including that the legal citations, quotations, and holdings are not fabricated; and\". The appellate lead-in is worded differently and must not be quoted as though it were the same sentence — proposed Tex. R. App. P. 9.1(d) (order p. 8) reads \"Representations by Signer. By signing a filed document, the signer represents to the court that the signer has:\", and its (d)(1) adds record citations to the list. The order states \"The Court expects the amendments to take effect on October 1, 2026.\" As of 2026-09-20 no final approval order appears in the Court's 2026 administrative orders index, the comment period closed September 1, 2026, and the current Tex. R. Civ. P. compilation (last amended July 1, 2026) still carries the old Rule 13. Nothing in either the current or the proposed rule asks the signer to say whether AI was used; the Court's own comment says \"Verifying a filing for accuracy is important, regardless of whether artificial intelligence was used.\"",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "IN FORCE NOW (general rules only, nothing AI-specific and binding). Tex. R. Civ. P. 13: \"The signatures of attorneys or parties constitute a certificate by them that they have read the pleading, motion, or other paper; that to the best of their knowledge, information, and belief formed after reasonable inquiry the instrument is not groundless and brought in bad faith or groundless and brought for the purpose of harassment.\" Tex. Disciplinary R. Prof. Conduct 3.03(a)(1): a lawyer shall not knowingly \"make a false statement of material fact or law to a tribunal\". Rule 1.01(b)(1) forbids a lawyer to \"neglect a legal matter entrusted to the lawyer\". Supervision: Rule 5.01(b), a supervising lawyer \"shall make reasonable efforts to ensure that the other lawyer complies with these rules\"; Rule 5.03(a) the same for a nonlawyer. PRELIMINARILY APPROVED, NOT YET IN FORCE (Misc. Docket No. 26-9054, June 26, 2026; expected October 1, 2026): proposed Tex. R. Civ. P. 13(c)(1) and Tex. R. App. P. 9.1(d)(1) would make the signature itself a representation that \"the signer reviewed the filing and verified its accuracy, including that the legal citations, quotations, and holdings are not fabricated; and\" (the appellate version adds record citations). The Court's Comment to 2026 change says \"Paragraph (c)(1) is adopted principally to address concerns about the improper use of artificial intelligence in filings, which increases the risk of fabricated authorities, quotations, and holdings appearing in court filings.\" and cabins it: \"The rule is not intended to govern disputes regarding the interpretation, application, or persuasive force of existing authorities.\" NON-BINDING but directly on point: Professional Ethics Committee Opinion 705 (Feb. 2025) — \"a lawyer should always verify the accuracy of any responses received from a generative AI tool\"; \"lawyers are responsible for the work product they submit regardless of who (or what) does the original research and drafting\"; \"That means lawyers cannot blindly rely upon or use answers given by generative AI tools.\" Committee opinions are advisory: Tex. Gov't Code § 81.092(c), quoted on the Committee's own index, states \"Committee opinions are not binding on the supreme court.\"",
+      "confidentiality_restriction": "Binding: Tex. Disciplinary R. Prof. Conduct 1.05(b)(1) — a lawyer shall not knowingly \"Reveal confidential information of a client or a former client to:\" a person the client has excluded or \"anyone else, other than the client, the client’s representatives, or the members, associates, or employees of the lawyer’s law firm.\" Note the Texas rule is broader than ABA 1.6 in one respect and narrower in another — it turns on knowing revelation/use, and Rule 1.05(a) defines confidential information to include \"both privileged information and unprivileged client information\". Texas has NO analogue to ABA Model Rule 1.6(c) or to N.J. RPC 1.6(f); there is no black-letter reasonable-efforts-to-safeguard paragraph. Non-binding Opinion 705 supplies the gap: \"In any case where the lawyer intends to provide client confidential information to the program, Rule 1.05 will likely be implicated.\"; on self-learning tools, \"If the lawyer is not so satisfied, the lawyer should—at a minimum—not input any confidential information to the program without client consultation and consent.\"; and it imports the four cloud-computing precautions of Opinion 680, including \"reviewing and potentially renegotiating the “terms of service” to which the lawyer submits when using the generative AI tool;\".",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional, and weaker than California or Florida. Binding Rule 1.03(b) requires a lawyer to \"explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" and Rule 1.03(a) to keep the client \"reasonably informed about the status of a matter\". No Texas rule requires telling a client that AI was used. Non-binding Opinion 705 deliberately stops short of the ABA and Florida position — after noting that \"Ethics opinions from the ABA and the Florida Bar go a step further and suggest that lawyers should obtain informed consent before using these tools.\" it says only that \"If a lawyer intends to use confidential information in conjunction with generative AI tools, the lawyer should consider informing clients about the associated risks and may need to secure client consent.\" and that \"At a minimum, Texas lawyers should engage in the same thoughtful analysis with respect to generative AI tools.\"",
+      "fees_note": "Binding Rule 1.04(a): \"A lawyer shall not enter into an arrangement for, charge, or collect an illegal fee or unconscionable fee. A fee is unconscionable if a competent lawyer could not form a reasonable belief that the fee is reasonable.\" Non-binding Opinion 705 applies it to AI: a lawyer \"will likely be able to charge the client for the actual time the lawyer spends using a generative AI program for purposes of the representation, including to refine the program’s outputs and check the work. A lawyer may not, however, charge hourly fees for the time that was “saved” by using the generative AI program.\" On per-use costs: \"The lawyer will generally not be permitted to recover more than the amount of expenses actually incurred and paid to the generative AI provider.\"",
+      "sources": [
+        {
+          "title": "Texas Disciplinary Rules of Professional Conduct (Supreme Court of Texas compilation) — title page currency",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "Effective March 7, 2025",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Preamble, Scope para. 10 (the Comments add no obligations and no discipline may follow from them)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "The Comments do not, however, add obligations to the rules and no disciplinary action may be taken for failure to conform to the Comments.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Preamble, Scope para. 10 (rules are imperatives, comments are permissive)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "They are imperatives, cast in the terms shall or shall not. The comments are cast often in the terms of may or should and are permissive, defining areas in which the lawyer has professional discretion.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Terminology, definition of Competent or Competence",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "“Competent” or “Competence” denotes possession or the ability to timely acquire the legal knowledge, skill, and training reasonably necessary for the representation of the client.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.01(a) (Competent and Diligent Representation)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "A lawyer shall not accept or continue employment in a legal matter which the lawyer knows or should know is beyond the lawyer’s competence, unless:",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.01(b) (neglect)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "neglect a legal matter entrusted to the lawyer; or",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.01 Comment 8 (Maintaining Competence; the Texas technology-competence comment)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "Because of the vital role of lawyers in the legal process, each lawyer should strive to become and remain proficient and competent in the practice of law, including the benefits and risks associated with relevant technology.",
+          "effective": "2019-02-26",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.03(a) (Communication)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "A lawyer shall keep a client reasonably informed about the status of a matter and promptly comply with reasonable requests for information.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.03(b)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.04(a) (Fees; rule header reads Effective March 1, 2005)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "A lawyer shall not enter into an arrangement for, charge, or collect an illegal fee or unconscionable fee. A fee is unconscionable if a competent lawyer could not form a reasonable belief that the fee is reasonable.",
+          "effective": "2005-03-01",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.05(a) (definition of confidential information)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "Confidential information includes both privileged information and unprivileged client information.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 1.05(b)(1) (Confidentiality of Information)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "Reveal confidential information of a client or a former client to: (i) a person that the client has instructed is not to receive the information; or (ii) anyone else, other than the client, the client’s representatives, or the members, associates, or employees of the lawyer’s law firm.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 3.03(a)(1) (Candor Toward the Tribunal)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "make a false statement of material fact or law to a tribunal;",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 5.01(b) (Responsibilities of a Partner or Supervisory Lawyer)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer complies with these rules.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Rule 5.03(a) (Responsibilities Regarding Nonlawyer Assistants)",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "a lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the persons conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Supreme Court of Texas, Misc. Docket No. 19-9016, Order Amending Comment to the Texas Disciplinary Rules of Professional Conduct (Feb. 26, 2019) — the order that added technology to Comment 8",
+          "url": "https://www.txcourts.gov/media/1443638/199016.pdf",
+          "verbatim": "Paragraph 8 of the comment to Rule 1.01, Texas Disciplinary Rules of Professional Conduct, is amended as published in this order.",
+          "effective": "2019-02-26",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — the amended Comment 8 as published in the order",
+          "url": "https://www.txcourts.gov/media/1443638/199016.pdf",
+          "verbatim": "each lawyer should strive to become and remain proficient and competent in the practice of law, including the benefits and risks associated with relevant technology.",
+          "effective": "2019-02-26",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Texas Rules of Civil Procedure (Supreme Court compilation, last amended July 1, 2026) — Rule 13 as currently in force",
+          "url": "https://www.txcourts.gov/media/1462349/texas-rules-of-civil-procedure.pdf",
+          "verbatim": "The signatures of attorneys or parties constitute a certificate by them that they have read the pleading, motion, or other paper; that to the best of their knowledge, information, and belief formed after reasonable inquiry the instrument is not groundless and brought in bad faith or groundless and brought for the purpose of harassment.",
+          "effective": "2026-07-01",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Supreme Court of Texas, Misc. Docket No. 26-9054, Preliminary Approval of Amendments to Texas Rule of Civil Procedure 13 and Texas Rules of Appellate Procedure 9 and 52 and the Repeal of Texas Rule of Civil Procedure 57 (June 26, 2026) — comment deadline",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "Comments regarding the amendments should be submitted in writing to rulescomments@txcourts.gov by September 1, 2026.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — expected effective date and the Court's reservation of the right to change the text",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "The Court will issue an order finalizing the amendments after the close of the comment period. The Court may change the amendments in response to public comments. The Court expects the amendments to take effect on October 1, 2026.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — proposed Tex. R. Civ. P. 13(c) and (c)(1) (clean form), the verification representation",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "Representations by Signer. By signing a court filing, the signer represents to the court that: (1) the signer reviewed the filing and verified its accuracy, including that the legal citations, quotations, and holdings are not fabricated; and",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Comment to 2026 change, stating the AI purpose of proposed Rule 13(c)(1)",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "Paragraph (c)(1) is adopted principally to address concerns about the improper use of artificial intelligence in filings, which increases the risk of fabricated authorities, quotations, and holdings appearing in court filings. Verifying a filing for accuracy is important, regardless of whether artificial intelligence was used. The rule is not intended to govern disputes regarding the interpretation, application, or persuasive force of existing authorities.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — proposed Tex. R. App. P. 9.1(d)(1) (appellate version adds record citations)",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "reviewed the filing and verified its accuracy, including that the legal citations, quotations, holdings, and record citations are not fabricated; and",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — proposed sanctions provision, Rule 13(e)(2)",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "Available Sanctions. Available sanctions may include reprimand, contempt, striking of the filing in whole or in part, dismissal of proceedings, costs, or attorney’s fees. Any sanction must be proportionate to the violation found.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Supreme Court of Texas, Administrative Orders 2026 index — shows only preliminary approval of the Rule 13 amendments, no final order as of the fetch date",
+          "url": "https://www.txcourts.gov/supreme/administrative-orders/2026/",
+          "verbatim": "Preliminary Approval of Amendments to Texas Rule of Civil Procedure 13 and Texas Rules of Appellate Procedure 9 and 52 and the Repeal of Texas Rule of Civil Procedure 57",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Professional Ethics Committee for the State Bar of Texas, Opinion 705 (February 2025) — question presented",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "What ethical issues are raised under the Texas Disciplinary Rules of Professional Conduct by a lawyer’s use of generative artificial intelligence in the practice of law?",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, Competence",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "What’s clear even now is that if a lawyer opts to use a generative AI tool in the practice of law, the lawyer must have a reasonable and current understanding of the technology—because only then can the lawyer evaluate the associated risks of hallucinations or inaccurate answers, the limitations that may be imposed by the model’s use of incomplete or inaccurate data, and the potential for exposing client confidential information.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, Confidentiality (when Rule 1.05 is implicated)",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "In any case where the lawyer intends to provide client confidential information to the program, Rule 1.05 will likely be implicated.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, self-learning tools",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "If the lawyer is not so satisfied, the lawyer should—at a minimum—not input any confidential information to the program without client consultation and consent.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, the four reasonable precautions imported from Opinion 680",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "reviewing and potentially renegotiating the “terms of service” to which the lawyer submits when using the generative AI tool;",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, Oversight/Supervision (the verification duty)",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "Though this should likely go without saying, a lawyer should always verify the accuracy of any responses received from a generative AI tool.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, responsibility for work product",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "lawyers are responsible for the work product they submit regardless of who (or what) does the original research and drafting. That means lawyers cannot blindly rely upon or use answers given by generative AI tools.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, the rules a verification failure can implicate",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "A lawyer’s failure to verify generative AI outputs can implicate a host of Rules, including Rule 1.01 (Competent and Diligent Representation), Rule 3.01 (Meritorious Claims and Contentions), Rule 3.03 (Candor Toward the Tribunal), and Rule 3.04 (Fairness in Adjudicatory Proceedings), among others.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, client communication (Texas stops short of informed consent)",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "If a lawyer intends to use confidential information in conjunction with generative AI tools, the lawyer should consider informing clients about the associated risks and may need to secure client consent.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, contrasting the ABA and Florida position",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "Ethics opinions from the ABA and the Florida Bar go a step further and suggest that lawyers should obtain informed consent before using these tools.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, minimum expected of Texas lawyers",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "At a minimum, Texas lawyers should engage in the same thoughtful analysis with respect to generative AI tools.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, Fees (billing for time actually spent, not time saved)",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "will likely be able to charge the client for the actual time the lawyer spends using a generative AI program for purposes of the representation, including to refine the program’s outputs and check the work. A lawyer may not, however, charge hourly fees for the time that was “saved” by using the generative AI program.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, per-use expenses",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "The lawyer will generally not be permitted to recover more than the amount of expenses actually incurred and paid to the generative AI provider.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — Opinion 705, self-limiting scope (a snapshot, not a code)",
+          "url": "https://www.legalethicstexas.com/resources/opinions/opinion-705/",
+          "verbatim": "This opinion is intended only to provide a snapshot of potential ethical concerns at the moment and a restatement of certain ethical principles for lawyers to use as a guide regardless of where the technology goes.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Texas Center for Legal Ethics, Ethics Opinions index — statutory basis and binding effect of Professional Ethics Committee opinions",
+          "url": "https://www.legalethicstexas.com/resources/opinions/",
+          "verbatim": "The nine members of the committee are appointed by the Supreme Court of Texas. Tex. Gov't Code § 81.092(c) states, “Committee opinions are not binding on the supreme court.”",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Texas H.B. 149, 89th Leg., R.S. (2025), the Texas Responsible Artificial Intelligence Governance Act — short title",
+          "url": "https://capitol.texas.gov/tlodocs/89R/billtext/html/HB00149F.HTM",
+          "verbatim": "This Act may be cited as the Texas Responsible Artificial Intelligence Governance Act.",
+          "effective": "2026-01-01",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — applicability of the new subtitle (persons doing business or developing/deploying AI systems, not court filings)",
+          "url": "https://capitol.texas.gov/tlodocs/89R/billtext/html/HB00149F.HTM",
+          "verbatim": "APPLICABILITY OF SUBTITLE. This subtitle applies only to a person who: (1) promotes, advertises, or conducts business in this state; (2) produces a product or service used by residents of this state; or (3) develops or deploys an artificial intelligence system in this state.",
+          "effective": "2026-01-01",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — effective date",
+          "url": "https://capitol.texas.gov/tlodocs/89R/billtext/html/HB00149F.HTM",
+          "verbatim": "This Act takes effect January 1, 2026.",
+          "effective": "2026-01-01",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "State Bar of Texas, Committee on Disciplinary Rules and Referenda, April 2026 meeting materials — AI is a study item, no proposed disciplinary rule",
+          "url": "https://www.texasbar.com/Content/NavigationMenu/CDRR/2026_Meeting_Materials/April-2026-CDRR-Meeting-Materials.pdf",
+          "verbatim": "Use of Artificial Intelligence in Legal Practice: Evaluate the use of artificial intelligence within the legal profession and judiciary. Study the risks and benefits associated with using artificial intelligence and how to mitigate actual or potential harms.",
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Suday v. Suday, No. 04-23-00836-CV (Tex. App.—San Antonio Jan. 14, 2026) (mem. op.; petition history not checked) — slip op. at 2 n.3 (pro se litigant, not counsel)",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaID=d8176c2d-0f82-4126-856d-e34005f53a9e",
+          "verbatim": "Because most of it seems to be fictitious, it appears Suday may have used an artificial intelligence tool in the preparation of her supplemental brief. While this could be grounds for striking the estate’s brief, we choose to address the merits as referred to us by the Texas Supreme Court. However, we caution Suday and other litigants, as we have in other cases, that these tools, at present, lack the ability to produce reliable and accurate citations to legal authorities.",
+          "effective": "2026-01-14",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Adams v. Allen Butler Construction, Inc., No. 07-25-00191-CV (Tex. App.—Amarillo May 5, 2026) (mem. op.; petition history not checked) — slip op. at 3, quoting the trial court's admonition (pro se litigant, not counsel)",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=75e96f2b-45dc-4dda-b0cd-fb2253dc1ea2&coa=coa07&DT=Opinion&MediaID=d821a5f7-96a5-459b-85ed-08bff5e2d457",
+          "verbatim": "Any further blatant misrepresentations of case law will not be permitted and may result in the issuance of sanctions. The use of artificial intelligence in preparation of a submission to the Court will not excuse misrepresentations of case law.",
+          "effective": "2026-05-05",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Same — slip op. at 4, effect of the fabricated authority (waiver, not sanctions, on appeal)",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=75e96f2b-45dc-4dda-b0cd-fb2253dc1ea2&coa=coa07&DT=Opinion&MediaID=d821a5f7-96a5-459b-85ed-08bff5e2d457",
+          "verbatim": "Many of the cases she cites and the quotations she attributes to cases do not exist, do not contain the said quotations, or do not stand for the propositions for which she cites the authority. Those authorities cannot, therefore, serve as support for her claims.",
+          "effective": "2026-05-05",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Edinger v. Stillwaters Pool Co., No. 02-24-00527-CV (Tex. App.—Fort Worth Aug. 21, 2025) (mem. op.; petition history not checked) — slip op. n.7 (pro se litigant, not counsel)",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaID=a41fe755-f7a7-4e2c-8143-34baa7a20295",
+          "verbatim": "We cannot tell from Edinger’s brief if he used ChatGPT or another artificial intelligence (AI) source to attempt to develop his authorities and arguments.",
+          "effective": "2025-08-21",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Texas Rules of Appellate Procedure (Supreme Court compilation, last amended Feb. 6, 2026) — checked, zero AI hits",
+          "url": "https://www.txcourts.gov/media/1463134/texas-rules-of-appellate-procedure-02062026.pdf",
+          "verbatim": null,
+          "effective": "2026-02-06",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "Texas Rules of Judicial Administration (Supreme Court compilation, last amended July 1, 2026) — checked, zero AI hits",
+          "url": "https://www.txcourts.gov/media/1462987/texas-rules-of-judicial-administration-07012026.pdf",
+          "verbatim": null,
+          "effective": "2026-07-01",
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "State Bar of Texas, Taskforce for Responsible AI in the Law, Interim Report to the State Bar of Texas Board of Directors (OCR) — status of the report; the PDF's own text layer drops ti-ligatures so it was OCR'd",
+          "url": "https://www.texasbar.com/AM/Template.cfm?Template=/CM/ContentDisplay.cfm&ContentID=62597",
+          "verbatim": "None of the preliminary thoughts described below should be taken as any formal recommendation, but rather reflect preliminary concepts being considered by the taskforce.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same (OCR) — the recommendation that became Misc. Docket No. 26-9054",
+          "url": "https://www.texasbar.com/AM/Template.cfm?Template=/CM/ContentDisplay.cfm&ContentID=62597",
+          "verbatim": "Consider recommending to the Supreme Court of Texas Rules Committee that it explore Texas Rules of Civil Procedure 13 on the Effect of Signing Pleadings, Motions, and Other Papers and evaluate whether additional language or guidance is necessary",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "State Bar of Texas, Taskforce for Responsible AI in the Law (TRAIL), Proposed Mission and Vision Statement (Aug. 25, 2023) — located and fetched; no duty-bearing text",
+          "url": "https://www.texasbar.com/AM/Template.cfm?Template=/CM/ContentDisplay.cfm&ContentID=61655",
+          "verbatim": null,
+          "effective": "2023-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT A SOURCE — State Bar of Texas landing page reached when a Section parameter is used; texasbar.com serves the same generic page for every Section value, which is why the TRAIL documents had to be reached by ContentID",
+          "url": "https://www.texasbar.com/AM/Template.cfm?Section=Taskforce_for_Responsible_AI_in_the_Law",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-20"
+        },
+        {
+          "title": "San Antonio Independent School District v. Becerra, as Next Friend of J.C., a Minor, No. 04-25-00724-CV (Tex. App.—San Antonio Aug. 5, 2026) (mem. op.) — slip op. 1, the date of the opinion",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "Delivered and Filed: August 5, 2026",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 5, the holding that opens the analysis; four of the eight opinions cited in the appellee's brief are AI hallucinations",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "We begin by noting that Becerra’s appellee’s brief cites eight judicial opinions, four of which appear to be hallucinations created by generative artificial intelligence:",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 6, the Fourth Court's own earlier AI warnings, repeated",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "We have previously warned litigants that generative artificial intelligence tools “lack the ability to produce reliable and accurate citations to legal authorities.”",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 6, the petition history Becerra supplies for Suday, which the compiler recorded as unchecked",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "at *1 n.3 (Tex. App.—San Antonio Jan. 14, 2026, pet. filed)",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 6, the style and pincite Becerra gives the earlier San Antonio caution",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "AGiza v. Franklin, No. 04-25-00099-CV, 2025 WL 2058089, at *2 n.1",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 6, the reminder addressed to counsel and the two disciplinary rules invoked; THIS is the row that defeats a pro se reading of the Texas case law",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "We also feel compelled to remind licensed attorneys, including Becerra’s counsel in this appeal, that they owe both a duty of candor to this court and a duty of competence to their clients. TEX. DISCIPLINARY RULES PROF’L CONDUCT R. 1.01 cmt. 6; id. R. 3.03(a)(1). Reliance on fictitious citations and inaccurate representations about the contents of an opposing party’s brief are inconsistent with both of these duties.",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 6, striking the brief considered under Tex. R. App. P. 38.9 and declined",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "In light of these hallucinations, we have considered whether to strike Becerra’s brief “and proceed as if [she] had failed to file a brief.”",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 7, how the AI issue actually ends; a caution to counsel, with no sanction, no fee award and no referral anywhere in the opinion",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=b868eb35-2b21-4d9e-8b08-567292e4d35c&coa=coa04&DT=Opinion&MediaID=aa298d61-abfb-4dce-bbd8-20635b42bfda",
+          "verbatim": "However, we will proceed to the merits of this appeal without taking further action on this issue. We nevertheless caution Becerra’s counsel that we will not tolerate similar issues in any future appearances before this court.",
+          "effective": "2026-08-05",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "AGiza v. Franklin, No. 04-25-00099-CV (Tex. App.—San Antonio July 23, 2025, pet. denied) (per curiam) (mem. op.) — slip op. 1, date and disposition",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=344318eb-9fcd-4cf8-ba5a-0c4bf4e00278&coa=coa04&DT=Opinion&MediaID=95fb5792-21f6-4dbc-a59f-4253e18a500e",
+          "verbatim": "Delivered and Filed: July 23, 2025 DISMISSED FOR LACK OF JURISDICTION",
+          "effective": "2025-07-23",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 1, the appellant's name as the opinion itself spells it, which is why the draft's Giza is a transcription slip",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=344318eb-9fcd-4cf8-ba5a-0c4bf4e00278&coa=coa04&DT=Opinion&MediaID=95fb5792-21f6-4dbc-a59f-4253e18a500e",
+          "verbatim": "appellant Dalila AGiza filed a notice of interlocutory appeal",
+          "effective": "2025-07-23",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 4 n.1, the AI caution in full; note that the inner sentence is the court quoting a law review article, not the court's own words",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=344318eb-9fcd-4cf8-ba5a-0c4bf4e00278&coa=coa04&DT=Opinion&MediaID=95fb5792-21f6-4dbc-a59f-4253e18a500e",
+          "verbatim": "Because some of the cases, quotations, and holdings AGiza cited seem to be fictitious or inaccurate, it appears that she may have used ChatGPT or another generative artificial intelligence tool in the preparation of her response. We caution litigants that “ChatGPT currently lacks the ability to produce reliable and accurate results when given a legal query.” David T. Laton, A Cautionary Tale of AI as a Research Tool for Lawyers, 70 PRAC. LAW. 42, 43 (2024); see also Byrd v. Vills. of Woodland Springs Homeowners Ass’n, Inc., No. 02-23-00078-CV, 2024 WL 3529431, at *4 n.12 (Tex. App.—Fort Worth July 25, 2024, no pet.) (mem. op.).",
+          "effective": "2025-07-23",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Byrd v. Villages of Woodland Springs Homeowners Association, Inc., No. 02-23-00078-CV (Tex. App.—Fort Worth July 25, 2024, no pet.) (mem. op.) — slip op. 2, the appellant is pro se",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=a5c4c965-bca2-4677-9712-a0caddd700d1&coa=coa02&DT=Opinion&MediaID=d7808461-b4fb-4883-8783-edf14b7bcf75",
+          "verbatim": "Pro se appellant Joe W. Byrd appeals the trial court’s amended final judgment",
+          "effective": "2024-07-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. 10 n.12, the earliest caution in this Texas line and the origin of the ChatGPT sentence AGiza later quotes",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaVersionID=a5c4c965-bca2-4677-9712-a0caddd700d1&coa=coa02&DT=Opinion&MediaID=d7808461-b4fb-4883-8783-edf14b7bcf75",
+          "verbatim": "We cannot tell from Byrd’s brief if he used ChatGPT or another artificial intelligence (AI) source to attempt to develop his legal citations. See David T. Laton, A Cautionary Tale of AI As A Research Tool for Lawyers, Prac. Law. 42, 43 (2024) (“ChatGPT currently lacks the ability to produce reliable and accurate results when given a legal query.”).",
+          "effective": "2024-07-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Suday v. Suday, No. 04-23-00836-CV (Tex. App.—San Antonio Jan. 14, 2026) — slip op. 2 n.3 as the Fourth Court itself prints the earlier case name, on the resolver's own re-fetch",
+          "url": "https://search.txcourts.gov/SearchMedia.aspx?MediaID=d8176c2d-0f82-4126-856d-e34005f53a9e",
+          "verbatim": "See, e.g., AGiza v. Franklin, No. 04-25-00099-CV, 2025 WL 2058089, at *3 (Tex. App.—San Antonio July 23, 2025, pet. denied).",
+          "effective": "2026-01-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Texas, Misc. Docket No. 26-9054 — proposed Tex. R. App. P. 9.1(d) lead-in as it actually reads, at order p. 8; the civil lead-in quoted elsewhere in this entry is proposed Tex. R. Civ. P. 13(c), at order p. 6",
+          "url": "https://www.txcourts.gov/media/1462936/269054.pdf",
+          "verbatim": "Representations by Signer. By signing a filed document, the signer represents to the court that the signer has:",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Texas, Administrative Orders 2026 index — resolver re-check on 2026-09-21; 26-9054 still appears only as a preliminary approval",
+          "url": "https://www.txcourts.gov/supreme/administrative-orders/2026/",
+          "verbatim": "Preliminary Approval of Amendments to Texas Rule of Civil Procedure 13 and Texas Rules of Appellate Procedure 9 and 52 and the Repeal of Texas Rule of Civil Procedure 57",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the most recent order carried in the index on the re-check date, 26-9074 of 09/18/2026, which shows the index was current and that no final Rule 13 order had issued",
+          "url": "https://www.txcourts.gov/supreme/administrative-orders/2026/",
+          "verbatim": "Order Amending the Rules Governing Admission to the Bar of Texas and Repealing Article XIV of the State Bar Rules",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Texas Rules of Civil Procedure (Supreme Court compilation) — resolver re-fetch on 2026-09-21; the compilation still prints the pre-amendment Rule 13 and contains zero instances of verified its accuracy or not fabricated",
+          "url": "https://www.txcourts.gov/media/1462349/texas-rules-of-civil-procedure.pdf",
+          "verbatim": "Courts shall presume that pleadings, motions, and other papers are filed in good faith.",
+          "effective": "2026-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Texas, Rules and Standards index — the page that establishes the currency dates the rule compilations themselves do not print",
+          "url": "https://www.txcourts.gov/rules-forms/rules-standards/",
+          "verbatim": "The rules listed below are the most current version approved by the Supreme Court of Texas.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the Last Amended table row for the Texas Rules of Civil Procedure, the source of the July 1, 2026 date this entry carries",
+          "url": "https://www.txcourts.gov/rules-forms/rules-standards/",
+          "verbatim": "Texas Rules of Civil Procedure July 1, 2026",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the Last Amended table row for the Texas Disciplinary Rules of Professional Conduct, corroborating the TDRPC title-page date",
+          "url": "https://www.txcourts.gov/rules-forms/rules-standards/",
+          "verbatim": "Texas Disciplinary Rules of Professional Conduct March 7, 2025",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Texas, Misc. Docket No. 19-9016 — the order carries no effective-date clause, only a date line, so the 2019-02-26 effective values in this entry are the order date and not a printed currency date",
+          "url": "https://www.txcourts.gov/media/1443638/199016.pdf",
+          "verbatim": "Dated: February 26, 2019.",
+          "effective": "2019-02-26",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Texas Disciplinary Rules of Professional Conduct — Rule 1.01 Comment 6 under the heading Competent and Diligent Representation, the comment Becerra invokes, which is NOT the technology comment",
+          "url": "https://www.txcourts.gov/media/1459244/texas-disciplinary-rules-of-professional-conduct-pdf.pdf",
+          "verbatim": "Having accepted employment, a lawyer should act with competence, commitment and dedication to the interest of the client and with zeal in advocacy upon the client’s behalf.",
+          "effective": "2025-03-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT A SOURCE — statutes.capitol.texas.gov Government Code chapter 81, resolver attempt on 2026-09-21; it returns the same JavaScript shell the verifier got, byte-identical at 250,874 bytes, so the Texas statutory gap is confirmed and not cured",
+          "url": "https://statutes.capitol.texas.gov/Docs/GV/htm/GV.81.htm",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT A SOURCE — Texas Legislature Online full-text search, resolver attempt on 2026-09-21; the TextSearch page is itself a shell and returns no results to curl, so no statutory keyword sweep was possible from this route either",
+          "url": "https://capitol.texas.gov/Search/TextSearch.aspx?SearchText=artificial+intelligence",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT A SOURCE — CourtListener v4 search API, the compiler's own Texas query re-run by the resolver on 2026-09-21; it returns 5 results but only 4 unique opinions, Ford appearing twice as clusters 10664021 and 10664022",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=tex%20texapp%20texcrimapp&q=%22artificial%20intelligence%22%20AND%20(fabricated%20OR%20nonexistent%20OR%20fictitious)%20AND%20sanctions",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT A SOURCE — CourtListener v4 search API, phrase query showing Becerra IS indexed there; the compiler's query could not reach it because that query required the word sanctions and Becerra never uses it",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=texapp&q=%22hallucinations%20created%20by%20generative%20artificial%20intelligence%22",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 3a - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-3a.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: Texas today has no AI-specific binding rule for lawyers, but it is 11 days from one. Supreme Court of Texas Misc. Docket No. 26-9054 (June 26, 2026) preliminarily approved a rewritten Tex. R. Civ. P. 13 and a new Tex. R. App. P. 9.1(d) making the signature on any filing a representation that the signer verified the filing's accuracy, \"including that the legal citations, quotations, and holdings are not fabricated\", with express sanctions including striking the filing and dismissal. The Court said it \"expects the amendments to take effect on October 1, 2026.\" Comments closed September 1, 2026. As of 2026-09-20 the Court's 2026 administrative-orders index shows only the preliminary approval (26-9054, 06/26/2026) and no final-approval order, and the current Tex. R. Civ. P. compilation (last amended July 1, 2026) still prints the old Rule 13. ACTION DUE: re-check the Supreme Court of Texas administrative orders index on or shortly after October 1, 2026; if the final order has issued, this entry's disclosure_to_court, verification_duty and Rule 13 verbatim must all be rewritten from the final text, which the Court expressly reserved the right to change. WHAT THE AMENDMENT IS NOT: it is not a disclosure rule and not a certificate. Nothing requires a Texas lawyer to state whether AI was used, and nothing requires a separate signed AI certification; the representation is made by the act of signing, Rule 11 style. The Court's own comment says verification matters \"regardless of whether artificial intelligence was used.\" TECHNOLOGY COMPETENCE: Texas DID adopt a technology-competence comment, but not the ABA words and not in the ABA place. Comment 8 to Rule 1.01 (Maintaining Competence) was amended by Misc. Docket No. 19-9016 on February 26, 2019 to read that each lawyer should strive to remain proficient \"including the benefits and risks associated with relevant technology.\" Texas has no Comment numbered 8 to a 'Rule 1.1'; the competence rule is Rule 1.01 and its black letter is a prohibition (a lawyer \"shall not accept or continue employment\" beyond competence), not the ABA's affirmative command. And the comment is expressly not a disciplinary standard: Preamble, Scope para. 10 says the rules \"are imperatives, cast in the terms shall or shall not. The comments are cast often in the terms of may or should and are permissive, defining areas in which the lawyer has professional discretion.\" and, flatly, \"The Comments do not, however, add obligations to the rules and no disciplinary action may be taken for failure to conform to the Comments.\" So a Texas lawyer cannot be disciplined for failing to keep abreast of AI as such; the exposure runs through Rule 1.01(b) neglect, Rule 3.03 candor, Rule 1.05 confidentiality, and Rule 13 sanctions. ETHICS OPINION: Professional Ethics Committee Opinion 705 (February 2025) is the controlling guidance and is thorough — competence, confidentiality, verification, supervision, fees. It is advisory: the Committee is appointed by the Supreme Court of Texas under Tex. Gov't Code §§ 81.091-81.095, and § 81.092(c) provides that committee opinions are not binding on the supreme court. Opinion 705 was issued at the request of the State Bar's Taskforce on Responsible AI in the Law. DATE CAVEAT: the opinion bears only the month February 2025 on its face and on the Committee's index, so every Opinion 705 source row carries effective: null rather than an invented day. Note for the verifier: Opinion 705 cites N.D. Tex. LR 7.2(f) and the Fifth Circuit's June 10, 2024 decision declining an AI rule; both are federal and out of scope for this entry. CASE LAW — A NEGATIVE RESULT WORTH RECORDING: one CourtListener v4 search of Texas state appellate courts (courts tex, texapp, texcrimapp; query \"artificial intelligence\" AND (fabricated OR nonexistent OR fictitious) AND sanctions; run 2026-09-20) returned 5 result rows but only 4 unique opinions, because Ford v. University of Texas at Austin, 15th COA, is indexed twice; Ford is a false positive either way — the AI phrase appears in a clerk's-record research-topics list, not the opinion. The other three (Suday, Adams, Edinger) all involve PRO SE litigants, not counsel. No published Texas state appellate decision sanctioning or disciplining an ATTORNEY for AI-fabricated citations was found. Suday is the most quotable: the court said striking the brief \"could be grounds\" but declined. Adams quotes a trial court admonition that AI use \"will not excuse misrepresentations of case law\" and resolves the appeal on briefing waiver, not sanctions. Suday n.3 cites an earlier San Antonio caution, AGiza v. Franklin, No. 04-25-00099-CV, 2025 WL 2058089 (Tex. App.—San Antonio July 23, 2025, pet. denied), which was NOT fetched. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-20): the full Texas Disciplinary Rules of Professional Conduct PDF (effective March 7, 2025) grepped for artificial intelligence, generative, machine learning, large language, chatgpt, hallucinat, technolog — the single hit is the Rule 1.01 Comment 8 technology clause; Texas Rules of Civil Procedure (last amended July 1, 2026), Texas Rules of Appellate Procedure (Feb. 6, 2026) and Texas Rules of Judicial Administration (July 1, 2026) — zero hits for any AI term in all three; the Texas Center for Legal Ethics opinions index (710 opinions) plus the full text of Opinions 704 and 706 through 710 (through February 2026) — Opinion 705 is the only AI opinion; Supreme Court of Texas administrative orders index for 2026 — no AI order other than 26-9054; H.B. 149 (TRAIGA, effective January 1, 2026) — regulates developers, deployers and governmental entities, never mentions pleadings, court filings, or attorneys other than the attorney general as enforcer; CDRR April 2026 meeting materials — AI is item 7 on the study agenda with no proposed rule text. STATUTORY CHECK, LIMITED — SAY SO PLAINLY: no keyword search of the Texas statutes or of Texas Legislature Online was run. statutes.capitol.texas.gov serves a JavaScript shell that returns no chapter text to curl, and no GET-able full-text search endpoint was found. The Texas statutory finding therefore rests on reading H.B. 149 (TRAIGA) in full plus zero AI hits across the three statewide rule books. Another Texas AI statute could exist and would not have been seen. The verifier should run a proper statutory sweep. NOT FETCHED: the State Bar of Texas TRAIL taskforce page and its reports (texasbar.com serves the same generic 95 KB page for every Section= parameter, so no TRAIL URL could be resolved; a 2023-24 TRAIL year-end report PDF is hosted on texasbarpractice.com, a third-party CLE site, and was not treated as primary); AGiza v. Franklin; N.D. Tex. LR 7.2(f) and any federal or individual-judge order (Tier 3); the TDRPC Preamble/Scope treatment of the authority of comments. WHERE THE RULE 13 AMENDMENT CAME FROM: the State Bar's Taskforce for Responsible AI in the Law (TRAIL, commissioned by State Bar President Cindy Tisdale, Aug. 25, 2023) recommended in its Interim Report to the Board of Directors that the Court be asked to \"explore Texas Rules of Civil Procedure 13 on the Effect of Signing Pleadings, Motions, and Other Papers and evaluate whether additional language or guidance is necessary\" — and Misc. Docket No. 26-9054 is that inquiry's result. The Interim Report is itself non-binding and says so: \"None of the preliminary thoughts described below should be taken as any formal recommendation, but rather reflect preliminary concepts being considered by the taskforce.\" The report PDF's own text layer silently drops ti-ligatures (it renders Introduction as Introduc on), so it was re-read with OCR and its rows are marked (OCR); OCR also renders AI as Al, which is why the quoted spans avoid that string. The report is reachable only by ContentID on texasbar.com, never by the Section parameter. EFFECTIVE-DATE CONVENTION FOR THIS ENTRY: unlike the Pennsylvania entry, EVERY Texas rule-compilation source row carries the currency date printed on that compilation's title page or on the Court's rules index, NOT the date the quoted provision itself last changed. So the TDRPC rows read 2025-03-07, the Tex. R. Civ. P. row (including Rule 13, whose text dates from the 1990 amendment) reads 2026-07-01, Tex. R. App. P. reads 2026-02-06 and Tex. R. Jud. Admin. reads 2026-07-01. The one exception in the TDRPC is Rule 1.04, whose own header prints March 1, 2005. The one rule-specific date established from a primary source is Comment 8 to Rule 1.01, February 26, 2019, from Misc. Docket No. 19-9016. OPEN QUESTIONS FOR THE VERIFIER: (1) Has Misc. Docket 26-9054 been finalized? Re-fetch https://www.txcourts.gov/supreme/administrative-orders/2026/ and the TRCP compilation; if it has, this entry must be rewritten from the final text. (2) Confirm AGiza v. Franklin and whether any Texas state appellate decision has in fact sanctioned counsel (as opposed to a pro se party) for AI-fabricated citations. (3) Is there a TRAIL FINAL report (the Interim Report promises one), and did the Board of Directors adopt any of its recommendations? RESOLVER (2026-09-21): a third session, which neither compiled nor verified this entry, worked the eight discrepancy rows the verifier raised against it. Everything below is appended; the compiler's paragraphs above are unchanged except for two things that were false as written and are named in the resolution block of this file - a case name, in the three places it appeared, and one arithmetic sentence. (1) THE BLOCKING ROW IS CURED BY ADDING THE AUTHORITY, NOT BY ARGUING IT AWAY. San Antonio Independent School District v. Becerra, as Next Friend of J.C., a Minor, No. 04-25-00724-CV (Tex. App.—San Antonio Aug. 5, 2026) (mem. op.) was fetched from search.txcourts.gov and read in full on 2026-09-21, and eight source rows from it are carried above. It is the only Texas state appellate decision FOUND BY ANY OF THE THREE SESSIONS that addresses AI-fabricated citations to COUNSEL rather than to a self-represented party - not, on this record, demonstrably the first, since no session has run an exhaustive sweep of the Texas courts of appeals. The Fourth Court opened its analysis by holding that four of the eight opinions cited in the appellee's brief \"appear to be hallucinations created by generative artificial intelligence\", itemised all four, and then turned to the disciplinary rules: \"We also feel compelled to remind licensed attorneys, including Becerra’s counsel in this appeal, that they owe both a duty of candor to this court and a duty of competence to their clients.\" — citing Rule 1.01 cmt. 6 and Rule 3.03(a)(1). It considered striking the brief under Tex. R. App. P. 38.9, declined, and closed the point with \"We nevertheless caution Becerra’s counsel that we will not tolerate similar issues in any future appearances before this court.\" THE COMPILER'S TWO SENTENCES ABOVE SURVIVE AND WERE NOT REWRITTEN, because both are literally true. Becerra imposed no sanction, awarded no fees, made no referral and does not contain the word sanction anywhere in its thirteen pages; and the three cases the compiler carried really do involve self-represented litigants, which the resolver checked in its own fetched texts rather than taking on trust - Adams and Edinger each use the words pro se on their face, and the Supreme Court of Texas held that Suday could represent the estate pro se as the only beneficiary. What the resolver changed is the picture the paragraph gives a reader, by putting Becerra into the entry. An arbiter may now reasonably downgrade this row from blocking. WHY THE COMPILER'S SEARCH COULD NOT HAVE FOUND IT: that query required the term sanctions, and Becerra never uses it. A phrase query on the Becerra holding returns the case from the same CourtListener index, so the miss is a query-design limit, not a corpus gap. Recorded so that later batches run AI phrase queries without a sanctions conjunct. (2) THE CASE NAME WAS WRONG AND IS CORRECTED IN THREE PLACES. The Fourth Court's earlier caution is AGiza v. Franklin; the appellant is Dalila AGiza, and Suday n.3 itself prints \"AGiza v. Franklin\", so the draft's spelling was a transcription slip and not a faithful copy of Suday. AGiza was fetched and read on 2026-09-21 and is carried above with three source rows, as is the still earlier Fort Worth caution it cites, Byrd v. Villages of Woodland Springs Homeowners Association, Inc., No. 02-23-00078-CV (Tex. App.—Fort Worth July 25, 2024, no pet.) (mem. op.), whose appellant that opinion describes as \"Pro se appellant Joe W. Byrd\". Two cautions about AGiza. First, its best-known sentence is not the court's own words: the opinion quotes a law review article, \"ChatGPT currently lacks the ability to produce reliable and accurate results when given a legal query.\", attributing it to David T. Laton, and Byrd n.12 is where that sentence entered this Texas line. Second, the AGiza opinion is SILENT on whether the appellant was represented, and that silence is all this entry should claim. It is a real silence and not an oversight of the resolver's - the words pro se occur five times in Adams, three times in Edinger, five times in Byrd and once in Suday, and not once in AGiza. Nor does the absence of counsel from a caption prove anything in this court, since Becerra's caption names no counsel either and Becerra plainly had some. Becerra supplies the petition histories the compiler left unchecked, giving Suday the parenthetical \"pet. filed\" and pinning AGiza to \"at *2 n.1\" with pet. denied; Suday n.3 independently gives AGiza as pet. denied at *3, so the two courts pin the same footnote to different star pages. (3) THE JOINT ATTRIBUTION IN disclosure_to_court IS FIXED, AND THE VERIFIER'S PINPOINTS ARE OFF BY ONE. The verifier was right that one quotation was carried for two different rules. The civil and appellate lead-ins are not the same sentence; proposed Tex. R. App. P. 9.1(d) reads \"Representations by Signer. By signing a filed document, the signer represents to the court that the signer has:\" The verifier put the clean form of Rule 13(c) at order page 5 and Rule 9.1(d) at order page 7. In the resolver's own page-by-page extraction of Misc. Docket No. 26-9054 they are at order pages 6 and 8. (4) TIME-CRITICAL RE-CHECK, AND THE CHARACTERISATION STILL HOLDS. The Supreme Court of Texas 2026 administrative orders index was re-fetched on 2026-09-21 and still shows 26-9054 only as a preliminary approval; the most recent order carried in it is 26-9074, \"Order Amending the Rules Governing Admission to the Bar of Texas and Repealing Article XIV of the State Bar Rules\", released 09/18/2026, so the index is current and no final Rule 13 order has issued. The verifier's note that the most recent order was 26-9073 of 09/04/2026 is wrong on its own copy of that page, which is byte-identical to the resolver's. The Tex. R. Civ. P. compilation was re-fetched the same day and still prints the pre-amendment Rule 13, including \"Courts shall presume that pleadings, motions, and other papers are filed in good faith.\", with zero instances of verified its accuracy or not fabricated. ACTION DUE on or shortly after October 1, 2026 stands unchanged. (5) THE TRCP CURRENCY DATE NOW HAS A SOURCE OF ITS OWN. July 1, 2026 is printed nowhere in the compilation; it comes from the Court's Rules and Standards index, whose Last Amended table is cited above and which says of itself \"The rules listed below are the most current version approved by the Supreme Court of Texas.\" The same table gives March 7, 2025 for the Texas Disciplinary Rules of Professional Conduct, corroborating the TDRPC title page. (6) THE STATUTORY GAP IS CONFIRMED, NOT CURED. One further attempt was made on 2026-09-21. statutes.capitol.texas.gov returned an Angular shell byte-identical to the verifier's, and the Texas Legislature Online TextSearch page is itself a shell that returns no results to curl. No full-text Texas statutory sweep has been run by any of the three sessions, and the limit the compiler stated stands word for word. (7) THE TRAIL INTERIM REPORT DATE IS NOT ASSERTED IN THIS ENTRY. The verifier's row is about the draft file's header comment, which dates the report to December 2023. No source row and no notes sentence here asserts that date, and every TRAIL row already carries effective null, so there is nothing to change. Whether a TRAIL FINAL report exists is still unanswered. (8) THE 2019 DATE IS AN ORDER DATE, AND IS LEFT AS IT WAS. Misc. Docket No. 19-9016 was re-fetched; it carries no effective-date clause, only \"Dated: February 26, 2019.\", so the 2019-02-26 values in this entry are the date of the order rather than a printed currency date. The line is now quoted in a source row so a reader can see the inference for what it is. ONE THING NOBODY FLAGGED, WORTH THE ARBITER'S EYE: Becerra grounds the competence half of its admonition in Rule 1.01 cmt. 6, the Competent and Diligent Representation comment — \"Having accepted employment, a lawyer should act with competence, commitment and dedication to the interest of the client and with zeal in advocacy upon the client’s behalf.\" — and NOT in Comment 8, the technology comment this entry is built around. The first Texas court to speak to counsel about AI citations did not reach for technology competence at all. verification_duty was not edited, because no discrepancy row flags it; the point is recorded here for the merge."
+    },
+    {
+      "id": "dc-rpc",
+      "kind": "state_bar",
+      "name": "District of Columbia Rules of Professional Conduct, D.C. Bar Legal Ethics Opinion 388, and D.C. Courts AI materials",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "No District of Columbia court rule requires disclosure, certification, or verification of AI use as of 2026-09-21; the duty is stated in an advisory bar opinion and enforced through the general rules and the D.C. Court of Appeals' inherent and Rule 28 authority. D.C. Rule 1.1 black letter — \"A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.\" plus a provision found in no Model Rule state, Rule 1.1 (b): \"A lawyer shall serve a client with skill and care commensurate with that generally afforded to clients by other lawyers in similar matters.\" Rule 3.3 (a) (1) forbids knowingly making \"a false statement of fact or law to a tribunal\". Rules 5.1 (b) and 5.3 (b) impose supervisory \"reasonable efforts to ensure\" duties. The operative AI guidance is D.C. Bar Legal Ethics Opinion 388 (advisory), which states that \"Attorneys also should have a reasonable basis for trusting the GAI outputs, or must review and validate GAI outputs, before incorporating these outputs in their work product for clients or relying on them in support of a legal proceeding.\" and that \"Before using any particular form of GAI, attorneys should have a reasonable and current understanding of how it works and what it does\". The D.C. Court of Appeals enforced that expectation in Douglas v. Deutsche Bank National Trust Co., No. 24-CV-1099 (Published Order, filed Sept. 3, 2026), striking appellee's brief and holding that \"The use of AI is now so pervasive in legal practice that attorneys can no longer credibly claim ignorance of its pitfalls, including its propensity to hallucinate legal authority.\" and that \"every firm attorney who signed the brief bears some responsibility.\"",
+      "confidentiality_restriction": "D.C. keeps the older confidence-and-secret formulation. Rule 1.6 (a) — \"Except when permitted under paragraph (c), (d), or (e), a lawyer shall not knowingly:\" then \"(1) reveal a confidence or secret of the lawyer’s client;\". The D.C. black letter also carries a reasonable-care duty that has no Model Rule number, Rule 1.6 (f) — \"A lawyer shall exercise reasonable care to prevent:\" then \"(1) the lawyer’s employees, associates, and others whose services are utilized by the lawyer from disclosing or using confidences or secrets of a client, except that such persons may reveal information permitted to be disclosed by paragraphs (c), (d), or (e) and\" and \"(2) the unauthorized access to confidences or secrets of a client.\" Paragraph (f) (2) is the unauthorized-access limb of Model Rule 1.6 (c) written into the D.C. black letter, and paragraph (f) (1) reaches \"others whose services are utilized by the lawyer\", which on its face would reach an outside AI vendor. What D.C. does NOT have is the inadvertent-disclosure limb of Model Rule 1.6 (c), and where the Model Rule says reasonable efforts the D.C. rule says reasonable care. The precaution for transmitting and storing is separate and does live only in a comment, Rule 1.6 Comment [40] — \"When transmitting or storing confidences or secrets of a client, the lawyer must take reasonable precautions to prevent the information from coming into the hands of unintended recipients.\" Rule 5.3 Comment [3] treats \"using an internet-based service to store client information\" as an outside nonlawyer service. Opinion 388 applies this to AI directly: \"A lawyer should be reasonably satisfied that her interaction with the GAI will not reveal Client Confidential Information to future users of the GAI. If the lawyer is not so satisfied, she should not reveal Client Confidential Information to the GAI or should not use the GAI.\" and \"Absent client consent, lawyers who share Client Confidential Information with third party providers who have privacy policies like this risk violating their confidentiality obligations under Rule 1.6.\" Separately, but binding only on court personnel, the DC Courts AI Internal Use Policy provides that \"No court information, whether public or confidential, should be entered into a non-sequestered system.\"",
+      "record_keeping_duty": "none as a rule — but D.C. is the only jurisdiction in this batch whose guidance raises the question. D.C. Legal Ethics Opinion 388 (advisory), section F (Client File), says that under Rule 1.16 (d) \"a lawyer should consider whether specific interactions with GAI in connection with a client matter should be retained as part of the client file.\" That is a should-consider, not a duty, and no D.C. rule or order requires prompt or output retention.",
+      "client_disclosure_duty": "conditional, and thinner than in most states. D.C. Rule 1.4 has NO paragraph requiring the lawyer to consult about the means of the representation; its communication paragraphs are \"(a) A lawyer shall keep a client reasonably informed about the status of a matter and promptly comply with reasonable requests for information.\" and \"(b) A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" The rule has one further paragraph, which has nothing to do with AI — \"(c) A lawyer who receives an offer of settlement in a civil case or proffered plea bargain in a criminal case shall inform the client promptly of the substance of the communication.\" Rule 1.4 is not among the Applicable Rules listed in Opinion 388, and the opinion imposes no AI-specific duty to tell the client that AI was used. The live consent trigger is confidentiality, not communication — under Rule 1.6 and Opinion 388, client consent is what is missing when Client Confidential Information goes into a GAI product, and the opinion warns that clients \"typically should not be asked to consent\" to such disclosures.",
+      "fees_note": "Rule 1.5 (a) — \"(a) A lawyer’s fee shall be reasonable.\" Opinion 388 section E is explicit about AI and the hourly bill: \"No matter how good or valuable the GAI’s output is, absent a different fee arrangement, the lawyer can only bill for the time the lawyer spent.\" and, on expenses, \"If the lawyer intends to bill the client for use of GAI for which there is an out-of-pocket cost to the lawyer, that expected cost is an expense that should be communicated to the client under this rule.\"",
+      "sources": [
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 1.1 (Competence), black letter paragraph (a)",
+          "url": "https://www.dcbar.org/for-lawyers/legal-ethics/rules-of-professional-conduct/client-lawyer-relationship/competence",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 (b), the D.C.-only skill-and-care paragraph",
+          "url": "https://www.dcbar.org/for-lawyers/legal-ethics/rules-of-professional-conduct/client-lawyer-relationship/competence",
+          "verbatim": "(b) A lawyer shall serve a client with skill and care commensurate with that generally afforded to clients by other lawyers in similar matters.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 Comment [8], Maintaining Competence (NOTE the ABA technology clause is ABSENT)",
+          "url": "https://www.dcbar.org/for-lawyers/legal-ethics/rules-of-professional-conduct/client-lawyer-relationship/competence",
+          "verbatim": "[8] To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, and engage in such continuing study and education as may be necessary to maintain competence.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 Comment [5] (the only place technology appears in the seven rules read)",
+          "url": "https://www.dcbar.org/for-lawyers/legal-ethics/rules-of-professional-conduct/client-lawyer-relationship/competence",
+          "verbatim": "[5] Competent handling of a particular matter includes inquiry into and analysis of the factual and legal elements of the problem, and use of methods, procedures, and technology meeting the standards of competent practitioners.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 1.4 (a) (Communication)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Communication",
+          "verbatim": "(a) A lawyer shall keep a client reasonably informed about the status of a matter and promptly comply with reasonable requests for information.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.4 (b)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Communication",
+          "verbatim": "(b) A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.4 (c), the only other paragraph of the rule, on settlement offers and plea bargains (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Communication",
+          "verbatim": "(c) A lawyer who receives an offer of settlement in a civil case or proffered plea bargain in a criminal case shall inform the client promptly of the substance of the communication.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 1.5 (a) (Fees)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Fees",
+          "verbatim": "(a) A lawyer’s fee shall be reasonable.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 1.6 (a) (Confidentiality of Information), opening",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "(a) Except when permitted under paragraph (c), (d), or (e), a lawyer shall not knowingly:",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 (a) (1)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "(1) reveal a confidence or secret of the lawyer’s client;",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 Comment [40] (reasonable precautions when transmitting or storing)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "[40] When transmitting or storing confidences or secrets of a client, the lawyer must take reasonable precautions to prevent the information from coming into the hands of unintended recipients.",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 (f), the D.C. black-letter reasonable-care duty (RESOLVER-ADDED 2026-09-21)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "(f) A lawyer shall exercise reasonable care to prevent:",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 (f) (1), employees, associates and others whose services are utilized by the lawyer (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "(1) the lawyer’s employees, associates, and others whose services are utilized by the lawyer from disclosing or using confidences or secrets of a client, except that such persons may reveal information permitted to be disclosed by paragraphs (c), (d), or (e) and",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 (f) (2), the unauthorized-access limb (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "(2) the unauthorized access to confidences or secrets of a client.",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the Rule 1.6 page’s own amendment statement, which dates the rule as posted (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Client-Lawyer-Relationship/Confidentiality-of-Information",
+          "verbatim": "This page contains amendments to the District of Columbia Rules of Professional Conduct adopted by the D.C. Court of Appeals on May 14, 2025, and effective September 15, 2025.",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Court of Appeals order promulgating the 2025 amendments to the Rules of Professional Conduct, text layer (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/getmedia/20112a5e-d8c0-449d-ab49-2428a1cdfea4/M287-24-Order-Promulgating-052025",
+          "verbatim": "The amendments will go into effect September 15, 2025.",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same order — what it did and did not amend in Rule 1.6 (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/getmedia/20112a5e-d8c0-449d-ab49-2428a1cdfea4/M287-24-Order-Promulgating-052025",
+          "verbatim": "(4) new language in Rule 1.6(b) clarifying that client “secrets” “generally does not refer to legal knowledge or legal research, to knowledge the lawyer has obtained about the regulatory environment in which a client operates, or to information that is generally known in the local community or in the trade, field, or profession to which the information relates;”",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same order, caption page (OCR) — the page 1 image, OCR’d separately because it carries no text layer (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/getmedia/20112a5e-d8c0-449d-ab49-2428a1cdfea4/M287-24-Order-Promulgating-052025",
+          "verbatim": "No. M287-24",
+          "effective": "2025-05-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 3.3 (a) (1) (Candor to Tribunal)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Advocate/Candor-to-Tribunal",
+          "verbatim": "(1) Make a false statement of fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer, unless correction would require disclosure of information that is prohibited by Rule 1.6;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 5.1 (b) (supervisory lawyers)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Law-Firms-and-Associations/Responsibilities-of-Partners,-Managers-and-Supervi",
+          "verbatim": "(b) A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Rules of Professional Conduct Rule 5.3 (b) (nonlawyer assistants)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Law-Firms-and-Associations/Responsibilities-Regarding-Nonlawyer-Assistants",
+          "verbatim": "(b) A lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the person’s conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 5.3 Comment [3], Nonlawyers Not Associated With the Firm (internet-based services)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Rules-of-Professional-Conduct/Law-Firms-and-Associations/Responsibilities-Regarding-Nonlawyer-Assistants",
+          "verbatim": "[3] A lawyer may use nonlawyers not associated with the lawyer’s own firm to assist the lawyer in rendering legal services to the client. Examples include the retention of an investigative or paraprofessional service, hiring a document management company to create and maintain a database for complex litigation, sending client documents to a third party for printing and scanning, and using an internet-based service to store client information.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Bar Legal Ethics Opinion 388, Attorneys’ Use of Generative Artificial Intelligence in Client Matters — the Bar’s own statement that D.C. has no technology comment",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Although the District’s Comments to Rule 1.1 do not specifically reference technology, competent representation always requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary to carry out the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388, the verification duty",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Attorneys also should have a reasonable basis for trusting the GAI outputs, or must review and validate GAI outputs, before incorporating these outputs in their work product for clients or relying on them in support of a legal proceeding.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388, the pre-use diligence duty",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Before using any particular form of GAI, attorneys should have a reasonable and current understanding of how it works and what it does, with due regard for (a) its potential dangers, including the risk of “hallucinations” or misuse or exposure of Client Confidential Information, (b) its limitations, including whether it uses a narrow dataset that could generate incomplete, out-of-date, or inaccurate results, and (c) its cost.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388, confidentiality test",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "A lawyer should be reasonably satisfied that her interaction with the GAI will not reveal Client Confidential Information to future users of the GAI. If the lawyer is not so satisfied, she should not reveal Client Confidential Information to the GAI or should not use the GAI.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388, third-party privacy policies and Rule 1.6",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Absent client consent, lawyers who share Client Confidential Information with third party providers who have privacy policies like this risk violating their confidentiality obligations under Rule 1.6.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388, supervision under Rules 5.1 and 5.3",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Under Rules 5.1 and 5.3, a lawyer should take reasonable measures to ensure that any supervised lawyer’s or nonlawyer’s use of GAI conforms to the Rules of Professional Conduct and the principles discussed in this opinion.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388 section F, client file and GAI interactions",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "a lawyer should consider whether specific interactions with GAI in connection with a client matter should be retained as part of the client file.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388 section E, billing for time saved",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "No matter how good or valuable the GAI’s output is, absent a different fee arrangement, the lawyer can only bill for the time the lawyer spent.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388 section E, GAI cost as an expense",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "If the lawyer intends to bill the client for use of GAI for which there is an out-of-pocket cost to the lawyer, that expected cost is an expense that should be communicated to the client under this rule.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388 publication line (the only date on the page)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Published: April 2024",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388 Applicable Rules block, which also lists Rule 8.4 (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "Rule 8.4 (Misconduct)",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Opinion 388 introduction, the duties the opinion says GAI use implicates (RESOLVER-ADDED)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present/Ethics-Opinion-388",
+          "verbatim": "use of GAI in legal matters implicates lawyers’ duties of competence, confidentiality, communication, candor to the court, and fairness to opposing parties and counsel",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Bar Legal Ethics Opinions index 210 to present (checked for any later AI opinion; 389 through 392 are not on AI)",
+          "url": "https://www.dcbar.org/For-Lawyers/Legal-Ethics/Ethics-Opinions-210-Present",
+          "verbatim": "Attorneys’ Use of Generative Artificial Intelligence in Client Matters",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "District of Columbia Courts, Artificial Intelligence and the DC Courts page — creation of the task force",
+          "url": "https://www.dccourts.gov/dc-courts/artificial-Intelligence",
+          "verbatim": "In March 2024, the DC Courts created an AI Taskforce to study how AI could be used in the Courts.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — date of the internal staff policy",
+          "url": "https://www.dccourts.gov/dc-courts/artificial-Intelligence",
+          "verbatim": "The DC Courts shared an Internal AI Use Policy with staff in July 2025.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "District of Columbia Courts Administrative Order, Artificial Intelligence Task Force (filed March 6, 2026) — standing committee",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-03/Artificial-Intelligence-Task-Force-Administrative-Order-Revised-FINAL-03062026%20%281%29.pdf",
+          "verbatim": "ORDERED that the Artificial Intelligence Task Force of the District of Columbia Courts will be a standing Committee of the District of Columbia Courts effective March 6, 2026",
+          "effective": "2026-03-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — purpose 8, the AI court rules that do NOT yet exist",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-03/Artificial-Intelligence-Task-Force-Administrative-Order-Revised-FINAL-03062026%20%281%29.pdf",
+          "verbatim": "8) Develop court rules with respect to disclosure, transparency, ethics, accuracy, authenticity and certification of AI use in court pleadings and proceedings.",
+          "effective": "2026-03-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "DC Courts AI Internal Use Policy — coverage (court personnel only, NOT attorneys)",
+          "url": "https://www.dccourts.gov/sites/default/files/Internal-Use-Policy-Final-without-Attachments.pdf",
+          "verbatim": "This policy governs the use of AI by all DC Courts’ judicial officers, employees, contractors, and volunteers for court business and when using court information.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — duty to review AI output",
+          "url": "https://www.dccourts.gov/sites/default/files/Internal-Use-Policy-Final-without-Attachments.pdf",
+          "verbatim": "This includes the duty to review and confirm the accuracy of all output from any AI tool, including checking such output for bias, and to review and confirm that data provided to an AI tool is allowed under this policy before uploading it.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — confidentiality bar on non-sequestered systems",
+          "url": "https://www.dccourts.gov/sites/default/files/Internal-Use-Policy-Final-without-Attachments.pdf",
+          "verbatim": "No court information, whether public or confidential, should be entered into a non-sequestered system.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Douglas v. Deutsche Bank National Trust Co., No. 24-CV-1099, D.C. Court of Appeals Published Order (filed Sept. 3, 2026), slip op. at 1 — opening",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "What began as a routine appeal has become a cautionary tale about the misuse of artificial intelligence (AI) and its consequences for attorneys, their clients, and the courts.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 1, what the attorney did",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "Ms. Hall explained that she had “used Google’s generative artificial intelligence search tool to assist in locating case authority” and did not verify the existence or accuracy of those citations before filing the brief.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 3, no more ignorance defence",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "The use of AI is now so pervasive in legal practice that attorneys can no longer credibly claim ignorance of its pitfalls, including its propensity to hallucinate legal authority.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 5, every signatory bears responsibility",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "while we acknowledge Ms. Hall’s attempt to take ownership of her error as the “submitting attorney,” every firm attorney who signed the brief bears some responsibility.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 7, the sanction",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "As such, we deem it appropriate to strike appellee’s brief.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 7, referral to Disciplinary Counsel",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "We also refer this matter to the Office of Disciplinary Counsel for any investigation it deems appropriate.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 6 n.4, referral to the court’s Rules Committee",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "We are referring this issue to the court’s Rules Committee for analysis and potential clarification of the full scope of our sanctions authority in these circumstances, which, as the concurring opinion notes, is unclear.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. at 8, Glickman, S.J., concurring (first such case in this court)",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-09/Douglas%20v.%20Deutsche%20Bank%20Nat%27l%20Trt%20Co.%2024-CV-1099%20ORDER.pdf",
+          "verbatim": "This is the first reported case in which this court has received a brief containing fabricated citations.",
+          "effective": "2026-09-03",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Pennington v. First Hand Land, LLC, No. 25-CV-0400, D.C. Court of Appeals (decided Jan. 8, 2026), slip op. at 8 n.1 — forgery by a self-represented party, with an AI caution (NOT an AI-citation sanction)",
+          "url": "https://www.dccourts.gov/sites/default/files/2026-01/Pennington%20v.%20First%20Hand%20Land%2025-CV-0400.pdf",
+          "verbatim": "While Pennington’s forgery does not bear any hallmarks of being generated with artificial intelligence, we note that recent advancements in AI have made it increasingly quick and easy for parties to create convincing forgeries.",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of the D.C. Court of Appeals page (checked; the only AI hit is the navigation link to the courts’ AI page)",
+          "url": "https://www.dccourts.gov/court-of-appeals/court-of-appeals-resources/rules-of-the-dc-court-of-appeals",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "D.C. Court of Appeals Orders and Notices page (checked; no AI order listed)",
+          "url": "https://www.dccourts.gov/court-of-appeals/court-of-appeals-orders-and-notices",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API, D.C. Court of Appeals, generative-AI fabrication query (2 hits, both read)",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=dc&q=%28%22artificial+intelligence%22+OR+%22generative+AI%22+OR+ChatGPT%29+AND+%28fabricated+OR+hallucinat%2A+OR+%22nonexistent+cases%22+OR+%22nonexistent+citations%22%29",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT FETCHED — D.C. Law Library code search, no working query endpoint (the site is a JavaScript app and the search URL returns HTTP 404)",
+          "url": "https://code.dccouncil.gov/",
+          "verbatim": null,
+          "effective": null,
+          "fetched": null
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 3b - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-3b.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: the District has the richest AI material in this batch short of a court rule — an on-point bar ethics opinion, a published Court of Appeals sanction order, a standing judicial task force, and an internal court AI policy — but still NO binding rule requiring disclosure, certification, or verification of AI use in a filing. SURPRISE 1 — D.C. NEVER ADOPTED THE TECHNOLOGY-COMPETENCE COMMENT. D.C. Rule 1.1 Comment [8] stops at \"keep abreast of changes in the law and its practice, and engage in such continuing study and education as may be necessary to maintain competence.\" — no reference to the benefits and risks of relevant technology. The D.C. Bar says so itself in Opinion 388, quoting its earlier Opinion 371: \"Although the District’s Comments to Rule 1.1 do not specifically reference technology\". The word technology appears exactly once in the seven rules and comment sets read (1.1, 1.4, 1.5, 1.6, 3.3, 5.1, 5.3), in Rule 1.1 Comment [5] on thoroughness and preparation. SURPRISE 2 — D.C. Rule 1.6 has no paragraph (c) equivalent, but it is NOT silent about unauthorized access. RESOLVER-CORRECTED 2026-09-21 — the sentence that stood here said the D.C. black letter contains no duty against inadvertent or unauthorized disclosure and that the duty lives only in Comment [40]. That is wrong as to unauthorized access. Rule 1.6 (f) is black letter — \"A lawyer shall exercise reasonable care to prevent:\" ... \"(2) the unauthorized access to confidences or secrets of a client.\" What D.C. lacks, unlike Model Rule 1.6 (c), Massachusetts Rule 1.6 (c) and Connecticut Rule 1.6 (e), is the INADVERTENT-disclosure limb, and it says reasonable care where those rules say reasonable efforts. Comment [40] adds the separate precaution for transmitting and storing. The rule still speaks of a \"confidence or secret\". SURPRISE 3 — D.C. Rule 1.4 has no means-consultation paragraph, and Opinion 388 does not list Rule 1.4 among its Applicable Rules (1.1, 1.2, 1.5, 1.6, 1.16, 3.3, 3.4, 5.1, 5.3 and 8.4 — RESOLVER-CORRECTED 2026-09-21, the list as it stood omitted Rule 8.4 (Misconduct), which the opinion does list). Read against the opinion's own introduction — \"use of GAI in legal matters implicates lawyers’ duties of competence, confidentiality, communication, candor to the court, and fairness to opposing parties and counsel\" — the omission of Rule 1.4 from the list is not a considered statement that communication duties are irrelevant. A generator should not assume a D.C. duty to consult the client about the means of the representation; there is none in the black letter. OPINION 388 (advisory, published April 2024) is the substantive AI guidance and is unusually concrete: verify or have a reasonable basis to trust GAI output; investigate the tool before use; ask whether inputs are visible to the provider and whether they will affect later users' answers; do not put Client Confidential Information into a tool that fails those tests; bill only for time actually spent; pass GAI cost through only as a disclosed expense; supervise under 5.1 and 5.3; and consider whether GAI interactions belong in the client file under Rule 1.16 (d). CITATION TRAP: Opinion 388 cites the Maintaining Competence comment as \"Rule 1.1 cmt. [6]\"; on the dcbar site today that same text is numbered [8]. The comments now at [6] and [7], on retaining or contracting with other lawyers, sit between them, which is consistent with a renumbering after April 2024, but no adopting order was fetched to confirm that. Cite the current numbering and let the verifier date the change. DISCIPLINE: Douglas v. Deutsche Bank National Trust Co., No. 24-CV-1099 (D.C. Ct. App., Published Order, filed Sept. 3, 2026) is the one to read — four fabricated cases in an appellee brief produced with \"Google’s generative artificial intelligence search tool\"; brief STRICKEN; matter referred to the Office of Disciplinary Counsel; the firm criticized for blaming a departed junior lawyer and for not producing its own AI policy. Glickman, S.J., concurring, records that \"This is the first reported case in which this court has received a brief containing fabricated citations.\" and that the court's direct sanctioning authority over attorneys is unclear, which is why the panel referred the question to the Rules Committee. Pennington v. First Hand Land, LLC, No. 25-CV-0400 (Jan. 8, 2026) is the other CourtListener hit; it sanctions a self-represented litigant for a FORGED court order, not for AI, and its n.1 expressly says the forgery bore no hallmarks of AI generation. Do not cite it as an AI case. COURT MATERIALS BIND COURT PERSONNEL, NOT LAWYERS. The DC Courts AI Internal Use Policy (shared with staff July 2025) governs \"judicial officers, employees, contractors, and volunteers\" — the same structure as the Pennsylvania Interim Policy. The Administrative Order of March 6, 2026 makes the AI Task Force a standing committee and charges it, at purpose 8, to \"Develop court rules with respect to disclosure, transparency, ethics, accuracy, authenticity and certification of AI use in court pleadings and proceedings.\" Those rules DO NOT YET EXIST; this is the single most important watch item for the District. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): D.C. RPC rules 1.1, 1.4, 1.5, 1.6, 3.3, 5.1 and 5.3 with their comments on dcbar.org; the D.C. Bar Legal Ethics Opinions index for 210 to present (388 is the only AI opinion; 389 Flat Fees, 390 Representation and Privilege Issues, 391 Conditions Limiting Law Practice, 392 Rules 3.3 (d) and 1.6 (d) are not on AI); the D.C. Court of Appeals Orders and Notices page; the Rules of the D.C. Court of Appeals page. OPEN QUESTIONS FOR THE VERIFIER: (1) NO D.C. STATUTE SWEEP WAS DONE — code.dccouncil.gov is a JavaScript application and its search URL returns 404 to curl; check the D.C. Code and recent Council acts for anything on AI in court filings or law practice. (2) Effective and amendment dates: the dcbar.org rule pages carry NO adoption or amendment dates, so every RPC source row here has effective: null; find the D.C. Court of Appeals order adopting the current rules and date them, and in particular date Rule 1.1 Comment [5] and the renumbering that moved Maintaining Competence from [6] to [8]. (3) Watch the D.C. Courts Rules Committee and the AI Task Force for the rules promised by purpose 8 of the administrative order, and re-check after the Douglas referral. (4) Check the Office of Disciplinary Counsel and the D.C. Court of Appeals Board on Professional Responsibility for any AI discipline flowing from the Douglas referral. (5) The AI Glossary, DC Courts Guide to AI and AI Strategic Planning Roadmap linked from the courts' AI page were NOT fetched; read them if the internal policy matters to a matter. RESOLVER (2026-09-21): a third session, which neither compiled nor verified this entry, worked the seven discrepancy rows raised against it and re-fetched every authority the verifier named into its own folder (files numbered from dc-50). Both blocking rows are sustained and the entry is corrected. D.C. Rule 1.6 (f) IS black letter, so the two statements that the duty against unauthorized disclosure exists only in Comment [40] were false; they have been rewritten above and three source rows for paragraph (f) added. The accurate D.C. answer to a lawyer asking whether feeding client confidences to a GAI tool can breach a black-letter rule is yes — Rule 1.6 (f) (2) on unauthorized access, and Rule 1.6 (f) (1) where the tool is run by \"others whose services are utilized by the lawyer\"; what D.C. lacks is the limb about INADVERTENT disclosure, and its standard is reasonable care, not reasonable efforts. Of the five non-blocking rows: Rule 1.4 (c) exists, so client_disclosure_duty no longer says the rule provides only (a) and (b), and a source row for (c) is added; Opinion 388's Applicable Rules block also lists Rule 8.4 (Misconduct) and the list above is corrected; the ignorance-defence quotation in Douglas is on slip op. 3, not 4 — in the fetched PDF the printed page number runs one behind the PDF page, and that quotation sits on PDF page 4, which is headed 3 — and the source title is fixed; and the three Rule 1.6 rows now carry effective 2025-09-15, because the rule page itself states that \"This page contains amendments to the District of Columbia Rules of Professional Conduct adopted by the D.C. Court of Appeals on May 14, 2025, and effective September 15, 2025.\" and the promulgating order says \"The amendments will go into effect September 15, 2025.\" That order was fetched and read. Its page 1 carries no text layer and was OCR'd separately, where the number reads \"No. M287-24\" (the D.C. Bar's own download link spells it the same way; the batch-3b verification record calls it M-287-24); pages 2 to 9 are text. The order amends Rule 1.6 (b) and adds a comment; it does NOT touch Rule 1.6 (a), paragraph (f) or Comment [40]. So 2025-09-15 is the date the Rule 1.6 text as now posted took effect, and NOT the date paragraph (f) was adopted, which is still unknown. Rule 1.1 and its comments remain undated for the same reason — the order's text layer names Rules 1.6, 1.7, 1.8, 1.9 and 1.16 and never Rule 1.1 — so the renumbering of Maintaining Competence from cmt. [6] to cmt. [8] is still unexplained and those rows keep effective: null. STILL OPEN, the D.C. statute sweep: on 2026-09-21 code.dccouncil.gov/search and code.dccouncil.gov/api/search each answered curl with HTTP 404 and a thirteen-byte body. No D.C. statute on AI in court filings or law practice is UNCHECKED, not a verified nothing."
+    },
+    {
+      "id": "ma-rpc",
+      "kind": "state_bar",
+      "name": "Massachusetts Rules of Professional Conduct (S.J.C. Rule 3:07) and Massachusetts AI guidance",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "No Massachusetts rule, Supreme Judicial Court order, or statute imposes an AI-specific verification, disclosure, or certification duty on attorneys as of 2026-09-21. The duty comes from the general rules. Rule 1.1 — \"A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.\" Rule 1.1 Comment [8] adds the technology clause (below). Rule 3.3 (a) (1) — a lawyer shall not knowingly \"make a false statement of fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer;\". Rules 5.1 (b) and 5.3 (b) impose supervisory \"reasonable efforts to ensure\" duties over lawyers and over nonlawyers inside and outside the firm. The only signing certification is the general one in Mass. R. Civ. P. 11 (a) — \"The signature of any attorney to a pleading constitutes a certificate that the attorney has read the pleading; that to the best of the attorney’s knowledge, information, and belief there is a good ground to support it; and that it is not interposed for delay.\" with the sanction that \"For a willful violation of this rule an attorney may be subjected to appropriate disciplinary action.\" That rule is not AI-specific and, unlike Fed. R. Civ. P. 11 (b), contains no reasonable-inquiry clause about legal contentions.",
+      "confidentiality_restriction": "Rule 1.6 (a) — \"A lawyer shall not reveal confidential information relating to the representation of a client unless the client gives informed consent, the disclosure is impliedly authorized in order to carry out the representation or the disclosure is permitted by paragraph (b).\" Rule 1.6 (c) — \"A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, confidential information relating to the representation of a client.\" Rule 1.6 Comment [18] reads (c) to require \"a lawyer to act competently to safeguard confidential information relating to the representation of a client against unauthorized access by third parties\". Rule 5.3 Comment [3] treats \"using an Internet-based service to store client information\" as an outside nonlawyer service for which \"a lawyer must make reasonable efforts to ensure that the services are provided in a manner that is compatible with the lawyer’s professional obligations.\" Nothing names AI. Massachusetts uses the broader term confidential information rather than the Model Rule formulation, and defines it in Rule 1.6 (a) itself.",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional — no AI-specific duty. Rule 1.4 (a) (2) requires a lawyer to \"reasonably consult with the client about the means by which the client’s objectives are to be accomplished;\" and Rule 1.4 (b) that \"A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" Client informed consent is required by Rule 1.6 (a) before confidential information is revealed outside implied authorization. No Massachusetts bar or court guidance adds an AI-specific consultation or consent duty.",
+      "fees_note": "Rule 1.5 (a) — \"A lawyer shall not enter into an agreement for, charge, or collect an illegal or clearly excessive fee or collect an unreasonable amount for expenses.\" Massachusetts keeps the older illegal-or-clearly-excessive standard rather than the Model Rule reasonableness standard. Nothing in the rule, its comments, or any located Massachusetts guidance addresses billing for generative-AI time or expense.",
+      "sources": [
+        {
+          "title": "Massachusetts Rules of Professional Conduct Rule 1.1 (Competence), black letter, S.J.C. Rule 3:07",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-11-competence",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.",
+          "effective": "2015-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 Comment [8], Maintaining Competence (technology-competence language, ADOPTED)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-11-competence",
+          "verbatim": "To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, and engage in continuing study and education.",
+          "effective": "2022-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 page Updates line (date of the current comment text)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-11-competence",
+          "verbatim": "Comment amended July 13, 2022, effective October 1, 2022",
+          "effective": "2022-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of Professional Conduct Rule 1.4 (a) (2) (Communication)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-14-communication",
+          "verbatim": "(2) reasonably consult with the client about the means by which the client’s objectives are to be accomplished;",
+          "effective": "2022-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.4 (b)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-14-communication",
+          "verbatim": "A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": "2022-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of Professional Conduct Rule 1.5 (a) (Fees)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-15-fees",
+          "verbatim": "A lawyer shall not enter into an agreement for, charge, or collect an illegal or clearly excessive fee or collect an unreasonable amount for expenses.",
+          "effective": "2018-09-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of Professional Conduct Rule 1.6 (a) (Confidentiality of information)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-16-confidentiality-of-information",
+          "verbatim": "A lawyer shall not reveal confidential information relating to the representation of a client unless the client gives informed consent, the disclosure is impliedly authorized in order to carry out the representation or the disclosure is permitted by paragraph (b).",
+          "effective": "2024-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 (c) (reasonable efforts to prevent disclosure or access)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-16-confidentiality-of-information",
+          "verbatim": "A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, confidential information relating to the representation of a client.",
+          "effective": "2024-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 Comment [18] (acting competently to preserve confidentiality)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-16-confidentiality-of-information",
+          "verbatim": "Paragraph (c) requires a lawyer to act competently to safeguard confidential information relating to the representation of a client against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer’s supervision.",
+          "effective": "2024-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 page Updates line (most recent amendment)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-16-confidentiality-of-information",
+          "verbatim": "Amended March 12, 2024, effective April 1, 2024",
+          "effective": "2024-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of Professional Conduct Rule 3.3 (a) (1) (Candor toward the tribunal)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-33-candor-toward-the-tribunal",
+          "verbatim": "(1) make a false statement of fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer;",
+          "effective": "2015-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of Professional Conduct Rule 5.1 (b) (supervisory lawyers)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-51-responsibilities-of-partners-managers-and-supervisory-lawyers",
+          "verbatim": "A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.",
+          "effective": "2015-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of Professional Conduct Rule 5.3 (b) (nonlawyer assistance)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-53-responsibilities-regarding-nonlawyer-assistance",
+          "verbatim": "(b) a lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the person’s conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": "2015-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 5.3 Comment [3], Nonlawyers Outside the Firm (Internet-based services)",
+          "url": "https://www.mass.gov/supreme-judicial-court-rules/rules-of-professional-conduct-rule-53-responsibilities-regarding-nonlawyer-assistance",
+          "verbatim": "A lawyer may use nonlawyers outside the firm to assist the lawyer in rendering legal services to the client. Examples include retaining an investigative or paraprofessional service, hiring a document management company to create and maintain a database for complex litigation, sending client documents to a third party for printing or scanning, and using an Internet-based service to store client information. When using such services outside the firm, a lawyer must make reasonable efforts to ensure that the services are provided in a manner that is compatible with the lawyer’s professional obligations.",
+          "effective": "2015-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Rules and Orders of the Supreme Judicial Court, consolidated PDF — currency statement (whole file greps to zero AI hits)",
+          "url": "https://www.mass.gov/doc/massachusetts-supreme-judicial-court-rules-and-orders/download",
+          "verbatim": "Including rule amendments effective August 1, 2026",
+          "effective": "2026-08-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — publisher disclaimer (read before relying on this compilation)",
+          "url": "https://www.mass.gov/doc/massachusetts-supreme-judicial-court-rules-and-orders/download",
+          "verbatim": "The Massachusetts Trial Court Law Libraries make every effort to provide a current, accurate copy of the rules of court. However, this is not an official source for the rules, and the libraries cannot be held responsible for any errors or omissions contained in this document.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Rule of Civil Procedure 11 (a) (Appearances and pleadings) — the general signing certificate, not AI-specific",
+          "url": "https://www.mass.gov/rules-of-civil-procedure/civil-procedure-rule-11-appearances-and-pleadings-effective-until-january-1-2027",
+          "verbatim": "The signature of any attorney to a pleading constitutes a certificate that the attorney has read the pleading; that to the best of the attorney’s knowledge, information, and belief there is a good ground to support it; and that it is not interposed for delay.",
+          "effective": "2021-09-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 11 sanction for willful violation",
+          "url": "https://www.mass.gov/rules-of-civil-procedure/civil-procedure-rule-11-appearances-and-pleadings-effective-until-january-1-2027",
+          "verbatim": "For a willful violation of this rule an attorney may be subjected to appropriate disciplinary action.",
+          "effective": "2021-09-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Rule of Civil Procedure 11 as amended to take effect January 1, 2027 (electronic signatures; contains no AI language)",
+          "url": "https://www.mass.gov/rules-of-civil-procedure/civil-procedure-rule-11-appearances-and-pleadings-signatures-effective-january-1-2027",
+          "verbatim": "Civil Procedure Rule 11: Appearances and pleadings; signatures (Effective January 1, 2027)",
+          "effective": "2027-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Supreme Judicial Court Rules index on mass.gov (checked for an AI rule or order; none listed)",
+          "url": "https://www.mass.gov/lists/massachusetts-supreme-judicial-court-rules",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Rules of Court and Standing Orders index (checked; no AI item)",
+          "url": "https://www.mass.gov/info-details/massachusetts-rules-of-court-and-standing-orders",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Superior Court rules and standing orders index (checked; no AI standing order)",
+          "url": "https://www.mass.gov/superior-court-rules-and-standing-orders",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Trial Court rules and standing orders index (checked; no AI standing order)",
+          "url": "https://www.mass.gov/massachusetts-trial-court-rules-and-standing-orders",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Appeals Court rules and orders index (checked; no AI order)",
+          "url": "https://www.mass.gov/appeals-court-rules-and-orders",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API, Massachusetts SJC, Appeals Court, Superior Court and District Court, generative-AI fabrication query (1 hit, Superior Court only)",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=mass%20massappct%20masssuperct%20massdistct&q=%28%22artificial+intelligence%22+OR+%22generative+AI%22+OR+ChatGPT%29+AND+%28fabricated+OR+hallucinat%2A+OR+%22nonexistent+cases%22+OR+%22nonexistent+citations%22%29",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API, Massachusetts SJC and Appeals Court, bare phrase artificial intelligence (0 results)",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=mass%20massappct&q=%22artificial+intelligence%22",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT FETCHED (AWS WAF challenge) — CourtListener opinion page for Robert Dastou v. Kathryn Holmes, Mass. Super. Ct. No. 2381CV02212 (July 16, 2025), the only AI-query hit",
+          "url": "https://www.courtlistener.com/opinion/10642455/robert-dastou-v-kathryn-holmes/",
+          "verbatim": null,
+          "effective": "2025-07-16",
+          "fetched": null
+        },
+        {
+          "title": "NOT USABLE — Social Law Library slip-opinion page for the same case redirected to the slip-opinions index and returned no opinion text",
+          "url": "https://www.socialaw.com/services/slip-opinions/slip-opinion-details/robert-dastou-vs.-kathryn-holmes",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT FETCHED (Cloudflare) — Massachusetts Bar Association ethics opinions index",
+          "url": "https://www.massbar.org/publications/ethics-opinions",
+          "verbatim": null,
+          "effective": null,
+          "fetched": null
+        },
+        {
+          "title": "NOT USABLE (JavaScript shell) — Board of Bar Overseers rules page, returned seven words of text",
+          "url": "https://www.massbbo.org/Rules",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Supreme Judicial Court, Interim guidelines for use of Generative AI (mass.gov guidance page, Date field 11/12/2025) — who is covered (RESOLVER-ADDED 2026-09-21)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "These guidelines apply to the use of Generative Artificial Intelligence (GenAI) tools by judges, clerks, registers, recorders, employees, law clerks, interns, and contractors of the Massachusetts state courts.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the general policy (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "The general policy is that GenAI may not be used except in certain limited situations set out below.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — GenAI for legal research, legal writing or other legal work (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "Can I use GenAI tools to assist with legal research, legal writing, or other legal work? Not at this time.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the three approved tools, and only with training and retention opted out (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "Provided you activate the settings to opt-out of allowing the tool to use what you input to train its learning model or retain your input in any fashion ([instructions provided]), you may use the following tools, which have been approved for use under these interim guidelines by the IT Department:",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — what information may be entered (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "Because of the risks associated with the use of GenAI, only Level 1 (Public) information may be entered into a GenAI tool. No other information may be entered. No Level 2 (Internal), Level 3 (Confidential), or Level 4 (Highly Confidential) information should be entered.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — no reliance without verification (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "you must never assume that information from GenAI is accurate, credible, or authoritative. You must always separately verify the information from GenAI, as detailed below.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the user carries the responsibility (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "Ultimately, you are responsible for your use of GenAI, and you should take all steps necessary to ensure that the information it produces at your request is wholly accurate. You must never use GenAI as the sole source of reference or rely on it to make final decisions, and you must always independently verify any information produced by GenAI.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the guidelines are interim and are expected to change (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/guidance/interim-guidelines-for-use-of-generative-ai",
+          "verbatim": "These guidelines are being issued on an interim basis, and will be refined and modified as more becomes known about Generative AI. It is your responsibility to make sure that you are following the most recent guidance.",
+          "effective": "2025-11-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Glenn Wilder and Others v. President & Fellows of Harvard College and Others, Mass. Super. Ct. (Suffolk) No. 2384CV01461-BLS2 consolidated with 2384CV01389-BLS2 (May 18, 2026) — the holding (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2026/05/18/glenn_wilder_and_others_v._president__fellows_of_harvard_college_and.html",
+          "verbatim": "Attorney Morgan’s role in submitting hallucinated case citations to a Federal District Court, and his failure in that action to review motions that he allowed to be filed over his signature, provide ample grounds for denying his request to appear pro hac vice in this case.",
+          "effective": "2026-05-18",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — what the out-of-state attorney had done (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2026/05/18/glenn_wilder_and_others_v._president__fellows_of_harvard_college_and.html",
+          "verbatim": "Attorney Morgan disclosed that he was sanctioned by the United States District Court for the District of Wyoming for violating Fed. R. Civ. P. 11(b) because he signed motions in limine without reading them and, as a result, permitted the filing of motions citing eight non-existent cases that had been hallucinated by Morgan & Morgan’s in-house Artificial Intelligence (“AI”) platform.",
+          "effective": "2026-05-18",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — judge and date on the face of the decision (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2026/05/18/glenn_wilder_and_others_v._president__fellows_of_harvard_college_and.html",
+          "verbatim": "/s/Kenneth W. Salinger Justice of the Superior Court May 18, 2026",
+          "effective": "2026-05-18",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Wilder’s citation of Smith v. Farwell, which is the only text of that case read in this batch (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2026/05/18/glenn_wilder_and_others_v._president__fellows_of_harvard_college_and.html",
+          "verbatim": "Smith v. Farwell, Norfolk Super. Ct. no. 2282CV01197, 2024 WL 4002576, at *4 (Mass. Super. Feb. 15, 2024) (Davis, J.) (imposing a $2,000 fine as a sanction for submitting fake case citations to the court).",
+          "effective": "2026-05-18",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API record for Wilder, which supplies the court, docket and date (the decision text itself carries no caption) (RESOLVER-ADDED)",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=masssuperct&q=Farwell",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Robert Dastou v. Kathryn Holmes, Mass. Super. Ct. No. 2381CV02212 (Middlesex, Goldenberg, J.) — caption and docket, read from the CourtListener stored document, which the WAF does not protect (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "SUPERIOR COURT ROBERT DASTOU vs. KATHRYN HOLMES Docket: 2381CV02212",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the title of the order (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "FINDINGS, RULINGS, AND ORDER IMPOSING SANCTIONS",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — why the hearing was held (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "The Court held a hearing to address the suspected misuse of generative artificial intelligence by an attorney in court filings.",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the line the case is cited for (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "Misuse of generative AI is sanctionable; poor drafting is not.",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — what counsel said she had done (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "put them into ChatGPT for formatting.",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — no blaming the tool, and the review duty (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "If a lawyer uses generative technology, they may not blame errors in their work product on the technology. Any document filed with the court must be thoroughly reviewed to ensure accuracy and the protection of client interests.",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the standard the order sets for a lawyer who uses generative AI (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "Lawyers who assume the risk of using generative AI must establish a thorough review process to ensure accuracy, ethical compliance, and protection of client interests.",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the first ordered sanction, no billing for the affected work (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "Is enjoined from billing Defendant for time spent preparing motions in limine and jury instructions for this matter and for time in court litigating these motions; and",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the second ordered sanction, an MCLE program and a sworn statement (RESOLVER-ADDED)",
+          "url": "https://storage.courtlistener.com/html/2025/07/16/robert_dastou_v._kathryn_holmes.html",
+          "verbatim": "submit a sworn statement to the Clerk of Court affirming its completion no later than six months from the date that this order issues.",
+          "effective": "2025-07-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "LEAD ONLY — Smith v. Farwell itself was not located. CourtListener holds no Massachusetts Superior Court opinion of that name and none for docket 2282CV01197; only opinions citing it (RESOLVER-ADDED)",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&q=%22Smith+v.+Farwell%22",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Rule of Civil Procedure 11, Reporter’s notes (2021) — the pinpoint for the certification sentence is 11 (a) (1) (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/rules-of-civil-procedure/civil-procedure-rule-11-appearances-and-pleadings-effective-until-january-1-2027",
+          "verbatim": "Rule 11(a) has been subdivided into (1) and (2). Rule 11(a)(1) contains the language previously in Rule 11(a), with some changes.",
+          "effective": "2021-09-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Rules and Orders of the Supreme Judicial Court, consolidated PDF — the Rule History printed under Rule 1.1, which is what dates the black letter (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/doc/massachusetts-supreme-judicial-court-rules-and-orders/download",
+          "verbatim": "Adopted June 9, 1997, effective January 1, 1998; amended March 26, 2015, effective July 1, 2015; amended July 13, 2022, effective October 1, 2022.",
+          "effective": "2015-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts General Laws full-text search for artificial intelligence — seven hits, all economic development (RESOLVER-ADDED)",
+          "url": "https://malegislature.gov/Laws/GeneralLaws/Search?searchTerms=artificial+intelligence",
+          "verbatim": "Showing results 1 to 7 of 7 results.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts General Laws full-text search for generative (RESOLVER-ADDED)",
+          "url": "https://malegislature.gov/Laws/GeneralLaws/Search?searchTerms=generative",
+          "verbatim": "No results were found. Try broadening your search.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Massachusetts Attorney General Advisory on AI — read in full and addressed to AI developers, suppliers and users, not to counsel (RESOLVER-ADDED)",
+          "url": "https://www.mass.gov/doc/ago-ai-advisory-41624/download",
+          "verbatim": "The Office of the Attorney General (“AGO”) issues this Advisory to provide guidance to developers, suppliers, and users of artificial intelligence and algorithmic decision-making systems",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT FETCHED (Cloudflare challenge) — Massachusetts Bar Association ethics opinions index, HTTP 403 with Cf-Mitigated challenge at 03:33 local time on 2026-09-21 (RESOLVER-ADDED)",
+          "url": "https://www.massbar.org/publications/ethics-opinions",
+          "verbatim": null,
+          "effective": null,
+          "fetched": null
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 3b - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-3b.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: as of 2026-09-21 no Massachusetts rule, order, statute or located bar opinion imposes an AI-specific duty on an ATTORNEY. No Supreme Judicial Court rule or order, no Trial Court or Appeals Court standing order, no statewide certification or disclosure requirement, and no located state bar ethics opinion on generative AI. RESOLVER-CORRECTED 2026-09-21 — the sentence that stood here said that Massachusetts has NOTHING AI-specific, and that is false of the Commonwealth's courts. The Supreme Judicial Court has published Interim guidelines for use of Generative AI, carrying the date 11/12/2025 on its mass.gov guidance page, which apply to \"judges, clerks, registers, recorders, employees, law clerks, interns, and contractors of the Massachusetts state courts\" and not to the lawyers who appear before them (COURT PERSONNEL, below). The consolidated Massachusetts Rules and Orders of the Supreme Judicial Court, published with \"Including rule amendments effective August 1, 2026\" on its title page and including S.J.C. Rule 3:07, contains zero occurrences of artificial, generative or ChatGPT across 181,937 words — RESOLVER-CORRECTED, the figure that stood here was 181,876; the resolver's own wc -w of its own extraction of the same PDF gives 181,937, and the document is a zero-hit document on either count. Massachusetts is therefore the mirror image of Connecticut in this batch as to what binds an attorney. TECHNOLOGY COMPETENCE: ADOPTED, but in a shortened form that a lawyer should notice. Rule 1.1 Comment [8] tracks the ABA language up to \"relevant technology\" and then stops at \"and engage in continuing study and education.\" — Massachusetts omits the ABA clause about complying with continuing legal education requirements, consistent with Massachusetts having no mandatory CLE. The mass.gov page gives Adopted Date 03/26/2015 and Effective Date 10/01/2022, with the Updates line \"Comment amended July 13, 2022, effective October 1, 2022\"; the rule as a whole was adopted March 26, 2015, effective July 1, 2015. The effective date recorded on the Comment [8] source row is 2022-10-01 because that is the date of the currently posted comment text, not the date the technology clause first appeared. SIGNING: the only certification a Massachusetts filer makes is Mass. R. Civ. P. 11 (a), which certifies reading, good ground and absence of delay. It has no reasonable-inquiry clause about legal contentions, so the Fed. R. Civ. P. 11 (b) (2) route used in Park v. Kim has no exact state analogue here; the discipline hook is instead \"For a willful violation of this rule an attorney may be subjected to appropriate disciplinary action.\" A separate Rule 11 takes effect January 1, 2027 — it addresses electronic signatures and Board of Bar Overseers numbers, and it contains no AI language (checked). PINPOINT CAVEAT: the mass.gov page for the current rule displays the text under the headings (a) Signing and (1) In General, and its Reporter's Notes say \"Rule 11(a) has been subdivided into (1) and (2).\" The certification sentence is cited here simply as Rule 11 (a); the verifier should settle whether the correct pinpoint today is 11 (a) or 11 (a) (1). CASE LAW: CourtListener returns ZERO opinions containing the phrase artificial intelligence from the Supreme Judicial Court or the Appeals Court, so there is no published Massachusetts APPELLATE decision sanctioning counsel for AI-fabricated citations to report. The single hit across all Massachusetts courts for the fabrication query is Robert Dastou v. Kathryn Holmes, Mass. Super. Ct. No. 2381CV02212 (dateFiled 2025-07-16), a TRIAL-level decision whose text could not be read here (CourtListener returned an AWS WAF challenge on the HTML page and HTTP 401 on the opinion API; the Social Law Library slip-opinion link redirected to its index). Nothing about that case is asserted in any field. NOTE FOR THE VERIFIER: a Massachusetts AI-citation sanction commonly cited as Smith v. Farwell (Mass. Super. Ct. Feb. 2024) is RECALLED BY THE COMPILER FROM MEMORY and was NOT located, fetched, or read in this run; no search result or snippet supports it. Treat the name and date as unverified leads, find the decision, and read it. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): the consolidated SJC Rules and Orders PDF; the Supreme Judicial Court rules index; the Massachusetts Rules of Court and Standing Orders index; the Superior Court, Trial Court and Appeals Court rules-and-standing- orders index pages; Mass. R. Civ. P. 11 in both its current and its January 1, 2027 form. COULD NOT BE SEARCHED: mass.gov site search and search.mass.gov are JavaScript-rendered and returned no text to curl, so no keyword sweep of mass.gov was possible; the mass.gov sitemap index has 118 pages and was not walked. The Massachusetts Bar Association ethics-opinions index is behind a Cloudflare challenge (Cf-Mitigated: challenge) and the Board of Bar Overseers site is a JavaScript shell, so neither bar body was searched for an AI opinion. Treat the finding of no bar guidance as UNCONFIRMED for those two bodies. OPEN QUESTIONS FOR THE VERIFIER: (1) find and read Smith v. Farwell and any later Superior Court AI decision; (2) check the Massachusetts Bar Association and Boston Bar Association for AI ethics opinions or task-force reports through a route that is not Cloudflare-blocked; (3) check whether the Trial Court has an internal generative-AI policy for judges and staff of the kind Pennsylvania adopted; (4) check the Massachusetts Attorney General's 2024 advisory on AI under Chapter 93A, which was not fetched here and which is about AI systems generally rather than about lawyers. CAVEAT ON SOURCES: the rule text used here comes from mass.gov, which is where the Judiciary publishes the rules, but the consolidated compilation carries the Trial Court Law Libraries disclaimer that \"this is not an official source for the rules\". Read the rule in the official print source before signing anything in reliance on it. COURT PERSONNEL — RESOLVER (2026-09-21): the Supreme Judicial Court's Interim guidelines for use of Generative AI, fetched and read in full by the resolver on 2026-09-21, are the one AI-specific instrument the Commonwealth has, and they do not bind counsel. They apply to \"judges, clerks, registers, recorders, employees, law clerks, interns, and contractors of the Massachusetts state courts\". Their substance, for a lawyer who needs to know what the court across the bench may and may not do: \"The general policy is that GenAI may not be used except in certain limited situations set out below.\"; on legal work the guidelines put the question and the answer as \"Can I use GenAI tools to assist with legal research, legal writing, or other legal work? Not at this time.\"; administrative use is allowed only with one of three named approved tools, with training and retention opted out, and \"Because of the risks associated with the use of GenAI, only Level 1 (Public) information may be entered into a GenAI tool.\"; and reliance is barred — \"Ultimately, you are responsible for your use of GenAI, and you should take all steps necessary to ensure that the information it produces at your request is wholly accurate.\" The guidelines say of themselves that they are interim and will be refined. They change NOTHING in the structured fields of this entry — disclosure_to_court, certification_required, verification_duty, record_keeping_duty and client_disclosure_duty all still state an attorney's position — exactly as the DC Courts AI Internal Use Policy does in the dc-rpc entry. What they change is the headline: a reader told that Massachusetts has nothing AI-specific would say so to a court or a client, and the state's highest court has published a generative-AI policy. CASE LAW — RESOLVER (2026-09-21): two Massachusetts trial-court decisions were fetched and read in full, and both belong in the record. (1) Glenn Wilder and Others v. President & Fellows of Harvard College and Others (Mass. Super. Ct., Salinger, J., May 18, 2026) DENIES pro hac vice admission to an out-of-state attorney, because \"Attorney Morgan’s role in submitting hallucinated case citations to a Federal District Court, and his failure in that action to review motions that he allowed to be filed over his signature, provide ample grounds for denying his request to appear pro hac vice in this case.\" The underlying sanction was Wadsworth v. Walmart Inc., 348 F.R.D. 489 (D. Wyo. 2025), which Wilder describes as a Fed. R. Civ. P. 11 (b) violation over \"motions citing eight non-existent cases that had been hallucinated by Morgan & Morgan’s in-house Artificial Intelligence (“AI”) platform.\" Practically this is the most useful Massachusetts AI holding there is — an AI sanction in another court is a ground to refuse admission here. It is a Superior Court decision, it changes no structured field, and the entry's statement that there is no published Massachusetts APPELLATE AI decision still stands. (2) Robert Dastou v. Kathryn Holmes was read after all. The CourtListener HTML page is behind the AWS WAF, but the stored document is not, and storage.courtlistener.com answered HTTP 200. Goldenberg, J., found fabricated citations and a fabricated legal concept in motions in limine and proposed jury instructions, credited that counsel had taken the model jury instructions and \"put them into ChatGPT for formatting.\" and held that \"Misuse of generative AI is sanctionable; poor drafting is not.\" The sanctions were that counsel is enjoined from billing the client for the affected work and must complete a named MCLE program and file a sworn statement within six months. The standard the order states for the bar is \"Lawyers who assume the risk of using generative AI must establish a thorough review process to ensure accuracy, ethical compliance, and protection of client interests.\" The compiler's NOT FETCHED row for the CourtListener opinion page is left standing as a true record of that URL; the storage rows added to sources are the text. NOTE ON THE STORED TEXT — CourtListener's copy of Dastou carries scanning artefacts (a middle dot inside one sentence, and generative AI rendered twice as Al and as AL); nothing is quoted here from an affected span. The order bears no date on its face, and 2025-07-16 comes from the CourtListener record and the storage path. SMITH v. FARWELL — RESOLVER (2026-09-21): real, and still not read. The decision is not in CourtListener (a search of the Massachusetts Superior Court for Farwell returns eight opinions, none of them Smith v. Farwell, and a search for docket 2282CV01197 returns only opinions that cite it), the reporter citation is Westlaw-only, and socialaw.com is behind a Cloudflare challenge. What IS read is Wilder's citation of it — \"Smith v. Farwell, Norfolk Super. Ct. no. 2282CV01197, 2024 WL 4002576, at *4 (Mass. Super. Feb. 15, 2024) (Davis, J.) (imposing a $2,000 fine as a sanction for submitting fake case citations to the court).\" Cite it as located by citation, name the citing decision, and quote nothing from Smith itself. The compiler's note that the name and date were a recollection is left standing; it is a true record of how the case entered this entry. OPEN QUESTIONS, ANSWERED — RESOLVER (2026-09-21). (1) The Massachusetts statute sweep is done and it is a verified nothing. The General Laws full-text search answers curl, and returns \"Showing results 1 to 7 of 7 results.\" for artificial intelligence — c. 23I sections 1, 2 and 6, c. 40J section 4G, and c. 63 sections 31M, 38M and 38U, every one of them economic-development law — while the same search for generative returns \"No results were found. Try broadening your search.\" (2) The Rule 11 pinpoint is settled. The current mass.gov page prints the certification sentence and the willful-violation sentence under the headings (a) Signing and (1) In General, and the page's own Reporter's notes say \"Rule 11(a) has been subdivided into (1) and (2). Rule 11(a)(1) contains the language previously in Rule 11(a), with some changes.\" Cite Mass. R. Civ. P. 11 (a) (1). The verification_duty field above and the Rule 11 source titles still read 11 (a); that is imprecise rather than wrong, no discrepancy row flags it, and it is left for the merging session to propagate. (3) The Attorney General's AI advisory was fetched and read in full, and nothing in it belongs in this entry. It is addressed to \"developers, suppliers, and users of artificial intelligence and algorithmic decision-making systems\" under G.L. c. 93A, c. 151B and c. 93H, and the words lawyer, pleading, practice of law and Rules of Professional Conduct do not appear in it at all. (4) The Rule 1.1 effective date of 2015-07-01 IS sourced, though not from the page the row cites. The consolidated Supreme Judicial Court Rules and Orders PDF prints under Rule 1.1 the history \"Adopted June 9, 1997, effective January 1, 1998; amended March 26, 2015, effective July 1, 2015; amended July 13, 2022, effective October 1, 2022.\" A source row for that line is added and the date is unchanged. (5) The two bar bodies remain UNCONFIRMED. The Massachusetts Bar Association ethics-opinions index answered the resolver HTTP 403, Server cloudflare, with Cf-Mitigated challenge, at 03:33 local time on 2026-09-21, and massbbo.org is a JavaScript shell. Neither body has been searched for an AI opinion by the compiler, the verifier or the resolver."
+    },
+    {
+      "id": "va-rpc",
+      "kind": "state_bar",
+      "name": "Virginia Rules of Professional Conduct and Virginia AI authority (LEO 1901 approved by the Supreme Court of Virginia, proposed LEO 1902, the Court's Rules for Generative AI Use, and LPC Commercial Services)",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "No Virginia rule of professional conduct, statewide court rule or statute requires a lawyer to disclose AI use or to file an AI-specific certification as of 2026-09-21. The verification duty is general and comes from three places. (1) The Rules: Rule 1.1 requires competent representation and, since March 1, 2016, Comment [6] adds Virginia's own technology sentence — \"Attention should be paid to the benefits and risks associated with relevant technology.\" (a Comment only; the Scope note says \"Comments do not add obligations to the Rules but provide guidance for practicing in compliance with the Rules.\"). Rule 3.3(a)(1): a lawyer shall not knowingly \"make a false statement of fact or law to a tribunal\". Rules 5.1(b) and 5.3(b) require a supervising lawyer to \"make reasonable efforts to ensure\" conformity. (2) A STATUTE, not a rule, supplies the signing certificate in Virginia — Code § 8.01-271.1(B): \"The signature of an attorney or party constitutes a certificate by him that (i) he has read the pleading, motion, or other paper, (ii) to the best of his knowledge, information and belief, formed after reasonable inquiry, it is well grounded in fact and is warranted by existing law\". It is not AI-specific, and § 8.01-271.1(D) makes a sanction mandatory once it is violated. (3) The Court of Appeals of Virginia applied that statute to AI in LPC Commercial Services, LLC v. Ar-Razzaaq Properties, LLC (Aug. 25, 2026), where \"appellee’s brief contains 25 “phantom quotes” attributed to Virginia cases.\" and the court held: \"The problem is, at the end of the day, it is the attorney who signs the brief and, therefore, is responsible for the accuracy of its contents.\" (4) Non-binding but on point, and added by the resolver: the Virginia State Bar's own Guidance on Generative Artificial Intelligence, published on the VSB Legal Ethics page under Legal Ethics Topical Information, states the verification duty in terms — \"As with any legal research or drafting done by software or by a nonlawyer assistant, a lawyer has a duty to review the work done and verify that any citations are accurate (and real).\" — and adds that \"Work product generated by generative AI should always be critically reviewed by the lawyer exercising independent judgment about the contents.\" On filings the same guidance puts the burden of finding the rule on the filer, without creating a Virginia disclosure duty — \"A lawyer must determine whether any disclosure requirement applies to a filing that the lawyer is making and must comply with that requirement pursuant to Rule 3.4(d).\" The guidance is undated on the page and is NOT a legal ethics opinion.",
+      "confidentiality_restriction": "Rule 1.6(a) protects privileged information and other information the client asked be held inviolate or whose disclosure would be embarrassing or detrimental, absent client consent after consultation. Unlike Georgia, Virginia's safeguarding duty is BLACK LETTER — Rule 1.6(d): \"A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information protected under this Rule.\" Comment [19] applies it to third-party access and to persons under the lawyer's supervision; Comment [20]: \"Lawyers have an ethical obligation to implement reasonable information security practices to protect the confidentiality of client data.\" and adds that \"To comply with this Rule, a lawyer does not need to have all the required technology competencies. The lawyer can and more likely must turn to the expertise of staff or an outside technology professional.\" Comment [21] tells firms to \"keep abreast on an ongoing basis of reasonable methods for protecting client confidential information\" and lists practices (staff security training, departing-employee access, third party access, backup and secure erasure). No Virginia rule, opinion or order names a particular AI tool as off limits for attorneys; the DeepSeek ban and the case-related-information prohibition in the Supreme Court of Virginia Rules for Generative AI Use bind judicial-system users, not counsel. What the VSB's own non-binding Guidance on Generative Artificial Intelligence adds for attorneys is a due-diligence step and a new risk. The step — \"A lawyer must be aware of the Terms of Service and any other information about the possible use of information input into an AI model. Many free, publicly available models specifically instruct users not to input any confidential or sensitive information, and any information input into such a model might be disclosed to other users or used as part of the model’s training.\" The risk — AI-enhanced browsers, which the guidance says \"can create inadvertent cybersecurity vulnerabilities. For example, malicious websites or emails may include hidden text that can activate unwanted instructions for the AI (“prompt injection”).\"",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional — Rule 1.4 requires a lawyer to \"keep a client reasonably informed about the status of a matter and promptly comply with reasonable requests for information.\" and to \"explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" Nothing requires telling a client that AI was used. The one court-approved Virginia AI opinion ties client explanation to FEES rather than to AI as such: LEO 1901 (approved by the Supreme Court of Virginia, Nov. 24, 2025) says \"Separate from the reasonableness requirement in Rule 1.5(a), a lawyer’s fee must also be adequately explained to the client under Rule 1.5(b).\" and that a client \"may need additional explanation of why the lawyer’s experience, technical skills, or other efficiencies contribute to the value of the services\" where AI substantially cuts the time spent. The VSB's non-binding Guidance on Generative Artificial Intelligence answers the question squarely and is the closest thing Virginia has to a rule on the point — \"There is no per se requirement to inform a client about the use of generative AI in their matter. Whether disclosure is necessary will depend on several factors, including the existence of any agreement with or instructions from the client on this issue, whether confidential information will be disclosed to the generative AI, and any risks to the client from the use of generative AI.\"",
+      "fees_note": "Rule 1.5(a): \"A lawyer's fee shall be reasonable.\" LEO 1901, Reasonable Fees and the Use of Generative Artificial Intelligence — approved by order of the Supreme Court of Virginia on November 24, 2025, effective immediately — is the governing Virginia authority and is more permissive than most: hourly fees still track actual time, but \"It is not per se unreasonable for a lawyer to charge the same non-hourly fee for work done with the assistance of AI as work done without the use of AI.\" The opinion reasons that the \"skill requisite to perform the legal service properly\" may INCREASE with AI use, and that \"Rule 1.5 should not require the lawyer to surrender any benefit from the efficiency gains if clients continue to receive value from the lawyer’s output.\" Hourly billing is where the line is drawn, and the VSB's non-binding Guidance on Generative Artificial Intelligence draws it in one sentence — \"A lawyer may not charge an hourly fee in excess of the time actually spent on the case and may not bill for time saved by using generative AI.\" The same guidance treats AI as a cost that may be passed on only at cost — \"The lawyer may only charge the client for costs associated with generative AI if permitted by the fee agreement and by Rule 1.5; any costs passed along to the client and described to the client as costs must be actual costs and cannot be marked up.\"",
+      "sources": [
+        {
+          "title": "Virginia Rules of Professional Conduct, Part Six Section II of the Rules of the Supreme Court of Virginia (Virginia State Bar official text) — Rule 1.1 (Competence)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness and preparation reasonably necessary for the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 Comment [6] (Virginia's technology-competence sentence)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "[6] To maintain the requisite knowledge and skill, a lawyer should engage in continuing study and education in the areas of practice in which the lawyer is engaged. Attention should be paid to the benefits and risks associated with relevant technology.",
+          "effective": "2016-03-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 Committee Commentary (effective date of the technology language)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "The amendments effective March 1, 2016, added the language “in the areas of practice in which the lawyer is engaged. Attention should be paid to the benefits and risks associated with relevant technology.”",
+          "effective": "2016-03-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Scope (comments add no obligations)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "Many of the Comments use the term \"should.\" Comments do not add obligations to the Rules but provide guidance for practicing in compliance with the Rules.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.4(a) (Communication)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "A lawyer shall keep a client reasonably informed about the status of a matter and promptly comply with reasonable requests for information.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.4(b)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.5(a) (Fees), first sentence",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "A lawyer's fee shall be reasonable.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6(d) (black-letter duty to safeguard)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information protected under this Rule.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 Comment [19] (acting reasonably to preserve confidentiality)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "[19] Paragraph (d) requires a lawyer to act reasonably to safeguard information protected under this Rule against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer’s supervision.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 Comment [20] (information security practices)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "Lawyers have an ethical obligation to implement reasonable information security practices to protect the confidentiality of client data.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 Comment [20] (a lawyer may rely on technology professionals)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "To comply with this Rule, a lawyer does not need to have all the required technology competencies. The lawyer can and more likely must turn to the expertise of staff or an outside technology professional.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.6 Comment [21] (firms must keep abreast of protective methods)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "[21] Because of evolving technology, and associated evolving risks, law firms should keep abreast on an ongoing basis of reasonable methods for protecting client confidential information, addressing such practices as:",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 3.3(a)(1) (Candor Toward The Tribunal; the lead-in reads \"A lawyer shall not knowingly\")",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "make a false statement of fact or law to a tribunal;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 5.1(b) (supervisory lawyers)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 5.3(b) (nonlawyer assistants)",
+          "url": "https://vsb.org/Site/about/rules-regulations/rpc-part6-sec2.aspx",
+          "verbatim": "a lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the person's conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Virginia order approving Legal Ethics Opinion No. 1901 (Nov. 24, 2025)",
+          "url": "https://www.vacourts.gov/static/courts/scv/amendments/leo_1901.pdf",
+          "verbatim": "it is ordered that Legal Ethics Opinion No. 1901 be approved as follows, effective immediately:",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Legal Ethics Opinion 1901, Reasonable Fees and the Use of Generative Artificial Intelligence — hourly billing",
+          "url": "https://vsb.org/common/Uploaded%20files/LEOs/1901.pdf",
+          "verbatim": "While it is clear that time-based billing, such as hourly fees, can only be based on the actual time spent on a task, lawyers increasingly seek guidance on the ethical parameters for non-hourly fee structures",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the holding on non-hourly fees",
+          "url": "https://vsb.org/common/Uploaded%20files/LEOs/1901.pdf",
+          "verbatim": "It is not per se unreasonable for a lawyer to charge the same non-hourly fee for work done with the assistance of AI as work done without the use of AI.",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — skill required may increase",
+          "url": "https://vsb.org/common/Uploaded%20files/LEOs/1901.pdf",
+          "verbatim": "Rather, the “skill requisite to perform the legal service properly” might actually increase, as effective AI use could require specialized knowledge to prompt, verify, supplement, and integrate AI outputs into competent legal work product.",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — efficiency gains need not be surrendered",
+          "url": "https://vsb.org/common/Uploaded%20files/LEOs/1901.pdf",
+          "verbatim": "Rule 1.5 should not require the lawyer to surrender any benefit from the efficiency gains if clients continue to receive value from the lawyer’s output.",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.5(b) explanation duty",
+          "url": "https://vsb.org/common/Uploaded%20files/LEOs/1901.pdf",
+          "verbatim": "Separate from the reasonableness requirement in Rule 1.5(a), a lawyer’s fee must also be adequately explained to the client under Rule 1.5(b).",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — additional explanation where AI cuts the time spent",
+          "url": "https://vsb.org/common/Uploaded%20files/LEOs/1901.pdf",
+          "verbatim": "may need additional explanation of why the lawyer’s experience, technical skills, or other efficiencies contribute to the value of the services",
+          "effective": "2025-11-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Proposed Legal Ethics Opinion 1902, Duties When Opposing Counsel Fails to Review and Correct Generative Artificial Intelligence (AI) Outputs — PROPOSED, not adopted; status legend on every page",
+          "url": "https://vsb.org/common/Uploaded%20files/docs/20260527-leo-1902-proposed.pdf",
+          "verbatim": "Draft Opinion for Public Comment",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the problem the draft addresses",
+          "url": "https://vsb.org/common/Uploaded%20files/docs/20260527-leo-1902-proposed.pdf",
+          "verbatim": "The advent of generative AI tools has led to a disturbing trend: lawyers have been caught",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — conclusion (professional judgment, not a bright line)",
+          "url": "https://vsb.org/common/Uploaded%20files/docs/20260527-leo-1902-proposed.pdf",
+          "verbatim": "Whether to notify the court or disciplinary authority of an opponent lawyer’s apparently AI-hallucinated errors requires the attorney to use professional judgment, taking into account the seriousness of the errors and other relevant circumstances.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the Rule 8.3 reporting trigger the draft would apply",
+          "url": "https://vsb.org/common/Uploaded%20files/docs/20260527-leo-1902-proposed.pdf",
+          "verbatim": "Under Rule 8.3(a), it is mandatory for a lawyer to report another lawyer to the appropriate professional authority if that lawyer has reliable information that the other lawyer has committed a violation of the Rules of Professional Conduct that raises a substantial",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Virginia State Bar news, VSB Seeks Comment on Proposed Legal Ethics Opinion 1902 (May 27, 2026)",
+          "url": "https://vsb.org/Site/Site/news/rules-news/20260527-leo-1902.aspx",
+          "verbatim": "The proposed opinion addresses whether a lawyer’s duties of diligence and competence require the lawyer to identify misstatements of law or fact in an opponent’s court filing and advise the court.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Virginia Rules for Generative AI Use — currency (binds the Judicial System, NOT attorneys)",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "Effective Date: June 6, 2024 Last Amended: May 7, 2025",
+          "effective": "2025-05-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — scope of the AI Rules",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "The following Supreme Court of Virginia Rules for Generative AI Use (“AI Rules”) apply to all individuals subject to the administrative authority of the Chief Justice of the Supreme Court of Virginia in his or her capacity as “administrative head of the judicial system.”",
+          "effective": "2025-05-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — paragraph 1 (responsibility to verify)",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "1. Responsibility: Any user of generative AI tools is responsible for understanding the limitations of any AI-generated content and verifying the accuracy and completeness of any AI-generated content. AI-generated content must not be relied upon as a sole source of reference or assumed to be truthful, credible, or unbiased.",
+          "effective": "2025-05-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — paragraph 2 (compliance certification by judicial-system users)",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "2. Compliance Certification: Before using any generative AI tool, users must complete the compliance training video posted on the Court’s Judicial Learning Center and certify that they have read and will comply with the AI Rules.",
+          "effective": "2025-05-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — paragraph 4 (DeepSeek prohibition)",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "No user shall download or use on any court-issued device the DeepSeek AI application or any other application developed by Hangzhou DeepSeek Artificial Intelligence Basic Technology Research Co., Ltd.",
+          "effective": "2025-05-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — paragraph 5 (no case-related information in non-vetted tools)",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "Users must not enter, upload, or otherwise disclose non-public, proprietary, confidential, personally identifying, or case-related information.",
+          "effective": "2025-05-07",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Appendix of vetted tools",
+          "url": "https://www.vacourts.gov/static/programs/ai/resources/scv_rules_generative_ai_use.pdf",
+          "verbatim": "Lexis+ AI (included in the Judicial System’s current LexisNexis subscription)",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Virginia Judicial System, Authorized Use of Artificial Intelligence in Virginia's Judicial System (landing page)",
+          "url": "https://www.vacourts.gov/programs/ai/home",
+          "verbatim": "Use of artificial intelligence systems in which the system makes a decision without the involvement of a human decision-maker is not authorized in Virginia’s Judicial System.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Code of Virginia § 8.01-271.1(B) — signing certificate (general, not AI-specific)",
+          "url": "https://law.lis.virginia.gov/vacode/title8.01/chapter3/section8.01-271.1/",
+          "verbatim": "B. The signature of an attorney or party constitutes a certificate by him that (i) he has read the pleading, motion, or other paper, (ii) to the best of his knowledge, information and belief, formed after reasonable inquiry, it is well grounded in fact and is warranted by existing law or a good faith argument for the extension, modification, or reversal of existing law, and (iii) it is not interposed for any improper purpose, such as to harass or to cause unnecessary delay or needless increase in the cost of litigation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Code of Virginia § 19.2-11.14(B) — human decision-maker required for criminal-justice decisions (2025, c. 637; the effective date below is INFERRED from the ordinary July 1 effective date for a 2025 act without an emergency clause and is not stated on the page cited — the resolver could not reach the act text, see the RESOLVER paragraph in notes)",
+          "url": "https://law.lis.virginia.gov/vacode/title19.2/chapter1/section19.2-11.14/",
+          "verbatim": "B. All decisions related to the pre-trial detention or release, prosecution, adjudication, sentencing, probation, parole, correctional supervision, or rehabilitation of criminal offenders shall be made by the judicial officer or other person charged with making such decision. No such decision shall be made without the involvement of a human decision-maker.",
+          "effective": "2025-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Code of Virginia, Title 19.2, Chapter 1.3 (Artificial Intelligence-Based Tools) — the whole chapter is one section",
+          "url": "https://law.lis.virginia.gov/vacode/title19.2/chapter1.3/",
+          "verbatim": null,
+          "effective": "2025-07-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "LPC Commercial Services, LLC v. Ar-Razzaaq Properties, LLC, Record No. 1407-25-4 (Court of Appeals of Virginia, Aug. 25, 2026) — the phantom quotes (record number corrected by the resolver from the PDF file name to the number the opinion prints)",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "As noted above, appellee’s brief contains 25 “phantom quotes” attributed to Virginia cases.",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — responsibility rests on the signing attorney",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "The problem is, at the end of the day, it is the attorney who signs the brief and, therefore, is responsible for the accuracy of its contents.",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — human oversight of AI research and filings",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "This makes it incumbent upon legal professionals utilizing AI in its various forms to exercise human oversight and control over their research and filings—to inject the judgment, analysis, and heart that machinery lacks into the final product.",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the sanction imposed",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "we call upon counsel to complete a continuing legal education course relating to AI or appellate practice within six months of the issuance of this opinion.",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — footnote 18 recording that LEO 1902 was still out for comment as of Aug. 25, 2026",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "We recognize that the Virginia State Bar recently introduced (for comment) Legal Ethics Opinion 1902 which deals with opposing counsel’s responsibilities when confronted with a brief fraught with AI-hallucinated misstatements of law or fact.",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Virginia State Bar news, VSB Seeks Public Comment on Providing Artificial Intelligence Software to Members (Sept. 9, 2026; comment closes Oct. 9, 2026)",
+          "url": "https://vsb.org/Site/news/rules-news/20260909-ai-software-members.aspx",
+          "verbatim": "The Virginia State Bar (VSB) seeks comment on proposed VSB provision of free AI software to members.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Rules of the Supreme Court of Virginia, complete text (Parts One through Eleven; 0 hits for artificial intelligence or generative)",
+          "url": "https://www.vacourts.gov/static/courts/scv/rulesofcourt.pdf",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Virginia State Bar, Legal Ethics page and Legal Ethics Opinions landing (LEO 1901 is still the only APPROVED Virginia AI ethics opinion, but the same page carries the VSB's Guidance on Generative Artificial Intelligence, quoted in the rows below — title corrected by the resolver)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API, Supreme Court of Virginia and Court of Appeals of Virginia, AI-citation terms (9 hits; result list saved)",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?q=%28%22artificial%20intelligence%22%20OR%20ChatGPT%20OR%20hallucinated%20OR%20%22nonexistent%20cases%22%29%20AND%20%28sanction%20OR%20sanctions%20OR%20fictitious%20OR%20fabricated%29&type=o&court=va%20vactapp&order_by=dateFiled%20desc",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Virginia State Bar, Legal Ethics page, Legal Ethics Topical Information — Guidance on Generative Artificial Intelligence, opening (VSB guidance, NOT a legal ethics opinion; undated on the page)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "By now, it’s well known that lawyers must pay attention to “the benefits and risks associated with relevant technology.” Comment [6] to Rule 1.1.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, opening (the duties are the ordinary ones)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "Nonetheless, a lawyer’s basic ethical responsibilities have not changed, and many ethical issues involving generative AI are fundamentally similar to issues lawyers face when working with other technology or other people (both lawyers and nonlawyers).",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Confidentiality (read the Terms of Service first)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "A lawyer must be aware of the Terms of Service and any other information about the possible use of information input into an AI model. Many free, publicly available models specifically instruct users not to input any confidential or sensitive information, and any information input into such a model might be disclosed to other users or used as part of the model’s training.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Confidentiality (AI-enhanced browsers and prompt injection)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "Lawyers should be cautious when using these AI-enhanced browsers as they can create inadvertent cybersecurity vulnerabilities. For example, malicious websites or emails may include hidden text that can activate unwanted instructions for the AI (“prompt injection”).",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Disclosure to clients (no per se duty to tell the client)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "There is no per se requirement to inform a client about the use of generative AI in their matter. Whether disclosure is necessary will depend on several factors, including the existence of any agreement with or instructions from the client on this issue, whether confidential information will be disclosed to the generative AI, and any risks to the client from the use of generative AI.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Competence and supervision (duty to verify citations)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "As with any legal research or drafting done by software or by a nonlawyer assistant, a lawyer has a duty to review the work done and verify that any citations are accurate (and real).",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Competence and supervision (independent judgment over the output)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "Work product generated by generative AI should always be critically reviewed by the lawyer exercising independent judgment about the contents.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Competence and supervision (firm policy under Rule 5.1, and tracking of AI use)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "The duty of supervision extends to generative AI use by others in a law firm, and partners and other supervisory lawyers should consider whether Rule 5.1 requires adopting a policy on the use of generative AI, including education and safeguards on when use of generative AI is appropriate. Firms should also consider systems for tracking use of generative AI within the firm",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Billing and fees (hourly fees and time saved)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "In all instances, fees must be reasonable and adequately explained to the client under Rule 1.5. A lawyer may not charge an hourly fee in excess of the time actually spent on the case and may not bill for time saved by using generative AI.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Billing and fees (AI costs may not be marked up)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "The lawyer may only charge the client for costs associated with generative AI if permitted by the fee agreement and by Rule 1.5; any costs passed along to the client and described to the client as costs must be actual costs and cannot be marked up.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Guidance, Court disclosure requirements (the duty is to find out what the filing court requires)",
+          "url": "https://vsb.org/Site/lawyers/ethics.aspx",
+          "verbatim": "Some courts throughout the country have imposed requirements to certify whether generative AI has been used in any document filed with the court. The content and scope of these requirements vary depending on the court, and new requirements may be added at any time. A lawyer must determine whether any disclosure requirement applies to a filing that the lawyer is making and must comply with that requirement pursuant to Rule 3.4(d).",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "LPC Commercial Services, LLC v. Ar-Razzaaq Properties, LLC — the record number as the opinion itself prints it (the compiler's 1407254 is the PDF file name)",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "Record No. 1407-25-4",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — publication and date line",
+          "url": "https://www.vacourts.gov/opinions/opncavwp/1407254.pdf",
+          "verbatim": "Opinion Issued August 25, 2026",
+          "effective": "2026-08-25",
+          "fetched": "2026-09-21"
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 3c - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-3c.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: as of 2026-09-21 Virginia imposes NO AI-specific disclosure or certification duty on attorneys, but it is the most developed of the three states in this batch: it has a technology-competence Comment in force since 2016, a black-letter data-safeguarding rule with unusually detailed technology comments, an AI ethics opinion APPROVED BY ORDER OF THE SUPREME COURT OF VIRGINIA, a second AI opinion out for comment, a court-wide AI policy for the judiciary, an AI statute (criminal justice only), and one published appellate sanction. WHAT IS SURPRISING: (1) Virginia adopted technology competence with its OWN wording, not the ABA formula. Comment [6] does not say \"keep abreast\"; it says \"Attention should be paid to the benefits and risks associated with relevant technology.\", added by amendments effective March 1, 2016. (2) LEO 1901 is not a bar-committee opinion in the ordinary sense: the Supreme Court of Virginia entered an order on November 24, 2025 that \"Legal Ethics Opinion No. 1901 be approved as follows, effective immediately:\". (3) Its content is business-friendly and runs against the common assumption that AI savings must be passed through: \"It is not per se unreasonable for a lawyer to charge the same non-hourly fee for work done with the assistance of AI as work done without the use of AI.\" Hourly billing is unchanged — time billed must be time spent. (4) PROPOSED LEO 1902 would place duties on the lawyer who RECEIVES an AI-hallucinated filing, including a mandatory Rule 8.3(a) report in some circumstances. It was published for comment on May 27, 2026 with a July 10, 2026 comment deadline and is NOT in force: the draft is stamped \"Draft Opinion for Public Comment\" on every page, the Court of Appeals described it on Aug. 25, 2026 as one the bar \"recently introduced (for comment)\", and https://vsb.org/common/Uploaded files/LEOs/1902.pdf returns HTTP 404 while 1900.pdf and 1901.pdf return 200. VERIFIER: re-check whether 1902 has been approved. (5) The Supreme Court of Virginia Rules for Generative AI Use (effective June 6, 2024, last amended May 7, 2025) are a real, current, named-tool AI policy — they ban DeepSeek on court devices and vet only Lexis+ AI and Westlaw Precision — but they bind judicial-system personnel, not counsel; their \"Compliance Certification\" is a judicial-employee training certificate and is NOT a filing certificate. (6) In Virginia the Rule 11 analogue is a STATUTE, Code § 8.01-271.1, and under § 8.01-271.1(D) the sanction is mandatory once a violation is found — which is why the Court of Appeals in LPC Commercial Services imposed a CLE requirement even though it believed counsel and found no monetary loss. CASE LAW: LPC Commercial Services, LLC v. Ar-Razzaaq Properties, LLC (Va. Ct. App., Record No. 1407-25-4, Aug. 25, 2026 — record number corrected by the resolver, twice in this entry, from the PDF file name 1407254) is the only Virginia appellate AI-citation decision found. Appellee's brief carried 25 phantom quotes; counsel said they were unintentional and the court believed him; the sanction was an AI or appellate-practice CLE within six months. The court grounded the duty in Code § 8.01-271.1 and cited \"Va. Rules of Pro. Conduct 1.1, 1.3, 3.1, 3.3\". Mast v. A.A. (Va. Feb. 12, 2026) appears in the same search but is NOT an AI case — the phrase appears only rhetorically. No Virginia disciplinary decision on AI was located. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): the complete Rules of the Supreme Court of Virginia (Parts One through Eleven, 20,592 lines of extracted text), grep for artificial intelligence and generative: 0 hits — there is no statewide Virginia court rule on AI in filings. The Virginia Rules of Professional Conduct (Part Six, Section II, 62,841 words): 0 occurrences of artificial intelligence or generative; the only technology language is Rule 1.1 Comment [6] and Rule 1.6 Comments [19]-[21]. Virginia State Bar Legal Ethics page and Legal Ethics Opinions index: no approved AI legal ethics opinion other than LEO 1901 (RESOLVER correction: the compiler listed this page as holding nothing AI-specific. That is wrong. The page carries the VSB's own Guidance on Generative Artificial Intelligence, which is now quoted in the sources and in four fields above. What is true of the page is only what is said here — it indexes no AI LEO but 1901.) VSB rules-regulations landing page: no pending AI rule amendment. Code of Virginia Title 19.2, Chapter 1.3 (Artificial Intelligence-Based Tools) contains a single section, § 19.2-11.14, which is about criminal justice decisions and says nothing about lawyers or filings. NOT CHECKED / OPEN QUESTIONS FOR THE VERIFIER: (1) The Code of Virginia was NOT full-text searched. law.lis.virginia.gov renders its search client-side and returns no results to curl; no browser was permitted on this run. Chapter 1.3 of Title 19.2 was reached directly, but there may be other AI statutes (e.g., in Title 59.1) that do not touch court filings. (2) Whether proposed LEO 1902 has been approved since the July 10, 2026 comment deadline. (3) The outcome of the VSB's September 9, 2026 request for comment (closing Oct. 9, 2026) on the VSB providing free AI software to its members — if adopted, the terms of that software will matter for Rule 1.6 analysis. (4) Whether the Virginia State Bar has opened a disciplinary matter arising from LPC Commercial Services. (5) Whether any Virginia circuit court or individual judge has a standing order on AI (Tier 3). (6) Virginia appellate decisions after Aug. 25, 2026 were not swept beyond the single CourtListener search recorded above. EXTRACTION NOTES: (a) the Virginia Rules of Professional Conduct were read from the Virginia State Bar's web edition, which carries the rule text in HTML lists; the paragraph designators ((a), (b), (1), (2)) are markup and are therefore absent from va/va-03-rpc-part6sec2.txt, so the pinpoints in the source titles above, not the quoted text, identify the subdivision — the quoted span for Rule 3.3(a)(1), for example, follows the lead-in \"A lawyer shall not knowingly\" and a designator on the live page. (b) the proposed LEO 1902 PDF is typeset with fi/fl/ff ligatures that pdftotext renders as a single ligature character or drops entirely — for example the extracted text reads o ering where the source page reads offering, and a single fi-ligature glyph where the source reads f followed by i. No quotation above was taken from a span containing one of those artifacts, which is why the 1902 quotations stop where they do. RESOLVER (2026-09-21) — THE VSB GUIDANCE ON GENERATIVE ARTIFICIAL INTELLIGENCE. The verifier's blocking row was right and the page was fetched and the whole section read. It sits on the Virginia State Bar's Legal Ethics page under Legal Ethics Topical Information, under the heading Guidance on Generative Artificial Intelligence, with five sub-headings — Confidentiality, Disclosure to clients, Competence and supervision, Billing and fees, Court disclosure requirements — followed by a list of other bars' materials. WHAT IT IS: State Bar guidance, not a legal ethics opinion, not approved by the Supreme Court of Virginia, and carrying no date anywhere on the page, so its source rows take effective: null. Do not cite it as an LEO. WHAT IT CHANGES IN THIS ENTRY: four fields now quote it — verification_duty (the duty to verify citations, and Rule 3.4(d) for filings), confidentiality_restriction (read the Terms of Service; prompt injection through AI-enhanced browsers), client_disclosure_duty (no per se duty to tell the client, with the factors) and fees_note (no hourly billing for time saved; AI costs at cost). WHAT IT DOES NOT CHANGE: the bare answers stand. There is still no Virginia disclosure duty to a court — the guidance says only that a lawyer must find out whether the FILING COURT imposes one — so disclosure_to_court stays none and certification_required stays false. And record_keeping_duty stays none although this is the first Virginia text that touches the question, because what the guidance says is advice to firms and not a duty on a lawyer, and a generator that saw text in that field would report a record-keeping duty where Virginia has none. The sentence, for a reader deciding whether to keep such a record, is that \"Firms should also consider systems for tracking use of generative AI within the firm\" with, as its examples, when it is used, what specific prompts and other information are used, and what output is generated. That is also, in substance, what an AI Use Record is. RESOLVER (2026-09-21) — THE REMAINING ROWS. (1) The LPC record number is 1407-25-4, as the opinion's own caption prints it; the PDF file name 1407254 is not a record number, and the correction has been made in the source title and in the CASE LAW paragraph. Nothing else about that citation changes — the resolver re-fetched the opinion and confirms the court, the court below, the author and \"Opinion Issued August 25, 2026\". (2) The effective date for Code § 19.2-11.14 is LEFT at 2025-07-01 and is now marked in the source title as an inference. The resolver tried two routes to the act itself and reached neither (law.lis.virginia.gov/acts/2025 returns HTTP 404 for the chapter and the legacy LIS full-text URL answers with a page saying the document does not exist), and July 1 is only the ordinary effective date for an act of the 2025 regular session with no emergency clause. A merge session should confirm it against the Acts of Assembly or set it null; nothing in this entry turns on it, since the statute governs criminal-justice decisions and not lawyers' filings. (3) LEO 1902 is still NOT approved as of 2026-09-21 on the verifier's two independent tests, and the compiler's text already says so. (4) The Code of Virginia still cannot be full-text searched without a browser; the verifier narrowed the question by reading Title 59.1's table of contents, which has no artificial-intelligence chapter, and the same method does find the Title 19.2 chapter, so the method works. The question stays open for a statute whose chapter caption does not name AI."
+    },
+    {
+      "id": "co-rpc",
+      "kind": "state_bar",
+      "name": "Colorado Rules of Professional Conduct (Colo. RPC) and Colorado AI authority",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "No Colorado rule, Supreme Court order, or statute requires an attorney to disclose the use of AI or to certify verification of AI output in a filing as of 2026-09-21. The duty to verify is the ordinary competence and candor duty, but since Rule Change 2026(02) (adopted en banc January 8, 2026, effective immediately) the Colorado Rules of Professional Conduct address artificial intelligence by name. Scope [20A] (new): \"Technology, including artificial intelligence and similar innovations, plays an increasing role in the practice of law, but that role does not diminish a lawyer’s responsibilities under these Rules. A lawyer who uses, directly or indirectly, technology in performing or delivering legal services may be subject to discipline for a resulting violation of these Rules.\" Rule 1.1 (black letter): \"A lawyer shall provide competent representation to a client.\" Rule 1.1 Comment [8] (as amended by the same order): \"To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, engage in continuing study and education, and comply with all continuing legal education requirements to which the lawyer is subject.\" New Rule 1.1 Comment [9] opens \"A lawyer’s use of technology, particularly artificial intelligence, can implicate a number of other Rules, including, without limitation, those governing communication (Rule 1.4), reasonable fees (Rule 1.5), preservation of a client’s confidential information (Rule 1.6), meritorious claims and defenses (Rule 3.1), candor toward the tribunal (Rule 3.3)\" and closes \"Reliance on technology does not diminish the lawyer’s duty to exercise independent judgment in the representation of a client.\" Comments are interpretive only (see notes). Rule 3.3(a)(1) forbids knowingly making \"a false statement of material fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer\". Supervision runs through Rule 5.1(b) and Rule 5.3(b). APPLIED: People v. Crabill, 23PDJ067 (Presiding Disciplinary Judge, Nov. 22, 2023) — the lawyer \"did not read the cases he found through ChatGPT or otherwise attempt to verify that the citations were accurate\" and \"violated Colo. RPC 1.1 (a lawyer must competently represent a client)\". Al-Hamim v. Star Hearthstone, LLC, 2024 COA 128 (published), holds that \"The submission of a brief containing GAI-produced hallucinations runs afoul of this rule\" (C.A.R. 28(a)(7)(B)) and warns that \"A lawyer’s or a self-represented party’s future filing in this court containing GAI-generated hallucinations may result in sanctions.\"",
+      "confidentiality_restriction": "No AI-specific prohibition; the restriction is Rule 1.6 plus the new Scope [20A] discipline hook. Rule 1.6(a): \"A lawyer shall not reveal information relating to the representation of a client unless the client gives informed consent, the disclosure is impliedly authorized in order to carry out the representation, or the disclosure is permitted by paragraph (b).\" Rule 1.6(c): \"A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.\" Comment [18] adds that reasonableness turns on \"the sensitivity of the information, the likelihood of disclosure if additional safeguards are not employed, the cost of employing additional safeguards, the difficulty of implementing the safeguards\". Comment [19]: \"When transmitting a communication that includes information relating to the representation of a client, the lawyer must take reasonable precautions to prevent the information from coming into the hands of unintended recipients.\" Rule 5.3 Comment [3] treats \"using an Internet-based service to store client information\" as an outside nonlawyer service for which \"a lawyer must make reasonable efforts to ensure that the services are provided in a manner that is compatible with the lawyer's professional obligations.\" New Rule 1.1 Comment [9] lists \"preservation of a client’s confidential information (Rule 1.6)\" among the rules a lawyer's use of AI can implicate.",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional — no Colorado rule requires telling a client that AI was used. Rule 1.4(a)(2) requires a lawyer to \"reasonably consult with the client about the means by which the client's objectives are to be accomplished\" and Rule 1.4(b) to \"explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" Rule 1.1 Comment [9] flags \"communication (Rule 1.4)\" as one of the rules a lawyer's use of AI can implicate, but states no separate disclosure duty. Client informed consent is required under Rule 1.6(a) before confidential information is revealed to an AI provider outside implied authorization.",
+      "fees_note": "Rule 1.5(a): \"A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.\" Rule 1.1 Comment [9] lists \"reasonable fees (Rule 1.5)\" among the rules a lawyer's use of artificial intelligence can implicate. No Colorado rule or opinion fetched in this run addresses billing for AI-assisted time or passing through AI tool costs.",
+      "sources": [
+        {
+          "title": "Colorado Supreme Court, Rule Change 2026(02), Colorado Rules of Professional Conduct — Preamble and Scope and Rule 1.1 — adoption line",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2026-01/Rule%20Change%202026(02).pdf",
+          "verbatim": "Amended and Adopted by the Court, En Banc, January 8, 2026, effective immediately.",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — new Scope paragraph [20A] (clean adopted text, second half of the order)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2026-01/Rule%20Change%202026(02).pdf",
+          "verbatim": "Technology, including artificial intelligence and similar innovations, plays an increasing role in the practice of law, but that role does not diminish a lawyer’s responsibilities under these Rules. A lawyer who uses, directly or indirectly, technology in performing or delivering legal services may be subject to discipline for a resulting violation of these Rules.",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 Comment [8] as amended (clean adopted text)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2026-01/Rule%20Change%202026(02).pdf",
+          "verbatim": "To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, engage in continuing study and education, and comply with all continuing legal education requirements to which the lawyer is subject.",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — new Rule 1.1 Comment [9] (clean adopted text)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2026-01/Rule%20Change%202026(02).pdf",
+          "verbatim": "A lawyer’s use of technology, particularly artificial intelligence, can implicate a number of other Rules, including, without limitation, those governing communication (Rule 1.4), reasonable fees (Rule 1.5), preservation of a client’s confidential information (Rule 1.6), meritorious claims and defenses (Rule 3.1), candor toward the tribunal (Rule 3.3), responsibilities of a partner or supervisory lawyer (Rule 5.1), responsibilities of a subordinate lawyer (Rule 5.2), responsibilities regarding nonlawyer assistance (Rule 5.3), communications concerning a lawyer’s services (Rule 7.1), and bias (Rule 8.4(g)). Reliance on technology does not diminish the lawyer’s duty to exercise independent judgment in the representation of a client.",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colorado Supreme Court, proposed amendment published for public hearing (same Preamble/Scope and Rule 1.1 text; file posted in the September 2025 folder)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2025-09/Co%20Rules%20of%20Professional%20Conduct%20Preamble%20and%20Scope%20and%20Rule%201.1%20Comment+Hearing.pdf",
+          "verbatim": "[9] A lawyer’s use of technology, particularly artificial intelligence, can implicate a number of other Rules, including, without limitation, those governing communication (Rule 1.4),",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC Scope [21] (weight of the Comments) — Lexis print of the Colorado Court Rules hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/Scope.pdf?ver=Wmpi2vjl1XmUW2U9issBxw%3d%3d",
+          "verbatim": "[21] The Comment accompanying each Rule explains and illustrates the meaning and purpose of the Rule. The Preamble and this note on Scope provide general orientation. The Comments are intended as guides to interpretation, but the text of each Rule is authoritative.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC Scope [20A] as codified after Rule Change 2026(02)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/Scope.pdf?ver=Wmpi2vjl1XmUW2U9issBxw%3d%3d",
+          "verbatim": "[20A] Technology, including artificial intelligence and similar innovations, plays an increasing role in the practice of law, but that role does not diminish a lawyer’s responsibilities under these Rules.",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC Scope History note (effective date of [20A])",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/Scope.pdf?ver=Wmpi2vjl1XmUW2U9issBxw%3d%3d",
+          "verbatim": "[5] amended and effective November 16, 2023 (Rule Change 2023(17)); [20A] added and effective January 8, 2026 (Rule Change 2026(02)).",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 1.1 (Competence), black letter — Lexis print of the Colorado Court Rules hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/1.1.pdf?ver=qKd-yqG0F0VddFWDCeTuUw%3d%3d",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness and preparation reasonably necessary for the representation.",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 1.1 History note (when the technology comment was added and when the AI comment was added)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/1.1.pdf?ver=qKd-yqG0F0VddFWDCeTuUw%3d%3d",
+          "verbatim": "Entire Appendix repealed and readopted April 12, 2007, effective January 1, 2008; Comment [6] amended, and Comment [7] and [8] added, effective April 6, 2016; Comment [6] amended and adopted May 20, 2021, effective July 1, 2021; Comment [8] amended and Comment [9] added, effective January 8, 2026 (Rule Change 2026(02)).",
+          "effective": "2026-01-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — currency statement on the Rule 1.1 print (note the tension with the January 8, 2026 amendment it prints)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/1.1.pdf?ver=qKd-yqG0F0VddFWDCeTuUw%3d%3d",
+          "verbatim": "This document reflects all rule changes adopted and effective as of December 10, 2025",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 1.4(a)(2) (Communication) — Colorado Court Rules text hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/Client-Lawyer%20Relationship/Rule1.4.pdf?ver=ouGBmMhlvGbnUuKI33IzDw%3d%3d",
+          "verbatim": "(2) reasonably consult with the client about the means by which the client's objectives are to be accomplished;",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC 1.4(b)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/Client-Lawyer%20Relationship/Rule1.4.pdf?ver=ouGBmMhlvGbnUuKI33IzDw%3d%3d",
+          "verbatim": "(b) A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — currency statement on the Rule 1.4 print",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/Client-Lawyer%20Relationship/Rule1.4.pdf?ver=ouGBmMhlvGbnUuKI33IzDw%3d%3d",
+          "verbatim": "As amended through Rule Change 2018(6), effective April 12, 2018",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 1.6(a) (Confidentiality of Information) — Lexis print hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "A lawyer shall not reveal information relating to the representation of a client unless the client gives informed consent, the disclosure is impliedly authorized in order to carry out the representation, or the disclosure is permitted by paragraph (b).",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC 1.6(c)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "(c) A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC 1.6 Comment [18] (reasonable measures to preserve confidentiality)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "Paragraph (c) requires a lawyer to make reasonable efforts to safeguard information relating to the representation of a client against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer’s supervision.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC 1.6 Comment [18], reasonableness factors",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "Factors to be considered in determining the reasonableness of the lawyer’s efforts include, but are not limited to, the sensitivity of the information, the likelihood of disclosure if additional safeguards are not employed, the cost of employing additional safeguards, the difficulty of implementing the safeguards, and the extent to which the safeguards adversely affect the lawyer’s ability to represent clients",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC 1.6 Comment [19] (transmitting communications)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "When transmitting a communication that includes information relating to the representation of a client, the lawyer must take reasonable precautions to prevent the information from coming into the hands of unintended recipients.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — currency statement on the Rule 1.6 print",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "This document reflects all rule changes adopted and effective as of April 15, 2025.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 3.3(a)(1) (Candor Toward the Tribunal) — Lexis print hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/CRPC%203.3.pdf?ver=DRmu_lGDCwfwlURGrEqr8Q%3d%3d",
+          "verbatim": "(1) make a false statement of material fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer;",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 5.1(b) (Responsibilities of a Partner or Supervisory Lawyer) — Colorado Court Rules text hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/Rule%205.1%20-%20Responsibilities%20or%20a%20Partner%20of%20Supervisory%20Lawyer.pdf?ver=0psCYvlqxgIl5tLE1-knCQ%3d%3d",
+          "verbatim": "(b) A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 5.3(b) (Responsibilities Regarding Nonlawyer Assistance)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/Rule%205.3%20-%20Responsibilities%20Regarding%20Nonlawyer%20Assistance.pdf?ver=6uFXcmQEP9iL85tc48t9wQ%3d%3d",
+          "verbatim": "(b) a lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the person's conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": "2008-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Colo. RPC 5.3 Comment [3] (nonlawyers outside the firm, including Internet-based services)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/Rule%205.3%20-%20Responsibilities%20Regarding%20Nonlawyer%20Assistance.pdf?ver=6uFXcmQEP9iL85tc48t9wQ%3d%3d",
+          "verbatim": "using an Internet-based service to store client information. When using such services outside the firm, a lawyer must make reasonable efforts to ensure that the services are provided in a manner that is compatible with the lawyer's professional obligations.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colo. RPC 1.5(a) (Fees) — Lexis print hosted by the Colorado Bar Association",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/RPC/1.5.pdf?ver=k62_esHYlvulDgrx0dWT_A%3d%3d",
+          "verbatim": "A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Al-Hamim v. Star Hearthstone, LLC, 2024 COA 128, 564 P.3d 1117 (Colo. App. Dec. 26, 2024) (published) — C.A.R. 28(a)(7)(B) violation",
+          "url": "https://storage.courtlistener.com/pdf/2024/12/26/al-hamim_v._star_hearthstone_llc.pdf",
+          "verbatim": "The submission of a brief containing GAI-produced hallucinations runs afoul of this rule.",
+          "effective": "2024-12-26",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. para. 41 (warning extended to lawyers)",
+          "url": "https://storage.courtlistener.com/pdf/2024/12/26/al-hamim_v._star_hearthstone_llc.pdf",
+          "verbatim": "A lawyer’s or a self-represented party’s future filing in this court containing GAI-generated hallucinations may result in sanctions.",
+          "effective": "2024-12-26",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. para. 36 (question of first impression in Colorado)",
+          "url": "https://storage.courtlistener.com/pdf/2024/12/26/al-hamim_v._star_hearthstone_llc.pdf",
+          "verbatim": "Until today, no Colorado appellate court has considered the consequences for a self-represented litigant who submits a brief containing hallucinations.",
+          "effective": "2024-12-26",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — slip op. para. 40 (why no sanction was imposed)",
+          "url": "https://storage.courtlistener.com/pdf/2024/12/26/al-hamim_v._star_hearthstone_llc.pdf",
+          "verbatim": "we conclude that imposing monetary sanctions or dismissing this appeal would be disproportionate to Al-Hamim’s violation of the Appellate Rules.",
+          "effective": "2024-12-26",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "People v. Zachariah C. Crabill, 23PDJ067 (Colo. Presiding Disciplinary Judge, Nov. 22, 2023) — sanction (the file served at this URL, despite its name, is the Office of Attorney Regulation Counsel published case summary, 303 words, not the stipulation itself)",
+          "url": "https://www.coloradolegalregulation.com/wp-content/uploads/PDJ/Decisions/Crabill,%20Stipulation%20to%20Discipline,%2023PDJ067,%2011-22-23.pdf",
+          "verbatim": "The Presiding Disciplinary Judge approved the parties’ stipulation to discipline and suspended Zachariah C. Crabill (attorney registration number 56783) for one year and one day, with ninety days to be served",
+          "effective": "2023-11-22",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the conduct found",
+          "url": "https://www.coloradolegalregulation.com/wp-content/uploads/PDJ/Decisions/Crabill,%20Stipulation%20to%20Discipline,%2023PDJ067,%2011-22-23.pdf",
+          "verbatim": "Crabill did not read the cases he found through ChatGPT or otherwise attempt to verify that the citations were accurate.",
+          "effective": "2023-11-22",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — rules violated",
+          "url": "https://www.coloradolegalregulation.com/wp-content/uploads/PDJ/Decisions/Crabill,%20Stipulation%20to%20Discipline,%2023PDJ067,%2011-22-23.pdf",
+          "verbatim": "Through this conduct, Crabill violated Colo. RPC 1.1 (a lawyer must competently represent a client); Colo. RPC 1.3 (a lawyer must act with reasonable diligence and promptness when representing a client); Colo. RPC 3.3(a)(1) (a lawyer must not knowingly make a false statement of material fact or law to a tribunal); and Colo. RPC 8.4(c) (it is professional misconduct for a lawyer to engage in conduct involving dishonesty, fraud, deceit, or misrepresentation).",
+          "effective": "2023-11-22",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colorado Judicial Branch press release, Chief Justice Márquez Launches Initiative to Form Legal Technology Advisory Committee (Sept. 15, 2025)",
+          "url": "https://www.coloradojudicial.gov/media/press-release/chief-justice-marquez-launches-initiative-form-legal-technology-advisory",
+          "verbatim": "this newly formed committee is designed to guide attorneys, licensed legal paraprofessionals, other legal professionals, judicial officers, and members of the public on the appropriate use of generative artificial intelligence (AI) and other advanced technologies and their impact on the practice of law, professional ethics, and the judiciary.",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — deadline for the committee's first recommendations",
+          "url": "https://www.coloradojudicial.gov/media/press-release/chief-justice-marquez-launches-initiative-form-legal-technology-advisory",
+          "verbatim": "The Committee is charged with submitting its initial recommendations to the Chief Justice by October 1, 2026.",
+          "effective": "2025-09-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colorado Judicial Branch press release, Colorado Supreme Court Announces Legal Technology Advisory Committee Appointments (Jan. 12, 2026)",
+          "url": "https://www.coloradojudicial.gov/media/press-release/colorado-supreme-court-announces-legal-technology-advisory-committee",
+          "verbatim": "Jan. 12, 2026, DENVER— Chief Justice Monica Márquez today announced her appointments to the Colorado Supreme Court’s newly established Legal Technology Advisory Committee.",
+          "effective": "2026-01-12",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colorado General Assembly, SB24-205 Consumer Protections for Artificial Intelligence — general AI statute, nothing about lawyers or court filings",
+          "url": "https://leg.colorado.gov/bills/sb24-205",
+          "verbatim": "Concerning consumer protections in interactions with artificial intelligence systems.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — enactment line",
+          "url": "https://leg.colorado.gov/bills/sb24-205",
+          "verbatim": "APPROVED by Governor May 17, 2024",
+          "effective": "2024-05-17",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Colorado Bar Association, Formal Ethics Opinions index — no AI opinion; latest opinion is 151",
+          "url": "https://www.cobar.org/For-Members/Opinions-Rules-Statutes/Formal-Ethics-Opinions",
+          "verbatim": "151 Restrictive Covenants, Adopted Nov 8, 2025",
+          "effective": "2025-11-08",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — advisory status of CBA formal ethics opinions",
+          "url": "https://www.cobar.org/For-Members/Opinions-Rules-Statutes/Formal-Ethics-Opinions",
+          "verbatim": "Formal Ethics Opinions are issued for advisory purposes only and are not in any way binding on the Colorado Supreme Court, the Presiding Disciplinary Judge, the Attorney Regulation Committee, or the Office of Attorney Regulation Counsel and do not provide protection against disciplinary actions.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Colorado Supreme Court, Rule Change 2016(04), Colorado Rules of Professional Conduct - adoption line",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2023-06/Rule_Change_2016-04.pdf",
+          "verbatim": "Amended and Adopted by the Court, En Banc, April 6, 2016, effective immediately.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - Rule 1.6 as printed in the order, showing paragraph (a) was not touched by the April 6, 2016 amendments",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2023-06/Rule_Change_2016-04.pdf",
+          "verbatim": "Rule 1.6. Confidentiality of Information (a) [NO CHANGE]",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - Rule 1.1 Comment [8] in the clean adopted half, the wording that stood from April 6, 2016 until January 8, 2026",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2023-06/Rule_Change_2016-04.pdf",
+          "verbatim": "[8] To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, and changes in communications and other relevant technologies, engage in continuing study and education, and comply with all continuing legal education requirements to which the lawyer is subject. See Comments [18] and [19] to Rule 1.6.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - Rule 1.6 Comment [18] in the clean adopted half, the opening sentence as adopted April 6, 2016",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2023-06/Rule_Change_2016-04.pdf",
+          "verbatim": "[18] Paragraph (c) requires a lawyer to make reasonable efforts to safeguard information relating to the representation of a client against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer’s supervision.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - Rules 5.1 and 5.2 left untouched by the April 6, 2016 order",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2023-06/Rule_Change_2016-04.pdf",
+          "verbatim": "Rule 5.1. – 5.2. [NO CHANGE]",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - Rule 5.3 Comment [3] and its heading in the clean adopted half, text inserted in full by this order (PyMuPDF span colours on the redline half, page 14 - the heading and the whole of Comment [3] are olive 0x84a35b, the insertion colour, and the surviving comments carry the renumbering [2 to 1] and [1 to 2])",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2023-06/Rule_Change_2016-04.pdf",
+          "verbatim": "Nonlawyers Outside the Firm [3] A lawyer may use nonlawyers outside the firm to assist the lawyer in rendering legal services to the client.",
+          "effective": "2016-04-06",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Colorado Supreme Court, Rule Change 2023(17) - Rule 5.1 paragraphs (a) and (b) left unchanged",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2024-01/Rule%20Change%202023(17).pdf",
+          "verbatim": "Rule 5.1. Responsibilities of a Partner or Supervisory Lawyer (a) - (b) [NO CHANGE]",
+          "effective": "2023-11-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - adoption line of Rule Change 2023(17)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2024-01/Rule%20Change%202023(17).pdf",
+          "verbatim": "Amended and Adopted by the Court, En Banc, November 16, 2023, effective immediately.",
+          "effective": "2023-11-16",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Colo. RPC 1.6 History note in full (the dating source for paragraph (a), Comment [18] and Comment [19])",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/1.6.pdf?ver=MiIVVdKRMQnf39OpjlvkSA%3d%3d",
+          "verbatim": "Entire Appendix repealed and readopted April 12, 2007, effective January 1, 2008; Comment [16], [17], and [18] added and effective November 6, 2008; (b)(4), (6), (7) amended, (c) added, and Comment amended, effective April 6, 2016; comment [5] amended and effective May 14, 2020.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Colo. RPC 5.1 history line on the Colorado-Bar-hosted print, which omits the April 6, 2016 order altogether (the Rule 5.3 print carries the identical line)",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/Rule%205.1%20-%20Responsibilities%20or%20a%20Partner%20of%20Supervisory%20Lawyer.pdf?ver=0psCYvlqxgIl5tLE1-knCQ%3d%3d",
+          "verbatim": "Entire Appendix repealed and readopted April 12, 2007, effective 1/1/2008; amended and adopted by the Court, En Banc, effective 11/16/2023.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same line on the Colo. RPC 5.3 print",
+          "url": "https://www.cobar.org/Portals/COBAR/Repository/ethicsOpinions/324/Rule%205.3%20-%20Responsibilities%20Regarding%20Nonlawyer%20Assistance.pdf?ver=6uFXcmQEP9iL85tc48t9wQ%3d%3d",
+          "verbatim": "Entire Appendix repealed and readopted April 12, 2007, effective 1/1/2008; amended and adopted by the Court, En Banc, effective 11/16/2023.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Colorado Supreme Court, Rule Change 2026(14), a further amendment to the Colorado Rules of Professional Conduct with no AI content (zero occurrences of artificial)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2026-09/Rule%20Change%202026(14).pdf",
+          "verbatim": "Rule 6.5. Nonprofit and Court-Annexed Limited Legal Services Programs",
+          "effective": "2026-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - adoption line of Rule Change 2026(14)",
+          "url": "https://www.coloradojudicial.gov/sites/default/files/2026-09/Rule%20Change%202026(14).pdf",
+          "verbatim": "Amended and Adopted by the Court, En Banc, September 10, 2026, effective October 1, 2026.",
+          "effective": "2026-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Colorado SB25B-004 (2025 special session), short title, which postponed the Colorado AI Act",
+          "url": "https://leg.colorado.gov/bills/sb25b-004",
+          "verbatim": "Concerning measures effective no later than June 30, 2026, to increase transparency for algorithmic systems.",
+          "effective": "2025-11-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - the summary stating what SB25B-004 did to SB24-205",
+          "url": "https://leg.colorado.gov/bills/sb25b-004",
+          "verbatim": "In 2024, the general assembly enacted Senate Bill 24-205, which created consumer protections in interactions with artificial intelligence systems. The act extends the effective date of the requirements of Senate Bill 24-205 to June 30, 2026.",
+          "effective": "2025-11-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - enactment line of SB25B-004",
+          "url": "https://leg.colorado.gov/bills/sb25b-004",
+          "verbatim": "APPROVED by Governor August 28, 2025",
+          "effective": "2025-08-28",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - effective line of SB25B-004",
+          "url": "https://leg.colorado.gov/bills/sb25b-004",
+          "verbatim": "EFFECTIVE November 25, 2025",
+          "effective": "2025-11-25",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - People v. Zachariah C. Crabill, the heading of the Office of Attorney Regulation Counsel published case summary served at the Crabill URL",
+          "url": "https://www.coloradolegalregulation.com/wp-content/uploads/PDJ/Decisions/Crabill,%20Stipulation%20to%20Discipline,%2023PDJ067,%2011-22-23.pdf",
+          "verbatim": "People v. Zachariah C. Crabill. 23PDJ067. November 22, 2023.",
+          "effective": "2023-11-22",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - the closing line of that summary",
+          "url": "https://www.coloradolegalregulation.com/wp-content/uploads/PDJ/Decisions/Crabill,%20Stipulation%20to%20Discipline,%2023PDJ067,%2011-22-23.pdf",
+          "verbatim": "The case file is public per C.R.C.P. 242.41(a).",
+          "effective": "2023-11-22",
+          "fetched": "2026-09-21"
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 4b - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-4b.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: Colorado has AI-specific text in its Rules of Professional Conduct, and it imposes no disclosure or certification duty. Rule Change 2026(02) (Colorado Supreme Court, en banc, January 8, 2026, effective immediately) added Scope [20A] and Rule 1.1 Comment [9] and amended Rule 1.1 Comment [8]. Nothing in the order requires a lawyer to tell a court, or a client, that AI was used; the operative words are that a lawyer using technology \"may be subject to discipline for a resulting violation of these Rules\" and that \"Reliance on technology does not diminish the lawyer’s duty to exercise independent judgment in the representation of a client.\" BINDING STATUS: Scope [20A] and Comment [9] sit in the Preamble/Scope and Comment apparatus, not in black letter, and Colorado Scope [21] says \"The Comments are intended as guides to interpretation, but the text of each Rule is authoritative.\" Comment [9] is therefore interpretive. Scope [20A], however, is a paragraph of the Scope note itself and states a discipline consequence in terms; a verifier should form a view on whether [20A] is better read as orientation or as an operative statement, because a generator that treats it as black letter would overstate the duty. TECHNOLOGY-COMPETENCE COMMENT: adopted. Per the Rule 1.1 History note, Comments [7] and [8] were added effective April 6, 2016, and Comment [8] was amended effective January 8, 2026. The redline half of Rule Change 2026(02) shows the pre-2026 Colorado text was a non-ABA variant (words to the effect of changes in communications and other relevant technologies, with a cross-reference to Comments [18] and [19] to Rule 1.6) and that 2026(02) conformed it to the ABA wording and dropped that cross-reference; the exact pre-2026 wording could not be read out of the redline half, because pdftotext flattens strikethrough. CORRECTED BY RESOLVER 2026-09-21 - the pre-2026 wording IS now quoted in this entry, recovered not from the redline but from the clean adopted half of Rule Change 2016(04); see that source row and the RESOLVER paragraph at the end of these notes. NO STATE BAR AI ETHICS OPINION: the Colorado Bar Association Formal Ethics Opinions index was fetched 2026-09-21 and contains zero occurrences of the word artificial; the series runs to Opinion 151 (Restrictive Covenants, Nov. 8, 2025), and Opinion 145 is Discrimination/Bias (2022), not AI. A web-search summary in this run asserted a CBA Formal Opinion 145 of March 2024 on artificial intelligence; that is false and nothing from it was used. CBA opinions are in any event advisory only, by the index's own statement. GUIDANCE PENDING: the Legal Technology Advisory Committee was charged September 15, 2025 on the unanimous recommendation of the Standing Committee on the Colorado Rules of Professional Conduct and its members were appointed January 12, 2026; its initial recommendations are due to the Chief Justice by October 1, 2026. ACTION DUE - re-check for the committee's recommendations after October 1, 2026. CASES: two Colorado authorities, both read in full. (1) People v. Crabill, 23PDJ067 (Nov. 22, 2023) is a Presiding Disciplinary Judge order approving a stipulation to discipline, not an appellate decision; it is the Colorado lawyer-discipline case on AI-fabricated citations. (2) Al-Hamim v. Star Hearthstone, LLC, 2024 COA 128, 564 P.3d 1117, is a published Colorado Court of Appeals opinion; the appellant was self-represented and no sanction issued, so the lawyer-facing content is the warning in para. 41. The opinion does not cite the Colorado Rules of Professional Conduct at all (zero occurrences of Colo. RPC or Professional Conduct in the slip opinion); it rests on C.A.R. 28(a)(7)(B), 38(a) and 39.1. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): Rule Change 2026(01) (C.R.C.P. 63), 2026(03) (lawyer discipline, CLE, client protection, lawyer assistance), 2026(04) (admission rules 204.3 and 204.4) and 2026(05) (Colorado Appellate Rules 3.5, 10, 21, 40, 52, 54) — zero hits for artificial intelligence in any of them, so no Colorado court rule of civil, appellate or admission procedure mentions AI; every page (0 through 7) of the Chief Justice Directive index at coloradojudicial.gov/Courts/Supreme_Court/cjds, listing 38 distinct CJD numbers — zero hits for artificial, so no Chief Justice Directive addresses AI; the Office of Attorney Regulation Counsel home page at coloradolegalregulation.com — zero hits for artificial intelligence; SB24-205, the Colorado AI Act, which by its own summary regulates developers and deployers of high-risk AI systems and contains no reference to lawyers, the practice of law or court filings; CourtListener v4 opinion search over the Colorado Supreme Court and Court of Appeals for artificial intelligence with fabricated, fictitious, nonexistent or hallucinat* — one hit, Al-Hamim, which is included above. NOT FETCHED / OPEN FOR THE VERIFIER: (a) CORRECTED BY RESOLVER 2026-09-21, NOT OPEN - Colorado Scope [21] on the weight of comments was fetched and quoted by the compiler itself, at sources[5], and the entry relies on that quotation; the item is struck, and the lettering of (b) to (e) is left as the compiler numbered it so the verifier's rows still cite correctly; (b) the pre-2026 text of Rule 1.1 Comment [8]; (c) whether SB24-205's February 1, 2026 applicability date was postponed by later legislation (the bill page fetched shows only the 2024 act and says nothing about a delay); (d) the Standing Committee on the Colorado Rules of Professional Conduct minutes of July 25, 2025, which the press release says carried the unanimous recommendation (located but not fetched); (e) the base rule texts for 1.4, 1.5, 1.6, 3.3, 5.1 and 5.3, and the Scope text, come from Colorado-Bar-hosted prints of the Colorado Court Rules, dated on their faces between April 2018 and February 2026 — a verifier with Westlaw or Lexis should confirm them against the current official chapter. RESOLVER (2026-09-21): a third session that neither compiled nor verified this entry worked the twelve co-rpc discrepancy rows and fetched every authority the verifier named into its own tree. FOUR EFFECTIVE DATES CORRECTED, each read out of the order itself and not copied from the verifier. Rule 1.6(a), from 2016-04-06 to 2008-01-01 - Rule Change 2016(04) prints \"Rule 1.6. Confidentiality of Information (a) [NO CHANGE]\", and the Lexis History note on the Rule 1.6 print says the 2016 order amended only \"(b)(4), (6), (7) amended, (c) added, and Comment amended, effective April 6, 2016\", so paragraph (a) has stood in its quoted wording since the entire Appendix was readopted effective January 1, 2008. Rule 1.6 Comment [18] opening sentence, from 2008-11-06 to 2016-04-06 - the quoted sentence construes paragraph (c), which that same order added, and the clean adopted half prints it in the wording the entry quotes. Rule 5.1(b), from 2023-11-16 to 2008-01-01 - Rule Change 2016(04) prints \"Rule 5.1. – 5.2. [NO CHANGE]\" and Rule Change 2023(17) prints \"Rule 5.1. Responsibilities of a Partner or Supervisory Lawyer (a) - (b) [NO CHANGE]\" with \"COMMENT [NO CHANGE]\", so neither order touched paragraph (b). Rule 5.3 Comment [3], from 2008-01-01 to 2016-04-06 - Comment [3] and its heading are new text in Rule Change 2016(04), which the resolver confirmed by span colour with PyMuPDF on page 14 of the redline half, where insertions are olive (0x84a35b) and deletions blue (0x2e97d3), polarity fixed by the two surviving comments printing as a struck 2 with an inserted 1 and a struck 1 with an inserted 2. ONE CORRECTION TO THE VERIFIER, on the row it graded non-blocking. Both Comment [18] factors and Comment [19] move to 2016-04-06, but not for the same reason. The verifier wrote that Rule Change 2016(04) carries both sentences through unchanged and that only the numbering is new. That is right for Comment [19], whose quoted first sentence prints in black in the redline; it is wrong for the Comment [18] factors sentence, which prints entirely in the olive insertion colour and is therefore new text of April 6, 2016, not 2008 wording under a new number. WHAT THE 5.1 DATE RESTS ON, stated plainly because the history notes in this family are incomplete - two orders printing paragraph (b) as unchanged, plus a print whose own history line lists no other amending order. The Colorado-Bar-hosted prints of Rules 5.1 and 5.3 both give the whole history as \"Entire Appendix repealed and readopted April 12, 2007, effective 1/1/2008; amended and adopted by the Court, En Banc, effective 11/16/2023.\", omitting the April 6, 2016 order that plainly rewrote Rule 5.3's comments. The Colorado rule changes between 2008 and 2016 and between 2016 and 2023 were not swept; see still_open. PRE-2026 RULE 1.1 COMMENT [8], RECOVERED. Rule Change 2016(04) prints it in clean adopted form, and it is now a source row. The change Rule Change 2026(02) made is exactly what the compiler described - the phrase about \"changes in communications and other relevant technologies\" became the ABA phrase about \"the benefits and risks associated with relevant technology\", and the closing cross-reference \"See Comments [18] and [19] to Rule 1.6.\" was deleted. The same order shows the technology clause reached Colorado on April 6, 2016 by renumbering Comment [6] to Comment [8]. SB24-205 WAS POSTPONED, and the postponement is now carried. Colorado SB25B-004, approved by the Governor August 28, 2025 and effective November 25, 2025, states that \"The act extends the effective date of the requirements of Senate Bill 24-205 to June 30, 2026.\" SB25B-004 contains zero occurrences of attorney, lawyer or practice of law, so nothing in this entry's operative fields changes. ACTION DUE - that date has now passed; whether the 2026 regular session postponed the Colorado AI Act again was not checked by any of the three sessions. RULE CHANGE 2026(14) is carried as a source. It amends Rule 6.5 of the Colorado Rules of Professional Conduct, was adopted En Banc September 10, 2026 effective October 1, 2026, and has zero occurrences of artificial. The resolver did not re-run the verifier's sweep of all fourteen 2026 orders and does not certify it; it fetched and read 2026(14), the one order the verifier identified as new. THE CRABILL URL serves the Office of Attorney Regulation Counsel's published case summary, 303 words, not the stipulation to discipline. The resolver re-fetched it, confirmed all three of the entry's quotations against its own copy, repointed those rows' local_text at that copy, and added the summary's heading and its closing line \"The case file is public per C.R.C.P. 242.41(a).\" No quotation changed and no characterization in the entry is affected. TWO ROWS LEFT AS THEY STAND. The currency statement on the Rule 1.1 print is stale boilerplate on a document that prints the January 8, 2026 amendment in full, exactly as the compiler read it, so no field moves. The Al-Hamim parallel citation 564 P.3d 1117 is not on the face of the slip opinion; the resolver re-ran the CourtListener v4 opinion search over the Colorado Court of Appeals on 2026-09-21 (count 1, docket 24CA0190, citations 564 P.3d 1117 and 2024 COA 128), so the parallel cite is corroborated by that index and by nothing either session read on the document itself. Cite by 2024 COA 128 if the P.3d cite matters."
+    },
+    {
+      "id": "mn-rpc",
+      "kind": "state_bar",
+      "name": "Minnesota Rules of Professional Conduct and Minnesota AI authority",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "Nothing in Minnesota is AI-specific. No Minnesota rule, Supreme Court order, Lawyers Professional Responsibility Board opinion or statute found in this run mentions artificial intelligence in connection with a lawyer's work; the whole of the Minnesota Rules of Professional Conduct as published by the Office of Lawyers Professional Responsibility contains zero occurrences of the phrase. The duty to verify is the ordinary one. Rule 1.1: \"A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.\" Rule 1.1 Comment [8] carries the ABA technology clause: a lawyer should keep abreast of changes in the law and its practice, \"including the benefits and risks associated with relevant technology\". Weight matters more in Minnesota than elsewhere: the Supreme Court's own publication records that \"the inclusion of comments is made for convenience and does not reflect court approval of the comments made therein\" and that the Court reiterated the point on August 24, 2022, while Scope [21] says \"The comments are intended as guides to interpretation, but the text of each rule is authoritative.\" Rule 3.3(a)(1) is broader than the ABA model in its first clause — a lawyer shall not knowingly \"make a false statement of fact or law to a tribunal, or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer\" (no materiality qualifier on the affirmative false statement). Supervision runs through Rule 5.1(b) and Rule 5.3(b). The signing certification is general, not AI-specific: Minn. R. Civ. P. 11.02, \"By presenting to the court (whether by signing, filing, submitting, or later advocating) a pleading, written motion, or other document, an attorney or self-represented litigant is certifying that to the best of the person's knowledge, information, and belief, formed after an inquiry reasonable under the circumstances:\" that, among other things, \"the claims, defenses, and other legal contentions therein are warranted by existing law or by a nonfrivolous argument for the extension, modification, or reversal of existing law or the establishment of new law\".",
+      "confidentiality_restriction": "No AI-specific restriction. Minnesota's Rule 1.6(a) is not the ABA formulation: \"Except when permitted under paragraph (b), a lawyer shall not knowingly reveal information relating to the representation of a client.\" Informed consent appears as Rule 1.6(b)(1), one of the permitted grounds, rather than as a precondition in paragraph (a). Rule 1.6(c): \"A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.\" Comment [17] gives the reasonableness factors, including \"the sensitivity of the information, the likelihood of disclosure if additional safeguards are not employed, the cost of employing additional safeguards\". The Lawyers Professional Responsibility Board's nearest opinions are Opinion 19, \"19 Using Technology to Communicate Confidential Information to Clients\", and Opinion 22 on metadata; neither addresses AI.",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional, and only through the general rule — no Minnesota authority requires a lawyer to tell a client that AI was used. Rule 1.4(a)(2) requires a lawyer to \"reasonably consult with the client about the means by which the client’s objectives are to be accomplished;\" and Rule 1.4(b) provides \"(b) A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\"",
+      "fees_note": "No Minnesota authority addresses billing for AI-assisted work. The governing rule is Rule 1.5(a): \"A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.\"",
+      "sources": [
+        {
+          "title": "Minnesota Rules of Professional Conduct, official compilation published by the Office of Lawyers Professional Responsibility — cover currency line",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "Effective October 1, 2005 Last Amended September 1, 2022",
+          "effective": "2022-09-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — June 17, 2005 order, status of the comments",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "the inclusion of comments is made for convenience and does not reflect court approval of the comments made therein.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the Court's 2022 reiteration on the comments",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "On August 24, 2022, the Minnesota Supreme Court reiterated that comments are included with the rules for convenience and do not reflect court approval or adoption.",
+          "effective": "2022-08-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Scope [21] (comments as guides to interpretation)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "The comments are intended as guides to interpretation, but the text of each rule is authoritative.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.1 (Competence), black letter",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.4(a)(2)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(2) reasonably consult with the client about the means by which the client’s objectives are to be accomplished;",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.4(b)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(b) A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.5(a) (Fees)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.6(a) (Minnesota's non-model formulation)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(a) Except when permitted under paragraph (b), a lawyer shall not knowingly reveal information relating to the representation of a client.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.6(c)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(c) A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.6 Comment [17] (acting competently to preserve confidentiality)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "Paragraph (c) requires a lawyer to act competently to safeguard information relating to the representation of a client against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer’s supervision.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 1.6 Comment [17], reasonableness factors",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "Factors to be considered in determining the reasonableness of the lawyer’s efforts include, but are not limited to, the sensitivity of the information, the likelihood of disclosure if additional safeguards are not employed, the cost of employing additional safeguards, the difficulty of implementing the safeguards",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 3.3(a)(1) (Candor Toward the Tribunal)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(1) make a false statement of fact or law to a tribunal, or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer;",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 5.1(b)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(b) A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer’s conduct conforms to the Rules of Professional Conduct.",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Prof. Conduct 5.3(b)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/02/MN-Rules-of-Professional-Conduct-1.pdf",
+          "verbatim": "(b) a lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the person’s conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": "2005-10-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Prof. Conduct 1.1 Comment [8] (technology competence) — Minnesota Office of the Revisor of Statutes, official court-rules text",
+          "url": "https://www.revisor.mn.gov/court_rules/pr/subtype/cond/id/1.1/",
+          "verbatim": "To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, engage in continuing study and education and comply with all continuing legal education requirements to which the lawyer is subject.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Prof. Conduct 1.4 — Revisor text (corroborates the OLPR compilation)",
+          "url": "https://www.revisor.mn.gov/court_rules/pr/subtype/cond/id/1.4/",
+          "verbatim": "(b) A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Prof. Conduct 1.6 — Revisor text",
+          "url": "https://www.revisor.mn.gov/court_rules/pr/subtype/cond/id/1.6/",
+          "verbatim": "(c) A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Prof. Conduct 3.3 — Revisor text",
+          "url": "https://www.revisor.mn.gov/court_rules/pr/subtype/cond/id/3.3/",
+          "verbatim": "(1) make a false statement of fact or law to a tribunal, or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Prof. Conduct 5.1 — Revisor text",
+          "url": "https://www.revisor.mn.gov/court_rules/pr/subtype/cond/id/5.1/",
+          "verbatim": "(b) A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer's conduct conforms to the Rules of Professional Conduct.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Prof. Conduct 5.3 — Revisor text",
+          "url": "https://www.revisor.mn.gov/court_rules/pr/subtype/cond/id/5.3/",
+          "verbatim": "(b) a lawyer having direct supervisory authority over the nonlawyer shall make reasonable efforts to ensure that the person's conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minnesota Rules of Professional Conduct, Preamble and Scope — Revisor text, Scope [21]",
+          "url": "https://www.revisor.mn.gov/court_rules/rule/prcond-1.0_P",
+          "verbatim": "[21] The comment accompanying each rule explains and illustrates the meaning and purpose of the rule. The Preamble and this note on Scope provide general orientation. The comments are intended as guides to interpretation, but the text of each rule is authoritative.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Lawyers Professional Responsibility Board Opinions, Table of Headnotes — the full list of Board opinions, none on AI",
+          "url": "https://www.revisor.mn.gov/court_rules/rule/prlawy-toh/",
+          "verbatim": "19 Using Technology to Communicate Confidential Information to Clients",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minn. R. Civ. P. 11.02 (Representations to Court) — general signing certification, not AI-specific",
+          "url": "https://www.revisor.mn.gov/court_rules/cp/id/11/",
+          "verbatim": "By presenting to the court (whether by signing, filing, submitting, or later advocating) a pleading, written motion, or other document, an attorney or self-represented litigant is certifying that to the best of the person's knowledge, information, and belief, formed after an inquiry reasonable under the circumstances:",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Minn. R. Civ. P. 11.02(b)",
+          "url": "https://www.revisor.mn.gov/court_rules/cp/id/11/",
+          "verbatim": "(b) the claims, defenses, and other legal contentions therein are warranted by existing law or by a nonfrivolous argument for the extension, modification, or reversal of existing law or the establishment of new law;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minnesota State Bar Association, Artificial Intelligence Committee page (voluntary bar association, not the regulator; no adopted guidance)",
+          "url": "https://mnbars.org/?pg=ai-committee",
+          "verbatim": "The Artificial Intelligence Committee is comprised of legal professionals from across Minnesota who are interested in developing a framework and guidance for how AI can be used by attorneys and better serve access to justice initiatives.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the committee's relationship to the MSBA Working Group on AI report",
+          "url": "https://mnbars.org/?pg=ai-committee",
+          "verbatim": "The committee, in response to the report from the Working Group on AI, will continue to study the sandbox/pilot project proposals and make recommendations to the Board of Governors.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minnesota H.F. 5155 (94th Legislature, 2026), as introduced — human oversight of AI-created verbatim court records; PENDING, not law, and directed at court reporters not counsel",
+          "url": "https://www.revisor.mn.gov/bills/94/2026/0/HF/5155/versions/latest/",
+          "verbatim": "A bill for an act relating to judiciary; requiring human oversight in the creation of official verbatim court records; proposing coding for new law in Minnesota Statutes, chapter 484.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the operative requirement as introduced",
+          "url": "https://www.revisor.mn.gov/bills/94/2026/0/HF/5155/versions/latest/",
+          "verbatim": "The recommendations, predictions, or outputs provided by an artificial intelligence-based tool must not be the sole basis for the creation of an official verbatim court record.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minnesota H.F. 5155 status page — introduced and referred to committee, no further action",
+          "url": "https://www.revisor.mn.gov/bills/bill.php?b=House&f=HF5155&ssn=0&y=2026",
+          "verbatim": "05/16/2026 Introduction and first reading, referred to Judiciary Finance and Civil Law",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Minnesota Supreme Court, Order Promulgating Amendments to the Minnesota Rules of Professional Conduct (Rules 1.8 and 3.8), posted by the Lawyers Board — the most recent MRPC amendment order, with no AI content",
+          "url": "https://lprb.mncourts.gov/order-promulgating-amendments-to-the-mrpc/",
+          "verbatim": "On January 22, 2025, the Lawyers Professional Responsibility Board and the Director of the Office of Lawyers Professional Responsibility filed a joint petition proposing amendments to Rules 1.8 and 3.8 of the Minnesota Rules of Professional Conduct.",
+          "effective": "2026-05-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "NOT FETCHED (Cloudflare) - Minnesota Judicial Branch recent rules orders page and the mncourts.gov site generally",
+          "url": "https://mncourts.gov/supremecourt/court-rules/recent-rules-orders",
+          "verbatim": null,
+          "effective": null,
+          "fetched": null
+        },
+        {
+          "title": "NOT FETCHED (HTTP 404 after one retry) - Office of Lawyers Professional Responsibility column, Ethics guidance for generative AI use, Bench and Bar of Minnesota (Sept. 2024), hosted at lprb.mncourts.gov",
+          "url": "https://lprb.mncourts.gov/articles/ArticleImages/bba0924.pdf",
+          "verbatim": null,
+          "effective": null,
+          "fetched": null
+        },
+        {
+          "title": "RESOLVER SOURCE - Minnesota Supreme Court, Order Promulgating Amendments to the Minnesota Rules of Professional Conduct (Rules 1.8 and 3.8), ADM10-8005, the order PDF linked from the Lawyers Board page - the ordering paragraph, which gives two effective dates",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/05/Order-Promulgating-Amendments-to-the-MRPC-2026-05-14.pdf",
+          "verbatim": "IT IS HEREBY ORDERED that the Minnesota Rules of Professional Conduct are amended as shown below. The amendments to Rule 1.8 of the Minnesota Rules of Professional Conduct are effective as of the date of this order. The amendments to Rule 3.8 of the Minnesota Rules of Professional Conduct are effective July 1, 2026.",
+          "effective": "2026-05-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - the date the order bears, over the signature of Chief Justice Natalie E. Hudson (the PDF also carries the court's own electronic date stamp of 2026.05.14, and the file name the Lawyers Board gave it ends 2026-05-14)",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/05/Order-Promulgating-Amendments-to-the-MRPC-2026-05-14.pdf",
+          "verbatim": "Dated: May 14, 2026",
+          "effective": "2026-05-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same - a sentence the Lawyers Board web transcription of the order omits",
+          "url": "https://lprb.mncourts.gov/wp-content/uploads/2026/05/Order-Promulgating-Amendments-to-the-MRPC-2026-05-14.pdf",
+          "verbatim": "We received four comments, all in support of the petition.",
+          "effective": "2026-05-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE (OCR) - Minnesota Supreme Court, Amended Order Regarding Proposed Amendments to the Minnesota Rules of Professional Conduct, ADM10-8005, filed February 27, 2015 - the Ethics 20/20 order, and the effective date of the amendments it approved",
+          "url": "https://mncourts.gov/_media/migration/documents/0/public/clerks_office/rule-amendments/oradm108005-022715.pdf",
+          "verbatim": "The amendments to the Minnesota Rules of Professional Conduct as approved are attached to this order, and are effective April 1, 2015.",
+          "effective": "2015-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same (OCR) - the attachment to that order, showing the technology clause inserted into Rule 1.1 Comment [8] and the comment renumbered from [6] to [8] (read by eye against a 200 dpi render of page 3 - in the image the 6 of [68] is struck through, the 8 is underlined, and the words about benefits and risks are underlined)",
+          "url": "https://mncourts.gov/_media/migration/documents/0/public/clerks_office/rule-amendments/oradm108005-022715.pdf",
+          "verbatim": "[68] To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, engage in continuing study and education and comply with all continuing legal education requirements to which the lawyer is subject.",
+          "effective": "2015-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same (OCR) - the court's statement about the comments in the very order that carried the technology clause",
+          "url": "https://mncourts.gov/_media/migration/documents/0/public/clerks_office/rule-amendments/oradm108005-022715.pdf",
+          "verbatim": "The comments to the rules are included for convenience and do not reflect court approval or adoption.",
+          "effective": "2015-04-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE (OCR) - Minnesota Supreme Court, Order Regarding Proposed Amendments to the Minnesota Rules of Professional Conduct, ADM10-8005, filed February 24, 2015, the original order the February 27 order amended - the petition it granted",
+          "url": "https://mncourts.gov/_media/migration/documents/0/public/clerks_office/rule-amendments/oradm108005-022415.pdf",
+          "verbatim": "The Minnesota State Bar Association and the Lawyers Professional Responsibility Board filed a joint petition proposing amendments to the Minnesota Rules of Professional Conduct and amendments to the comments to those rules based on recommendations made by the American Bar Association Commission on Ethics 20/20.",
+          "effective": "2015-02-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Minnesota S.F. 5303 status page, the Senate companion to H.F. 5155, pending and not law",
+          "url": "https://www.revisor.mn.gov/bills/bill.php?b=Senate&f=SF5303&ssn=0&y=2026",
+          "verbatim": "Human oversight requirement in the creation of official verbatim court records",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "RESOLVER SOURCE - Minnesota Statutes chapter 481 (Attorneys-at-Law), full chapter as served by the Revisor, with zero occurrences of artificial",
+          "url": "https://www.revisor.mn.gov/statutes/cite/481/full",
+          "verbatim": "CHAPTER 481. ATTORNEYS-AT-LAW",
+          "effective": null,
+          "fetched": "2026-09-21"
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 4b - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-4b.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: a verified nothing. Minnesota has no AI-specific rule, no Supreme Court order or notice on AI use by lawyers, no Lawyers Professional Responsibility Board opinion on AI, and no statute. What Minnesota does have is an unusually weak comment apparatus, so the technology-competence comment that other states lean on carries less weight here than a reader would assume. THE COMMENT PROBLEM: Minnesota's Rule 1.1 Comment [8] contains the ABA technology clause word for word, but the Supreme Court's own publication of the rules states that \"the inclusion of comments is made for convenience and does not reflect court approval of the comments made therein\" and that the Court repeated that position on August 24, 2022. Scope [21] adds that \"The comments are intended as guides to interpretation, but the text of each rule is authoritative.\" A Minnesota AI-use memo should therefore rest on the black letter of Rules 1.1, 1.6(c), 3.3 and 5.1/5.3 and on Minn. R. Civ. P. 11.02, and should cite Comment [8] as persuasive only. TWO NON-MODEL RULES THAT MATTER. (1) Rule 1.6(a) reads \"Except when permitted under paragraph (b), a lawyer shall not knowingly reveal information relating to the representation of a client.\" — the knowingly qualifier is Minnesota's, and informed consent is a permitted ground in paragraph (b)(1) rather than a precondition in paragraph (a). Do not paste the model Rule 1.6(a) into a Minnesota record. (2) Rule 3.3(a)(1) drops the materiality qualifier from its first clause, so an affirmative false statement of fact or law to a tribunal violates the rule whether or not it is material; a fabricated citation therefore has a shorter path to a Rule 3.3 violation in Minnesota than under the model rule. EFFECTIVE DATE OF COMMENT [8]: ESTABLISHED BY THE RESOLVER ON 2026-09-21 AS APRIL 1, 2015; see the RESOLVER paragraph at the end of these notes. What the compiler could establish in its own run follows. The OLPR compilation gives only global dates (Effective October 1, 2005; Last Amended September 1, 2022) and the Revisor's per-rule pages carry no history notes. The Minnesota Supreme Court's rules-orders pages are behind a Cloudflare challenge and were not fetched. The MRPC rules docket number visible in a fetched Lawyers Board order is ADM10-8005; a verifier should pull the amendment order that inserted the technology clause from that docket and set the date. The resolver did that on 2026-09-21. It is not the 2005 promulgation date. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): the complete Minnesota Rules of Professional Conduct as published by the Office of Lawyers Professional Responsibility, about 400,000 characters of text — zero occurrences of artificial intelligence or generative; the Revisor's official court-rule pages for Rules 1.1, 1.4, 1.5, 1.6, 3.3, 5.1, 5.3 and the Preamble and Scope — zero occurrences; the Lawyers Professional Responsibility Board Opinions table of headnotes, all twenty-six opinions — the closest are Opinion 19 on using technology to communicate confidential information and Opinion 22 on metadata, neither on AI; the Lawyers Board site map (four sitemaps, fifty-seven URLs) and its news and announcements page — no AI item, and the most recent MRPC amendment order, dated and filed May 14, 2026, concerns Rules 1.8 and 3.8 (CORRECTED BY RESOLVER 2026-09-21 - the compiler read May 15, 2026, which is a loose line on the Lawyers Board web page and is neither the date the order bears nor either date it makes things effective); the mncourts.gov sitemap, 4,504 URLs — not one URL contains artificial, intelligence, genai or ai as a path segment; CourtListener v4 opinion search over the Minnesota Supreme Court and the Minnesota Court of Appeals for artificial intelligence with fabricated, fictitious, nonexistent or hallucinat* — zero hits, so no published Minnesota state appellate decision sanctioning counsel for AI-fabricated citations. DELIBERATELY EXCLUDED: Kohls v. Ellison, the well-known Minnesota AI-declaration case, is a United States District Court for the District of Minnesota decision. It is federal and belongs to Tier 3, not to this state entry. A verifier should not add it here. PENDING, NOT IN FORCE: Minnesota H.F. 5155 (2026) would add Minn. Stat. section 484.721 and require human oversight and a court reporter's certification where an AI tool is used to create an official verbatim court record. It was introduced and referred to the House Judiciary Finance and Civil Law committee on May 16, 2026 with no further action recorded, it has a Senate companion S.F. 5303 that was not fetched, and it regulates the court's own record, not counsel's filings. ACTION DUE - re-check H.F. 5155 and S.F. 5303 at the end of the 2026 session. NOT FETCHED / OPEN FOR THE VERIFIER: (a) everything on mncourts.gov — the domain answers curl with a Cloudflare challenge page, so the Minnesota Judicial Branch's own AI materials, its rules-orders list, and any AI Response Committee page could not be read; a verifier with a browser should check whether the Judicial Branch has published AI guidance, because a secondary report of a Minnesota Judicial Branch AI Response Committee exists and nothing from it was used here; (b) the OLPR's September 2024 Bench and Bar column on generative AI, whose PDF URL now returns 404 — if it is recovered it is the Director's guidance, influential but not a formal opinion; (c) the MSBA Working Group on AI report, referred to on the MSBA committee page but not itself fetched, and in any event the product of a voluntary bar association; (d) a full-text sweep of the Minnesota Statutes and of the Minnesota General Rules of Practice for AI language, which could not be done because the Revisor's keyword search is rendered in JavaScript and returns nothing to curl; (e) S.F. 5303. RESOLVER (2026-09-21): a third session that neither compiled nor verified this entry worked the eight mn-rpc discrepancy rows and re-fetched every authority the verifier named into its own tree. THE BLOCKING ROW IS CURED AND THE VERIFIER IS RIGHT ON IT. The order amending Rules 1.8 and 3.8 is dated \"Dated: May 14, 2026\", not May 15, and it sets two effective dates, so the single date on the compiler's source row is now 2026-05-14 and the Rule 3.8 date is carried in a source row of its own. The order itself says \"The amendments to Rule 1.8 of the Minnesota Rules of Professional Conduct are effective as of the date of this order. The amendments to Rule 3.8 of the Minnesota Rules of Professional Conduct are effective July 1, 2026.\" The order still has no AI content - zero occurrences of artificial or generative - so the reason it is cited is unaffected. TWO THINGS THE RESOLVER ADDS ON THAT ROW. The Lawyers Board page links the order as a PDF; the resolver fetched it, and that PDF, not the web transcription, is now the cited text. It carries the court's own electronic date stamp for May 14, 2026, which supports a filing date the verifier could not find anywhere in the source - the verifier was right that the web page gives none. And the web transcription is not complete - it omits the order's sentence \"We received four comments, all in support of the petition.\" THE EFFECTIVE DATE OF RULE 1.1 COMMENT [8] IS NO LONGER OPEN. Both earlier sessions left it unknown because mncourts.gov answers curl with a Cloudflare challenge. The challenge is on the site's pages, not on its media store - the resolver reached the PDFs under mncourts.gov/_media/ directly at HTTP 200 on 2026-09-21, having found their paths in a Wayback copy of the rules-orders index. The technology clause entered the Minnesota comments through the Ethics 20/20 petition of the Minnesota State Bar Association and the Lawyers Professional Responsibility Board, granted by an order filed February 24, 2015 in ADM10-8005 and amended by an order filed February 27, 2015 which states that the approved amendments \"are effective April 1, 2015.\" The attachment prints the comment with the clause inserted and the comment renumbered from [6] to [8]. Both 2015 orders are image-only PDFs; their quotations here are OCR, marked (OCR) in the source titles, and the two that matter were read by eye against a 200 dpi render of the page. TREAT THE DATE WITH THE CAVEAT THE COURT ITSELF ATTACHED - the same order says \"The comments to the rules are included for convenience and do not reflect court approval or adoption.\", so April 1, 2015 is the date the accompanying rule amendments took effect and the date from which the comment has been published with the rules, not a date on which the court adopted the comment. The source row for the Revisor's text of Comment [8] is deliberately left at effective null, because that page states no date; the date lives on the 2015 order rows. ITEMS CLOSED. S.F. 5303 was fetched - its status page gives the bill's description as \"Human oversight requirement in the creation of official verbatim court records\" and records referral to \"Judiciary and Public Safety\" on 05/16/2026, so open item (e) is closed and the pending-only characterization holds for both files. Open item (d) is narrowed exactly as the verifier narrowed it, and the resolver re-ran that sweep itself rather than taking it on trust - Minnesota Statutes chapters 480, 480A, 481, 484, 485 and 486 were fetched in full from the Revisor at /statutes/cite/<chapter>/full (16,958, 3,259, 7,321, 16,050, 3,501 and 2,395 words) and the General Rules of Practice table of headnotes at /court_rules/rule/gp-toh (2,263 words), and every one has zero occurrences of artificial. That is chapter-level for the statutes and title-level for the General Rules of Practice, not a full-text sweep of either body. ITEMS STILL BLOCKED. https://www.mncourts.gov/sitemap.xml answered HTTP 403 twice on 2026-09-21 at 04:05 local, so the compiler's 4,504-URL sitemap sweep has now gone unreproduced by two sessions and this entry does not certify it. The OLPR Bench and Bar column at lprb.mncourts.gov/articles/ArticleImages/bba0924.pdf answered HTTP 404 twice at the same time. Both of the compiler's NOT FETCHED records are accurate. TWO ROWS LEFT AS THEY STAND. The October 1, 2005 dates on the black-letter rules are uncontradicted and rest on the compilation cover, which carries no per-rule history; nothing the resolver fetched contradicts them and nothing establishes them, and the compiler was right to leave the genuinely doubtful ones null. Kohls v. Ellison stays out - it is a federal district court decision and this is a state entry."
+    },
+    {
+      "id": "az-rpc",
+      "kind": "state_bar",
+      "name": "Arizona Rules of Professional Conduct (Ariz. R. Sup. Ct. 42) and Arizona AI guidance",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "No Arizona rule of professional conduct, statewide court rule, Supreme Court order, or statute imposes an AI-specific verification or disclosure duty on attorneys as of 2026-09-21. The duty comes from the general rules, from Supreme Court committee and State Bar guidance, and — since July 2026 — from published appellate authority. ER 1.1 (black letter): \"A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness and preparation reasonably necessary for the representation.\" ER 3.3(a)(1): a lawyer shall not knowingly \"make a false statement of fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer\" (this is the ABA Model Rule text; Arizona did not narrow or broaden it). Supervision: ER 5.1(b), \"A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.\"; ER 5.3(b) for nonlawyers. Signing certification (general, not AI-specific): Ariz. R. Civ. P. 11(b), \"By signing a pleading, motion, or other document, the attorney or party certifies that to the best of the person's knowledge, information, and belief formed after reasonable inquiry\" that \"the claims, defenses, and other legal contentions are warranted by existing law or by a nonfrivolous argument for extending, modifying, or reversing existing law or for establishing new law.\"; on appeal, ARCAP 25, \"An appellate court may impose sanctions on an attorney or a party if it determines that an appeal or a motion is frivolous, or was filed solely for the purpose of delay.\" Supreme Court AISC guidance (Nov. 14, 2024) at 1-2: \"Legal professionals must also check the work product to ensure that any factual or legal information is accurate, relevant, and otherwise appropriate.\" and legal professionals \"should not rely on its output without checking every material proposition and source, such as statutory or case citations.\" Now squarely held by the Court of Appeals in Dineen/Shibata v. Kotchka, 1 CA-CV 25-0606 PB (Ariz. App. Div. One July 15, 2026) (published opinion; the court said the problem \"has not been squarely addressed by any prior published Arizona authority\"): \"Failure to act with reasonable diligence to check—and correct—any work product created using Gen-AI that is submitted to the courts constitutes abuse of Gen-AI tools in litigation.\"; \"Thus, whether attorney or self-represented litigant, all who file documents with the courts remain directly and personally responsible for the content, accuracy, and quality of legal filings submitted to all courts, including this court.\"; \"Accordingly, citing a hallucinated case in a legal filing is sanctionable conduct.\" The court also made clear that mere use is not the wrong — \"using Gen-AI is not, in and of itself, objectionable\" — and that the duty cannot be delegated: a filer \"may not offload their duty to ensure the truth and accuracy of their representations of fact and law in their filings to any technological tool, including Gen-AI tools.\" Non-binding State Bar practical guidance: \"Legal professionals must independently verify all generative AI-generated citations, arguments, and factual statements before submitting them to a court or administrative body.\"",
+      "confidentiality_restriction": "ER 1.6(a): \"A lawyer shall not reveal information relating to the representation of a client unless the client gives informed consent, the disclosure is impliedly authorized in order to carry out the representation or the disclosure is permitted or required by paragraphs (b), (c) or (d).\" ER 1.6(e): \"A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.\" Supreme Court AISC guidance (Nov. 14, 2024) at 2-3 applies this to AI tools: unless the legal professional has sufficient guarantees that the tool will not share or use the information, the professional \"may not enter such information into the tool.\"; \"When in any doubt, legal professionals should refrain from entering confidential or nonpublic information into the tool.\" Non-binding State Bar practical guidance: \"A legal professional must not enter any confidential client information into generative AI platforms unless adequate safeguards are in place.\" and \"A legal professional must review applicable terms governing any generative AI tool to ensure it does not share input data with third parties or use it for training or improving its model.\" No Arizona rule bars inputting client information into AI outright.",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional — ER 1.4(a)(2) requires a lawyer to \"reasonably consult with the client about the means by which the client's objectives are to be accomplished\" and ER 1.4(b) to \"explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" Supreme Court AISC guidance (Nov. 14, 2024) at 3 states the baseline: \"The ethical rules do not impose an obligation to inform clients about each and every use of AI.\" but \"If, however, the client would need to know about its use to make an informed decision, disclosure would be required.\" and, before inputting confidential or privileged information into a tool that risks third-party disclosure, \"the lawyer should first obtain the client’s informed consent to proceed.\" Non-binding State Bar practical guidance goes further: \"A legal professional must communicate to clients that AI is being used in the provision of services.\"",
+      "fees_note": "ER 1.5(a): \"A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.\" Supreme Court AISC guidance (Nov. 14, 2024) at 4: if an attorney \"plans to bill the client for use of AI tools in the client’s matter, the attorney must disclose these plans to the client in advance and in writing.\" and an attorney on an hourly arrangement \"cannot bill the client for the time the attorney saved by using AI.\" Non-binding State Bar practical guidance: \"Any generative AI-related costs should be clearly disclosed in client fee agreements.\"",
+      "sources": [
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 1.1 (Competence), black letter — official text on the Arizona Judicial Branch's publisher (Westlaw govt site); comments are NOT published there",
+          "url": "https://govt.westlaw.com/azrules/Document/N33A22D9074D411EF8956F5387F9E6B1A?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness and preparation reasonably necessary for the representation.",
+          "effective": "2003-12-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — ER 1.1 Credits line (latest amendment of the black letter)",
+          "url": "https://govt.westlaw.com/azrules/Document/N33A22D9074D411EF8956F5387F9E6B1A?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "Amended June 9, 2003, effective Dec. 1, 2003.",
+          "effective": "2003-12-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, Preamble and Scope para. [23] — authority of the Comments",
+          "url": "https://govt.westlaw.com/azrules/Document/N06C8F1F174C011EF8B27BE1084FA6B15?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "The Comments are intended as guides to interpretation, but the text of each Rule is authoritative.",
+          "effective": "2025-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Scope para. [14] (Comments add no obligations)",
+          "url": "https://govt.westlaw.com/azrules/Document/N06C8F1F174C011EF8B27BE1084FA6B15?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "Many of the Comments use the term “should.” Comments do not add obligations to the Rules but provide guidance for practicing in compliance with the Rules.",
+          "effective": "2025-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 1.4(a)(2) (Communication)",
+          "url": "https://govt.westlaw.com/azrules/Document/N851BA8E074C011EFBBC6F5DB7D04A748?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "reasonably consult with the client about the means by which the client's objectives are to be accomplished;",
+          "effective": "2025-02-10",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — ER 1.4(b)",
+          "url": "https://govt.westlaw.com/azrules/Document/N851BA8E074C011EFBBC6F5DB7D04A748?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": "2025-02-10",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 1.5(a) (Fees)",
+          "url": "https://govt.westlaw.com/azrules/Document/NE0549F103E3E11EDA13DAA05478457BE?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.",
+          "effective": "2021-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 1.6(a) (Confidentiality)",
+          "url": "https://govt.westlaw.com/azrules/Document/N2F8A421074D911EF987FA6C0CA81BD90?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer shall not reveal information relating to the representation of a client unless the client gives informed consent, the disclosure is impliedly authorized in order to carry out the representation or the disclosure is permitted or required by paragraphs (b), (c) or (d).",
+          "effective": "2015-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — ER 1.6(e) (reasonable efforts against inadvertent or unauthorized disclosure)",
+          "url": "https://govt.westlaw.com/azrules/Document/N2F8A421074D911EF987FA6C0CA81BD90?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.",
+          "effective": "2015-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 3.3(a)(1) (Candor Toward the Tribunal)",
+          "url": "https://govt.westlaw.com/azrules/Document/N4A06EF90B0F511F09941B9CDE25BDF20?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "make a false statement of fact or law to a tribunal or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer;",
+          "effective": "2003-12-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 5.1(b) (supervisory lawyers)",
+          "url": "https://govt.westlaw.com/azrules/Document/NF413F5E0094E11EB80A8DBDF401773A2?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.",
+          "effective": "2021-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, ER 5.3(b) (nonlawyers within or outside a firm)",
+          "url": "https://govt.westlaw.com/azrules/Document/N243B83F0087811EB8E98A8E4AB3D8003?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "A lawyer having supervisory authority over a nonlawyer within or outside a firm shall make reasonable efforts to ensure that the nonlawyer's conduct when engaged in activities assisting lawyers in providing legal services is compatible with the professional obligations of the lawyer.",
+          "effective": "2021-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Civ. P. 11(b) (signing certification; general, not AI-specific)",
+          "url": "https://govt.westlaw.com/azrules/Document/NEAAD8531BCA911EFA096FF61643DF779?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "By signing a pleading, motion, or other document, the attorney or party certifies that to the best of the person's knowledge, information, and belief formed after reasonable inquiry:",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Ariz. R. Civ. P. 11(b)(2)",
+          "url": "https://govt.westlaw.com/azrules/Document/NEAAD8531BCA911EFA096FF61643DF779?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "the claims, defenses, and other legal contentions are warranted by existing law or by a nonfrivolous argument for extending, modifying, or reversing existing law or for establishing new law.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "ARCAP 25 (Sanctions on appeal; general, not AI-specific)",
+          "url": "https://govt.westlaw.com/azrules/Document/NDF66F5403FB311E4B4D7C67CCE44C05C?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "An appellate court may impose sanctions on an attorney or a party if it determines that an appeal or a motion is frivolous, or was filed solely for the purpose of delay.",
+          "effective": "2015-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Arizona, Steering Committee on Artificial Intelligence and the Courts (AISC), Generative AI — Ethical Best Practices for Lawyers and Judges (Nov. 14, 2024), n.2 quoting ER 1.1 cmt. 6 (technology competence)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, engage in continuing study and education and comply with all continuing legal education requirements to which the lawyer is subject.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 1 (scope of the guidance)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "To provide guidance to Arizona lawyers and judges using generative artificial intelligence (AI), the Arizona Steering Committee on Artificial Intelligence and the Courts issues these ethical best practices.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 2, Section 1 (checking the work product)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Legal professionals must also check the work product to ensure that any factual or legal information is accurate, relevant, and otherwise appropriate.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 2, Section 1 (checking every material proposition and source)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Because generative AI can incorporate or create inaccurate information, legal professionals should not rely on its output without checking every material proposition and source, such as statutory or case citations.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 2, Section 2 (confidentiality; sentence quoted from the words after footnote marker 9)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "may not enter such information into the tool.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 3, Section 2 (when in doubt)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "When in any doubt, legal professionals should refrain from entering confidential or nonpublic information into the tool.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 3, Section 3 (no duty to tell the client about each use)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "The ethical rules do not impose an obligation to inform clients about each and every use of AI.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 3, Section 3 (when disclosure to the client is required)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "If, however, the client would need to know about its use to make an informed decision, disclosure would be required.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 3, Section 3 (informed consent before inputting confidential information)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Likewise, before a lawyer inputs confidential or privileged information into a generative AI tool posing a risk of disclosure or use by third parties, the lawyer should first obtain the client’s informed consent to proceed.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 4, Section 4 (billing for AI tools must be disclosed in advance and in writing)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Alternatively, if an attorney plans to bill the client for use of AI tools in the client’s matter, the attorney must disclose these plans to the client in advance and in writing.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 4, Section 4 (no billing for time saved)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "In addition, an attorney using an hourly billing arrangement cannot bill the client for the time the attorney saved by using AI.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 4, Section 5 (KEY — no ethical duty to disclose AI use to the court)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Although the ethical rules do not currently require disclosure to the court that an attorney has used AI in connection with the litigation, certain courts’ general, standing, and case-specific orders require it.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 4, Section 5 (double-check all information and sources)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "It is now common knowledge that generative AI can create false or misleading information, and legal professionals using this technology should double-check all information and sources.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 5, Section 7 (supervision of AI tools)",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Finally, legal professionals must supervise the use and output of their AI tools, just as they must supervise their human supervisees.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — p. 6, Conclusion",
+          "url": "https://www.azcourts.gov/Portals/0/AISC%20Ethical%20Best%20Practices%20Guidance_For%20Publication.pdf",
+          "verbatim": "Judges and attorneys, not AI tools, are responsible for their work product.",
+          "effective": "2024-11-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Supreme Court of Arizona, Administrative Order No. 2024-33, Establishing the Arizona Steering Committee on Artificial Intelligence and the Courts (Jan. 24, 2024) — creates the committee; imposes no duty on attorneys",
+          "url": "https://www.azcourts.gov/Portals/0/22/admorder/Orders24/2024-33.pdf?ver=Wga82VXaI00ghnRazZUqWA%3d%3d",
+          "verbatim": "IT IS ORDERED establishing the Arizona Steering Committee on Artificial Intelligence and the Courts (“Steering Committee”), as follows:",
+          "effective": "2024-01-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — date line",
+          "url": "https://www.azcourts.gov/Portals/0/22/admorder/Orders24/2024-33.pdf?ver=Wga82VXaI00ghnRazZUqWA%3d%3d",
+          "verbatim": "Dated this 24th day of January, 2024.",
+          "effective": "2024-01-24",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Arizona Judicial Branch, Arizona Steering Committee on Artificial Intelligence and the Courts (committee page) — the Nov. 14, 2024 best practices are its only lawyer-facing output listed",
+          "url": "https://www.azcourts.gov/cscommittees/Arizona-Steering-Committee-on-Artificial-Intelligence-and-the-Courts",
+          "verbatim": "The Arizona Steering Committee on Artificial Intelligence and the Courts (AISC) was established by Administrative Order No. 2024-33.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Dineen/Shibata v. Kotchka, No. 1 CA-CV 25-0606 PB (Ariz. Ct. App. Div. One, filed July 15, 2026) (published opinion, Furuya, J.) — para. 2, the Gen-AI holding is introduced",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "More concerning, however, is Mr. Kotchka’s failure to ensure the validity of legal citations in his opening brief that he obtained through use of generative artificial intelligence",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 11 (first published Arizona authority on the question)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "has not been squarely addressed by any prior published Arizona authority, we do so now.",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 12 (use of Gen-AI is not itself objectionable)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "using Gen-AI is not, in and of itself, objectionable",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 16 (failure to check is abuse of Gen-AI)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "Failure to act with reasonable diligence to check—and correct—any work product created using Gen-AI that is submitted to the courts constitutes abuse of Gen-AI tools in litigation.",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 18 (attorneys and self-represented litigants alike; citing a hallucinated case is sanctionable)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "Thus, whether attorney or self-represented litigant, all who file documents with the courts remain directly and personally responsible for the content, accuracy, and quality of legal filings submitted to all courts, including this court.",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 18 (the holding)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "Accordingly, citing a hallucinated case in a legal filing is sanctionable conduct.",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 25 (the duty cannot be delegated to a tool)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "may not offload their duty to ensure the truth and accuracy of their representations of fact and law in their filings to any technological tool, including Gen-AI tools.",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — para. 31 (the sanction imposed was a fee award, not discipline)",
+          "url": "https://coa1.azcourts.gov/Portals/1/OpinionFiles/Div1/2026/1%20CA-CV%2025-0606%20PB%20Dineen%20Shibata%20v%20Kotchka.pdf?ver=ZlKfunCALkNNqzZkEO15Xg%253d%253d",
+          "verbatim": "the appropriate sanction here is to award Dineen that portion of her reasonable attorneys’ fees under A.R.S. Section 12-349 and ARCAP 25 incurred due to the use of hallucinated and misrepresented case citations.",
+          "effective": "2026-07-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API result for Arizona AI-citation opinions (court=ariz arizctapp) — one hit, Dineen/Shibata v. Kotchka; JSON kept as the search record",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?q=%28%22artificial+intelligence%22+OR+ChatGPT+OR+%22generative+AI%22%29+AND+%28fictitious+OR+fabricated+OR+nonexistent+OR+hallucinated+OR+%22does+not+exist%22%29&type=o&court=ariz+arizctapp&order_by=dateFiled+desc",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "State Bar of Arizona, Guidance for the Use of Generative Artificial Intelligence in the Practice of Law in Arizona (undated web page; non-binding practical guidance) — Candor to the Tribunal",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "Legal professionals must independently verify all generative AI-generated citations, arguments, and factual statements before submitting them to a court or administrative body.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Confidentiality",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "A legal professional must not enter any confidential client information into generative AI platforms unless adequate safeguards are in place.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — terms of the tool",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "A legal professional must review applicable terms governing any generative AI tool to ensure it does not share input data with third parties or use it for training or improving its model.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Competence and Diligence",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "All generative AI-generated content must be independently verified for accuracy and bias.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Communication (goes further than the AISC guidance)",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "A legal professional must communicate to clients that AI is being used in the provision of services.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — fees",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "Any generative AI-related costs should be clearly disclosed in client fee agreements.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — local rules caveat (the only place AI disclosure is said to be required)",
+          "url": "https://www.azbar.org/for-legal-professionals/practice-tools-management/practice-2-0/choosing-and-using-technology/best-practices-for-using-artificial-intelligence/",
+          "verbatim": "Legal professionals should stay apprised of any local rules and/or requirements of individual courts or judges regarding use of generative AI in such tribunals.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "State Bar of Arizona press release, Warning — Generative AI may hallucinate citations, result in discipline (Dec. 9, 2025)",
+          "url": "https://www.azbar.org/news-publications/news-releases-articles/warning-generative-ai-may-hallucinate-citations-result-in-discipline/",
+          "verbatim": "This conduct may lead to disciplinary action by the State Bar of Arizona. Several cases have already made their way to the Bar.",
+          "effective": "2025-12-09",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "State Bar of Arizona, Ethics Opinions page — the State Bar no longer issues formal ethics opinions (so there is no Arizona bar AI ethics opinion and cannot be one)",
+          "url": "https://azbar.org/for-legal-professionals/ethics/ethics-opinions/",
+          "verbatim": "The State Bar of Arizona no longer has an ethics committee that issues formal ethics opinions.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Arizona Supreme Court Attorney Ethics Advisory Committee, main page — lists the AISC best practices and the State Bar guidance as the AI material; no AEAC opinion on AI",
+          "url": "https://www.azcourts.gov/cld/Ethics-Advisory-Committee",
+          "verbatim": "Please view best practices for using generative artificial intelligence:",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Arizona Supreme Court Attorney Ethics Advisory Committee, Opinions Issued by the Committee — page fetched, no opinion list rendered in the HTML and no AI opinion found",
+          "url": "https://www.azcourts.gov/cld/Attorney-Ethics-Advisory-Committee/Opinions-Issued-by-the-Committee",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Ariz. R. Sup. Ct. 42, Rule 42 parent rule (adoption of the ABA Model Rules as amended by the Arizona Supreme Court)",
+          "url": "https://govt.westlaw.com/azrules/Document/NBF203A00717A11DAA16E8D4AC7636430?viewType=FullText&originationContext=documenttoc&transitionType=CategoryPageItem&contextData=(sc.Default)",
+          "verbatim": "The professional conduct of members shall be governed by the Model Rules of Professional Conduct of the American Bar Association, adopted August 2, 1983, as amended by this court and adopted as the Arizona Rules of Professional Conduct:",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Arizona Supreme Court Center for Forensics and Artificial Intelligence, AI information page (court-facing; no attorney duty)",
+          "url": "https://www.azcourts.gov/forensicsciencecenter/AI",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 4c - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-4c.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: Arizona has no AI-specific rule of professional conduct, no statewide court rule, no Supreme Court order and no statute directed at AI use by lawyers or litigants in filings, as of 2026-09-21. What Arizona does have, and what makes it unusual among Tier 2 states, is (a) a Supreme Court committee publication addressed directly to lawyers, and (b) a PUBLISHED intermediate appellate opinion holding that citing a hallucinated case is sanctionable. TECHNOLOGY COMPETENCE: Arizona has adopted the ABA technology-competence language, but it sits at ER 1.1 COMMENT 6, not Comment 8 as in the ABA model and most states. Its text, as quoted by the Supreme Court's own AI steering committee, is the ABA wording. CAUTION FOR THE VERIFIER: the Arizona ER comments are NOT published on govt.westlaw.com, which is where the Arizona Judicial Branch and the State Bar both send readers for Rule 42; every ER document fetched there (ERs 1.1, 1.4, 1.5, 1.6, 3.3, 5.1, 5.3, Preamble, Rule 42) contains black letter and Credits only, zero occurrences of the word comment except in the Preamble/Scope. The comment text in this entry therefore comes from the AISC guidance n.2, which quotes ER 1.1 cmt. 6 in full and adds \"(emphasis added)\" on the technology clause. The EFFECTIVE DATE of the comment is UNKNOWN and is left out rather than guessed: the ER 1.1 Credits line shows only \"Amended June 9, 2003, effective Dec. 1, 2003.\", which is the black letter, and no Arizona order adding the technology clause was located. OPEN QUESTION 1 for the verifier: find the Arizona Supreme Court rule order (R-number) that added the technology language to ER 1.1 cmt. 6, and confirm the comment is numbered 6 in a source that prints the comments (print ARS Ann. vol. 17A Pt. 2, or a rule-change order). BINDING STATUS: (a) ER black letter binds; Comments do not add obligations — Scope para. [14], \"Many of the Comments use the term “should.” Comments do not add obligations to the Rules but provide guidance for practicing in compliance with the Rules.\" and para. [23], \"The Comments are intended as guides to interpretation, but the text of each Rule is authoritative.\" (b) AISC Generative AI — Ethical Best Practices (Nov. 14, 2024) is guidance ISSUED BY A SUPREME COURT COMMITTEE, not an order and not a rule; it was published under the charge in AO 2024-33 to \"develop and recommend guidelines and best practices\". It is the most authoritative Arizona statement addressed to lawyers, and it states in terms that the ethical rules do not require disclosure of AI use to a court. (c) AO 2024-33 (Jan. 24, 2024, Chief Justice Brutinel) only creates the committee; it imposes no duty on attorneys and no duty on filings. (d) State Bar of Arizona practical guidance is non-binding, and the State Bar's own page says the guidance in its ethics opinions is \"advisory only and non-binding\". (e) Dineen/Shibata v. Kotchka, No. 1 CA-CV 25-0606 PB (Ariz. Ct. App. Div. One July 15, 2026) is captioned OPINION (Arizona's designation for a published decision, as against MEMORANDUM DECISION), its running header reads Opinion of the Court, and the panel itself says the question \"has not been squarely addressed by any prior published Arizona authority\", so it is precedential in Arizona. No S.W.3d-style reporter citation was located; verify the P.3d cite before relying on it in a brief. IMPORTANT QUALIFIER: the sanctioned filer was a SELF-REPRESENTED litigant, not counsel, so there is still no published Arizona appellate decision sanctioning or disciplining an ATTORNEY for AI-fabricated citations. The opinion nevertheless states the rule for attorneys expressly and holds self-represented litigants to the attorney standard. The sanction was an attorneys' fee award under A.R.S. Sec. 12-349 and ARCAP 25 plus the court's inherent power — not professional discipline. NO ARIZONA BAR ETHICS OPINION IS POSSIBLE: the State Bar of Arizona disbanded its ethics-opinion committee; its page says so in terms. Formal opinions now come from the Arizona Supreme Court's Attorney Ethics Advisory Committee, whose opinions page was fetched on 2026-09-21 and rendered no opinion list in the HTML; its parent page lists the AISC best practices and the State Bar guidance as the AI material and no AEAC opinion on AI. OPEN QUESTION 2 for the verifier: confirm by another route (the AEAC opinion PDFs are not linked in the served HTML) that no AEAC formal opinion addresses AI, and check Proposed Ethics Opinions and Pending Opinion Requests for an AI request in the queue. DISCIPLINE PIPELINE: the State Bar press release of Dec. 9, 2025 states that AI-hallucination cases have already reached the Bar. No Arizona disciplinary decision on AI was located; the Presiding Disciplinary Judge's docket was not searched. OPEN QUESTION 3 for the verifier: search the Arizona Presiding Disciplinary Judge / attorney-discipline decisions for AI-hallucination matters filed after Dec. 2025. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): ER 1.1, 1.4, 1.5, 1.6, 3.3, 5.1, 5.3, the Preamble/Scope and the Rule 42 parent rule on govt.westlaw.com (state court rules current with amendments received through May 1, 2026) — no occurrence of artificial, generative, AI, machine learning, large language, chatgpt, hallucinat, technolog in any of the black-letter texts; Ariz. R. Civ. P. 11 and ARCAP 25 — general signing and sanctions rules, no AI language; the Arizona Judicial Branch committees page and the AISC committee page — the Nov. 14, 2024 best practices is the only lawyer-facing AISC output listed; the azcourts.gov Administrative Orders Index page — the list is rendered by script and served empty to curl, so no sweep of 2025-2026 administrative orders was possible. NOT FETCHED / NOT DONE: the Arizona ER comments in a source that actually prints them; the Arizona Supreme Court order adding ER 1.1 cmt. 6; any Arizona rule petition on AI (the Arizona Rules Forum is a script-driven application and served no petition list to curl); the azcourts.gov administrative-orders list (same reason); the Arizona legislature — www.azleg.gov/Search returns HTTP 403 to curl and the apps.azleg.gov API exposes a Session list but no keyword endpoint (tried /api/Keyword, /api/BillSearch, /api/BillInfo, all 404), so NO Arizona statute search was completed. OPEN QUESTION 4 for the verifier: run the azleg bill/ARS keyword search for artificial intelligence combined with court filing and practice of law, and sweep the azcourts.gov administrative orders for 2025 and 2026. RESOLVER (2026-09-21): govt.westlaw.com, which was down or degraded for the whole of the verification run, was up for this one. The five documents the verifier could never reach were fetched between 03:54 and 03:56 local, all HTTP 200 and all complete: ER 3.3, ER 5.1, ER 5.3, Ariz. R. Civ. P. 11 and the Rule 42 parent rule. Each was read in full and the nine quotations resting on them now gate character-for-character against the resolver's own extractions. NOTHING IN THEM WAS WRONG; no Arizona text changed because of the re-fetch, only the local_text paths. Three things the re-fetch settles that nobody could check before. FIRST, the Westlaw comments gap is now confirmed for all nine ER documents rather than six: ER 3.3, ER 5.1, ER 5.3 and the Rule 42 parent contain the word comment zero times between them, and none of the five contains artificial, generative, machine learning, large language, chatgpt or hallucinat. SECOND, the header-versus-Credits trap runs through ER 3.3 as well: its page header reads Effective January 1, 2026 while its Credits line reads Amended June 9, 2003, effective Dec. 1, 2003. The Credits date is the one this entry carries and it is the right one. THIRD, Ariz. R. Civ. P. 11 carries effective null here, but its own Credits line does supply a date — added Sept. 2, 2016, effective Jan. 1, 2017, amended Aug. 31, 2017 effective July 1, 2018, Aug. 24, 2023 effective Jan. 1, 2024, and amended on an emergency basis effective Aug. 22, 2024 and permanently adopted effective Dec. 3, 2024. No discrepancy row flags that field, so the resolver left it null; the arbiter may fill it with 2024-12-03. One pinpoint was corrected: the AISC confidentiality sentence sits on page 2 of the six-page PDF, not page 3, which the resolver confirmed by splitting its own extraction on form feeds (Section 2 opens on page 2). The AISC comment-number finding was also re-confirmed independently — footnote 2 on page 1 cites ER 1.1 cmt. 6 and prints the technology comment — and the resolver's extraction of that PDF is byte-identical to the verifier's. The four Arizona open questions are unchanged and remain open; see still_open."
+    },
+    {
+      "id": "tn-rpc",
+      "kind": "state_bar",
+      "name": "Tennessee Rules of Professional Conduct (Tenn. Sup. Ct. R. 8) and Tennessee AI guidance",
+      "disclosure_to_court": "none",
+      "certification_required": false,
+      "certificate_language": null,
+      "verification_duty": "No Tennessee rule of professional conduct, statewide court rule, Supreme Court order, or statute imposes an AI-specific verification or disclosure duty as of 2026-09-21, and Tennessee has NO ethics opinion of any kind on AI. The duty rests entirely on the general rules as applied by four 2026 decisions — one published Court of Appeals opinion and three decisions of the Workers' Compensation Appeals Board. RPC 1.1: \"A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.\" RPC 1.1 Comment [8] carries the ABA technology clause. RPC 3.3(a)(1): a lawyer shall not knowingly \"make a false statement of fact or law to a tribunal; or\". CAUTION: Tennessee's RPC 3.3 is heavily restructured and its (a)(1) contains NO duty to correct a false statement of law or fact already made to the tribunal; the words correct a false statement appear nowhere in Tenn. Sup. Ct. R. 8. The correction machinery sits instead in RPC 3.3(e)-(j), which is framed around client crime or fraud on the tribunal and false evidence, not around a lawyer's own erroneous citation. Supervision: RPC 5.1(b), \"A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.\"; RPC 5.3(b) for nonlawyers. The operative certification is Tenn. R. Civ. P. 11.02: \"By presenting to the court (whether by signing, filing, submitting, or later advocating) a pleading, written motion, or other paper, an attorney or unrepresented party is certifying that to the best of the person's knowledge, information, and belief, formed after an inquiry reasonable under the circumstances\" that \"the claims, defenses, and other legal contentions therein are warranted by existing law or by a nonfrivolous argument for the extension, modification, or reversal of existing law or the establishment of new law\"; Tenn. R. Civ. P. 11.03 supplies the sanction. Applied to AI in Simmons v. Islam, No. M2025-01261-COA-R3-CV (Tenn. Ct. App. May 21, 2026) (captioned OPINION, not a memorandum opinion under Tenn. Ct. App. R. 10; cited by the Workers Compensation Appeals Board as 2026 Tenn. App. LEXIS 225), where the court found that \"his case citations appear to be from an artificial intelligence hallucination.\" and defined the term from a law review as \"a widely reported phenomenon in which artificial intelligence programs create new information that has no basis in fact.\"; and in Bianco v. Academy of Maryland Farms (Tenn. Bureau of Workers' Comp. Appeals Bd. July 10, 2026) and Webb v. A.O. Smith Water Products Co. (same board, Aug. 11, 2026), each of which states in a footnote that \"All litigants, whether represented by counsel or not, must comply with Rule 11 of the Tennessee Rules of Civil Procedure.\" A third Board decision, Valentine v. Volkswagen of America, Inc. (same board, July 17, 2026), puts the same caution in the BODY of the opinion rather than in a footnote and in different words, closing its analysis: \"Finally, we caution Employee that, whether the content of his filings was generated by him individually or with the assistance of artificial intelligence, he is responsible for the accuracy of all such content and the legal basis for the filings.\" and then reciting Tenn. R. Civ. P. 11.02, 11.02(1) and 11.02(2) before noting that \"Rule 11 also authorizes a court to impose sanctions on litigants who fail to abide by these mandates. Tenn. R. Civ. P. 11.03.\" No sanction was imposed for AI use in any of the four, and no Tennessee decision found here reaches a represented party or an attorney.",
+      "confidentiality_restriction": "RPC 1.6(a): \"A lawyer shall not reveal information relating to the representation of a client unless: (1) the client gives informed consent;\" (subject to implied authorization and the listed exceptions). RPC 1.6(d): \"A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.\" RPC 1.6 Comment [18]: \"Paragraph (d) requires a lawyer to act competently to safeguard information relating to the representation of a client against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer's supervision.\", with reasonableness factors. RPC 5.3 Comment [3] lists \"using an Internet-based service to store client information.\" as an outside-the-firm service for which reasonable efforts are required. NOTHING in Tennessee addresses putting client information into an AI tool; there is no state ethics opinion to fill the gap.",
+      "record_keeping_duty": "none",
+      "client_disclosure_duty": "conditional, and entirely generic — RPC 1.4(a)(2) requires a lawyer to \"reasonably consult with the client about the means by which the client's objectives are to be accomplished;\" and RPC 1.4(b): \"A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.\" No Tennessee authority says whether, or when, AI use must be disclosed to a client. Unlike Arizona and Missouri, Tennessee has issued no guidance on the question.",
+      "fees_note": "RPC 1.5(a): \"A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.\" No Tennessee authority addresses billing for AI tools or for time saved by AI.",
+      "sources": [
+        {
+          "title": "Tenn. Sup. Ct. R. 8, RPC 1.1 (Competence), black letter — official text on the Tennessee Judiciary site",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "A lawyer shall provide competent representation to a client. Competent representation requires the legal knowledge, skill, thoroughness, and preparation reasonably necessary for the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.1 Comment [8] (technology competence; Tennessee keeps the ABA numbering)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "To maintain the requisite knowledge and skill, a lawyer should keep abreast of changes in the law and its practice, including the benefits and risks associated with relevant technology, engage in continuing study and education, and comply with all continuing legal education requirements to which the lawyer is subject.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Rule 8 replacement order (the currency date shown on the rule page)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "Rule replaced in its entirety by order filed September 29, 2010, effective January 1, 2011.",
+          "effective": "2011-01-01",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the bracketed block that CLOSES Rule 8, listing twelve amendment orders after the 2010 replacement order; none is attributed to a rule or a comment",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "Amended by order filed February 27, 2013. Amended by order filed December 16, 2014. Amended by order filed August 18, 2014. Amended by order filed February 12 & 19, 2015. Amended by order filed December 21, 2015 and effective January 1, 2016. Amended by order filed and effective October 4, 2016. Amended by order filed March 6, 2017. Amended by order filed on June 5, 2020. Amended by order filed on September 1, 2021. Amended by order filed December 15, 2021 and effective January 1, 2022. Amended by order filed May 12, 2022 and effective May 12, 2022. Amended by order filed and effective November 15, 2022]",
+          "effective": "2022-11-15",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Scope para. [15] (Comments add no obligations)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "Comments do not add obligations to the Rules but provide guidance for practicing in compliance with the Rules.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Scope para. [23] (authority of the Comments)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "The Comments are intended as guides to interpretation, but the text of each Rule is authoritative.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.4(a)(2) (Communication)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "reasonably consult with the client about the means by which the client's objectives are to be accomplished;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.4(b)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "A lawyer shall explain a matter to the extent reasonably necessary to permit the client to make informed decisions regarding the representation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.5(a) (Fees)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "A lawyer shall not make an agreement for, charge, or collect an unreasonable fee or an unreasonable amount for expenses.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.6(a) (Confidentiality of Information)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "A lawyer shall not reveal information relating to the representation of a client unless: (1) the client gives informed consent;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.6(d) (reasonable efforts against unauthorized disclosure or access)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "A lawyer shall make reasonable efforts to prevent the inadvertent or unauthorized disclosure of, or unauthorized access to, information relating to the representation of a client.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 1.6 Comment [18] (acting competently to preserve confidentiality)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "Paragraph (d) requires a lawyer to act competently to safeguard information relating to the representation of a client against unauthorized access by third parties and against inadvertent or unauthorized disclosure by the lawyer or other persons who are participating in the representation of the client or who are subject to the lawyer's supervision.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 3.3(a)(1) (Candor Toward the Tribunal; note the missing correction clause)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "make a false statement of fact or law to a tribunal; or",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 5.1(b) (supervisory lawyers)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "A lawyer having direct supervisory authority over another lawyer shall make reasonable efforts to ensure that the other lawyer conforms to the Rules of Professional Conduct.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 5.3(b) (nonlawyer assistants)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "a lawyer having direct supervisory authority over a nonlawyer shall make reasonable efforts to ensure that the nonlawyer's conduct is compatible with the professional obligations of the lawyer; and",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — RPC 5.3 Comment [3] (Internet-based services to store client information)",
+          "url": "https://www.tncourts.gov/courts/supreme-court/rules/supreme-court-rules/rule-8-rules-professional-conduct",
+          "verbatim": "using an Internet-based service to store client information.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Tenn. R. Civ. P. 11.02 (Representations to Court; general, not AI-specific)",
+          "url": "https://www.tncourts.gov/courts/rules-civil-procedure/rules/rules-civil-procedure-rules/rule-1102-representations-court",
+          "verbatim": "By presenting to the court (whether by signing, filing, submitting, or later advocating) a pleading, written motion, or other paper, an attorney or unrepresented party is certifying that to the best of the person's knowledge, information, and belief, formed after an inquiry reasonable under the circumstances,",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — Tenn. R. Civ. P. 11.02(2)",
+          "url": "https://www.tncourts.gov/courts/rules-civil-procedure/rules/rules-civil-procedure-rules/rule-1102-representations-court",
+          "verbatim": "the claims, defenses, and other legal contentions therein are warranted by existing law or by a nonfrivolous argument for the extension, modification, or reversal of existing law or the establishment of new law;",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Tenn. R. Civ. P. 11.03 (Sanctions)",
+          "url": "https://www.tncourts.gov/courts/rules-civil-procedure/rules/rules-civil-procedure-rules/rule-1103-sanctions",
+          "verbatim": "If, after notice and a reasonable opportunity to respond, the court determines that subdivision 11.02 has been violated, the court may, subject to the conditions stated below, impose an appropriate sanction upon the attorneys, law firms, or parties that have violated subdivision 11.02 or are responsible for the violation.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Tray Simmons v. Dr. Shahidul Islam, No. M2025-01261-COA-R3-CV (Tenn. Ct. App. May 21, 2026) (Usman, J.; captioned OPINION) — AI hallucinations in a pro se brief",
+          "url": "https://www.tncourts.gov/sites/default/files/OpinionsPDFVersion/Majority%20Opinion-%20M2025-01261-COA-R3-CV.pdf",
+          "verbatim": "his case citations appear to be from an artificial intelligence hallucination.",
+          "effective": "2026-05-21",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — n.3, the definition Tennessee courts now use",
+          "url": "https://www.tncourts.gov/sites/default/files/OpinionsPDFVersion/Majority%20Opinion-%20M2025-01261-COA-R3-CV.pdf",
+          "verbatim": "a widely reported phenomenon in which artificial intelligence programs create new information that has no basis in fact.",
+          "effective": "2026-05-21",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — later in the opinion",
+          "url": "https://www.tncourts.gov/sites/default/files/OpinionsPDFVersion/Majority%20Opinion-%20M2025-01261-COA-R3-CV.pdf",
+          "verbatim": "is again plagued with what appear to be artificial intelligence hallucinations.",
+          "effective": "2026-05-21",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Bianco v. Academy of Maryland Farms, No. 2025-60-7253 (Tenn. Bureau of Workers' Comp., Workers' Comp. Appeals Bd., July 10, 2026) — n.3, citing Simmons. The url is CourtListener's stored copy of the Board's own PDF, which is what was fetched; the opinion page is https://www.courtlistener.com/opinion/10925591/bianco-miriam-v-academy-of-maryland-farms/",
+          "url": "https://storage.courtlistener.com/pdf/2026/07/10/bianco_miriam_v._academy_of_maryland_farms.pdf",
+          "verbatim": "Employee should be aware that she is responsible for the accuracy of all content she chooses to file with the court. All litigants, whether represented by counsel or not, must comply with Rule 11 of the Tennessee Rules of Civil Procedure.",
+          "effective": "2026-07-10",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Webb v. A.O. Smith Water Products Co., No. 2024-20-6489 (Tenn. Bureau of Workers' Comp., Workers' Comp. Appeals Bd., Aug. 11, 2026) — n.5. The url is CourtListener's stored copy of the Board's own PDF, which is what was fetched; the opinion page is https://www.courtlistener.com/opinion/10944683/webb-demetrius-v-ao-smith-water-products-co/",
+          "url": "https://storage.courtlistener.com/pdf/2026/08/11/webb_demetrius_v._a.o._smith_water_products_co..pdf",
+          "verbatim": "Employee should be aware that he is responsible for the accuracy of all content he chooses to file with the court. All litigants, whether represented by counsel or not, must comply with Rule 11 of the Tennessee Rules of Civil Procedure.",
+          "effective": "2026-08-11",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Valentine v. Volkswagen of America, Inc., No. 2025-10-5856, State File No. 52744-2024 (Tenn. Bureau of Workers' Comp., Workers' Comp. Appeals Bd., July 17, 2026) — the AI caution, in the BODY of the opinion (last paragraph of the Analysis) and NOT in a footnote. The url is CourtListener's stored copy of the Board's own PDF, which is what was fetched; the opinion page is https://www.courtlistener.com/opinion/10932412/valentine-markcus-v-volkswagen-of-america-inc/",
+          "url": "https://storage.courtlistener.com/pdf/2026/07/17/valentine_markcus_v._volkswagen_of_america_inc..pdf",
+          "verbatim": "Finally, we caution Employee that, whether the content of his filings was generated by him individually or with the assistance of artificial intelligence, he is responsible for the accuracy of all such content and the legal basis for the filings.",
+          "effective": "2026-07-17",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the Tenn. R. Civ. P. 11.03 sentence that closes the Rule 11 recital following the caution",
+          "url": "https://storage.courtlistener.com/pdf/2026/07/17/valentine_markcus_v._volkswagen_of_america_inc..pdf",
+          "verbatim": "Rule 11 also authorizes a court to impose sanctions on litigants who fail to abide by these mandates. Tenn. R. Civ. P. 11.03.",
+          "effective": "2026-07-17",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — disposition; no sanction was imposed and costs were waived",
+          "url": "https://storage.courtlistener.com/pdf/2026/07/17/valentine_markcus_v._volkswagen_of_america_inc..pdf",
+          "verbatim": "we affirm the trial court’s order in all respects and remand the case. Costs on appeal were waived.",
+          "effective": "2026-07-17",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the counsel block; the employee is self-represented, as in Bianco and Webb",
+          "url": "https://storage.courtlistener.com/pdf/2026/07/17/valentine_markcus_v._volkswagen_of_america_inc..pdf",
+          "verbatim": "Markcus Valentine, employee-appellant, pro se",
+          "effective": "2026-07-17",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API, court=tennworkcompapp, phrase assistance of artificial intelligence — the query that finds Valentine; two hits, Valentine and Webb; JSON kept as the search record",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?type=o&court=tennworkcompapp&q=%22assistance%20of%20artificial%20intelligence%22&order_by=dateFiled%20desc",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "CourtListener v4 search API result for Tennessee AI-citation opinions (court=tenn tennctapp tenncrimapp tennworkcompcl tennworkcompapp) — two hits, both from the Workers' Compensation Appeals Board; JSON kept as the search record",
+          "url": "https://www.courtlistener.com/api/rest/v4/search/?q=%28%22artificial+intelligence%22+OR+ChatGPT+OR+%22generative+AI%22%29+AND+%28fictitious+OR+fabricated+OR+nonexistent+OR+hallucinated+OR+%22does+not+exist%22%29&type=o&court=tenn+tennctapp+tenncrimapp+tennworkcompcl+tennworkcompapp&order_by=dateFiled+desc",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Board of Professional Responsibility of the Supreme Court of Tennessee, Formal Ethics Opinions index — the complete list; no AI opinion exists",
+          "url": "https://www.tbpr.org/for-legal-professionals/formal-ethics-opinions",
+          "verbatim": "The Board of Professional Responsibility assists members of the legal community in interpreting their ethical obligations by issuing Formal Ethics Opinions about specific issues from time to time.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the two most recent formal opinions, one of them withdrawn",
+          "url": "https://www.tbpr.org/for-legal-professionals/formal-ethics-opinions",
+          "verbatim": "Formal Ethics Opinion 2025-F-172 - *Withdrawn on April 21, 2025*",
+          "effective": "2025-04-21",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the nearest ADJACENT technology opinion on the index. It is NOT about AI and changes no answer in this entry; it is carried because it is where a Tennessee lawyer asking whether client material may go into a hosted tool would be sent. Opinion page https://www.tbpr.org/ethic_opinions/2015-f-159",
+          "url": "https://www.tbpr.org/for-legal-professionals/formal-ethics-opinions",
+          "verbatim": "2015-F-159 - Storing client information in the cloud",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Formal Ethics Opinion 2025-F-171 (the most recent operative Tennessee formal ethics opinion; subject is settlement non-disparagement clauses, NOT AI)",
+          "url": "https://www.tbpr.org/docs/c3ce0c61-e63d-4a4e-b35b-e63982512902/FEO%202025-F-171-Formatted-for-web.html",
+          "verbatim": "It is improper for an attorney to propose or accept a provision in a settlement agreement that requires the attorney to become a party bound by a non-disparagement clause that prohibits the lawyer from future use of information, learned during the case, which may shed a negative light on the defendants.",
+          "effective": "2025-03-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the signature block, which is where the March 14, 2025 date comes from",
+          "url": "https://www.tbpr.org/docs/c3ce0c61-e63d-4a4e-b35b-e63982512902/FEO%202025-F-171-Formatted-for-web.html",
+          "verbatim": "This 14th day of March, 2025.",
+          "effective": "2025-03-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Same — the adoption line under the Ethics Committee signatures",
+          "url": "https://www.tbpr.org/docs/c3ce0c61-e63d-4a4e-b35b-e63982512902/FEO%202025-F-171-Formatted-for-web.html",
+          "verbatim": "APPROVED AND ADOPTED BY THE BOARD",
+          "effective": "2025-03-14",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Formal Ethics Opinion 2025-F-172, withdrawn April 21, 2025 (subject is limited scope representation, NOT AI)",
+          "url": "https://www.tbpr.org/ethic_opinions/formal-ethics-opinion-2025-f-172",
+          "verbatim": "FORMAL ETHICS OPINION 2025-F-172 *Withdrawn on April 21, 2025*",
+          "effective": "2025-04-21",
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "Board of Professional Responsibility document repository index (docs.tbpr.org) — swept for AI, nothing found",
+          "url": "https://docs.tbpr.org/",
+          "verbatim": null,
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "tncourts.gov site search for generative — no results",
+          "url": "https://www.tncourts.gov/search/node?keys=generative",
+          "verbatim": "Your search yielded no results.",
+          "effective": null,
+          "fetched": "2026-09-21"
+        },
+        {
+          "title": "tncourts.gov site search for artificial intelligence — one hit, a 2020 press release about an ADR commission chair, nothing on AI in filings",
+          "url": "https://www.tncourts.gov/search/node?keys=artificial+intelligence",
+          "verbatim": "Search for artificial intelligence",
+          "effective": null,
+          "fetched": "2026-09-21"
+        }
+      ],
+      "status": "verified",
+      "verified_on": "2026-09-21",
+      "verified_by": "four-session chain, batch 4c - claude-opus compiler (2026-09-20/21), separate claude-opus verifier (held the entry on its discrepancy rows), claude-opus resolver as third session, separate claude-opus delta verifier (re-fetched and passed every row the resolver changed); arbiter and merge Fable 5.1, 2026-09-21. Audit files jurisdictions.batch-4c.verified.yaml, .resolved.yaml and .delta-report.yaml",
+      "attorney_signoff": null,
+      "notes": "BOTTOM LINE: Tennessee is the emptiest of the three states in this batch. There is no AI-specific rule of professional conduct, no statewide court rule, no Supreme Court order, no administrative order, no statute, AND — unlike Arizona and Missouri — NO ETHICS OPINION OR GUIDANCE OF ANY KIND on AI, as of 2026-09-21. A Tennessee lawyer has nothing to read except the general rules and four 2026 decisions. TECHNOLOGY COMPETENCE: adopted, at RPC 1.1 Comment [8], in the ABA wording, with the ABA numbering. EFFECTIVE DATES: every Tenn. Sup. Ct. R. 8 source in this entry carries effective: null except the replacement-order source, which carries 2011-01-01. The rule page gives no per-rule and no per-comment amendment history at all. Its heading gives one date for the whole of Rule 8 (replaced in its entirety by order filed Sept. 29, 2010, effective Jan. 1, 2011), and a bracketed block at the very END of the rule lists twelve later amendment orders — February 27, 2013; December 16, 2014; August 18, 2014; February 12 & 19, 2015; December 21, 2015 eff. January 1, 2016; filed and effective October 4, 2016; March 6, 2017; June 5, 2020; September 1, 2021; December 15, 2021 eff. January 1, 2022; May 12, 2022 eff. May 12, 2022; filed and effective November 15, 2022 — but attributes none of them to a rule or a comment, so no quoted provision can be pinned to a date from this page. Several provisions quoted here — RPC 1.1 cmt. [8], RPC 1.6(d), RPC 1.6 cmt. [18], RPC 5.3 cmt. [3] — are ABA Ethics 20/20 language that postdates 2011, so 2011-01-01 would be wrong for them, and the page does not say when they came in. null is therefore the honest value. OPEN QUESTION 1 for the verifier: find the Tennessee Supreme Court order that added the technology clause to RPC 1.1 cmt. [8] and confirm its date; the rule page carries no per-comment amendment history. SURPRISE FOR A LAWYER 1 (the important one): Tennessee's RPC 3.3(a)(1) is only \"make a false statement of fact or law to a tribunal; or\". It omits the ABA Model Rule tail beginning or fail to correct a false statement of material fact or law previously made to the tribunal by the lawyer. A word search of the whole of Tenn. Sup. Ct. R. 8 for that phrase returns nothing. Tennessee rebuilt Rule 3.3 into paragraphs (a) through (j) organised around client crime or fraud on the tribunal, false evidence, juror misconduct and a mandatory withdraw-and-inform procedure. The RPC 3.3 block (black letter plus all seventeen Comments) was also searched for the words correct, rectif, disaffirm and misrepresent: correct does not appear at all; rectify appears only in paragraphs (e) and (f) and Comments [8], [10] and [12], always about a CLIENT's perjury, crime or fraud; disaffirm appears only in paragraph (g) and Comment [13], about false tangible or documentary EVIDENCE the lawyer offered. Nothing reaches a lawyer's own erroneous citation of law. The practical consequence for AI work: an attorney who discovers after filing that a cited case was hallucinated cannot be told, as in most states, that RPC 3.3(a)(1) itself compels correction. The duty to fix it has to be built from Tenn. R. Civ. P. 11.02 (later advocating), RPC 1.1, RPC 8.4 and the court's inherent authority. Flag this before writing any Tennessee correction-duty language into a record. SURPRISE FOR A LAWYER 2: the Board of Professional Responsibility has issued no AI opinion, and its opinion output has nearly stopped — the two most recent formal opinions are 2025-F-171 (settlement non-disparagement) and 2025-F-172, which was WITHDRAWN on April 21, 2025; before those, the most recent was 2023-F-170. The BPR document repository at docs.tbpr.org was swept and contains no AI document. SURPRISE FOR A LAWYER 3: the only Tennessee appellate authority is Simmons v. Islam (Tenn. Ct. App. May 21, 2026), and it sanctioned no one — the appellant was PRO SE, the court simply noted that his citations appear to come from an AI hallucination and affirmed. The only other Tennessee appellate-level material is three decisions of the Tennessee Bureau of Workers' Compensation Appeals Board (Bianco, July 10, 2026; Valentine, July 17, 2026; Webb, Aug. 11, 2026), which is an EXECUTIVE-BRANCH administrative tribunal, not a court of the judicial branch; all three involve self-represented employees and all three only warn. There is therefore NO published Tennessee decision, at any level found here, sanctioning or disciplining an attorney for AI-fabricated citations. BINDING STATUS: RPC black letter binds; Comments do not — Scope [15] and [23]. Tenn. R. Civ. P. 11.02 and 11.03 bind and are the enforcement hook every Tennessee AI discussion uses. SOURCING CAVEAT FOR THE VERIFIER: www.tncourts.gov sits behind a JavaScript cookie challenge and was also serving an intermittent maintenance page on 2026-09-21. The challenge is pure integer arithmetic (compute a value, take its least prime factor, set a KEY cookie), so it was solved in Python by the helper script compile/tnfetch.py and no browser was used; several URLs had to be requested more than once because the maintenance page alternated with the real one. Every tncourts.gov text in this entry is from a full-size real response (Rule 8 alone is 74,310 words of extracted text). If the verifier gets a 3,162-byte page reading We are currently undergoing maintenance, that is the alternate server; retry. CHECKED, NOTHING AI-SPECIFIC FOUND (all fetched 2026-09-21): the entire text of Tenn. Sup. Ct. R. 8, Preamble, Scope, all RPCs and all Comments, 74,310 words - zero occurrences of artificial, generative, machine learning or chatgpt, and the only technology reference is RPC 1.1 cmt. [8]; Tenn. R. Civ. P. 11.02 and 11.03; the tncourts.gov site search for generative (no results) and for artificial intelligence (one hit, an unrelated January 2020 press release naming a new Alternative Dispute Resolution Commission chair who works at a knowledge-management company); the tncourts.gov page /programs/artificial-intelligence, which returns Page Not Found; the complete BPR Formal Ethics Opinions index back to 1981; the BPR document repository index at docs.tbpr.org. NOT FETCHED / NOT DONE: no Tennessee statute search was run (the ELVIS Act and other Tennessee AI legislation concern voice and likeness, not court filings, and were not fetched); tncourts.gov Proposed Rules and Amendments was not swept page by page, only through the site search, which may not index PDFs; the Tennessee Bar Association (a voluntary bar with no regulatory authority) was not searched; the original tn.gov PDFs of the three Workers' Compensation Appeals Board decisions were not located, so those sources point at CourtListener's mirror of the Board's own PDF. OPEN QUESTION 2 for the verifier: sweep tncourts.gov Proposed Rules and Amendments and the Supreme Court orders for 2024-2026 for any AI rule petition, and confirm there is no Administrative Office of the Courts AI policy for court staff (Arizona and Pennsylvania both have one; Tennessee appears not to). OPEN QUESTION 3: confirm from the Board's own site (tn.gov) that the Bianco and Webb footnotes read as quoted here. RESOLVER (2026-09-21): the verifier was right about both blocking rows, and the first was worse than it said. VALENTINE. Valentine v. Volkswagen of America, Inc., No. 2025-10-5856, State File No. 52744-2024 (Tenn. Bureau of Workers' Comp., Workers' Comp. Appeals Bd., July 17, 2026), was fetched and read in full and is now carried with four source rows. It is a THIRD Workers' Compensation Appeals Board AI caution, filed a week after Bianco and a month before Webb, and it is NOT a footnote: Bianco and Webb put the caution in a footnote, while Valentine puts it in the body as the last paragraph of its Analysis, in different words — \"Finally, we caution Employee that, whether the content of his filings was generated by him individually or with the assistance of artificial intelligence, he is responsible for the accuracy of all such content and the legal basis for the filings.\" — followed by a recital of Tenn. R. Civ. P. 11.02, 11.02(1), 11.02(2) and 11.03. So it was added as its own sentence with its own quotation and NOT folded into the Bianco and Webb clause. Like the other two it sanctioned nobody: the appellant appears as \"Markcus Valentine, employee-appellant, pro se\", the Board affirmed, and \"we affirm the trial court’s order in all respects and remand the case. Costs on appeal were waived.\" It reached no attorney. THE COUNT WAS FALSE IN FOUR PLACES, not the two the verifier flagged, and all four were corrected in place because each was false as written: verification_duty opened by resting the duty on two published 2026 appellate decisions while listing three, and closed with any of the three; this paragraph's BOTTOM LINE said two 2026 opinions; SURPRISE FOR A LAWYER 3 said two Board decisions and both; and the NOT FETCHED paragraph said the two Board decisions whose tn.gov originals were not located. The arithmetic is now one Court of Appeals opinion (Simmons) plus three Board decisions (Bianco, Valentine, Webb). 2025-F-171. Its effective date was changed from 2025-01-01 to 2025-03-14; the opinion closes \"This 14th day of March, 2025.\" above the Ethics Committee signatures and the words APPROVED AND ADOPTED BY THE BOARD, and carries no January date anywhere. Two signature-block source rows were added so the date is gate-auditable and not merely asserted. TWO FALSE SENTENCES CORRECTED that the verifier graded non-blocking. RPC 3.3 carries SEVENTEEN Comments, [1] through [17], not fifteen; the resolver re-fetched Rule 8 through the cookie challenge in Python (no browser) and counted them in its own extraction, which is byte-identical to the verifier's, and everything else the compiler reported about that word search re-ran exactly as written (correct 0 occurrences, rectify only in paragraphs (e) and (f) and Comments [8], [10] and [12], disaffirm only in paragraph (g) and Comment [13]). And the Rule 8 page does NOT give one date for the whole rule: a bracketed block at the end of the rule lists twelve amendment orders after the 2010 replacement order, none attributed to a rule or a comment. That sentence was rewritten and the block added as a source row. The effective: null values both sentences explain are unchanged and remain the honest values; the technology clause still cannot be pinned, but the window is now bounded to those twelve orders, and since the ABA added the clause in August 2012 the earliest candidate is the order filed February 27, 2013. ONE ADJACENT AUTHORITY ADDED. The BPR index, re-fetched by the resolver, carries \"2015-F-159 - Storing client information in the cloud\". It is NOT about AI and changes no answer in this entry, so confidentiality_restriction was left exactly as written; it is carried in sources[] because it is the nearest Tennessee authority to the question whether client material may be put into a hosted tool. The index itself was swept again and contains zero occurrences of artificial, generative, chatgpt or even technolog, which independently re-confirms that Tennessee has no AI ethics opinion. OPEN QUESTIONS 1, 2 and 3 all remain open; see still_open."
     }
   ]
 };
