@@ -1,7 +1,16 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { X, Send, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Send, Maximize2, Minimize2, Eraser } from 'lucide-react';
 import type { ChatMessage } from '@/lib/types';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  NO_MATTER_SCOPE,
+  browserSessionStore,
+  clearConversation,
+  readConversation,
+  writeConversation,
+  type StoredChatMessage,
+} from '@/lib/draft-store';
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
 import { ASSISTANT_COMMAND_EVENT, type AssistantCommand } from '@/lib/assistant-bus';
@@ -73,9 +82,50 @@ const READING_SUGGESTIONS = [
 // `moonshotai.kimi-k2.5` on Bedrock, and Kimi K3 on Fireworks was deleted with
 // PR #159.
 
+/** A stored conversation, back in the shape the panel renders. */
+function reviveMessages(stored: StoredChatMessage[]): ChatMessage[] {
+  const messages = stored
+    .filter((m) => m && typeof m.content === 'string' && (m.role === 'user' || m.role === 'assistant'))
+    .map((m) => ({
+      id: String(m.id),
+      role: m.role,
+      content: m.content,
+      // JSON has no Date. Every message renders its timestamp, so a string
+      // here would take the panel down on the first frame after a refresh.
+      timestamp: new Date(m.timestamp),
+    }));
+  return messages.length > 0 ? messages : [welcomeMessage];
+}
+
 export default function Assistant({ isOpen, onClose }: AssistantProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
-  const [input, setInput] = useState('');
+  // The conversation CARRIES the scope it belongs to. Two reasons: the panel
+  // may be looking at a different matter a render before the swap below runs,
+  // and a write that took its key from "wherever we are now" would file one
+  // matter's conversation under another's — the thing this must never do.
+  const [conv, setConv] = useState<{ scopeId: string | null; messages: ChatMessage[]; input: string }>({
+    scopeId: null,
+    messages: [welcomeMessage],
+    input: '',
+  });
+  const scopeKeyRef = useRef<string>(NO_MATTER_SCOPE);
+  const setMessages = (update: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+    setConv((prev) => {
+      const here = prev.scopeId === scopeKeyRef.current;
+      const base = here ? prev.messages : [welcomeMessage];
+      return {
+        scopeId: scopeKeyRef.current,
+        messages: typeof update === 'function' ? update(base) : update,
+        input: here ? prev.input : '',
+      };
+    });
+  };
+  const setInput = (value: string) => {
+    setConv((prev) => ({
+      scopeId: scopeKeyRef.current,
+      messages: prev.scopeId === scopeKeyRef.current ? prev.messages : [welcomeMessage],
+      input: value,
+    }));
+  };
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const { id: routeId } = useParams();
@@ -122,6 +172,19 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const unscoped = Boolean(bound.id) && unscopedFor === bound.id;
   const scoped = Boolean(bound.id) && !unscoped;
 
+  // One conversation per (user, scope). A matter is its own scope; a panel
+  // with no matter has one of its own and never shares a matter's.
+  const scopeKey = scoped && bound.id ? bound.id : NO_MATTER_SCOPE;
+  scopeKeyRef.current = scopeKey;
+  const inThisScope = conv.scopeId === scopeKey;
+  // Memoised: a fresh array every render would make the scroll-to-bottom
+  // effect below fire on every render.
+  const messages = useMemo(
+    () => (inThisScope ? conv.messages : [welcomeMessage]),
+    [inThisScope, conv.messages],
+  );
+  const input = inThisScope ? conv.input : '';
+
   // The pen that actually answered, from the server's `session` event. It is
   // stamped with the matter it answered FOR, so walking from a sealed matter
   // to an open one cannot leave the sealed pen's name in the header.
@@ -150,6 +213,64 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     : { tier: 'A', livePen: liveForBound };
   const describe = describeScope(facts);
   const conversationEmpty = messages.length === 1;
+
+  // ── The conversation, kept for the session ─────────────────────────────
+  //
+  // sessionStorage, not localStorage: a conversation is a session's working
+  // memory, not a document. It survives the panel closing, a navigation and a
+  // refresh, and it dies with the tab. Keyed by (user, scope), so nothing one
+  // account or one matter said can appear under another.
+  //
+  // A SEALED ROOM KEEPS NOTHING. The strip above it promises "no training ·
+  // zero data retention", and a lawyer reading that sentence is not reading it
+  // as a claim about one vendor's servers. A PAUSED matter keeps nothing
+  // either — the switch says nothing is going anywhere. And where the tier or
+  // the pause has not been read yet, nothing is written: unknown is not open.
+  const { user } = useAuth();
+  const chatStore = useMemo(() => browserSessionStore(), []);
+  const mayKeepConversation = !scoped ? true : !ai.loading && ai.tier === 'A' && ai.paused === false;
+
+  useEffect(() => {
+    if (!user?.id || conv.scopeId === scopeKey) return;
+    const kept = readConversation(chatStore, user.id, scopeKey);
+    setConv({
+      scopeId: scopeKey,
+      messages: kept ? reviveMessages(kept.messages) : [welcomeMessage],
+      input: kept?.input ?? '',
+    });
+  }, [chatStore, user?.id, scopeKey, conv.scopeId]);
+
+  useEffect(() => {
+    // While the panel is closed nothing is written and nothing is cleared:
+    // the matter's tier is not being read either, and a closed panel must not
+    // be able to throw away what an open one kept.
+    if (!user?.id || !isOpen || conv.scopeId !== scopeKey) return;
+    // Mid-stream the last message is still growing; the settled render writes.
+    if (loading) return;
+    const empty = conv.messages.length <= 1 && !conv.input.trim();
+    if (!mayKeepConversation || empty) {
+      clearConversation(chatStore, user.id, scopeKey);
+      return;
+    }
+    writeConversation(chatStore, {
+      userId: user.id,
+      scopeId: scopeKey,
+      messages: conv.messages.map((m) => ({
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        timestamp: (m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp)).toISOString(),
+      })),
+      input: conv.input,
+      savedAt: Date.now(),
+    });
+  }, [chatStore, user?.id, isOpen, scopeKey, conv, loading, mayKeepConversation]);
+
+  /** Start again in this scope — and take the kept copy with it. */
+  const clearConversationHere = () => {
+    clearConversation(chatStore, user?.id, scopeKey);
+    setConv({ scopeId: scopeKey, messages: [welcomeMessage], input: '' });
+  };
 
   // A wider panel for a real conversation — a toggle, not a mode: the
   // sidebar width suits a question in passing; a discussion wants room to
@@ -665,6 +786,19 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                 with the position and size in one record. Meaningless on a
                 phone, where the panel fills the screen. */}
             {!isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
+            {/* The conversation now outlives a refresh, so there has to be a
+                way to end one. Quiet, and only once there is something to
+                end. */}
+            {!conversationEmpty && (
+              <button
+                onClick={clearConversationHere}
+                className="p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
+                title="Clear conversation"
+                aria-label="Clear conversation"
+              >
+                <Eraser className="h-4 w-4" />
+              </button>
+            )}
             <button
               onClick={toggleWide}
               className="hidden sm:inline-flex p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
