@@ -152,6 +152,10 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     if (!going) return () => { alive = false; };
     const timer = setInterval(() => { void tick(); }, 5_000);
     return () => { alive = false; clearInterval(timer); };
+    // The STATUS, not the run object: every poll replaces the object, and
+    // depending on it would tear down and rebuild the timer five times a
+    // second. Only a change of status should change whether we are polling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshServerRun, serverRun?.run?.status]);
 
   /**
