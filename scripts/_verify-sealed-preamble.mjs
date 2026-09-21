@@ -40,7 +40,7 @@ import {
   SEALED_PEN_PREAMBLE_VERSION, applyPenPreamble, hasPenPreamble,
 } from '../lib/pen-preambles.mjs';
 import { PENS, bedrockPenFor, choosePen } from '../lib/assistant-core.mjs';
-import { estimateLlmCents } from '../lib/usage-prices.mjs';
+import { estimateLlmCents, ratePerMtok } from '../lib/usage-prices.mjs';
 import * as evalKit from './eval-sealed-pen.mjs';
 
 let failures = 0;
@@ -360,6 +360,14 @@ console.log('\n4. The eval kit — scripts/eval-sealed-pen.mjs');
   eq('planted noise left unfiled is correct silence', evalKit.scoreAgainstTruth(0, 0), 'quiet');
   eq('planted noise that was filed is noise', evalKit.scoreAgainstTruth(0, 1), 'noise');
   eq('hot=1 is not scored either way', evalKit.scoreAgainstTruth(1, 0), 'unscored');
+  // The demo matter holds documents that were never planted. Scoring a missing
+  // `hot` as 0 would count every one the pen filed as "noise" and invent the
+  // one number this whole exercise is for.
+  eq('a document with NO planted truth is unscored, not treated as noise', evalKit.scoreAgainstTruth(null, 1), 'unscored');
+  eq('...and not treated as correct silence either', evalKit.scoreAgainstTruth(undefined, 0), 'unscored');
+  eq('a non-numeric hot is unscored too', evalKit.scoreAgainstTruth(Number.NaN, 1), 'unscored');
+  check(evalKit.dryCorpus().docs.some((d) => d.hot === null),
+    'the dry corpus contains an unplanted document, so --dry walks that branch');
 
   // ── --dry, end to end ────────────────────────────────────────────────
   // The whole pipeline — translation, preamble, SigV4, SSE parsing, the
@@ -394,6 +402,47 @@ console.log('\n4. The eval kit — scripts/eval-sealed-pen.mjs');
     check(!report.includes(evalKit.DRY_CANARY), 'NO document text in the report');
     check(!/Demo document \d/.test(stdout) && !/Demo document \d/.test(report),
       'not even a document TITLE — in a sealed matter a title is the client\'s information too');
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ── the estimate is priced at the pen that will ACTUALLY answer ──────
+  // BEDROCK_MODEL selects the pen, and PENS.bedrock (an anthropic.* id) costs
+  // nine times what PENS.bedrockOpen does. A hardcoded model id here would
+  // print an estimate nine times too low on a server configured for the
+  // expensive pen — which is the one guard this script exists to provide.
+  {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'sealed-eval-pen-'));
+    const priced = async (bedrockModel) => {
+      const lines = [];
+      const realFetch = globalThis.fetch;
+      const had = Object.prototype.hasOwnProperty.call(process.env, 'BEDROCK_MODEL');
+      const prev = process.env.BEDROCK_MODEL;
+      if (bedrockModel) process.env.BEDROCK_MODEL = bedrockModel; else delete process.env.BEDROCK_MODEL;
+      try {
+        await evalKit.main(['--dry', '--n', '4', '--seed', '5', '--out', join(dir, `${bedrockModel ?? 'default'}.md`)], (m) => lines.push(String(m)));
+      } finally {
+        globalThis.fetch = realFetch;
+        if (had) process.env.BEDROCK_MODEL = prev; else delete process.env.BEDROCK_MODEL;
+      }
+      const text = lines.join('\n');
+      return {
+        model: text.match(/Sealed pen: (\S+)/)?.[1] ?? null,
+        cents: Math.round(Number(text.match(/COST ESTIMATE: \$([\d.]+)/)?.[1] ?? 0) * 100),
+        rates: text.match(/\$([\d.]+)\/\$([\d.]+) per Mtok/)?.slice(1, 3).map(Number) ?? null,
+      };
+    };
+    const cheap = await priced(null);
+    const dear = await priced('anthropic.claude-opus-5');
+    eq('with no BEDROCK_MODEL the estimate names the default sealed pen', cheap.model, 'moonshotai.kimi-k2.5');
+    eq('...at its own rate from lib/usage-prices.mjs', cheap.rates, ratePerMtok('moonshotai.kimi-k2.5', 'aws-bedrock'));
+    eq('BEDROCK_MODEL selects the pen the estimate is priced at', dear.model, 'anthropic.claude-opus-5');
+    eq('...at ITS rate, not the default pen\'s', dear.rates, ratePerMtok('anthropic.claude-opus-5', 'aws-bedrock'));
+    check(dear.cents > cheap.cents * 5,
+      'so the expensive pen produces a visibly larger estimate — a hardcoded model id would not',
+      { cheap: cheap.cents, dear: dear.cents });
     rmSync(dir, { recursive: true, force: true });
   }
 

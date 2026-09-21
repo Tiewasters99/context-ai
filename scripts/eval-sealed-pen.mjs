@@ -63,6 +63,7 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { sealedRouteFor } from '../lib/llm-sealed-route.mjs';
+import { bedrockCredsFromEnv, bedrockPenFor } from '../lib/assistant-core.mjs';
 import { SEALED_PEN_PREAMBLE_VERSION } from '../lib/pen-preambles.mjs';
 import { estimateLlmCents, ratePerMtok, centsForTokens } from '../lib/usage-prices.mjs';
 import {
@@ -383,9 +384,16 @@ export function setAgreement(a, b) {
  *   hot >= 2  → the trial team must find it, so it must land in SOME bucket
  *   hot === 0 → noise, so it must land in none
  *   hot === 1 → either answer is defensible; not scored
+ *   null      → NOT A PLANTED DOCUMENT. The demo matter holds documents that
+ *               were never planted (the demo repo's own scorer filters on
+ *               `metadata.demo === 'patel-world'` for exactly this reason).
+ *               Treating a missing `hot` as 0 would score every one of them as
+ *               noise the moment the pen filed it, which would quietly invent
+ *               the one number this whole exercise is for.
  * @returns {'hit'|'miss'|'quiet'|'noise'|'unscored'}
  */
 export function scoreAgainstTruth(hot, assignmentCount) {
+  if (hot === null || hot === undefined || !Number.isFinite(hot)) return 'unscored';
   if (hot >= 2) return assignmentCount > 0 ? 'hit' : 'miss';
   if (hot === 0) return assignmentCount > 0 ? 'noise' : 'quiet';
   return 'unscored';
@@ -456,6 +464,7 @@ export function renderReport({ matter, n, seed, model, arms, estimateCents, actu
     row('Agreement with the existing labels', (a) => pct(a.agreementWithExisting)),
     row('Planted hot documents found (recall)', (a) => pct(a.recall)),
     row('Planted noise correctly left unfiled', (a) => pct(a.silence)),
+    row('Not planted — excluded from the two rows above', (a) => String(a.truth.unscored)),
     row('Input tokens', (a) => a.inputTokens.toLocaleString('en-US')),
     row('Output tokens', (a) => a.outputTokens.toLocaleString('en-US')),
     '',
@@ -467,6 +476,8 @@ export function renderReport({ matter, n, seed, model, arms, estimateCents, actu
     '  the better.',
     '- **Recall** and **noise left unfiled** are the real scores: they are measured against',
     '  the documents the demo record was BUILT to contain (`metadata.hot`), not against a model.',
+    '  A document with no planted `hot` was never part of that design, so it is excluded from',
+    '  both — it still counts toward agreement with the existing labels, where it is evidence.',
     '- **Contract failures** are answers that could not be used even after one repair. This is',
     '  the number the preamble\'s "return exactly that and nothing around it" sentence is aimed at.',
     '- A difference of one or two documents in a 50-document sample is noise. Re-run with a',
@@ -499,7 +510,10 @@ export function dryCorpus() {
   ];
   const docs = [];
   for (let i = 0; i < 12; i++) {
-    const hot = [3, 2, 1, 0][i % 4];
+    // Every fifth document is UNPLANTED (`hot: null`) — the demo matter really
+    // does hold documents that were never planted, and the dry run has to walk
+    // that branch rather than assume it works.
+    const hot = i % 5 === 4 ? null : [3, 2, 1, 0][i % 4];
     docs.push({
       id: `d-${String(i).padStart(3, '0')}`,
       title: `Demo document ${i}`,
@@ -610,7 +624,8 @@ async function liveCorpus(matterShortCode) {
       id: d.id,
       title: d.title,
       doc_type: d.doc_type,
-      hot: Number(d.metadata?.hot ?? 0),
+      // null, NOT 0, when the document was never planted — see scoreAgainstTruth.
+      hot: d.metadata?.hot == null ? null : Number(d.metadata.hot),
       existingNodeIds: byDoc.get(d.id) ?? [],
       passages: null, // fetched per sampled document below
     }));
@@ -670,10 +685,29 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
     });
   }
 
-  const model = 'moonshotai.kimi-k2.5';
+  // The pen that will ACTUALLY answer, read from the environment exactly as
+  // lib/llm-sealed-route.mjs reads it. Never a hardcoded model id: BEDROCK_MODEL
+  // selects the pen, and PENS.bedrock (an anthropic.* id) costs nine times what
+  // PENS.bedrockOpen does. An estimate printed against the wrong pen is worse
+  // than no estimate — it is the one guard this script exists to provide.
+  // A dry run still honours BEDROCK_MODEL, so "what would this cost here" can
+  // be answered on a machine configured for the expensive pen without spending
+  // anything to find out.
+  const env = opts.dry
+    ? { ...DRY_ENV, ...(process.env.BEDROCK_MODEL ? { BEDROCK_MODEL: process.env.BEDROCK_MODEL } : {}) }
+    : process.env;
+  const creds = bedrockCredsFromEnv(env);
+  if (!creds && !opts.dry) {
+    log('REFUSED: BEDROCK_AWS_ACCESS_KEY_ID / BEDROCK_AWS_SECRET_ACCESS_KEY are not set, so there '
+      + 'is no sealed pen to evaluate. Nothing was sent.');
+    return 2;
+  }
+  const model = bedrockPenFor(creds).model;
+
   const estimateCents = estimateRunCents({ requests: prepared, model });
   const [inRate, outRate] = ratePerMtok(model, 'aws-bedrock');
   log(`Prepared ${prepared.length} document(s) of ${sample.length} sampled.`);
+  log(`Sealed pen: ${model} (from BEDROCK_MODEL, or the default).`);
   log(`COST ESTIMATE: ${usd(estimateCents)} — ${prepared.length} documents x 2 arms, priced at the`);
   log(`  sealed pen's rate ($${inRate}/$${outRate} per Mtok, lib/usage-prices.mjs), plus 10% for repairs.`);
   log('  That rate is an ESTIMATE: Bedrock has not published a list price for this pen.');
@@ -682,7 +716,6 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
   if (!spend.ok) { log(`\n${spend.reason}`); return 0; }
 
   const restore = opts.dry ? installStubPen() : null;
-  const env = opts.dry ? DRY_ENV : process.env;
   const knownRefs = new Set(refToId.keys());
   const rows = [];
   try {

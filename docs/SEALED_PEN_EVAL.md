@@ -30,7 +30,7 @@ once without — and compares the two arms.
 | --- | --- |
 | **Agreement with the existing labels** | The demo matter's ~3,900 classifications were produced by Claude. Agreement is *not* correctness; Claude is not ground truth. But a large move in either direction means the preamble changed behaviour. |
 | **Planted hot documents found (recall)** | Real ground truth. `patel-world` was *built*: each demo document carries `metadata.hot` — 3 or 2 means the trial team must find it, 0 means it is noise that must stay unfiled. This is the number that matters. |
-| **Planted noise left unfiled** | The other half of the same truth. A prompt that files everything scores perfect recall and is useless. |
+| **Planted noise left unfiled** | The other half of the same truth. A prompt that files everything scores perfect recall and is useless. Documents with no planted `hot` were never part of the record's design and are excluded from both rows — they still count toward agreement, where they are evidence. |
 | **JSON-contract failures** | Answers that could not be used even after one repair. The preamble's "return exactly that and nothing around it" sentence is aimed squarely at this; if it does not move, that sentence is decoration. |
 | **Repair rate** | How often the one repair retry (PR #168) had to fire. |
 | **Input/output tokens, cost** | The preamble is ~250 tokens of input on every sealed call in the product. This is what that costs. |
@@ -80,23 +80,30 @@ created, changed or deleted.
 
 ## What it costs
 
-Priced from `lib/usage-prices.mjs`, at the rate of the pen that actually answers
-(`moonshotai.kimi-k2.5` → **$0.60 / $2.50** per million input/output tokens,
-mirrored there from `PENS.bedrockOpen.pricePerM`).
+Priced from `lib/usage-prices.mjs`, at the rate of **the pen that will actually
+answer** — the script reads `BEDROCK_MODEL` the same way
+`lib/llm-sealed-route.mjs` does and prints which pen it priced, because the two
+sealed pens are nine times apart:
+
+| `BEDROCK_MODEL` | Rate ($/Mtok in/out) | |
+| --- | --- | --- |
+| unset → `moonshotai.kimi-k2.5` | $0.60 / $2.50 | the sealed pen today |
+| `anthropic.claude-opus-5` | $5.50 / $27.50 | `PENS.bedrock`, gated for this account since 09-18 |
 
 One classify call is one document's excerpts up to
 `CLASSIFY_INPUT_CHAR_BUDGET` (60,000 characters) plus the outline, and asks for
-a 4,000-token answer:
+a 4,000-token answer. On the default pen:
 
 | Sample | Per call | **N = 50, both arms** |
 | --- | --- | --- |
 | A full 60k-character document | ~$0.03 | **~$3.50** |
 | A typical 20k-character document | ~$0.02 | **~$2.50** |
 
-So **budget about $3.50 for `--n 50`**, including the 10% the estimator adds for
-repair retries. The script prints its own estimate from the bodies it has
-actually built before it asks for `--yes-spend`, so trust that line over this
-table.
+So **budget about $3.50 for `--n 50`** on Kimi — and roughly **$27** if
+`BEDROCK_MODEL` names the Claude pen. The script prints its own estimate, and
+the pen it priced, from the bodies it has actually built before it asks for
+`--yes-spend`; trust that line over this table. `--dry` honours `BEDROCK_MODEL`
+too, so "what would this cost here" is answerable without spending anything.
 
 Two caveats the script repeats on every run:
 
