@@ -5,6 +5,24 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
+/**
+ * The ONLY columns of `connections` this application may read from a browser.
+ *
+ * The row also carries `encrypted_refresh_token` — the stored credential for
+ * the user's mailbox or cloud drive. Since migration 080 the `authenticated`
+ * and `anon` roles hold no SELECT privilege on that column, so a query that
+ * names it, or that asks for `*`, is refused by Postgres with
+ * `42501 permission denied for table connections`. That refusal is the real
+ * guarantee; this constant is how the application stays on the right side of
+ * it, in one place, instead of in every call site.
+ *
+ * Never replace a read of this table with `select('*')`, and never add a
+ * column here that migration 080 does not grant.
+ * scripts/_verify-connections-columns.mjs fails CI if either happens.
+ */
+export const CONNECTIONS_SAFE_SELECT =
+  'id, kind, status, connected_email, last_error';
+
 export interface Connection {
   id: string;
   kind: string;
@@ -19,7 +37,7 @@ export function useConnections() {
     queryFn: async (): Promise<Connection[]> => {
       const { data, error } = await supabase
         .from('connections')
-        .select('id, kind, status, connected_email, last_error');
+        .select(CONNECTIONS_SAFE_SELECT);
       if (error) throw error;
       return (data ?? []) as Connection[];
     },
@@ -55,6 +73,11 @@ export async function startGoogleConnect(
   window.location.href = body.url;
 }
 
+// No `.select()` on the way back. A DELETE ... RETURNING would ask Postgres
+// for the deleted row, and under migration 080's column grants a `*`
+// representation of this table is refused outright — quite apart from the
+// RLS-on-RETURNING trap this project has hit before. The row is gone; the
+// caller invalidates the query and re-reads the safe columns.
 export async function disconnectConnection(id: string): Promise<void> {
   const { error } = await supabase.from('connections').delete().eq('id', id);
   if (error) throw error;

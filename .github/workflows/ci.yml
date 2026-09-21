@@ -441,3 +441,19 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs
+
+      # Migration 080. A connection's stored refresh token is ciphertext, but
+      # it is still the credential for someone's mailbox and cloud drive, and
+      # RLS plus Supabase's blanket column grant let a signed-in browser ask
+      # PostgREST for it. 080 takes the table-wide SELECT away from `anon` and
+      # `authenticated` and grants back the non-credential columns only. This
+      # runs 026 → 029 → 075 → 080 in PGlite with the three real roles and real
+      # RLS, opens with the leak as a negative control, and then holds the
+      # result to all of it: the token refused (42501), `select *` refused,
+      # the safe columns served and still cut to the caller's own rows, the
+      # service role untouched, Disconnect still working, idempotent, and
+      # correct from three drift states. It ends by scanning every file under
+      # src/ — a `*` or a credential column on this table fails the build.
+      - name: Migration 080 — a connection's token never reaches the browser (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-connections-columns.mjs
