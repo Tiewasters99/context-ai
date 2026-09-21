@@ -352,3 +352,18 @@ jobs:
       - name: Version notice — a stale tab is told, never reloaded
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-app-version.mjs
+
+      # OneDrive and Dropbox export. Migration 075 runs in PGlite from three
+      # drift states (026→029→075, 026→075 with 029 never applied, and no
+      # table at all); the rest drives the real connect/callback/export
+      # handlers with fetch stubbed and witnessed — least-privilege scopes,
+      # PKCE bound to a cookie rather than to the state, a cross-service state
+      # refused, Microsoft's rotating refresh token written back, the
+      # app-folder path and its never-overwrite flags, the ASCII-escaped
+      # Dropbox header, and the 503 every endpoint gives while the two apps
+      # are unregistered. **No request reaches Microsoft or Dropbox.** The
+      # seal itself is proved in the export-gate harness above, which now runs
+      # its whole table against both new destinations.
+      - name: Cloud drives — OneDrive + Dropbox export (PGlite + stubbed providers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-cloud-drives.mjs

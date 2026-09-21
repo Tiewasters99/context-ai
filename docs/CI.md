@@ -72,6 +72,8 @@ Then the twenty-three offline harness steps, one step each, each with
 | `_verify-bucketizer-scale.mjs` | Whole-document windowing, the resumable run, the meter pause, the deterministic merge, and the paged read shared with Discovery. | Same; the model, the database and PostgREST all arrive as injected deps. |
 | `_verify-bucketizer-evidence.mjs` | Migration 068 — `bucketizer_evidence`, the pair-level run state, and the cascade that takes a quotation with its passage when a document is re-ingested. | PGlite. Shares one CI step with the harness below. |
 | `_verify-bucketizer-outline.mjs` | Verbatim quotation (a span the stored passage does not hold is dropped, never repaired), citations that degrade where the record has no line numbers, gaps-first assembly, a byte-identical `.md` on a re-run, and a real `.docx` read back with the repo's own docx library. | Same as `_verify-reader-copy.mjs`; every effect is an injected dep. |
+| `_verify-export-gate.mjs` | A sealed matter's document does not leave for an outside service without the user being told, and, where a Record exists, without it being written down: 409 with an egress witness of zero storage reads and zero outside requests, a confirmation that must be literally `true`, a metadata-only `file.exported`, fail-closed on an unreadable (including inherited) tier, and an unsealed export byte-identical to main's. Runs its whole table against every destination — Google Drive, the extension's push, Gmail, **and both `/api/cloud-export` drives**. | Stubs `fetch` and answers as Supabase, Google, Microsoft and Dropbox, so the real `supabase-js` client and the real tier walk run unmodified. Its negative control reconstructs each ungated handler by deleting the marked gate block and watches the document's own bytes leave; the "the reconstruction IS `origin/main`'s file" assertion prints SKIP where the base ref is not fetched. |
+| `_verify-cloud-drives.mjs` | OneDrive and Dropbox export. Migration 075 from three drift states (026→029→075, 026→075 with 029 never applied, and no `connections` table at all), idempotent, converging to exactly one `kind` check. Then: the authorize URL asks for the app-folder scope and nothing wider, PKCE is S256 and the verifier lives in an HttpOnly cookie rather than in the state; a state minted for the other drive, a forged state and a code with no cookie are each refused with nothing exchanged; Microsoft's rotating refresh token is written back and Dropbox's is not; the upload lands at `Contextspaces/<matter>/<file>` inside the app folder with sanitized names and never-overwrite flags, over the provider's upload-session API for a large file, with the `Dropbox-API-Arg` header ASCII-escaped; every endpoint answers 503 `not_configured` while the two applications are unregistered; and `api/drive-export.mjs` is byte-for-byte `origin/main`'s. | PGlite for the migration; `fetch` stubbed and witnessed for everything else. **No request reaches Microsoft or Dropbox** — there are no app registrations yet, and the harness must keep working on the day there are. The seal is not re-proved here; it lives in `_verify-export-gate.mjs` above. |
 | `_validate-cover-manifest.mjs` + `_test-cover-gating.mjs` | The cover picker: `core-covers.json` is sorted, points only at files that exist and are under the size cap, and holds no filename the exclusion list bars; then the gate itself — core for every plan but `workshop`, core while the plan is still loading, and **nothing** (never everything) if the allow-list will not load. | One step, two commands. Both read files off disk; the second imports `src/lib/covers.ts` via Node type stripping, which is why that module has no `@/` imports and no React. |
 
 The first fourteen were executed on `main` at `b97d6c6` before the workflow was
@@ -102,6 +104,13 @@ a reader sees.
 same lane. Run from a checkout with no `.env`, exit 0, about a second; the
 negative control ran locally against a fetched `origin/main` and is expected
 to print SKIP in CI, where the checkout is shallow.
+
+`_verify-export-gate.mjs` arrived with PR #167 and was added to `ci.yml` in
+that PR, but its row here was missed; it is filled in above by the OneDrive /
+Dropbox change, which extends the same harness rather than writing a second
+one. `_verify-cloud-drives.mjs` is that change's own harness: run from a
+checkout with no `.env`, exit 0, about three seconds including PGlite. Both
+were re-run together after the extension, and both are green.
 
 ### Lint is non-blocking, for now
 
