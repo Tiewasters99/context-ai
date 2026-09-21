@@ -14,24 +14,17 @@
 // a matter we already know to be paused a real error fails CLOSED.
 
 import { supabase } from '@/lib/supabase';
+// The state machine is a separate, import-free module so a harness can run it.
+// Re-exported here so every existing caller of '@/lib/ai-pause' is unchanged.
+import { NOT_PAUSED, type AiPauseState } from '@/lib/ai-pause-state';
 
-export interface AiPauseState {
-  paused: boolean;
-  /** migration 070 is not in this database — behave as today, hide the control. */
-  notDeployed: boolean;
-  /** the read failed for a reason that is NOT "not deployed". */
-  error?: string;
-  /** the matter that actually carries the pause (this one, or an ancestor). */
-  pausedMatterId?: string | null;
-  pausedMatterName?: string | null;
-  at?: string | null;
-  by?: string | null;
-  byName?: string | null;
-  note?: string | null;
-  inherited?: boolean;
-}
-
-export const NOT_PAUSED: AiPauseState = { paused: false, notDeployed: false };
+export {
+  NOT_PAUSED,
+  nextPauseState,
+  isPauseUnknown,
+  PAUSE_UNKNOWN_SENTENCE,
+} from '@/lib/ai-pause-state';
+export type { AiPauseState } from '@/lib/ai-pause-state';
 
 /**
  * Codes that mean "migration 070 has not been applied here", and nothing else.

@@ -20,8 +20,15 @@ import {
   CLASSIFY_TOOL_DESCRIPTION,
   CLASSIFY_SCHEMA,
   serializeOutline,
-  type TreeResult,
 } from '../../../lib/bucketizer-core.mjs';
+import {
+  buildRepairContent,
+  labelKey,
+  runWithContract,
+  trimmedText,
+  type ContractAttempt,
+  type ContractCheck,
+} from '@/lib/llm/contract';
 import { loadCorpusDocumentText } from '@/lib/cite-check/corpus';
 import { callStructured } from './llm-call';
 import { LlmCallError } from './llm-error';
@@ -157,6 +164,259 @@ export async function deleteNode(nodeId: string): Promise<void> {
 // Tree generation from pleadings
 // ---------------------------------------------------------------------------
 
+/**
+ * THE OUTPUT CONTRACT FOR A CASE-THEORY TREE.
+ *
+ * Until this existed the tree call checked one thing — `result.claims.length`
+ * — and then walked the answer inserting rows. On frontier Claude that was
+ * nearly always enough. Inside a SEALED matter every feature call is answered
+ * by the sealed pen (Kimi K2.5), which holds a forced-tool contract less
+ * literally, and "nearly always" becomes a bucket in the attorney's tree whose
+ * label is `undefined`, or the same element typed twice, or a claim whose
+ * elements arrived as a flat list with parent references. Each of those is
+ * written to `bucketizer_nodes` and has to be deleted by hand.
+ *
+ * So: validated whole BEFORE the first insert, which is also what makes
+ * "nothing is persisted from a failed attempt" true rather than hoped for.
+ */
+export const TREE_MAX_CLAIMS = 24;
+export const TREE_MAX_ELEMENTS_PER_CLAIM = 24;
+export const TREE_MAX_SUBISSUES_PER_ELEMENT = 24;
+export const TREE_MAX_THEMES = 32;
+/** Every node the answer would create. A tree past this is not a working tree. */
+export const TREE_MAX_NODES = 400;
+export const TREE_MAX_LABEL_CHARS = 300;
+
+interface CheckedTreeNode {
+  label: string;
+  description: string | null;
+}
+export interface CheckedTreeElement extends CheckedTreeNode {
+  subissues: CheckedTreeNode[];
+}
+export interface CheckedTreeClaim extends CheckedTreeNode {
+  elements: CheckedTreeElement[];
+}
+export interface CheckedTree {
+  claims: CheckedTreeClaim[];
+  themes: CheckedTreeNode[];
+  /** How many `bucketizer_nodes` rows this answer would create. */
+  nodeCount: number;
+}
+
+/** A label/description pair, or the reason it is not one. */
+function checkNode(value: unknown, where: string): ContractCheck<CheckedTreeNode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, reason: `${where} was not an object` };
+  }
+  const n = value as Record<string, unknown>;
+  const label = trimmedText(n.label);
+  if (!label) return { ok: false, reason: `${where} has no label` };
+  if (label.length > TREE_MAX_LABEL_CHARS) {
+    return { ok: false, reason: `the label for ${where} is longer than ${TREE_MAX_LABEL_CHARS} characters` };
+  }
+  if (n.description != null && typeof n.description !== 'string') {
+    return { ok: false, reason: `the description for ${where} was not text` };
+  }
+  return { ok: true, value: { label, description: trimmedText(n.description) } };
+}
+
+/** An array field that may be absent, but may not be something else. */
+function checkList(value: unknown, where: string, cap: number): ContractCheck<unknown[]> {
+  if (value == null) return { ok: true, value: [] };
+  if (!Array.isArray(value)) return { ok: false, reason: `${where} was not an array` };
+  if (value.length > cap) {
+    return { ok: false, reason: `${where} holds ${value.length} entries — no more than ${cap} are accepted` };
+  }
+  return { ok: true, value };
+}
+
+/** Siblings that are the same bucket typed twice. */
+function firstDuplicate(labels: string[]): string | null {
+  const seen = new Set<string>();
+  for (const label of labels) {
+    const key = labelKey(label);
+    if (seen.has(key)) return label;
+    seen.add(key);
+  }
+  return null;
+}
+
+/**
+ * REFERENTIAL INTEGRITY, for a shape that carries no refs.
+ *
+ * The tree's parent relation is the NESTING — an element is inside its claim.
+ * The failure mode worth naming is a model that flattens it: a `nodes` array,
+ * or claims carrying `parent` / `parent_ref` fields, with the hierarchy
+ * expressed as references. Some of those references then point at nothing.
+ * That shape is REFUSED, never adopted: repairing a flattened answer here
+ * would be this module guessing at a case-theory tree, and a bucket the
+ * attorney never approved is exactly what must not reach the database.
+ */
+function describeFlattened(raw: Record<string, unknown>): string | null {
+  const flat = Array.isArray(raw.nodes) ? raw.nodes
+    : Array.isArray(raw.elements) ? raw.elements
+      : null;
+  if (!flat) return null;
+  const known = new Set<string>();
+  for (const item of flat) {
+    if (!item || typeof item !== 'object') continue;
+    const n = item as Record<string, unknown>;
+    for (const key of ['id', 'ref', 'label']) {
+      const v = trimmedText(n[key]);
+      if (v) known.add(labelKey(v));
+    }
+  }
+  let dangling = 0;
+  for (const item of flat) {
+    if (!item || typeof item !== 'object') continue;
+    const n = item as Record<string, unknown>;
+    const parent = trimmedText(n.parent) ?? trimmedText(n.parent_id) ?? trimmedText(n.parent_ref);
+    if (parent && !known.has(labelKey(parent))) dangling += 1;
+  }
+  return `the answer was a flat list of ${flat.length} nodes with parent references`
+    + (dangling ? ` (${dangling} of them naming a parent that is not in the answer)` : '')
+    + `, not the nested claims → elements → subissues shape`;
+}
+
+export function checkTreeContract(raw: unknown): ContractCheck<CheckedTree> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: 'the answer was not an object' };
+  }
+  const root = raw as Record<string, unknown>;
+
+  if (!Array.isArray(root.claims)) {
+    const flattened = describeFlattened(root);
+    if (flattened) return { ok: false, reason: flattened };
+    return { ok: false, reason: 'no "claims" array' };
+  }
+  if (!root.claims.length) return { ok: false, reason: 'the "claims" array was empty' };
+  if (root.claims.length > TREE_MAX_CLAIMS) {
+    return { ok: false, reason: `${root.claims.length} claims — no more than ${TREE_MAX_CLAIMS} are accepted` };
+  }
+
+  // A claim that names a parent has been flattened into the claims array.
+  const claimKeys = new Set<string>();
+  for (const entry of root.claims) {
+    if (!entry || typeof entry !== 'object') continue;
+    const label = trimmedText((entry as Record<string, unknown>).label);
+    if (label) claimKeys.add(labelKey(label));
+  }
+  for (let i = 0; i < root.claims.length; i++) {
+    const entry = root.claims[i];
+    if (!entry || typeof entry !== 'object') continue;
+    const n = entry as Record<string, unknown>;
+    const parent = trimmedText(n.parent) ?? trimmedText(n.parent_id) ?? trimmedText(n.parent_ref);
+    if (parent) {
+      // A claim has no parent in this schema. Whether the ref resolves or
+      // dangles, the hierarchy has been flattened into references and the
+      // nesting no longer says what belongs to what — so an "element" sitting
+      // in `claims` would become a top-level bucket. Refused either way; the
+      // dangling count is named because it is the more obvious symptom.
+      const dangles = !claimKeys.has(labelKey(parent));
+      return {
+        ok: false,
+        reason: `claim ${i + 1} names a parent "${parent}"`
+          + (dangles ? ' that is not in the answer' : '')
+          + ' — a claim has no parent; elements belong inside their claim, not beside it with a reference',
+      };
+    }
+  }
+
+  const claims: CheckedTreeClaim[] = [];
+  let nodeCount = 0;
+  for (let i = 0; i < root.claims.length; i++) {
+    const where = `claim ${i + 1}`;
+    const claim = checkNode(root.claims[i], where);
+    if (!claim.ok) return claim;
+    nodeCount += 1;
+
+    const elementList = checkList(
+      (root.claims[i] as Record<string, unknown>).elements,
+      `the elements of ${where}`,
+      TREE_MAX_ELEMENTS_PER_CLAIM,
+    );
+    if (!elementList.ok) return elementList;
+
+    const elements: CheckedTreeElement[] = [];
+    for (let j = 0; j < elementList.value.length; j++) {
+      const elWhere = `element ${j + 1} of ${where}`;
+      const element = checkNode(elementList.value[j], elWhere);
+      if (!element.ok) return element;
+      nodeCount += 1;
+
+      const subList = checkList(
+        (elementList.value[j] as Record<string, unknown>).subissues,
+        `the subissues of ${elWhere}`,
+        TREE_MAX_SUBISSUES_PER_ELEMENT,
+      );
+      if (!subList.ok) return subList;
+
+      const subissues: CheckedTreeNode[] = [];
+      for (let k = 0; k < subList.value.length; k++) {
+        const sub = checkNode(subList.value[k], `subissue ${k + 1} of ${elWhere}`);
+        if (!sub.ok) return sub;
+        nodeCount += 1;
+        subissues.push(sub.value);
+      }
+      const dupSub = firstDuplicate(subissues.map((s) => s.label));
+      if (dupSub) return { ok: false, reason: `${elWhere} has two subissues labelled "${dupSub}"` };
+
+      elements.push({ ...element.value, subissues });
+    }
+    const dupEl = firstDuplicate(elements.map((e) => e.label));
+    if (dupEl) return { ok: false, reason: `${where} has two elements labelled "${dupEl}"` };
+
+    claims.push({ ...claim.value, elements });
+  }
+  const dupClaim = firstDuplicate(claims.map((c) => c.label));
+  if (dupClaim) return { ok: false, reason: `two claims share the label "${dupClaim}"` };
+
+  const themeList = checkList(root.themes, 'the "themes" array', TREE_MAX_THEMES);
+  if (!themeList.ok) return themeList;
+  const themes: CheckedTreeNode[] = [];
+  for (let i = 0; i < themeList.value.length; i++) {
+    const theme = checkNode(themeList.value[i], `theme ${i + 1}`);
+    if (!theme.ok) return theme;
+    nodeCount += 1;
+    themes.push(theme.value);
+  }
+  const dupTheme = firstDuplicate(themes.map((t) => t.label));
+  if (dupTheme) return { ok: false, reason: `two themes share the label "${dupTheme}"` };
+
+  if (nodeCount > TREE_MAX_NODES) {
+    return { ok: false, reason: `the tree holds ${nodeCount} buckets — no more than ${TREE_MAX_NODES} are accepted` };
+  }
+
+  return { ok: true, value: { claims, themes, nodeCount } };
+}
+
+/** The tree's single repair turn. */
+export function buildTreeRepairContent(original: string, reason: string, sent: unknown): string {
+  return buildRepairContent({
+    original,
+    reason,
+    sent,
+    shape:
+      `{"claims":[{"label":"<the cause of action>","description":"<one or two sentences>",`
+      + `"elements":[{"label":"<an element of that claim>","description":"<routing criteria>",`
+      + `"subissues":[{"label":"<a contested subissue>","description":"<routing criteria>"}]}]}],`
+      + `"themes":[{"label":"<a cross-cutting theme>","description":"<routing criteria>"}]}`,
+    rules:
+      `Every claim, element, subissue and theme is an object with a non-empty "label" and a "description". `
+      + `Nest elements inside their claim and subissues inside their element — do not send a flat list with `
+      + `parent references, and do not repeat a label among siblings.`,
+  });
+}
+
+/**
+ * The sentence the surface shows when the tree could not be read, twice.
+ * Deliberately says what did NOT happen: nothing in the matter changed.
+ */
+export const TREE_CONTRACT_FAILURE =
+  'The model’s answer could not be read as a case-theory tree. Nothing was changed. '
+  + 'Try again, or build the tree by hand.';
+
 export async function generateTreeFromPleadings(input: {
   matterId: string;
   pleadingDocIds: string[];
@@ -170,10 +430,17 @@ export async function generateTreeFromPleadings(input: {
   }
   if (!pleadings.length) throw new Error('No pleading text could be loaded.');
 
-  const result = await generateStructured<TreeResult>({
+  const userContent = buildTreeUserContent(pleadings);
+
+  // The repair turn is the SAME call: same model, same system prompt, same
+  // tool and schema, same allowance, and the same 'bucketizer.tree' label — so
+  // it is metered and written to the matter's Record exactly like the first.
+  // A 402, a 429 or a sealed refusal throws straight through `runWithContract`
+  // and reaches the surface as the server's own sentence.
+  const call = async ({ userContent: content }: ContractAttempt) => generateStructured<unknown>({
     modelId: input.modelId ?? BUCKETIZER_DEFAULT_MODEL,
     system: TREE_SYSTEM,
-    userContent: buildTreeUserContent(pleadings),
+    userContent: content,
     toolName: TREE_TOOL_NAME,
     toolDescription: TREE_TOOL_DESCRIPTION,
     inputSchema: TREE_SCHEMA,
@@ -186,7 +453,21 @@ export async function generateTreeFromPleadings(input: {
     documentIds: input.pleadingDocIds,
   });
 
-  if (!result?.claims?.length) throw new Error('The model returned no claims.');
+  const outcome = await runWithContract<CheckedTree>({
+    userContent,
+    call,
+    validate: checkTreeContract,
+    repair: buildTreeRepairContent,
+  });
+
+  // NOTHING HAS BEEN WRITTEN YET, and on this path nothing will be. The
+  // insert loop below is the first write in this function, so a failed answer
+  // leaves the existing tree — every node, every classification hanging off
+  // it — exactly as the attorney left it.
+  if (!outcome.ok) {
+    throw new Error(`${TREE_CONTRACT_FAILURE} (Twice: ${outcome.reason}.)`);
+  }
+  const result: CheckedTree = outcome.value;
 
   // Insert level by level so parent ids exist before children reference them.
   const created: BucketNode[] = [];
@@ -197,44 +478,44 @@ export async function generateTreeFromPleadings(input: {
       parentId: null,
       kind: 'claim',
       label: claim.label,
-      description: claim.description,
+      description: claim.description ?? undefined,
       position: rootPos++,
       origin: 'generated',
     });
     created.push(claimNode);
     let elPos = 0;
-    for (const el of claim.elements ?? []) {
+    for (const el of claim.elements) {
       const elNode = await createNode({
         matterId: input.matterId,
         parentId: claimNode.id,
         kind: 'element',
         label: el.label,
-        description: el.description,
+        description: el.description ?? undefined,
         position: elPos++,
         origin: 'generated',
       });
       created.push(elNode);
       let subPos = 0;
-      for (const sub of el.subissues ?? []) {
+      for (const sub of el.subissues) {
         created.push(await createNode({
           matterId: input.matterId,
           parentId: elNode.id,
           kind: 'subissue',
           label: sub.label,
-          description: sub.description,
+          description: sub.description ?? undefined,
           position: subPos++,
           origin: 'generated',
         }));
       }
     }
   }
-  for (const theme of result.themes ?? []) {
+  for (const theme of result.themes) {
     created.push(await createNode({
       matterId: input.matterId,
       parentId: null,
       kind: 'theme',
       label: theme.label,
-      description: theme.description,
+      description: theme.description ?? undefined,
       position: rootPos++,
       origin: 'generated',
     }));
