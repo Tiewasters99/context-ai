@@ -34,6 +34,8 @@ const { requireEntitlement, NOT_IN_PLAN, PLAN_UNREADABLE } = await import('../li
 const mediationHandler = (await import('../api/mediation.mjs')).default;
 const meetingFlagHandler = (await import('../api/meeting-flag.mjs')).default;
 const meetingChatHandler = (await import('../api/meeting-chat.mjs')).default;
+const deepgramHandler = (await import('../api/deepgram-token.mjs')).default;
+const assistantHandler = (await import('../api/assistant.mjs')).default;
 const ocrHandler = (await import('../api/student-hub-ocr.mjs')).default;
 const inviteModule = await import('../api/student-hub-invite.mjs');
 const inviteHandler = inviteModule.default;
@@ -288,8 +290,100 @@ test('the meetings chat refuses a free account before any model call', async () 
   } finally { w.restore(); }
 });
 
+test('the live-transcription credential is not minted for a free account', async () => {
+  const w = witness([AUTH, profiles('free')]);
+  const res = fakeRes();
+  try {
+    await deepgramHandler(req({ meeting_id: 'm-1' }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.json().message, NOT_IN_PLAN);
+    assert.equal(w.hits(/deepgram\.com/).length, 0, 'no key was asked for');
+    assert.equal(w.hits(/rpc\/usage_consume/).length, 0);
+  } finally { w.restore(); }
+});
+
+test('the credential endpoint lets workshop reach the meter', async () => {
+  const w = witness([
+    AUTH, profiles('workshop'),
+    [/\/rest\/v1\/meetings/, rows([{ matterspace_id: null }])],
+    meter({
+      allowed: false, status: 429, reason: 'over_rate_limit', retry_after_seconds: 60,
+      message: 'Too many requests in a row. Give it a moment and try again.',
+    }),
+  ]);
+  const res = fakeRes();
+  try {
+    await deepgramHandler(req({ meeting_id: 'm-1' }), res);
+    assert.equal(res.statusCode, 429, 'past the plan gate, refused by the rate window');
+    assert.equal(w.hits(/deepgram\.com/).length, 0);
+  } finally { w.restore(); }
+});
+
+test('the credential endpoint answers 503 while the plan cannot be read', async () => {
+  const w = witness([AUTH, [/\/rest\/v1\/profiles/, () => new Response('', { status: 503 })]]);
+  const res = fakeRes();
+  try {
+    await deepgramHandler(req({}), res);
+    assert.equal(res.statusCode, 503);
+    assert.match(res.json().message, /try again/i);
+    assert.equal(w.hits(/deepgram\.com/).length, 0);
+  } finally { w.restore(); }
+});
+
 /* ======================================================================== */
-/* 3. The Student Hub — OCR and the invitation cap                           */
+/* 3. Agents — /api/assistant, gated on the charter and not on the endpoint  */
+/* ======================================================================== */
+
+const ASSISTANT_MSGS = [{ role: 'user', content: 'What did the court hold?' }];
+
+test('the core Assistant does not ask about the plan AT ALL', async () => {
+  // The claim the whole design of this gate rests on: a turn with no charter
+  // is the core Assistant, which every plan gets, and it pays nothing — not a
+  // profiles read, not even the getUser() round trip the gate needs.
+  const w = witness([meter(METER_SPENT)]);
+  const res = fakeRes();
+  try {
+    await assistantHandler(req({ messages: ASSISTANT_MSGS, matterId: 'm-1' }), res);
+    assert.equal(res.statusCode, 402, 'it went straight to the meter');
+    assert.equal(w.hits(/\/rest\/v1\/profiles/).length, 0);
+    assert.equal(w.hits(/\/auth\/v1\/user/).length, 0);
+  } finally { w.restore(); }
+});
+
+test('a turn under a CHARTER is refused to a free account', async () => {
+  const w = witness([AUTH, profiles('free')]);
+  const res = fakeRes();
+  try {
+    await assistantHandler(req({ messages: ASSISTANT_MSGS, matterId: 'm-1', charterId: 'c-1' }), res);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.json().message, NOT_IN_PLAN);
+    assert.equal(w.hits(/rpc\/usage_consume/).length, 0, 'refused before the meter, so nothing is charged');
+    assert.equal(w.modelCalls().length, 0);
+  } finally { w.restore(); }
+});
+
+test('a turn under a charter passes for workshop and reaches the meter', async () => {
+  const w = witness([AUTH, profiles('workshop'), meter(METER_SPENT)]);
+  const res = fakeRes();
+  try {
+    await assistantHandler(req({ messages: ASSISTANT_MSGS, matterId: 'm-1', charterId: 'c-1' }), res);
+    assert.equal(res.statusCode, 402);
+    assert.equal(w.modelCalls().length, 0);
+  } finally { w.restore(); }
+});
+
+test('a charter turn answers 503 while the plan cannot be read', async () => {
+  const w = witness([AUTH, [/\/rest\/v1\/profiles/, () => new Response('', { status: 500 })]]);
+  const res = fakeRes();
+  try {
+    await assistantHandler(req({ messages: ASSISTANT_MSGS, charterId: 'c-1' }), res);
+    assert.equal(res.statusCode, 503);
+    assert.match(res.json().message, /try again/i);
+  } finally { w.restore(); }
+});
+
+/* ======================================================================== */
+/* 4. The Student Hub — OCR and the invitation cap                           */
 /* ======================================================================== */
 
 const OCR_BODY = { pages: [{ path: `${USER}/torts/page_0001.jpg`, n: 1 }] };
@@ -425,7 +519,7 @@ test('chargeInvite reads the RPC answer straight through', async () => {
 });
 
 /* ======================================================================== */
-/* 4. Mediation — the gate at the door, and the meter on every model call    */
+/* 5. Mediation — the gate at the door, and the meter on every model call    */
 /* ======================================================================== */
 
 const caseRow = (over = {}) => ({
