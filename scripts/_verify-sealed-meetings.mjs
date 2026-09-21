@@ -69,6 +69,8 @@ const { providerAllowed } = await import('../lib/ai-tier-policy.mjs');
 const { estimateLlmCents } = await import('../lib/usage-prices.mjs');
 const { transcriptWindow, windowNotice, buildSealedMeetingMessages, SEALED_PEN_CONTEXT_TOKENS } =
   await import('../lib/meeting-sealed-chat.mjs');
+const { SEALED_PEN_PREAMBLE_TEXT, SEALED_PEN_PREAMBLE_MARKER } =
+  await import('../lib/pen-preambles.mjs');
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -472,6 +474,19 @@ try {
   check(JSON.stringify(sealedSent).includes('Reyes:'), 'the transcript IS included — the meeting is what the question is about');
   check(sealedSent?.messages?.[0]?.role === 'system' && /SECURESPACE/i.test(sealedSent.messages[0].content),
     'the system prompt tells the pen it is the sealed pen on a sealed matter', sealedSent?.messages?.[0]?.content?.slice(-200));
+  // The pen's own preamble (lib/pen-preambles.mjs) leads it, once, and the
+  // harness's own prompt is byte-identical behind the separator. The meeting
+  // panel runs the SAME loop as sealed chat, so this is where that is proved
+  // for this surface.
+  {
+    const sys = sealedSent?.messages?.[0]?.content ?? '';
+    const markers = sys.split(SEALED_PEN_PREAMBLE_MARKER).length - 1;
+    check(sys.startsWith(SEALED_PEN_PREAMBLE_TEXT),
+      'the pen preamble is the FIRST thing the sealed meeting pen reads', sys.slice(0, 80));
+    check(markers === 1, 'exactly ONE preamble — the meeting path does not apply it a second time', markers);
+    check(/SECURESPACE/i.test(sys.slice(SEALED_PEN_PREAMBLE_TEXT.length)),
+      "and the harness's own prompt is intact behind it");
+  }
   check(sealedSent?.messages?.[1]?.content?.includes('<meeting_transcript>'),
     'the transcript rides a framing turn, so the real question stays the last user message');
   check(sealedSent?.messages?.[sealedSent.messages.length - 1]?.content === 'What should I push back on?',
