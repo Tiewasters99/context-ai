@@ -31,11 +31,19 @@ import { adapters } from '@/lib/llm/adapters';
 import { llmAuthHeader } from '@/lib/llm/auth';
 import { llmErrorText } from '@/lib/llm/refusals';
 import type { StructuredRequest, TokenUsage } from '@/lib/llm/types';
+import type { LlmRecordFields } from '@/lib/llm/features';
 import { LlmCallError } from './llm-error';
 
 export { LlmCallError } from './llm-error';
 
-export interface StructuredCallOptions extends StructuredRequest {
+/**
+ * `LlmRecordFields` is what the matter's Record is told about this call — the
+ * act it performs and the documents it is working on. It is carried by the
+ * same options object as the prompt, and separated from it below, exactly as
+ * `generateStructured` does: `/api/llm` writes these two into the Record and
+ * forwards `body` to the provider, so they must never be part of `body`.
+ */
+export interface StructuredCallOptions extends StructuredRequest, LlmRecordFields {
   modelId: string;
   matterId?: string;
   signal?: AbortSignal;
@@ -55,7 +63,10 @@ export interface StructuredCallOutcome {
  * only it knows which refs were on offer.
  */
 export async function callStructured(options: StructuredCallOptions): Promise<StructuredCallOutcome> {
-  const { modelId, matterId, signal, onUsage, ...request } = options;
+  // `feature` and `documentIds` are pulled OUT of `request` here deliberately:
+  // what is left is the StructuredRequest the adapter turns into the provider
+  // body, so neither can reach a provider even by accident.
+  const { modelId, matterId, signal, onUsage, feature, documentIds, ...request } = options;
 
   const found = findModel(modelId);
   if (!found) throw new Error(`Unknown model: ${modelId}`);
@@ -70,7 +81,7 @@ export async function callStructured(options: StructuredCallOptions): Promise<St
     res = await fetch('/api/llm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(await llmAuthHeader()) },
-      body: JSON.stringify({ provider: provider.id, model: model.apiModelId, body, matterId }),
+      body: JSON.stringify({ provider: provider.id, model: model.apiModelId, body, matterId, feature, documentIds }),
       signal,
     });
   } catch (err) {
