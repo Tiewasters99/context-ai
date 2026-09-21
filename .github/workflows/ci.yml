@@ -166,6 +166,31 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-rls-authorize.mjs
 
+      # Migration 080. A connection's stored refresh token is ciphertext, but
+      # it is still the credential for someone's mailbox and cloud drive, and
+      # RLS plus Supabase's blanket column grant let a signed-in browser ask
+      # PostgREST for it. 080 takes the table-wide SELECT away from `anon` and
+      # `authenticated` and grants back the non-credential columns only. This
+      # runs 026 → 029 → 075 → 080 with the three real roles and real RLS,
+      # opens with the leak as a negative control, and then holds the result to
+      # all of it: the token refused (42501), `select *` refused, the safe
+      # columns served and still cut to the caller's own rows, the service role
+      # untouched, Disconnect still working, idempotent, and correct from three
+      # drift states. It ends by scanning src/ — a `*` or a credential column
+      # on this table fails the build — and api/ + lib/, where every read of
+      # the token column must be on a service-role client.
+      #
+      # It belongs HERE, with the other PGlite steps, and not at the end of the
+      # file: two later steps run `npm i --no-save jsdom`, and npm prunes
+      # packages that are not in package.json, so PGlite is GONE from that
+      # point on. (That is also why `_verify-cloud-drives.mjs` prints SKIP for
+      # its migration-075 section in CI today.) A new PGlite harness appended
+      # after those steps exits 2 with "Run: npm i --no-save @electric-sql/
+      # pglite" and takes the whole job red.
+      - name: Migration 080 — a connection's token never reaches the browser (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-connections-columns.mjs
+
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-profiles-rls.mjs
@@ -187,6 +212,14 @@ jobs:
       - name: Ingestion — stamp-only scans reach OCR (fake Supabase, stubbed OCR)
         if: ${{ !cancelled() }}
         run: node scripts/_test-stamp-scans.mjs
+
+      # Transcript chunking AND the reporter's printed page. A cite that names
+      # the PDF's page index instead of the page the reporter printed is off by
+      # the slip sheet on every exhibit-wrapped deposition — and it reads like a
+      # real cite. Synthetic fixtures only; no client transcript is in the repo.
+      - name: Ingestion — transcript page:line and the reporter's printed page
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-transcript-parse.mjs
 
       - name: Reader — reflow
         if: ${{ !cancelled() }}
@@ -441,11 +474,29 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs
+      # The first five minutes of a brand-new account. Who the first-run docket
+      # is shown to (and the two loading states where it must show nothing at
+      # all), that every tick comes from a fact and an unreadable fact is never
+      # a tick, that a second click on "create your workspace" writes nothing,
+      # and that the sealed-from-the-start option reaches the tier column the
+      # server enforces off. It also holds the copy to what the product can
+      # keep: the size cap and the accepted types are compared against
+      # lib/ingest-formats.mjs, the ledger kinds against the Record's own
+      # describe.ts, and the sealed sentence must not name a model. Offline:
+      # the rules are pure functions, the create path is driven against
+      # scripts/_fake-supabase.mjs, and the React wiring is asserted as source
+      # text. Same '@/' loader as the harnesses above — first-run.ts imports
+      # lib/plan.ts through the alias.
+      - name: First run — what a brand-new account is shown, and what it is told
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-first-run.mjs
+
       # Finding ONE document by name in a 7,600-document matter, and reading a
       # matter in Table-of-Authorities order. Migration 081 is EXECUTED in
       # PGlite with real pg_trgm, real RLS, real anon/authenticated/service_role
-      # and a 20,000-document corpus: two users and three matters (one not
-      # shared, one sealed), with the isolation asserted under every filter and
+      # and a 20,000-document corpus: two users and five matters (one not
+      # shared, one sealed with a sub-matter, one another firm's), with the
+      # isolation asserted under every filter and
       # against a caller who names the forbidden matter ids by hand; ranking;
       # paging that reproduces the single-page order exactly; the limit and
       # offset clamps; the category rule over forty real-shaped names, which a
