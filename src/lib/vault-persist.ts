@@ -28,6 +28,7 @@ import { checkUpload, type UploadRefusal } from '../../lib/ingest-formats.mjs';
 // with, so the body this file sends and the figure the handler recomputes can
 // never come from two different ideas of what a page costs.
 import {
+  chooseDeclaration,
   declarationFor,
   documentNeedsConfirmation,
   estimateUploadItem,
@@ -276,12 +277,17 @@ export interface PersistOptions {
   /** Upload progress, reported only on the resumable path (files of 50 MB and up). */
   onProgress?: (p: UploadProgress) => void;
   /**
-   * The estimate a person was shown and confirmed for THIS file, from the
-   * Vault's upload gate. Absent for every upload that never reached the
-   * threshold — and then the ingest request is byte-for-byte what it has
-   * always been.
+   * What the upload gate decided for THIS file. Three states, and they are
+   * not interchangeable (see chooseDeclaration):
+   *   an object — a quote was shown and confirmed;
+   *   null      — the file was measured and no quote was owed, so the ingest
+   *               request is byte-for-byte what it has always been;
+   *   absent    — nobody measured it. Every caller that files a document the
+   *               APP made (a Record export, a combined exhibit PDF, a trial
+   *               outline) is in this state, and gets an estimate formed from
+   *               the file's name and size.
    */
-  ingestDeclaration?: IngestDeclaration;
+  ingestDeclaration?: IngestDeclaration | null;
 }
 
 export async function persistVaultFile(
@@ -362,7 +368,11 @@ export async function persistVaultFile(
   }
   // Don't await; the API call can take 30-60s for large docs and we want the
   // UI thread back immediately. Errors are surfaced via document status.
-  void postIngest(doc.id, accessToken, opts.ingestDeclaration ?? autoDeclaration(file));
+  void postIngest(
+    doc.id,
+    accessToken,
+    chooseDeclaration(opts.ingestDeclaration, { name: file.name, bytes: file.size }),
+  );
 
   return { documentId: doc.id, storagePath };
 }
@@ -385,28 +395,10 @@ export async function persistVaultFile(
 // update runs under the user's own session, exactly like every other write in
 // this file, so RLS decides whether it is allowed.
 // -----------------------------------------------------------------------------
-/**
- * The estimate for a file nobody was shown a dialog for.
- *
- * Almost every caller of persistVaultFile files a document the APP made from
- * content already in the matter — a Record export, a combined exhibit PDF, a
- * trial outline, a Student Hub export. There is no drop and no dialog, but the
- * person did press the button that made the file, and /api/ingest refuses an
- * above-threshold document that arrives with no estimate at all. So one is
- * formed here from the file's own name and size — the only two facts available
- * without parsing it — and only when the file is big enough for the handler to
- * ask. A small file gets NOTHING, which is what keeps the ordinary request
- * body unchanged.
- */
-function autoDeclaration(file: File): IngestDeclaration | undefined {
-  const item = estimateUploadItem({ name: file.name, bytes: file.size });
-  return documentNeedsConfirmation(item) ? declarationFor(item) : undefined;
-}
-
 async function postIngest(
   documentId: string,
   accessToken: string,
-  declaration?: IngestDeclaration,
+  declaration?: IngestDeclaration | null,
 ): Promise<void> {
   let res: Response;
   try {
@@ -788,19 +780,19 @@ export async function triggerIngest(documentId: string): Promise<void> {
 }
 
 /** The estimate for a document already in the Vault, from its own row. */
-async function declarationForFiled(documentId: string): Promise<IngestDeclaration | undefined> {
+async function declarationForFiled(documentId: string): Promise<IngestDeclaration | null> {
   const { data } = await supabase
     .from('documents')
     .select('source_filename, file_size_bytes, page_count')
     .eq('id', documentId)
     .maybeSingle();
-  if (!data) return undefined;
+  if (!data) return null;
   const item = estimateUploadItem({
     name: data.source_filename || '',
     bytes: Number(data.file_size_bytes) || 0,
     pages: Number(data.page_count) || undefined,
   });
-  return documentNeedsConfirmation(item) ? declarationFor(item) : undefined;
+  return documentNeedsConfirmation(item) ? declarationFor(item) : null;
 }
 
 

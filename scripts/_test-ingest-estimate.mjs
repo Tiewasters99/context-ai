@@ -38,6 +38,7 @@ import {
   estimateUpload,
   thresholdVerdict,
   whatFits,
+  chooseDeclaration,
   declarationFor,
   documentNeedsConfirmation,
   recomputeDocumentEstimate,
@@ -454,13 +455,38 @@ test('below the threshold the request is the one it has always been', async (t) 
     assert.equal(body.estimate.pages, 900);
   });
 
+  await t.test('"measured and small" sends nothing; "never measured" is the only auto case', () => {
+    // The distinction requirement 5 actually rests on. A 13 MB PDF of fifty
+    // photographed pages measures at fifty and needs no quote — but its SIZE
+    // alone reads as 222 pages, because the browser's fallback errs high on
+    // purpose. If the two collapsed, an ordinary upload would carry a page
+    // count the browser had already measured as wrong.
+    const photos = { name: 'Photos.pdf', bytes: 13 * MB };
+    assert.equal(chooseDeclaration(null, photos), null, 'measured, no quote owed → send nothing');
+    assert.equal(
+      ingestRequestBody('d', chooseDeclaration(null, photos)),
+      '{"documentId":"d"}',
+      'and the body is the one this endpoint has always taken',
+    );
+    // Never measured — an app-generated document, which has no dialog to show
+    // and would otherwise be refused by the handler.
+    const auto = chooseDeclaration(undefined, photos);
+    assert.ok(auto && auto.confirmed === true);
+    assert.equal(auto.pages, Math.ceil((13 * MB) / ASSUMED_BYTES_PER_PAGE));
+    // Never measured and small → still nothing.
+    assert.equal(chooseDeclaration(undefined, { name: 'Letter.docx', bytes: 200 * KB }), null);
+    // A confirmed quote is passed through untouched.
+    const shown = declarationFor(estimateUploadItem({ name: 'Big.pdf', bytes: 60 * MB, pages: 900 }));
+    assert.equal(chooseDeclaration(shown, { name: 'Big.pdf', bytes: 60 * MB }), shown);
+  });
+
   await t.test('the Vault sends that body, and only that body', () => {
     const text = src('src/lib/vault-persist.ts');
     assert.match(text, /body: ingestRequestBody\(documentId, declaration\)/);
-    assert.match(text, /opts\.ingestDeclaration \?\? autoDeclaration\(file\)/);
-    // An app-generated document (a Record export, a combined exhibit PDF) has
-    // no dialog to show, so it must still be able to be filed.
-    assert.match(text, /documentNeedsConfirmation\(item\) \? declarationFor\(item\) : undefined/);
+    assert.match(text, /chooseDeclaration\(opts\.ingestDeclaration, \{ name: file\.name, bytes: file\.size \}\)/);
+    const gate = src('src/components/vault/UploadEstimateGate.tsx');
+    assert.match(gate, /declarations: files\.map\(\(\) => null\)/,
+      'the below-threshold branch must send null, never undefined');
   });
 
   await t.test('the Vault gates its drop, and the sealed matter card gates its own', () => {
@@ -476,6 +502,10 @@ test('below the threshold the request is the one it has always been', async (t) 
   await t.test('the handler checks before it charges — a refusal costs nothing', () => {
     const handler = src('api/ingest.mjs');
     const check = handler.indexOf('verifyIngestConfirmation({');
+    // Like for like with the browser, which has no process.env: passing this
+    // deployment's env would make an OCR_TIER_A_ROUTES flip reject every
+    // honest confirmation of a big scan at fifteen times the price.
+    assert.match(handler, /verifyIngestConfirmation\(\{ doc, body, tier: 'A', env: \{\} \}\)/);
     const meter = handler.indexOf('const ingestMeter = await consumeUsage(');
     const ready = handler.indexOf('alreadyReady: true');
     assert.ok(check > 0 && meter > 0 && ready > 0);

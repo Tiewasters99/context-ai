@@ -409,11 +409,14 @@ export default function Vault() {
       // Measuring a big drop — reading each PDF's page count, each recording's
       // length — takes a moment, and a drop where nothing happens for several
       // seconds reads as a drop that failed.
-      if (candidates.length >= 10) {
+      const saidMeasuring = candidates.length >= 10;
+      if (saidMeasuring) {
         setVaultNotice({ kind: 'warn', text: `Working out what these ${candidates.length.toLocaleString()} files will cost…` });
       }
       const gated = await gateUpload(candidates, matter.id);
-      setVaultNotice(null);
+      // Only clear what THIS step put there. The zip loop above may have left
+      // a "3 entries were skipped" warning, and that is still true.
+      if (saidMeasuring) setVaultNotice(null);
       if (!gated) {
         setVaultNotice({ kind: 'warn', text: UPLOAD_CANCELLED_NOTICE });
         return;

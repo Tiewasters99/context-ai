@@ -113,6 +113,18 @@ export declare function declarationFor(
   options?: { confirmed?: boolean },
 ): IngestDeclaration;
 
+/**
+ * Which declaration a POST should carry.
+ *   null      — measured, and no quote was owed. Send nothing.
+ *   an object — a quote was shown and confirmed. Send it.
+ *   undefined — never measured (an app-generated document). Form one from the
+ *               name and size, and only if it is big enough to matter.
+ */
+export declare function chooseDeclaration(
+  supplied: IngestDeclaration | null | undefined,
+  file: { name: string; bytes: number },
+): IngestDeclaration | null;
+
 export declare function ingestRequestBody(
   documentId: string,
   declaration?: IngestDeclaration | null,

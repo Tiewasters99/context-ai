@@ -35,11 +35,16 @@ export interface GateResult {
   /** The files to upload — all of them, or the leading run the person chose. */
   files: File[];
   /**
-   * Per file, aligned by index: the estimate that was confirmed, or undefined
-   * for a file that never reached the threshold. An undefined entry leaves the
-   * ingest request exactly as it was before this feature existed.
+   * Per file, aligned by index: the estimate that was confirmed, or NULL for a
+   * file that was measured and found not to need one.
+   *
+   * null, never undefined. `undefined` means "nobody measured this", and
+   * persistVaultFile answers that by estimating from the file's size — which
+   * for a 13 MB PDF of fifty photographed pages reads as 222. A file this gate
+   * measured at fifty and let through must send nothing at all, or the
+   * "unchanged below the threshold" promise is only nearly true.
    */
-  declarations: (IngestDeclaration | undefined)[];
+  declarations: (IngestDeclaration | null)[];
 }
 
 interface Pending {
@@ -78,7 +83,7 @@ export function useUploadEstimateGate() {
       // Below the threshold there is no dialog, no declaration, and the
       // request that follows is byte-for-byte the one this product has always
       // sent.
-      return { files, declarations: files.map(() => undefined) };
+      return { files, declarations: files.map(() => null) };
     }
     // An above-threshold drop whose surface went away mid-measure reads as
     // CANCELLED, not as "send it anyway": there is no longer anywhere to show

@@ -120,14 +120,19 @@ export default async function handler(req, res) {
   // The meter below remains the real enforcement. This is about a person being
   // told the price before the work, not about trusting the client.
   //
-  // Tier 'A' deliberately, with no tier lookup: the unsealed OCR route is the
-  // DEARER of the two, so this recomputation is the conservative one, and the
-  // page/minute triggers do not depend on the tier at all. The client quotes a
-  // sealed matter at the sealed rate because that is what the person is
-  // actually metered; this side only decides whether a quote was owed.
+  // Tier 'A' and an EMPTY env, both deliberately, and both for the same
+  // reason: this gate answers "was a quote owed", not "which route will read
+  // it". The browser can only ever compute from the tier's policy DEFAULT — it
+  // has no process.env — so passing this deployment's env here would make the
+  // two sides compute different numbers the moment OCR_TIER_A_ROUTES is
+  // flipped to anthropic-vision (which lib/ocr-routes.mjs plans for), and
+  // every honest confirmation of a big scan would fail the ack comparison at
+  // fifteen times the price. Like for like on both sides; a forged ack is
+  // still caught, and Tier A is the dearer of the two OCR routes, so the
+  // figure a sealed matter confirms still clears it.
   //
   // It runs BEFORE the meter, so a refusal costs nothing.
-  const confirmation = verifyIngestConfirmation({ doc, body, tier: 'A', env: process.env });
+  const confirmation = verifyIngestConfirmation({ doc, body, tier: 'A', env: {} });
   if (confirmation) {
     const { status, ...payload } = confirmation;
     return json(res, status, payload);
