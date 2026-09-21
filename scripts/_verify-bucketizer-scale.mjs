@@ -618,16 +618,38 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
     const chain = {
       select: () => chain, eq: () => chain, order: () => chain, range: () => chain,
       maybeSingle: async () => result,
+      single: async () => result,
       then: (res, rej) => Promise.resolve(result).then(res, rej),
     };
     return chain;
   };
 
+  // EVERY attempted write is recorded rather than performed, so "nothing was
+  // persisted from the failed attempt" is an assertion about an empty list and
+  // not about a stub that happened to throw.
+  let writes = [];
+  let nextNodeId = 0;
   globalThis.__bkzSupabase = {
-    auth: { getSession: async () => ({ data: { session: null } }) },
+    auth: {
+      getSession: async () => ({ data: { session: null } }),
+      getUser: async () => ({ data: { user: { id: '11111111-2222-4333-8444-555555555555' } }, error: null }),
+    },
     from: (table) => {
+      if (table === 'bucketizer_nodes') {
+        return {
+          ...q({ data: null, error: null }),
+          insert: (row) => {
+            const written = { ...row, id: `n-${nextNodeId++}` };
+            writes.push({ table, row: written });
+            return q({ data: written, error: null });
+          },
+        };
+      }
       if (table === 'documents') {
-        return q({ data: { id: PLEADING_A, title: 'Complaint', source_filename: 'complaint.pdf', processing_status: 'ready', matterspace_id: MATTER }, error: null });
+        return {
+          ...q({ data: { id: PLEADING_A, title: 'Complaint', source_filename: 'complaint.pdf', processing_status: 'ready', matterspace_id: MATTER, metadata: {} }, error: null }),
+          update: (row) => { writes.push({ table, row }); return q({ data: null, error: null }); },
+        };
       }
       if (table === 'passages') {
         return q({ data: [{ text: `Paragraph 14. ${SENTINEL}.`, sequence_number: 0 }], error: null });
@@ -681,12 +703,15 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
   // matter exactly as it was.
   {
     seen.length = 0;
+    writes = [];
     reply = { content: [{ type: 'tool_use', input: { claims: [] } }] };
     let threw = null;
     try {
       await generateTreeFromPleadings({ matterId: MATTER, pleadingDocIds: [PLEADING_A, PLEADING_B] });
     } catch (e) { threw = e; }
 
+    check('tree: NOTHING was written — the existing tree is untouched by a failed answer',
+      writes.length === 0, JSON.stringify(writes));
     check('tree: the failure is the plain sentence, and says nothing was changed',
       typeof threw?.message === 'string' && threw.message.startsWith(TREE_CONTRACT_FAILURE),
       threw?.message);
@@ -744,9 +769,6 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
       seen[0]?.env.body?.slice(0, 200));
   }
 
-  // -- the contract itself ---------------------------------------------------
-  section('7b. The tree contract — what is refused, and what survives');
-
   const goodTree = () => ({
     claims: [{
       label: 'Excessive force (§ 1983)',
@@ -759,6 +781,57 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
     }],
     themes: [{ label: 'Pattern of indifference', description: 'Prior complaints.' }],
   });
+
+  // -- invalid → repair → VALID, all the way into the insert loop ------------
+  //
+  // The only case that executes the loop the contract now guards. It also
+  // proves the repair is not a dead end: a pen that missed the shape the first
+  // time and got it right the second builds the tree it was asked for.
+  {
+    seen.length = 0;
+    writes = [];
+    nextNodeId = 0;
+    const replies = [
+      { content: [{ type: 'tool_use', input: { claims: [] } }] },
+      { content: [{ type: 'tool_use', input: goodTree() }] },
+    ];
+    let i = 0;
+    const saveFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (url !== '/api/llm') throw new Error(`section 7 saw egress to ${url}`);
+      seen.push({ init, env: JSON.parse(init.body) });
+      return new Response(JSON.stringify(replies[i++]), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    const created = await generateTreeFromPleadings({ matterId: MATTER, pleadingDocIds: [PLEADING_A, PLEADING_B] });
+    globalThis.fetch = saveFetch;
+
+    check('tree: a repaired answer is used, and the tree is built', created.length === 4, created.length);
+    check('tree: exactly two calls — the bad answer and one repair', seen.length === 2, seen.length);
+
+    const nodes = writes.filter((w) => w.table === 'bucketizer_nodes').map((w) => w.row);
+    check('tree: four bucketizer_nodes rows — claim, element, subissue, theme',
+      nodes.length === 4, nodes.length);
+    check('tree: every row is marked as generated, not hand-made',
+      nodes.every((n) => n.origin === 'generated'));
+    check('tree: the claim and the theme are roots',
+      nodes[0].parent_id === null && nodes[0].kind === 'claim'
+      && nodes[3].parent_id === null && nodes[3].kind === 'theme');
+    check('tree: the element hangs off its claim, and the subissue off its element',
+      nodes[1].kind === 'element' && nodes[1].parent_id === nodes[0].id
+      && nodes[2].kind === 'subissue' && nodes[2].parent_id === nodes[1].id,
+      JSON.stringify(nodes.map((n) => [n.kind, n.parent_id, n.id])));
+    check('tree: labels and descriptions survive the contract check unchanged',
+      nodes[0].label === 'Excessive force (§ 1983)'
+      && nodes[2].description === 'Logs and footage.');
+    check('tree: the pleadings are marked as the tree’s sources, AFTER the inserts',
+      writes.filter((w) => w.table === 'documents').length === 2
+      && writes.findIndex((w) => w.table === 'documents')
+        > writes.findLastIndex((w) => w.table === 'bucketizer_nodes'));
+  }
+
+  // -- the contract itself ---------------------------------------------------
+  section('7b. The tree contract — what is refused, and what survives');
 
   check('a valid tree passes, and counts every bucket it would create',
     (() => { const r = checkTreeContract(goodTree()); return r.ok && r.value.nodeCount === 4; })());

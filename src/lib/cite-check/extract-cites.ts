@@ -111,12 +111,26 @@ function foldForSearch(input: string): string {
     .toLowerCase();
 }
 
-export function appearsInDraft(draft: string, needle: string): boolean {
+/**
+ * The draft, folded once. A 300 KB brief with 200 citations would otherwise be
+ * re-folded up to four hundred times on the browser's main thread.
+ */
+interface FoldedDraft { spaced: string; tight: string }
+function foldDraft(draft: string): FoldedDraft {
+  const spaced = foldForSearch(draft ?? '');
+  return { spaced, tight: spaced.replace(/\s+/g, '') };
+}
+
+function foundIn(hay: FoldedDraft, needle: string): boolean {
   const wanted = foldForSearch(needle);
   if (wanted.length < MIN_RAW_CHARS) return false;
-  const hay = foldForSearch(draft ?? '');
-  if (hay.includes(wanted)) return true;
-  return hay.replace(/\s+/g, '').includes(wanted.replace(/\s+/g, ''));
+  if (hay.spaced.includes(wanted)) return true;
+  return hay.tight.includes(wanted.replace(/\s+/g, ''));
+}
+
+/** The same question, for one citation against one draft. */
+export function appearsInDraft(draft: string, needle: string): boolean {
+  return foundIn(foldDraft(draft), needle);
 }
 
 export interface ExtractContract {
@@ -157,6 +171,8 @@ export function checkExtractContract(raw: unknown, draftText: string): ContractC
     };
   }
 
+  // Folded once for the whole answer, not once per citation.
+  const hay = foldDraft(draftText);
   const cites: Cite[] = [];
   const seen = new Set<string>();
   let setAside = 0;
@@ -197,7 +213,7 @@ export function checkExtractContract(raw: unknown, draftText: string): ContractC
     }
 
     const location = trimmedText(c.location);
-    if (!appearsInDraft(draftText, rawText) && !(location && appearsInDraft(draftText, location))) {
+    if (!foundIn(hay, rawText) && !(location && foundIn(hay, location))) {
       setAside += 1;
       continue;
     }

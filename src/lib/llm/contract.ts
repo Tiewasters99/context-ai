@@ -5,7 +5,7 @@
 // Inside a sealed matter every feature model call is answered by the sealed pen
 // (`lib/llm-sealed-route.mjs`), and the pen is less reliable than frontier
 // Claude at holding a forced tool call to a shape. PR #168 worked the right
-// pattern out for Bucketizer's classify step and #182 repeated it for the
+// pattern out for Bucketizer's classify step and #177 repeated it for the
 // evidence step; both grew their own copy of the same two helpers.
 //
 // The pattern, stated once:
