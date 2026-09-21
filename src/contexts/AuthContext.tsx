@@ -2,6 +2,12 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { User, Session, AuthError } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { asPlan, type Plan } from '@/lib/plan'
+import {
+  browserLocalStore,
+  browserSessionStore,
+  clearAllDrafts,
+  flushAllUnsaved,
+} from '@/lib/draft-store'
 
 interface AuthContextType {
   user: User | null
@@ -113,8 +119,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error }
   }
 
+  // Signing out wipes the drafts this machine is holding — but only after
+  // every live surface has been offered to the server, and only on a
+  // DELIBERATE sign-out. Supabase also raises SIGNED_OUT when a refresh token
+  // fails, which is a session expiring under a lawyer with an hour of unsaved
+  // text on screen; wiping there would destroy exactly what this net exists
+  // to catch, so nothing is cleared in onAuthStateChange.
   const signOut = async () => {
+    try {
+      await flushAllUnsaved()
+    } catch {
+      /* a save that will not go through must not trap someone in the app */
+    }
     const { error } = await supabase.auth.signOut()
+    // Every account's drafts, not just this one's: the next person to sign in
+    // at this desk may be a different lawyer, and a predecessor's unsaved page
+    // must not be sitting in their browser.
+    clearAllDrafts(browserLocalStore())
+    clearAllDrafts(browserSessionStore())
     return { error }
   }
 
