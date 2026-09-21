@@ -504,8 +504,17 @@ jobs:
       # nothing. The second command is the browser half — the grouping is a
       # pure module and the paged read takes its client as an argument, so
       # neither needs a DOM, only the '@/' loader.
+      #
+      # PGlite is re-installed here rather than relied on from the step near
+      # the top of this job. `npm i --no-save X` recomputes the tree from
+      # package.json plus X, so the two `npm i --no-save jsdom` steps above
+      # SILENTLY REMOVE every earlier --no-save package. Any PGlite harness
+      # appended after them has to bring its own, or it exits 2 with
+      # "Run: npm i --no-save @electric-sql/pglite" and looks like a missing
+      # dependency rather than an ordering bug. Same pinned version as above.
       - name: Vault — document search, categories, and the list's order
         if: ${{ !cancelled() }}
         run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-vault-document-search.mjs
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-vault-grouping.mjs
