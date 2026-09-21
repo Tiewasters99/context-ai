@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pause, Play, X } from 'lucide-react';
+import { AlertTriangle, Pause, Play, X } from 'lucide-react';
 import ModalPortal from '@/components/ui/ModalPortal';
-import { readAiPause, setAiPause, aiPausedSentence, NOT_PAUSED, type AiPauseState } from '@/lib/ai-pause';
+import {
+  readAiPause, setAiPause, aiPausedSentence, NOT_PAUSED,
+  nextPauseState, isPauseUnknown, PAUSE_UNKNOWN_SENTENCE, type AiPauseState,
+} from '@/lib/ai-pause';
 
 // "Pause all AI on this matter" — the switch, in the matter's own header.
 //
@@ -16,11 +19,16 @@ import { readAiPause, setAiPause, aiPausedSentence, NOT_PAUSED, type AiPauseStat
 //
 //   * NOT DEPLOYED IS INVISIBLE. Until migration 070 is pasted the control
 //     does not render at all and nothing about the product changes. A missing
-//     column is not an error and must never look like one.
+//     column is not an error and must never look like one. ONLY a genuine
+//     not-deployed answer does this: until 2026-09-20 the initial state also
+//     carried notDeployed:true and a failed read kept it, so the FIRST error
+//     of a session removed the emergency stop from the screen without a word.
 //   * A REAL ERROR ON A PAUSED MATTER FAILS CLOSED. If the matter was paused
 //     a moment ago and the next read fails, the control keeps saying paused.
 //     The alternative — showing "AI on" because a request timed out — would
-//     be the switch lying about the one thing it exists to say.
+//     be the switch lying about the one thing it exists to say. An error on a
+//     matter we have never read successfully is the same lie told by silence,
+//     so the control stays on screen and says it could not check.
 //   * RESUMING ASKS. Pausing is one click, because the moment you want it is
 //     the moment you want it. Resuming is the one that needs a breath, and it
 //     says what it will restart.
@@ -45,13 +53,11 @@ export default function AiPauseControl({ matterId, matterName, onChange }: Props
 
   const refresh = useCallback(async () => {
     const next = await readAiPause(matterId);
-    if (next.error) {
-      // Fail CLOSED: keep the last known state rather than claiming AI is on.
-      setState((prev) => (known.current.paused ? known.current : { ...prev, error: next.error }));
-      return;
-    }
-    known.current = next;
-    setState(next);
+    // Fail CLOSED: a failed read never downgrades a known pause, and never
+    // hides the control. nextPauseState() holds the whole rule, and
+    // scripts/_verify-ai-pause.mjs exercises it.
+    if (!next.error) known.current = next;
+    setState(nextPauseState(known.current, next));
   }, [matterId]);
 
   useEffect(() => {
@@ -85,6 +91,20 @@ export default function AiPauseControl({ matterId, matterName, onChange }: Props
   };
 
   const paused = state.paused;
+  // The state could not be read. Say so — never the "Pause AI" face, which
+  // asserts that AI is currently running.
+  if (isPauseUnknown(state)) {
+    return (
+      <button
+        onClick={() => { void refresh(); }}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-white/60 hover:text-white/90 hover:bg-[rgba(255,255,255,0.06)] border border-[rgba(255,255,255,0.14)] transition-colors"
+        title={`${PAUSE_UNKNOWN_SENTENCE}. Nothing is claimed about this matter either way.`}
+      >
+        <AlertTriangle size={15} strokeWidth={1.75} />
+        {PAUSE_UNKNOWN_SENTENCE}
+      </button>
+    );
+  }
 
   return (
     <>

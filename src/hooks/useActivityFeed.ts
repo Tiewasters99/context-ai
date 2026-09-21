@@ -27,9 +27,16 @@ export interface ActivityEvent {
   ref_id: string;
   title: string;
   actor_name: string | null;
+  /**
+   * The name of the SUB-matter a row came from, when the feed is scoped to a
+   * matter and the row is not that matter's own. Null otherwise — including
+   * on the cross-matter dashboard feed, which labels its rows from the
+   * `matterNames` map it already holds.
+   */
+  matter_name: string | null;
 }
 
-type RawEvent = Omit<ActivityEvent, 'actor_name'>;
+type RawEvent = Omit<ActivityEvent, 'actor_name' | 'matter_name'>;
 
 const COLUMNS = 'matter_id, event_type, actor_id, occurred_at, ref_id, title';
 
@@ -49,6 +56,10 @@ export function useActivityFeed(matterId: string | undefined, limit = 60) {
       };
 
       let events: RawEvent[] = [];
+      // Sub-matter names, for the label the feed puts on a row that is not
+      // this matter's own. Only asked for when the tree actually has
+      // sub-matters, so the common case costs nothing.
+      const subMatterNames = new Map<string, string>();
       if (matterId) {
         const ids = await matterDescendantIds(client, matterId);
         const { rows, error } = await readAllPages<RawEvent>(
@@ -57,6 +68,13 @@ export function useActivityFeed(matterId: string | undefined, limit = 60) {
         );
         if (error) throw new Error(error.message ?? 'Failed to load activity');
         events = rows;
+        if (ids.length > 1) {
+          const { data: matters } = await supabase
+            .from('matterspaces')
+            .select('id, name')
+            .in('id', ids.filter((id) => id !== matterId));
+          for (const m of matters ?? []) subMatterNames.set(m.id, m.name);
+        }
       } else {
         const { rows, error } = await readAllPages<RawEvent>(build, limit);
         if (error) throw new Error(error.message ?? 'Failed to load activity');
@@ -84,6 +102,7 @@ export function useActivityFeed(matterId: string | undefined, limit = 60) {
       return events.map((e) => ({
         ...e,
         actor_name: e.actor_id ? names.get(e.actor_id) ?? null : null,
+        matter_name: subMatterNames.get(e.matter_id) ?? null,
       }));
     },
   });

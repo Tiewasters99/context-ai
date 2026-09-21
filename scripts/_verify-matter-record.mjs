@@ -901,6 +901,8 @@ function fanout(matterId, payloadOver = {}) {
     md.includes('5 searches run by a connected assistant across every matter'),
     'and states the number for the period covered',
   );
+  check(doc.accountWideByConnector === 5,
+    'all five of these were a connector’s, by the rows’ own actor kind');
   check(
     md.includes('searched across every matter and read from this one'),
     'the chronology carries the line too',
@@ -940,6 +942,57 @@ function fanout(matterId, payloadOver = {}) {
   check(
     !md.includes('recorded against none of them'),
     'the old sentence is gone',
+  );
+}
+
+{
+  // WHO ran the account-wide search. PR #175 wrote "run by a connected
+  // assistant" because the connector was the only caller that could fan out;
+  // PR #182 put the SAME rows on the in-app path, where a global search from
+  // the Assistant reads across every matter too. A court-facing document must
+  // not name a connector that may never have existed on the account, so the
+  // sentence follows the rows' own recorded actor kind.
+  const inApp = (matterId) => event('tool.invoked', {
+    matterspace_id: matterId,
+    actor_kind: 'user',
+    actor_user_id: USER_ONE,
+    payload: {
+      scope: 'matter', via: 'account-wide search', tool: 'search',
+      args: { q: { present: true, length: 40 }, limit: 5 },
+      matter_filter: false, connector: false, result_count: 3, ok: true,
+    },
+  });
+
+  const only = async (events) => {
+    const doc = assembleMatterRecord(
+      await fetchMatterRecord(clientFor(events), { id: PARENT, name: 'Fixture Matter' }),
+      CONTEXT, null,
+    );
+    return { doc, md: renderMatterRecordMarkdown(doc) };
+  };
+
+  const inAppOnly = await only([...sampleEvents(), inApp(PARENT), inApp(CHILD_A)]);
+  check(inAppOnly.doc.accountWideReads === 2 && inAppOnly.doc.accountWideByConnector === 0,
+    'two in-app account-wide reads, none of them a connector’s',
+    `${inAppOnly.doc.accountWideReads}/${inAppOnly.doc.accountWideByConnector}`);
+  check(inAppOnly.md.includes('2 searches run from inside Contextspaces across every matter'),
+    'so the sentence says where they were run from, and does NOT say "connected assistant"');
+  check(!inAppOnly.md.split('### Account-wide activity')[1].split('##')[0].includes('connected assistant'),
+    'the section names no connector at all when no row recorded one');
+
+  const mixed = await only([...sampleEvents(), fanout(PARENT), inApp(CHILD_B)]);
+  check(mixed.doc.accountWideReads === 2 && mixed.doc.accountWideByConnector === 1,
+    'one of each is counted as one of each');
+  check(mixed.md.includes('2 searches run by a connected assistant or from inside Contextspaces'),
+    'and the sentence names both, because both happened');
+
+  const connectorOnly = await only([...sampleEvents(), fanout(PARENT)]);
+  check(connectorOnly.md.includes('1 search run by a connected assistant across every matter'),
+    'a connector-only period still reads exactly as PR #175 wrote it, singular and all');
+
+  check(
+    mixed.md.includes('A search that names no matter — run by a connected assistant, or from inside '),
+    'and section 10 says the same of both, rather than describing the connector alone',
   );
 }
 
