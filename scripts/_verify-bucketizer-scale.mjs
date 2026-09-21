@@ -19,6 +19,16 @@
 //      order — ties are what break a naive `.range()` loop.
 //   6. JSON REPAIR. A malformed answer is repaired once; a second malformed
 //      answer becomes a plain sentence, not a row.
+//   7. THE MATTER'S RECORD KNOWS WHICH ACT WAS PERFORMED. Every Bucketizer
+//      model call names itself to `/api/llm` — 'bucketizer.tree',
+//      'bucketizer.classify', 'bucketizer.evidence' — and names the documents
+//      it is working on, by id. A sealed classification ran in production on
+//      09-19 and the matter's Record did not know it had happened; after
+//      #190 it would have been recorded as 'unspecified'. Asserted against
+//      the REAL call sites with `/api/llm` stubbed: the label, the ids, that
+//      no prompt or excerpt text rides in either field, and that the bytes
+//      forwarded to the provider are byte-for-byte what they were without
+//      them.
 //
 // Untracked by convention elsewhere in scripts/, but this one runs in CI.
 
@@ -35,7 +45,14 @@ import { classifyDocumentWindowed } from '../src/lib/bucketizer/classify-run.ts'
 import { LlmCallError } from '../src/lib/bucketizer/llm-error.ts';
 import { fetchPaged, showingOf } from '../src/lib/paged.ts';
 import { estimateRun, windowsForPages } from '../src/lib/bucketizer/estimate.ts';
-import { serializeOutline } from '../lib/bucketizer-core.mjs';
+import {
+  serializeOutline,
+  CLASSIFY_TOOL_NAME,
+  CLASSIFY_TOOL_DESCRIPTION,
+  CLASSIFY_SCHEMA,
+} from '../lib/bucketizer-core.mjs';
+import { register } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 let failures = 0;
 const check = (name, ok, detail) => {
@@ -523,6 +540,219 @@ function fakeTable(n, { tie = true } = {}) {
   const t = fakeTable(2500);
   const res = await fetchPaged((from, to) => t.page(from, to), { pageSize: 5000 });
   check('an over-large page size is clamped rather than silently truncating', res.rows.length === 2500);
+}
+
+// ---------------------------------------------------------------------------
+section("7. The matter's Record — what each Bucketizer call SAYS it is");
+// ---------------------------------------------------------------------------
+
+/**
+ * This section drives the REAL call sites — `generateTreeFromPleadings`,
+ * `supabaseRunDeps().callWindow` and `supabaseEvidenceDeps().call` — with
+ * `/api/llm` replaced by a witness. Nothing is asserted about a copy of the
+ * wiring: the envelope examined is the one the product sends.
+ *
+ * Those three modules import `@/lib/supabase`, which reads `import.meta.env`
+ * at module scope and cannot be loaded by plain node. So a second resolve
+ * hook, registered here and reaching no further than that one specifier,
+ * swaps it for a proxy onto `globalThis.__bkzSupabase`. Everything between
+ * the call site and `fetch` — `llm-call.ts`, `structured.ts`, `auth.ts`, the
+ * adapter — is the real module.
+ *
+ * Registering AFTER the static imports above is deliberate and safe: they are
+ * hoisted and already evaluated, and none of them touches supabase (see the
+ * note at the top of llm-error.ts). The modules below are imported
+ * dynamically so they resolve through the new hook.
+ */
+{
+  const SUPABASE_STUB = 'data:text/javascript,' + encodeURIComponent(
+    'export const supabase = new Proxy({}, { get: (_t, k) => globalThis.__bkzSupabase[k] });',
+  );
+  register(
+    new URL(`data:text/javascript,${encodeURIComponent(`
+      const STUB = ${JSON.stringify(SUPABASE_STUB)};
+      export async function resolve(specifier, context, next) {
+        if (specifier === '@/lib/supabase') return { url: STUB, format: 'module', shortCircuit: true };
+        return next(specifier, context);
+      }
+    `)}`).href,
+    pathToFileURL('./'),
+  );
+
+  const { LLM_FEATURES } = await import('../src/lib/llm/features.ts');
+  const { callStructured } = await import('../src/lib/bucketizer/llm-call.ts');
+  const { BUCKETIZER_DEFAULT_MODEL, generateTreeFromPleadings, supabaseRunDeps } =
+    await import('../src/lib/bucketizer/index.ts');
+  const { supabaseEvidenceDeps } = await import('../src/lib/bucketizer/evidence.ts');
+
+  // Real uuids: `lib/ledger.mjs` uuidList() drops the WHOLE list if one
+  // element is not a uuid, so an id that is merely a string would be recorded
+  // as `{items:n}` and the Record would name no document at all.
+  const MATTER = '2f1a9f4e-6c3b-4a17-9d21-0b6e8c5a7d10';
+  const PLEADING_A = 'aa11bb22-cc33-4d44-8e55-ff6677889900';
+  const PLEADING_B = 'bb22cc33-dd44-4e55-9f66-001122334455';
+  const CLASSIFY_DOC = 'cc33dd44-ee55-4f66-8a77-112233445566';
+  const EVIDENCE_DOC = 'dd44ee55-ff66-4a77-9b88-223344556677';
+  const EVIDENCE_NODE = 'ee55ff66-aa77-4b88-8c99-334455667788';
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /**
+   * One phrase, planted in the system prompt, in the user content and in the
+   * passage text the tree call loads. It is what a leak would look like: the
+   * words of a client's deposition arriving in a row nobody can delete.
+   */
+  const SENTINEL = 'the mental-health pen was left unlocked at 04:12 on August 16';
+
+  // A chainable, thenable PostgREST stand-in — `.range()` is awaited on the
+  // builder itself, `.maybeSingle()` is called.
+  const q = (result) => {
+    const chain = {
+      select: () => chain, eq: () => chain, order: () => chain, range: () => chain,
+      maybeSingle: async () => result,
+      then: (res, rej) => Promise.resolve(result).then(res, rej),
+    };
+    return chain;
+  };
+
+  globalThis.__bkzSupabase = {
+    auth: { getSession: async () => ({ data: { session: null } }) },
+    from: (table) => {
+      if (table === 'documents') {
+        return q({ data: { id: PLEADING_A, title: 'Complaint', source_filename: 'complaint.pdf', processing_status: 'ready', matterspace_id: MATTER }, error: null });
+      }
+      if (table === 'passages') {
+        return q({ data: [{ text: `Paragraph 14. ${SENTINEL}.`, sequence_number: 0 }], error: null });
+      }
+      throw new Error(`section 7 did not expect a read of "${table}"`);
+    },
+  };
+
+  // The egress witness. Any url but /api/llm is a failure, not a fixture.
+  const seen = [];
+  const realFetch = globalThis.fetch;
+  let reply = { content: [{ type: 'tool_use', input: {} }] };
+  globalThis.fetch = async (url, init) => {
+    if (url !== '/api/llm') throw new Error(`section 7 saw egress to ${url}`);
+    seen.push({ init, env: JSON.parse(init.body) });
+    return new Response(JSON.stringify(reply), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+
+  /** Everything every one of the three envelopes must satisfy. */
+  const commonChecks = (where, env, feature, documentIds) => {
+    check(`${where}: the envelope names the act — '${feature}'`, env.feature === feature, env.feature);
+    check(`${where}: and it is a label the server will accept, not free text`,
+      LLM_FEATURES.includes(env.feature));
+    check(`${where}: the envelope names the document(s), by id`,
+      JSON.stringify(env.documentIds) === JSON.stringify(documentIds), JSON.stringify(env.documentIds));
+    check(`${where}: every id is a uuid — a non-uuid drops the whole list from the Record`,
+      Array.isArray(env.documentIds) && env.documentIds.length > 0 && env.documentIds.every((d) => UUID.test(d)));
+
+    // The Record fields carry metadata and nothing else.
+    const recorded = JSON.stringify({ feature: env.feature, documentIds: env.documentIds });
+    check(`${where}: NO prompt or excerpt text rides in the recorded fields`,
+      !recorded.includes(SENTINEL) && !recorded.includes('Paragraph 14'), recorded);
+
+    // ... and the bytes for the provider carry the prompt and nothing new.
+    check(`${where}: the provider body still carries the prompt (so the check above is not vacuous)`,
+      env.body.includes(SENTINEL));
+    check(`${where}: the provider body carries no feature label and no document id`,
+      !env.body.includes('bucketizer.') && !env.body.includes('"feature"')
+      && !env.body.includes('"documentIds"') && documentIds.every((d) => !env.body.includes(d)));
+    check(`${where}: the envelope gained exactly two keys and no others`,
+      Object.keys(env).sort().join(',') === 'body,documentIds,feature,matterId,model,provider',
+      Object.keys(env).sort().join(','));
+  };
+
+  // -- the tree, from the pleadings it was drawn from ------------------------
+  {
+    seen.length = 0;
+    reply = { content: [{ type: 'tool_use', input: { claims: [] } }] };
+    let threw = null;
+    try {
+      await generateTreeFromPleadings({ matterId: MATTER, pleadingDocIds: [PLEADING_A, PLEADING_B] });
+    } catch (e) { threw = e; }
+    // An empty answer stops the run before the first insert, which is how
+    // this case reaches the model without a database behind it. Asserting the
+    // exact sentence keeps an unrelated failure from passing as this one.
+    check('tree: the run stopped where it was meant to, after the call',
+      threw?.message === 'The model returned no claims.', threw?.message);
+    check('tree: exactly one call to /api/llm', seen.length === 1, seen.length);
+    if (seen.length === 1) {
+      commonChecks('tree', seen[0].env, 'bucketizer.tree', [PLEADING_A, PLEADING_B]);
+      check('tree: both pleadings are named — the tree was drawn from both',
+        seen[0].env.documentIds.length === 2);
+    }
+  }
+
+  // -- one classification window --------------------------------------------
+  const classifyCall = {
+    system: `You file passages into the buckets on offer. ${SENTINEL}`,
+    userContent: `Window 1 of 3.\n[p1] Q. ${SENTINEL}?\nA. Yes.`,
+    maxTokens: 4_000,
+    attempt: 1,
+    documentId: CLASSIFY_DOC,
+    windowIndex: 0,
+  };
+  {
+    seen.length = 0;
+    reply = { content: [{ type: 'tool_use', input: { assignments: [] } }] };
+    const deps = supabaseRunDeps({ matterId: MATTER, modelId: BUCKETIZER_DEFAULT_MODEL });
+    await deps.callWindow(classifyCall);
+    check('classify: exactly one call to /api/llm', seen.length === 1, seen.length);
+    if (seen.length === 1) commonChecks('classify', seen[0].env, 'bucketizer.classify', [CLASSIFY_DOC]);
+  }
+
+  // -- one evidence pairing --------------------------------------------------
+  {
+    seen.length = 0;
+    reply = { content: [{ type: 'tool_use', input: { quotes: [] } }] };
+    const deps = supabaseEvidenceDeps({ matterId: MATTER, modelId: BUCKETIZER_DEFAULT_MODEL });
+    await deps.call({
+      system: `You quote verbatim. ${SENTINEL}`,
+      userContent: `[e1] ${SENTINEL}`,
+      maxTokens: 4_000,
+      attempt: 1,
+      nodeId: EVIDENCE_NODE,
+      documentId: EVIDENCE_DOC,
+    });
+    check('evidence: exactly one call to /api/llm', seen.length === 1, seen.length);
+    if (seen.length === 1) commonChecks('evidence', seen[0].env, 'bucketizer.evidence', [EVIDENCE_DOC]);
+  }
+
+  // -- the bytes the provider sees are unchanged -----------------------------
+  //
+  // A/B through the real `callStructured`: the same StructuredRequest twice,
+  // once with the two Record fields and once without. If the destructure in
+  // llm-call.ts ever stopped pulling them out of `...request`, the adapter
+  // would see them and these two bodies would differ.
+  {
+    seen.length = 0;
+    reply = { content: [{ type: 'tool_use', input: { assignments: [] } }] };
+    const base = {
+      modelId: BUCKETIZER_DEFAULT_MODEL,
+      system: classifyCall.system,
+      userContent: classifyCall.userContent,
+      toolName: CLASSIFY_TOOL_NAME,
+      toolDescription: CLASSIFY_TOOL_DESCRIPTION,
+      inputSchema: CLASSIFY_SCHEMA,
+      maxTokens: classifyCall.maxTokens,
+      matterId: MATTER,
+    };
+    await callStructured({ ...base, feature: 'bucketizer.classify', documentIds: [CLASSIFY_DOC] });
+    await callStructured(base);
+    const [withFields, without] = seen.map((s) => s.env);
+    check('A/B: the provider body is BYTE-IDENTICAL with and without the Record fields',
+      withFields.body === without.body);
+    check('A/B: a call that says nothing sends no label and no ids',
+      !('feature' in without) && !('documentIds' in without),
+      Object.keys(without).join(','));
+    check('A/B: and the rest of the envelope is the same either way',
+      withFields.provider === without.provider && withFields.model === without.model
+      && withFields.matterId === without.matterId);
+  }
+
+  globalThis.fetch = realFetch;
+  delete globalThis.__bkzSupabase;
 }
 
 console.log(failures ? `\n${failures} FAILURES` : '\nALL CHECKS PASSED');

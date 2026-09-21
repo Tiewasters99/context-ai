@@ -180,6 +180,10 @@ export async function generateTreeFromPleadings(input: {
     maxTokens: 16_000,
     signal: input.signal,
     matterId: input.matterId,
+    // For the matter's Record: the act, and the pleadings it was performed on.
+    // Ids only — the Record never carries a title or a word of the text.
+    feature: 'bucketizer.tree',
+    documentIds: input.pleadingDocIds,
   });
 
   if (!result?.claims?.length) throw new Error('The model returned no claims.');
@@ -492,6 +496,11 @@ export function supabaseRunDeps(input: {
         maxTokens: call.maxTokens,
         matterId: input.matterId,
         signal: input.signal,
+        // For the matter's Record. Every window of a document is one call, so
+        // a long deposition leaves several rows naming the same document —
+        // which is what happened, and is what the Record should say.
+        feature: 'bucketizer.classify',
+        documentIds: [call.documentId],
       });
       return raw;
     },
