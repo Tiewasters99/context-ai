@@ -492,93 +492,24 @@ export function reclassifyNotices(summary: ChosenSummary): string[] {
 // ---------------------------------------------------------------------------
 // What a re-run is allowed to write
 // ---------------------------------------------------------------------------
+//
+// The rule — never touch a CONFIRMED or REJECTED row, refresh an undecided
+// one, insert a missing one, delete nothing — now lives in
+// `lib/bucketizer-writes.mjs`, and this module re-exports it.
+//
+// It moved because the run it governs now also happens on the Fly worker
+// (`lib/bucketizer-run.mjs`), which cannot import a browser module, and this
+// discipline is the last thing that should be re-derived on the server: a
+// server-side re-run that overwrote a confirmed row would destroy a decision
+// an attorney made and took responsibility for, and it would do it silently,
+// overnight, with the laptop shut. One copy, both sides.
+export {
+  planClassificationWrites,
+  sentinelAfterRun,
+} from '../../../lib/bucketizer-writes.mjs';
 
-export interface ExistingClassification {
-  id: string;
-  node_id: string;
-  status: 'proposed' | 'confirmed' | 'rejected';
-}
-
-export interface ProposedClassification {
-  node_id: string;
-  confidence: number;
-  rationale: string | null;
-  passage_ids: string[];
-}
-
-export interface WritePlan {
-  /** Pairs with no row yet. */
-  insert: ProposedClassification[];
-  /** Undecided rows the re-read has something newer to say about. */
-  refresh: { id: string; row: ProposedClassification }[];
-  /** Rows left exactly as they are because you decided them. */
-  keptDecided: string[];
-  /**
-   * Undecided rows the re-read no longer proposes. Left in place: deleting
-   * machine work an attorney may be in the middle of reviewing is not
-   * something a re-run gets to do quietly.
-   */
-  keptStale: string[];
-}
-
-/**
- * What a run writes for one document — and, by its shape, what it never does.
- *
- * THERE IS NO `delete`. A classification row is the anchor for #177's evidence
- * (`bucketizer_evidence.classification_id`) and for the attorney's own
- * decision, and deleting one to "clean up" a re-run would take confirmed
- * quotations with it. So:
- *
- *   - a CONFIRMED or REJECTED row is never touched — not its status, not its
- *     confidence, not its rationale, not its passage ids. It is your decision;
- *     the machine does not get to revise it;
- *   - an UNDECIDED (proposed) row is refreshed from the new read, which is the
- *     point of running again — a row written from the first 200 passages
- *     carries a rationale about page 3 and passage ids the evidence lane would
- *     quote from;
- *   - a pair with no row yet is inserted;
- *   - nothing is ever removed.
- *
- * The caller must ALSO carry `status = 'proposed'` into the UPDATE itself, so
- * a row confirmed in another tab while the run was in flight is not overwritten
- * by a refresh planned a minute earlier.
- */
-export function planClassificationWrites(
-  existing: ExistingClassification[],
-  proposed: ProposedClassification[],
-): WritePlan {
-  const byNode = new Map(existing.map((e) => [e.node_id, e]));
-  const proposedNodes = new Set(proposed.map((p) => p.node_id));
-
-  const plan: WritePlan = { insert: [], refresh: [], keptDecided: [], keptStale: [] };
-
-  for (const row of proposed) {
-    const prior = byNode.get(row.node_id);
-    if (!prior) plan.insert.push(row);
-    else if (prior.status === 'proposed') plan.refresh.push({ id: prior.id, row });
-    else plan.keptDecided.push(prior.id);
-  }
-  for (const prior of existing) {
-    if (proposedNodes.has(prior.node_id)) continue;
-    if (prior.status === 'proposed') plan.keptStale.push(prior.id);
-    else plan.keptDecided.push(prior.id);
-  }
-  return plan;
-}
-
-/**
- * The "examined, nothing fitted" sentinel after a run, or null to clear it.
- *
- * It exists so a document that fits no bucket is not re-read (and re-charged)
- * on every run. On a RE-run it has to be able to go the other way too: a
- * document that now has rows must lose the sentinel, and a document that
- * already carried rows must never gain one just because this pass added
- * nothing new.
- */
-export function sentinelAfterRun(input: {
-  existingRows: number;
-  writtenRows: number;
-  completedAt: string;
-}): string | null {
-  return input.existingRows === 0 && input.writtenRows === 0 ? input.completedAt : null;
-}
+export type {
+  ExistingClassification,
+  ProposedClassification,
+  WritePlan,
+} from '../../../lib/bucketizer-writes.mjs';

@@ -1,52 +1,13 @@
 // The one thing the bulk runner needs to know about a failed model call: what
 // the server answered.
 //
-// Kept in its own module, with no imports, for two reasons. It is the only
-// part of the call path the RUNNER depends on — the runner asks `instanceof`
-// and nothing else — so the runner can be exercised offline without dragging
-// in `@/lib/supabase`, which reads `import.meta.env` at module scope and does
-// not exist outside a Vite build. And a status classification is a fact about
-// the API, not about the transport that observed it.
-
-/** An `/api/llm` failure that still knows what the server answered. */
-export class LlmCallError extends Error {
-  status: number;
-  /** The server's machine code (`budget_exhausted`, `rate_limited`, …). */
-  code: string | null;
-  retryAfterSeconds: number | null;
-
-  constructor(message: string, status: number, code: string | null = null, retryAfterSeconds: number | null = null) {
-    super(message);
-    this.name = 'LlmCallError';
-    this.status = status;
-    this.code = code;
-    this.retryAfterSeconds = retryAfterSeconds;
-  }
-
-  /**
-   * The wallet or the rate window, not this document.
-   *
-   * 402 is the month's budget spent; 429 is the rate limit, with a
-   * `retry-after`. A run that meets either should STOP where it is and keep
-   * everything it has finished — the next run resumes from the same place and
-   * pays for nothing twice. Treating them as ordinary per-document failures is
-   * what makes a bulk run throw four hundred more requests at a spent budget.
-   *
-   * 413 is deliberately NOT here. The plan's per-request size ceiling is a
-   * fact about THIS window, and it fails identically however long you wait —
-   * so pausing on it would let one oversized document block four hundred
-   * others behind a message that says "try again later". It is recorded
-   * against the window instead.
-   */
-  get isUsagePause(): boolean {
-    return this.status === 402 || this.status === 429;
-  }
-
-  /**
-   * This request will never succeed as written, so there is no point retrying
-   * or repairing it: the window is recorded as failed and the run moves on.
-   */
-  get isPermanentForThisRequest(): boolean {
-    return this.status === 413;
-  }
-}
+// The class itself now lives in `lib/llm-call-error.mjs`, because the windowed
+// classification loop that asks `instanceof` on it runs in two places: the tab,
+// where the call goes over HTTP to `/api/llm`, and the Fly worker, where
+// `lib/llm-server-call.mjs` runs the same gate → seal → meter → clamp → record
+// → send in process. The two must classify a refusal identically — a 402 that
+// pauses a browser run and merely fails a server document would be the same bug
+// in two colours — so there is one class and both sides import it.
+//
+// This file is the shim the browser keeps importing. Nothing about it changed.
+export { LlmCallError } from '../../../lib/llm-call-error.mjs';
