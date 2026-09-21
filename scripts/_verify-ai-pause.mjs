@@ -682,6 +682,17 @@ for (const tier of ['A', 'B', 'C']) {
   check(providerCalls().length === 0, `Tier ${tier}: zero provider requests`, `${providerCalls().length}`);
 }
 {
+  // And that /api/llm does forward it. Until 2026-09-20 the refusal carried
+  // {error, tier, provider} only, so the browser had nothing but the code
+  // `ai_paused` to render — src/lib/llm/refusals.ts prefers a server message
+  // and there was none. Refusing was never in doubt; being understood was.
+  const src = fs.readFileSync(path.join(REPO, 'api', 'llm.mjs'), 'utf8');
+  check(/if \(!sealed && !gate\.ok\) return refuse\(gate\.status, \{[^}]*message: gate\.message[^}]*\}\)/.test(src),
+    'api/llm.mjs forwards gate.message on the gate refusal');
+  check(src.indexOf('const sealed = sealedRouteFor(') < src.indexOf('if (!sealed && !gate.ok) return refuse('),
+    'and the seal is still asked before the gate refusal is sent — the order is untouched');
+}
+{
   // The ORDER is the point: a paused Tier-B matter must NOT be refused as a
   // tier violation, or lib/llm-sealed-route.mjs would substitute the sealed
   // pen and answer it.
