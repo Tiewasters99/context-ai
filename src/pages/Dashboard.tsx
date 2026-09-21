@@ -163,11 +163,14 @@ export default function Dashboard() {
         <h1 className="text-[22px] font-semibold text-[#f5f2ed] flex items-center gap-2.5">
           <DoorOpen size={21} className="text-[#e8b84a] shrink-0" strokeWidth={1.75} />
           {/* Nobody is "back" on their first visit, and this is the first
-              sentence of the product. The word returns as soon as the account
-              has anything of its own. */}
-          {firstRun.show && serverspaces.length === 0
-            ? FIRST_RUN_COPY.dashboard.greetingNew
-            : FIRST_RUN_COPY.dashboard.greetingReturning}
+              sentence of the product. "Welcome" is the default and "back" is
+              added once the account is known to have something of its own:
+              the word must never be on screen and then withdrawn, which is
+              what a `length === 0` test would do for the beat before the
+              serverspaces query lands. */}
+          {!loadingServerspaces && serverspaces.length > 0
+            ? FIRST_RUN_COPY.dashboard.greetingReturning
+            : FIRST_RUN_COPY.dashboard.greetingNew}
           {displayName}
         </h1>
         {!isMobile && (

@@ -20,6 +20,8 @@ import { defaultCoverFor, loadCoreCovers } from '@/lib/covers';
 import { FIRST_RUN_COPY } from '@/components/firstrun/copy';
 import {
   COMPLETION_KINDS,
+  MATTER_EVENTS_ONLY,
+  anyAiConnection,
   createFirstServerspace,
   defaultWorkspaceName,
   hasAnyMatter,
@@ -27,6 +29,7 @@ import {
   pickFirstServerspace,
   readDismissed,
   shouldShowFirstRun,
+  tokenIsLive,
   writeDismissed,
   type CreateOutcome,
   type DocketServerspace,
@@ -47,12 +50,26 @@ function browserStore() {
   }
 }
 
-/** One `limit(1)` read. A row → true, no row → false, an error → null (unknown). */
+/** One narrow read. A row → true, no row → false, an error → null (unknown). */
 async function peek(run: () => PromiseLike<{ data: unknown[] | null; error: unknown }>) {
   try {
     const { data, error } = await run();
     if (error) return null;
     return (data?.length ?? 0) > 0;
+  } catch {
+    return null;
+  }
+}
+
+/** The same read, but the rows are judged rather than counted. */
+async function peekWhere<T>(
+  run: () => PromiseLike<{ data: T[] | null; error: unknown }>,
+  keep: (row: T) => boolean,
+) {
+  try {
+    const { data, error } = await run();
+    if (error) return null;
+    return (data ?? []).some(keep);
   } catch {
     return null;
   }
@@ -106,13 +123,37 @@ export function useFirstRun(): FirstRunState {
     enabled: show && !!userId,
     staleTime: 60_000,
     queryFn: async () => {
-      const [document, completion, ledger, grant] = await Promise.all([
+      const now = Date.now();
+      const [document, completion, ledger, grant, token] = await Promise.all([
         peek(() => supabase.from('documents').select('id').limit(1)),
-        peek(() => supabase.from('events').select('id').in('kind', COMPLETION_KINDS).limit(1)),
-        peek(() => supabase.from('events').select('id').limit(1)),
+        // Both `events` reads exclude the account chain (migration 072), whose
+        // rows belong to no matter — otherwise registering a connector would
+        // tick "a matter's Record has an entry", which would be false.
+        peek(() =>
+          supabase
+            .from('events')
+            .select('id')
+            .not(MATTER_EVENTS_ONLY.column, MATTER_EVENTS_ONLY.operator, MATTER_EVENTS_ONLY.value)
+            .in('kind', COMPLETION_KINDS)
+            .limit(1),
+        ),
+        peek(() =>
+          supabase
+            .from('events')
+            .select('id')
+            .not(MATTER_EVENTS_ONLY.column, MATTER_EVENTS_ONLY.operator, MATTER_EVENTS_ONLY.value)
+            .limit(1),
+        ),
         peek(() => supabase.from('oauth_grants').select('id').is('revoked_at', null).limit(1)),
+        // The Claude path leaves no grant, only a token — and an expired one
+        // is not a connection, so the rows are judged by the same rule the
+        // Connections page applies rather than merely counted.
+        peekWhere(
+          () => supabase.from('connector_tokens').select('revoked_at, expires_at').limit(50),
+          (row) => tokenIsLive(row, now),
+        ),
       ]);
-      return { document, completion, ledger, grant };
+      return { document, completion, ledger, grant, token };
     },
   });
 
@@ -123,7 +164,7 @@ export function useFirstRun(): FirstRunState {
       hasDocument: remote?.document ?? null,
       hasAssistantRun: remote?.completion ?? null,
       hasRecordEntry: remote?.ledger ?? null,
-      hasAiConnection: remote?.grant ?? null,
+      hasAiConnection: remote ? anyAiConnection(remote.grant, remote.token) : null,
     }),
     [hasServerspace, hasMatter, remote],
   );

@@ -24,10 +24,12 @@ import {
   COMPLETION_KINDS,
   CONNECTIONS_PATH,
   FIRST_RUN_DISMISS_PREFIX,
+  MATTER_EVENTS_ONLY,
   MAX_WORKSPACE_NAME,
   RECORD_TAB,
   STEP_IDS,
   UNKNOWN_FACTS,
+  anyAiConnection,
   createFirstServerspace,
   defaultWorkspaceName,
   dismissKey,
@@ -39,6 +41,7 @@ import {
   shouldShowFirstRun,
   stepDone,
   stepReady,
+  tokenIsLive,
   vaultPathFor,
   writeDismissed,
 } from '../src/components/firstrun/first-run.ts';
@@ -345,6 +348,54 @@ test('the ledger kinds a model call actually writes', () => {
   for (const kind of COMPLETION_KINDS) {
     assert.ok(describe.includes(`case '${kind}'`), `${kind} is no longer a ledger event kind`);
   }
+  // Step 4's own button drives the Assistant, which writes completion.received
+  // when the answer lands; a FEATURE call through /api/llm opens with
+  // completion.requested. Both, or the tick is unreachable from the action.
+  assert.ok(COMPLETION_KINDS.includes('completion.received'));
+  assert.match(src('lib/assistant-core.mjs'), /kind: 'completion\.received'/);
+  assert.match(src('lib/llm-record.mjs'), /kind: 'completion\.requested'/);
+});
+
+test('the Record ticks exclude the account chain, which belongs to no matter', () => {
+  // Migration 072 added rows whose matterspace_id is null. Step 6's hover text
+  // says "A matter's Record has at least one entry"; without this filter,
+  // registering a connector would make that sentence false.
+  assert.deepEqual({ ...MATTER_EVENTS_ONLY }, { column: 'matterspace_id', operator: 'is', value: null });
+  assert.match(
+    src('supabase/migrations/072_account_chain_and_session_immutability.sql'),
+    /account row\s+matterspace_id null/,
+  );
+  const hook = src('src/hooks/useFirstRun.ts');
+  // Both events reads, not one.
+  const guarded = hook.match(/\.not\(MATTER_EVENTS_ONLY\.column/g) ?? [];
+  assert.equal(guarded.length, 2, 'both events reads must exclude the account chain');
+});
+
+test('either way of connecting an outside AI counts, and only "unreadable" is unknown', () => {
+  // ChatGPT and anything over OAuth leaves an oauth_grants row; a Claude
+  // connection made with a pasted token leaves only a connector_tokens row.
+  assert.equal(anyAiConnection(true, false), true);
+  assert.equal(anyAiConnection(false, true), true);
+  assert.equal(anyAiConnection(true, null), true);
+  assert.equal(anyAiConnection(null, true), true);
+  assert.equal(anyAiConnection(false, false), false);
+  // One table answering "no" is still a "no" that was genuinely read.
+  assert.equal(anyAiConnection(false, null), false);
+  assert.equal(anyAiConnection(null, false), false);
+  // Only when neither could be read is the answer unknown — no tick.
+  assert.equal(anyAiConnection(null, null), null);
+  assert.match(src('src/hooks/useFirstRun.ts'), /from\('connector_tokens'\)/);
+});
+
+test('an expired or revoked token is not a connection — the Connections page\'s own rule', () => {
+  const now = Date.UTC(2026, 8, 21);
+  const iso = (ms) => new Date(ms).toISOString();
+  assert.equal(tokenIsLive({ revoked_at: null, expires_at: null }, now), true);
+  assert.equal(tokenIsLive({ revoked_at: null, expires_at: iso(now + 86_400_000) }, now), true);
+  assert.equal(tokenIsLive({ revoked_at: null, expires_at: iso(now - 1) }, now), false);
+  assert.equal(tokenIsLive({ revoked_at: iso(now - 1), expires_at: null }, now), false);
+  // The page and the docket must not disagree about who is connected.
+  assert.match(src('src/pages/Connections.tsx'), /!t\.revoked_at &&/);
 });
 
 // ---------------------------------------------------------------------------
@@ -543,8 +594,9 @@ test('a double-click cannot reach the database twice', () => {
 test('the Dashboard shows the docket and defers its three empty places to it', () => {
   const dash = src('src/pages/Dashboard.tsx');
   assert.match(dash, /<FirstRunDocket state=\{firstRun\} \/>/);
-  // The greeting drops "back" for someone who has never been here.
-  assert.match(dash, /firstRun\.show && serverspaces\.length === 0\s*\n?\s*\? FIRST_RUN_COPY\.dashboard\.greetingNew/);
+  // "Welcome" is the default; "back" is only added once the account is KNOWN
+  // to have something of its own, so the word is never withdrawn mid-read.
+  assert.match(dash, /!loadingServerspaces && serverspaces\.length > 0\s*\n?\s*\? FIRST_RUN_COPY\.dashboard\.greetingReturning/);
   // The serverspaces panel stops repeating the instruction the docket gives.
   assert.match(dash, /serverspaces\.length === 0 && firstRun\.show/);
   assert.match(dash, /serverspaces\.length === 0 && !firstRun\.show/);

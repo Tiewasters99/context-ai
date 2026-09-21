@@ -421,5 +421,52 @@ export function recordPathFor(target: FirstRunTarget): string {
 
 export const CONNECTIONS_PATH = '/app/connections';
 
-/** The kinds on `events` that mean a model was actually asked something. */
+/**
+ * The kinds on `events` that mean a model was actually asked something.
+ *
+ * Both, because the two paths write different ones: a FEATURE call through
+ * `/api/llm` opens with `completion.requested` (lib/llm-record.mjs), while the
+ * Assistant itself writes `completion.received` when the answer lands
+ * (lib/assistant-core.mjs). Step 4's own button drives the second, so its tick
+ * is reachable from its own action.
+ */
 export const COMPLETION_KINDS: readonly string[] = ['completion.requested', 'completion.received'];
+
+/**
+ * `events` also carries ACCOUNT-chain rows, which have no matter at all
+ * (migration 072: "account row — matterspace_id null, serverspace_id null").
+ * Step 6's mark says "A matter's Record has at least one entry", so the reads
+ * behind it must exclude those rows or the mark would be false the moment a
+ * connector was registered.
+ */
+export const MATTER_EVENTS_ONLY = { column: 'matterspace_id', operator: 'is', value: null } as const;
+
+/**
+ * Is a connector token live? The same rule `Connections.tsx` applies, because
+ * the two must not disagree about whether an account is connected.
+ */
+export function tokenIsLive(
+  row: { revoked_at?: string | null; expires_at?: string | null },
+  now: number,
+): boolean {
+  if (row.revoked_at) return false;
+  return !row.expires_at || new Date(row.expires_at).getTime() > now;
+}
+
+/**
+ * Step 5 is done if EITHER signal says so, because the two AI-connection paths
+ * are recorded differently: ChatGPT (and anything that signs in over OAuth)
+ * leaves an `oauth_grants` row, while a Claude connection made with a pasted
+ * token leaves only a `connector_tokens` row — "the only readable signal" for
+ * that path (Connections.tsx). Unknown only when NEITHER could be read: one
+ * table answering "no" while the other is unreadable is still a "no" that was
+ * genuinely read, and a false tick is worse than a missing one.
+ */
+export function anyAiConnection(
+  grants: boolean | null,
+  tokens: boolean | null,
+): boolean | null {
+  if (grants === true || tokens === true) return true;
+  if (grants === null && tokens === null) return null;
+  return false;
+}
