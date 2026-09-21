@@ -5,6 +5,11 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import llmProxy from './vite-claude-proxy'
 import pdfjsAssets from './vite-pdfjs-assets'
+import appVersion, { resolveBuildId } from './vite-app-version'
+
+// Computed once, here, so the id compiled into the bundle and the id written
+// to /version.json cannot drift apart.
+const BUILD_ID = resolveBuildId()
 
 // The Reading Room answers at /read/<book>. In production vercel.json
 // rewrites that to reader.html; this does the same under vite dev, so the
@@ -28,7 +33,7 @@ export default defineConfig(({ mode }) => {
   Object.assign(process.env, env);
 
   return {
-    plugins: [react(), tailwindcss(), llmProxy(), pdfjsAssets(), readingRoomRoute()],
+    plugins: [react(), tailwindcss(), llmProxy(), pdfjsAssets(), readingRoomRoute(), appVersion(BUILD_ID)],
     build: {
       rolldownOptions: {
         // Two doors: the workspace, and the Reader standing on its own.
