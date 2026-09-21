@@ -24,6 +24,9 @@ export function DirectionBadge({ direction }: { direction: ProductionDirection }
 const STATUS_COLOR: Record<ProductionStatus, string> = {
   intake: '#7e7a72',
   processing: '#fbbf24',
+  // Parked by the seal or the pause (071). Amber, not red: nothing failed,
+  // and nothing is lost — releasing the hold puts the work back in the queue.
+  held: '#e8b84a',
   review: '#7dd3fc',
   stamped: '#d4a054',
   packaged: '#a78bfa',

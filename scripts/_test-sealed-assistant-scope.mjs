@@ -471,6 +471,25 @@ test('the door is on the matter header and dispatches the scoped command', () =>
   assert.match(view, /<AskAssistantButton matterId=\{matter\.id\} matterName=\{matter\.name\} \/>/);
 });
 
+test('the charter editor names the same sealed pen as the Assistant', () => {
+  // src/lib/agent-charters.ts PEN_BY_TIER.B is what CharterEditor prints under
+  // "which model answers". It said "Kimi K3, US-hosted, zero data retention" —
+  // the Fireworks fallback PR #159 deleted — so an agent on a sealed matter
+  // advertised a pen that no longer exists, on infrastructure that is not ours.
+  const src = code('src/lib/agent-charters.ts');
+  assert.doesNotMatch(src, /Kimi K3/, 'agent-charters still names the deleted Fireworks pen');
+  assert.doesNotMatch(src, /US-hosted/, 'and still describes the seal as somebody else’s US hosting');
+  assert.match(src, new RegExp(SEALED_PEN_DEFAULT_LABEL), 'it names the pen that actually answers');
+  assert.match(src, /Bedrock/, 'and says where it runs');
+  assert.match(src, /own AWS account/, 'in whose account');
+  // The audit's line: zero retention is OUR account setting, and the sealed
+  // pen is never called Claude.
+  assert.match(src, /zero data retention/i);
+  const tierB = src.slice(src.indexOf('B: {'), src.indexOf('C: {'));
+  assert.doesNotMatch(tierB.split('detail:')[0], /Claude/,
+    'the Tier B pen is never labelled Claude');
+});
+
 test('no substring model-name guessing is left in the assistant lane', () => {
   for (const f of [
     'src/components/ai/Assistant.tsx',
