@@ -126,7 +126,10 @@ async function main() {
     fetchDocs(sb, matterId, (q) => q.in('processing_status', TRANSIENT).lt('updated_at', cutoff)),
     fetchStuckJobs(sb, cutoff),
     args['no-empty-check']
-      ? Promise.resolve({ rows: [], note: 'skipped (--no-empty-check)' })
+      // Skipping is the operator's explicit choice, so it stays green — the
+      // note says it was skipped. A check that FAILED is a different thing
+      // (degraded), and it is not green.
+      ? Promise.resolve({ rows: [], degraded: false, note: 'skipped (--no-empty-check)' })
       : fetchReadyEmpty(sb, matterId),
     fetchOcrPending(sb, matterId),
   ]);
@@ -157,13 +160,19 @@ async function main() {
   const escalate = report.groups.filter((g) => !MUTED.reasons.includes(g.cls));
   const escalatedClasses = new Set(escalate.map((g) => g.cls));
   const escalatedRows = rows.filter((r) => escalatedClasses.has(r.cls));
-  const needsAttention = escalate.some((g) => g.severity === 'blocking') || jobs.length > 0 || workers.down;
+  // A check that did not run is not a pass. Until 2026-09-20 a timed-out
+  // ready-but-empty check left `rows: []`, so the digest printed "All
+  // documents are ready" and exited 0 with the question unanswered — the same
+  // silent-success shape as the scans this monitor was built after.
+  const needsAttention = escalate.some((g) => g.severity === 'blocking') || jobs.length > 0 || workers.down
+    || readyEmpty.degraded;
 
   if (QUIET && !needsAttention && report.total === 0) process.exit(0);
 
   const text = render({
     report, escalate, escalatedRows, jobs, matter: args.matter,
-    staleMin: STALE_MIN, emptyNote: readyEmpty.note, allowed: parseFilenameOwners(), workers,
+    staleMin: STALE_MIN, emptyNote: readyEmpty.note, emptyDegraded: readyEmpty.degraded,
+    allowed: parseFilenameOwners(), workers,
   });
   if (!QUIET || needsAttention) console.log(text);
 
@@ -173,7 +182,7 @@ async function main() {
   // only signal Task Scheduler keeps. Found 2026-09-04: Gmail refused the app
   // password ("534-5.7.9 Please log in with your web browser") and every
   // scheduled run would have reported 2 with the real answer thrown away.
-  const alert = alertHeadline({ workers, stalledCount: stalled.length, staleMin: STALE_MIN });
+  const alert = alertHeadline({ workers, stalledCount: stalled.length, staleMin: STALE_MIN, emptyDegraded: readyEmpty.degraded });
   if (args.email && (needsAttention || !QUIET)) {
     try { await emailDigest(text, needsAttention, alert); }
     catch (e) { console.error(`(--email failed: ${String(e.message || e).split('\n')[0]} — digest printed above, not sent)`); }
@@ -265,7 +274,7 @@ async function fetchStuckJobs(sb, cutoff) {
 // lives here, next to the extension lists. Degrades gracefully when 059 has
 // not been pasted — a watchdog that dies on a missing dependency protects
 // nothing.
-async function fetchReadyEmpty(sb, matterId) {
+export async function fetchReadyEmpty(sb, matterId) {
   // PostgREST caps ANY response — a set-returning RPC included — at 1,000 rows,
   // and it truncates SILENTLY. The first live run of this check reported
   // exactly 1,000 empty documents out of ~4,000 and looked healthy doing it —
@@ -273,19 +282,41 @@ async function fetchReadyEmpty(sb, matterId) {
   // page; .order() makes the walk stable across pages.
   const rows = [];
   for (let from = 0; ; from += 1000) {
-    const { data, error } = await sb.rpc('ready_but_empty')
-      .order('document_id')
-      .range(from, from + 999);
+    // A statement timeout here is not an answer. The RPC sits near the 8s
+    // ceiling at ~46k documents (it ran at 17:44Z on 2026-09-20 and timed out
+    // at 19:35Z), and a timeout is usually load, not a broken query — so try
+    // again before giving up. Migration 081 makes the query cheap; this keeps
+    // a slow minute from costing the check.
+    let data; let error;
+    for (let attempt = 1; ; attempt++) {
+      ({ data, error } = await sb.rpc('ready_but_empty').order('document_id').range(from, from + 999));
+      if (!error || attempt >= 3 || !isTransient(error.message)) break;
+      await new Promise((r) => setTimeout(r, attempt * 3000));
+    }
     if (error) {
       const missing = /could not find|does not exist|PGRST202|404/i.test(error.message);
-      return { rows: [], note: missing ? 'unavailable — paste migration 059' : `failed: ${error.message}` };
+      // Either way the check did not run, so this monitor CANNOT say the
+      // corpus is healthy: 'ready with zero passages' is precisely the class
+      // it exists to catch. `degraded` makes the run not-green instead of
+      // letting an unanswered question read as an all-clear (2026-09-20).
+      return {
+        rows: [],
+        degraded: true,
+        note: missing ? 'unavailable — paste migration 059' : `failed: ${error.message}`,
+      };
     }
     rows.push(...(data || []));
     if (!data || data.length < 1000) break;
   }
   const scoped = rows.filter((d) => !matterId || d.matterspace_id === matterId);
   await attachTextStatus(sb, scoped);
-  return { rows: scoped, note: null };
+  return { rows: scoped, degraded: false, note: null };
+}
+
+// Worth another try: load, a cancelled statement, a dropped connection.
+// Not a missing function, not a permission refusal.
+export function isTransient(message) {
+  return /statement timeout|canceling statement|57014|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|timeout/i.test(String(message || ''));
 }
 
 // The 059 RPC returns the raw fact (ready, zero passages) and nothing about
@@ -461,7 +492,7 @@ export function ownerCounts(rows) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
 }
 
-export function render({ report, escalate, escalatedRows = [], jobs, matter, staleMin, emptyNote, allowed = new Set(), workers = null }) {
+export function render({ report, escalate, escalatedRows = [], jobs, matter, staleMin, emptyNote, emptyDegraded = false, allowed = new Set(), workers = null }) {
   const L = [];
   const scope = matter ? `matter "${matter}"` : 'all matters';
   L.push(`Contextspaces ingestion health — ${scope}`);
@@ -500,11 +531,27 @@ export function render({ report, escalate, escalatedRows = [], jobs, matter, sta
   // classes are still COUNTED, but they no longer masquerade as health.
   const escalatedTotal = escalate.reduce((s, g) => s + g.count, 0);
   if (escalatedTotal === 0 && jobs.length === 0) {
-    L.push('All documents are ready, and every text-bearing document is searchable.');
+    // Nothing escalated — but say so only if the check that finds the
+    // silent class actually ran. Otherwise the honest headline is "I could
+    // not look", and the run is not green.
+    if (emptyDegraded) {
+      L.push('NOT GREEN — health could not be established this run.');
+      L.push(`The ready-but-empty check ${emptyNote}, so documents that are 'ready' with zero passages`);
+      L.push('(a scan nobody read, an upload that indexed nothing) could not be seen. Nothing below rules them out.');
+      L.push('');
+      L.push('Re-run the monitor; if it keeps timing out, ready_but_empty() needs migration 081 (it makes the query cheap).');
+      L.push('');
+    } else {
+      L.push('All documents are ready, and every text-bearing document is searchable.');
+    }
     const mutedG = report.groups.filter((g) => MUTED.reasons.includes(g.cls));
     if (mutedG.length) L.push('Known-benign: ' + mutedG.map((g) => `${g.label} ×${g.count}`).join(', '));
-    if (emptyNote) L.push(`(ready-but-empty check ${emptyNote})`);
+    if (emptyNote && !emptyDegraded) L.push(`(ready-but-empty check ${emptyNote})`);
     return L.join('\n');
+  }
+  if (emptyDegraded) {
+    L.push(`NOT GREEN — the ready-but-empty check ${emptyNote}; ready-with-zero-passages documents are NOT covered by the counts below.`);
+    L.push('');
   }
 
   L.push(`${escalatedTotal} document(s) not searchable${report.total > escalatedTotal ? ` (+${report.total - escalatedTotal} known-benign)` : ''}.`);
@@ -568,7 +615,8 @@ export function render({ report, escalate, escalatedRows = [], jobs, matter, sta
 // whole fact. Unset, everything goes where it goes today. Comma-separated for
 // more than one. Routine digests never go to this list — an alert channel that
 // carries routine traffic is an alert channel that gets muted.
-export function alertHeadline({ workers, stalledCount, staleMin }) {
+export function alertHeadline({ workers, stalledCount, staleMin, emptyDegraded = false }) {
+  if (emptyDegraded) return 'ready-but-empty check did NOT run — health unverified';
   if (workers && workers.available && workers.down) {
     const newest = workers.rows[0];
     const mins = newest ? Math.round((Date.now() - Date.parse(newest.last_beat_at)) / 60_000) : null;
