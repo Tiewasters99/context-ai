@@ -511,4 +511,178 @@ const printedOf = (passages) => [...new Set(passages.map((p) => p.metadata?.prin
   ok('the audit reports the mapping, the confidence and how many cites would change — offline, ids and numbers only');
 }
 
+// =============================================================================
+// PART 3 — the number the reporter printed is not a line
+//
+// A connector search on 2026-09-21 returned, from a deposition in the demo
+// record, a passage cited "35:35-7": page 35, lines 35 through 7. A transcript
+// page has 25 lines, line 35 does not exist, and an end before the start is
+// nonsense. The passage text began "1  A. It did…" — the reporter's own line
+// number sitting INSIDE the testimony.
+//
+// One cause for both halves. The page number the reporter prints in the
+// running header is a 1-2 digit token alone on its line, shaped exactly like a
+// line number; read as one it becomes "line 35" on a 25-line page. Under the
+// pre-2026-09-10 gap (`\s{1,6}`, which crossed the newline) it also swallowed
+// the first real line and carried its "1" into the text. That gap was fixed by
+// PR #138 — the cite above was indexed before it — but the header itself was
+// still read as a line, and it is the same mistake PR #205 §8 recorded for
+// pages with no numbers in the text layer. Nothing above the line-number
+// column is a line: that is now read once, in lineColumnBounds.
+//
+// Fixtures are invented. No transcript from any matter is copied into this repo.
+// =============================================================================
+
+// A reporter's page as a PDF text layer emits it: running header, date, the
+// printed page number alone on its line, then the numbered column.
+const LINES_PER_PAGE = 25;
+const depoPage = (printed, lines) => {
+  assert.strictEqual(lines.length, LINES_PER_PAGE, `a reporter's page holds ${LINES_PER_PAGE} lines`);
+  return [
+    'MARGUERITE OYELARAN -- Vol. I',
+    'March 3, 2026',
+    String(printed),
+    ...lines.map((t, i) => `${String(i + 1).padStart(2, ' ')}${t ? '  ' + t : ''}`),
+    'Quainton Reporting Services -- INVENTED FIXTURE',
+  ].join('\n');
+};
+
+const P34 = [
+  'Q. When did you first see the revised specification?',
+  'A. In the first week of February.',
+  '',
+  'Q. Who gave it to you?',
+  'A. It came around on the distribution list.',
+  '',
+  'Q. Did you read it that week?',
+  'A. I read the parts that touched procurement.',
+  '',
+  'Q. Which parts were those?',
+  'A. Seven and eight, and the tables at the back.',
+  '',
+  'Q. Did section 7.3 change?',
+  'A. No. Section 7.3 stayed the same.',
+  '',
+  'Q. You are certain of that?',
+  'A. I am certain of that.',
+  '',
+  'Q. Are you familiar with Revision C?',
+  'A. I know there was a Revision C in March.',
+  '',
+  'Q. Did Revision C change anything you bought to?',
+  'A. No. The alloy stayed the same.',
+  'Q. So the specification still called for the same alloy in',
+  'March of that year.',
+];
+const P35 = [
+  'A. It did. And it still did in May, and it still did the',
+  'following March. No one ever revised 7.3.',
+  'Q. The change order superseded it?',
+  'A. A change order is a deviation from the specification.',
+  'That is what a change order is.',
+  '',
+  'Q. Was the specification ever revised to reflect it?',
+  'A. Not that I have seen.',
+  '',
+  'Q. Would a reader of the specification know?',
+  'A. They would have to go and find the change order.',
+  '',
+  'Q. Where would they find it?',
+  'A. In the change order log.',
+  '',
+  'Q. Would they know to look?',
+  'A. They would have to know that one existed.',
+  '',
+  'Q. Did you tell anyone?',
+  'A. I told my project manager.',
+  '',
+  'Q. When?',
+  'A. The same week.',
+  'Q. In writing?',
+  'A. In writing, yes.',
+];
+// The pages around them: the same testimony rotated, so the run of printed
+// numbers is long enough for the detector to fit (it wants six).
+const rot = (body, k) => [...body.slice(k), ...body.slice(0, k)];
+
+{
+  const pages = [31, 32, 33, 34, 35, 36, 37, 38].map((n2) => ({
+    pageNumber: n2,
+    text: depoPage(n2, n2 === 34 ? P34 : n2 === 35 ? P35 : rot(n2 % 2 ? P34 : P35, n2 % 5)),
+  }));
+  const report = {};
+  const ps = chunkPages(pages, { report });
+  const lined = ps.filter((p) => p.line_start != null);
+  assert(lined.length >= 8, `the four pages are read as transcript (${lined.length} located passages)`);
+
+  const impossible = lined.filter((p) => p.line_start < 1 || p.line_start > 25 || p.line_end < 1 || p.line_end > 25);
+  assert.deepStrictEqual(impossible.map((p) => `${p.page_start}:${p.line_start}-${p.line_end}`), [],
+    'no line number outside the 25 lines of a page');
+  const backwards = lined.filter((p) => p.page_start === p.page_end && p.line_end < p.line_start);
+  assert.deepStrictEqual(backwards.map((p) => `${p.page_start}:${p.line_start}-${p.line_end}`), [],
+    'no citation ends before it starts');
+  const leaked = ps.filter((p) => /^\s*\d{1,2}[ \t]{1,6}\S/.test(p.text));
+  assert.deepStrictEqual(leaked.map((p) => p.text.slice(0, 40)), [],
+    'no line-number token is left inside a passage');
+  assert(!ps.some((p) => /^3[3-6]$/m.test(p.text.trim())), 'the printed page number is not testimony');
+
+  const p35 = lined.filter((p) => p.page_start === 35);
+  assert.strictEqual(p35[0].line_start, 1, `the answer at the top of p. 35 is line 1, not line 35 (${p35[0].line_start})`);
+  assert.match(p35[0].text, /^A\. It did\./, `and its text is the answer, not "1  A. It did…" (${JSON.stringify(p35[0].text.slice(0, 24))})`);
+  assert(p35[0].line_end >= 2 && p35[0].line_end <= 25, `ending inside the page (${p35[0].line_end})`);
+  const p34 = lined.filter((p) => p.page_start === 34);
+  assert.strictEqual(p34[p34.length - 1].line_end, 25, 'the question it answers runs to the foot of p. 34');
+  ok(`the page-number header is not a line: p. 34 ends at 34:25 and p. 35 opens at 35:1-${p35[0].line_end} (was "35:35-7")`);
+
+  // The page reader and the line reader now share one boundary. Reading the
+  // header out of the line column must not blind the detector to it.
+  assert.strictEqual(report.printedPages.claimed, true, 'the printed page is still read from that same header');
+  assert.strictEqual(p35[0].metadata?.printed_page, 35, `and the cite carries it (${JSON.stringify(p35[0].metadata)})`);
+  ok('the printed-page detector still reads the header the line reader ignores');
+}
+
+{
+  // Same page, from a text layer that sets the header number on the same
+  // baseline as the first line and welds them: "35  1  A. It did…". The line is
+  // testimony and must survive with its own number.
+  const welded = depoPage(35, P35).replace('35\n 1  A. It did.', '35  1  A. It did.');
+  assert(/^35 {2}1 {2}A\./m.test(welded), 'the fixture really is welded');
+  const ps = chunkPages([{ pageNumber: 35, text: welded }]).filter((p) => p.line_start != null);
+  assert.strictEqual(ps[0].line_start, 1, `the welded line is line 1 (${ps[0].line_start})`);
+  assert.match(ps[0].text, /^A\. It did\./, `carrying its own text (${JSON.stringify(ps[0].text.slice(0, 24))})`);
+  assert(ps.every((p) => p.line_start >= 1 && p.line_end <= 25), 'and the rest of the page is unmoved');
+  ok('a header welded to the first line keeps the testimony and drops the page number');
+}
+
+{
+  // The same header on a page with NO numbers in the text layer — the case
+  // PR #205 §8 recorded and did not fix: the bare "35" was counted as text
+  // line 1 and every inferred cite on the page sat one line low.
+  const body = [
+    'Q. Was the specification ever revised to reflect it?',
+    'A. Not that I have seen.',
+    'Q. Would a reader of the specification know?',
+    'A. They would have to go and find the change order.',
+    'Q. Where would they find it?',
+    'A. In the change order log, and in document control.',
+    'Q. Would they know to look?',
+    'A. They would have to know that one existed.',
+    'Q. Did you tell anyone?',
+    'A. I told my project manager the same week.',
+    'Q. In writing?',
+    'A. In writing, yes.',
+    'Q. Did he answer?',
+    'A. He said he would raise it.',
+    'Q. Did he?',
+    'A. I never saw anything come back.',
+  ];
+  const inferredPage = ['35', ...body].join('\n');
+  const ps = chunkPages([{ pageNumber: 35, text: inferredPage }]).filter((p) => p.line_start != null);
+  assert(ps.length >= 1 && ps[0].metadata?.line_numbers === 'inferred', 'the page is read with inferred line numbers');
+  assert.strictEqual(ps[0].line_start, 1, `the first question is line 1, not line 2 (${ps[0].line_start})`);
+  assert.match(ps[0].text, /^Q\. Was the specification/, 'and the page number is not the first line of testimony');
+  assert(!ps.some((p) => /(^|\n)35(\n|$)/.test(p.text)), 'the page number is nowhere in the text');
+  ok('inferred line numbers no longer count the page-number header as line 1 (PR #205 §8)');
+}
+
 console.log(`\nPASS (${n} checks)`);
