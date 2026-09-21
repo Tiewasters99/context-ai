@@ -154,6 +154,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-scope-router.mjs
 
+      # 078 moves the access check out of the per-row policy and into the
+      # wrapper, which means the search itself runs SECURITY DEFINER. A harness
+      # running as the superuser could not tell that apart from a data leak, so
+      # this one creates `anon` / `authenticated` / `service_role` for real,
+      # enables RLS with the real policy function, and does every assertion
+      # from inside SET ROLE with request.jwt.claims set the way PostgREST sets
+      # it. The reference is 074 UNDER RLS, and the negative control deletes
+      # the wrapper's reduction and watches the forbidden matter come back.
+      - name: Migration 078 — authorize once per matter, not once per passage (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-rls-authorize.mjs
+
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-profiles-rls.mjs
