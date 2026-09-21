@@ -342,3 +342,13 @@ jobs:
       - name: Connector — the Claude Code command, character for character
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-claude-code-command.mjs
+
+      # A tab left open across a deploy. Both halves of the build id (the
+      # constant compiled into the bundle, the one written to /version.json),
+      # when the line shows and when it stays quiet, the stale-chunk net, and
+      # the assertion that neither main.tsx nor the Editor reloads the tab on
+      # its own any more. Offline: fetch is a local function that counts its
+      # own calls, `window` is a bare EventTarget.
+      - name: Version notice — a stale tab is told, never reloaded
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-app-version.mjs
