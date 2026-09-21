@@ -59,11 +59,27 @@ export default function ProducePanel({
         {(production.status === 'packaged' || production.status === 'delivered') && (
           <DeliveryStep production={production} />
         )}
-        {production.status === 'error' && (
-          <p className="text-[11.5px] text-red-300">
-            The last worker job failed — check the job log on the Discovery home, fix the cause,
-            and re-run.
+        {/* Migration 071 (F5): an intake parked by the seal or the AI pause.
+            Before this branch existed the panel rendered nothing at all for a
+            held production — no status, no reason, no next step. */}
+        {production.status === 'held' && (
+          <p className="text-[11.5px] text-amber-300 leading-relaxed">
+            {production.status_reason
+              ?? 'This production is held. Nothing was lost — releasing the hold puts it back in the queue.'}
           </p>
+        )}
+        {production.status === 'error' && (
+          <>
+            <p className="text-[11.5px] text-red-300">
+              The last worker job failed — check the job log on the Discovery home, fix the cause,
+              and re-run.
+            </p>
+            {production.status_reason && (
+              <p className="text-[11.5px] text-red-300/80 leading-relaxed mt-1.5">
+                {production.status_reason}
+              </p>
+            )}
+          </>
         )}
       </div>
     </FloatingPanel>

@@ -179,6 +179,13 @@ export interface MatterRecordDoc {
    * nothing about any other matter, because nothing it is counted from does.
    */
   accountWideReads: number;
+  /**
+   * How many of those were made by a CONNECTED ASSISTANT, from the row's own
+   * recorded actor kind. The fan-out in 072 is not the connector's alone — the
+   * in-app assistant's own global search takes the same path — so the export
+   * has to say which, and cannot call them all connectors.
+   */
+  accountWideByConnector: number;
   access: LineRow[];
   exports: LineRow[];
   citeRuns: CiteRunRow[];
@@ -776,6 +783,9 @@ export function assembleMatterRecord(
     // over the period those rows cover. Never from another matter's chain,
     // and never from the account chain — see docs/THE_MATTER_RECORD.md.
     accountWideReads: events.filter((e) => isAccountWideRead(e)).length,
+    accountWideByConnector: events.filter(
+      (e) => isAccountWideRead(e) && e.actor_kind === 'connector',
+    ).length,
     access: events.filter((e) => ACCESS_KINDS.has(e.kind)).map((e) => toLine(e, people)),
     exports: events.filter((e) => EXPORT_KINDS.has(e.kind)).map((e) => toLine(e, people)),
     citeRuns,
