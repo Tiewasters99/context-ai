@@ -12,6 +12,9 @@ import UpcomingDeadlines from '@/components/activity/UpcomingDeadlines';
 import { canOpenSurface, type SurfaceId } from '@/lib/plan';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
+import FirstRunDocket from '@/components/firstrun/FirstRunDocket';
+import { FIRST_RUN_COPY } from '@/components/firstrun/copy';
+import { useFirstRun } from '@/hooks/useFirstRun';
 
 // `surface` is the entry in lib/plan.ts that decides who sees the action.
 // Creating a serverspace is the one onboarding step in the product, so it is
@@ -35,6 +38,14 @@ export default function Dashboard() {
   // Shared query — same cache as the sidebar. Mutations from either view
   // invalidate and both refetch.
   const { data: serverspaces = [], isLoading: loadingServerspaces } = useServerspaces();
+
+  // The first five minutes of a brand-new account. `firstRun.show` is the one
+  // switch: while it is true the three empty places on this page — the
+  // greeting, the serverspaces panel and the deadlines section — defer to the
+  // docket instead of each saying nothing separately. It is false for the
+  // workshop plan, false once dismissed, and false while the plan or the
+  // serverspaces list is still being read.
+  const firstRun = useFirstRun();
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
@@ -151,7 +162,13 @@ export default function Dashboard() {
         </div>
         <h1 className="text-[22px] font-semibold text-[#f5f2ed] flex items-center gap-2.5">
           <DoorOpen size={21} className="text-[#e8b84a] shrink-0" strokeWidth={1.75} />
-          Welcome back, {displayName}
+          {/* Nobody is "back" on their first visit, and this is the first
+              sentence of the product. The word returns as soon as the account
+              has anything of its own. */}
+          {firstRun.show && serverspaces.length === 0
+            ? FIRST_RUN_COPY.dashboard.greetingNew
+            : FIRST_RUN_COPY.dashboard.greetingReturning}
+          {displayName}
         </h1>
         {!isMobile && (
           <p className="text-[12px] text-white/55 mt-1">Drag to move · right-click to pin · double-click to release.</p>
@@ -175,6 +192,10 @@ export default function Dashboard() {
           </span>
         </button>
 
+        {/* What to do first — only while the account is new and the list has
+            not been dismissed. Renders nothing otherwise. */}
+        <FirstRunDocket state={firstRun} />
+
         {/* Serverspaces Explorer */}
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">Serverspaces</h2>
@@ -182,7 +203,18 @@ export default function Dashboard() {
             {loadingServerspaces && (
               <div className="px-4 py-3 text-[12px] text-[#8a8693]">Loading serverspaces…</div>
             )}
-            {!loadingServerspaces && serverspaces.length === 0 && (
+            {/* Two empties, not one. With the docket above, this panel is the
+                place the first step's result will land and says so — repeating
+                "create one to get started" here would be the same instruction
+                twice and would read as a second, separate void. Once the
+                docket is dismissed (or the account is workshop) the original
+                line comes back, because then it is the only invitation left. */}
+            {!loadingServerspaces && serverspaces.length === 0 && firstRun.show && (
+              <div className="px-4 py-3 text-[12px] text-[#8a8693]">
+                {FIRST_RUN_COPY.dashboard.serverspacesEmptyWithDocket}
+              </div>
+            )}
+            {!loadingServerspaces && serverspaces.length === 0 && !firstRun.show && (
               <div className="px-4 py-3 text-[12px] text-[#8a8693]">
                 No serverspaces yet.{' '}
                 <button
@@ -271,27 +303,42 @@ export default function Dashboard() {
             component (components/docket) and the feed (a matter's Updates
             tab) remain. Do not put them back here without asking. */}
 
-        {/* Upcoming deadlines across all matters */}
-        <section className="mt-8">
-          <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">
-            Upcoming deadlines
-          </h2>
-          <UpcomingDeadlines matterNames={matterNames} />
-        </section>
+        {/* Upcoming deadlines across all matters.
+            An account with no matter cannot have a deadline, so on a brand-new
+            account this section could only ever be a third empty heading under
+            two others. It is left out entirely until there is a matter for a
+            deadline to belong to; the docket's closing line is what mentions
+            deadlines in the meantime. Nothing is hidden from an account that
+            has matters — including one whose calendar happens to be clear,
+            where "Nothing ahead" is a fact worth reading. */}
+        {!(firstRun.show && !firstRun.facts.hasMatter) && (
+          <section className="mt-8">
+            <h2 className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-3">
+              Upcoming deadlines
+            </h2>
+            <UpcomingDeadlines matterNames={matterNames} />
+          </section>
+        )}
 
+        {/* The one quick action is step 1 of the docket. While the docket is
+            showing it to an account that has no serverspace, this is the same
+            button twice. */}
         <div className="grid grid-cols-1 gap-3 mt-10">
-          {quickActions.filter((a) => canOpenSurface(a.surface, plan)).map((a) => (
-            <button
-              key={a.label}
-              onClick={() => { if (a.action === 'new-serverspace') setShowNewServerspace(true); }}
-              className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.14)] hover:border-[rgba(255,255,255,0.22)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
-            >
-              <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
-                <a.icon size={15} className="text-[#d4a054]" strokeWidth={1.75} />
-              </div>
-              <span className="text-[13px] font-medium text-[#f5f1e8]">{a.label}</span>
-            </button>
-          ))}
+          {quickActions
+            .filter((a) => canOpenSurface(a.surface, plan))
+            .filter(() => !(firstRun.show && serverspaces.length === 0))
+            .map((a) => (
+              <button
+                key={a.label}
+                onClick={() => { if (a.action === 'new-serverspace') setShowNewServerspace(true); }}
+                className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.14)] hover:border-[rgba(255,255,255,0.22)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
+              >
+                <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
+                  <a.icon size={15} className="text-[#d4a054]" strokeWidth={1.75} />
+                </div>
+                <span className="text-[13px] font-medium text-[#f5f1e8]">{a.label}</span>
+              </button>
+            ))}
         </div>
       </div>
 
