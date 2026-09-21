@@ -685,4 +685,27 @@ const rot = (body, k) => [...body.slice(k), ...body.slice(0, k)];
   ok('inferred line numbers no longer count the page-number header as line 1 (PR #205 §8)');
 }
 
+{
+  // CRLF. A PDF text layer has no carriage returns, but the reporter's "TXT
+  // FILE" copy produced on Windows does, and paginatePlainText keeps them. A
+  // line regex anchored with `$` matches before a `\r` when it is applied to
+  // the whole page with the `m` flag and does NOT when it is applied to a line
+  // that still ends in one, so the two readings have to be proved equal: a
+  // stray carriage return must not drop a transcript to prose.
+  const lf = [31, 32, 33, 34, 35, 36, 37, 38].map((n2) => ({
+    pageNumber: n2,
+    text: depoPage(n2, n2 === 34 ? P34 : n2 === 35 ? P35 : rot(n2 % 2 ? P34 : P35, n2 % 5)),
+  }));
+  const crlf = lf.map((p) => ({ ...p, text: p.text.replace(/\n/g, '\r\n') }));
+  const cite = (ps) => ps.map((p) => `${p.page_start}:${p.line_start}-${p.line_end}/${p.passage_type}/${p.metadata?.printed_page ?? '-'}`);
+  const rLf = {}, rCrlf = {};
+  const a = chunkPages(lf, { report: rLf });
+  const b = chunkPages(crlf, { report: rCrlf });
+  assert.deepStrictEqual(cite(b), cite(a), 'CRLF pages cite exactly what LF pages cite');
+  assert(a.every((p) => p.passage_type !== 'monologue'), 'and neither reading fell to prose');
+  assert.strictEqual(rCrlf.printedPages.claimed, rLf.printedPages.claimed, 'the printed page is read either way');
+  assert(!/\r/.test(b.map((p) => p.text).join('')), 'no carriage return is left in the text');
+  ok('a Windows transcript printout reads exactly like the same page with LF endings');
+}
+
 console.log(`\nPASS (${n} checks)`);
