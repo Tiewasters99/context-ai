@@ -1,9 +1,17 @@
 import { useState, useRef, useCallback, useMemo } from 'react';
-import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw } from 'lucide-react';
+import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2 } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
 import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import ContentSearch from './ContentSearch';
+import {
+  buildVaultGroups,
+  shareRenderBudget,
+  CATEGORY_ORDER,
+  CATEGORY_LABEL,
+  isDocumentCategory,
+  type VaultGrouping,
+} from '@/lib/vault-grouping';
 
 interface ImportPanelProps {
   files: VaultFile[];
@@ -33,6 +41,19 @@ interface ImportPanelProps {
   totalCount?: number;
   /** Set only when the read was truncated: the sentence the list owes the reader. */
   listNotice?: string | null;
+  /**
+   * How the list is cut into groups — and, more importantly, the order the
+   * SERVER was asked to return the rows in. Nothing here re-sorts 7,600 rows
+   * in the browser; the grouping is one pass over rows that already arrived in
+   * the right order (see lib/vault-grouping.ts).
+   */
+  grouping?: VaultGrouping;
+  onGroupingChange?: (g: VaultGrouping) => void;
+  /** "Organize my matter": file every document by the deterministic rule.
+   *  Resolves with how many rows actually changed. */
+  onOrganize?: () => Promise<number>;
+  /** Re-file ONE document by hand. Null hands it back to the rule. */
+  onSetCategory?: (documentId: string, category: string | null) => Promise<void>;
 }
 
 /**
@@ -121,10 +142,13 @@ function friendlyIngestError(msg: string): string {
   return msg;
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(RENDER_WINDOW);
   const [dragOver, setDragOver] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  const [organizeNote, setOrganizeNote] = useState<string | null>(null);
+  const [categoryMenu, setCategoryMenu] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -217,25 +241,11 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     ? files.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()))
     : files;
 
-  // Group by matter when persistent-mode files are tagged with matterspace
-  // metadata. Multiple distinct matters → render collapsible groups; one
-  // matter (or none) → fall back to the flat list. Group order: insertion
-  // order of first-seen matter, which mirrors the recency sort from the
-  // documents query.
-  const groups = useMemo(() => {
-    const tagged = filtered.filter((f) => f.matterspace_id);
-    if (tagged.length === 0) return null;
-    const distinct = new Set(tagged.map((f) => f.matterspace_id));
-    if (distinct.size <= 1) return null;
-    const map = new Map<string, { name: string; files: VaultFile[] }>();
-    for (const f of filtered) {
-      const id = f.matterspace_id ?? '__untagged__';
-      const name = f.matterspace_name ?? '(unknown matter)';
-      if (!map.has(id)) map.set(id, { name, files: [] });
-      map.get(id)!.files.push(f);
-    }
-    return Array.from(map.entries()).map(([id, v]) => ({ id, ...v }));
-  }, [filtered]);
+  // One pass over rows the server already ordered — by matter (date mode,
+  // which is what this panel has always done), by A–Z letter, or by shelf.
+  // Never a sort: `filtered` can hold 7,600 rows and this runs on every
+  // keystroke in the filter box and on every status tick from the pipeline.
+  const groups = useMemo(() => buildVaultGroups(filtered, grouping), [filtered, grouping]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const toggleGroup = (id: string) => {
     setCollapsedGroups((prev) => {
@@ -249,18 +259,35 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   // How many rows each group may draw, taken from one shared budget in group
   // order. Every group keeps its header and its TRUE count; only the rows
   // inside are windowed, so no folder ever vanishes from the list.
-  const groupTake = useMemo(() => {
-    if (!groups) return null;
-    let budget = shown;
-    const take = new Map<string, number>();
-    for (const g of groups) {
-      if (collapsedGroups.has(g.id)) { take.set(g.id, 0); continue; }
-      const n = Math.min(g.files.length, Math.max(0, budget));
-      take.set(g.id, n);
-      budget -= n;
+  const groupTake = useMemo(
+    () => (groups ? shareRenderBudget(groups, shown, collapsedGroups) : null),
+    [groups, shown, collapsedGroups],
+  );
+
+  const runOrganize = async () => {
+    if (!onOrganize || organizing) return;
+    setOrganizing(true);
+    setOrganizeNote(null);
+    try {
+      const n = await onOrganize();
+      setOrganizeNote(
+        n === 0
+          ? 'Everything in this matter was already filed — nothing changed.'
+          : `Filed ${n.toLocaleString()} document${n === 1 ? '' : 's'}. Anything you filed yourself was left alone.`,
+      );
+    } catch (err) {
+      setOrganizeNote(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOrganizing(false);
     }
-    return take;
-  }, [groups, shown, collapsedGroups]);
+  };
+
+  const chooseCategory = async (id: string, category: string | null) => {
+    setCategoryMenu(null);
+    if (!onSetCategory) return;
+    try { await onSetCategory(id, category); }
+    catch (err) { setOrganizeNote(err instanceof Error ? err.message : String(err)); }
+  };
 
   // Rows actually drawn, and rows there are to draw — the two numbers the
   // "Show more" line reports.
@@ -363,6 +390,50 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
           </p>
         )}
       </div>
+      {/* Which shelf this document sits on, and the one gesture that moves it.
+          The rule made the first guess; the person makes the last one, and
+          from then on no automatic pass touches this row again. */}
+      {onSetCategory && file.matterspace_id && file.category !== undefined && (
+        <div className="relative shrink-0" data-card-inert>
+          <button
+            onClick={(e) => { e.stopPropagation(); setCategoryMenu(categoryMenu === file.id ? null : file.id); }}
+            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-white/50 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.06)] transition-colors"
+            title="Change this document's category"
+            aria-haspopup="listbox"
+            aria-expanded={categoryMenu === file.id}
+          >
+            <Tag size={10} strokeWidth={2} />
+            {isDocumentCategory(file.category) ? CATEGORY_LABEL[file.category] : 'Unfiled'}
+          </button>
+          {categoryMenu === file.id && (
+            <div
+              className="absolute right-0 top-full mt-1 z-20 w-48 rounded-lg border border-[rgba(255,255,255,0.12)] py-1 shadow-2xl"
+              style={{ backgroundColor: 'rgba(14,14,20,0.98)' }}
+              role="listbox"
+            >
+              {CATEGORY_ORDER.map((c) => (
+                <button
+                  key={c}
+                  role="option"
+                  aria-selected={file.category === c}
+                  onClick={(e) => { e.stopPropagation(); void chooseCategory(file.id, c); }}
+                  className={`w-full text-left px-3 py-1.5 text-[11px] hover:bg-[rgba(232,184,74,0.1)] transition-colors ${
+                    file.category === c ? 'text-[#e8b84a]' : 'text-white/75'
+                  }`}
+                >
+                  {CATEGORY_LABEL[c]}
+                </button>
+              ))}
+              <button
+                onClick={(e) => { e.stopPropagation(); void chooseCategory(file.id, null); }}
+                className="w-full text-left px-3 py-1.5 text-[11px] text-white/45 hover:bg-[rgba(255,255,255,0.06)] border-t border-[rgba(255,255,255,0.08)] mt-1 transition-colors"
+              >
+                Back to the automatic choice
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {/* Retry on a failure; Re-run on a document stored without text (so a
           scan can be re-OCR'd once OCR is available) or with pages still
           awaiting OCR. Never on a 'held' row, nor on pages the seal kept in:
@@ -451,6 +522,51 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               </h3>
             </div>
 
+            {/* How to read the matter. A reviewing attorney thinks in Table-of-
+                Authorities order, not upload order — so the order is a choice,
+                it is remembered per matter, and the SERVER does the sorting. */}
+            {matterId && onGroupingChange && (
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="text-[10px] uppercase tracking-wider text-white/40">Order</span>
+                <div className="flex rounded-lg border border-[rgba(255,255,255,0.1)] overflow-hidden" role="group" aria-label="How to order this matter">
+                  {([
+                    ['date', 'Date added'],
+                    ['name', 'A–Z'],
+                    ['category', 'By category'],
+                  ] as [VaultGrouping, string][]).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      onClick={() => onGroupingChange(mode)}
+                      aria-pressed={grouping === mode}
+                      className={`px-2.5 py-1 text-[11px] transition-colors ${
+                        grouping === mode
+                          ? 'bg-[rgba(232,184,74,0.15)] text-[#e8b84a]'
+                          : 'text-white/60 hover:text-white hover:bg-[rgba(255,255,255,0.05)]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {onOrganize && (
+                  <button
+                    onClick={runOrganize}
+                    disabled={organizing}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[rgba(255,255,255,0.15)] text-[11px] text-white/80 hover:border-[#e8b84a]/50 hover:text-white disabled:opacity-50 transition-colors"
+                    title="File every document in this matter by name: cases, statutes, rules, secondary authorities, pleadings, supporting material. Nothing moves between matters, and anything you filed yourself is left alone."
+                  >
+                    {organizing
+                      ? <Loader2 size={11} className="animate-spin" />
+                      : <Wand2 size={11} strokeWidth={2} />}
+                    Organize my matter
+                  </button>
+                )}
+              </div>
+            )}
+            {organizeNote && (
+              <p className="mb-3 text-[11px] text-white/60">{organizeNote}</p>
+            )}
+
             {listNotice && (
               <p className="mb-3 text-[11px] text-[#e8b84a]/90">{listNotice}</p>
             )}
@@ -480,7 +596,8 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                         className="flex items-center gap-2 w-full text-left mb-1.5 group/header"
                       >
                         {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}
-                        <Folder size={13} className="text-[#d4a054]" strokeWidth={1.75} />
+                        {grouping === 'date' && <Folder size={13} className="text-[#d4a054]" strokeWidth={1.75} />}
+                        {grouping === 'category' && <Tag size={13} className="text-[#d4a054]" strokeWidth={1.75} />}
                         <span className="text-[12px] font-medium text-[#f5f1e8] group-hover/header:text-[#e8b84a] transition-colors">{g.name}</span>
                         <span className="text-[10px] text-white/30 ml-auto">{g.files.length.toLocaleString()}</span>
                       </button>
@@ -489,7 +606,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                           {g.files.slice(0, take).map(renderFileRow)}
                           {take < g.files.length && (
                             <p className="pl-3 py-1 text-[10px] text-white/40">
-                              {(g.files.length - take).toLocaleString()} more in this folder — Show more below.
+                              {(g.files.length - take).toLocaleString()} more in this group — Show more below.
                             </p>
                           )}
                         </div>

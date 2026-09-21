@@ -26,6 +26,12 @@ import {
   type BucketNode, type NodeKind, type ClassifiedDoc, type ClassifyProgress,
   type DocRow, type RunEstimate, type ChooserRow,
 } from '@/lib/bucketizer';
+import { BUCKETIZER_DEFAULT_MODEL } from '@/lib/bucketizer';
+import {
+  SERVER_RUN_MIN_DOCUMENTS, ServerRunError, cancelServerRun, describeServerRun,
+  fetchServerRun, resumeServerRun, shouldRunOnServer, startServerRun,
+  type ServerRunState,
+} from '@/lib/bucketizer/server-run';
 import { showingOf } from '@/lib/paged';
 
 // The Bucketizer: the matter's living case-theory tree (claims → elements →
@@ -84,6 +90,16 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
   // could not be used, documents left for next time.
   const [runReport, setRunReport] = useState<ClassifyProgress | null>(null);
 
+  // A run that does not need this tab. Read from the `bucketizer_runs` row
+  // (migration 079), so it survives a reload, a different browser and a
+  // different machine — which is the entire point of the server lane.
+  const [serverRun, setServerRun] = useState<ServerRunState | null>(null);
+  const [serverBusy, setServerBusy] = useState(false);
+  // Dismissed BY RUN ID, not by clearing the state: the poll re-reads the row
+  // every five seconds and would otherwise put a dismissed report straight
+  // back on the screen.
+  const [dismissedRunId, setDismissedRunId] = useState<string | null>(null);
+
   const [nodeDocs, setNodeDocs] = useState<ClassifiedDoc[] | null>(null);
   const [nodeDocsNotice, setNodeDocsNotice] = useState<string | null>(null);
   const [showManualAdd, setShowManualAdd] = useState(false);
@@ -114,6 +130,37 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       setError(e instanceof Error ? e.message : 'Failed to load the tree.');
     }
   }, [matterId]);
+
+  /**
+   * Read the server run's row. Quiet on failure: until migration 079 is
+   * applied, or on a deployment without the endpoint, there simply is no
+   * server run, and the browser path is exactly what it was.
+   */
+  const refreshServerRun = useCallback(async () => {
+    try {
+      setServerRun(await fetchServerRun(matterId));
+    } catch {
+      setServerRun(null);
+    }
+  }, [matterId]);
+
+  // The progress line, after a reload and on another machine. A run that is
+  // still going is polled; a finished one is read once and left on screen
+  // until it is dismissed, because the closing report is the point.
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => { if (alive) await refreshServerRun(); };
+    void tick();
+    const going = serverRun?.run
+      && ['queued', 'running'].includes(serverRun.run.status);
+    if (!going) return () => { alive = false; };
+    const timer = setInterval(() => { void tick(); }, 5_000);
+    return () => { alive = false; clearInterval(timer); };
+    // The STATUS, not the run object: every poll replaces the object, and
+    // depending on it would tear down and rebuild the timer five times a
+    // second. Only a change of status should change whether we are polling.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshServerRun, serverRun?.run?.status]);
 
   /**
    * How much evidence work is outstanding.
@@ -328,11 +375,48 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
     choosableIn(chooserRows ?? [], matterIds).map((r) => ({ id: r.id, title: r.title }))
   ), [chooserRows]);
 
-  /** Step two: the person clicked through the estimate. */
+  /**
+   * Step two: the person clicked through the estimate.
+   *
+   * A run of any size goes to the SERVER by default, and the tab is then free:
+   * close it, open another machine tomorrow, the progress line reads the same
+   * row. Below the threshold the browser path stays, because for four
+   * documents it is immediate, it shows every window as it lands, and it costs
+   * the shared queue nothing.
+   *
+   * If the server is not switched on for background runs yet — which is the
+   * state between merging this and deploying the worker — it says so and the
+   * run happens here instead. A refusal to start on the server has never been
+   * a refusal to classify.
+   */
   const handleClassifyAll = useCallback(async () => {
     const run = pending;
     if (!run || !nodes?.length) return;
     setPending(null);
+
+    if (shouldRunOnServer(run.docs.length, SERVER_RUN_MIN_DOCUMENTS)) {
+      setServerBusy(true);
+      try {
+        await startServerRun({
+          matterId,
+          documentIds: run.docs.map((d) => d.id),
+          modelId: BUCKETIZER_DEFAULT_MODEL,
+          estimateCents: run.estimate.cents,
+        });
+        await refreshServerRun();
+        return;
+      } catch (e) {
+        if (!(e instanceof ServerRunError) || !e.shouldFallBackToBrowser) {
+          setError(e instanceof Error ? e.message : 'The run could not be started.');
+          return;
+        }
+        // Fall through to the browser loop, and say why it needs the window.
+        setError(e.message);
+      } finally {
+        setServerBusy(false);
+      }
+    }
+
     const controller = new AbortController();
     classifyAbort.current = controller;
     setClassifying(emptyProgress(run.docs.length));
@@ -354,7 +438,25 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
       void refreshInventory();
       if (selectedId) void loadNodeDocs(selectedId).catch(() => {});
     }
-  }, [matterId, nodes, pending, selectedId, loadNodeDocs, refreshInventory]);
+  }, [matterId, nodes, pending, selectedId, loadNodeDocs, refreshInventory, refreshServerRun]);
+
+  /** Stop a server run, or put a paused one back to work. Always explicit. */
+  const handleServerRunAction = useCallback(async (what: 'cancel' | 'resume') => {
+    const id = serverRun?.run?.id;
+    if (!id) return;
+    setServerBusy(true);
+    try {
+      if (what === 'cancel') await cancelServerRun(matterId, id);
+      else await resumeServerRun(matterId, id);
+      await refreshServerRun();
+      setCounts(await fetchNodeCounts(matterId));
+      void refreshInventory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'That could not be done.');
+    } finally {
+      setServerBusy(false);
+    }
+  }, [matterId, serverRun?.run?.id, refreshServerRun, refreshInventory]);
 
   // ---- evidence -----------------------------------------------------------
 
@@ -648,6 +750,16 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
           onOpenVault={() => navigate(`/app/vault?matter=${encodeURIComponent(matterId)}`)}
           onChoose={() => void openChooser()}
           onDismiss={() => setNothingNewDismissed(true)}
+        />
+      )}
+
+      {serverRun?.run && serverRun.run.id !== dismissedRunId && (
+        <ServerRunPanel
+          state={serverRun}
+          busy={serverBusy}
+          onCancel={() => void handleServerRunAction('cancel')}
+          onResume={() => void handleServerRunAction('resume')}
+          onDismiss={() => setDismissedRunId(serverRun.run?.id ?? null)}
         />
       )}
 
@@ -1000,6 +1112,102 @@ function NothingNewNotice({
       </div>
     </div>
   );
+}
+
+/**
+ * A run that is not in this window.
+ *
+ * Everything shown here is read from the `bucketizer_runs` row, never from
+ * this tab's own counters — which is what makes the line survive a reload, a
+ * different browser and a different machine. The sentence a stopped run shows
+ * is the SERVER's own: the meter's, the gate's, or the seal's.
+ */
+function ServerRunPanel({ state, busy, onCancel, onResume, onDismiss }: {
+  state: ServerRunState;
+  busy: boolean;
+  onCancel: () => void;
+  onResume: () => void;
+  onDismiss: () => void;
+}) {
+  const run = state.run;
+  if (!run) return null;
+  const going = run.status === 'queued' || run.status === 'running';
+  const stopped = run.status === 'paused' || run.status === 'held';
+  const finished = run.status === 'done' || run.status === 'cancelled' || run.status === 'failed';
+  const trouble = state.documents.filter((d) => d.status !== 'done' && d.note);
+
+  const tint = stopped
+    ? 'border-[#d4a054]/40 bg-[#d4a054]/10 text-[#d4a054]'
+    : run.status === 'failed'
+      ? 'border-orange-500/30 bg-orange-500/10 text-orange-200'
+      : 'border-white/10 bg-white/[0.03] text-zinc-300';
+
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 text-sm ${tint}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="flex items-center gap-2 font-medium">
+            {going
+              ? <Loader2 className="w-4 h-4 animate-spin text-emerald-300" />
+              : <Info className="w-4 h-4 shrink-0" />}
+            {going ? 'Classifying on the server' : `Run ${run.status}`}
+            <span className="text-zinc-500">
+              {run.documents_done + run.documents_skipped + run.documents_failed}/{run.documents_total}
+            </span>
+          </p>
+          {going && (
+            <p className="mt-1 pl-6 text-xs text-zinc-500">
+              This will keep running if you close this window.
+            </p>
+          )}
+          {state.stalled && going && (
+            <p className="mt-1 pl-6 text-xs text-[#d4a054]">
+              Nothing is queued for this run at the moment — press Resume to put the rest back in the queue.
+            </p>
+          )}
+          <ul className="mt-1.5 space-y-0.5 pl-6 text-xs leading-relaxed">
+            {describeServerRun(state).map((line, i) => <li key={i}>{line}</li>)}
+          </ul>
+          {finished && trouble.length > 0 && (
+            <ul className="mt-1.5 max-h-40 space-y-0.5 overflow-auto pl-6 text-xs text-zinc-400">
+              {trouble.slice(0, 50).map((d) => <li key={d.document_id}>{d.note}</li>)}
+            </ul>
+          )}
+          <div className="mt-2 flex flex-wrap gap-2 pl-6">
+            {(going || stalledOrStopped(state)) && (
+              <button
+                onClick={onCancel}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1 text-xs text-zinc-300 hover:bg-white/5 disabled:opacity-50"
+              >
+                <Square className="w-3.5 h-3.5" /> Cancel
+              </button>
+            )}
+            {stalledOrStopped(state) && (
+              <button
+                onClick={onResume}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-xs text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5" /> Resume
+              </button>
+            )}
+          </div>
+        </div>
+        {finished && (
+          <button className="shrink-0 text-zinc-500 hover:text-zinc-300" onClick={onDismiss}>
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Paused, held, or going-but-with-nothing-queued: all three offer Resume. */
+function stalledOrStopped(state: ServerRunState): boolean {
+  const s = state.run?.status;
+  return s === 'paused' || s === 'held' || (state.stalled && (s === 'queued' || s === 'running'));
 }
 
 /**

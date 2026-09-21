@@ -130,6 +130,12 @@ export interface VaultFileList {
   total: number;
   /** The ceiling stopped the read. The surface owes the reader `showingOf()`. */
   truncated: boolean;
+  /**
+   * An A–Z or Category read was asked for and this database has not got
+   * migration 081 yet, so the date list came back instead. The surface owes
+   * the reader one sentence saying which list they are looking at.
+   */
+  orderFellBack?: boolean;
 }
 
 export async function listMatterDocuments(
@@ -147,7 +153,7 @@ export async function listMatterDocumentsRecursive(
   options: FetchMatterDocumentsOptions = {},
 ): Promise<VaultFileList> {
   if (matterIds.length === 0) return { files: [], total: 0, truncated: false };
-  const { rows, total, truncated } = await fetchMatterDocumentRows(
+  const { rows, total, truncated, orderFellBack } = await fetchMatterDocumentRows(
     supabase as unknown as DocumentsSource,
     matterIds,
     options,
@@ -156,7 +162,51 @@ export async function listMatterDocumentsRecursive(
     files: rows.map((d: VaultDocumentRow) => documentToVaultFile(d, nameById.get(d.matterspace_id))),
     total,
     truncated,
+    orderFellBack,
   };
+}
+
+// -----------------------------------------------------------------------------
+// "Organize my matter" and the category a person sets by hand (migration 081).
+//
+// Both are RPCs rather than table writes: the organize pass has to be ONE
+// statement over the whole matter tree (7,600 round trips is not a feature),
+// and both go through an INVOKER wrapper that decides what the caller may
+// write before anything is written. A database without 081 answers 404 —
+// which reads here as a plain sentence, not a stack trace.
+// -----------------------------------------------------------------------------
+
+const NEEDS_081 = 'Organizing arrives with migration 081 — ask Eden to apply it.';
+
+function is404(message: string): boolean {
+  return /PGRST202|could not find the function|does not exist/i.test(message);
+}
+
+/** Files every document in these matters by the deterministic rule. Returns
+ *  how many rows actually changed — a second run legitimately returns 0. */
+export async function organizeMatterDocuments(matterIds: string[]): Promise<number> {
+  if (matterIds.length === 0) return 0;
+  const { data, error } = await supabase.rpc('organize_matter_documents', {
+    p_matterspace_ids: matterIds,
+  } as never);
+  if (error) throw new Error(is404(error.message) ? NEEDS_081 : error.message);
+  const rows = (data ?? []) as { assigned: number | string }[];
+  return rows.reduce((n, r) => n + Number(r.assigned ?? 0), 0);
+}
+
+/** Set one document's category by hand — or pass null to hand it back to the
+ *  rule. The server records `category_source = 'user'`, which is what makes
+ *  the organize pass skip the row from then on. */
+export async function setDocumentCategory(
+  documentId: string,
+  category: string | null,
+): Promise<string | null> {
+  const { data, error } = await supabase.rpc('set_document_category', {
+    p_document_id: documentId,
+    p_category: category,
+  } as never);
+  if (error) throw new Error(is404(error.message) ? NEEDS_081 : error.message);
+  return (data as string | null) ?? null;
 }
 
 function documentToVaultFile(doc: {
@@ -171,6 +221,9 @@ function documentToVaultFile(doc: {
   text_status?: string | null;
   /** metadata->ocr_pending arrives typed as Json; narrowed below. */
   ocr_pending?: unknown;
+  /** Migration 081; present only on an A-Z or Category read. */
+  sort_key?: string | null;
+  category?: string | null;
 }, matterspace_name?: string): VaultFile {
   const name = doc.source_filename || doc.title || 'Untitled';
   const sizeBytes = doc.file_size_bytes || 0;
@@ -195,6 +248,8 @@ function documentToVaultFile(doc: {
     textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
     ocrPending: doc.processing_status === 'ready' && doc.ocr_pending && typeof doc.ocr_pending === 'object'
       ? (doc.ocr_pending as OcrPending) : undefined,
+    sortKey: doc.sort_key ?? undefined,
+    category: doc.category ?? null,
   };
 }
 
