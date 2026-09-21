@@ -77,8 +77,10 @@ with open(OUT, 'w', encoding='utf-8', newline='\n') as fh:
 
 # Prove the conversion kept every quotation byte-for-byte: each `verbatim`
 # string in the JSON must appear in the YAML source text. YAML folds long
-# scalars across lines, so compare on collapsed whitespace.
+# scalars across lines, so compare on collapsed whitespace. A single-quoted
+# YAML scalar writes a straight apostrophe as '', so look in that form too.
 haystack = ' '.join(raw.split())
+haystack_unescaped = haystack.replace("''", "'")
 missing = 0
 checked = 0
 for entry in out['entries']:
@@ -87,7 +89,8 @@ for entry in out['entries']:
         if not isinstance(quote, str) or not quote.strip():
             continue
         checked += 1
-        if ' '.join(quote.split()) not in haystack:
+        needle = ' '.join(quote.split())
+        if needle not in haystack and needle not in haystack_unescaped:
             missing += 1
             print('MISSING VERBATIM:', entry['id'], repr(quote[:70]))
 
