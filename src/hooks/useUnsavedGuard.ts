@@ -38,6 +38,15 @@ export interface UseAutosaveOptions<T> {
   /** `updated_at` of the server copy, recorded with the draft for the prompt. */
   baseUpdatedAt?: string | null;
   delayMs?: number;
+  /**
+   * Mirror to localStorage between keystroke and server. Default true.
+   *
+   * Off for Lists and Tables: every structural edit there already lands
+   * immediately, so the only exposure is the second or so of typing inside
+   * one item or one cell, and the flushes below close that window. A mirror
+   * with no restore prompt would be a draft nobody is ever offered.
+   */
+  mirror?: boolean;
 }
 
 export interface UseAutosave<T> {
@@ -60,6 +69,7 @@ export function useAutosave<T>({
   save,
   baseUpdatedAt = null,
   delayMs,
+  mirror = true,
 }: UseAutosaveOptions<T>): UseAutosave<T> {
   const saveRef = useRef(save);
   useEffect(() => { saveRef.current = save; });
@@ -82,7 +92,7 @@ export function useAutosave<T>({
         // nothing left to mirror — which matters, because a Supabase write
         // started in that handler may never reach the network.
         mirror: (value) => {
-          if (!userId || !itemId) return;
+          if (!mirror || !userId || !itemId) return;
           writeDraft<T>(store, {
             userId,
             itemId,
@@ -91,14 +101,14 @@ export function useAutosave<T>({
             data: value,
           });
         },
-        clearMirror: () => clearDraft(store, userId, itemId),
+        clearMirror: () => { if (mirror) clearDraft(store, userId, itemId); },
         delayMs,
         onState: (next) => {
           setStatus(next);
           notifyUnsaved();
         },
       }),
-    [store, userId, itemId, delayMs],
+    [store, userId, itemId, delayMs, mirror],
   );
 
   // Flush, THEN dispose. An unmount is a route change or a closed panel, and
