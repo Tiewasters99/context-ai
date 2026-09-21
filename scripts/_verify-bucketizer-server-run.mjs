@@ -782,5 +782,25 @@ check(src('lib/bucketizer-run.mjs').includes("eq('status', 'proposed')")
   "the server's refresh carries status = 'proposed' on the UPDATE itself, like the browser's");
 check(BUCKETIZER_JOB_TYPE === 'bucketizer_classify_document', 'one job type, named the same everywhere');
 
+// ---------------------------------------------------------------------------
+console.log('\n--- B10. the closing report is reachable -----------------------');
+// The endpoint needs a Supabase session to drive, so these are source
+// assertions on the wiring. They exist because the first draft filtered
+// `status` on the way out: the worker flipped the run to `done`, the next
+// five-second poll answered "no run", and the whole report — documents done,
+// skipped WITH THEIR REASONS, failed — was unreachable code.
+const api = src('api/bucketizer-run.mjs');
+check(/lastFinishedRun\(\)/.test(api) && /await currentRun\(\)\) \?\? \(await lastFinishedRun/.test(api),
+  'status falls back to the run that JUST finished, so its report is actually shown');
+check(/\.in\('status', \['done', 'cancelled', 'failed'\]\)/.test(api),
+  'and that fallback reads a TERMINAL run, bounded to the last day');
+check(/run_still_going/.test(api) && /await liveJobs\(run\.id\)\) > 0/.test(api),
+  'Resume refuses while a worker still holds a job — the one way a document could be classified twice');
+const surface = src('src/components/matter/BucketizerSurface.tsx');
+check(/dismissedRunId/.test(surface) && /serverRun\.run\.id !== dismissedRunId/.test(surface),
+  'and the report is dismissed BY RUN ID, so the next poll cannot put it straight back');
+check(/This will keep running if you close this window/.test(surface),
+  'the surface says the thing this whole lane is for');
+
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : failures + ' CHECK(S) FAILED'}`);
 process.exit(failures === 0 ? 0 : 1);

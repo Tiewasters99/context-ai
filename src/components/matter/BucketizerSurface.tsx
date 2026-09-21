@@ -95,6 +95,10 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
   // different machine — which is the entire point of the server lane.
   const [serverRun, setServerRun] = useState<ServerRunState | null>(null);
   const [serverBusy, setServerBusy] = useState(false);
+  // Dismissed BY RUN ID, not by clearing the state: the poll re-reads the row
+  // every five seconds and would otherwise put a dismissed report straight
+  // back on the screen.
+  const [dismissedRunId, setDismissedRunId] = useState<string | null>(null);
 
   const [nodeDocs, setNodeDocs] = useState<ClassifiedDoc[] | null>(null);
   const [nodeDocsNotice, setNodeDocsNotice] = useState<string | null>(null);
@@ -749,13 +753,13 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
         />
       )}
 
-      {serverRun?.run && (
+      {serverRun?.run && serverRun.run.id !== dismissedRunId && (
         <ServerRunPanel
           state={serverRun}
           busy={serverBusy}
           onCancel={() => void handleServerRunAction('cancel')}
           onResume={() => void handleServerRunAction('resume')}
-          onDismiss={() => setServerRun(null)}
+          onDismiss={() => setDismissedRunId(serverRun.run?.id ?? null)}
         />
       )}
 

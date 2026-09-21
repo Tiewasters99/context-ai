@@ -125,7 +125,12 @@ export default async function handler(req, res) {
    * moves.
    */
   async function statusAction() {
-    const run = await currentRun();
+    // The active run if there is one; otherwise the one that JUST finished, so
+    // the closing report — documents done, skipped with their reasons, failed
+    // — is actually shown. A status filter here would make that report
+    // unreachable: the run flips to `done` on the worker and the next poll,
+    // five seconds later, would answer "no run" and take the answer with it.
+    const run = (await currentRun()) ?? (await lastFinishedRun());
     if (!run) return json(res, 200, { ok: true, run: null });
 
     const { data: docs } = await asUser
@@ -138,13 +143,7 @@ export default async function handler(req, res) {
 
     let stalled = false;
     if (run.status === 'running' || run.status === 'queued') {
-      const { count } = await svc
-        .from('processing_jobs')
-        .select('id', { count: 'exact', head: true })
-        .eq('job_type', BUCKETIZER_JOB_TYPE)
-        .in('status', ['queued', 'running'])
-        .filter('payload->>run_id', 'eq', run.id);
-      stalled = (count ?? 0) === 0;
+      stalled = (await liveJobs(run.id)) === 0;
     }
 
     return json(res, 200, { ok: true, run, documents: docs ?? [], stalled });
@@ -280,6 +279,16 @@ export default async function handler(req, res) {
     if (!ACTIVE_RUN_STATUSES.includes(run.status)) {
       return json(res, 409, { error: 'run_finished', message: 'That run has already finished.' });
     }
+    // A run that is genuinely going does not need putting back to work, and
+    // re-enqueueing it would hand a second job to a document a worker is
+    // holding right now — the one way this design could classify (and charge
+    // for) the same document twice. Resume is for a run that has stopped.
+    if ((run.status === 'queued' || run.status === 'running') && (await liveJobs(run.id)) > 0) {
+      return json(res, 409, {
+        error: 'run_still_going',
+        message: 'This run is still working through its documents — there is nothing to resume yet.',
+      });
+    }
 
     const { data: left, error } = await asUser
       .from('bucketizer_run_documents')
@@ -325,6 +334,38 @@ export default async function handler(req, res) {
       .limit(1);
     if (error) throw new Error(`run: ${error.message}`);
     return data?.[0] ?? null;
+  }
+
+  /**
+   * The run that just finished, so its report can be read.
+   *
+   * Bounded to a day: a run that finished three weeks ago is not news, and
+   * showing it on every visit to this tab would be noise rather than a report.
+   */
+  async function lastFinishedRun() {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await asUser
+      .from('bucketizer_runs')
+      .select(RUN_COLUMNS)
+      .eq('matterspace_id', matterId)
+      .eq('kind', 'classify')
+      .in('status', ['done', 'cancelled', 'failed'])
+      .gte('finished_at', since)
+      .order('finished_at', { ascending: false })
+      .limit(1);
+    if (error) throw new Error(`run: ${error.message}`);
+    return data?.[0] ?? null;
+  }
+
+  /** Jobs for this run that a worker still has, or will claim. */
+  async function liveJobs(runId) {
+    const { count } = await svc
+      .from('processing_jobs')
+      .select('id', { count: 'exact', head: true })
+      .eq('job_type', BUCKETIZER_JOB_TYPE)
+      .in('status', ['queued', 'running'])
+      .filter('payload->>run_id', 'eq', runId);
+    return count ?? 0;
   }
 
   async function runById(id) {
