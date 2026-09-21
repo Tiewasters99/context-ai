@@ -1,3 +1,30 @@
+// ⛔ DEPRECATED (2026-09-21). Use the app: Bucketizer → choose documents → the
+//    estimate → the button. A run of five documents or more now goes to the
+//    server and keeps going with the laptop shut (migration 079,
+//    lib/bucketizer-run.mjs, /api/bucketizer-run).
+//
+// THIS SCRIPT READS THE FIRST 200 PASSAGES OF EACH DOCUMENT AND NOTHING ELSE.
+// ---------------------------------------------------------------------------
+// `buildDocRequest` below does `.range(0, 199)`. For a memo that is the whole
+// document. For Blake Desmond's 247-page deposition it is the first thirty-odd
+// pages: the witness is bucketed on the reporter's appearance page and the
+// opening of the examination, and the testimony the case turns on is never
+// read. The document still appears, confidently, in a bucket — which is worse
+// than appearing nowhere, because the tree then *looks* reviewed. PR #168
+// replaced that with a whole-document window plan everywhere EXCEPT here, and
+// the real Fleming corpus was classified by this script.
+//
+// It also holds a service-role key and an Anthropic key and asks nobody, so a
+// run through it is outside the SecureSpace seal, outside the AI pause
+// (migration 070), outside the spend cap (063), outside the per-tier output
+// clamp and absent from the matter's Record (064/073). Every one of those is a
+// promise the product makes to a client.
+//
+// So it refuses to run without `--i-know-this-reads-only-200-passages`, which
+// exists for exactly one case: a corpus already classified by it that has to be
+// reproduced byte for byte. Anything else belongs in the app.
+//
+// ---------------------------------------------------------------------------
 // Bucketizer batch classifier — classify a matter's ready documents into its
 // case-theory tree (bucketizer_nodes), writing AI-proposed rows the attorney
 // reviews in the app. The service-role twin of the in-app classifier: same
@@ -52,6 +79,37 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSessio
 
 const args = parseArgs(process.argv.slice(2));
 const DRY = !!args['dry-run'];
+
+// The trap, closed. See the header: this script reads the first 200 passages of
+// each document, and nothing it does is seen by the seal, the pause, the spend
+// cap, the output clamp or the matter's Record.
+if (!DRY && !args['i-know-this-reads-only-200-passages']) {
+  console.error(`
+  ⛔ scripts/bucketize.mjs is deprecated, and it will not run.
+
+     It reads the FIRST 200 PASSAGES of each document and nothing else. On a
+     247-page deposition that is the first thirty pages: the witness gets
+     bucketed on the appearance page, and the testimony the case turns on is
+     never read. The document still lands in a bucket, confidently, so the
+     tree LOOKS reviewed.
+
+     It is also outside every guard the product has — the SecureSpace seal, the
+     AI pause, the spend cap, the per-tier output clamp, and the matter's
+     Record. A classification run through here leaves no trace in the account
+     of what AI did on the matter.
+
+     Do this instead, in the app:
+       Bucketizer → Classify → choose the documents → check the estimate → run.
+
+     Five documents or more runs ON THE SERVER: it reads every page of every
+     document in windows, it resumes exactly where it stopped, and it keeps
+     going with this laptop shut.
+
+     If you are reproducing an old corpus byte for byte and you mean it, pass
+       --i-know-this-reads-only-200-passages
+`);
+  process.exit(1);
+}
 const ANTHROPIC_API_KEY = DRY ? (process.env.ANTHROPIC_API_KEY || '') : requireEnv('ANTHROPIC_API_KEY');
 const LIMIT = args.limit ? parseInt(args.limit, 10) : Infinity;
 const CONCURRENCY = args.concurrency ? Math.max(1, parseInt(args.concurrency, 10)) : 2;
