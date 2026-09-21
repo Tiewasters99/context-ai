@@ -26,6 +26,7 @@
 //      20,000 of 43,118" instead of pretending.
 
 import { fetchPaged, type PagedPage, type PagedRows } from './paged';
+import type { VaultGrouping } from './vault-grouping';
 
 /**
  * The columns the Vault's file rows are built from. One string, so the
@@ -34,6 +35,61 @@ import { fetchPaged, type PagedPage, type PagedRows } from './paged';
 export const VAULT_DOCUMENT_COLUMNS =
   'id, title, source_filename, file_size_bytes, processing_status, processing_error, ' +
   'matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending';
+
+/**
+ * The same columns plus the two migration 081 adds. Asked for ONLY when the
+ * reader has chosen A–Z or Category, which is what keeps this change invisible
+ * — and harmless — on a database where 081 has not been pasted yet: the
+ * default date list sends byte for byte the request it has always sent.
+ */
+export const VAULT_DOCUMENT_COLUMNS_ORGANIZED = `${VAULT_DOCUMENT_COLUMNS}, sort_key, category`;
+
+/**
+ * What each grouping asks the SERVER to order by. Every chain ends with the
+ * unique tiebreaker `id` — paged.ts's first rule, and not optional: a folder
+ * dropped on the Vault gives hundreds of rows the same `created_at`, and rows
+ * the ORDER BY treats as equal swap between `.range()` pages, which duplicates
+ * some and drops others.
+ *
+ * Migration 081 builds one index per line below, so each of these is an
+ * ordered index read inside a single matter rather than a sort of the matter.
+ */
+const ORDER_BY: Record<VaultGrouping, { col: string; ascending: boolean }[]> = {
+  date: [
+    { col: 'created_at', ascending: false },
+    { col: 'id', ascending: false },
+  ],
+  name: [
+    { col: 'sort_key', ascending: true },
+    { col: 'id', ascending: true },
+  ],
+  category: [
+    { col: 'category_rank', ascending: true },
+    { col: 'sort_key', ascending: true },
+    { col: 'id', ascending: true },
+  ],
+};
+
+/**
+ * PostgREST's answer when a column does not exist — which, for this module, is
+ * the whole of "the code merged before the migration was pasted". It is not a
+ * transient failure and must not be retried three times with sleeps; it is a
+ * signal to go back to the date list and say so.
+ */
+export class VaultColumnsMissingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'VaultColumnsMissingError';
+  }
+}
+
+function looksLikeMissingColumn(message: string): boolean {
+  // Deliberately narrow. A loose `/sort_key/` would swallow a genuine outage
+  // whose message happened to quote the query, and silently downgrade the
+  // list for the rest of the session instead of retrying it.
+  return /42703/.test(message)
+    || /column .*(sort_key|category_rank|category).* does not exist/i.test(message);
+}
 
 export interface VaultDocumentRow {
   id: string;
@@ -47,6 +103,9 @@ export interface VaultDocumentRow {
   text_status?: string | null;
   /** `metadata->ocr_pending` arrives typed as Json; the caller narrows it. */
   ocr_pending?: unknown;
+  /** Migration 081, and only on an A–Z or Category read. */
+  sort_key?: string | null;
+  category?: string | null;
 }
 
 /**
@@ -88,6 +147,19 @@ export interface FetchMatterDocumentsOptions {
   attempts?: number;
   /** Injected by the harness so a retry test does not actually sleep. */
   delay?: (ms: number) => Promise<void>;
+  /**
+   * Which order the SERVER should return the rows in. Defaults to 'date' —
+   * the Vault's behaviour since it had a list. 'name' and 'category' need
+   * migration 081's columns; if they are absent the read falls back to 'date'
+   * and reports `orderFellBack`, because a list that errors is worse than a
+   * list in the wrong order.
+   */
+  order?: VaultGrouping;
+}
+
+export interface VaultDocumentPage extends PagedRows<VaultDocumentRow> {
+  /** The asked-for order needed migration 081 and this database has not got it. */
+  orderFellBack?: boolean;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -105,36 +177,52 @@ export async function fetchMatterDocumentRows(
   db: DocumentsSource,
   matterIds: string[],
   options: FetchMatterDocumentsOptions = {},
-): Promise<PagedRows<VaultDocumentRow>> {
+): Promise<VaultDocumentPage> {
   if (matterIds.length === 0) return { rows: [], total: 0, truncated: false };
 
   const attempts = Math.max(1, options.attempts ?? 3);
   const delay = options.delay ?? sleep;
+  const wanted = options.order ?? 'date';
 
-  const readPage = async (from: number, to: number): Promise<PagedPage<VaultDocumentRow>> => {
-    let lastMsg = 'unknown error';
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      if (attempt > 0) await delay(600 * attempt);
-      const res = await db
-        .from('documents')
+  const readIn = (order: VaultGrouping) => {
+    const columns = order === 'date' ? VAULT_DOCUMENT_COLUMNS : VAULT_DOCUMENT_COLUMNS_ORGANIZED;
+    const readPage = async (from: number, to: number): Promise<PagedPage<VaultDocumentRow>> => {
+      let lastMsg = 'unknown error';
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0) await delay(600 * attempt);
         // The count is asked for on the first page only.
-        .select(VAULT_DOCUMENT_COLUMNS, from === 0 ? { count: 'exact' } : undefined)
-        .in('matterspace_id', matterIds)
-        .order('created_at', { ascending: false })
-        // The unique tiebreaker. Without it a bulk import's identical
-        // created_at values let rows swap between pages.
-        .order('id', { ascending: false })
-        .range(from, to);
-      if (!res.error) return res;
-      lastMsg = res.error.message;
-      console.error(`list documents [${from}–${to}] (attempt ${attempt + 1}/${attempts}):`, lastMsg);
-    }
-    throw new Error(`list documents: ${lastMsg}`);
+        let qb = db
+          .from('documents')
+          .select(columns, from === 0 ? { count: 'exact' } : undefined)
+          .in('matterspace_id', matterIds);
+        // Ends with the unique tiebreaker `id` in every mode. Without it a
+        // bulk import's identical created_at values let rows swap between
+        // pages — and A–Z has the same trap, because two copies of the same
+        // case export share a sort key exactly.
+        for (const { col, ascending } of ORDER_BY[order]) qb = qb.order(col, { ascending });
+        const res = await qb.range(from, to);
+        if (!res.error) return res;
+        lastMsg = res.error.message;
+        // A column this database has not got is not a transient failure.
+        if (order !== 'date' && looksLikeMissingColumn(lastMsg)) {
+          throw new VaultColumnsMissingError(lastMsg);
+        }
+        console.error(`list documents [${from}–${to}] (attempt ${attempt + 1}/${attempts}):`, lastMsg);
+      }
+      throw new Error(`list documents: ${lastMsg}`);
+    };
+    return fetchPaged<VaultDocumentRow>(readPage, {
+      ceiling: options.ceiling ?? VAULT_DOCUMENT_CEILING,
+      pageSize: options.pageSize,
+      label: 'list documents',
+    });
   };
 
-  return fetchPaged<VaultDocumentRow>(readPage, {
-    ceiling: options.ceiling ?? VAULT_DOCUMENT_CEILING,
-    pageSize: options.pageSize,
-    label: 'list documents',
-  });
+  if (wanted === 'date') return readIn('date');
+  try {
+    return await readIn(wanted);
+  } catch (err) {
+    if (!(err instanceof VaultColumnsMissingError)) throw err;
+    return { ...await readIn('date'), orderFellBack: true };
+  }
 }

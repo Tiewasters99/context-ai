@@ -43,6 +43,15 @@ export interface VaultFile {
    *  while `storagePath` is still unset. Only resumable uploads (50 MB and
    *  up, Phase 4) report it; a small file goes in one request. */
   uploadPct?: number;
+  /** Persistent mode, migration 081: the server's A–Z key for this row's
+   *  displayed name — leading date, index and article already removed. Present
+   *  only on an A–Z or Category read, and it is what the list is grouped by,
+   *  because it is what the list was ORDERED by. */
+  sortKey?: string;
+  /** Persistent mode, migration 081: case / statute / rule / secondary /
+   *  pleading / supporting / other. Null means nobody has filed it yet;
+   *  undefined means this read did not ask. */
+  category?: string | null;
   /** True for AI-generated drafts kept in the "Generated Documents" view
    *  (in-memory; never goes through Supabase). */
   generated?: boolean;

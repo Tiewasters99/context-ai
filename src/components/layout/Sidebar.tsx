@@ -41,6 +41,7 @@ import ShareModal from '@/components/serverspace/ShareModal';
 import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 import SecureSpacesSection from '@/components/securespace/SecureSpacesSection';
 import SealMatterModal, { type SealTarget } from '@/components/securespace/SealMatterModal';
+import { SiteSearchMount } from '@/components/search/SiteSearch';
 
 // Drag-and-drop ids are encoded as "matter:<uuid>" or "ss-root:<uuid>" so
 // dragEnd can tell whether the drop target is a matter (nest underneath)
@@ -287,6 +288,11 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           <Home size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>My Contextspace</span>}
         </Link>
+
+        {/* Find a document by name, across every matter. Also Ctrl/Cmd+K,
+            which is what makes it reachable from the Vault — the Vault covers
+            this rail entirely — and why it is mounted even when collapsed. */}
+        <SiteSearchMount collapsed={collapsed} />
 
         {/* The Assistant — the one door to everything else: it explains how
             the place works and, on request, does the work. It sits up here
