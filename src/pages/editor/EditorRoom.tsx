@@ -5,7 +5,15 @@
 // blind critic. The Editor's charter lives in docs/editor/CONSTITUTION.md
 // and is loaded verbatim into its prompts.
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  browserLocalStore,
+  clearDraft,
+  readDraft,
+  restoreOfferLine,
+  writeDraft,
+} from '@/lib/draft-store';
 import { runEditorPass } from '@/lib/editor/pass';
 import { applyEdits } from '@/lib/editor/verifier';
 import { wordDiff } from '@/lib/editor/diff';
@@ -29,6 +37,29 @@ type Decision = { kind: 'accepted' | 'declined' } | { kind: 'modified'; text: st
 
 /** Text the lawyer wrote in — their own ink, applied alongside accepted edits. */
 type UserInsertion = { id: string; pos: number; text: string };
+
+/**
+ * The desk, kept on this computer between one visit and the next.
+ *
+ * This room persisted NOTHING: a refresh, a closed tab or a stray navigation
+ * took the manuscript, the editorial pass ALREADY CHARGED FOR, and every
+ * accept/decline/modify ruling with it. There is no server copy to save to —
+ * the desk is not a document in the Vault — so the local mirror IS the save,
+ * written under the same (user, item) key as every other draft and wiped with
+ * them on sign-out. It never leaves the machine.
+ */
+const DESK_ITEM_ID = 'editor-desk';
+
+interface DeskDraft {
+  phase: Phase;
+  manuscript: string;
+  form: DocumentForm | '';
+  sourceMatterId: string | null;
+  submitted: string;
+  result: EditorPassResult | null;
+  decisions: Record<string, Decision>;
+  insertions: UserInsertion[];
+}
 
 /** The manuscript cut into plain runs, edit spans, and insertion points, in order. */
 type Segment =
@@ -147,6 +178,57 @@ export default function EditorRoom() {
   const [sourceNote, setSourceNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // ── The desk, kept (see DESK_ITEM_ID above) ──────────────────────────
+  const { user } = useAuth();
+  const deskStore = useMemo(() => browserLocalStore(), []);
+  const [deskDraftHandled, setDeskDraftHandled] = useState(false);
+  // Read when the account is known — on a refresh `user` arrives a beat after
+  // the first render, so this cannot be a lazy initial state.
+  const deskDraft = useMemo(
+    () => readDraft<DeskDraft>(deskStore, user?.id, DESK_ITEM_ID),
+    [deskStore, user?.id],
+  );
+
+  // An EMPTY desk writes nothing and clears nothing: that is what lets the
+  // offer below survive the moment between mount and the person's answer.
+  const hasWork = manuscript.trim().length > 0 || result !== null;
+  useEffect(() => {
+    if (!user?.id || !hasWork) return;
+    const timer = setTimeout(() => {
+      writeDraft<DeskDraft>(deskStore, {
+        userId: user.id,
+        itemId: DESK_ITEM_ID,
+        savedAt: Date.now(),
+        baseUpdatedAt: null,
+        data: { phase, manuscript, form, sourceMatterId, submitted, result, decisions, insertions },
+      });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [deskStore, user?.id, hasWork, phase, manuscript, form, sourceMatterId, submitted, result, decisions, insertions]);
+
+  const offerDeskRestore = !deskDraftHandled && !!deskDraft && !hasWork;
+
+  const restoreDesk = () => {
+    const kept = deskDraft?.data;
+    setDeskDraftHandled(true);
+    if (!kept) return;
+    setManuscript(kept.manuscript);
+    setForm(kept.form);
+    setSourceMatterId(kept.sourceMatterId);
+    setSubmitted(kept.submitted);
+    setResult(kept.result);
+    setDecisions(kept.decisions ?? {});
+    setInsertions(kept.insertions ?? []);
+    // A pass interrupted mid-read has no redline to return to, so its
+    // manuscript comes back to the desk rather than to a half-drawn room.
+    setPhase(kept.result && kept.submitted ? 'redline' : 'desk');
+  };
+
+  const discardDesk = () => {
+    clearDraft(deskStore, user?.id, DESK_ITEM_ID);
+    setDeskDraftHandled(true);
+  };
 
   const segments = useMemo(
     () => (result ? buildSegments(submitted, result.edits, insertions) : []),
@@ -445,6 +527,32 @@ export default function EditorRoom() {
             <p className="mt-4 text-[13px] text-[#e8a090]">
               The Editor could not finish the last read: {error}
             </p>
+          )}
+
+          {offerDeskRestore && deskDraft && (
+            <div className="mt-4 rounded-sm border border-[#e8b84a]/35 bg-[rgba(232,184,74,0.1)] px-3 py-2.5">
+              <p className="text-[13px] leading-snug text-[#f5f2ed]">
+                {restoreOfferLine(deskDraft.savedAt)}{' '}
+                {deskDraft.data.result
+                  ? 'The manuscript and the Editor’s pass are still here.'
+                  : 'The manuscript is still here.'}
+              </p>
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  onClick={restoreDesk}
+                  className="px-2.5 py-1 rounded-sm text-[12px] bg-[#e8b84a]/20 hover:bg-[#e8b84a]/30 transition-colors"
+                  style={{ color: GOLD }}
+                >
+                  Restore
+                </button>
+                <button
+                  onClick={discardDesk}
+                  className="px-2.5 py-1 rounded-sm text-[12px] text-white/60 hover:text-white transition-colors"
+                >
+                  Discard
+                </button>
+              </div>
+            </div>
           )}
 
           <div
