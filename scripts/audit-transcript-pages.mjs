@@ -188,6 +188,11 @@ async function auditDatabase({ matter, limit }) {
     q += `&matterspace_id=eq.${m.id}`;
   }
   const docs = await get(q);
+  // A silent truncation would read as "and that is all of them", which is the
+  // failure mode this whole lane exists to prevent.
+  if (docs.length >= limit) {
+    console.log(`NOTE: showing the first ${limit} ready documents only (--limit). Raise --limit or narrow with --matter.\n`);
+  }
   const rows = [];
   for (const d of docs) {
     const recorded = d.metadata?.transcript_pages || null;

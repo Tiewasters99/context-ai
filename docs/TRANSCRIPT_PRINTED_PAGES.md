@@ -33,7 +33,7 @@ both are existing structured fields.
 | `pdf_page` | with the above | the PDF page the passage sits on — what the Reader needs to open it |
 | `printed_page_method` | with the above | `sequence_fit` or `condensed_marker` |
 | `page_source: 'pdf_index'` | the detector looked at a transcript and **would not claim** a printed page | `page_start` is the PDF index. Say so beside the cite. |
-| `printed_page_confidence` | on every transcript passage | `high` / `medium` / `low` / `none` |
+| `printed_page_confidence` | on every transcript passage | how much is known about **this page**: `high` / `medium` / `low` / `none`. A page that fell outside every fitted run — a slip sheet, the word index, the errata — reads `none` even in a document that scored `high`, so the word "high" never appears beside a caveat. |
 | *(neither key)* | not a transcript, or indexed before 2026-09-21 | nothing is known. The standing "page may be the PDF index" note is the only honest thing to say. |
 
 `line_numbers: 'inferred'` (PR #138) is unchanged and orthogonal: it is about
@@ -86,7 +86,12 @@ return type in a migration, and have `formatCitation` prefer
    printed — above and below the reporter's line-number column — and take
    every 1–4 digit token there, scored by how page-number-shaped it is
    (`Page 15` > `15` alone on a line > digits at the end of a header line >
-   an OCR-mangled `l5`).
+   an OCR-mangled `l5`). A PDF text layer carries no indentation and joins a
+   baseline with no separator, so a right-set page number arrives at column 0
+   (`15`) or welded to the running header (`DESMOND BLAKE15`); both are read.
+   The line-number column is anchored on the first `1` or `2` whose successor
+   follows it, so the bare `1` header on printed page 1 is not mistaken for
+   line 1.
 2. **Fit.** Reporter pages step by exactly +1, so `printed = pdf_index +
    offset` over a contiguous run. Offsets that many pages agree on outvote
    one-off noise; the document is cut into runs of constant offset, and only
@@ -101,7 +106,17 @@ return type in a migration, and have `formatCitation` prefer
    each page boundary** set the confidence. Only `high` claims a printed page.
 
 Nothing here is a guess dressed as a fact: low confidence means the passage
-keeps the PDF index and is marked as carrying the PDF index.
+keeps the PDF index and is marked as carrying the PDF index. A run must show
+at least **six** pages of its own evidence before `high` is available, so an
+excerpt of five transcript pages or fewer never claims a printed page.
+
+**What this cannot tell you in advance:** whether a given reporter puts the
+page number in the PDF's text layer at all. Veritext's Fleming exports carry
+no *line* numbers there (PR #138 had to count lines by position); whether they
+carry the *page* number is a per-export fact. Run
+`audit-transcript-pages.mjs --fixture` over one document's extracted page text
+before approving a batch re-index — a `pdf_index / none` verdict on such a
+transcript is honest, and no worse than today, but also no better.
 
 Condensed 4-up sheets are short-circuited, not re-fitted — `parseTranscriptPage`
 has carried each panel's own printed page since PR #140. What is new for them

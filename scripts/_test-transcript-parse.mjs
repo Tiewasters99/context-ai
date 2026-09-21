@@ -417,7 +417,49 @@ const printedOf = (passages) => [...new Set(passages.map((p) => p.metadata?.prin
   ok('the verdict rides out of chunkPages for documents.metadata.transcript_pages');
 }
 
-// ---- 14. The audit reports what would change, from a fixture -------------
+// ---- 14. The header as a PDF text layer really emits it ------------------
+// pdf-parse joins a baseline with NO separator and NO indentation. So a page
+// number set to the right arrives at column 0 ("15"), or welded to the running
+// header ("DESMOND BLAKE15"). And on printed pages 1 and 2 that bare header is
+// indistinguishable from the first line of the line-number column unless the
+// column is anchored on a line whose successor follows it.
+{
+  const flat = (printed) => [String(printed), ...Array.from({ length: 25 }, (_, i) => {
+    const body = BODY[i % BODY.length];
+    const num = String(1 + i).padStart(2);
+    return body ? `${num}   ${body}` : num;
+  })].join('\n');
+
+  const pages = asPages([slipSheet, ...Array.from({ length: 16 }, (_, i) => flat(i + 1))]);
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.segments[0].offset, -1, `offset -1 (${JSON.stringify(v.segments)})`);
+  assert.strictEqual(v.map.get(2), 1, 'PDF p. 2 is printed p. 1 — the bare "1" header is not read as line 1');
+  assert.strictEqual(v.map.get(3), 2, 'and PDF p. 3 is printed p. 2');
+  assert.strictEqual(v.map.get(16), 15, 'the recorded example still holds at column 0');
+  assert.strictEqual(v.evidence_pages, 16, `every page carried its own evidence (${v.evidence_pages})`);
+
+  const welded = (printed) => flat(printed).replace(/^(\d+)\n/, `DESMOND BLAKE${printed}\n`);
+  const w = analyzeTranscriptPages(asPages(Array.from({ length: 12 }, (_, i) => welded(i + 31))));
+  assert.strictEqual(w.confidence, 'high', `a welded running header is still read (${w.confidence}: ${w.reason})`);
+  assert.strictEqual(w.map.get(1), 31, '"DESMOND BLAKE31" is printed p. 31');
+  assert.strictEqual(w.map.get(12), 42, 'and the run carries to p. 42');
+  ok('a bare column-0 header, including on printed pages 1 and 2, and a header welded to the witness name');
+}
+
+// ---- 15. A page outside every run says it knows nothing about itself -----
+{
+  const pages = asPages([slipSheet, ...Array.from({ length: 16 }, (_, i) => reporterPage(i + 1))]);
+  const passages = chunkPages(pages);
+  const onSlip = passages.filter((p) => p.page_start === 1);
+  assert(onSlip.length > 0, 'the slip sheet is indexed');
+  assert(onSlip.every((p) => p.metadata.page_source === 'pdf_index'), 'the slip sheet keeps the PDF index');
+  assert(onSlip.every((p) => p.metadata.printed_page_confidence === 'none'),
+    `and claims no confidence about ITSELF, whatever the document scored (${onSlip[0].metadata.printed_page_confidence})`);
+  ok('a page outside every run never carries the document\'s confidence next to a caveat');
+}
+
+// ---- 16. The audit reports what would change, from a fixture -------------
 // Offline by construction: the same two functions the --db mode calls, fed
 // page text and parsed passages held here. No network, no credentials.
 {
