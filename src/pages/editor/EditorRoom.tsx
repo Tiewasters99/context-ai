@@ -190,11 +190,14 @@ export default function EditorRoom() {
     [deskStore, user?.id],
   );
 
-  // An EMPTY desk writes nothing and clears nothing: that is what lets the
-  // offer below survive the moment between mount and the person's answer.
+  // An EMPTY desk writes nothing and clears nothing. Nor does a desk with an
+  // UNANSWERED offer standing over it: otherwise pasting a fresh manuscript
+  // before answering would overwrite — 600 ms later, in silence — the pass
+  // the person has already paid for.
   const hasWork = manuscript.trim().length > 0 || result !== null;
+  const offerOutstanding = !deskDraftHandled && !!deskDraft;
   useEffect(() => {
-    if (!user?.id || !hasWork) return;
+    if (!user?.id || !hasWork || offerOutstanding) return;
     const timer = setTimeout(() => {
       writeDraft<DeskDraft>(deskStore, {
         userId: user.id,
@@ -205,9 +208,11 @@ export default function EditorRoom() {
       });
     }, 600);
     return () => clearTimeout(timer);
-  }, [deskStore, user?.id, hasWork, phase, manuscript, form, sourceMatterId, submitted, result, decisions, insertions]);
+  }, [deskStore, user?.id, hasWork, offerOutstanding, phase, manuscript, form, sourceMatterId, submitted, result, decisions, insertions]);
 
-  const offerDeskRestore = !deskDraftHandled && !!deskDraft && !hasWork;
+  // The bar stands until it is answered — Restore or Discard — and not until
+  // the desk happens to look empty.
+  const offerDeskRestore = offerOutstanding;
 
   const restoreDesk = () => {
     const kept = deskDraft?.data;

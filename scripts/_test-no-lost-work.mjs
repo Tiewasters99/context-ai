@@ -500,7 +500,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function mount(props) {
+async function mount(props, { strict = false } = {}) {
   const container = window.document.createElement('div');
   window.document.body.appendChild(container);
   const api = { current: null };
@@ -508,15 +508,22 @@ async function mount(props) {
     api.current = useAutosave({ userId, itemId, save, delayMs: 20 });
     return null;
   }
+  // StrictMode is how this app actually mounts (src/main.tsx): in development
+  // React runs every effect mount -> cleanup -> mount. The tree below is the
+  // real one, not a stand-in.
+  const tree = (p) =>
+    strict
+      ? React.createElement(React.StrictMode, null, React.createElement(Probe, p))
+      : React.createElement(Probe, p);
   let root;
   await act(async () => {
     root = createRoot(container);
-    root.render(React.createElement(Probe, props));
+    root.render(tree(props));
   });
   return {
     api,
     async rerender(next) {
-      await act(async () => { root.render(React.createElement(Probe, next)); });
+      await act(async () => { root.render(tree(next)); });
     },
     async unmount() {
       await act(async () => { root.unmount(); });
@@ -596,6 +603,30 @@ test('B: pagehide flushes, and so does leaving the page', async () => {
   assert.equal(seen.length, 2, 'and so is navigating away');
 });
 
+test('B: under StrictMode the editor still saves — the saver is not disposed under it', async () => {
+  // The bug this guards: a cleanup that disposed the CURRENT saver. StrictMode
+  // runs cleanup between two mounts with the SAME memoised saver, so the
+  // second mount would hold a dead one — typing marks nothing dirty, nothing
+  // is mirrored, and blur reports success having written nothing. In
+  // development every Page, List and Table would silently stop saving.
+  resetUnsavedRegistry();
+  window.localStorage.clear();
+  const seen = [];
+  const view = await mount(
+    { userId: 'u1', itemId: 'p1', save: async (v) => { seen.push(v); } },
+    { strict: true },
+  );
+
+  await act(async () => { view.api.current.change({ body: 'after the double mount' }); });
+  assert.ok(window.localStorage.getItem(`${DRAFT_PREFIX}u1.p1`), 'still mirroring');
+  assert.equal(view.api.current.status.dirty, true, 'still marking the work unsaved');
+
+  await act(async () => { await sleep(60); });
+  assert.equal(seen.length, 1, 'and still writing to the server');
+  assert.deepEqual(seen[0], { body: 'after the double mount' });
+  await view.unmount();
+});
+
 test('B: the guard is absent until something is unsaved, and goes again after', async () => {
   resetUnsavedRegistry();
   const attached = [];
@@ -664,6 +695,8 @@ test('C: the Editor desk keeps the manuscript, the pass and the rulings', () => 
   assert.match(room, /decisions, insertions/, 'the rulings and the lawyer’s own ink travel with it');
   assert.match(room, /readDraft<DeskDraft>/);
   assert.match(room, /restoreOfferLine\(/, 'and it is offered, never applied');
+  assert.match(room, /if \(!user\?\.id \|\| !hasWork \|\| offerOutstanding\) return;/,
+    'and an unanswered offer is never overwritten by what is typed next');
 });
 
 test('C: the Assistant keeps a conversation per scope, and keeps none of a sealed one', () => {
@@ -686,6 +719,8 @@ test('C: the version banner saves before it reloads, and only the guard says bef
   const guard = read('src/hooks/useUnsavedGuard.ts');
   assert.match(guard, /addEventListener\('beforeunload', handler\)/);
   assert.match(guard, /const dirty = isDirty\(\)/, 'attached on a condition, never unconditionally');
+  assert.ok(!/=> \(\) => \{?\s*void saver\.flush\(\)\.finally\(\(\) => saver\.dispose\(\)\)/.test(guard),
+    'the CURRENT saver is never disposed in a cleanup — StrictMode remounts it');
   assert.match(guard, /onState: \(next\) => \{\s*setStatus\(next\);\s*notifyUnsaved\(\);/,
     'and every saver tells the registry, which is how the guard hears');
 });

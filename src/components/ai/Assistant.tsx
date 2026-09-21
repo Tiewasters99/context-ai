@@ -232,13 +232,33 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
 
   useEffect(() => {
     if (!user?.id || conv.scopeId === scopeKey) return;
+    // Park the outgoing conversation under ITS OWN scope before swapping, so
+    // walking out mid-reply does not drop the exchange that was in flight.
+    // Only where one is already kept: a scope that was never written to is a
+    // sealed or paused one, and this must not be the write that starts it.
+    if (conv.scopeId && readConversation(chatStore, user.id, conv.scopeId)) {
+      writeConversation(chatStore, {
+        userId: user.id,
+        scopeId: conv.scopeId,
+        messages: conv.messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          timestamp: (m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp)).toISOString(),
+        })),
+        input: conv.input,
+        savedAt: Date.now(),
+      });
+    }
     const kept = readConversation(chatStore, user.id, scopeKey);
     setConv({
       scopeId: scopeKey,
       messages: kept ? reviveMessages(kept.messages) : [welcomeMessage],
       input: kept?.input ?? '',
     });
-  }, [chatStore, user?.id, scopeKey, conv.scopeId]);
+    // `conv` whole rather than `conv.scopeId`: the parking write above reads
+    // its messages. The early return means the extra runs cost nothing.
+  }, [chatStore, user?.id, scopeKey, conv]);
 
   useEffect(() => {
     // While the panel is closed nothing is written and nothing is cleared:

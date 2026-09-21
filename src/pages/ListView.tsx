@@ -760,7 +760,11 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
         type="text"
         value={text}
         onChange={(e) => { setText(e.target.value); onTypeText(e.target.value); }}
-        onBlur={() => { if (text !== item.text) onChangeText(text); }}
+        // No `text !== item.text` guard: onTypeText has already synced the
+        // item, so the guard would short-circuit blur and leave the debounce
+        // pending. Committing an unchanged value writes nothing (the saver
+        // compares signatures), so this is free and it flushes.
+        onBlur={() => onChangeText(text)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();

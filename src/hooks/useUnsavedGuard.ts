@@ -23,6 +23,7 @@ import {
   registerUnsavedSource,
   subscribeUnsaved,
   writeDraft,
+  type Autosaver,
   type AutosaveState,
   type DraftRecord,
 } from '@/lib/draft-store';
@@ -111,11 +112,30 @@ export function useAutosave<T>({
     [store, userId, itemId, delayMs, mirror],
   );
 
-  // Flush, THEN dispose. An unmount is a route change or a closed panel, and
-  // both are moments a lawyer expects their typing to have landed.
-  useEffect(() => () => {
-    void saver.flush().finally(() => saver.dispose());
+  // NEVER dispose the CURRENT saver in a cleanup.
+  //
+  // React's StrictMode — which this app mounts in (src/main.tsx) — runs every
+  // effect mount → cleanup → mount in development, with the same memoised
+  // saver both times. A cleanup that disposed it would hand the re-mounted
+  // editor a dead saver: `change()` returns early, nothing is marked dirty,
+  // nothing is mirrored, and blur reports success having written nothing. In
+  // development every Page, List and Table would silently stop saving.
+  //
+  // So the PREVIOUS saver is disposed when a new one replaces it, and an
+  // unmount only flushes. A saver that outlives its component by a moment and
+  // finishes its retry is the behaviour worth having anyway.
+  const previousSaver = useRef<Autosaver<T> | null>(null);
+  useEffect(() => {
+    const previous = previousSaver.current;
+    if (previous && previous !== saver) {
+      void previous.flush().finally(() => previous.dispose());
+    }
+    previousSaver.current = saver;
   }, [saver]);
+
+  // Leaving for good — a route change, a closed panel. Both are moments a
+  // lawyer expects their typing to have landed.
+  useEffect(() => () => { void previousSaver.current?.flush(); }, []);
 
   useEffect(
     () =>
