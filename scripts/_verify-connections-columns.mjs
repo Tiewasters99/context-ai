@@ -260,6 +260,68 @@ section('3. the service role is unaffected — the /api handlers keep working');
       where connected_email = 'a@example.test' and kind = 'gmail'`);
   check(upd.ok, 'and it can still WRITE the token back — Microsoft rotates its refresh token on every use', upd.code);
   await asOwner(db);
+
+  // That is only half the claim. The other half is that every server reader
+  // really does hold the service role — a handler reading the token through a
+  // user-scoped client (anon key + the caller's JWT) would be a PostgREST
+  // request as `authenticated`, and 080 would turn it into a 500 in
+  // production. Roles cannot show that; the call sites can. So: scan api/ and
+  // lib/ for `.from('connections')` and require each chain that names a
+  // credential column to be on a client built from SUPABASE_SERVICE_ROLE_KEY,
+  // and each chain on a user-scoped client to name only granted columns.
+  const serverFiles = [];
+  for (const root of ['api', 'lib']) {
+    (function walk(dir) {
+      if (!fs.existsSync(dir)) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.(mjs|js|ts)$/.test(e.name)) serverFiles.push(p);
+      }
+    })(path.join(repo, root));
+  }
+
+  const serverChains = [];
+  for (const file of serverFiles) {
+    const text = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(repo, file).replace(/\\/g, '/');
+    // The client variable sits at the end of the line BEFORE `.from(...)`,
+    // or immediately before it on the same line.
+    const re = /(?:await\s+)?([A-Za-z_$][\w$]*)\s*\n?\s*\.from\(\s*['"`]connections['"`]\s*\)([\s\S]*?);/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const [, client, chain] = m;
+      const line = text.slice(0, m.index).split('\n').length;
+      // Is this variable built from the service-role key? Take the whole
+      // assignment statement — up to its first `;`, which a createClient call
+      // does not contain — and look for the key in it. (A pattern that stopped
+      // at the first `)` would miss `createClient(URL(), SERVICE_KEY(), …)`.)
+      const decl = new RegExp(
+        `(?:const|let|var)\\s+${client}\\s*=\\s*([\\s\\S]{0,400}?);`,
+      ).exec(text);
+      const serviceRole = /SERVICE_KEY|SERVICE_ROLE|adminClient\(\)/.test(decl?.[1] ?? '');
+      serverChains.push({
+        rel, line, client, serviceRole,
+        namesSecret: SECRET_COLUMNS.some((s) => chain.includes(s)),
+        columns: (chain.match(/\.select\(\s*['"`]([^'"`]*)['"`]/)?.[1] ?? '')
+          .split(',').map((s) => s.trim()).filter(Boolean),
+      });
+    }
+  }
+
+  check(serverChains.length >= 8,
+    'the scan found the server-side readers of connections', `${serverChains.length} call sites`);
+  const secretOnUserClient = serverChains.filter((c) => c.namesSecret && !c.serviceRole);
+  check(secretOnUserClient.length === 0,
+    'every server read or write of the token column is on a SERVICE-ROLE client — none would become a 500 under 080',
+    secretOnUserClient.map((c) => `${c.rel}:${c.line} via ${c.client}`).join(', '));
+
+  const userScoped = serverChains.filter((c) => !c.serviceRole);
+  const wouldBreak = userScoped.filter((c) =>
+    c.columns.length === 0 || c.columns.some((col) => col === '*' || !SAFE_COLUMNS.includes(col)));
+  check(wouldBreak.length === 0,
+    `the ${userScoped.length} user-scoped server read(s) name only granted columns`,
+    userScoped.map((c) => `${c.rel}:${c.line} → ${c.columns.join('/') || 'NO SELECT'}`).join(', '));
 }
 
 // ===========================================================================

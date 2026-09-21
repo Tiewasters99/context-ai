@@ -35,6 +35,19 @@
 -- same refusal with one object instead of two, and cannot be bypassed by
 -- someone who goes back to the base table.
 --
+-- WHAT YOU WILL SEE WHEN YOU PASTE THIS. Step 1(b) below revokes column-level
+-- SELECT on every column for both browser roles, and on a database where no
+-- such column grant was ever made there is nothing to take away. Postgres says
+-- so, once per column per role: `WARNING: no privileges could be revoked for
+-- column "..." of relation "connections"`. About twenty of those are expected
+-- and are NOT a failure — the SQL editor prints warnings and errors in the
+-- same place. The only line that means something went wrong is an ERROR, and
+-- the assertion at the bottom of this file raises one if the door is still
+-- open. If THAT assertion fires, the likeliest cause is a grant made by some
+-- other role: REVOKE only removes grants the current role issued, so re-run
+-- this file as the role that granted it (`\dp public.connections` in psql, or
+-- the `attacl` column of pg_attribute, names the grantor after the `/`).
+--
 -- CONSEQUENCE YOU SHOULD KNOW ABOUT: `select=*` NOW FAILS, LOUDLY.
 -- With a column-level grant in place, `select * from public.connections` as
 -- `authenticated` raises `42501 permission denied for table connections` —
@@ -44,6 +57,18 @@
 -- its columns. They all do (src/hooks/useConnections.ts, which now takes them
 -- from one exported constant), and scripts/_verify-connections-columns.mjs
 -- fails CI if a `*` or a credential column ever appears in src/ again.
+--
+-- TWO PostgREST BEHAVIOURS THIS RELIES ON, both true of the version Supabase
+-- runs and neither exercised by the harness (which speaks SQL, not HTTP):
+--   * a request with no `select=`, or with `select=*`, becomes `"connections".*`
+--     in the generated SELECT list — which is why a star fails rather than
+--     silently returning the granted columns; and
+--   * a mutation with no `?select=` is generated with `RETURNING 1`, not
+--     `RETURNING *`. That is the only reason the Connections page's
+--     `.delete().eq('id', …)` still works under these grants. A `.select()`
+--     chained onto a write of this table would ask for a representation and
+--     be refused — see the note on disconnectConnection in
+--     src/hooks/useConnections.ts.
 --
 -- APPLY ORDER. After 075. Relative to the front-end deploy the order does NOT
 -- matter, and that is on purpose: the code already on main names its columns
