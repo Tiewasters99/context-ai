@@ -17,11 +17,17 @@ const FLAG_TINT: Record<CiteFlag, string> = {
   'lean-red': 'text-orange-400',
   red: 'text-red-400',
   blue: 'text-sky-400/70',
+  unchecked: 'text-white/45',
 };
 
 // Worst-first: a lawyer wants the verified mismatches and unverified
 // concerns at the top, then the clean ones, then the Westlaw-paste pile.
-const FLAG_ORDER: CiteFlag[] = ['red', 'lean-red', 'lean-green', 'green', 'blue'];
+//
+// 'unchecked' sits SECOND, not last. It is not a mild finding to be swept up
+// with the Westlaw pile — it is a citation about which this run established
+// nothing, and the person signing the brief has to know that before they read
+// a single green tick.
+const FLAG_ORDER: CiteFlag[] = ['red', 'unchecked', 'lean-red', 'lean-green', 'green', 'blue'];
 
 const ACCEPTED_EXT = '.docx,.pdf,.txt,.md';
 
@@ -367,7 +373,8 @@ function RunHistoryRow({ run, onOpen }: { run: CiteCheckRunSummary; onOpen: () =
           {counts.lean_red > 0 && <span className="text-orange-400/80 mr-2">{FLAG_GLYPH['lean-red']}{counts.lean_red}</span>}
           {counts.lean_green > 0 && <span className="text-[#d4a054] mr-2">{FLAG_GLYPH['lean-green']}{counts.lean_green}</span>}
           {counts.green > 0 && <span className="text-emerald-400/80 mr-2">{FLAG_GLYPH.green}{counts.green}</span>}
-          {counts.blue > 0 && <span className="text-sky-400/60">{FLAG_GLYPH.blue}{counts.blue}</span>}
+          {counts.blue > 0 && <span className="text-sky-400/60 mr-2">{FLAG_GLYPH.blue}{counts.blue}</span>}
+          {(counts.not_checked ?? 0) > 0 && <span className="text-white/45">{FLAG_GLYPH.unchecked}{counts.not_checked}</span>}
         </span>
       )}
       <span className={`text-[12px] shrink-0 ${badge.cls}`}>{badge.label}</span>
@@ -405,7 +412,7 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
     );
   }
 
-  const counts = (run.counts && 'green' in run.counts) ? run.counts : { green: 0, lean_green: 0, lean_red: 0, red: 0, blue: 0 };
+  const counts = (run.counts && 'green' in run.counts) ? run.counts : { green: 0, lean_green: 0, lean_red: 0, red: 0, blue: 0, not_checked: 0 };
   const entries = run.report ?? [];
   const sorted = [...entries].sort((a, b) => FLAG_ORDER.indexOf(a.flag) - FLAG_ORDER.indexOf(b.flag));
   const shown = filter === 'all' ? sorted : sorted.filter((e) => e.flag === filter);
@@ -416,6 +423,8 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
     { flag: 'lean-red', n: counts.lean_red },
     { flag: 'red', n: counts.red },
     { flag: 'blue', n: counts.blue },
+    // Runs recorded before 'unchecked' existed have no such key.
+    { flag: 'unchecked', n: counts.not_checked ?? 0 },
   ];
 
   return (
@@ -495,7 +504,7 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
 function CiteDetail({ e }: { e: ReportEntry }) {
   return (
     <div className="px-4 pb-3 pt-1 pl-11 text-[14px] space-y-1 bg-[rgba(255,255,255,0.015)]">
-      <p><span className="text-white/40">Status:</span> <span className="text-white/80">{FLAG_LABEL[e.flag]}</span> <span className="text-white/30">({e.verification_status} · {e.rating} confidence)</span></p>
+      <p><span className="text-white/40">Status:</span> <span className="text-white/80">{FLAG_LABEL[e.flag]}</span> <span className="text-white/30">({e.verification_status} · {e.rating ? `${e.rating} confidence` : 'no rating given'})</span></p>
       {e.proposition && <p><span className="text-white/40">Cited for:</span> <span className="text-white/80">{e.proposition}</span></p>}
       {e.signal && <p><span className="text-white/40">Signal:</span> <span className="text-white/80">{e.signal}</span></p>}
       <p>

@@ -45,6 +45,8 @@
 // never handed a request it cannot hold.
 
 // ---------------------------------------------------------------------------
+import { buildRepairContent } from '@/lib/llm/contract';
+
 // Budgets
 // ---------------------------------------------------------------------------
 
@@ -357,24 +359,22 @@ export function checkWindowContract(raw: unknown, knownRefs: Set<string>): Contr
  * same misunderstanding.
  */
 export function buildRepairUserContent(original: string, reason: string, sent: unknown): string {
-  let shown: string;
-  try {
-    shown = JSON.stringify(sent).slice(0, 1200);
-  } catch {
-    shown = String(sent).slice(0, 1200);
-  }
-  return (
-    `${original}\n\n` +
-    `## Your previous answer could not be used\n` +
-    `Reason: ${reason}.\n` +
-    `You sent: ${shown}\n\n` +
-    `Answer again by calling the tool, with exactly this shape and nothing else:\n` +
-    `{"assignments":[{"ref":"<a ref that appears in the outline above, e.g. N4>",` +
-    `"confidence":<a number between 0 and 1>,"rationale":"<one or two sentences>",` +
-    `"passageRefs":["<a ref that appears in the excerpts above, e.g. P3>"]}]}\n` +
-    `If no bucket fits this part of the document, answer {"assignments":[]}. ` +
-    `Do not invent refs, and do not write confidence as a percentage or a string.`
-  );
+  // The prose lives in `src/lib/llm/contract.ts` now — the same three-step
+  // discipline is used by the tree, the evidence lane and cite-check, and one
+  // copy of it is one place to improve it. The text is byte-identical to what
+  // this function built before that module existed.
+  return buildRepairContent({
+    original,
+    reason,
+    sent,
+    shape:
+      `{"assignments":[{"ref":"<a ref that appears in the outline above, e.g. N4>",`
+      + `"confidence":<a number between 0 and 1>,"rationale":"<one or two sentences>",`
+      + `"passageRefs":["<a ref that appears in the excerpts above, e.g. P3>"]}]}`,
+    rules:
+      `If no bucket fits this part of the document, answer {"assignments":[]}. `
+      + `Do not invent refs, and do not write confidence as a percentage or a string.`,
+  });
 }
 
 // ---------------------------------------------------------------------------
