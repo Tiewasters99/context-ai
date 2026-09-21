@@ -184,9 +184,15 @@ const cols = await q(`
      and column_name in ('category','category_source','category_at','sort_key','category_rank')
    order by column_name`);
 check(cols.length === 5, 'all five columns exist', cols.map((c) => c.column_name).join(', '));
+// NOT generated, on purpose. `copy_document` in lib/mcp-core.mjs reads a
+// document with select('*'), strips six keys and inserts the rest; a generated
+// column in that row is rejected outright (428C9), so copying a document would
+// start failing the moment 081 was applied. The trigger in section 6 keeps
+// them true instead — see the round-trip check below.
 check(
-  cols.filter((c) => c.is_generated === 'ALWAYS').length === 2,
-  'sort_key and category_rank are GENERATED, so nothing can write them by hand',
+  cols.every((c) => c.is_generated !== 'ALWAYS'),
+  'no column is GENERATED — a full-row round trip must keep working',
+  cols.map((c) => `${c.column_name}:${c.is_generated}`).join(' '),
 );
 
 const idx = (await q(
@@ -557,9 +563,46 @@ check(badKeys.length === 0, 'the A–Z key strips extensions, leading dates, ind
 
 // The insert trigger.
 const fresh = await mkDoc(mShared, 'Motion for Summary Judgment.pdf');
-const freshRow = await one(`select category, category_source from public.documents where id = $1`, [fresh]);
+const freshRow = await one(
+  `select category, category_source, sort_key, category_rank
+     from public.documents where id = $1`, [fresh]);
 check(freshRow.category === 'pleading' && freshRow.category_source === 'rule',
   'a newly uploaded document is already on a shelf', `${freshRow.category}/${freshRow.category_source}`);
+check(freshRow.sort_key === 'motion for summary judgment' && freshRow.category_rank === 5,
+  'and its sort key and shelf order were computed for it',
+  `${freshRow.sort_key} / ${freshRow.category_rank}`);
+
+// THE `copy_document` CASE. lib/mcp-core.mjs reads a row with select('*'),
+// deletes six keys and inserts the rest. Everything 081 adds travels in that
+// row, so this is the exact shape that a GENERATED column would have broken —
+// and the trigger has to put the derived values back for the new matter.
+const roundTrip = await one(`
+  with src as (select * from public.documents where id = $1)
+  insert into public.documents
+    (matterspace_id, title, doc_type, source_filename, file_size_bytes, page_count,
+     processing_status, metadata, category, category_source, category_at,
+     sort_key, category_rank, created_by)
+  select $2, title, doc_type, source_filename, file_size_bytes, page_count,
+         processing_status, metadata, category, category_source, category_at,
+         'DELIBERATELY WRONG', 99, created_by
+    from src
+  returning id, sort_key, category_rank, category`, [fresh, mPrivate]);
+check(roundTrip.sort_key === 'motion for summary judgment' && roundTrip.category_rank === 5,
+  'a whole row written back (copy_document) is accepted, and the derived columns are recomputed',
+  `${roundTrip.sort_key} / ${roundTrip.category_rank}`);
+check(roundTrip.category === 'pleading',
+  'while the copy keeps the category the original carried');
+await db.query(`delete from public.documents where id = $1`, [roundTrip.id]);
+
+// A rename re-files the sort key; a status tick does not wake the trigger.
+await db.query(
+  `update public.documents set source_filename = 'Zulu final order.pdf' where id = $1`, [fresh]);
+const renamed = await one(`select sort_key, category, category_source from public.documents where id = $1`, [fresh]);
+check(renamed.sort_key === 'zulu final order',
+  'renaming a document moves it in the A–Z list', renamed.sort_key);
+check(renamed.category === 'pleading' && renamed.category_source === 'rule',
+  'but the trigger never RE-DECIDES the category on an update',
+  `${renamed.category}/${renamed.category_source}`);
 
 // The organize pass, as Alice. Every row in this matter already has a category
 // (the insert trigger gave it one), so first put the matter back into the state
@@ -608,6 +651,22 @@ let badCat = null;
 try { await db.query(`select public.set_document_category($1, 'nonsense')`, [target]); }
 catch (e) { badCat = e; }
 check(badCat !== null, 'an invented category is refused');
+
+// Somebody else's document. The UPDATE policy hides the row, so the function
+// must SAY it refused rather than return null, which the surface would paint
+// as "Unfiled".
+const secretDoc = (await one(
+  `select id from public.documents where matterspace_id = $1 limit 1`, [mPrivate])).id;
+let refused = null;
+try {
+  await as(BOB, `select public.set_document_category($1, 'case')`, [secretDoc]);
+} catch (e) { refused = e; }
+check(refused !== null && /not one you can re-file/.test(refused.message ?? ''),
+  'a document the caller may not write is REFUSED, not silently unchanged',
+  refused?.message?.slice(0, 70));
+const untouched = await one(
+  `select category_source from public.documents where id = $1`, [secretDoc]);
+check(untouched.category_source !== 'user', 'and the row is unchanged');
 
 // Organizing needs WRITE, not merely read: Bob is a 'member' of the shared
 // matter (so he may), and nothing at all elsewhere.

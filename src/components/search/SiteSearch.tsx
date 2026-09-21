@@ -230,28 +230,42 @@ export default function SiteSearch({ onClose }: { onClose: () => void }) {
  * finding a document matters most — and a button nobody can reach is not an
  * entry.
  */
-export function SiteSearchMount() {
+export function SiteSearchMount({ collapsed = false }: { collapsed?: boolean }) {
   const [open, setOpen] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-        e.preventDefault();
-        setOpen(true);
-      }
+      if (e.defaultPrevented) return;
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== 'k' && e.key !== 'K')) return;
+      // Cmd/Ctrl+K belongs to the editor while somebody is typing in it —
+      // TipTap uses it for a link, and a browser's own field may too.
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      e.preventDefault();
+      setOpen(true);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
   return (
     <>
+      {/* Always rendered, even on a collapsed rail: the button shrinks to its
+          icon, and the hotkey listener above must not be unmounted — a
+          collapsed rail is exactly when a keyboard entry earns its keep. */}
       <button
         onClick={() => setOpen(true)}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] text-white/55 hover:text-white hover:bg-[rgba(255,255,255,0.05)] transition-colors"
+        className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors ${
+          collapsed ? 'justify-center' : ''
+        }`}
         title="Find a document by name (Ctrl/Cmd + K)"
+        aria-label="Find a document"
       >
-        <Search size={13} strokeWidth={1.75} className="shrink-0" />
-        <span className="truncate">Find a document</span>
-        <kbd className="ml-auto text-[9px] text-white/30 border border-white/10 rounded px-1 py-px">⌘K</kbd>
+        <Search size={15} strokeWidth={1.75} className="shrink-0" />
+        {!collapsed && (
+          <>
+            <span className="truncate">Find a document</span>
+            <kbd className="ml-auto text-[9px] text-white/30 border border-white/10 rounded px-1 py-px">⌘K</kbd>
+          </>
+        )}
       </button>
       {open && <SiteSearch onClose={() => setOpen(false)} />}
     </>

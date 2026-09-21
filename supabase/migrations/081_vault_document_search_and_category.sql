@@ -92,35 +92,60 @@
 -- ---------------------------------------------------------------------------
 -- HOW TO APPLY THIS — read before pasting
 -- ---------------------------------------------------------------------------
--- Section 4 adds five columns to `public.documents`, two of them STORED
--- GENERATED. A stored generated column REWRITES THE TABLE and holds ACCESS
--- EXCLUSIVE while it does. On this deployment `documents` is tens of thousands
--- of short rows, so the rewrite itself is seconds — but the ALTER must first
--- get the lock, and while it waits every reader queues BEHIND it. The
--- `set lock_timeout` on the first line is what keeps a busy minute from
--- becoming a stalled site: if the lock is not free within ten seconds the
--- whole paste fails cleanly, changes nothing, and can be pasted again when the
--- ingest worker is quiet.
+-- THE ONE FACT THAT DECIDES HOW TO PASTE IT: the Supabase SQL editor wraps a
+-- pasted file in a SINGLE TRANSACTION. Section 4 takes ACCESS EXCLUSIVE on
+-- `public.documents`, and a lock taken in a transaction is held until COMMIT.
+-- So pasting this file whole means NOTHING READS OR WRITES `documents` — not
+-- the Vault, not the reader, not the worker — from section 4 to the end of the
+-- file. On this table (tens of thousands of short rows) that is a few seconds.
+-- At 3 a.m. that is a non-event; in the middle of a filing day, with a bulk
+-- ingest running, it is the site pausing.
 --
--- Section 8 builds four indexes, one of them a trigram GIN. They are built
--- WITHOUT `concurrently`, on purpose: `CREATE INDEX CONCURRENTLY` cannot run
--- inside a transaction block, and the Supabase SQL editor wraps a pasted file
--- in exactly one. A plain build takes SHARE (readers continue, writes to
--- `documents` queue) and on a table this size finishes in about a second. If
--- this table is ever an order of magnitude larger, split the CREATE INDEX
--- statements out of the file and run each one on its own, outside a
--- transaction, with `concurrently` added.
+-- The file is therefore written in THREE PARTS, each marked in the body, each
+-- safe to paste on its own, in this order:
 --
--- Everything else — the schema, the functions, the trigger, the grants — is
--- create-or-replace and returns in milliseconds.
+--   PART A — sections 1 to 7.  The schema, the functions, the five columns,
+--            the trigger, the RPCs. The ALTER adds five NULLABLE columns with
+--            no default, which in PostgreSQL 11+ is a CATALOG-ONLY change: no
+--            table rewrite, no row touched. ACCESS EXCLUSIVE is held for
+--            milliseconds and released at COMMIT. Paste any time.
 --
--- ORDER: the application code MERGES FIRST and this file is pasted whenever is
--- convenient. Nothing regresses in between. The Vault's default list read is
--- byte-for-byte the request it makes today (it does not select or order by any
--- column added here); the A–Z and Category views ask for the new columns, get
--- a 400 while they do not exist, and fall back to the date list with one line
--- saying so; the search box gets a 404 from PostgREST and says "Search arrives
--- with migration 081." Applying the file turns all three on with no deploy.
+--   PART B — section 8, the backfill.  One UPDATE that fills `sort_key` for
+--            documents that already exist. An ordinary UPDATE: ROW EXCLUSIVE,
+--            so READERS CONTINUE THROUGHOUT. Seconds on this table. Until it
+--            has run, existing documents sort under '#' in the A–Z view and
+--            the list still works.
+--
+--   PART C — section 9, the five indexes.  Built WITHOUT `concurrently`,
+--            because `CREATE INDEX CONCURRENTLY` cannot run inside a
+--            transaction block and the editor always provides one. A plain
+--            build takes SHARE: readers continue, writes to `documents` queue
+--            behind it. About a second each here. If `documents` ever grows an
+--            order of magnitude, run each CREATE INDEX on its own outside a
+--            transaction with `concurrently` added.
+--
+-- Pasting the whole file at once is correct and idempotent; it just merges
+-- those three lock stories into one window. `set lock_timeout = '10s'` on the
+-- first line means a paste that cannot get its lock fails cleanly and changes
+-- nothing, rather than queueing every reader behind itself.
+--
+-- WHY THE COLUMNS ARE NOT `GENERATED ... STORED`, although they look like they
+-- should be: `copy_document` in lib/mcp-core.mjs reads a document row with
+-- `select('*')`, strips six keys and INSERTS the rest. A generated column in
+-- that row is rejected outright (`428C9 cannot insert a non-DEFAULT value into
+-- column "sort_key"`), so copying a document would start failing the moment
+-- this migration was applied. Plain columns maintained by the trigger in
+-- section 6 behave identically for every reader, survive a full-row round trip
+-- (the trigger simply recomputes them), and cost no table rewrite.
+--
+-- ORDER RELATIVE TO THE CODE: the application code MERGES FIRST and this file
+-- is pasted whenever is convenient. Nothing regresses in between. The Vault's
+-- default list read is byte-for-byte the request it makes today (it does not
+-- select or order by any column added here); the A–Z and Category views ask
+-- for the new columns, get a 400 while they do not exist, and fall back to the
+-- date list with one line saying so; the search box gets a 404 from PostgREST
+-- and says "Search arrives with migration 081." Applying the file turns all
+-- three on with no deploy.
 --
 -- ROLLBACK: `drop function public.search_documents(...) cascade;` and the
 -- matching organize/category functions, then `drop schema vault_internal
@@ -129,7 +154,17 @@
 
 set lock_timeout = '10s';
 
--- ---------------------------------------------------------------------------
+-- `extensions` is where a Supabase project usually keeps pg_trgm, and it is
+-- NOT in the default search_path for every role. Without it, `gin_trgm_ops` in
+-- section 9 and `similarity()` in section 7 resolve to nothing. A schema that
+-- does not exist in a search_path is ignored, so this is harmless where
+-- pg_trgm lives in `public` (and in PGlite, which has no `extensions` schema).
+set search_path = public, extensions;
+
+-- ===========================================================================
+-- PART A — schema, functions, columns, trigger, RPCs. Catalog-only; the lock
+-- on `documents` is held for milliseconds. Safe to paste at any hour.
+-- ===========================================================================
 -- 1. Extension.
 --
 -- `pg_trgm` is ALREADY enabled: migration 001/002 create it (002, line 12), so
@@ -159,15 +194,16 @@ comment on schema vault_internal is
   'wrapper.';
 
 -- ---------------------------------------------------------------------------
--- 3. The two pure functions the columns are generated from.
+-- 3. The two pure functions everything below is decided by.
 --
--- Both are IMMUTABLE because a STORED generated column requires it. That has a
--- consequence worth writing down: the stored values are computed ONCE, at
--- write time. `create or replace` on either function below does NOT recompute
--- what is already stored. Changing a rule means a backfill —
---   alter table public.documents alter column sort_key drop expression;
---   alter table public.documents drop column sort_key;
--- then re-run section 4. Treat these two bodies as versioned.
+-- Both are IMMUTABLE: same input, same answer, no reads. That matters twice —
+-- the planner may use them in an index expression, and a value once written is
+-- only as current as the body that wrote it. `create or replace` on either
+-- function does NOT rewrite what is already stored, so changing a rule means
+-- re-running the backfill in section 8 (for `sort_key`) or pressing "Organize
+-- my matter" again (for `category`, which only touches rows the rule now
+-- answers differently and never a row a person filed). Treat these two bodies
+-- as versioned.
 -- ---------------------------------------------------------------------------
 
 -- The A–Z key. Not the title: the title. A reviewing attorney looks for
@@ -316,50 +352,34 @@ comment on function public.document_category_rule(text, text) is
   'rule — see the body. IMMUTABLE; see document_sort_key''s comment.';
 
 -- ---------------------------------------------------------------------------
--- 4. The columns. ONE alter, so ONE table rewrite.
+-- 4. The columns. ONE alter, five NULLABLE columns with no default, which is
+--    a catalog-only change: no rewrite, no row touched, milliseconds.
 --
 --   category        what shelf this document sits on. NULL until the matter is
---                   organized (or until a row is inserted, see section 6) —
---                   deliberately NOT backfilled here, because a backfill is a
---                   second rewrite of every row on a table that has just had
---                   one, and the feature has a button for it.
+--                   organized, or until a row is inserted (section 6).
 --   category_source who decided: 'rule' (this file's function) or 'user'.
---                   NOTHING may overwrite 'user'.
+--                   NOTHING automatic may overwrite 'user'.
 --   category_at     when.
---   sort_key        generated. The A–Z key for the DISPLAYED name, which is
+--   sort_key        the A–Z key for the DISPLAYED name, which is
 --                   source_filename first — that is what documentToVaultFile
 --                   puts on the row, so it is what A–Z must agree with.
---   category_rank   generated. Table-of-Authorities order as a number, so
---                   PostgREST can `order=category_rank` and use an index.
---                   Uncategorised sorts last, not first.
+--                   Maintained by the trigger in section 6, backfilled by
+--                   section 8.
+--   category_rank   Table-of-Authorities order as a number, so PostgREST can
+--                   `order=category_rank` and use an index. Uncategorised
+--                   sorts LAST (8), not first. Same trigger.
 --
--- `if not exists` makes this idempotent, and that cuts both ways: if a column
--- of this name already exists with a DIFFERENT generation expression, this
--- statement keeps the old one silently. On a database where 081 has never run
--- that cannot happen; on one where it has, re-running changes nothing, which
--- is the point.
+-- Maintained by a trigger rather than GENERATED — see the header: a generated
+-- column would break `copy_document`, which round-trips a whole row.
+--
+-- `if not exists` makes this idempotent. Re-running changes nothing.
 -- ---------------------------------------------------------------------------
 alter table public.documents
   add column if not exists category        text,
   add column if not exists category_source text,
   add column if not exists category_at     timestamptz,
-  add column if not exists sort_key        text
-    generated always as (
-      public.document_sort_key(coalesce(nullif(source_filename, ''), title))
-    ) stored,
-  add column if not exists category_rank   smallint
-    generated always as (
-      case category
-        when 'case'       then 1
-        when 'statute'    then 2
-        when 'rule'       then 3
-        when 'secondary'  then 4
-        when 'pleading'   then 5
-        when 'supporting' then 6
-        when 'other'      then 7
-        else 8
-      end
-    ) stored;
+  add column if not exists sort_key        text,
+  add column if not exists category_rank   smallint;
 
 -- The vocabulary, as constraints rather than as a convention. Dropped first so
 -- a re-paste replaces rather than duplicates.
@@ -379,13 +399,18 @@ comment on column public.documents.category_source is
   '''rule'' = public.document_category_rule decided it; ''user'' = a person '
   'did, and nothing automatic may overwrite it.';
 comment on column public.documents.sort_key is
-  'Generated A–Z key for the displayed name. See public.document_sort_key.';
+  'A–Z key for the displayed name, maintained by the documents_shelf trigger. '
+  'Never write it by hand — the trigger recomputes it. See document_sort_key.';
 comment on column public.documents.category_rank is
-  'Generated Table-of-Authorities order for `category`. Uncategorised = 8, '
-  'so it sorts after every named shelf rather than before all of them.';
+  'Table-of-Authorities order for `category`, maintained by the same trigger. '
+  'Uncategorised = 8, so it sorts after every named shelf, not before all of '
+  'them.';
 
--- ---------------------------------------------------------------------------
--- 5. A person's own choice, and the pass that must not overwrite it.
+-- ===========================================================================
+-- PART A continues — a person's own choice, and the pass that must not
+-- overwrite it.
+-- ===========================================================================
+-- 5.
 -- ---------------------------------------------------------------------------
 
 -- Set (or clear) one document's category by hand. SECURITY INVOKER with no
@@ -436,6 +461,14 @@ begin
    where d.id = p_document_id
   returning d.category into v_out;
 
+  -- No row means the documents UPDATE policy refused it (a viewer, or somebody
+  -- else's document). Saying so is the difference between "you may not" and a
+  -- silent null the surface would paint as "Unfiled".
+  if not found then
+    raise exception 'set_document_category: document % is not one you can re-file', p_document_id
+      using errcode = '42501';
+  end if;
+
   return v_out;
 end $$;
 
@@ -458,7 +491,7 @@ returns table (matterspace_id uuid, assigned bigint)
 language plpgsql
 volatile
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 begin
   return query
@@ -529,29 +562,59 @@ grant execute on function public.organize_matter_documents(uuid[])
   to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- 6. A new document arrives already on a shelf.
+-- 6. The shelf trigger: what keeps sort_key and category_rank true.
 --
--- BEFORE INSERT only, and only when nothing was supplied. Never on UPDATE:
--- an update trigger would re-decide a row a person had just decided, which is
--- the one thing this feature promises not to do.
+-- Two jobs, and the difference between them is the whole of the promise this
+-- feature makes:
+--
+--   * `sort_key` and `category_rank` are DERIVED. They are recomputed on every
+--     insert and on every update that could change them, so nothing — not a
+--     hand edit, not `copy_document` writing a whole row back — can leave a
+--     stale one behind. Writing them by hand is pointless, not dangerous.
+--
+--   * `category` is a DECISION, and it is made ONCE, on insert, and only when
+--     nobody supplied one. The trigger never re-decides it on UPDATE. That is
+--     the one thing this feature promises not to do.
+--
+-- `update of` lists the columns worth waking for: a status tick from the
+-- ingest pipeline (processing_status, metadata) does not fire this at all.
 -- ---------------------------------------------------------------------------
-create or replace function public._documents_default_category()
+create or replace function public._documents_shelf()
 returns trigger
 language plpgsql
 as $$
 begin
-  if new.category is null then
+  if tg_op = 'INSERT' and new.category is null then
     new.category        := public.document_category_rule(new.title, new.source_filename);
     new.category_source := coalesce(new.category_source, 'rule');
     new.category_at     := coalesce(new.category_at, now());
   end if;
+
+  new.sort_key := public.document_sort_key(
+    coalesce(nullif(new.source_filename, ''), new.title));
+
+  new.category_rank := case new.category
+    when 'case'       then 1
+    when 'statute'    then 2
+    when 'rule'       then 3
+    when 'secondary'  then 4
+    when 'pleading'   then 5
+    when 'supporting' then 6
+    when 'other'      then 7
+    else 8
+  end;
+
   return new;
 end $$;
 
+-- The 2026-09-09 name is dropped explicitly so a database that saw an earlier
+-- paste of this file does not keep two triggers.
 drop trigger if exists documents_default_category on public.documents;
-create trigger documents_default_category
-  before insert on public.documents
-  for each row execute function public._documents_default_category();
+drop trigger if exists documents_shelf on public.documents;
+create trigger documents_shelf
+  before insert or update of title, source_filename, category
+  on public.documents
+  for each row execute function public._documents_shelf();
 
 -- ---------------------------------------------------------------------------
 -- 7. The search.
@@ -620,7 +683,7 @@ returns table (
 language plpgsql
 stable
 security definer
-set search_path = public, pg_temp
+set search_path = public, extensions, pg_temp
 as $$
 #variable_conflict use_column
 declare
@@ -814,9 +877,32 @@ comment on function public.search_documents(
   'connector-side exclusion is lib/mcp-core.mjs''s business, not this '
   'function''s. This is NOT passage search: see public.search_passages.';
 
+-- ===========================================================================
+-- PART B — the backfill. Safe to paste on its own; readers continue.
+-- ===========================================================================
+-- 8. Give every document that already exists a sort key.
+--
+-- An ordinary UPDATE: ROW EXCLUSIVE, which does not block readers. It writes
+-- every row once, so on a table of tens of thousands it is seconds and some
+-- bloat that autovacuum reclaims. `where sort_key is null` makes it resumable
+-- and makes a second run free.
+--
+-- Categories are deliberately NOT backfilled. Filing a matter is a decision
+-- with a button on it ("Organize my matter"), it is per matter, and it is not
+-- something a migration should do to 46,000 documents on somebody's behalf.
+-- Until that button is pressed, a document's category is NULL and it appears
+-- under "Not yet organized".
 -- ---------------------------------------------------------------------------
--- 8. The indexes. See "HOW TO APPLY THIS": built without `concurrently`
---     because a pasted file is one transaction and CIC cannot run in one.
+update public.documents
+   set sort_key = public.document_sort_key(coalesce(nullif(source_filename, ''), title))
+ where sort_key is null;
+
+-- ===========================================================================
+-- PART C — the indexes. Safe to paste on its own; readers continue, writes to
+-- `documents` queue behind each build.
+-- ===========================================================================
+-- 9. See "HOW TO APPLY THIS": built without `concurrently`, because a pasted
+--    file is one transaction and CREATE INDEX CONCURRENTLY cannot run in one.
 -- ---------------------------------------------------------------------------
 
 -- The A–Z list: `order by sort_key, id` inside one matter, answered as an

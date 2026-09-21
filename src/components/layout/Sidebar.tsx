@@ -291,8 +291,8 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
 
         {/* Find a document by name, across every matter. Also Ctrl/Cmd+K,
             which is what makes it reachable from the Vault — the Vault covers
-            this rail entirely. */}
-        {!collapsed && <SiteSearchMount />}
+            this rail entirely — and why it is mounted even when collapsed. */}
+        <SiteSearchMount collapsed={collapsed} />
 
         {/* The Assistant — the one door to everything else: it explains how
             the place works and, on request, does the work. It sits up here
