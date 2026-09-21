@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import {
   currentServerRefusal,
@@ -7,6 +7,8 @@ import {
 } from '@/lib/refusal-bus';
 import { dismissUpdateNotice } from '@/lib/app-version';
 import { useUpdateNotice, useVersionWatch } from '@/hooks/useAppVersion';
+import { useUnsavedGuard } from '@/hooks/useUnsavedGuard';
+import { flushAllUnsaved } from '@/lib/draft-store';
 
 // The one place a server refusal is drawn. Mounted once per shell
 // (MainLayout, DiscoveryLayout, ConnectLayout) and fed by refusal-bus.ts, so
@@ -67,6 +69,10 @@ export default function RefusalBanner() {
   // rendering; it only asks /version.json at sensible moments.
   const update = useUpdateNotice();
   useVersionWatch();
+  // And, for the same reason, where the browser's leave-confirmation is
+  // attached — only ever while something typed is not yet on the server.
+  useUnsavedGuard();
+  const [refreshBlocked, setRefreshBlocked] = useState(false);
 
   if (refusal) {
     const tone =
@@ -91,14 +97,33 @@ export default function RefusalBanner() {
   }
 
   if (update) {
-    // location.reload() and nothing else. No auto-reload anywhere in this
-    // path: the person may be mid-sentence in the Editor, and the Editor desk
-    // is not persisted. They choose the moment.
+    // The person chooses the moment — but a Refresh they DID ask for saves
+    // first. flushAllUnsaved() is every live editing surface, and a reload
+    // only follows if the server actually took the work; if it did not, the
+    // banner says so and the tab stays where it is.
+    const refresh = async () => {
+      setRefreshBlocked(false);
+      const saved = await flushAllUnsaved();
+      if (!saved) {
+        setRefreshBlocked(true);
+        return;
+      }
+      window.location.reload();
+    };
+
     return (
       <div role="status" aria-live="polite" className={`${SHELL} ${TONES.news}`}>
-        <span className="flex-1">{update.message}</span>
+        <span className="flex-1">
+          {update.message}
+          {refreshBlocked && (
+            <span className="block mt-1 text-[#f8b4b4]">
+              Not refreshed — some of your work has not saved yet. It is still
+              here, and it is still being retried.
+            </span>
+          )}
+        </span>
         <button
-          onClick={() => window.location.reload()}
+          onClick={() => { void refresh(); }}
           className="shrink-0 underline underline-offset-2 decoration-[#8aa2c8]/60 opacity-90 hover:opacity-100"
         >
           Refresh
