@@ -54,7 +54,8 @@ Then the twenty-three offline harness steps, one step each, each with
 | `_verify-recovery-sweep.mjs` | Migration 058 at production scale (1,641 error jobs per victim). | PGlite. |
 | `_verify-ready-but-empty.mjs` | Migration 059 returns exactly the empty-but-ready rows. | PGlite. |
 | `_verify-held-status.mjs` | Migration 060 — a `held` row is picked up by nothing. | PGlite. |
-| `_verify-search-model-scope.mjs` | Migration 061 — no cosine across two embedding spaces. | PGlite + pgvector. |
+| `_verify-search-model-scope.mjs` | Migration 061 — no cosine across two embedding spaces, and migration 074 leaves that untouched. | PGlite + pgvector. |
+| `_verify-search-scope-router.mjs` | Migration 074 — the search timeout fix. Runs 056 → 061 → 074 over one corpus and requires every answer to be **byte-identical**, then pushes 074's `contextspaces.search_exact_max` GUC below the corpus so the whole battery runs again on the ANN branch. Asserts on each branch separately that a matter left out of `p_matterspace_ids` (the sealed/paused descendant case, PRs #181/#179) cannot be reached, with a negative control that puts it back. Also: the exact branch's ORDER BY provably cannot use the HNSW index, the ten-argument signature and fifteen columns are unchanged, 074 is idempotent, and 056 → 074 with no 061 in between still carries 061's guarantees. | PGlite + pgvector. |
 | `_verify-profiles-rls.mjs` | Migration 062 — `profiles` exposes no email column, and the policy wrapper is SECURITY INVOKER. | PGlite. |
 | `_verify-usage-budget.mjs` | Migration 063 — the spend cap's database half: budgets hold, every admitted request is recorded, an unknown tier falls back to `free`. | PGlite. |
 | `_test-usage-meter.mjs` | The spend cap's handler half — `lib/usage-meter.mjs` and `lib/usage-prices.mjs` (31 tests). | `node --test`; the RPC is stubbed, no database and no network. |
