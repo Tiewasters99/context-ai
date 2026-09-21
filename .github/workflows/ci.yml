@@ -135,6 +135,17 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-model-scope.mjs
 
+      # 074 changes how stage A is RETRIEVED, so the assertion that matters is
+      # a comparison: 056, then 061, then 074 over one corpus, with every
+      # answer required to come back byte-identical. It then pushes 074's
+      # threshold GUC below the corpus and runs the whole battery again on the
+      # ANN branch, and asserts on EACH branch separately that a matter left
+      # out of the id array — the sealed/paused descendant case from #181/#179
+      # — stays out, against a negative control that proves it is reachable.
+      - name: Migration 074 — search scope router, same answers, isolation intact (PGlite + pgvector)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-scope-router.mjs
+
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-profiles-rls.mjs
