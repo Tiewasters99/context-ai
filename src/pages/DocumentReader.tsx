@@ -29,9 +29,16 @@ import {
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
+import AnimationLayer from '@/components/reader/AnimationLayer';
+import AnimationAttach from '@/components/reader/AnimationAttach';
+import {
+  listAnimations, deleteAnimation, type DocumentAnimation, type Turn,
+} from '@/lib/document-animations';
+import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
 import DriveExportControl from '@/components/reader/DriveExportControl';
 import { DRIVE_KINDS, DRIVE_LABEL, type DriveKind } from '@/lib/export-connectors';
@@ -253,6 +260,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const [openNote, setOpenNote] = useState<{ id: string; x: number; y: number } | null>(null);
   const [openRef, setOpenRef] = useState<{ link: IncomingLink; x: number; y: number } | null>(null);
   const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
+  // Living illustrations: a clip laid over a picture on the page, played
+  // by tapping it (migration 062).
+  const [animations, setAnimations] = useState<DocumentAnimation[]>([]);
+  // True while waiting for a rectangle to be drawn round a picture.
+  const [attaching, setAttaching] = useState(false);
+  const [pendingArea, setPendingArea] = useState<{ page: number; rect: FractionalRect } | null>(null);
 
   const pdfDocRef = useRef<unknown>(null);
   // Natural (scale-1) size of every page, so the stack can lay out a
@@ -1508,6 +1521,48 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     return () => { cancelled = true; };
   }, [loadState, fileKind, id]);
 
+  // The clips attached to this document. A failure is an empty list (the
+  // table may not exist yet), so the book always opens.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    void listAnimations(id).then((rows) => { if (!cancelled) setAnimations(rows); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  // Esc gives up on drawing the rectangle.
+  useEffect(() => {
+    if (!attaching) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setAttaching(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [attaching]);
+
+  // The chosen area of the page, cropped and turned — the attach dialog's
+  // preview, drawn by the same renderer the page grid uses for its images.
+  const makeAnimationPreview = useCallback(async (p: number, rect: FractionalRect, turn: Turn) => {
+    const pdf = pdfDocRef.current as PDFDocumentProxy | null;
+    if (!pdf) return null;
+    try {
+      const canvas = await renderPageCanvas(pdf, p, { width: 1000, maxEdge: 2000 });
+      const blob = await canvasToBlob(rotateCanvas(cropCanvas(canvas, rect), turn), 'image/jpeg', 0.85);
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      console.warn('[animation preview] failed:', e instanceof Error ? e.message : e);
+      return null;
+    }
+  }, []);
+
+  const removeAnimation = useCallback(async (animationId: string) => {
+    const err = await deleteAnimation(animationId);
+    if (err) { setErrorMsg(err); return; }
+    setAnimations((prev) => prev.filter((a) => a.id !== animationId));
+  }, []);
+
   // Load annotations + incoming cross-references once per document, and
   // keep them live: margin notes are collaborative, so a teammate's note
   // should appear without a reload (the matter_comments realtime pattern;
@@ -2386,6 +2441,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             outline={outline}
             onJumpPage={(p) => gotoPage(p)}
             onJumpDest={(d) => void jumpDest(d)}
+            animations={animations}
+            onAddAnimation={doc?.matterspace_id ? () => setAttaching(true) : null}
+            onRemoveAnimation={(animationId) => void removeAnimation(animationId)}
+            addingAnimation={attaching}
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">
@@ -2417,6 +2476,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     h={d.h * renderedScale}
                     pending={visibleSet.has(i + 1)}
                     annotations={annotations}
+                    animations={animations}
+                    attachMode={attaching}
+                    onAreaChosen={(chosenPage, rect) => {
+                      setAttaching(false);
+                      setPendingArea({ page: chosenPage, rect });
+                    }}
                     incomingLinks={incomingLinks}
                     isMobile={isMobile}
                     currentUserId={user?.id ?? null}
@@ -2564,6 +2629,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       )}
         </div>
       </div>
+      {pendingArea && doc && (
+        <AnimationAttach
+          documentId={doc.id}
+          matterId={doc.matterspace_id ?? null}
+          page={pendingArea.page}
+          rect={pendingArea.rect}
+          makePreview={makeAnimationPreview}
+          onSaved={(animation) => {
+            setAnimations((prev) => [...prev, animation]);
+            setPendingArea(null);
+          }}
+          onClose={() => setPendingArea(null)}
+        />
+      )}
+
       {pageEditorOpen && doc && (
         <PdfPageEditor
           doc={doc}
@@ -2813,6 +2893,9 @@ const PageSlot = memo(function PageSlot({
   h,
   pending,
   annotations,
+  animations,
+  attachMode,
+  onAreaChosen,
   incomingLinks,
   isMobile,
   currentUserId,
@@ -2829,6 +2912,10 @@ const PageSlot = memo(function PageSlot({
   /** In view: show a spinner on the blank paper until the page paints. */
   pending: boolean;
   annotations: Annotation[];
+  animations: DocumentAnimation[];
+  /** Drawing a rectangle round a picture, to attach a clip to it. */
+  attachMode: boolean;
+  onAreaChosen: (page: number, rect: FractionalRect) => void;
   incomingLinks: IncomingLink[];
   isMobile: boolean;
   currentUserId: string | null;
@@ -2872,6 +2959,13 @@ const PageSlot = memo(function PageSlot({
           ref={(el) => setHitLayerEl(p, el)}
           className="search-hits absolute inset-0 pointer-events-none"
           aria-hidden="true"
+        />
+        {/* Last, so a play badge sits above the text layer's own hit area. */}
+        <AnimationLayer
+          page={p}
+          animations={animations}
+          attachMode={attachMode}
+          onAreaChosen={onAreaChosen}
         />
       </div>
       <NotesRail

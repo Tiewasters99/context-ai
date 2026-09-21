@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { FileText, List } from 'lucide-react';
+import { FileText, List, Film, Plus, Trash2 } from 'lucide-react';
+import type { DocumentAnimation } from '@/lib/document-animations';
 
 // Tree node returned by pdfjs `pdf.getOutline()`. The shape is flexible —
 // pdfjs may include extra properties we don't need.
@@ -16,9 +17,16 @@ type Props = {
   outline: OutlineNode[] | null;
   onJumpPage: (page: number) => void;
   onJumpDest: (dest: unknown) => void;
+  /** Clips attached to pages of this document — the living illustrations. */
+  animations: DocumentAnimation[];
+  /** Arms "draw a rectangle round the picture"; null when adding isn't possible. */
+  onAddAnimation: (() => void) | null;
+  onRemoveAnimation: (id: string) => void;
+  /** True while the reader is waiting for that rectangle. */
+  addingAnimation: boolean;
 };
 
-type Tab = 'pages' | 'contents';
+type Tab = 'pages' | 'contents' | 'animations';
 
 export default function ReaderSidebar({
   totalPages,
@@ -27,6 +35,10 @@ export default function ReaderSidebar({
   outline,
   onJumpPage,
   onJumpDest,
+  animations,
+  onAddAnimation,
+  onRemoveAnimation,
+  addingAnimation,
 }: Props) {
   const hasOutline = !!outline && outline.length > 0;
   const [tab, setTab] = useState<Tab>('pages');
@@ -48,6 +60,12 @@ export default function ReaderSidebar({
           icon={<FileText size={13} />}
           label="Contents"
           disabled={!hasOutline}
+        />
+        <SidebarTab
+          active={tab === 'animations'}
+          onClick={() => setTab('animations')}
+          icon={<Film size={13} />}
+          label="Animations"
         />
       </div>
 
@@ -101,6 +119,61 @@ export default function ReaderSidebar({
               <p className="text-[11px] text-white/40 p-2">
                 This document has no table of contents.
               </p>
+            )}
+          </div>
+        )}
+
+        {tab === 'animations' && (
+          <div className="p-2 space-y-2">
+            {animations.length === 0 && !addingAnimation && (
+              <p className="p-2 text-[11px] leading-relaxed text-white/40">
+                Nothing is animated yet. A clip filed in this matter can be laid over a picture
+                in the book, so it comes alive when a reader taps it.
+              </p>
+            )}
+
+            {animations.map((a) => (
+              <div
+                key={a.id}
+                className="group flex items-center gap-2 rounded-md border border-[var(--color-border)] px-2 py-1.5 hover:border-white/20"
+              >
+                <button
+                  onClick={() => onJumpPage(a.page)}
+                  className="min-w-0 flex-1 text-left"
+                  title={`Go to page ${a.page}`}
+                >
+                  <span className="block truncate text-[11px] text-white/80">
+                    {a.label || a.media?.title || 'Animation'}
+                  </span>
+                  <span className="block text-[10px] tabular-nums text-white/45">
+                    p. {a.page}{a.turn ? ` · turned ${a.turn}°` : ''}{a.loops ? '' : ' · plays once'}
+                  </span>
+                </button>
+                <button
+                  onClick={() => onRemoveAnimation(a.id)}
+                  title="Take this animation off the page"
+                  aria-label={`Remove the animation on page ${a.page}`}
+                  className="shrink-0 rounded p-1 text-white/35 opacity-0 transition hover:bg-white/5 hover:text-red-400 group-hover:opacity-100"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+
+            {onAddAnimation && (
+              addingAnimation ? (
+                <p className="rounded-md border border-[var(--color-primary)] px-2 py-2 text-[11px] leading-relaxed text-[var(--color-primary)]">
+                  Draw a rectangle round the picture on the page, and the clip will play there.
+                  Press Esc to stop.
+                </p>
+              ) : (
+                <button
+                  onClick={onAddAnimation}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-white/18 px-2 py-2 text-[11px] text-white/55 transition hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                >
+                  <Plus size={13} /> Add an animation
+                </button>
+              )
             )}
           </div>
         )}
