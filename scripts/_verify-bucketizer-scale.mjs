@@ -29,6 +29,13 @@
 //      no prompt or excerpt text rides in either field, and that the bytes
 //      forwarded to the provider are byte-for-byte what they were without
 //      them.
+//   8. THE TREE HAS AN OUTPUT CONTRACT TOO. Tree generation checked
+//      `result.claims.length` and then walked the answer inserting rows, so a
+//      claim with no label, a duplicated element or a flattened parent-ref
+//      list became buckets in the attorney's tree. It is now validated whole
+//      BEFORE the first insert, repaired once through the same metered
+//      'bucketizer.tree' call, and otherwise refused in a sentence that says
+//      nothing was changed — which is true because no write is attempted.
 //
 // Untracked by convention elsewhere in scripts/, but this one runs in CI.
 
@@ -581,8 +588,10 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
 
   const { LLM_FEATURES } = await import('../src/lib/llm/features.ts');
   const { callStructured } = await import('../src/lib/bucketizer/llm-call.ts');
-  const { BUCKETIZER_DEFAULT_MODEL, generateTreeFromPleadings, supabaseRunDeps } =
-    await import('../src/lib/bucketizer/index.ts');
+  const {
+    BUCKETIZER_DEFAULT_MODEL, generateTreeFromPleadings, supabaseRunDeps,
+    checkTreeContract, buildTreeRepairContent, TREE_CONTRACT_FAILURE, TREE_MAX_CLAIMS,
+  } = await import('../src/lib/bucketizer/index.ts');
   const { supabaseEvidenceDeps } = await import('../src/lib/bucketizer/evidence.ts');
 
   // Real uuids: `lib/ledger.mjs` uuidList() drops the WHOLE list if one
@@ -609,16 +618,38 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
     const chain = {
       select: () => chain, eq: () => chain, order: () => chain, range: () => chain,
       maybeSingle: async () => result,
+      single: async () => result,
       then: (res, rej) => Promise.resolve(result).then(res, rej),
     };
     return chain;
   };
 
+  // EVERY attempted write is recorded rather than performed, so "nothing was
+  // persisted from the failed attempt" is an assertion about an empty list and
+  // not about a stub that happened to throw.
+  let writes = [];
+  let nextNodeId = 0;
   globalThis.__bkzSupabase = {
-    auth: { getSession: async () => ({ data: { session: null } }) },
+    auth: {
+      getSession: async () => ({ data: { session: null } }),
+      getUser: async () => ({ data: { user: { id: '11111111-2222-4333-8444-555555555555' } }, error: null }),
+    },
     from: (table) => {
+      if (table === 'bucketizer_nodes') {
+        return {
+          ...q({ data: null, error: null }),
+          insert: (row) => {
+            const written = { ...row, id: `n-${nextNodeId++}` };
+            writes.push({ table, row: written });
+            return q({ data: written, error: null });
+          },
+        };
+      }
       if (table === 'documents') {
-        return q({ data: { id: PLEADING_A, title: 'Complaint', source_filename: 'complaint.pdf', processing_status: 'ready', matterspace_id: MATTER }, error: null });
+        return {
+          ...q({ data: { id: PLEADING_A, title: 'Complaint', source_filename: 'complaint.pdf', processing_status: 'ready', matterspace_id: MATTER, metadata: {} }, error: null }),
+          update: (row) => { writes.push({ table, row }); return q({ data: null, error: null }); },
+        };
       }
       if (table === 'passages') {
         return q({ data: [{ text: `Paragraph 14. ${SENTINEL}.`, sequence_number: 0 }], error: null });
@@ -664,24 +695,235 @@ section("7. The matter's Record — what each Bucketizer call SAYS it is");
   };
 
   // -- the tree, from the pleadings it was drawn from ------------------------
+  //
+  // An off-contract answer now buys ONE repair turn and then stops, which is
+  // how this case reaches the model twice without a database behind it: the
+  // insert loop is never entered, so no `bucketizer_nodes` write is attempted.
+  // That is the assertion, not a convenience — a failed tree must leave the
+  // matter exactly as it was.
   {
     seen.length = 0;
+    writes = [];
     reply = { content: [{ type: 'tool_use', input: { claims: [] } }] };
     let threw = null;
     try {
       await generateTreeFromPleadings({ matterId: MATTER, pleadingDocIds: [PLEADING_A, PLEADING_B] });
     } catch (e) { threw = e; }
-    // An empty answer stops the run before the first insert, which is how
-    // this case reaches the model without a database behind it. Asserting the
-    // exact sentence keeps an unrelated failure from passing as this one.
-    check('tree: the run stopped where it was meant to, after the call',
-      threw?.message === 'The model returned no claims.', threw?.message);
-    check('tree: exactly one call to /api/llm', seen.length === 1, seen.length);
-    if (seen.length === 1) {
+
+    check('tree: NOTHING was written — the existing tree is untouched by a failed answer',
+      writes.length === 0, JSON.stringify(writes));
+    check('tree: the failure is the plain sentence, and says nothing was changed',
+      typeof threw?.message === 'string' && threw.message.startsWith(TREE_CONTRACT_FAILURE),
+      threw?.message);
+    check('tree: and it names what was wrong, twice',
+      /Twice: the "claims" array was empty\.\)$/.test(threw?.message ?? ''), threw?.message);
+    check('tree: TWO calls to /api/llm — the first answer, and one repair',
+      seen.length === 2, seen.length);
+    if (seen.length === 2) {
       commonChecks('tree', seen[0].env, 'bucketizer.tree', [PLEADING_A, PLEADING_B]);
       check('tree: both pleadings are named — the tree was drawn from both',
         seen[0].env.documentIds.length === 2);
+
+      // THE REPAIR IS A METERED, RECORDED CALL. It goes through the same
+      // /api/llm with the same feature label and the same document ids, so
+      // the matter's Record and the wallet both see it.
+      commonChecks('tree repair', seen[1].env, 'bucketizer.tree', [PLEADING_A, PLEADING_B]);
+      check('tree repair: it shows the model its own answer and the reason',
+        seen[1].env.body.includes('Your previous answer could not be used')
+        && seen[1].env.body.includes('the \\"claims\\" array was empty'));
+      check('tree repair: and asks for the nested shape by name',
+        seen[1].env.body.includes('subissues') && seen[1].env.body.includes('do not send a flat list'));
+      check('tree repair: same model, same tool, same allowance — only the user content differs',
+        seen[1].env.model === seen[0].env.model && seen[1].env.provider === seen[0].env.provider
+        && JSON.parse(seen[1].env.body).max_tokens === JSON.parse(seen[0].env.body).max_tokens
+        && JSON.stringify(JSON.parse(seen[1].env.body).tools) === JSON.stringify(JSON.parse(seen[0].env.body).tools));
     }
+  }
+
+  // -- the FIRST turn's bytes are what they always were ----------------------
+  //
+  // Rebuilt from the same prompt pieces through the same adapter, so a valid
+  // first answer sends exactly what it sent before the contract existed.
+  {
+    const { adapters } = await import('../src/lib/llm/adapters.ts');
+    const { findModel } = await import('../src/lib/llm/providers.ts');
+    const {
+      TREE_SYSTEM, TREE_TOOL_NAME, TREE_TOOL_DESCRIPTION, TREE_SCHEMA, buildTreeUserContent,
+    } = await import('../lib/bucketizer-core.mjs');
+    const { provider, model } = findModel(BUCKETIZER_DEFAULT_MODEL);
+    const expected = adapters[provider.id].buildStructuredRequestBody({
+      system: TREE_SYSTEM,
+      // The stub answers both pleading ids with the same row, so the real
+      // call loads two pleadings — and the budget is split between them.
+      userContent: buildTreeUserContent([
+        { title: 'Complaint', text: `Paragraph 14. ${SENTINEL}.` },
+        { title: 'Complaint', text: `Paragraph 14. ${SENTINEL}.` },
+      ]),
+      toolName: TREE_TOOL_NAME,
+      toolDescription: TREE_TOOL_DESCRIPTION,
+      inputSchema: TREE_SCHEMA,
+      maxTokens: 16_000,
+    }, model);
+    check('tree: the first turn\'s request bytes are unchanged by the contract check',
+      seen[0]?.env.body === expected,
+      seen[0]?.env.body?.slice(0, 200));
+  }
+
+  const goodTree = () => ({
+    claims: [{
+      label: 'Excessive force (§ 1983)',
+      description: 'Force used during the August 16 entry.',
+      elements: [{
+        label: 'Seizure',
+        description: 'Records showing a seizure occurred.',
+        subissues: [{ label: 'Was the pen locked?', description: 'Logs and footage.' }],
+      }],
+    }],
+    themes: [{ label: 'Pattern of indifference', description: 'Prior complaints.' }],
+  });
+
+  // -- invalid → repair → VALID, all the way into the insert loop ------------
+  //
+  // The only case that executes the loop the contract now guards. It also
+  // proves the repair is not a dead end: a pen that missed the shape the first
+  // time and got it right the second builds the tree it was asked for.
+  {
+    seen.length = 0;
+    writes = [];
+    nextNodeId = 0;
+    const replies = [
+      { content: [{ type: 'tool_use', input: { claims: [] } }] },
+      { content: [{ type: 'tool_use', input: goodTree() }] },
+    ];
+    let i = 0;
+    const saveFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      if (url !== '/api/llm') throw new Error(`section 7 saw egress to ${url}`);
+      seen.push({ init, env: JSON.parse(init.body) });
+      return new Response(JSON.stringify(replies[i++]), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+
+    const created = await generateTreeFromPleadings({ matterId: MATTER, pleadingDocIds: [PLEADING_A, PLEADING_B] });
+    globalThis.fetch = saveFetch;
+
+    check('tree: a repaired answer is used, and the tree is built', created.length === 4, created.length);
+    check('tree: exactly two calls — the bad answer and one repair', seen.length === 2, seen.length);
+
+    const nodes = writes.filter((w) => w.table === 'bucketizer_nodes').map((w) => w.row);
+    check('tree: four bucketizer_nodes rows — claim, element, subissue, theme',
+      nodes.length === 4, nodes.length);
+    check('tree: every row is marked as generated, not hand-made',
+      nodes.every((n) => n.origin === 'generated'));
+    check('tree: the claim and the theme are roots',
+      nodes[0].parent_id === null && nodes[0].kind === 'claim'
+      && nodes[3].parent_id === null && nodes[3].kind === 'theme');
+    check('tree: the element hangs off its claim, and the subissue off its element',
+      nodes[1].kind === 'element' && nodes[1].parent_id === nodes[0].id
+      && nodes[2].kind === 'subissue' && nodes[2].parent_id === nodes[1].id,
+      JSON.stringify(nodes.map((n) => [n.kind, n.parent_id, n.id])));
+    check('tree: labels and descriptions survive the contract check unchanged',
+      nodes[0].label === 'Excessive force (§ 1983)'
+      && nodes[2].description === 'Logs and footage.');
+    check('tree: the pleadings are marked as the tree’s sources, AFTER the inserts',
+      writes.filter((w) => w.table === 'documents').length === 2
+      && writes.findIndex((w) => w.table === 'documents')
+        > writes.findLastIndex((w) => w.table === 'bucketizer_nodes'));
+  }
+
+  // -- the contract itself ---------------------------------------------------
+  section('7b. The tree contract — what is refused, and what survives');
+
+  check('a valid tree passes, and counts every bucket it would create',
+    (() => { const r = checkTreeContract(goodTree()); return r.ok && r.value.nodeCount === 4; })());
+  check('a non-object is refused', checkTreeContract('nope').ok === false);
+  check('a null answer is refused', checkTreeContract(null).ok === false);
+  check('an array is refused', checkTreeContract([{ label: 'x' }]).ok === false);
+  check('no "claims" array is refused', checkTreeContract({ themes: [] }).ok === false);
+  check('an EMPTY claims array is refused — a tree with no claims is not a tree',
+    checkTreeContract({ claims: [] }).reason === 'the "claims" array was empty');
+  check('a claim with no label is refused, and the reason says which one',
+    checkTreeContract({ claims: [{ description: 'x' }] }).reason === 'claim 1 has no label');
+  check('a label that is a number, not text, is refused',
+    checkTreeContract({ claims: [{ label: 7, description: 'x' }] }).ok === false);
+  check('a description that is not text is refused',
+    checkTreeContract({ claims: [{ label: 'A', description: { note: 'x' } }] }).reason
+      === 'the description for claim 1 was not text');
+  check('elements that are not an array are refused',
+    checkTreeContract({ claims: [{ label: 'A', description: 'x', elements: 'Seizure' }] }).reason
+      === 'the elements of claim 1 was not an array');
+  check('an element with no label is refused, named by its claim',
+    checkTreeContract({ claims: [{ label: 'A', description: 'x', elements: [{ description: 'y' }] }] }).reason
+      === 'element 1 of claim 1 has no label');
+
+  // DANGLING PARENT REF — the flattening failure mode, refused not adopted.
+  {
+    const flat = checkTreeContract({
+      nodes: [
+        { id: 'c1', label: 'Excessive force' },
+        { id: 'e1', label: 'Seizure', parent: 'c1' },
+        { id: 'e2', label: 'Objective reasonableness', parent: 'c9' },
+        { id: 'e3', label: 'Causation', parent: 'c7' },
+      ],
+    });
+    check('a FLAT node list with parent refs is refused', flat.ok === false);
+    check('and the reason counts the refs that point at nothing',
+      flat.reason === 'the answer was a flat list of 4 nodes with parent references '
+        + '(2 of them naming a parent that is not in the answer), not the nested '
+        + 'claims → elements → subissues shape',
+      flat.reason);
+  }
+  {
+    const r = checkTreeContract({
+      claims: [
+        { label: 'Excessive force', description: 'x' },
+        { label: 'Seizure', description: 'y', parent: 'Negligence' },
+      ],
+    });
+    check('a claim naming a parent that is not in the answer is refused', r.ok === false);
+    check('and it is told the shape is nested, not a reference list',
+      (r.reason ?? '').includes('elements belong inside their claim'), r.reason);
+  }
+  {
+    const r = checkTreeContract({
+      claims: [
+        { label: 'Excessive force', description: 'x' },
+        { label: 'Seizure', description: 'y', parent: 'Excessive force' },
+      ],
+    });
+    check('a parent ref that RESOLVES is refused too — a claim has no parent either way',
+      r.ok === false && (r.reason ?? '').includes('a claim has no parent'), r.reason);
+  }
+
+  check('two claims with the same label are refused — one bucket typed twice',
+    checkTreeContract({ claims: [{ label: 'Negligence', description: 'x' }, { label: ' negligence ', description: 'y' }] }).reason
+      === 'two claims share the label "negligence"');
+  check('two elements with the same label under one claim are refused',
+    (checkTreeContract({ claims: [{ label: 'A', description: 'x', elements: [
+      { label: 'Duty', description: 'd' }, { label: 'DUTY', description: 'd2' },
+    ] }] }).reason ?? '').includes('two elements labelled'));
+  check('a tree past the bucket ceiling is refused',
+    (checkTreeContract({ claims: Array.from({ length: TREE_MAX_CLAIMS + 1 }, (_, i) => ({ label: `C${i}`, description: 'x' })) }).reason ?? '')
+      .includes(`no more than ${TREE_MAX_CLAIMS}`));
+  check('themes that are not an array are refused',
+    checkTreeContract({ ...goodTree(), themes: 'indifference' }).ok === false);
+  check('a theme with no label is refused',
+    checkTreeContract({ ...goodTree(), themes: [{ description: 'x' }] }).reason === 'theme 1 has no label');
+  check('a missing themes array is FINE — themes are optional',
+    (() => { const t = goodTree(); delete t.themes; return checkTreeContract(t).ok === true; })());
+  check('descriptions are trimmed, and an empty one becomes null rather than ""',
+    (() => {
+      const r = checkTreeContract({ claims: [{ label: '  Negligence  ', description: '   ' }] });
+      return r.ok && r.value.claims[0].label === 'Negligence' && r.value.claims[0].description === null;
+    })());
+
+  // The repair prompt echoes the model's own answer back at it.
+  {
+    const body = buildTreeRepairContent('BUILD THE TREE', 'claim 1 has no label', { claims: [{ description: 'x' }] });
+    check('the repair shows the model what it sent', body.includes('"description":"x"'));
+    check('the repair names the precise reason', body.includes('Reason: claim 1 has no label.'));
+    check('the repair keeps the original request above it', body.startsWith('BUILD THE TREE\n\n'));
+    check('the repair asks for the corrected answer only, with no second chance offered',
+      body.includes('Answer again by calling the tool, with exactly this shape and nothing else:'));
   }
 
   // -- one classification window --------------------------------------------

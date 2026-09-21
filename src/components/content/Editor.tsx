@@ -1,6 +1,7 @@
 // TipTap rich-text editor for Pages. Owns its own editor instance
-// and a small toolbar; the parent passes the initial JSON document
-// and a save callback that fires on blur.
+// and a small toolbar; the parent passes the initial JSON document,
+// a change callback that fires on every keystroke (the parent
+// debounces it), and a save callback that fires on blur.
 //
 // Backward compat: when the existing content_items have content.body
 // stored as a plain string (from the MVP), the parent normalizes it
@@ -30,12 +31,21 @@ import {
 interface EditorProps {
   initialContent: object;
   editable: boolean;
+  /** Blur, and any other moment the parent treats as "save now". */
   onSave: (json: object) => void;
+  /**
+   * Every keystroke. The parent debounces it (useAutosave), which is what
+   * stops a refresh mid-paragraph from costing the paragraph. Optional so a
+   * caller that only wants the old blur behaviour keeps it.
+   */
+  onChange?: (json: object) => void;
 }
 
-export function RichTextEditor({ initialContent, editable, onSave }: EditorProps) {
+export function RichTextEditor({ initialContent, editable, onSave, onChange }: EditorProps) {
   const onSaveRef = useRef(onSave);
   useEffect(() => { onSaveRef.current = onSave; }, [onSave]);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
   const editor = useEditor({
     extensions: [
@@ -62,6 +72,9 @@ export function RichTextEditor({ initialContent, editable, onSave }: EditorProps
       attributes: {
         class: 'rich-text',
       },
+    },
+    onUpdate: ({ editor }) => {
+      onChangeRef.current?.(editor.getJSON());
     },
     onBlur: ({ editor }) => {
       onSaveRef.current(editor.getJSON());

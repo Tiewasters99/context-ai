@@ -387,10 +387,21 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     });
   } else {
     const n = doc.accountWideReads;
+    // WHO ran them, from the rows' own recorded actor kind. 072's fan-out is
+    // not the connector's alone: an in-app search with no matter named takes
+    // the same path and writes the same rows. Calling all of them "a connected
+    // assistant" would put a claim in a court-facing document that the record
+    // does not support — and would send a reader looking for a connector that
+    // may never have existed on the account.
+    const byConnector = doc.accountWideByConnector;
+    const who =
+      byConnector === 0 ? 'run from inside Contextspaces'
+      : byConnector === n ? 'run by a connected assistant'
+      : 'run by a connected assistant or from inside Contextspaces';
     out.push({
       type: 'p',
       text:
-        `${n} search${n === 1 ? '' : 'es'} run by a connected assistant across every matter that ` +
+        `${n} search${n === 1 ? '' : 'es'} ${who} across every matter that ` +
         `account can see returned passages from this matter, or from one of its sub-matters, ` +
         `during the period covered${
           doc.integrity.truncated ? ' (counted over the entries shown; this read stopped at its ceiling)' : ''
@@ -564,11 +575,12 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
   out.push({
     type: 'bullets',
     items: [
-      'A connected assistant’s search that names no matter touches many matters at once. Where ' +
-        'account-wide recording has been switched on, this matter’s Record gains one entry for ' +
-        'each such search that returned passages from this matter, and that entry says nothing ' +
-        'about any other matter it may also have read. Where it has not, such a search leaves no ' +
-        'entry anywhere and does not appear here.',
+      'A search that names no matter — run by a connected assistant, or from inside ' +
+        'Contextspaces — touches many matters at once. Where account-wide recording has been ' +
+        'switched on, this matter’s Record gains one entry for each such search that returned ' +
+        'passages from this matter, and that entry says nothing about any other matter it may ' +
+        'also have read. Where it has not, such a search leaves no entry anywhere and does not ' +
+        'appear here.',
       'Work done on this matter outside Contextspaces — a browser chat, another firm’s tool, a ' +
         'local model — is not recorded and cannot be inferred from its absence.',
       'Document-level attestations, the citation verification log and the corrections log are ' +

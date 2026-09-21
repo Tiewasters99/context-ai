@@ -17,6 +17,15 @@ import {
   type ContentItemFull,
 } from '@/hooks/useContentItems';
 import { RichTextEditor, normalizeBody } from '@/components/content/Editor';
+import { useAuth } from '@/contexts/AuthContext';
+import { useAutosave } from '@/hooks/useUnsavedGuard';
+import { restoreOfferLine, saveStatusLine } from '@/lib/draft-store';
+
+/** What is being autosaved: the whole page, so the last write wins cleanly. */
+interface PageDraft {
+  title: string;
+  body: object;
+}
 
 export default function PageView({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
   const params = useParams();
@@ -31,55 +40,128 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
   const { data: item, isLoading, error } = useContentItem(id);
   const invalidate = useContentInvalidate();
 
+  const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [initialBody, setInitialBody] = useState<object | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const hydrated = useRef(false);
+  // The live document, read by every save. Refs, not state: a keystroke must
+  // not re-render the page, and the debounced save needs the latest of both
+  // halves whichever one changed.
+  const draftRef = useRef<PageDraft>({ title: '', body: { type: 'doc' } });
+  // Bumped to remount TipTap when a restored draft replaces its content:
+  // `useEditor({ content })` applies once, at creation.
+  const [editorRevision, setEditorRevision] = useState(0);
+  const [draftHandled, setDraftHandled] = useState(false);
 
-  useEffect(() => { hydrated.current = false; setInitialBody(null); }, [id]);
+  useEffect(() => {
+    hydrated.current = false;
+    setInitialBody(null);
+    setDraftHandled(false);
+  }, [id]);
+
+  // ONE writer for the page's own content, debounced while typing and flushed
+  // on blur, on unmount, on a route change, when the tab is hidden and on
+  // pagehide. Before this, everything typed since the last click-away died
+  // with the tab (PR #192 §3).
+  const autosave = useAutosave<PageDraft>({
+    userId: user?.id,
+    itemId: id,
+    baseUpdatedAt: item?.updated_at ?? null,
+    save: async (value) => {
+      if (!id) return;
+      await updateContentItem(id, {
+        title: value.title || 'Untitled Page',
+        content: { body: value.body },
+      });
+      invalidate.invalidateItem(id);
+    },
+  });
+  const { change, adopt, flush } = autosave;
 
   useEffect(() => {
     if (!item || hydrated.current) return;
     setTitle(item.title);
-    setInitialBody(normalizeBody(item.content?.body));
+    const body = normalizeBody(item.content?.body);
+    setInitialBody(body);
     if (titleRef.current) titleRef.current.textContent = item.title;
+    draftRef.current = { title: item.title, body };
+    // This IS the server's copy: no save, and nothing marked dirty.
+    adopt(draftRef.current);
     hydrated.current = true;
-  }, [item]);
+  }, [item, adopt]);
 
-  const persist = async (patch: Partial<Pick<ContentItemFull, 'title' | 'content' | 'is_locked' | 'cover_url'>>) => {
+  // The unsaved copy on this computer, offered only when it actually differs
+  // from what the server holds. A draft exists at all only because a save
+  // never completed, so this never overwrites anything by itself.
+  const localDraft = autosave.draft;
+  const offerRestore =
+    !draftHandled &&
+    !!localDraft &&
+    !!item &&
+    JSON.stringify(localDraft.data.body) !== JSON.stringify(normalizeBody(item.content?.body));
+
+  const restoreDraft = () => {
+    if (!localDraft) return;
+    setTitle(localDraft.data.title);
+    setInitialBody(localDraft.data.body);
+    if (titleRef.current) titleRef.current.textContent = localDraft.data.title;
+    draftRef.current = { ...localDraft.data };
+    setEditorRevision((n) => n + 1);
+    setDraftHandled(true);
+    change(draftRef.current);
+  };
+
+  const discardDraft = () => {
+    autosave.discardDraft();
+    setDraftHandled(true);
+  };
+
+  // Everything that is NOT the document — the lock, the cover — is a
+  // deliberate click, so it flushes the document first and then writes its own
+  // column. Two writes, never overlapping, never racing for the same field.
+  const persist = async (patch: Partial<Pick<ContentItemFull, 'is_locked' | 'cover_url'>>) => {
     if (!id) return;
-    setSaving(true);
+    await flush();
     try {
       await updateContentItem(id, patch);
-      setSavedAt(Date.now());
       invalidate.invalidateItem(id);
     } catch (e) {
       console.error('save failed', e);
-    } finally {
-      setSaving(false);
     }
+  };
+
+  const handleTitleInput = () => {
+    const next = (titleRef.current?.textContent ?? '').trim();
+    draftRef.current = { ...draftRef.current, title: next };
+    change(draftRef.current);
   };
 
   const handleTitleBlur = () => {
     const next = (titleRef.current?.textContent ?? '').trim();
-    if (next === title) return;
     setTitle(next);
-    persist({ title: next || 'Untitled Page' });
+    draftRef.current = { ...draftRef.current, title: next };
+    change(draftRef.current);
+    void flush();
+  };
+
+  const handleEditorChange = (json: object) => {
+    draftRef.current = { ...draftRef.current, body: json };
+    change(draftRef.current);
   };
 
   const handleEditorSave = (json: object) => {
-    persist({ content: { body: json } });
+    handleEditorChange(json);
+    void flush();
   };
 
   const handleCoverChange = (url: string | null) => {
-    persist({ cover_url: url });
+    void persist({ cover_url: url });
   };
 
   const toggleLock = () => {
     if (!item) return;
-    persist({ is_locked: !item.is_locked });
+    void persist({ is_locked: !item.is_locked });
   };
 
   const [exportingKind, setExportingKind] = useState<'docx' | null>(null);
@@ -114,6 +196,26 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
           <p className="text-[13px] text-white/40 py-12 text-center">Page not found.</p>
         )}
 
+        {item && offerRestore && localDraft && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[#e8b84a]/30 bg-[rgba(232,184,74,0.08)] px-3 py-2 text-[13px] text-[#f5f1e8]">
+            <span className="flex-1 min-w-[12rem]">
+              {restoreOfferLine(localDraft.savedAt, item.updated_at)}
+            </span>
+            <button
+              onClick={restoreDraft}
+              className="px-2.5 py-1 rounded-md bg-[#e8b84a]/20 text-[#e8b84a] hover:bg-[#e8b84a]/30 transition-colors"
+            >
+              Restore
+            </button>
+            <button
+              onClick={discardDraft}
+              className="px-2.5 py-1 rounded-md text-white/60 hover:text-white hover:bg-[rgba(255,255,255,0.08)] transition-colors"
+            >
+              Discard
+            </button>
+          </div>
+        )}
+
         {item && initialBody && (
           <div className="flex flex-col-reverse md:flex-row gap-8">
             <div className="flex-1 min-w-0">
@@ -121,13 +223,16 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
                 ref={titleRef}
                 contentEditable={!isLocked}
                 suppressContentEditableWarning
+                onInput={handleTitleInput}
                 onBlur={handleTitleBlur}
                 className="text-3xl font-bold text-[#f5f2ed] outline-none mb-6 empty:before:content-['Untitled'] empty:before:text-white/30"
                 data-placeholder="Untitled"
               />
               <RichTextEditor
+                key={editorRevision}
                 initialContent={initialBody}
                 editable={!isLocked}
+                onChange={handleEditorChange}
                 onSave={handleEditorSave}
               />
             </div>
@@ -161,8 +266,18 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
                   </div>
                   <div className="flex justify-between items-center">
                     <span>Status</span>
-                    <span className={isLocked ? 'text-[#d4a054]' : 'text-[#4ade80]'}>
-                      {saving ? 'Saving…' : savedAt ? 'Saved' : isLocked ? 'Locked' : 'Editable'}
+                    {/* "Saving… / Saved 12:04", and when a write fails it says
+                        so plainly rather than looking saved. */}
+                    <span
+                      className={
+                        autosave.status.error
+                          ? 'text-[#c96852]'
+                          : isLocked
+                            ? 'text-[#d4a054]'
+                            : 'text-[#4ade80]'
+                      }
+                    >
+                      {saveStatusLine(autosave.status) ?? (isLocked ? 'Locked' : 'Editable')}
                     </span>
                   </div>
                 </div>

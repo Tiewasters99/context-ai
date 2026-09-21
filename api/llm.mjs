@@ -206,7 +206,13 @@ export default async function handler(req, res) {
   // This sits ahead of the spend cap on purpose — see reason 1 in the header.
   const sealed = sealedRouteFor({ gate, provider, model, body });
   if (sealed?.refusal) return refuse(sealed.refusal.status, sealed.refusal.body);
-  if (!sealed && !gate.ok) return refuse(gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider });
+  // `message` is the gate's own sentence for a person — who paused the matter
+  // and since when, or that the pause could not be read so nothing was sent.
+  // src/lib/llm/refusals.ts already prefers a server-sent message, so without
+  // this the browser renders the code `ai_paused`. Forwarding it changes
+  // nothing about WHETHER the call is refused, and nothing about the order
+  // above: gate -> seal -> meter -> clamp -> record -> send.
+  if (!sealed && !gate.ok) return refuse(gate.status, { error: gate.error, tier: gate.tier, provider: gate.provider, message: gate.message });
 
   // The provider key is the unsealed forward's, and it is resolved before the
   // meter so a misconfigured server is not charged for a call it cannot make.
