@@ -4,9 +4,17 @@
 -- This is the bug flagged in #56 and open since 2026-08-22: "search works" for
 -- the largest matter and fails for several smaller ones, which is the opposite
 -- of what anyone expects. It was never diagnosable from the repo, because the
--- answer is in the plans. Measured 2026-09-20 against production (read-only,
--- Management API, service_role-equivalent — RLS bypassed, same as the MCP path
--- that reports the timeouts).
+-- answer is in the plans. Measured 2026-09-20 against production, read-only,
+-- through the Management API — which connects as `postgres` and therefore with
+-- RLS BYPASSED. The MCP connector does NOT: api/mcp.mjs builds its client from
+-- the anon key with the user's JWT in the Authorization header (the service
+-- key is used only to look up connector_tokens), so every search that reports
+-- 57014 runs as `authenticated`, with the policy `can_access_matter
+-- (matterspace_id)` evaluated per row on top of everything below. Every number
+-- in this file is therefore a LOWER BOUND on what production pays. The one
+-- piece of that overhead measurable read-only is the recursive ancestry walk
+-- inside matter_role: 10,145 calls in 228 ms, ~0.02 ms each, and the
+-- membership lookups sit on top of it. See the last note in this file.
 --
 -- What production actually looks like
 -- ---------------------------------------------------------------------------
@@ -109,14 +117,18 @@
 --     idx_passages_matterspace_level with `limit v_exact_max + 1` — it can
 --     never read more than that many index entries and never touches TOAST.
 --     Measured over three matters totalling 145k passages: 6.5 ms, 56 buffers,
---     29 heap fetches. It is free.
+--     29 heap fetches, with RLS bypassed. Under `authenticated` the policy
+--     rides along as a per-tuple filter, which is the ancestry cost noted at
+--     the top; the count is then the number of passages the CALLER can see,
+--     which is the right number to branch on anyway.
 --
 --   * Scope at or under the threshold -> EXACT scan. Brute force is not a
 --     failure here, it is the right plan: exact top-K, no recall loss, and
---     bounded by construction. At the default 15,000 that is ~2.5 s at the
---     very top of the range, and the overwhelming majority of matters are
---     nowhere near it — a 557-passage matter measures 112 ms, and 10,145
---     measures 1.5 s.
+--     bounded by construction. At the default 15,000 that is a few seconds at
+--     the very top of the range — the same plan measured 1,511 ms and 2,542 ms
+--     on one 10,145-passage matter an hour apart, so it is load-dependent, not
+--     a constant — and the overwhelming majority of matters are nowhere near
+--     the threshold: a 557-passage matter measures 112 ms.
 --
 --     The ORDER BY in this branch is deliberately `(...) + 0.0` so that the
 --     HNSW index cannot match it as a pathkey. That is the whole fix for the
@@ -462,9 +474,16 @@ end $$;
 --     compromise inherited from 056. It is not the timeout — vector-only
 --     searches, which never reach stage B, timed out too — so it is left
 --     alone here.
---   * The `authenticated` path (the app, not the MCP connector) evaluates the
---     RLS policy `can_access_matter(matterspace_id)` per row on top of all of
---     the above; can_access_matter -> matter_role -> matter_ancestry is a
---     recursive plpgsql call. service_role has rolbypassrls, so the timeouts
---     being reported are not this — but it is real, and it is the next thing
---     to measure if the app is ever slower than the connector.
+--   * Per-row RLS, which the connector DOES pay. `can_access_matter ->
+--     matter_role -> matter_ancestry` runs once per candidate row in the exact
+--     branch and once per index entry in the scope probe. Only the recursive
+--     ancestry walk is measurable without a session (10,145 calls, 228 ms,
+--     50,966 buffers); the membership lookups are additive on top. It is
+--     roughly 0.02-0.1 ms a row against the exact scan's measured 0.15-0.44,
+--     so it worsens every number above without changing which branch wins —
+--     but it is why the threshold is a GUC. If the exact branch runs long on
+--     this instance, lower it before touching anything else:
+--       alter role authenticated set contextspaces.search_exact_max = '10000';
+--     The structural fix is a SECURITY DEFINER pre-check that validates the id
+--     array ONCE per call instead of the policy re-deciding per row, wrapped
+--     per docs/RLS invoker rule. That is its own change, not this one.
