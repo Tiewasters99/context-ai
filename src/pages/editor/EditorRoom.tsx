@@ -11,6 +11,7 @@ import { applyEdits } from '@/lib/editor/verifier';
 import { wordDiff } from '@/lib/editor/diff';
 import { DOCUMENT_FORMS } from '@/lib/editor/types';
 import type { DocumentForm, EditorPassResult, ProposedEdit, PraiseNote } from '@/lib/editor/types';
+import { STALE_CHUNK_LINE, announceStaleChunk } from '@/lib/app-version';
 import DeskSourcePicker from './DeskSourcePicker';
 
 const RED = '#c96852'; // the red pen
@@ -342,13 +343,18 @@ export default function EditorRoom() {
       try {
         text = (await extractManuscript(file, (label) => setSourceNote({ kind: 'info', text: label }))).trim();
       } catch (err) {
-        // A redeploy deleted this tab's hashed chunks (the pdfjs worker
-        // fetch isn't covered by the vite:preloadError self-heal) —
-        // reload once, with the same loop guard main.tsx uses.
-        if (err instanceof StaleChunkError && Date.now() - Number(sessionStorage.getItem('chunk-reload-at') || 0) > 60_000) {
-          sessionStorage.setItem('chunk-reload-at', String(Date.now()));
-          setSourceNote({ kind: 'info', text: 'The app updated under this tab — reloading…' });
-          window.location.reload();
+        // A redeploy deleted this tab's hashed chunks (the pdfjs worker fetch
+        // isn't covered by vite:preloadError). This used to reload the tab on
+        // the spot — in the one room in the app that persists nothing: the
+        // manuscript, the editorial pass already paid for, and every
+        // accept/decline/modify ruling live in React state alone. Reloading
+        // here destroyed exactly the work it was meant to rescue.
+        //
+        // Now it says so, in the shell's banner and next to the button that
+        // was pressed, and the person reloads when the desk is clear.
+        if (err instanceof StaleChunkError) {
+          announceStaleChunk();
+          setSourceNote({ kind: 'error', text: STALE_CHUNK_LINE });
           return;
         }
         throw err;

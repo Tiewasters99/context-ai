@@ -16,8 +16,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   generateConnectorToken,
   claudeDesktopConfigSnippet,
+  claudeCodeAddCommand,
   MCP_ENDPOINT_URL,
 } from '@/lib/connectorTokens';
+
+// What stands in for a real token in the commands printed on the page. The
+// token dialog prints the same commands with the actual value substituted;
+// a real token is never rendered anywhere it is not already rendered.
+const TOKEN_PLACEHOLDER = 'YOUR_TOKEN';
 
 interface TokenRow {
   id: string;
@@ -286,17 +292,202 @@ export default function ClaudeConnect() {
           </p>
         </section>
 
-        {/* Token path — for clients that take a bearer header */}
+        {/* Claude Code — a terminal client, so the instruction is a command */}
+        <section className="mb-6 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+          <h2
+            className="text-lg font-semibold text-[var(--color-text-bright)] mb-2"
+            style={{ fontFamily: 'Playfair Display Variable, serif' }}
+          >
+            Claude Code — in a terminal
+          </h2>
+          <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
+            Claude Code is Claude in a terminal window — PowerShell on
+            Windows, Terminal on a Mac. You register Contextspaces once by
+            typing a command, and it is there in every session afterwards.
+            There are two ways in. Signing in is the shorter one, because
+            nothing is left for you to keep safe; a token is there for the
+            machine where opening a browser is awkward.
+          </p>
+
+          <h3 className="text-sm font-semibold text-[var(--color-text-bright)] mb-3">
+            1 · Sign in — nothing to paste
+          </h3>
+          <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed mb-6">
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
+              <span className="min-w-0 flex-1">
+                Open a terminal and type this, then press Enter. It registers
+                the connector; it does not sign you in yet.
+                <CommandLine
+                  command={claudeCodeAddCommand()}
+                  label="command"
+                />
+                <span className="block mt-2 text-xs text-[var(--color-text-muted)]">
+                  Claude Code answers with a line beginning{' '}
+                  <code className="font-mono">Added</code>.{' '}
+                  <code className="font-mono">--scope user</code> is what makes
+                  the connector available in every project; without it the
+                  connector exists only in the folder you happened to be
+                  standing in.
+                </span>
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
+              <span className="min-w-0 flex-1">
+                Start Claude Code by typing <code className="font-mono">claude</code>,
+                then type <code className="font-mono">/mcp</code>. Choose{' '}
+                <code className="font-mono">contextspaces</code> from the list,
+                press Enter, and choose <em>Authenticate</em>.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
+              <span className="min-w-0 flex-1">
+                Your browser opens the Contextspaces sign-in, and then the same
+                consent screen described above. Approve it, and back in the
+                terminal the server's status changes to connected.
+              </span>
+            </li>
+          </ol>
+
+          <h3 className="text-sm font-semibold text-[var(--color-text-bright)] mb-3">
+            2 · Or hand it a connector token
+          </h3>
+          <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-1">
+            Generate a token below and pass it as a header instead. One command,
+            in the two shells you are likely to be in — they differ only in the
+            quote marks.
+          </p>
+          <div className="mb-3">
+            <span className="block mt-3 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
+              macOS or Linux — Terminal (bash, zsh)
+            </span>
+            <CommandLine
+              command={claudeCodeAddCommand(TOKEN_PLACEHOLDER, 'posix')}
+              label="command"
+            />
+            <span className="block mt-4 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
+              Windows — PowerShell
+            </span>
+            <CommandLine
+              command={claudeCodeAddCommand(TOKEN_PLACEHOLDER, 'powershell')}
+              label="command"
+            />
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)] leading-relaxed mb-6">
+            Replace <code className="font-mono">{TOKEN_PLACEHOLDER}</code> with
+            the value from the token dialog — or just copy the ready-made
+            command the dialog offers, which already has the token in it.
+            Windows takes single quotes because PowerShell expands{' '}
+            <code className="font-mono">$</code> inside double ones. A token
+            passed this way is written into Claude Code's own configuration on
+            that machine (<code className="font-mono">~/.claude.json</code> at
+            user scope), and into your shell history, so treat the machine as
+            holding a key — and revoke the token here if it ever leaves your
+            hands.
+          </p>
+
+          <h3 className="text-sm font-semibold text-[var(--color-text-bright)] mb-3">
+            Checking it, and undoing it
+          </h3>
+          <ul className="space-y-2 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <code className="font-mono text-xs text-[var(--color-text-bright)]">
+                  claude mcp list
+                </code>{' '}
+                — Contextspaces should be there, shown as connected.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <code className="font-mono text-xs text-[var(--color-text-bright)]">
+                  claude mcp get contextspaces
+                </code>{' '}
+                — the same thing in detail, with an{' '}
+                <code className="font-mono">Issue:</code> line if the
+                connection failed.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <code className="font-mono text-xs text-[var(--color-text-bright)]">
+                  claude mcp logout contextspaces
+                </code>{' '}
+                — clears a browser sign-in but leaves the connector registered.
+                From inside a session, <em>Clear authentication</em> in the{' '}
+                <code className="font-mono">/mcp</code> menu does the same.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
+              <span>
+                <code className="font-mono text-xs text-[var(--color-text-bright)]">
+                  claude mcp remove contextspaces
+                </code>{' '}
+                — takes it away altogether.
+              </span>
+            </li>
+          </ul>
+          <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
+            Adding the same name twice at the same scope fails with{' '}
+            <em>already exists</em>, so choose one of the two routes — or run{' '}
+            <code className="font-mono">claude mcp remove contextspaces</code>{' '}
+            before switching from one to the other.
+          </p>
+          <p className="text-xs text-[var(--color-text-muted)] mt-3 leading-relaxed">
+            If a result comes back cut off, that is Claude Code's ceiling on a
+            single tool result — 25,000 tokens by default. Raise it for one
+            session with{' '}
+            <code className="font-mono">
+              {'$env:MAX_MCP_OUTPUT_TOKENS = "50000"; claude'}
+            </code>{' '}
+            in PowerShell, or{' '}
+            <code className="font-mono">
+              MAX_MCP_OUTPUT_TOKENS=50000 claude
+            </code>{' '}
+            in bash or zsh. A workspace with hundreds of matters can reach it
+            on a matter list; a more compact listing is on its way.
+          </p>
+          <p className="text-xs text-[var(--color-text-muted)] mt-3 leading-relaxed">
+            Anthropic's own pages are the place to check whether a command has
+            changed:{' '}
+            <a
+              href="https://code.claude.com/docs/en/mcp"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--color-primary)] hover:underline"
+            >
+              MCP in Claude Code
+            </a>{' '}
+            and the{' '}
+            <a
+              href="https://code.claude.com/docs/en/mcp-quickstart"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--color-primary)] hover:underline"
+            >
+              MCP quickstart
+            </a>
+            .
+          </p>
+        </section>
+
+        {/* Claude Desktop — the token path, unchanged in substance */}
         <section className="mb-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           <h2
             className="text-lg font-semibold text-[var(--color-text-bright)] mb-2"
             style={{ fontFamily: 'Playfair Display Variable, serif' }}
           >
-            Claude Desktop and Claude Code — with a token
+            Claude Desktop — with a token
           </h2>
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-4">
-            Clients that take a bearer header instead of signing in use a
-            connector token you generate here.
+            The desktop app takes a bearer header instead of signing in, using
+            a connector token you generate here.
           </p>
           <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <li className="flex gap-3">
@@ -427,20 +618,12 @@ export default function ClaudeConnect() {
           )}
         </section>
 
-        {/* Other clients — supplementary, deliberately below the fold */}
+        {/* One endpoint — supplementary, deliberately below the fold */}
         <section className="mt-14 pt-6 border-t border-[var(--color-border)]">
           <h2 className="text-xs font-semibold text-[var(--color-text-muted)] mb-3 uppercase tracking-wider">
-            Other clients
+            One endpoint
           </h2>
           <div className="text-sm text-[var(--color-text-secondary)] leading-relaxed space-y-3">
-            <p>
-              <strong className="text-[var(--color-text-bright)]">Claude Code</strong>{' '}
-              uses the same connector token via{' '}
-              <code className="font-mono text-xs text-[var(--color-text-bright)]">
-                claude mcp add
-              </code>
-              {' '}— handy for terminal-first workflows.
-            </p>
             <p>
               <strong className="text-[var(--color-text-bright)]">Every client shares one endpoint.</strong>{' '}
               The URL above is the whole integration. A client that can sign
@@ -582,7 +765,9 @@ function NewTokenModal({
         {/* What to do */}
         <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
           In Claude Desktop's settings, add a custom connector, paste the two
-          values below, name it <em>Contextspaces</em>, and save.
+          values below, name it <em>Contextspaces</em>, and save. For Claude
+          Code, skip past them to the command — it already has this token in
+          it.
         </p>
 
         {/* Endpoint URL */}
@@ -609,6 +794,42 @@ function NewTokenModal({
             </code>
             <CopyButton value={token} label="token" />
           </div>
+        </div>
+
+        {/* Claude Code — the same token, already inside the command */}
+        <div className="mb-6 border-t border-[var(--color-border)] pt-4">
+          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
+            Claude Code — one command, this token already in it
+          </label>
+          <p className="text-xs text-[var(--color-text-muted)] mb-1 leading-relaxed">
+            Paste it into a terminal: PowerShell on Windows, Terminal on a
+            Mac. Then <code className="font-mono">claude mcp list</code> should
+            show Contextspaces as connected. To undo it,{' '}
+            <code className="font-mono">claude mcp remove contextspaces</code>.
+          </p>
+          <span className="block mt-3 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
+            macOS or Linux — Terminal (bash, zsh)
+          </span>
+          <CommandLine
+            command={claudeCodeAddCommand(token, 'posix')}
+            label="command"
+          />
+          <span className="block mt-4 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
+            Windows — PowerShell
+          </span>
+          <CommandLine
+            command={claudeCodeAddCommand(token, 'powershell')}
+            label="command"
+          />
+          <p className="text-xs text-[var(--color-text-muted)] mt-3 leading-relaxed">
+            This command writes the token into Claude Code's configuration on
+            that machine (<code className="font-mono">~/.claude.json</code> at
+            user scope), and into your shell history. Treat the machine as
+            holding a key, and revoke the token on this page if it leaves your
+            hands. Prefer no token at all? Run the command without the{' '}
+            <code className="font-mono">--header</code> part and sign in from{' '}
+            <code className="font-mono">/mcp</code> instead.
+          </p>
         </div>
 
         {/* Advanced disclosure — JSON config snippet */}
@@ -666,6 +887,24 @@ function NewTokenModal({
         </div>
       </div>
     </div>
+  );
+}
+
+
+// -----------------------------------------------------------------------------
+// A command to type, with its own copy button.
+//
+// Rendered with spans, not divs: these sit inside <li><span> in the numbered
+// lists above, where a block element would be invalid nesting.
+// -----------------------------------------------------------------------------
+function CommandLine({ command, label }: { command: string; label: string }) {
+  return (
+    <span className="mt-2 flex items-start gap-2 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-3 py-2">
+      <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1 leading-relaxed">
+        {command}
+      </code>
+      <CopyButton value={command} label={label} />
+    </span>
   );
 }
 

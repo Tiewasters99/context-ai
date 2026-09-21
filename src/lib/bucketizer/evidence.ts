@@ -294,6 +294,10 @@ export function supabaseEvidenceDeps(input: {
         maxTokens: call.maxTokens,
         matterId: input.matterId,
         signal: input.signal,
+        // For the matter's Record: the act, and the document whose passages
+        // are being read for a quotation. Ids only, never the excerpt.
+        feature: 'bucketizer.evidence',
+        documentIds: [call.documentId],
       });
       return raw;
     },

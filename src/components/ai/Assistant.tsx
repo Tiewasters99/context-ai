@@ -9,11 +9,29 @@ import { parseServerRefusal } from '@/lib/llm/refusals';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { moveVaultDocument } from '@/lib/vault-persist';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import PinToggle from '@/components/ui/PinToggle';
+import {
+  describeScope,
+  unscopedStripText,
+  type ScopeFacts,
+  type Starter,
+} from '@/components/ai/assistant-scope';
+import { useMatterAiState } from '@/components/ai/useMatterAiState';
+import {
+  readPanelState,
+  writePanelState,
+  browserStore,
+  type PanelBox,
+} from '@/components/ai/assistant-panel-state';
 
-// Where a lifted panel sits: left/top/width/height in CSS pixels.
-type PanelBox = { left: number; top: number; width: number; height: number };
-const BOX_KEY = 'cs.assistant.box';
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Which matter the panel is talking about, and how it got there. */
+type Bound = {
+  id?: string;
+  name?: string;
+  source: 'command' | 'route' | 'context' | 'none';
+};
 
 interface AssistantProps {
   isOpen: boolean;
@@ -47,15 +65,13 @@ const READING_SUGGESTIONS = [
   'What echoes or themes should I watch for here?',
 ];
 
-// Friendly pen names for the header, from the model ids the server emits
-// (PENS in lib/assistant-core.mjs). An unknown id shows as itself — truth
-// beats pretty.
-function penLabel(model: string): string {
-  if (model.includes('opus-5')) return 'Opus 5';
-  if (model.includes('opus-4-8')) return 'Opus 4.8';
-  if (model.includes('kimi')) return 'Kimi K3';
-  return model.replace(/^anthropic\./, '');
-}
+// penLabel and every sentence the panel says about its scope now live in
+// components/ai/assistant-scope.ts — pure, so the wording is tested offline
+// (scripts/_test-sealed-assistant-scope.mjs) instead of being read off the
+// screen. The old local penLabel mapped any id containing "kimi" to "Kimi K3",
+// which mislabelled every sealed answer: the sealed pen is
+// `moonshotai.kimi-k2.5` on Bedrock, and Kimi K3 on Fireworks was deleted with
+// PR #159.
 
 export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMessage]);
@@ -68,8 +84,72 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // The URL names a matter only on a Matterspace page. In the reader it
   // names a document — the reader publishes its matter through the context.
   const routeMatterId = location.pathname.startsWith('/app/matterspace/') ? routeId : undefined;
-  const matterId = routeMatterId ?? getOrchestratorContext().matterId;
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Commands arrive from other surfaces (the docket's highlight-to-Run
+  // chip, next-step Run buttons, SecureChat's open button, the matter
+  // header's "Ask the assistant") carrying the matter they came from. The
+  // scope sticks for follow-up questions in the same panel session and is
+  // replaced by the next command. A ref for the wire (nothing re-renders),
+  // plus display state so the panel re-renders when the scope changes.
+  const commandMatterRef = useRef<{ id?: string; name?: string } | null>(null);
+  const [commandScope, setCommandScope] = useState<{ id?: string; name?: string; sealed?: boolean } | null>(null);
+
+  // "Ask without a matter", keyed to the matter it was asked FOR. A boolean
+  // would follow the user to the next matter and silently unscope a panel
+  // they never cleared; keyed, walking into another matter scopes the panel
+  // again, which is what the strip will then say.
+  const unscopedRef = useRef<string | null>(null);
+  const [unscopedFor, setUnscopedFor] = useState<string | null>(null);
+  const setUnscoped = (id: string | null) => {
+    unscopedRef.current = id;
+    setUnscopedFor(id);
+  };
+
+  // ONE resolution of "which matter is this?", used by the strip AND by
+  // send(). Two copies of this rule is how a panel comes to name one matter
+  // in its header while binding another on the wire.
+  const resolveBound = (): Bound => {
+    const cmd = commandMatterRef.current;
+    if (cmd?.id) return { id: cmd.id, name: cmd.name, source: 'command' };
+    const ctx = getOrchestratorContext();
+    if (routeMatterId) return { id: routeMatterId, name: ctx.matterName, source: 'route' };
+    if (ctx.matterId) return { id: ctx.matterId, name: ctx.matterName, source: 'context' };
+    return { source: 'none' };
+  };
+  const bound = resolveBound();
+  const unscoped = Boolean(bound.id) && unscopedFor === bound.id;
+  const scoped = Boolean(bound.id) && !unscoped;
+
+  // The pen that actually answered, from the server's `session` event. It is
+  // stamped with the matter it answered FOR, so walking from a sealed matter
+  // to an open one cannot leave the sealed pen's name in the header.
+  const [livePen, setLivePen] = useState<
+    { matterId?: string; tier: string; provider: string; model: string } | null
+  >(null);
+  const liveForBound = livePen && livePen.matterId === bound.id ? livePen : null;
+
+  // The matter's name, its effective tier and whether AI is paused — read
+  // under the user's own RLS, for WHATEVER the panel is bound to, command or
+  // page alike. A command's `sealed` flag is only a display hint (the reader's
+  // "Ask about this passage" sends none at all, and no command carries a
+  // pause), so it seeds the first frame and this read settles it.
+  const ai = useMatterAiState(bound.id, { enabled: isOpen, name: bound.name });
+  const hintedSealed = commandScope?.id === bound.id && commandScope?.sealed === true;
+  const facts: ScopeFacts = scoped
+    ? {
+      name: ai.name ?? bound.name,
+      tier: ai.tier ?? (hintedSealed ? 'B' : null),
+      paused: ai.paused,
+      pausedSentence: ai.pausedSentence,
+      livePen: liveForBound,
+    }
+    // No matter means no seal: a matter-less chat is Tier A by definition,
+    // which is what the server does with it too.
+    : { tier: 'A', livePen: liveForBound };
+  const describe = describeScope(facts);
+  const conversationEmpty = messages.length === 1;
 
   // A wider panel for a real conversation — a toggle, not a mode: the
   // sidebar width suits a question in passing; a discussion wants room to
@@ -81,28 +161,37 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     try { localStorage.setItem('cs.assistant.wide', wide ? '1' : '0'); } catch { /* a blocked store forgets the width, nothing more */ }
   }, [wide]);
 
-  // Free to move and size, like the cards elsewhere in the workspace: drag
-  // the header to lift the panel off the edge, pull its corner to size it,
-  // double-click the header to dock it again. Remembered on this machine.
+  // Free to move, size and PIN, like the cards elsewhere in the workspace:
+  // drag the header to lift the panel off the edge, pull its corner to size
+  // it, double-click the header to dock it again — and pin it when it is
+  // where you want it. Position, size and the pin live in one localStorage
+  // record, written whole, so unpinning can never lose the rect.
   // On a phone the panel fills the screen and none of this applies.
   const isMobile = useIsMobile();
-  const [box, setBox] = useState<PanelBox | null>(() => {
-    try {
-      const raw = localStorage.getItem(BOX_KEY);
-      return raw ? (JSON.parse(raw) as PanelBox) : null;
-    } catch { return null; }
-  });
+  const [box, setBox] = useState<PanelBox | null>(() => readPanelState(browserStore()).box);
+  const [pinned, setPinned] = useState<boolean>(() => readPanelState(browserStore()).pinned);
   useEffect(() => {
-    try {
-      if (box) localStorage.setItem(BOX_KEY, JSON.stringify(box));
-      else localStorage.removeItem(BOX_KEY);
-    } catch { /* a blocked store forgets the place, nothing more */ }
-  }, [box]);
+    writePanelState(browserStore(), { box, pinned });
+  }, [box, pinned]);
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ px: number; py: number; left: number; top: number } | null>(null);
   const floating = !isMobile && box !== null;
+
+  // Pinning a docked panel first lifts it, exactly where it already is —
+  // "pin at the current position", the same promise useDraggableResizable
+  // makes for a route card. Unpinning keeps the rect and only releases the
+  // lock.
+  const togglePin = () => {
+    if (pinned) { setPinned(false); return; }
+    if (!box) {
+      const r = panelRef.current?.getBoundingClientRect();
+      if (r) setBox({ left: r.left, top: r.top, width: r.width, height: r.height });
+    }
+    setPinned(true);
+  };
+
   const onHeaderDown = (e: React.PointerEvent) => {
-    if (isMobile || (e.target as HTMLElement).closest('button')) return;
+    if (isMobile || pinned || (e.target as HTMLElement).closest('button')) return;
     const el = panelRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
@@ -175,6 +264,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // happens only when the user submits that modal, under their own session.
   const openCreateSubMatter = async (input: { name?: string; description?: string }) => {
     const name = (input.name || '').trim();
+    const matterId = resolveBound().id;
     if (!matterId) {
       note('Open a matter first — sub-matters are created inside a matter.');
       return;
@@ -242,22 +332,6 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     }
   };
 
-  // Commands arrive from other surfaces (the docket's highlight-to-Run
-  // chip, next-step Run buttons, SecureChat's open button) carrying the
-  // matter they came from. The scope sticks for follow-up questions in the
-  // same panel session and is replaced by the next command. A ref for the
-  // wire (nothing re-renders), plus display state so the panel can SAY
-  // where it is scoped — a sticky scope the user can't see is a scope
-  // they'll forget.
-  const commandMatterRef = useRef<{ id?: string; name?: string } | null>(null);
-  const [scope, setScope] = useState<{ name: string; sealed?: boolean } | null>(null);
-
-  // The pen that actually answered, from the server's `session` event —
-  // tier, provider, model, escalation. The header renders it live instead
-  // of guessing; reset when the scope changes (a different matter may sit
-  // at a different tier).
-  const [livePen, setLivePen] = useState<{ tier: string; provider: string; model: string } | null>(null);
-
   // Agents: a command can also arrive carrying a CHARTER — the agent whose
   // job this run is. Only the id crosses the wire; the server loads the
   // charter under the user's own RLS, appends its prose to the system
@@ -321,9 +395,15 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       const token = session?.access_token;
       if (!token) throw new Error('You need to be signed in to use the assistant.');
 
-      // A command's matter first; else the page's — read now, not at render,
-      // since the reader publishes its matter after its document loads.
-      const boundMatterId = commandMatterRef.current?.id ?? routeMatterId ?? getOrchestratorContext().matterId;
+      // A command's matter first; else the page's — resolved through the very
+      // same function the strip renders from, and read now rather than at
+      // render, since the reader publishes its matter after its document
+      // loads. "Ask without a matter" is honoured here too: the strip says
+      // the panel is unscoped, so the wire must be.
+      const here = resolveBound();
+      const boundMatterId = unscopedRef.current && unscopedRef.current === here.id
+        ? undefined
+        : here.id;
       const boundCharterId = charterRef.current?.id;
       const sessionKey = `${boundMatterId ?? ''}|${boundCharterId ?? ''}`;
       const res = await fetch('/api/assistant', {
@@ -389,9 +469,16 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             if (boundMatterId && ev.sessionId) {
               sessionRef.current = { key: sessionKey, sessionId: ev.sessionId };
             }
-            // The pen the tier chose — rendered live in the header.
+            // The pen the tier chose — rendered live in the header and in the
+            // strip. The server is the authority: where this disagrees with
+            // what the strip predicted, the strip adopts this and says so.
             if (ev.provider && ev.model) {
-              setLivePen({ tier: ev.tier ?? 'A', provider: ev.provider, model: ev.model });
+              setLivePen({
+                matterId: boundMatterId,
+                tier: ev.tier ?? 'A',
+                provider: ev.provider,
+                model: ev.model,
+              });
             }
           } else if (ev.type === 'text' && ev.text) {
             ensureAssistant();
@@ -450,6 +537,34 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     }
   };
 
+  // A starter with a blank in it is put in the INPUT with the blank selected,
+  // not sent: "find the word 'term'" is not a question anybody has.
+  const runStarter = (s: Starter) => {
+    if (!s.select) { void send(s.text); return; }
+    const [from, to] = s.select;
+    setInput(s.text);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      try { el.setSelectionRange(from, to); } catch { /* not all inputs allow it */ }
+    });
+  };
+
+  // "clear" means two different things, and the strip says which. On a scope
+  // a COMMAND put there, it drops back to the page's own matter. On the
+  // page's own matter there is nothing to drop back to, so it means "ask
+  // without a matter" — for this matter, until the user says otherwise.
+  const clearScope = () => {
+    setLivePen(null);
+    if (commandMatterRef.current?.id) {
+      commandMatterRef.current = null;
+      setCommandScope(null);
+      return;
+    }
+    if (bound.id) setUnscoped(bound.id);
+  };
+
   // Subscribe once; route events through a ref so the handler always calls
   // the latest send() without re-subscribing every render.
   const sendRef = useRef(send);
@@ -458,8 +573,11 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     const onCommand = (e: Event) => {
       const cmd = (e as CustomEvent<AssistantCommand>).detail;
       if (!cmd) return;
-      commandMatterRef.current = { id: cmd.matterId, name: cmd.matterName };
-      setScope(cmd.matterName ? { name: cmd.matterName, sealed: cmd.sealed } : null);
+      commandMatterRef.current = cmd.matterId ? { id: cmd.matterId, name: cmd.matterName } : null;
+      setCommandScope(cmd.matterId ? { id: cmd.matterId, name: cmd.matterName, sealed: cmd.sealed } : null);
+      // A new command re-scopes the panel, so an earlier "ask without a
+      // matter" is spent.
+      setUnscoped(null);
       setLivePen(null);
       setCharter(cmd.charterId ? { id: cmd.charterId, name: cmd.charterName || 'Agent' } : null);
       // A command may carry no prompt: it scopes and opens the panel
@@ -492,40 +610,61 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         }
         style={floating && box ? {
           left: box.left, top: box.top, width: box.width, height: box.height,
-          resize: 'both', minWidth: 300, minHeight: 280, maxWidth: '96vw', maxHeight: '96vh',
+          // Pinned: no resize handle, and the cursor stops inviting a drag.
+          resize: pinned ? 'none' : 'both',
+          cursor: pinned ? 'default' : undefined,
+          minWidth: 300, minHeight: 280, maxWidth: '96vw', maxHeight: '96vh',
         } : undefined}
       >
-        {/* Header — the handle. */}
+        {/* Header — the ribbon, and the handle. */}
         <div
-          className={`flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)] select-none ${isMobile ? '' : 'cursor-grab active:cursor-grabbing'}`}
+          className={`flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)] select-none ${isMobile || pinned ? '' : 'cursor-grab active:cursor-grabbing'}`}
           onPointerDown={onHeaderDown}
           onPointerMove={onHeaderMove}
           onPointerUp={onHeaderUp}
           onPointerCancel={onHeaderUp}
-          onDoubleClick={(e) => { if (!(e.target as HTMLElement).closest('button')) setBox(null); }}
-          title={isMobile ? undefined : floating ? 'Drag to move · pull the corner to size · double-click to dock' : 'Drag to lift the panel off the edge'}
+          onDoubleClick={(e) => {
+            // A pinned card does not move, and docking would move it.
+            if (pinned) return;
+            if (!(e.target as HTMLElement).closest('button')) setBox(null);
+          }}
+          title={
+            isMobile
+              ? undefined
+              : pinned
+                ? 'Pinned in place — unpin to move or size it'
+                : floating
+                  ? 'Drag to move · pull the corner to size · double-click to dock'
+                  : 'Drag to lift the panel off the edge'
+          }
         >
-          {/* Truth-in-labeling: name the model that actually answers. Before
-              the first exchange we show the Tier-A default; after it, the
-              server's `session` event tells us which pen the matter's tier
-              actually chose (a sealed matter is served by the sealed pen,
-              never the default), and a SEALED chip says so. */}
+          {/* Truth-in-labeling: name the model that will answer, BEFORE the
+              first exchange — from the matter's own tier, read under the
+              user's RLS. Once the server's `session` event names the pen it
+              actually chose, that replaces the prediction outright. A tier we
+              could not read shows no name at all: silence is better than a
+              guess about which mind is reading the file. */}
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-white">
             Orchestrator{' '}
-            <span className="text-[11px] font-normal text-white/45">
-              · {livePen ? penLabel(livePen.model) : 'Opus 4.8'}
-            </span>
-            {livePen && livePen.tier !== 'A' && (
+            {describe.penChip && (
+              <span className="text-[11px] font-normal text-white/45">· {describe.penChip}</span>
+            )}
+            {describe.sealed && (
               <span
                 className="px-1 py-px rounded text-[9px] font-semibold tracking-wide"
                 style={{ backgroundColor: 'rgba(90,168,143,0.14)', color: '#5aa88f' }}
-                title="This matter is sealed: no training, zero data retention, recorded as privileged work product."
+                title="This matter is sealed: it is answered by a zero-retention model in the firm’s own AWS account — no training, and nothing reaches an outside provider."
               >
                 SEALED
               </span>
             )}
           </h2>
           <div className="flex items-center gap-1">
+            {/* Every card in the workspace is draggable, resizable and
+                pinnable; this one was the exception. Pinned state persists
+                with the position and size in one record. Meaningless on a
+                phone, where the panel fills the screen. */}
+            {!isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <button
               onClick={toggleWide}
               className="hidden sm:inline-flex p-1 rounded hover:bg-[rgba(20,20,30,0.8)] text-[#8a8693] hover:text-white transition-colors"
@@ -545,29 +684,72 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           </div>
         </div>
 
-        {/* Where the panel is scoped. For SecureChat (a born-sealed room)
-            the strip states the ground rules up front — the Heppner facts,
-            inverted: no training, zero retention, inside a matter. For any
-            other command scope it simply names the matter, so the sticky
-            scope is visible instead of remembered. */}
-        {scope && (
+        {/* Where the panel is scoped — WHENEVER it is scoped, by a command or
+            simply by the page the user is standing on. This used to render
+            only for a command, so a lawyer inside a sealed matter saw an
+            ordinary chat box: no matter name, no seal, no model, until after
+            an answer had already been produced.
+
+            Sealed scopes state the ground rules up front — the Heppner facts,
+            inverted: no training, zero retention, inside a matter. Line two
+            names the pen before the first message and corrects itself if the
+            server chose another. Line three is the one thing worth knowing
+            about searching inside a seal. Both are quiet, and both stand down
+            once the conversation has started. */}
+        {scoped && (
           <div
-            className="flex items-center justify-between gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.08)]"
-            style={scope.sealed ? { backgroundColor: 'rgba(90,168,143,0.07)' } : undefined}
+            className="px-4 py-2 border-b border-[rgba(255,255,255,0.08)]"
+            style={describe.sealed ? { backgroundColor: 'rgba(90,168,143,0.07)' } : undefined}
           >
-            <span className="text-[11px] truncate" style={{ color: scope.sealed ? '#5aa88f' : 'rgba(255,255,255,0.55)' }}>
-              {scope.sealed ? (
-                <>Sealed room — <span className="font-semibold">{scope.name}</span> · no training · zero data retention</>
-              ) : (
-                <>In <span className="font-semibold">{scope.name}</span></>
-              )}
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="text-[11px] truncate"
+                style={{ color: describe.sealed ? '#5aa88f' : 'rgba(255,255,255,0.55)' }}
+              >
+                {describe.lead}
+                <span className="font-semibold">{describe.name}</span>
+                {describe.tail}
+              </span>
+              <button
+                onClick={clearScope}
+                className="text-[11px] text-white/45 hover:text-white transition-colors shrink-0"
+                title={
+                  bound.source === 'command'
+                    ? 'Leave this matter’s scope and use the page’s own matter'
+                    : 'Ask without a matter for the rest of this conversation'
+                }
+              >
+                clear
+              </button>
+            </div>
+            {describe.penNote && (conversationEmpty || describe.corrected || describe.named) && (
+              <p
+                className="mt-1 text-[11px] leading-snug"
+                style={{ color: describe.sealed ? 'rgba(90,168,143,0.85)' : 'rgba(255,255,255,0.5)' }}
+              >
+                {describe.corrected && <span className="font-semibold">Corrected: </span>}
+                {describe.penNote}
+              </p>
+            )}
+            {describe.searchNote && conversationEmpty && (
+              <p className="mt-1 text-[11px] leading-snug text-white/45">{describe.searchNote}</p>
+            )}
+          </div>
+        )}
+
+        {/* Cleared off the page's own matter: the panel is unscoped on
+            purpose, and says so rather than looking like an accident. */}
+        {unscoped && (
+          <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-[rgba(255,255,255,0.08)]">
+            <span className="text-[11px] text-white/45 truncate">
+              {unscopedStripText(ai.name ?? bound.name)}
             </span>
             <button
-              onClick={() => { commandMatterRef.current = null; setScope(null); setLivePen(null); }}
+              onClick={() => { setUnscoped(null); setLivePen(null); }}
               className="text-[11px] text-white/45 hover:text-white transition-colors shrink-0"
-              title="Leave this matter's scope"
+              title="Scope the panel to this page’s matter again"
             >
-              clear
+              use this matter
             </button>
           </div>
         )}
@@ -610,24 +792,44 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               </div>
             </div>
           ))}
-          {messages.length === 1 && !loading && (
+          {conversationEmpty && !loading && !describe.paused && (
             <div className="flex flex-col items-start gap-1.5 pt-1">
-              {reading && (
+              {reading && !describe.sealed && (
                 <p className="text-[12px] text-white/70 leading-snug mb-1">
                   Reading <span className="text-[#e8d9b8]">“{reading.title ?? 'this document'}”</span>
                   {reading.page ? `, p. ${reading.page}` : ''}. Select a passage on the page and choose Ask to bring it here.
                 </p>
               )}
-              {(reading ? READING_SUGGESTIONS : SUGGESTIONS).map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => void send(s)}
-                  className="max-w-[85%] px-3 py-2 rounded-xl border border-[rgba(232,184,74,0.65)] bg-[rgba(232,184,74,0.10)] text-left text-[13.5px] font-medium text-[#f5e6c4] hover:bg-[rgba(232,184,74,0.2)] hover:border-[#e8b84a] hover:text-white transition-colors"
-                >
-                  {s}
-                </button>
-              ))}
+              {/* Inside a seal the openings are different: three questions
+                  that work against WORD search, one of them a template the
+                  user finishes. Everywhere else, the panel's usual four. */}
+              {describe.starters.length > 0
+                ? describe.starters.map((s) => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    onClick={() => runStarter(s)}
+                    title={s.select ? 'Puts this in the box with the word selected — type over it' : undefined}
+                    className="max-w-[92%] px-3 py-2 rounded-xl text-left text-[13.5px] font-medium transition-colors"
+                    style={{
+                      border: '1px solid rgba(90,168,143,0.55)',
+                      backgroundColor: 'rgba(90,168,143,0.10)',
+                      color: '#bfe3d5',
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))
+                : (reading ? READING_SUGGESTIONS : SUGGESTIONS).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => void send(s)}
+                    className="max-w-[85%] px-3 py-2 rounded-xl border border-[rgba(232,184,74,0.65)] bg-[rgba(232,184,74,0.10)] text-left text-[13.5px] font-medium text-[#f5e6c4] hover:bg-[rgba(232,184,74,0.2)] hover:border-[#e8b84a] hover:text-white transition-colors"
+                  >
+                    {s}
+                  </button>
+                ))}
             </div>
           )}
           {searching && (
@@ -667,10 +869,28 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           </div>
         )}
 
-        {/* Input */}
+        {/* Input — unless AI is paused on this matter (migration 070), in
+            which case the box would only produce a refusal. The sentence the
+            server would have answered with is shown instead, in the place the
+            box would have been. */}
+        {describe.paused ? (
+          <div className={`py-3 border-t border-[rgba(255,255,255,0.08)] ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
+            <p
+              className={`text-[12px] leading-relaxed rounded-lg px-3 py-2.5 ${wide ? 'max-w-3xl mx-auto' : ''}`}
+              style={{
+                color: '#e8b84a',
+                backgroundColor: 'rgba(232,184,74,0.07)',
+                border: '1px solid rgba(232,184,74,0.35)',
+              }}
+            >
+              {describe.pauseNote}
+            </p>
+          </div>
+        ) : (
         <div className={`py-3 border-t border-[rgba(255,255,255,0.08)] ${wide ? 'px-6 sm:px-10' : 'px-4'}`}>
           <div className={`flex items-center gap-2 bg-[rgba(20,20,30,0.8)] rounded-lg px-3 py-2 ${wide ? 'max-w-3xl mx-auto' : ''}`}>
             <input
+              ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -688,6 +908,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             </button>
           </div>
         </div>
+        )}
       </div>
 
       {pendingSubMatter && (

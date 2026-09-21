@@ -68,6 +68,7 @@ export async function extractCitations(
     // The whole brief is the prompt here, so this is the single largest piece
     // of matter content the cite-check run sends anywhere. It binds.
     matterId: opts.matterId,
+    feature: 'citecheck.extract',
     system: EXTRACT_SYSTEM,
     userContent: draftText,
     toolName: 'record_citations',

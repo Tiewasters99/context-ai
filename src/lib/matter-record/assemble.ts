@@ -17,7 +17,10 @@ import {
   isoDay,
   isoMinute,
   describeEvent,
+  featureOwner,
+  featurePhrase,
   isAccountWideRead,
+  isFeatureCall,
   kindLabel,
   providerLabel,
   retentionPosture,
@@ -74,6 +77,38 @@ export interface SessionRow {
   withinPolicy: string;
   escalations: string;
   errors: number;
+}
+
+/**
+ * One model, used by one feature, on one tier — with every call it made
+ * summed. A Bucketizer run is four hundred calls, and four hundred rows in a
+ * document a court reads is not an account of anything; one row that says
+ * "Bucketizer classified documents four hundred times on this model, between
+ * these two dates, at this cost" is.
+ */
+export interface FeatureCallRow {
+  feature: string;
+  /** "Bucketizer — classified a document" */
+  title: string;
+  model: string;
+  provider: string;
+  tier: string;
+  route: string;
+  retention: string;
+  calls: number;
+  refused: number;
+  refusedReasons: string;
+  failed: number;
+  unfinished: number;
+  streamed: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokensReportedFor: number;
+  cost: number;
+  costRecorded: boolean;
+  documents: number;
+  firstUse: string;
+  lastUse: string;
 }
 
 export interface ConnectorRow {
@@ -133,6 +168,8 @@ export interface MatterRecordDoc {
   error: string | null;
   tools: ToolRow[];
   sessions: SessionRow[];
+  /** One row per feature × model × tier, with every call it made summed. */
+  featureCalls: FeatureCallRow[];
   connectors: ConnectorRow[];
   inAppToolCalls: number;
   agentToolCalls: number;
@@ -184,6 +221,13 @@ export function chronological(events: LedgerEvent[]): LedgerEvent[] {
 }
 
 function channelFor(event: LedgerEvent): string {
+  // A feature's own model call is not the in-app assistant, and a tools memo
+  // that called it one would be wrong about the most common kind of AI use on
+  // a matter. The feature is named first, because that is what counsel has to
+  // reason about when they say what may go into it.
+  if (isFeatureCall(event)) {
+    return `Contextspaces feature — ${featureOwner(event.payload?.feature)}`;
+  }
   switch (event.actor_kind) {
     case 'charter':
       return 'Contextspaces agent charter';
@@ -200,7 +244,16 @@ function channelFor(event: LedgerEvent): string {
 // 1. Tools memo — every model and every connected client that touched it
 // ---------------------------------------------------------------------------
 
-function buildTools(events: LedgerEvent[], asOfDay: string): ToolRow[] {
+/**
+ * The tools memo.
+ *
+ * Feature model calls do NOT come from the raw entries here: one call leaves
+ * up to two of them, so counting entries would double every feature's use
+ * count, and counting only the answered ones would lose a call that was made
+ * and never came back. They come from the paired rows instead, which is the
+ * one place a call is a call.
+ */
+function buildTools(events: LedgerEvent[], asOfDay: string, featureCalls: FeatureCallRow[]): ToolRow[] {
   const byKey = new Map<string, ToolRow>();
 
   const touch = (key: string, make: () => ToolRow, ts: string) => {
@@ -221,6 +274,7 @@ function buildTools(events: LedgerEvent[], asOfDay: string): ToolRow[] {
 
   for (const event of events) {
     if (event.kind === 'completion.received') {
+      if (isFeatureCall(event)) continue;   // counted from featureCalls below
       const model = str(event.payload?.model) ?? 'not recorded';
       const provider = str(event.payload?.provider) ?? '';
       const tier = str(event.payload?.tier) ?? '';
@@ -269,6 +323,26 @@ function buildTools(events: LedgerEvent[], asOfDay: string): ToolRow[] {
     }
   }
 
+  // A feature's model, once per feature and tier, with the calls that
+  // actually reached a model. A refused call reached none, so it is not a use
+  // of the model — it is recorded, in full, in the Feature AI calls part.
+  for (const call of featureCalls) {
+    const reached = call.calls - call.refused;
+    if (reached <= 0 || call.model === 'not recorded') continue;
+    byKey.set(`a|${call.title}|${call.model}|${call.tier}`, {
+      title: `${call.model} (${call.provider}) — ${call.title}`,
+      channel: `Contextspaces feature — ${call.title.split(' — ')[0]}`,
+      model: call.model,
+      provider: call.provider,
+      tier: call.tier,
+      route: call.route,
+      retention: call.retention,
+      firstUse: call.firstUse,
+      lastUse: call.lastUse,
+      uses: reached,
+    });
+  }
+
   return [...byKey.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([, row]) => row);
@@ -304,6 +378,11 @@ function buildSessions(events: LedgerEvent[], people: People): SessionRow[] {
 
   for (const event of events) {
     if (event.kind !== 'completion.received' && event.kind !== 'tool.invoked') continue;
+    // A feature's model call belongs to no chat session — it has no session id
+    // and no turn before it. Counting one as a session would invent a session
+    // that never happened AND count its exchange twice, since the same call
+    // also has an "asked" row. They get their own part, below.
+    if (isFeatureCall(event)) continue;
     const sessionId = str(event.session_id);
     // A tool call outside any session belongs to the connector section, not
     // to the session index: there is no session to index it under.
@@ -407,6 +486,173 @@ function buildSessions(events: LedgerEvent[], people: People): SessionRow[] {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Feature AI calls — every model call the product made on this matter
+// ---------------------------------------------------------------------------
+// One call leaves up to two entries: "asked" before the model was contacted,
+// and "answered" afterwards. They carry the same call id, so one call is one
+// line here even though it is two entries in the chronology.
+//
+// Three shapes, and each is reported as what it is:
+//
+//   asked + answered   an ordinary call.
+//   answered alone     also an ordinary call. It is what every call looks like
+//                      until the second kind of entry is switched on for this
+//                      account, and a reader must not be told a complete call
+//                      was somehow partial.
+//   asked alone        either a REFUSAL (the entry says so, and nothing was
+//                      sent) or a call that never came back. The second is
+//                      counted separately and named, never quietly dropped.
+
+interface FeatureAcc {
+  key: string;
+  feature: string;
+  model: string;
+  provider: unknown;
+  tier: unknown;
+  firstTs: string;
+  lastTs: string;
+  calls: number;
+  refused: number;
+  refusedReasons: Set<string>;
+  failed: number;
+  unfinished: number;
+  streamed: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokensReportedFor: number;
+  cost: number;
+  costRecorded: boolean;
+  documents: Set<string>;
+}
+
+/** The two entries of one call, or whichever of them exists. */
+interface CallPair {
+  asked: LedgerEvent | null;
+  answered: LedgerEvent | null;
+}
+
+function pairFeatureCalls(events: LedgerEvent[]): CallPair[] {
+  const byCall = new Map<string, CallPair>();
+  const order: string[] = [];
+  for (const event of events) {
+    if (!isFeatureCall(event)) continue;
+    // An entry with no call id cannot be paired with anything, so it is its
+    // own call rather than being merged with an unrelated one.
+    const id = str(event.payload?.call_id) ?? `solo:${event.id}`;
+    let pair = byCall.get(id);
+    if (!pair) {
+      pair = { asked: null, answered: null };
+      byCall.set(id, pair);
+      order.push(id);
+    }
+    if (event.kind === 'completion.requested') pair.asked = pair.asked ?? event;
+    else pair.answered = pair.answered ?? event;
+  }
+  return order.map((id) => byCall.get(id)!);
+}
+
+function buildFeatureCalls(events: LedgerEvent[], asOfDay: string): FeatureCallRow[] {
+  const acc = new Map<string, FeatureAcc>();
+
+  for (const pair of pairFeatureCalls(events)) {
+    // The answered entry is the authority on the model and the counts; the
+    // asked entry is the authority on a refusal. Either may be missing.
+    const primary = pair.answered ?? pair.asked;
+    if (!primary) continue;
+    const feature = str(primary.payload?.feature) ?? 'unspecified';
+    const model = str(primary.payload?.model) ?? 'not recorded';
+    const provider = primary.payload?.provider ?? null;
+    const tier = primary.payload?.tier ?? null;
+    const key = `${feature}\u0000${model}\u0000${String(provider)}\u0000${String(tier)}`;
+    const ts = pair.asked?.ts ?? primary.ts;
+
+    let row = acc.get(key);
+    if (!row) {
+      row = {
+        key,
+        feature,
+        model,
+        provider,
+        tier,
+        firstTs: ts,
+        lastTs: ts,
+        calls: 0,
+        refused: 0,
+        refusedReasons: new Set<string>(),
+        failed: 0,
+        unfinished: 0,
+        streamed: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        tokensReportedFor: 0,
+        cost: 0,
+        costRecorded: false,
+        documents: new Set<string>(),
+      };
+      acc.set(key, row);
+    }
+    if (ts < row.firstTs) row.firstTs = ts;
+    const lastTs = pair.answered?.ts ?? ts;
+    if (lastTs > row.lastTs) row.lastTs = lastTs;
+    row.calls += 1;
+
+    const refused = str(pair.asked?.payload?.refused);
+    if (refused) {
+      row.refused += 1;
+      row.refusedReasons.add(refused);
+    } else if (!pair.answered) {
+      row.unfinished += 1;
+    }
+
+    for (const id of stringList(pair.asked?.payload?.document_ids)) row.documents.add(id);
+
+    if (pair.answered) {
+      const outcome = str(pair.answered.payload?.outcome);
+      if (outcome && outcome !== 'ok') row.failed += 1;
+      if (pair.answered.payload?.streaming === true) row.streamed += 1;
+      const input = num(pair.answered.payload?.input_tokens);
+      const output = num(pair.answered.payload?.output_tokens);
+      if (input !== null || output !== null) {
+        row.inputTokens += input ?? 0;
+        row.outputTokens += output ?? 0;
+        row.tokensReportedFor += 1;
+      }
+      const cost = num(pair.answered.payload?.estimated_cost);
+      if (cost !== null) {
+        row.cost += cost;
+        row.costRecorded = true;
+      }
+    }
+  }
+
+  return [...acc.values()]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map((row) => ({
+      feature: row.feature,
+      title: `${featureOwner(row.feature)} — ${featurePhrase(row.feature)}`,
+      model: row.model,
+      provider: providerLabel(row.provider),
+      tier: tierLabel(row.tier),
+      route: routePhrase(row.tier, row.provider),
+      retention: retentionPosture(row.tier, row.provider, asOfDay),
+      calls: row.calls,
+      refused: row.refused,
+      refusedReasons: [...row.refusedReasons].sort().join(', ') || 'none',
+      failed: row.failed,
+      unfinished: row.unfinished,
+      streamed: row.streamed,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      tokensReportedFor: row.tokensReportedFor,
+      cost: row.cost,
+      costRecorded: row.costRecorded,
+      documents: row.documents.size,
+      firstUse: isoDay(row.firstTs),
+      lastUse: isoDay(row.lastTs),
+    }));
+}
+
+// ---------------------------------------------------------------------------
 // 3. Connector activity
 // ---------------------------------------------------------------------------
 
@@ -486,6 +732,7 @@ export function assembleMatterRecord(
   const asOfDay = isoDay(context.generatedAt);
 
   const connectors = buildConnectors(events);
+  const featureCalls = buildFeatureCalls(events, asOfDay);
   const summary = chainSummary(data.chains);
 
   const citeRuns: CiteRunRow[] = [...data.citeRuns]
@@ -519,8 +766,9 @@ export function assembleMatterRecord(
     generatedBy: context.generatedBy,
     notDeployed: data.notDeployed,
     error: data.error,
-    tools: buildTools(events, asOfDay),
+    tools: buildTools(events, asOfDay, featureCalls),
     sessions: buildSessions(events, people),
+    featureCalls,
     connectors: connectors.rows,
     inAppToolCalls: connectors.inApp,
     agentToolCalls: connectors.agent,

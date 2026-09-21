@@ -248,6 +248,15 @@ jobs:
         run: |
           node scripts/_verify-bucketizer-evidence.mjs
           node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-outline.mjs
+
+      # Choosing what to classify: one predicate behind both the count and the
+      # chooser, strict matter isolation, a sealed matter's held-but-readable
+      # documents, the pleadings the tree was built from, and what a re-run may
+      # write (never a decision, never a delete). Offline: the model and the
+      # database are stubbed and the rules themselves are pure functions.
+      - name: Bucketizer — choosing documents, and what a re-run may write
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
       # The Vault's own read, at 2,500 and 12,000 documents with every
       # created_at tied — the dropped-folder case that makes an untiebroken
       # `.range()` loop lose rows. Offline: PostgREST is stubbed.
@@ -284,3 +293,62 @@ jobs:
       - name: Refusals — 402 / 429 / sealed read as English
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-server-refusals.mjs
+      # Migration 073: every model call a FEATURE makes through /api/llm
+      # reaches the matter's Record, and the Record reaches no provider.
+      # Drives the real handler with fetch stubbed and witnessed, so each case
+      # asserts what was contacted as well as what was written. Its negative
+      # control imports origin/main's own handler and compares the Tier-A
+      # request byte for byte; on a shallow checkout that ref is absent and
+      # the case prints SKIP. It imports src/lib/llm/features.ts, so it needs
+      # the same '@/' loader as the reader and Record harnesses above.
+      - name: The matter's Record — feature AI calls through /api/llm
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-llm-record.mjs
+      # "Pin" on a card means FIX IN PLACE — it stops moving and resizing and
+      # reopens where it was left. The real hook, in a real DOM: drag, pin,
+      # reload, unpin, reload, plus the right-click gesture and the rule that
+      # one item's pin never leaks into the next. jsdom is installed here the
+      # way PGlite is above — --no-save, a harness dependency, never a repo one.
+      - name: Cards — Pin means fixed in place (jsdom + the real hook)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-card-pin.mjs
+      # What the Assistant panel SAYS on a sealed matter before the first
+      # message: the scope strip, the pen named in advance (and corrected when
+      # the server names another), the word-search note, the pause, the
+      # starters, the matter header's door, and the panel's pin/position
+      # record. Pure modules plus narrow source assertions for the wiring — no
+      # loader needed, nothing mounted, no network.
+      - name: Assistant — a sealed matter says where it is and who answers
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-sealed-assistant-scope.mjs
+      # `list_matters` is the first call every connected AI makes, and in
+      # production it answered 296 matters with 112,790 characters — more than
+      # a client will load. This drives the real handler against a synthetic
+      # workspace of the same shape and size: the compact tree fits, every
+      # visible matter is on it exactly once with its id, the optional
+      # arguments narrow it, malformed ones fall back, `format:'full'` is
+      # byte-identical to the old answer, and sealed/paused subtrees are
+      # pruned before a single document is counted (with a negative control).
+      - name: list_matters — the map fits, and nothing hidden is on it
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-list-matters.mjs
+
+      # The connector page tells people to paste a command into a terminal, so
+      # the command is checked whole — every flag, and the quoting that differs
+      # between bash and PowerShell. It also asserts the endpoint URL appears
+      # as one constant and is never hard-coded a second time in the page.
+      - name: Connector — the Claude Code command, character for character
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-claude-code-command.mjs
+
+      # A tab left open across a deploy. Both halves of the build id (the
+      # constant compiled into the bundle, the one written to /version.json),
+      # when the line shows and when it stays quiet, the stale-chunk net, and
+      # the assertion that neither main.tsx nor the Editor reloads the tab on
+      # its own any more. Offline: fetch is a local function that counts its
+      # own calls, `window` is a bare EventTarget.
+      - name: Version notice — a stale tab is told, never reloaded
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-app-version.mjs

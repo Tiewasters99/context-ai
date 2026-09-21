@@ -156,6 +156,8 @@ const MATTER_NAMES = {
 };
 
 let seq = 0;
+/** A 64-character hex string, deterministic in the sequence number. */
+const fixtureSeal = (n) => String(Math.max(0, n)).padStart(4, '0').repeat(16).slice(0, 64);
 function event(kind, over = {}) {
   seq += 1;
   const matterId = over.matterspace_id ?? PARENT;
@@ -174,8 +176,12 @@ function event(kind, over = {}) {
     actor_user_id: over.actor_user_id ?? USER_ONE,
     actor_label: over.actor_label ?? null,
     payload: over.payload ?? {},
-    prev_hash: over.prev_hash ?? `hash-${String(seq - 1).padStart(4, '0')}`,
-    hash: over.hash ?? `hash-${String(seq).padStart(4, '0')}`,
+    // Hex, like the real thing: the export PRINTS these as the seal of the
+    // first and last entry, and §13 sweeps the rendered page for database
+    // vocabulary. A fixture spelling them "hash-0001" would fail that sweep
+    // on its own fixture rather than on the product's words.
+    prev_hash: over.prev_hash ?? fixtureSeal(seq - 1),
+    hash: over.hash ?? fixtureSeal(seq),
   };
 }
 
@@ -733,7 +739,7 @@ console.log('\n8. The .docx opens, and carries the legend, a session and the cha
   );
   check(strip(body).includes('Session id'), 'the session index is in the document');
   check(strip(body).includes(SESSION_ONE), 'a session row names its session', SESSION_ONE);
-  check(strip(body).includes('Last entry hash'), 'the integrity block is in the document');
+  check(strip(body).includes('Seal of the last entry'), 'the integrity block is in the document');
   check(strip(body).includes(doc.integrity.lastHash), 'the last hash is printed');
   check(strip(body).includes(ATTORNEY_CELL), 'the attorney’s empty cells survive into Word');
   check(
@@ -797,7 +803,7 @@ console.log('\n10. A tampered chain says so, plainly');
     summary.line,
   );
   check(
-    /cannot be confirmed/i.test(summary.meaning) && !/attack|breach|tamper/i.test(summary.meaning),
+    /cannot be relied on/i.test(summary.meaning) && !/attack|breach|tamper/i.test(summary.meaning),
     'it explains what it means without alarm',
   );
   const markdown = renderMatterRecordMarkdown(assembleMatterRecord(data, CONTEXT, null));
@@ -924,17 +930,240 @@ function fanout(matterId, payloadOver = {}) {
   const section = md.split('### Account-wide activity')[1] ?? '';
   check(section.includes('None recorded.'), 'and the section reads "None recorded."');
   check(
-    section.includes('before migration 072 is applied'),
-    'saying that this is also what a database without 072 shows, rather than implying nothing happened',
+    section.includes('has not been switched on'),
+    'saying that this is also what an account without account-wide recording shows, rather than implying nothing happened',
   );
   check(
-    md.includes('recorded once migration 072 is applied'),
+    md.includes('Where account-wide recording has been switched on'),
     'and section 10 no longer says a cross-matter connector call records nothing',
   );
   check(
     !md.includes('recorded against none of them'),
     'the old sentence is gone',
   );
+}
+
+// ===========================================================================
+console.log('\n12. Feature AI calls: two entries, one call, and nothing invented');
+// ===========================================================================
+{
+  seq = 0;
+  const people = { [USER_ONE]: 'A. Fixture' };
+  const FEATURE_CONTEXT = { generatedAt: '2026-09-20T09:00:00.000Z', generatedBy: 'A. Fixture' };
+  const DOC_ONE = 'dddddddd-0000-4000-8000-000000000001';
+
+  const sealedBase = {
+    feature: 'bucketizer.classify',
+    tier: 'B',
+    provider: 'aws-bedrock',
+    model: 'moonshotai.kimi-k2.5',
+    client_provider: 'anthropic',
+    client_model: 'claude-opus-4-8',
+    route: 'sealed',
+    streaming: false,
+  };
+  const events = [
+    // A sealed classify: asked, then answered. One call.
+    event('completion.requested', {
+      payload: { ...sealedBase, call_id: 'c-1', byok: false, refused: null, document_ids: [DOC_ONE] },
+    }),
+    event('completion.received', {
+      payload: { ...sealedBase, call_id: 'c-1', outcome: 'ok', ok: true, status: 200,
+        input_tokens: 21578, output_tokens: 6342, estimated_cost: 0.028801, ms: 8100 },
+    }),
+    // A first-party cite-check, answered only — what every call looks like
+    // before the "asked" entry is switched on for an account.
+    event('completion.received', {
+      payload: { feature: 'citecheck.check', call_id: 'c-2', tier: 'A', provider: 'anthropic',
+        model: 'claude-opus-4-8', route: 'first-party', streaming: false, outcome: 'ok', ok: true,
+        status: 200, input_tokens: 900, output_tokens: 120, estimated_cost: 0.0075, ms: 2000 },
+    }),
+    // A refusal: asked, never answered, and the reason is recorded.
+    event('completion.requested', {
+      payload: { feature: 'bucketizer.tree', call_id: 'c-3', tier: 'B', provider: null, model: null,
+        client_provider: 'anthropic', client_model: 'claude-opus-4-8', route: 'sealed',
+        streaming: false, refused: 'sealed_pen_unavailable', status: 503 },
+    }),
+    // Asked, and never answered, with no refusal: the call did not finish.
+    event('completion.requested', {
+      payload: { feature: 'editor.section', call_id: 'c-4', tier: 'A', provider: 'anthropic',
+        model: 'claude-opus-4-8', route: 'first-party', streaming: true, refused: null },
+    }),
+  ];
+
+  const doc = assembleMatterRecord(
+    {
+      matter: { id: PARENT, name: 'Fixture Matter' },
+      matters: [{ id: PARENT, name: 'Fixture Matter' }],
+      events,
+      totalEvents: events.length,
+      ceiling: 5000,
+      truncated: false,
+      chains: [{ matterId: PARENT, matterName: 'Fixture Matter', ok: true, checked: events.length, firstBadSeq: null }],
+      people,
+      citeRuns: [],
+      notDeployed: false,
+      error: null,
+    },
+    FEATURE_CONTEXT,
+    null,
+  );
+
+  check(doc.featureCalls.length === 4,
+    'four distinct feature/model/tier rows from five entries', String(doc.featureCalls.length));
+  const classify = doc.featureCalls.find((f) => f.feature === 'bucketizer.classify');
+  check(classify?.calls === 1 && classify?.inputTokens === 21578 && classify?.outputTokens === 6342,
+    'the paired call is ONE call, with the answered entry’s token counts',
+    JSON.stringify({ calls: classify?.calls, in: classify?.inputTokens }));
+  check(classify?.model === 'moonshotai.kimi-k2.5',
+    'and the model recorded is the one that ANSWERED, not the one the browser asked for',
+    classify?.model);
+  check(classify?.documents === 1, 'the document it worked on is counted, by id', String(classify?.documents));
+  const citecheck = doc.featureCalls.find((f) => f.feature === 'citecheck.check');
+  check(citecheck?.calls === 1 && citecheck?.unfinished === 0,
+    'a lone "answered" entry is a COMPLETE call, not a partial one');
+  const tree = doc.featureCalls.find((f) => f.feature === 'bucketizer.tree');
+  check(tree?.refused === 1 && tree?.unfinished === 0,
+    'a refusal is counted as refused and never as unfinished');
+  const section = doc.featureCalls.find((f) => f.feature === 'editor.section');
+  check(section?.unfinished === 1 && section?.refused === 0,
+    'a lone "asked" entry with no refusal is a call that did not finish, and says so');
+
+  check(doc.sessions.length === 0,
+    'and NONE of them is counted as a chat session', `${doc.sessions.length} sessions`);
+  check(doc.tools.length === 3,
+    'the tools memo lists the models the features actually used', `${doc.tools.length} blocks`);
+  check(doc.tools.every((t) => !/in-app assistant/.test(t.channel)),
+    'each under its own feature, never as the in-app assistant',
+    doc.tools.map((t) => t.channel).join(' | '));
+
+  const md = renderMatterRecordMarkdown(doc);
+  check(md.includes('Feature AI calls'), 'the export has the Feature AI calls part');
+  check(md.includes('Bucketizer — classified a document'), 'named in words, not in labels');
+  check(/1 of these calls was refused|1 call was recorded as asked/.test(md),
+    'and the refusal and the unfinished call are each stated in a sentence');
+  check(!md.includes('claude-opus-4-8, a sealed model'),
+    'the sealed line never names the model the browser asked for as the one that answered');
+
+  // The docket line each entry gets, which is what the Record tab shows.
+  const askedLine = describeEvent(events[0], people);
+  const answeredLine = describeEvent(events[1], people);
+  const refusedLine = describeEvent(events[3], people);
+  check(/^Bucketizer asked a model to classify a document/.test(askedLine), 'the asked line reads as a request', askedLine);
+  check(/^Bucketizer classified a document/.test(answeredLine), 'the answered line reads as the act', answeredLine);
+  check(/sealed model in the firm’s own AWS account/.test(answeredLine),
+    'and says where the answer came from in the words 02-securespace.md allows', answeredLine);
+  check(/refused/.test(refusedLine) && /Nothing was sent/.test(refusedLine),
+    'a refused call says it was refused AND that nothing was sent', refusedLine);
+  check(!/claude/i.test(refusedLine.replace(/claude-opus-4-8/g, '')),
+    'and never calls the sealed model Claude');
+}
+
+// ===========================================================================
+console.log('\n13. Plain words: nothing a reader sees is database vocabulary');
+// ===========================================================================
+// Eden opened the .docx and asked what "hash-chained list of recorded acts"
+// means. This document goes to a court, a bar or a client; every fact it
+// states is still stated, in English. The list below is checked against the
+// RENDERED export and against every string the Record tab can show.
+{
+  const BANNED = [
+    /\bhash(es|ed|-chained)?\b/i,
+    /\bchain(s|ed|-key)?\b/i,
+    /\bmigration\b/i,
+    /\bpayload\b/i,
+    /\bappend-only\b/i,
+    /\bRPC\b/,
+    /\buuid\b/i,
+    /\bledger\b/i,
+    /\bschema\b/i,
+    /\bjsonb?\b/i,
+    /\bnot deployed\b/i,
+    /\bthis installation\b/i,
+    /\bseq\b/i,
+    /\bPGRST\d+/,
+  ];
+  const sweep = (text, where) => {
+    const hits = BANNED.filter((re) => re.test(text)).map((re) => String(re));
+    check(hits.length === 0, `no database vocabulary in ${where}`, hits.join(' '));
+  };
+
+  // The whole export, with a jurisdiction selected so section 8 is populated
+  // too — the matrix's own quotations are excluded, because they are the
+  // court's words and are printed verbatim by contract.
+  const events = sampleEvents();
+  const client = clientFor(events);
+  const data = await fetchMatterRecord(client, { id: PARENT, name: 'Fixture Matter' });
+  const doc = assembleMatterRecord(data, CONTEXT, null);
+  sweep(renderMatterRecordMarkdown(doc), 'the rendered export');
+
+  // The same export in its three other states: nothing recorded, a failed
+  // check, and recording not switched on.
+  const empty = assembleMatterRecord(
+    { matter: { id: PARENT, name: 'Fixture Matter' }, matters: [{ id: PARENT, name: 'Fixture Matter' }],
+      events: [], totalEvents: 0, ceiling: 5000, truncated: false, chains: [], people: {},
+      citeRuns: [], notDeployed: true, error: null },
+    CONTEXT, null,
+  );
+  sweep(renderMatterRecordMarkdown(empty), 'the export before recording is switched on');
+
+  const broken = assembleMatterRecord(
+    { matter: { id: PARENT, name: 'Fixture Matter' }, matters: [{ id: PARENT, name: 'Fixture Matter' }],
+      events, totalEvents: events.length, ceiling: 5000, truncated: true,
+      chains: [{ matterId: PARENT, matterName: 'Fixture Matter', ok: false, checked: 6, firstBadSeq: 7 }],
+      people: {}, citeRuns: [], notDeployed: false, error: null },
+    CONTEXT, null,
+  );
+  sweep(renderMatterRecordMarkdown(broken), 'the export when the integrity check fails');
+
+  // Every sentence chainSummary can produce, which is what the tab's header
+  // shows, plus every docket line.
+  const states = [
+    chainSummary([]),
+    chainSummary([{ matterId: PARENT, matterName: 'Fixture Matter', ok: true, checked: 12, firstBadSeq: null }]),
+    chainSummary([{ matterId: PARENT, matterName: 'Fixture Matter', ok: false, checked: 6, firstBadSeq: 7 }]),
+    chainSummary([{ matterId: PARENT, matterName: 'Fixture Matter', ok: true, checked: 0, firstBadSeq: null, unavailable: true }]),
+    chainSummary([
+      { matterId: PARENT, matterName: 'Fixture Matter', ok: true, checked: 4, firstBadSeq: null },
+      { matterId: CHILD_A, matterName: 'Fixture Matter › Pleadings', ok: true, checked: 0, firstBadSeq: null, unavailable: true },
+    ]),
+  ];
+  sweep(states.map((s) => `${s.line}\n${s.meaning}`).join('\n'), 'the Record tab’s status line');
+  sweep(events.map((e) => describeEvent(e, {})).join('\n'), 'every docket line');
+
+  // And the two sentences the pass was actually about.
+  const md = renderMatterRecordMarkdown(doc);
+  check(md.includes('The Record is tamper-evident: each entry is sealed to the one before it'),
+    'the opening paragraph says tamper-evident in plain words');
+  check(md.includes('Entries cannot be edited or deleted.'),
+    'and says plainly that entries cannot be edited or deleted');
+  check(md.includes('How this Record can be relied on'), 'the reliance block is in the document');
+  check(md.includes('an act the product did not record would not appear here'),
+    'and it says what the Record does NOT prove, rather than over-claiming');
+  check(md.includes('Seal of the first entry') && md.includes('Seal of the last entry'),
+    'the two fingerprints are labelled as seals');
+  check(md.includes('digital fingerprints of the first and last entries'),
+    'with one line saying what they are for');
+
+  // The .md and the .docx are the same document, so the new part must be in
+  // both: one block model, two renderers.
+  const featureDoc = assembleMatterRecord(
+    { matter: { id: PARENT, name: 'Fixture Matter' }, matters: [{ id: PARENT, name: 'Fixture Matter' }],
+      events: [event('completion.received', { payload: { feature: 'deck', call_id: 'c-9', tier: 'A',
+        provider: 'openai', model: 'gpt-5', route: 'first-party', streaming: false, outcome: 'ok',
+        ok: true, status: 200, input_tokens: 10, output_tokens: 20, estimated_cost: 0.001 } })],
+      totalEvents: 1, ceiling: 5000, truncated: false,
+      chains: [{ matterId: PARENT, matterName: 'Fixture Matter', ok: true, checked: 1, firstBadSeq: null }],
+      people: {}, citeRuns: [], notDeployed: false, error: null },
+    CONTEXT, null,
+  );
+  const docxBuffer = await Packer.toBuffer(buildMatterRecordDocument(featureDoc));
+  const zip = await JSZip.loadAsync(docxBuffer);
+  const xml = await zip.file('word/document.xml').async('string');
+  const text = xml.replace(/<[^>]+>/g, ' ');
+  check(text.includes('Feature AI calls'), 'the .docx carries the Feature AI calls part too');
+  check(text.includes('Deck Composer'), 'and names the feature in it', 'Deck Composer');
+  sweep(text, 'the .docx');
 }
 
 // ===========================================================================

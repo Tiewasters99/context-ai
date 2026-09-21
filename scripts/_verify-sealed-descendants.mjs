@@ -316,9 +316,36 @@ check(!contentScope().has(SEALED_CHILD), 'and nothing was read from it');
 // ---------------------------------------------------------------------------
 console.log('\n--- connector: listings ----------------------------------------');
 reset();
-const listed = await callTool(supabase, 'list_matters', {}, CONNECTOR);
-check(!listed.some((m) => m.id === SEALED_CHILD), 'list_matters omits the sealed child');
+// The DEFAULT shape since 2026-09-20 is a compact tree — text, not rows — so
+// the seal can no longer be a filter over an array on the way out: the handler
+// prunes the hidden ids and everything under them BEFORE it counts a single
+// document. Both halves are asserted here: the sealed child is not in the map,
+// and its id never reached a `documents` query either.
+const tree = await callTool(supabase, 'list_matters', {}, CONNECTOR);
+check(typeof tree?.tree === 'string', 'list_matters answers with a tree', typeof tree?.tree);
+check(!tree.tree.includes(SEALED_CHILD), 'list_matters omits the sealed child');
+check(!tree.tree.includes('Privileged'), 'and does not name it either');
+check(tree.tree.includes(OPEN_CHILD), 'and still shows the open one');
+check(tree.tree.includes(PARENT), 'under their open parent');
+check(!contentScope().has(SEALED_CHILD),
+  'the sealed child was never asked how many documents it holds',
+  contentQueries.filter((q) => q.ids.includes(SEALED_CHILD)).map((q) => q.what).join('; ') || 'no such query');
+check(tree.matter_count === 3, 'three matters are visible to the connector', `n=${tree.matter_count}`);
+
+// The same seal, asked of the `format:'full'` escape hatch that existing
+// callers use.
+reset();
+const listed = await callTool(supabase, 'list_matters', { format: 'full' }, CONNECTOR);
+check(!listed.some((m) => m.id === SEALED_CHILD), 'format:"full" omits the sealed child too');
 check(listed.some((m) => m.id === OPEN_CHILD), 'and still shows the open one');
+
+// NEGATIVE CONTROL for the two assertions above: with no connector seal the
+// sealed child IS on the map and IS counted. If this ever goes quiet, the
+// assertions above have stopped proving anything.
+reset();
+const inAppTree = await callTool(supabase, 'list_matters', {}, IN_APP);
+check(inAppTree.tree.includes(SEALED_CHILD), 'in-app, the sealed child is on the map');
+check(contentScope().has(SEALED_CHILD), 'and it was counted like any other matter');
 
 reset();
 const contents = await callTool(supabase, 'list_matter_contents', { matter: 'vashti' }, CONNECTOR);
