@@ -314,6 +314,22 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
 
+      # A classification run has to survive a closed laptop. Migration 079 is
+      # EXECUTED in PGlite on top of the real 036 and the real queue chain
+      # (044 → 045 → 057), and then the real lib/bucketizer-run.mjs is driven
+      # against that database with the model stubbed and global fetch replaced
+      # by a witness — so "zero provider calls" is a number this job read.
+      # It covers a worker that dies mid-document resuming at the next undone
+      # WINDOW without re-charging a finished one, a sealed matter with no pen
+      # being HELD rather than falling back, the AI pause, a 402 mid-run
+      # pausing and resuming, a CONFIRMED row surviving a re-run untouched,
+      # Cancel, BULK priority against the real claim function, the two-row
+      # ledger record with its labels and document ids and no text, and the
+      # assertion that the browser path is the same code.
+      - name: Bucketizer — a run survives a closed laptop (migration 079 + the real runner)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-bucketizer-server-run.mjs
+
       # Cite-check's two model calls, held to their contracts. Inside a sealed
       # matter both are answered by the sealed pen, which holds a forced-tool
       # shape less literally than Claude — and the old code turned every
@@ -466,19 +482,3 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs
-
-      # A classification run has to survive a closed laptop. Migration 079 is
-      # EXECUTED in PGlite on top of the real 036 and the real queue chain
-      # (044 → 045 → 057), and then the real lib/bucketizer-run.mjs is driven
-      # against that database with the model stubbed and global fetch replaced
-      # by a witness — so "zero provider calls" is a number this job read.
-      # It covers a worker that dies mid-document resuming at the next undone
-      # WINDOW without re-charging a finished one, a sealed matter with no pen
-      # being HELD rather than falling back, the AI pause, a 402 mid-run
-      # pausing and resuming, a CONFIRMED row surviving a re-run untouched,
-      # Cancel, BULK priority against the real claim function, the two-row
-      # ledger record with its labels and document ids and no text, and the
-      # assertion that the browser path is the same code.
-      - name: Bucketizer — a run survives a closed laptop (migration 079 + the real runner)
-        if: ${{ !cancelled() }}
-        run: node scripts/_verify-bucketizer-server-run.mjs
