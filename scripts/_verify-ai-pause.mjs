@@ -538,6 +538,49 @@ console.log('\n--- the sentence ------------------------------------------------
     'a pause is a POLICY HOLD, so every existing held-parking call site inherits it unchanged');
 }
 
+console.log('\n--- the control never hides itself on a read error --------------');
+{
+  // The switch is worth what it shows. Until 2026-09-20 the component's
+  // initial state carried notDeployed:true and a failed read kept the
+  // previous state, so the FIRST unreadable answer of a session left that
+  // flag standing and `if (state.notDeployed) return null` removed the
+  // emergency stop from the screen — silently, and precisely when something
+  // was wrong. src/lib/ai-pause-state.ts is import-free so the rule can be
+  // run here rather than argued about in a comment.
+  const { nextPauseState, isPauseUnknown, NOT_PAUSED: NP, PAUSE_UNKNOWN_SENTENCE } =
+    await import('../src/lib/ai-pause-state.ts');
+
+  const PAUSED = { paused: true, notDeployed: false, byName: 'Ben Rowe', at: PAUSED_ROW.ai_paused_at };
+  const ERR = { paused: false, notDeployed: false, error: 'network' };
+  const ABSENT = { paused: false, notDeployed: true };
+
+  const firstReadFailed = nextPauseState(NP, ERR);
+  check(firstReadFailed.notDeployed === false,
+    'a read error is NEVER mistaken for "migration 070 is absent"', JSON.stringify(firstReadFailed));
+  check(isPauseUnknown(firstReadFailed),
+    'so the control stays on screen in the "could not check" state');
+  check(PAUSE_UNKNOWN_SENTENCE === 'Could not check whether AI is paused — retry',
+    'and says so in one sentence that claims nothing either way', PAUSE_UNKNOWN_SENTENCE);
+
+  const afterKnownPause = nextPauseState(PAUSED, ERR);
+  check(afterKnownPause.paused === true && !afterKnownPause.error,
+    'FAIL CLOSED: an error on a matter already known to be paused still reads "AI paused"');
+  check(!isPauseUnknown(afterKnownPause),
+    'and that is not the unknown state — it is the last trusted answer, standing');
+
+  check(nextPauseState(NP, ABSENT).notDeployed === true && !isPauseUnknown(nextPauseState(NP, ABSENT)),
+    'only a genuine not-deployed answer hides the control');
+  check(nextPauseState(PAUSED, NP).paused === false,
+    'and a good read that says "not paused" is believed, even over a remembered pause');
+
+  const src = fs.readFileSync(path.join(REPO, 'src', 'components', 'matter', 'AiPauseControl.tsx'), 'utf8');
+  check(/useState<AiPauseState>\(\{ \.\.\.NOT_PAUSED, notDeployed: true \}\)/.test(src)
+    && src.includes('setState(nextPauseState(known.current, next))'),
+    'the component still starts hidden, but every later state comes from that one rule');
+  check(src.includes('isPauseUnknown(state)') && src.includes('PAUSE_UNKNOWN_SENTENCE'),
+    'and it renders the unknown state rather than the "Pause AI" face, which would claim AI is running');
+}
+
 console.log('\n--- inheritance, in the JS walk every server path uses ----------');
 {
   // Part A proved it in SQL. This is walkEffectivePause, which is what
