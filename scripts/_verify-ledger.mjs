@@ -592,6 +592,90 @@ const {
 }
 
 // ---------------------------------------------------------------------------
+// A NUMBER IS NEVER REDACTED, UNDER ANY KEY.
+//
+// SECRET_RE matches the word "token", and every one of the three redactors
+// tests it against the KEY. So `input_tokens`, `output_tokens` and
+// `max_tokens` — two of them columns of the Record's own published contract —
+// were written as the string '[redacted]', and every reconciliation of a turn
+// against its cost read a word where a count belonged. `estimated_cost`
+// escaped only because its name happens not to match.
+//
+// Each redactor was fixed by putting the number/boolean branch AHEAD of the
+// key test, and each has a comment saying so. The guard for it lived only in
+// scripts/_verify-sealed-meetings.mjs, which asserts it of one payload on one
+// route; this asserts it of the functions themselves, which is where the rule
+// is. A secret-looking key with a STRING value must still be redacted, and
+// that is checked in the same breath — the fix must not have opened the hole
+// the rule exists to close.
+// ---------------------------------------------------------------------------
+console.log('\n--- token counts are never redacted ------------------------------');
+{
+  const { shapeOnly } = await import('../lib/ledger.mjs');
+
+  const usage = {
+    input_tokens: 1200,
+    output_tokens: 30,
+    cache_read_input_tokens: 0,
+    max_tokens: 8192,
+    estimated_cost_cents: 4,
+    token_budget_exhausted: false,
+    // The same key shapes, carrying what they are actually named for.
+    api_key: 'sk-live-abcdef',
+    authorization: 'Bearer xyz',
+    session_token: 'st-123',
+  };
+
+  for (const [name, fn] of [['redact', redact], ['redactToolArgs', redactToolArgs], ['shapeOnly', shapeOnly]]) {
+    const out = fn(usage);
+    check(out.input_tokens === 1200 && out.output_tokens === 30,
+      `${name}(): the pen's token counts survive as numbers`, JSON.stringify({ in: out.input_tokens, out: out.output_tokens }));
+    check(out.cache_read_input_tokens === 0,
+      `${name}(): a count of ZERO survives as 0, not as '[redacted]' and not as null`,
+      JSON.stringify(out.cache_read_input_tokens));
+    check(out.max_tokens === 8192,
+      `${name}(): the ceiling a call asked for survives`, JSON.stringify(out.max_tokens));
+    check(out.estimated_cost_cents === 4,
+      `${name}(): and the cost beside them, so the two can be reconciled`);
+    check(out.token_budget_exhausted === false,
+      `${name}(): a boolean under a secret-looking key survives too — it cannot carry prose`,
+      JSON.stringify(out.token_budget_exhausted));
+    check(out.api_key === '[redacted]' && out.authorization === '[redacted]' && out.session_token === '[redacted]',
+      `${name}(): but a STRING under a secret-bearing key is still redacted — the hole stays shut`,
+      JSON.stringify({ k: out.api_key, a: out.authorization, s: out.session_token }));
+    check(!JSON.stringify(out).includes('sk-live-abcdef') && !JSON.stringify(out).includes('Bearer xyz'),
+      `${name}(): and no secret's VALUE appears anywhere in the result`);
+  }
+
+  // Nested, because a usage block arrives inside a payload rather than as one.
+  const nested = redact({ tool: 'search', usage: { input_tokens: 512, output_tokens: 8, api_key: 'sk-1' } });
+  check(nested.usage.input_tokens === 512 && nested.usage.output_tokens === 8
+    && nested.usage.api_key === '[redacted]',
+    'redact(): the rule holds at depth, where a usage block actually lives');
+
+  // The source says why, so the ordering cannot be "tidied" back.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ledger.mjs'), 'utf8');
+  /** One function's own text, up to wherever the next one starts. */
+  const bodyOf = (fn) => {
+    const rest = src.slice(src.indexOf(`export function ${fn}(`) + 1);
+    const next = rest.search(/\n(export )?function /);
+    return next === -1 ? rest : rest.slice(0, next);
+  };
+  for (const fn of ['redact', 'redactToolArgs']) {
+    const body = bodyOf(fn);
+    const numberAt = body.indexOf("typeof v === 'number' || typeof v === 'boolean'");
+    const secretAt = body.indexOf('SECRET_RE.test(k)');
+    check(numberAt !== -1 && secretAt !== -1 && numberAt < secretAt,
+      `${fn}(): the number branch still comes BEFORE the secret-key test`,
+      `${numberAt} < ${secretAt}`);
+  }
+  check(
+    /SECRET_RE\.test\(k\) && typeof v !== 'number' && typeof v !== 'boolean'/.test(bodyOf('shapeOnly')),
+    'shapeOnly(): its secret-key test still exempts numbers and booleans in the same expression',
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The allow-list on tool arguments, driven through the REAL callTool hook.
 //
 // The Record's contract is metadata only, and redact() is a deny-list: it

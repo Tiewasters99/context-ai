@@ -5,7 +5,7 @@
 // run is left 'interrupted' and can be re-run later.
 
 import { supabase } from '@/lib/supabase';
-import type { CheckResult, FlagCounts, ReportEntry, RunProgress, RunResult } from './types';
+import { tallyFlags, type CheckResult, type ReportEntry, type RunProgress, type RunResult } from './types';
 import { extractCitations } from './extract-cites';
 import { checkOne } from './check';
 import { linkAuthorityToMatter } from './persist';
@@ -26,21 +26,8 @@ export interface RunCiteCheckOptions {
   signal?: AbortSignal;
 }
 
-function emptyCounts(): FlagCounts {
-  return { green: 0, lean_green: 0, lean_red: 0, red: 0, blue: 0 };
-}
-
-function tally(results: CheckResult[]): FlagCounts {
-  const c = emptyCounts();
-  for (const r of results) {
-    if (r.flag === 'green') c.green++;
-    else if (r.flag === 'lean-green') c.lean_green++;
-    else if (r.flag === 'lean-red') c.lean_red++;
-    else if (r.flag === 'red') c.red++;
-    else if (r.flag === 'blue') c.blue++;
-  }
-  return c;
-}
+/** The tally lives in `types.ts` so the renderer can reach it without a cycle. */
+const tally = tallyFlags;
 
 function toReportEntries(results: CheckResult[]): ReportEntry[] {
   return results.map((r) => ({
@@ -95,7 +82,11 @@ export async function runCiteCheck(opts: RunCiteCheckOptions): Promise<RunResult
     // 1. Extract citations.
     onProgress?.({ phase: 'extracting-cites', message: 'Reading the brief and pulling every citation…' });
     if (signal?.aborted) { await interrupt(); throw new DOMException('Aborted', 'AbortError'); }
-    const cites = await extractCitations(draftText, { modelId, signal, matterId });
+    // An answer that is not a citation list used to become an empty array, and
+    // the run finished "complete · 0 citations" on an unread brief. It now
+    // throws a sentence that says nothing was checked.
+    const extraction = await extractCitations(draftText, { modelId, signal, matterId });
+    const cites = extraction.cites;
 
     // 2. Check each cite.
     const results: CheckResult[] = [];
@@ -110,7 +101,7 @@ export async function runCiteCheck(opts: RunCiteCheckOptions): Promise<RunResult
     onProgress?.({ phase: 'persisting', message: 'Linking verified authorities to the matter…' });
     const counts = tally(results);
     const toaMarkdown = renderToa(results);
-    const reportMarkdown = renderReport(sourceLabel, results);
+    const reportMarkdown = renderReport(sourceLabel, results, { setAside: extraction.setAside });
 
     // 4. Link verified authorities to the matter.
     for (const r of results) {

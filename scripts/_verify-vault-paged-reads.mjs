@@ -79,7 +79,7 @@ function syntheticDocuments({ count, batches, matterIds }) {
  * fixture — it puts rows the ORDER BY calls EQUAL in an arbitrary order that
  * differs from page to page, exactly as a re-planned query may.
  */
-function fakePostgrest(rows, { dbMaxRows = 1000, failFirst = 0 } = {}) {
+function fakePostgrest(rows, { dbMaxRows = 1000, failFirst = 0, table: only = 'documents' } = {}) {
   const calls = { ranges: [], countRequests: 0, orders: [], attempts: 0 };
   let seed = 1;
   const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
@@ -115,7 +115,7 @@ function fakePostgrest(rows, { dbMaxRows = 1000, failFirst = 0 } = {}) {
   const db = {
     calls,
     from(table) {
-      if (table !== 'documents') throw new Error(`unexpected table: ${table}`);
+      if (table !== only) throw new Error(`unexpected table: ${table}`);
       return {
         select(columns, options) {
           const q = { columns, count: options?.count ?? null, filters: [], orders: [] };
@@ -256,6 +256,91 @@ section('6. Nothing to read costs nothing');
   const res = await fetchMatterDocumentRows(db, [], { delay: noSleep });
   check('an empty matter set makes no request at all',
     res.rows.length === 0 && res.total === 0 && res.truncated === false && db.calls.ranges.length === 0);
+}
+
+// ---------------------------------------------------------------------------
+// 7. The Reader's two passage reads (PR #173's "left, with the reason" list)
+// ---------------------------------------------------------------------------
+// Same cap, different surface, and a worse consequence. `indexedDocumentText`
+// is what "Copy the whole document" falls back to when a PDF carries no text
+// layer — a scanned deposition — and it asked for `.limit(5000)`, which
+// PostgREST answers with 1,000 rows and a 200. A lawyer copied a transcript,
+// pasted it into a brief, and got the first thousand passages with nothing
+// anywhere saying the rest existed. The text edition of an unsupported file
+// (`.limit(2000)`) ended mid-document for the same reason.
+
+section('7. The Reader reads a whole document, not its first 1,000 passages');
+{
+  const passages = Array.from({ length: 2500 }, (_, i) => ({
+    id: `p-${String(i + 1).padStart(5, '0')}`,
+    document_id: 'doc-1',
+    summary_level: 0,
+    sequence_number: i + 1,
+    text: `passage ${i + 1}`,
+  }));
+  // Another document's passages, so the filter has something to exclude.
+  passages.push({ id: 'p-other', document_id: 'doc-2', summary_level: 0, sequence_number: 1, text: 'not ours' });
+  // A summary row, which the Reader must not copy into the document's words.
+  passages.push({ id: 'p-sum', document_id: 'doc-1', summary_level: 1, sequence_number: 1, text: 'summary' });
+
+  const db = fakePostgrest(passages, { table: 'passages' });
+  const readerQuery = (from, to) => db
+    .from('passages')
+    .select('sequence_number, text')
+    .eq('document_id', 'doc-1')
+    .eq('summary_level', 0)
+    .order('sequence_number', { ascending: true })
+    .order('id')
+    .range(from, to);
+
+  const res = await fetchPaged(readerQuery, { label: 'document text' });
+  check('all 2,500 passages come back — not the 1,000 an unpaged read returned',
+    res.rows.length === 2500, `got ${res.rows.length}`);
+  check('in reading order, start to finish',
+    res.rows[0].text === 'passage 1' && res.rows[2499].text === 'passage 2500');
+  check('every passage exactly once', new Set(res.rows.map((r) => r.text)).size === 2500);
+  check('another document\'s passages are not in the copy',
+    !res.rows.some((r) => r.text === 'not ours'));
+  check('nor is a summary row — summary_level 0 is the document\'s own words',
+    !res.rows.some((r) => r.text === 'summary'));
+  check('three pages were fetched, 1,000 apart',
+    db.calls.ranges.length === 3 && db.calls.ranges[1][0] === 1000, JSON.stringify(db.calls.ranges));
+  check('the query ends with the unique tiebreaker `id`',
+    db.calls.orders.every((o) => o[o.length - 1] === 'id'), JSON.stringify(db.calls.orders[0]));
+
+  // CONTROL: the read this replaced, at its own asked-for width.
+  const capped = fakePostgrest(passages, { table: 'passages' });
+  const one = await capped.from('passages').select('sequence_number, text')
+    .eq('document_id', 'doc-1').eq('summary_level', 0)
+    .order('sequence_number', { ascending: true })
+    .range(0, 4999);
+  check('CONTROL — the old `.limit(5000)` really was answered with 1,000 rows and no error',
+    one.data.length === 1000 && one.error === null, `${one.data.length} rows`);
+}
+
+section('8. And the Reader actually uses it, at both sites');
+{
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/pages/DocumentReader.tsx', import.meta.url), 'utf8');
+  // Comments quote the caps they replaced, so the scan for the caps has to
+  // look at the code alone.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const paged = src.match(/fetchPaged<\{ text: string \| null \}>/g) ?? [];
+  check('both passage reads go through fetchPaged', paged.length === 2, `${paged.length} found`);
+  const body = code.slice(code.indexOf('async function indexedDocumentText'));
+  check('the whole-document read asks for no limit PostgREST will not honour',
+    !/\.limit\(/.test(body.slice(0, body.indexOf('\n}'))) && !/\.limit\(5000\)/.test(code));
+  // The one `.limit()` left on `passages` is the in-document search's own
+  // bound on how many MATCHING passages to collect. That is a deliberate
+  // ceiling on a filtered read, not a whole-document read pretending to be
+  // complete, and PR #173 did not list it. Counted so it cannot quietly
+  // become two.
+  check('exactly one deliberate passage limit remains, the search\'s own',
+    (code.match(/\.limit\(\d+\)/g) ?? []).length === 1, JSON.stringify(code.match(/\.limit\(\d+\)/g)));
+  check('each carries the unique tiebreaker, without which .range() drops rows',
+    (src.match(/\.order\('id'\)/g) ?? []).length === 2);
+  check('fetchPaged is imported from the one helper, not re-implemented here',
+    /import \{ fetchPaged \} from '@\/lib\/paged'/.test(src));
 }
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);

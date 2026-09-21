@@ -108,6 +108,26 @@ export function cropCanvas(canvas: HTMLCanvasElement, rect: FracRect): HTMLCanva
   return out;
 }
 
+/**
+ * A new canvas holding `canvas` turned clockwise by a quarter turn. Used
+ * where the picture, not the page, must come out upright — a landscape plate
+ * printed sideways to fit a portrait page.
+ */
+export function rotateCanvas(canvas: HTMLCanvasElement, degrees: number): HTMLCanvasElement {
+  const deg = norm(degrees);
+  if (deg === 0) return canvas;
+  const quarter = deg % 180 !== 0;
+  const out = document.createElement('canvas');
+  out.width = quarter ? canvas.height : canvas.width;
+  out.height = quarter ? canvas.width : canvas.height;
+  const ctx = out.getContext('2d');
+  if (!ctx) return canvas;
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate((deg * Math.PI) / 180);
+  ctx.drawImage(canvas, -canvas.width / 2, -canvas.height / 2);
+  return out;
+}
+
 /** Whether this browser can put an image on the clipboard at all. */
 export function canCopyImages(): boolean {
   return typeof ClipboardItem !== 'undefined' && !!navigator.clipboard?.write;

@@ -107,6 +107,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-llm-sealed-route.mjs
 
+      # The pen's preamble, the pen table that decides who gets it, and the
+      # eval kit's guards and --dry path. Offline: the loop runs against a
+      # stubbed Supabase and a witnessed fetch, and the eval's dry run replaces
+      # fetch for its own duration. Never spends, never reads a database.
+      - name: SecureSpace — the sealed pen's preamble, and only the sealed pen's
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-preamble.mjs
+
       - name: Agents — charter narrowing rule (offline part)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-charter.mjs
@@ -145,6 +153,43 @@ jobs:
       - name: Migration 074 — search scope router, same answers, isolation intact (PGlite + pgvector)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-scope-router.mjs
+
+      # 078 moves the access check out of the per-row policy and into the
+      # wrapper, which means the search itself runs SECURITY DEFINER. A harness
+      # running as the superuser could not tell that apart from a data leak, so
+      # this one creates `anon` / `authenticated` / `service_role` for real,
+      # enables RLS with the real policy function, and does every assertion
+      # from inside SET ROLE with request.jwt.claims set the way PostgREST sets
+      # it. The reference is 074 UNDER RLS, and the negative control deletes
+      # the wrapper's reduction and watches the forbidden matter come back.
+      - name: Migration 078 — authorize once per matter, not once per passage (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-rls-authorize.mjs
+
+      # Migration 080. A connection's stored refresh token is ciphertext, but
+      # it is still the credential for someone's mailbox and cloud drive, and
+      # RLS plus Supabase's blanket column grant let a signed-in browser ask
+      # PostgREST for it. 080 takes the table-wide SELECT away from `anon` and
+      # `authenticated` and grants back the non-credential columns only. This
+      # runs 026 → 029 → 075 → 080 with the three real roles and real RLS,
+      # opens with the leak as a negative control, and then holds the result to
+      # all of it: the token refused (42501), `select *` refused, the safe
+      # columns served and still cut to the caller's own rows, the service role
+      # untouched, Disconnect still working, idempotent, and correct from three
+      # drift states. It ends by scanning src/ — a `*` or a credential column
+      # on this table fails the build — and api/ + lib/, where every read of
+      # the token column must be on a service-role client.
+      #
+      # It belongs HERE, with the other PGlite steps, and not at the end of the
+      # file: two later steps run `npm i --no-save jsdom`, and npm prunes
+      # packages that are not in package.json, so PGlite is GONE from that
+      # point on. (That is also why `_verify-cloud-drives.mjs` prints SKIP for
+      # its migration-075 section in CI today.) A new PGlite harness appended
+      # after those steps exits 2 with "Run: npm i --no-save @electric-sql/
+      # pglite" and takes the whole job red.
+      - name: Migration 080 — a connection's token never reaches the browser (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-connections-columns.mjs
 
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
@@ -268,6 +313,21 @@ jobs:
       - name: Bucketizer — choosing documents, and what a re-run may write
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
+
+      # Cite-check's two model calls, held to their contracts. Inside a sealed
+      # matter both are answered by the sealed pen, which holds a forced-tool
+      # shape less literally than Claude — and the old code turned every
+      # off-contract answer into a FINDING: an unreadable extraction became
+      # "this brief cites nothing", and an unreadable rating became "medium".
+      # Asserted against the REAL call sites with /api/llm and
+      # /api/legal-source stubbed and witnessed: validate → one metered repair
+      # → "not checked", never "not found" and never verified; no citation the
+      # draft does not contain; 402 / 429 / a sealed refusal stop the run with
+      # the server's own sentence on the first turn AND on the repair turn; and
+      # the report's arithmetic reconciles (extracted = checked + not checked).
+      - name: Cite-check — output contracts, and the citation that was not checked
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-cite-check-contracts.mjs
       # The Vault's own read, at 2,500 and 12,000 documents with every
       # created_at tied — the dropped-folder case that makes an untiebroken
       # `.range()` loop lose rows. Offline: PostgREST is stubbed.
@@ -363,3 +423,46 @@ jobs:
       - name: Version notice — a stale tab is told, never reloaded
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-app-version.mjs
+
+      # OneDrive and Dropbox export. Migration 075 runs in PGlite from three
+      # drift states (026→029→075, 026→075 with 029 never applied, and no
+      # table at all); the rest drives the real connect/callback/export
+      # handlers with fetch stubbed and witnessed — least-privilege scopes,
+      # PKCE bound to a cookie rather than to the state, a cross-service state
+      # refused, Microsoft's rotating refresh token written back, the
+      # app-folder path and its never-overwrite flags, the ASCII-escaped
+      # Dropbox header, and the 503 every endpoint gives while the two apps
+      # are unregistered. **No request reaches Microsoft or Dropbox.** The
+      # seal itself is proved in the export-gate harness above, which now runs
+      # its whole table against both new destinations.
+      - name: Cloud drives — OneDrive + Dropbox export (PGlite + stubbed providers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-cloud-drives.mjs
+      # What a big upload will cost, before it draws on the month. The
+      # arithmetic against the REAL price table (it imports lib/ocr-routes.mjs
+      # and lib/ocr-textract.mjs and fails if a mirrored rate has drifted), the
+      # four-axis threshold matrix in both directions, sealed vs unsealed
+      # rates on the same files, "the first 36 of these 400 fit", and the
+      # handler's refusal to take the browser's arithmetic on trust — plus the
+      # assertion that an ordinary upload's request body is still byte for
+      # byte the one this endpoint has always taken. Offline: no file is
+      # parsed, no provider called, no database touched.
+      - name: Upload estimate — the quote, the threshold, and the server's re-check
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-ingest-estimate.mjs
+      # A refresh, a closed tab or a navigation must not cost a lawyer typed
+      # work. Three parts: the saver and the keyed draft store driven with
+      # injected timers and a fake storage (debounce, one serial writer, an
+      # unchanged document is never written, a failed save stays dirty and
+      # retries); the REAL useAutosave hook and the guard in a real DOM (the
+      # mirror lands under user+item, pagehide flushes, a second account sees
+      # none of it, `beforeunload` is attached only while something is
+      # unsaved); and narrow source assertions so a later edit that removes
+      # the wiring turns this red. Offline: no network, no React rendering of
+      # anything but a bare probe component. jsdom is installed --no-save here
+      # the same way the card-pin step above installs it.
+      - name: No lost work — autosave, drafts, and the guard
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs

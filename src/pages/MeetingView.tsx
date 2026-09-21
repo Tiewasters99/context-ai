@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { parseServerRefusal } from "@/lib/llm/refusals";
 import { WaveformBanner } from "@/components/meetings/WaveformBanner";
 import { DeepgramLiveClient } from "@/lib/meetings/deepgram";
 import {
@@ -36,27 +37,6 @@ type FlagItem = { type: FlagType; text: string; anchor?: string; ts: number };
 const FLAG_INTERVAL_MS = 90_000;
 const FLAG_MIN_GROWTH_CHARS = 200;
 const FLAG_MAX_PER_SESSION = 30;
-
-/**
- * The plain sentence inside a refusal, or null when the body is not one.
- *
- * /api/meeting-chat answers a refusal as JSON — `{error, tier, message}` — and
- * the `message` is deliberately written as prose for the person in the meeting
- * (SecureSpace seals, the sealed pen being unavailable, a spend cap). Rendering
- * the whole envelope as `[error: {"error":"sealed_pen_unavailable",…}]` showed
- * a lawyer a stack of JSON mid-meeting. The sentence is the product's answer;
- * this pulls it out. Anything else still falls through to the error path.
- */
-function refusalMessage(bodyText: string): string | null {
-  if (!bodyText) return null;
-  try {
-    const parsed = JSON.parse(bodyText) as { message?: unknown };
-    const message = typeof parsed?.message === "string" ? parsed.message.trim() : "";
-    return message || null;
-  } catch {
-    return null;
-  }
-}
 
 export default function MeetingView() {
   const { id } = useParams<{ id: string }>();
@@ -339,24 +319,28 @@ export default function MeetingView() {
             })),
           }),
         });
-        if (!res.ok || !res.body) {
-          const errText = await res.text();
+        if (!res.ok) {
           // A refusal from the server is a sentence written for the person
-          // sitting in the meeting — "this matter is sealed and the sealed pen
-          // is not available on this server…" — wrapped in a JSON envelope.
-          // Show the sentence, in the assistant's own voice. The envelope, and
-          // the `[error: …]` framing, are for the console.
-          const refusal = refusalMessage(errText);
-          if (refusal) {
-            setMessages((m) => [
-              ...m,
-              { role: "assistant", content: refusal, ts: Date.now() },
-            ]);
-            setStreamingReply("");
-            return;
-          }
-          throw new Error(errText || `Status ${res.status}`);
+          // sitting in the meeting — the seal, a paused matter, a spent
+          // wallet, a full rate window — wrapped in a JSON envelope. Show the
+          // sentence, in the assistant's own voice; the envelope and the
+          // `[error: …]` framing are for the console.
+          //
+          // parseServerRefusal is the app's ONE parser for this (PR #171). The
+          // local copy it replaces read only `message`, so every refusal that
+          // carries a code and no copy of its own — `sealed_pen_error`, a
+          // 402 from a server predating #161 — fell through and a lawyer got
+          // raw JSON mid-meeting. It also trims the 402's dead upsell and puts
+          // the server's own seconds into the 429.
+          const refusal = await parseServerRefusal(res);
+          setMessages((m) => [
+            ...m,
+            { role: "assistant", content: refusal.message, ts: Date.now() },
+          ]);
+          setStreamingReply("");
+          return;
         }
+        if (!res.body) throw new Error("The server sent no answer.");
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let acc = "";

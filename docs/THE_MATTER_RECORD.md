@@ -549,6 +549,14 @@ nothing more:
 > the period. Each is listed above. What those searches returned from other
 > matters is not part of this matter's Record.
 
+**Say who, from the row's own `actor_kind`.** The count above is not the
+connector's alone: an in-app search that names no matter fans out the same
+way and writes the same rows, so "run by a connected assistant" over a mixed
+count asserts an outside AI read the file when none did. The export splits
+the count and says *run by a connected assistant*, *run from inside
+Contextspaces*, or both — see `accountWideByConnector` in
+`src/lib/matter-record/assemble.ts`.
+
 `scope`, `via` (`'account-wide search'`, exported as `FANOUT_VIA`) and
 `result_count` are now an **interface**, not a payload convention. A partial
 index `events_fanout_idx` exists for exactly this count.

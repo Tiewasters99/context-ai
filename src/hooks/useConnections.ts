@@ -5,6 +5,24 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 
+/**
+ * The ONLY columns of `connections` this application may read from a browser.
+ *
+ * The row also carries `encrypted_refresh_token` — the stored credential for
+ * the user's mailbox or cloud drive. Since migration 080 the `authenticated`
+ * and `anon` roles hold no SELECT privilege on that column, so a query that
+ * names it, or that asks for `*`, is refused by Postgres with
+ * `42501 permission denied for table connections`. That refusal is the real
+ * guarantee; this constant is how the application stays on the right side of
+ * it, in one place, instead of in every call site.
+ *
+ * Never replace a read of this table with `select('*')`, and never add a
+ * column here that migration 080 does not grant.
+ * scripts/_verify-connections-columns.mjs fails CI if either happens.
+ */
+export const CONNECTIONS_SAFE_SELECT =
+  'id, kind, status, connected_email, last_error';
+
 export interface Connection {
   id: string;
   kind: string;
@@ -19,7 +37,7 @@ export function useConnections() {
     queryFn: async (): Promise<Connection[]> => {
       const { data, error } = await supabase
         .from('connections')
-        .select('id, kind, status, connected_email, last_error');
+        .select(CONNECTIONS_SAFE_SELECT);
       if (error) throw error;
       return (data ?? []) as Connection[];
     },
@@ -55,7 +73,98 @@ export async function startGoogleConnect(
   window.location.href = body.url;
 }
 
+// No `.select()` on the way back. A DELETE ... RETURNING would ask Postgres
+// for the deleted row, and under migration 080's column grants a `*`
+// representation of this table is refused outright — quite apart from the
+// RLS-on-RETURNING trap this project has hit before. The row is gone; the
+// caller invalidates the query and re-reads the safe columns.
 export async function disconnectConnection(id: string): Promise<void> {
   const { error } = await supabase.from('connections').delete().eq('id', id);
   if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// The other cloud drives — OneDrive and Dropbox (migration 075)
+// ---------------------------------------------------------------------------
+// Same connections table, same encrypted refresh token, a different provider
+// at the other end. Google's flow above is left exactly as it is; these have
+// their own endpoints because their OAuth details differ (PKCE, rotating
+// Microsoft refresh tokens, Dropbox's token_access_type=offline).
+//
+// All of it is DORMANT until the two applications are registered: with the
+// keys absent every endpoint answers 503 `not_configured`, and `isCloudDrive
+// Configured` below is what lets the Connections card say "Not available yet"
+// rather than offering a button that cannot work.
+
+export type CloudDriveService = 'onedrive' | 'dropbox';
+
+const CLOUD_DRIVE_ENDPOINT: Record<CloudDriveService, string> = {
+  onedrive: '/api/microsoft-connect',
+  dropbox: '/api/dropbox-connect',
+};
+
+export const CLOUD_DRIVE_LABEL: Record<CloudDriveService, string> = {
+  onedrive: 'OneDrive',
+  dropbox: 'Dropbox',
+};
+
+/** Has this deployment been given the provider's keys yet? */
+export async function isCloudDriveConfigured(
+  service: CloudDriveService,
+): Promise<boolean> {
+  try {
+    const resp = await fetch(CLOUD_DRIVE_ENDPOINT[service]);
+    if (!resp.ok) return false;
+    const body = await resp.json();
+    return body?.configured === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Asks the server for the provider's authorization URL, then goes there. */
+export async function startCloudConnect(service: CloudDriveService): Promise<void> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not signed in');
+  const resp = await fetch(CLOUD_DRIVE_ENDPOINT[service], {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${session.access_token}` },
+    // The PKCE verifier comes back as an HttpOnly cookie on this response, so
+    // the request has to be same-origin and credentialed.
+    credentials: 'same-origin',
+  });
+  const body = await resp.json().catch(() => ({}));
+  if (resp.status === 503) {
+    throw new Error(`${CLOUD_DRIVE_LABEL[service]} is not available yet.`);
+  }
+  if (!resp.ok || !body.url) {
+    throw new Error(body.error || `Could not start the ${CLOUD_DRIVE_LABEL[service]} connection`);
+  }
+  window.location.href = body.url;
+}
+
+/**
+ * Disconnect through the server, not with a row delete: Dropbox publishes a
+ * revoke endpoint and the refresh token needed to call it is only readable
+ * server-side. The row is deleted either way.
+ */
+export async function disconnectCloudDrive(
+  service: CloudDriveService,
+): Promise<{ revokedAtProvider: boolean; manageUrl: string | null }> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not signed in');
+  const resp = await fetch(CLOUD_DRIVE_ENDPOINT[service], {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.error || 'Could not disconnect');
+  return {
+    revokedAtProvider: body.revoked_at_provider === true,
+    manageUrl: typeof body.manage_url === 'string' ? body.manage_url : null,
+  };
 }

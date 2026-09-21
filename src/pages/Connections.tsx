@@ -14,13 +14,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive } from 'lucide-react';
+import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive, Cloud, Package } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import {
   useConnections,
   useConnectionsInvalidate,
   startGoogleConnect,
+  startCloudConnect,
   disconnectConnection,
+  disconnectCloudDrive,
+  isCloudDriveConfigured,
+  CLOUD_DRIVE_LABEL,
+  type CloudDriveService,
   type Connection,
 } from '@/hooks/useConnections';
 
@@ -29,7 +34,11 @@ type ConnState =
   | 'token_active'
   | 'not_connected'
   | 'needs_attention'
-  | 'coming_soon';
+  | 'coming_soon'
+  // The provider's application has not been registered for this deployment,
+  // so there is nothing to connect to yet. Not an error, and not the same
+  // thing as "not connected" — pressing Connect would only 503.
+  | 'not_available';
 type GoogleKind = 'gmail' | 'google_calendar' | 'google_drive';
 
 function StateBadge({ state }: { state: ConnState }) {
@@ -61,6 +70,13 @@ function StateBadge({ state }: { state: ConnState }) {
     return (
       <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
         Coming soon
+      </span>
+    );
+  }
+  if (state === 'not_available') {
+    return (
+      <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[var(--color-surface)] text-[var(--color-text-muted)] border border-[var(--color-border)]">
+        Not available yet
       </span>
     );
   }
@@ -136,6 +152,105 @@ function GoogleConnectionRow({
     </div>
   );
 }
+
+// OneDrive and Dropbox. Same shape as the Google row above, with one state it
+// does not have: until Eden registers the two applications and sets their
+// keys, the server answers 503 and the card says "Not available yet" with the
+// button disabled — never a button that looks live and fails when pressed.
+function CloudDriveRow({
+  icon: Icon,
+  service,
+  blurb,
+  connection,
+  configured,
+  busy,
+  onConnect,
+  onDisconnect,
+}: {
+  icon: typeof Mail;
+  service: CloudDriveService;
+  blurb: string;
+  connection: Connection | undefined;
+  configured: boolean | null; // null = still asking the server
+  busy: boolean;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  const name = CLOUD_DRIVE_LABEL[service];
+  const state: ConnState = connection
+    ? connection.status === 'needs_attention'
+      ? 'needs_attention'
+      : 'connected'
+    : configured === false
+      ? 'not_available'
+      : 'not_connected';
+
+  return (
+    <div className="flex items-center gap-4 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4">
+      <span className="w-10 h-10 rounded-lg bg-[var(--color-primary-light)] flex items-center justify-center shrink-0">
+        <Icon size={18} className="text-[var(--color-primary)]" strokeWidth={1.75} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="flex items-center gap-2.5">
+          <span className="text-[15px] font-medium text-[var(--color-text-bright)]">
+            {name}
+          </span>
+          <StateBadge state={state} />
+        </span>
+        <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
+          {state === 'connected' && connection?.connected_email
+            ? `Connected as ${connection.connected_email}.`
+            : state === 'connected'
+              ? `Connected. Exports land in the Contextspaces folder ${name} gives this app.`
+              : state === 'needs_attention'
+                ? 'Reconnect to restore access.'
+                : state === 'not_available'
+                  ? `${name} export is built but not switched on for this deployment yet.`
+                  : blurb}
+        </span>
+      </span>
+      {state === 'connected' || state === 'needs_attention' ? (
+        <button
+          onClick={state === 'connected' ? onDisconnect : onConnect}
+          disabled={busy}
+          className={`text-[13px] transition shrink-0 disabled:opacity-50 ${
+            state === 'connected'
+              ? 'text-[var(--color-text-secondary)] hover:text-[#f87171]'
+              : 'px-3.5 py-1.5 rounded-lg bg-[var(--color-primary)] text-[#1a1408] font-semibold hover:bg-[var(--color-primary-hover)]'
+          }`}
+        >
+          {state === 'connected' ? 'Disconnect' : 'Reconnect'}
+        </button>
+      ) : (
+        <button
+          onClick={onConnect}
+          disabled={busy || state === 'not_available' || configured === null}
+          className="px-3.5 py-1.5 rounded-lg bg-[var(--color-primary)] text-[#1a1408] text-[13px] font-semibold transition hover:bg-[var(--color-primary-hover)] shrink-0 disabled:opacity-50"
+          title={state === 'not_available' ? `${name} is not switched on for this deployment yet` : undefined}
+        >
+          {busy ? 'Starting…' : 'Connect'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const CLOUD_DRIVES: {
+  service: CloudDriveService;
+  icon: typeof Mail;
+  blurb: string;
+}[] = [
+  {
+    service: 'onedrive',
+    icon: Cloud,
+    blurb: 'Export documents straight to the Contextspaces folder in your OneDrive.',
+  },
+  {
+    service: 'dropbox',
+    icon: Package,
+    blurb: 'Export documents straight to the Contextspaces app folder in your Dropbox.',
+  },
+];
 
 // An outbound assistant connection (Claude, ChatGPT, Gemini, Grok) — a row
 // that navigates to a per-client setup page. The badge is optional and stays
@@ -301,6 +416,8 @@ export default function Connections() {
       if (connected === 'google_drive') {
         return { kind: 'ok', text: 'Google Drive connected.' };
       }
+      if (connected === 'onedrive') return { kind: 'ok', text: 'OneDrive connected.' };
+      if (connected === 'dropbox') return { kind: 'ok', text: 'Dropbox connected.' };
       const err = p.get('error');
       if (err) {
         return { kind: 'err', text: `Couldn't connect: ${err.replace(/_/g, ' ')}` };
@@ -308,6 +425,31 @@ export default function Connections() {
       return null;
     },
   );
+
+  // Whether the OneDrive and Dropbox applications exist for this deployment.
+  // null until the server answers — the Connect button stays disabled until
+  // then, so it can never be pressed on a promise we have not checked.
+  const [cloudConfigured, setCloudConfigured] = useState<
+    Record<CloudDriveService, boolean | null>
+  >({ onedrive: null, dropbox: null });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        CLOUD_DRIVES.map(async (d) => [d.service, await isCloudDriveConfigured(d.service)] as const),
+      );
+      if (cancelled) return;
+      setCloudConfigured((cur) => {
+        const next = { ...cur };
+        for (const [service, ok] of entries) next[service] = ok;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Strip the ?connected / ?error params after reading them once.
   useEffect(() => {
@@ -412,6 +554,49 @@ export default function Connections() {
         kind: 'err',
         text: e instanceof Error ? e.message : 'Could not start the connection',
       });
+      setBusy(false);
+    }
+  };
+
+  const handleCloudConnect = async (service: CloudDriveService) => {
+    setBusy(true);
+    try {
+      await startCloudConnect(service); // redirects the browser to the provider
+    } catch (e) {
+      setBanner({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'Could not start the connection',
+      });
+      setBusy(false);
+    }
+  };
+
+  const handleCloudDisconnect = async (service: CloudDriveService) => {
+    const label = CLOUD_DRIVE_LABEL[service];
+    if (
+      !confirm(`Disconnect ${label}? Contextspaces will lose access until you reconnect.`)
+    )
+      return;
+    setBusy(true);
+    try {
+      const { revokedAtProvider, manageUrl } = await disconnectCloudDrive(service);
+      invalidateConnections();
+      setBanner({
+        kind: 'ok',
+        // Two different facts, said as two different sentences. Dropbox's
+        // revoke really does end the grant; Microsoft publishes no equivalent
+        // for one app's delegated tokens, so the honest answer names where the
+        // grant itself is removed rather than implying we removed it.
+        text: revokedAtProvider
+          ? `${label} disconnected, and the access was revoked at ${label}.`
+          : `${label} disconnected here.${manageUrl ? ` To remove the app's access at Microsoft as well, visit ${manageUrl}.` : ''}`,
+      });
+    } catch (e) {
+      setBanner({
+        kind: 'err',
+        text: e instanceof Error ? e.message : 'Could not disconnect',
+      });
+    } finally {
       setBusy(false);
     }
   };
@@ -536,6 +721,22 @@ export default function Connections() {
               />
             );
           })}
+
+          {/* OneDrive and Dropbox — the same connections table, other
+              providers. Dormant until the two applications are registered. */}
+          {CLOUD_DRIVES.map((drive) => (
+            <CloudDriveRow
+              key={drive.service}
+              icon={drive.icon}
+              service={drive.service}
+              blurb={drive.blurb}
+              connection={connections.find((c) => c.kind === drive.service)}
+              configured={cloudConfigured[drive.service]}
+              busy={busy}
+              onConnect={() => handleCloudConnect(drive.service)}
+              onDisconnect={() => handleCloudDisconnect(drive.service)}
+            />
+          ))}
         </div>
 
         {grants && grants.length > 0 && (
@@ -563,8 +764,11 @@ export default function Connections() {
         )}
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
-          Connecting Gmail or Calendar asks Google for access; the token is
-          encrypted before it is stored, and you can disconnect at any time.
+          Connecting Gmail or Calendar asks Google for access; connecting
+          OneDrive or Dropbox asks Microsoft or Dropbox, and each is given
+          access to one folder of its own and nothing else in your account. In
+          every case the token is encrypted before it is stored, and you can
+          disconnect at any time.
         </p>
       </div>
     </div>
