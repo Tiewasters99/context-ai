@@ -222,5 +222,30 @@ const iCross = rows.findIndex((r) => /registered office/.test(r.text));
 check(iOwn < iCross, '[061] the genuinely-similar passage now ranks above the fake match',
   `own=#${iOwn + 1} cross=#${iCross + 1}`);
 
-console.log(`\n${failures === 0 ? '061 verified: text is model-agnostic, vectors are model-scoped.' : `${failures} FAILURE(S)`}\n`);
+// ---------------------------------------------------------------------------
+// 3. 074 rewrites stage A. Everything above is a property of stages B and C,
+//    so it must survive untouched — and the cheapest way to be sure of that is
+//    to run the same assertions again rather than to reason about the diff.
+//    (074's own behaviour is verified in _verify-search-scope-router.mjs.)
+// ---------------------------------------------------------------------------
+console.log('\n--- 074: stage A rewritten, 061 unchanged ---------------------');
+const before074 = await search(OPENAI, QUERY_VEC);
+await db.exec(migration('074_search_scope_aware_ann.sql'));
+
+rows = await search(OPENAI, null);
+check(rows.length === 3, '[074] text-only search still finds ALL 3 passages', `got ${rows.length}`);
+
+rows = await search(SEALED, null);
+check(rows.length === 3, '[074] and the same 3 from the sealed space', `got ${rows.length}`);
+
+rows = await search(OPENAI, QUERY_VEC);
+check(JSON.stringify(rows) === JSON.stringify(before074),
+  '[074] the hybrid answer is byte-identical to 061 — same rows, same order, same scores');
+
+const after = rows.find((r) => /registered office/.test(r.text));
+check(after !== undefined && Number(after.vector_score) === 0,
+  '[074] the other-space passage still scores 0 on vector',
+  after ? `vector_score=${Number(after.vector_score)}` : 'missing');
+
+console.log(`\n${failures === 0 ? '061 verified: text is model-agnostic, vectors are model-scoped — and 074 preserves it.' : `${failures} FAILURE(S)`}\n`);
 process.exit(failures === 0 ? 0 : 1);

@@ -19,6 +19,17 @@ import {
   hashName,
 } from '../src/lib/covers.ts';
 
+import {
+  SURFACES,
+  asPlan,
+  canOpenPath,
+  canOpenSurface,
+  isWorkshop,
+  surfacePresentation,
+} from '../src/lib/plan.ts';
+
+const SURFACE_IDS = Object.keys(SURFACES);
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const ALL = [
@@ -119,6 +130,77 @@ test('the real core-covers.json gates the real manifest to the core set', () => 
   for (const f of core.featured) {
     assert.ok(free.some((t) => t.file === f.file), `featured not offered: ${f.file}`);
   }
+});
+
+// ── the plan behind the gate ──────────────────────────────────────────────
+//
+// covers.ts is one reader of src/lib/plan.ts; <PlanRoute>, the Dashboard's
+// quick actions and the Productivity Suite are the others. The tier list is
+// the single place a paid customer's surfaces are decided, and migration 067
+// added a third paid price point (`basic`). Until PR #178 added it here,
+// asPlan() narrowed a paying Basic customer to 'free' and Settings showed
+// them the wrong plan name. These assertions exist so the next tier added to
+// the database cannot be added to only half of the app.
+
+test('every paid tier sees the core product, and only workshop sees more', () => {
+  const coreSurfaces = SURFACE_IDS.filter((id) => SURFACES[id].tier === 'core');
+  const frozen = SURFACE_IDS.filter((id) => SURFACES[id].tier === 'frozen');
+  const beta = SURFACE_IDS.filter((id) => SURFACES[id].tier === 'beta');
+  assert.ok(frozen.length > 0 && beta.length > 0, 'the fixture needs something closed to test');
+
+  for (const plan of ['free', 'basic', 'pro', 'max']) {
+    for (const id of coreSurfaces) {
+      assert.equal(canOpenSurface(id, plan), true, `${plan} cannot open core surface ${id}`);
+      assert.equal(surfacePresentation(id, plan), 'open');
+    }
+    for (const id of frozen) {
+      assert.equal(canOpenSurface(id, plan), false, `${plan} can open frozen surface ${id}`);
+      assert.equal(surfacePresentation(id, plan), 'hidden');
+    }
+    for (const id of beta) {
+      assert.equal(canOpenSurface(id, plan), false);
+      assert.equal(surfacePresentation(id, plan), 'beta', `${plan} does not see ${id} as beta`);
+    }
+    assert.equal(isWorkshop(plan), false);
+  }
+
+  for (const id of SURFACE_IDS) {
+    assert.equal(canOpenSurface(id, 'workshop'), true, `workshop cannot open ${id}`);
+    assert.equal(surfacePresentation(id, 'workshop'), 'open');
+  }
+  assert.equal(isWorkshop('workshop'), true);
+});
+
+test('a paying Basic customer is not narrowed to free', () => {
+  // Migration 067's tier key, and the row Settings reads its name from.
+  assert.equal(asPlan('basic'), 'basic');
+  for (const plan of ['free', 'basic', 'pro', 'max', 'workshop']) {
+    assert.equal(asPlan(plan), plan, `${plan} does not survive asPlan()`);
+  }
+  // And anything the database has never heard of still reads as free, which
+  // is the conservative direction: a surface is never opened by accident.
+  for (const odd of ['enterprise', '', 'WORKSHOP', null, 7, undefined, {}]) {
+    assert.equal(asPlan(odd), 'free', `asPlan(${JSON.stringify(odd)}) is not free`);
+  }
+});
+
+test('the tier keys in the app are the tier keys in the migration', () => {
+  // billing_plans is seeded by 067; plan.ts is the browser's copy of that
+  // vocabulary. If they drift, an account lands on a plan the app cannot name.
+  const sql = readFileSync(join(ROOT, 'supabase/migrations/067_billing_and_credits.sql'), 'utf8');
+  const seeded = new Set([...sql.matchAll(/\('(free|basic|pro|max|workshop)'/g)].map((m) => m[1]));
+  for (const key of ['free', 'basic', 'pro', 'max', 'workshop']) {
+    assert.ok(seeded.has(key), `migration 067 does not seed the tier key '${key}'`);
+    assert.equal(asPlan(key), key);
+  }
+  // The path guard reads the same list: a route no surface claims is open to
+  // every plan, and a frozen one is closed to all four paid tiers.
+  for (const plan of ['free', 'basic', 'pro', 'max']) {
+    assert.equal(canOpenPath('/app', plan), true);
+    assert.equal(canOpenPath('/app/vault', plan), true);
+    assert.equal(canOpenPath('/app/agents', plan), false);
+  }
+  assert.equal(canOpenPath('/app/agents', 'workshop'), true);
 });
 
 test('the dashboard default and the plate categories are inside the core set', () => {

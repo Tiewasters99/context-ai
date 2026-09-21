@@ -5,7 +5,14 @@
 
 import { generateStructured } from '@/lib/llm';
 import { parseServerRefusal, ServerRefusalError, isFinalRefusal } from '@/lib/llm/refusals';
-import type { Cite, CheckFlag, CheckResult, CiteFlag } from './types';
+import {
+  buildRepairContent,
+  runWithContract,
+  trimmedText,
+  type ContractAttempt,
+  type ContractCheck,
+} from '@/lib/llm/contract';
+import { UNREADABLE_CHECK_DETAIL, type Cite, type CheckFlag, type CheckResult, type CiteFlag } from './types';
 import {
   findByCitation,
   getMatchingProposition,
@@ -79,32 +86,98 @@ const RATE_SCHEMA = {
   required: ['rating', 'justification'],
 } as const;
 
+export const RATINGS = ['high', 'medium', 'low'] as const;
+export type Rating = (typeof RATINGS)[number];
+
+export interface RatedCite {
+  rating: Rating;
+  justification: string;
+}
+
+/**
+ * THE RATING CONTRACT.
+ *
+ * Three words and a sentence. It was checked with
+ * `result?.rating === 'high' || result?.rating === 'low' ? result.rating : 'medium'`
+ * — so an answer of `"High"`, `"very high"`, `{}` or `"the citation is sound"`
+ * all became **medium**, and "medium" is printed in the report as the model's
+ * confidence in a citation the model never rated. On frontier Claude that
+ * branch was almost never taken; the sealed pen takes it.
+ *
+ * Case and surrounding space ARE forgiven: a pen that answered "High " gave
+ * the rating, in the format it happened to type. A word that is not one of the
+ * three is not forgiven, because there is no honest way to map it.
+ */
+export function checkRatingContract(raw: unknown): ContractCheck<RatedCite> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, reason: 'the answer was not an object' };
+  }
+  const r = raw as Record<string, unknown>;
+  const word = trimmedText(r.rating)?.toLowerCase();
+  if (!word) return { ok: false, reason: 'no "rating"' };
+  if (!(RATINGS as readonly string[]).includes(word)) {
+    return { ok: false, reason: `the rating was "${word}" — it must be exactly high, medium or low` };
+  }
+  const justification = trimmedText(r.justification);
+  if (!justification) return { ok: false, reason: 'no "justification" for the rating' };
+  return { ok: true, value: { rating: word as Rating, justification } };
+}
+
+export function buildRatingRepairContent(original: string, reason: string, sent: unknown): string {
+  return buildRepairContent({
+    original,
+    reason,
+    sent,
+    shape: `{"rating":"high|medium|low","justification":"<one or two sentences>"}`,
+    rules:
+      `"rating" must be exactly one of the three words high, medium or low — not a number, `
+      + `not a percentage, and not a sentence. If the source text is empty or generic, answer "medium" `
+      + `and say so in the justification.`,
+  });
+}
+
+/**
+ * Returns the rating, or `null` when the model could not be held to the
+ * contract twice. `null` is a real answer here — "not checked" — and the
+ * caller must not turn it into a rating.
+ *
+ * A refusal (402, 429, a sealed matter's 403, an abort) is NOT caught: those
+ * are facts about the server and they stop the run, exactly as before.
+ */
 async function rateConfidence(
   cite: Cite,
   sourceText: string,
   opts: { modelId: string; signal?: AbortSignal; matterId?: string },
-): Promise<{ rating: 'high' | 'medium' | 'low'; justification: string }> {
+): Promise<RatedCite | null> {
   const payload = JSON.stringify({
     citation: cite.citation_bluebook,
     proposition: cite.proposition,
     pin_cite: cite.pin_cite,
     source_text_excerpt: (sourceText ?? '').slice(0, 4000),
   });
-  const result = await generateStructured<{ rating?: string; justification?: string }>({
+  // The repair turn is the same call with the same 'citecheck.check' label, so
+  // it is metered and written to the matter's Record like the first.
+  const call = async ({ userContent }: ContractAttempt) => generateStructured<unknown>({
     modelId: opts.modelId,
     signal: opts.signal,
     // The payload carries the proposition verbatim from the draft.
     matterId: opts.matterId,
     feature: 'citecheck.check',
     system: RATE_SYSTEM,
-    userContent: payload,
+    userContent,
     toolName: 'record_rating',
     toolDescription: 'Record the confidence rating for this citation.',
     inputSchema: RATE_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 600,
   });
-  const r = result?.rating === 'high' || result?.rating === 'low' ? result.rating : 'medium';
-  return { rating: r, justification: result?.justification ?? '' };
+
+  const outcome = await runWithContract<RatedCite>({
+    userContent: payload,
+    call,
+    validate: checkRatingContract,
+    repair: buildRatingRepairContent,
+  });
+  return outcome.ok ? outcome.value : null;
 }
 
 export async function checkOne(
@@ -159,6 +232,8 @@ export async function checkOne(
   // 3. Confidence rating
   let rating: CheckResult['rating'] = 'medium';
   let justification = '';
+  /** The checker's answer could not be read. Not a finding about the cite. */
+  let unreadable = false;
   if (cachedProposition) {
     rating = cachedProposition.oblique ? 'medium' : 'high';
     justification = cachedProposition.oblique
@@ -169,8 +244,18 @@ export async function checkOne(
   } else {
     try {
       const r = await rateConfidence(cite, sourceText ?? '', opts);
-      rating = r.rating;
-      justification = r.justification;
+      if (r) {
+        rating = r.rating;
+        justification = r.justification;
+      } else {
+        // Validated, repaired once, still unreadable. This citation is NOT
+        // checked — not found, not missing, not verified. Saying anything
+        // else about it is the lie the report must not tell.
+        unreadable = true;
+        rating = null;
+        justification = '';
+        flags.push({ kind: 'unreadable', detail: UNREADABLE_CHECK_DETAIL });
+      }
     } catch (err) {
       // A spent wallet, a full rate window or a sealed matter is not a
       // property of this citation: every remaining cite would fail the same
@@ -193,8 +278,13 @@ export async function checkOne(
     }
   }
 
-  // 4. Persist only when we genuinely fetched source text
-  if (!existing && sourceText && verification_status === 'verified') {
+  // 4. Persist only when we genuinely fetched source text AND the citation was
+  //    actually checked. An `authorities` row carries `confidence_rating`, and
+  //    an authority saved with a rating nobody gave is garbage that outlives
+  //    this run: the next brief to cite the same case reads it from the store.
+  //    `rating` in the condition is both the type narrowing and the rule: no
+  //    authority row is ever written without a rating somebody actually gave.
+  if (!existing && sourceText && verification_status === 'verified' && !unreadable && rating) {
     try {
       const created = await createAuthority({
         citation_bluebook: cite.citation_bluebook ?? cite.raw ?? '(unknown citation)',
@@ -215,11 +305,21 @@ export async function checkOne(
     }
   }
 
-  const flag = decideFlag({ verification_status, rating, flags });
+  const flag = decideFlag({ verification_status, rating, flags, unreadable });
   return { cite, authority_id, source_label, source_url, rating, justification, verification_status, flags, flag };
 }
 
-function decideFlag(args: { verification_status: CheckResult['verification_status']; rating: CheckResult['rating']; flags: CheckFlag[] }): CiteFlag {
+export function decideFlag(args: {
+  verification_status: CheckResult['verification_status'];
+  rating: CheckResult['rating'];
+  flags: CheckFlag[];
+  unreadable?: boolean;
+}): CiteFlag {
+  // FIRST, and before anything the fetch established. A citation whose source
+  // text we hold but whose checker we could not read has not been checked; a
+  // green on it would be the store's opinion dressed as this run's.
+  if (args.unreadable) return 'unchecked';
+
   const { verification_status, rating, flags } = args;
   const verified = verification_status === 'verified';
   const hasFetchFlag = flags.some((f) => f.kind === 'fetch');

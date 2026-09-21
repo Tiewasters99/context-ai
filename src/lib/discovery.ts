@@ -24,6 +24,10 @@ export type ProductionDirection = 'incoming' | 'outgoing';
 export type ProductionStatus =
   | 'intake'
   | 'processing'
+  // Migration 071 (F5). An intake parked by the SecureSpace seal or by the AI
+  // pause is not an error and is certainly not still 'processing'. The reason
+  // is in `status_reason`.
+  | 'held'
   | 'review'
   | 'stamped'
   | 'packaged'
@@ -68,6 +72,12 @@ export interface Production {
   receiving_party: string | null;
   production_date: string | null; // ISO date
   status: ProductionStatus;
+  /**
+   * The plain sentence behind whatever status the production is in
+   * (migration 071). Null on a deployment that has not applied 071 — which
+   * reads the same as "nothing to say", so no surface has to special-case it.
+   */
+  status_reason: string | null;
   bates_prefix: string | null;
   bates_pad: number;
   bates_start: number | null;

@@ -29,6 +29,7 @@ import {
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
+import { fetchPaged } from '@/lib/paged';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
@@ -155,14 +156,22 @@ async function passageCountOf(documentId: string): Promise<number> {
 // empty: a scanned opinion selects nothing and pdf.js reads nothing, but
 // the words are here.
 async function indexedDocumentText(documentId: string): Promise<string> {
-  const { data } = await supabase
-    .from('passages')
-    .select('sequence_number, text')
-    .eq('document_id', documentId)
-    .eq('summary_level', 0)
-    .order('sequence_number', { ascending: true })
-    .limit(5000);
-  return ((data ?? []) as { text: string | null }[])
+  // PostgREST answers an unbounded read with at most db-max-rows — 1,000 here
+  // — and a 200. A client .limit(5000) does not raise it (PR #173), so "Copy
+  // the whole document" on a scanned deposition silently stopped at passage
+  // 1,000 and the lawyer pasted a truncated record with nothing saying so.
+  const { rows } = await fetchPaged<{ text: string | null }>(
+    (from, to) => supabase
+      .from('passages')
+      .select('sequence_number, text')
+      .eq('document_id', documentId)
+      .eq('summary_level', 0)
+      .order('sequence_number', { ascending: true })
+      .order('id')
+      .range(from, to),
+    { label: 'document text' },
+  );
+  return rows
     .map((p) => (p.text ?? '').trim())
     .filter(Boolean)
     .join('\n\n');
@@ -380,15 +389,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       if (kind === 'unsupported') {
         // Not a file the reader can draw — but if ingest indexed its text,
         // serve that as a text edition. The error page is the last resort.
-        const { data: passages } = await supabase
-          .from('passages')
-          .select('sequence_number, text')
-          .eq('document_id', data.id)
-          .eq('summary_level', 0)
-          .order('sequence_number', { ascending: true })
-          .limit(2000);
+        // Paged, for the same reason as indexedDocumentText above: .limit(2000)
+        // is capped at 1,000 by PostgREST, so the text edition of a long
+        // OCR'd file simply ended mid-document. The read is wrapped because
+        // fetchPaged throws and this branch sits outside the load's try — a
+        // failed read must land on the error page, never as an unhandled
+        // rejection.
+        let passages: { text: string | null }[] = [];
+        try {
+          ({ rows: passages } = await fetchPaged<{ text: string | null }>(
+            (from, to) => supabase
+              .from('passages')
+              .select('sequence_number, text')
+              .eq('document_id', data.id)
+              .eq('summary_level', 0)
+              .order('sequence_number', { ascending: true })
+              .order('id')
+              .range(from, to),
+            { label: 'document text' },
+          ));
+        } catch {
+          passages = [];
+        }
         if (cancelled) return;
-        if (passages && passages.length > 0) {
+        if (passages.length > 0) {
           setFileKind('text');
           setDocHtml(plainTextHtml(passages.map((p) => p.text ?? '').join('\n\n')));
           setTotalPages(1);

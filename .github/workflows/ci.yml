@@ -107,6 +107,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-llm-sealed-route.mjs
 
+      # The pen's preamble, the pen table that decides who gets it, and the
+      # eval kit's guards and --dry path. Offline: the loop runs against a
+      # stubbed Supabase and a witnessed fetch, and the eval's dry run replaces
+      # fetch for its own duration. Never spends, never reads a database.
+      - name: SecureSpace — the sealed pen's preamble, and only the sealed pen's
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-preamble.mjs
+
       - name: Agents — charter narrowing rule (offline part)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-charter.mjs
@@ -134,6 +142,17 @@ jobs:
       - name: Migration 061 — search is model-scoped (PGlite + pgvector)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-model-scope.mjs
+
+      # 074 changes how stage A is RETRIEVED, so the assertion that matters is
+      # a comparison: 056, then 061, then 074 over one corpus, with every
+      # answer required to come back byte-identical. It then pushes 074's
+      # threshold GUC below the corpus and runs the whole battery again on the
+      # ANN branch, and asserts on EACH branch separately that a matter left
+      # out of the id array — the sealed/paused descendant case from #181/#179
+      # — stays out, against a negative control that proves it is reachable.
+      - name: Migration 074 — search scope router, same answers, isolation intact (PGlite + pgvector)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-search-scope-router.mjs
 
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
@@ -257,6 +276,21 @@ jobs:
       - name: Bucketizer — choosing documents, and what a re-run may write
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
+
+      # Cite-check's two model calls, held to their contracts. Inside a sealed
+      # matter both are answered by the sealed pen, which holds a forced-tool
+      # shape less literally than Claude — and the old code turned every
+      # off-contract answer into a FINDING: an unreadable extraction became
+      # "this brief cites nothing", and an unreadable rating became "medium".
+      # Asserted against the REAL call sites with /api/llm and
+      # /api/legal-source stubbed and witnessed: validate → one metered repair
+      # → "not checked", never "not found" and never verified; no citation the
+      # draft does not contain; 402 / 429 / a sealed refusal stop the run with
+      # the server's own sentence on the first turn AND on the repair turn; and
+      # the report's arithmetic reconciles (extracted = checked + not checked).
+      - name: Cite-check — output contracts, and the citation that was not checked
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-cite-check-contracts.mjs
       # The Vault's own read, at 2,500 and 12,000 documents with every
       # created_at tied — the dropped-folder case that makes an untiebroken
       # `.range()` loop lose rows. Offline: PostgREST is stubbed.

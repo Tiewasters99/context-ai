@@ -16,6 +16,13 @@ register(
           if (e?.code === 'ERR_MODULE_NOT_FOUND' && !/\\.[a-z]+$/.test(specifier)) {
             return next(specifier + '.ts', context);
           }
+          // vite resolves a folder to its index; node refuses to. Reached by
+          // 'import { generateStructured } from "@/lib/llm"' and nothing else
+          // in scripts/, so this is additive: a specifier that resolved before
+          // never raises this error.
+          if (e?.code === 'ERR_UNSUPPORTED_DIR_IMPORT') {
+            return next(specifier.replace(/\\/+$/, '') + '/index.ts', context);
+          }
           throw e;
         }
       }
