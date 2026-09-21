@@ -107,6 +107,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-llm-sealed-route.mjs
 
+      # The pen's preamble, the pen table that decides who gets it, and the
+      # eval kit's guards and --dry path. Offline: the loop runs against a
+      # stubbed Supabase and a witnessed fetch, and the eval's dry run replaces
+      # fetch for its own duration. Never spends, never reads a database.
+      - name: SecureSpace — the sealed pen's preamble, and only the sealed pen's
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-preamble.mjs
+
       - name: Agents — charter narrowing rule (offline part)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-charter.mjs
