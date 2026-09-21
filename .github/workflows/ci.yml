@@ -441,3 +441,20 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs
+      # Finding ONE document by name in a 7,600-document matter, and reading a
+      # matter in Table-of-Authorities order. Migration 081 is EXECUTED in
+      # PGlite with real pg_trgm, real RLS, real anon/authenticated/service_role
+      # and a 20,000-document corpus: two users and three matters (one not
+      # shared, one sealed), with the isolation asserted under every filter and
+      # against a caller who names the forbidden matter ids by hand; ranking;
+      # paging that reproduces the single-page order exactly; the limit and
+      # offset clamps; the category rule over forty real-shaped names, which a
+      # person's own choice survives; and a second paste of 081 that changes
+      # nothing. The second command is the browser half — the grouping is a
+      # pure module and the paged read takes its client as an argument, so
+      # neither needs a DOM, only the '@/' loader.
+      - name: Vault — document search, categories, and the list's order
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_verify-vault-document-search.mjs
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-vault-grouping.mjs

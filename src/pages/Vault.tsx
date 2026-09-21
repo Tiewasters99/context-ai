@@ -30,11 +30,18 @@ import {
   moveVaultDocument,
   triggerIngest,
   fetchIngestServiceStatus,
+  organizeMatterDocuments,
+  setDocumentCategory,
   type MatterRef,
   type DocumentStatusUpdate,
   type IngestServiceStatus,
   type DocumentStatusRow,
 } from '@/lib/vault-persist';
+// How this matter is read: date added (what the Vault has always done), A–Z,
+// or Table-of-Authorities order. The choice travels to the SERVER as an ORDER
+// BY — nothing here sorts 7,600 rows in the browser — and is remembered per
+// matter, because how you read the Fleming file is not how you read Teman.
+import { readGrouping, writeGrouping, type VaultGrouping } from '@/lib/vault-grouping';
 import { showingOf } from '@/lib/paged';
 import { checkUpload } from '../../lib/ingest-formats.mjs';
 import { useServerspaces } from '@/hooks/useServerspaces';
@@ -106,6 +113,9 @@ export default function Vault() {
   // gone, and the user re-entered and found their place again each time.
   // The list now stays mounted underneath; closing returns to it as it was.
   const [readerDocId, setReaderDocId] = useState<string | null>(null);
+
+  // The reading order, restored per matter on arrival.
+  const [grouping, setGrouping] = useState<VaultGrouping>('date');
 
   // Matter tree state — same shape as the main sidebar so users can
   // switch matters without leaving the Vault.
@@ -246,7 +256,7 @@ export default function Vault() {
     }
     if (matter && matterScope) {
       try {
-        const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById);
+        const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById, { order: grouping });
         setVaultFiles(refreshed.files);
         setVaultListing({ total: refreshed.total, truncated: refreshed.truncated });
       } catch (err) {
@@ -256,7 +266,7 @@ export default function Vault() {
         });
       }
     }
-  }, [matter, matterScope]);
+  }, [matter, matterScope, grouping]);
 
   // The one way a pipeline status update lands on a row. Every
   // watchDocumentStatus subscription uses it, so a new field on
@@ -279,15 +289,36 @@ export default function Vault() {
     });
   }, []);
 
+  // The reading order this person last used on THIS matter. Read on arrival,
+  // before the list is fetched, so the first paint is already in their order.
+  useEffect(() => {
+    setGrouping(readGrouping(matter?.id));
+  }, [matter?.id]);
+
+  const chooseGrouping = useCallback((g: VaultGrouping) => {
+    setGrouping(g);
+    writeGrouping(matter?.id, g);
+  }, [matter]);
+
   // Hydrate the vault file list from the documents table when a matter loads.
   useEffect(() => {
     if (!matter || !matterScope) return;
     let cancelled = false;
-    listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById).then(({ files, total, truncated }) => {
+    listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById, { order: grouping }).then(({ files, total, truncated, orderFellBack }) => {
       if (cancelled) return;
       setVaultNotice(null);
       setVaultFiles(files);
       setVaultListing({ total, truncated });
+      // The code shipped before the migration was pasted. Rather than an
+      // error where the list should be, this is the date list, and a sentence
+      // saying which list it is.
+      if (orderFellBack) {
+        setGrouping('date');
+        setVaultNotice({
+          kind: 'warn',
+          text: 'A–Z and category order arrive with migration 081 — showing date added for now.',
+        });
+      }
       // Resume polling for any docs that are still mid-pipeline — in ONE
       // batched poll, not one request per document every two seconds. A
       // matter caught mid-bulk-ingest can hold thousands of them.
@@ -309,7 +340,7 @@ export default function Vault() {
       cancelled = true;
       cleanups.forEach((c) => c());
     };
-  }, [matter, matterScope, applyDocUpdates]);
+  }, [matter, matterScope, grouping, applyDocUpdates]);
 
   // Is anything actually processing? Asked only while this matter has a
   // document that has not reached a terminal state — the one window in which
@@ -335,6 +366,27 @@ export default function Vault() {
     bytes > 1073741824 ? `${(bytes / 1073741824).toFixed(1)} GB` :
     bytes > 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` :
     `${(bytes / 1024).toFixed(0)} KB`;
+
+  // "Organize my matter" — the whole tree, in one statement, by the
+  // deterministic rule. Nothing moves between matters; a category somebody set
+  // by hand is not in the statement's row set at all. The list is re-read
+  // afterwards so the shelves appear without a reload.
+  const organizeMatter = useCallback(async (): Promise<number> => {
+    if (!matter || !matterScope) return 0;
+    const changed = await organizeMatterDocuments(matterScope.ids);
+    const refreshed = await listMatterDocumentsRecursive(matterScope.ids, matterScope.nameById, { order: grouping });
+    setVaultFiles(refreshed.files);
+    setVaultListing({ total: refreshed.total, truncated: refreshed.truncated });
+    return changed;
+  }, [matter, matterScope, grouping]);
+
+  // One row, re-filed by hand. The row updates immediately because the server
+  // has already agreed — set_document_category returns the category it wrote,
+  // and a refusal throws before this runs.
+  const changeCategory = useCallback(async (documentId: string, category: string | null) => {
+    const written = await setDocumentCategory(documentId, category);
+    setVaultFiles((prev) => prev.map((f) => (f.id === documentId ? { ...f, category: written } : f)));
+  }, []);
 
   const addVaultFiles = useCallback(async (fileList: FileList | File[]) => {
     const incoming = Array.from(fileList);
@@ -735,7 +787,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF or DOCX opens in the
           // full-screen DocumentReader (pages, search, annotations), laid
           // over this list so closing it lands back here. The inline
