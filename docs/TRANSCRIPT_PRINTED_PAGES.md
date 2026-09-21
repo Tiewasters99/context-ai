@@ -52,33 +52,84 @@ and dropped on a re-run that no longer reads one.
 ## For a citation builder
 
 The three states are deliberately distinguishable, so a cite can say exactly
-what is behind it. In tier order:
+what is behind it. **One module decides, and both the app and the connector
+read it: `lib/cite-page.mjs`.** Do not re-implement the tiers.
 
 ```js
-const printed = passage.metadata?.printed_page;
-if (typeof printed === 'number') {
-  // Tier: the reporter's own page. No PDF-index caveat belongs on this cite.
-  // Open the Reader at passage.metadata.pdf_page ?? passage.page_start.
-} else if (passage.metadata?.page_source === 'pdf_index') {
-  // Tier: the detector looked and declined. Cite page_start AND print the
-  // caveat — passage.metadata.printed_page_confidence says how close it got.
-} else {
-  // Tier: nothing is recorded. Today's unconditional standing note.
-}
+import { citePage, pageBasis, hasPrintedLineNumbers } from './cite-page.mjs';
+
+const where = citePage(passage);   // passage.metadata must be on the row
+where.state        // 'printed' | 'pdf_index_declined' | 'unknown'
+where.pageStart    // the page to CITE (printed_page where it is known)
+where.pageEnd      // …through printed_page_end for a range
+where.readerPage   // ALWAYS the PDF page — the only number that opens a file
+where.caveat       // set ONLY in 'pdf_index_declined'
 ```
 
-`src/lib/bucketizer/cite.ts` (PR #177) already has the tiers and the caveat
-text; wiring the first two branches into it is a separate, small change in
-that lane. Nothing is wired yet because **no passage carries these keys until
-its document is re-indexed** — see below.
+| state | means | the cite |
+| --- | --- | --- |
+| `printed` | `metadata.printed_page` is a number | the reporter's page, **no caveat** |
+| `pdf_index_declined` | `metadata.page_source === 'pdf_index'` | `page_start`, **plus the caveat, on this cite** |
+| `unknown` | neither key | `page_start`, and nothing new is said |
 
-`lib/mcp-core.mjs` is likewise unchanged. Its citation paths never select
-`passages.metadata` (the search RPC's return type is fixed in migration 002
-and `handleGetPassage` names its columns), so a change there today would
-change nothing. The follow-up, when the corpus has been re-indexed, is: add
-`metadata` to `handleGetPassage`'s select, add it to the hybrid-search RPC's
-return type in a migration, and have `formatCitation` prefer
-`row.metadata.printed_page`.
+A **printed page never appears beside a caveat** — that is the invariant the
+harness asserts over every metadata shape. `printed_page_confidence` is about
+*that page*, so the word "high" cannot land next to a warning. And `unknown`
+is not `pdf_index_declined`: "the detector looked and declined" is a fact
+about the page, "the detector never ran" is the absence of one, and the
+outline's standing note is the right thing only for the second.
+
+`hasPrintedLineNumbers(passage)` is the same question for the **line** number:
+false for prose, and false where `metadata.line_numbers === 'inferred'` (PR
+#138) marked numbers the chunker counted by position rather than read.
+
+### What is wired today
+
+**`lib/mcp-core.mjs` — done.** Every connector citation path routes through
+`citePage`:
+
+* `formatCitation` substitutes the printed page and appends the caveat in
+  words, inside the citation string an outside model is handed:
+  `Blake Dep., 15:4-11` where the page was read, `Blake Dep., 16 (PDF page;
+  the transcript's printed page was not confirmed)` where it was not.
+* `handleSearch` and `handleGrep` fetch `id, metadata` for **exactly the
+  passage ids they are returning**, in ONE query, through the same client and
+  the same access path the handler already uses — so RLS, the SecureSpace seal
+  and the AI pause are unchanged, and nothing takes a service-role shortcut.
+  **No migration:** the hybrid-search RPC's return type stays exactly as
+  074/078 left it. If that query fails or throws, the citation falls back to
+  today's format; a search is never failed for a decoration.
+* `handleGetPassage` simply adds `metadata` to the columns it already names —
+  no extra round trip.
+* Results carry `page_basis` (`cites`, `reader_page`, the confidence, the
+  caveat) **only where something is known**, so a passage with none of the
+  keys does not even change shape.
+* `handleGetOutline` returns a `page_range`, not a citation, and is untouched.
+
+**`src/lib/bucketizer/cite.ts` (PR #177) — not yet.** That file belongs to
+another lane. The change is three branches, and it is exactly this:
+
+```ts
+import { citePage } from '../../../lib/cite-page.mjs';
+
+// in buildCite, replacing `const pageStart = num(passage.page_start) ?? …`
+const where = citePage(passage);
+const pageStart = num(where.pageStart) ?? num(where.pageEnd);
+const pageEnd = num(where.pageEnd) ?? pageStart;
+// …and where the caveat is chosen, the page's caveat outranks the line's:
+//   where.caveat ?? (inferred ? INFERRED_LINES_CAVEAT : PAGE_ONLY_CAVEAT)
+// …and the Reader link opens the PDF page, not the cited one:
+//   readerUrl(doc.id, where.readerPage ?? null)
+// …and PDF_INDEX_PAGE_NOTE is emitted only when some cite is still 'unknown'.
+```
+
+`CitePassage.metadata` widens to `CitePageMetadata & { line_numbers?: string }`
+(`lib/cite-page.d.mts`), and `outline.ts`'s passage select must name
+`metadata` for any of it to arrive.
+
+`src/lib/document-annotations.ts`'s `formatNoteCite` is **not** part of this:
+its page is the page the Reader is physically on, which is a PDF page by
+definition and is not a passage citation.
 
 ## How the detector works
 
@@ -152,3 +203,22 @@ Bucketizer `passage_ids` recorded against the old rows.
 
 Proof lives in `scripts/_test-transcript-parse.mjs` (a CI step since this
 change): one synthetic fixture per layout above.
+
+`scripts/_verify-cite-printed-page.mjs` (also a CI step) proves the display
+half: a snapshot of origin/main's own citations that a key-less passage must
+still match character for character, the three states, the
+never-a-printed-page-beside-a-caveat invariant, the corrected `grep`
+citation, and that the extra metadata query is one query, scoped to the
+returned ids, and never fatal.
+
+### The grep citation was wrong, and is fixed here
+
+`handleGrep` used to cite `Memo, p. 1-undefined:1`. Two faults: it never
+selected `page_end`, so `formatCitation` compared a page to `undefined`,
+decided the passage spanned a range, and printed the word; and it handed
+`formatCitation` a line number for every hit, including hits in prose, where
+the "line" was only a count of newlines inside the chunk. A grep hit now
+cites the page alone on prose, and `page:line` on a transcript only where the
+reporter's own line numbers were read off the page (`hasPrintedLineNumbers`).
+`match.line` is `null` in every other case rather than a number that names
+nothing.
