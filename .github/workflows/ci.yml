@@ -474,3 +474,20 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-no-lost-work.mjs
+
+      # The first five minutes of a brand-new account. Who the first-run docket
+      # is shown to (and the two loading states where it must show nothing at
+      # all), that every tick comes from a fact and an unreadable fact is never
+      # a tick, that a second click on "create your workspace" writes nothing,
+      # and that the sealed-from-the-start option reaches the tier column the
+      # server enforces off. It also holds the copy to what the product can
+      # keep: the size cap and the accepted types are compared against
+      # lib/ingest-formats.mjs, the ledger kinds against the Record's own
+      # describe.ts, and the sealed sentence must not name a model. Offline:
+      # the rules are pure functions, the create path is driven against
+      # scripts/_fake-supabase.mjs, and the React wiring is asserted as source
+      # text. Same '@/' loader as the harnesses above — first-run.ts imports
+      # lib/plan.ts through the alias.
+      - name: First run — what a brand-new account is shown, and what it is told
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-first-run.mjs
