@@ -33,10 +33,10 @@ left out of this sentence on purpose — it went stale twice in a week; count
 the `run:` lines in `ci.yml`):
 Then the twenty-three offline harnesses, one step each, each with
 Then the twenty-four offline harnesses, one step each, each with
-Then the twenty-five offline harnesses, in twenty-four steps — the two
+Then the twenty-six offline harnesses, in twenty-five steps — the two
 Bucketizer evidence harnesses share one — each with `if: ${{ !cancelled() }}`
 so a red one does not hide the rest:
-Then the twenty-three offline harness steps, one step each, each with
+Then the twenty-four offline harness steps, one step each, each with
 `if: ${{ !cancelled() }}` so a red one does not hide the rest:
 
 | Harness | What it proves | How it stays offline |
