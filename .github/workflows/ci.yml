@@ -221,6 +221,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-transcript-parse.mjs
 
+      # The other half of the same bug: the step above proves the printed page
+      # is DETECTED, this one proves a citation SHOWS it — and, where it could
+      # not be read, says in words that the number is the PDF's. Its first
+      # section is a snapshot of origin/main's own citations: no passage
+      # carries the new keys until its document is re-indexed, so a key-less
+      # passage must cite character for character as it did. It also holds the
+      # extra metadata query to one query, scoped to the ids being returned,
+      # and never fatal. Stub client; no PGlite, no network, no .env.
+      - name: Citations — the printed page is what a cite shows
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-cite-printed-page.mjs
+
       - name: Reader — reflow
         if: ${{ !cancelled() }}
         run: node scripts/_verify-reflow.mjs
