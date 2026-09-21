@@ -188,6 +188,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-stamp-scans.mjs
 
+      # Transcript chunking AND the reporter's printed page. A cite that names
+      # the PDF's page index instead of the page the reporter printed is off by
+      # the slip sheet on every exhibit-wrapped deposition — and it reads like a
+      # real cite. Synthetic fixtures only; no client transcript is in the repo.
+      - name: Ingestion — transcript page:line and the reporter's printed page
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-transcript-parse.mjs
+
       - name: Reader — reflow
         if: ${{ !cancelled() }}
         run: node scripts/_verify-reflow.mjs

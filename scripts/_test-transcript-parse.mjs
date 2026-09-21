@@ -1,12 +1,19 @@
 // Transcript mode must survive the blank numbered lines every reporter
-// leaves in a page. No network. Run: node scripts/_test-transcript-parse.mjs
+// leaves in a page, and a transcript citation must name the page the REPORTER
+// printed. No network. Run: node scripts/_test-transcript-parse.mjs
 //
 // 2026-09-10: parseTranscriptPage's line regex let the gap after a line
 // number match a newline, so a blank numbered line swallowed the next line's
 // text ("5\n6  Q. Why" → line 5 = "6  Q. Why"); the Q./A. test then never
 // fired and the page — and with it a whole deposition — fell to prose.
+//
+// 2026-09-21: every full-size transcript was cited by the PDF's page INDEX.
+// Part 2 of this file (below the first PASS block) exercises the printed-page
+// detector on one synthetic fixture per layout the corpus actually holds.
+// Every fixture here is invented; no client transcript is copied into this
+// repo.
 import assert from 'node:assert';
-import { chunkPages } from '../lib/ingest-core.mjs';
+import { chunkPages, analyzeTranscriptPages, paginatePlainText } from '../lib/ingest-core.mjs';
 
 let n = 0;
 const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
@@ -158,5 +165,308 @@ ok('interior pages without Q./A. are read on the second pass; trailing index pag
 const prose = chunkPages([{ pageNumber: 3, text: 'The court held that the officers acted reasonably.\n1 Fed. R. Civ. P. 56.\n2 See also id. at 14.\n' + 'More discussion follows here. '.repeat(20) }]);
 assert(prose.every((p) => p.passage_type !== 'qa_pair'), 'citation footnotes are not a transcript');
 ok('prose with numbered footnotes stays prose');
+
+console.log(`\nchunking: ${n} checks`);
+
+
+// =============================================================================
+// PART 2 — the reporter's printed page
+//
+// Until 2026-09-21 a full-size transcript's page_start was the PDF's page
+// index. On a clean PDF the two agree by luck; wrap the same transcript as an
+// exhibit and every cite in it is one page high. "Blake Dep. 16:4" then reads
+// like a real citation and points at the wrong answer.
+//
+// Each fixture below is one layout the corpus holds. All are synthetic.
+// =============================================================================
+
+// A reporter's page: the printed page number set to the right above the
+// line-number column, then 25 numbered lines of testimony.
+const RIGHT = ' '.repeat(50);
+const BODY = [
+  'Q.   Where were you on the morning in question?',
+  '',
+  'A.   In the clinic, in the intake area.',
+  'That is where I was posted.',
+  '',
+  'Q.   Who else was there?',
+  'A.   Captain Blake and Officer Owens.',
+  '',
+];
+function reporterPage(printed, { firstLine = 1, count = 25, header = true, footer = false, headerText } = {}) {
+  const out = [];
+  const mark = headerText === undefined ? (printed == null ? null : String(printed)) : headerText;
+  if (header && mark != null) out.push(RIGHT + mark);
+  for (let i = 0; i < count; i++) {
+    const body = BODY[i % BODY.length];
+    const num = String(firstLine + i).padStart(2);
+    out.push(body ? `${num}   ${body}` : num);
+  }
+  if (footer && mark != null) out.push(RIGHT + mark);
+  return out.join('\n');
+}
+const slipSheet = 'EXHIBIT F\n\nDeposition of Desmond Blake\nOctober 28, 2022\n';
+const exhibitPage = 'NEW YORK CITY DEPARTMENT OF CORRECTION\nUse of Force Report\n\nIncident 2015-0816-AMKC\nReporting officer: Owens\n';
+
+const asPages = (texts) => texts.map((text, i) => ({ pageNumber: i + 1, text }));
+const printedOf = (passages) => [...new Set(passages.map((p) => p.metadata?.printed_page))];
+
+// ---- 1. A plain full-size transcript: index and printed page agree ---------
+{
+  const pages = asPages(Array.from({ length: 12 }, (_, i) => reporterPage(i + 1)));
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.is_transcript, true, 'read as a transcript');
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.claimed, true, 'a printed page is claimed');
+  assert.strictEqual(v.segments.length, 1, `one run (${JSON.stringify(v.segments)})`);
+  assert.strictEqual(v.segments[0].offset, 0, 'offset 0');
+  assert.strictEqual(v.map.get(7), 7, 'PDF p. 7 is printed p. 7');
+  const passages = chunkPages(pages);
+  assert(passages.every((p) => p.metadata?.page_source === 'printed'), 'every passage cites a printed page');
+  assert(passages.filter((p) => p.page_start === 7).every((p) => p.metadata.printed_page === 7), 'the passage records printed page 7');
+  assert(passages.every((p) => p.metadata.pdf_page === p.page_start), 'the PDF index is kept beside it, for the Reader');
+  ok('full-size transcript, no wrapper: printed page read on every page, offset 0');
+}
+
+// ---- 2. THE RECORDED EXAMPLE: exhibit-wrapped, constant -1 ----------------
+// Bañuelos Exh. F, 2026-09-19: PDF p. 16 is transcript p. 15.
+{
+  const pages = asPages([slipSheet, ...Array.from({ length: 16 }, (_, i) => reporterPage(i + 1))]);
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.segments.length, 1, `one run (${JSON.stringify(v.segments)})`);
+  assert.strictEqual(v.segments[0].offset, -1, `offset -1 (${v.segments[0].offset})`);
+  assert.strictEqual(v.map.get(16), 15, 'PDF p. 16 is transcript p. 15 — the recorded example');
+  assert.strictEqual(v.map.has(1), false, 'the slip sheet itself gets no printed page');
+  const passages = chunkPages(pages);
+  const onPdf16 = passages.filter((p) => p.page_start === 16);
+  assert(onPdf16.length > 0 && onPdf16.every((p) => p.metadata.printed_page === 15), 'the passages on PDF p. 16 cite transcript p. 15');
+  ok('exhibit-wrapped transcript: PDF p. 16 = transcript p. 15 (the off-by-the-slip-sheet bug)');
+}
+
+// ---- 3. Pages inserted mid-transcript: the offset changes once ------------
+{
+  const pages = asPages([
+    ...Array.from({ length: 6 }, (_, i) => reporterPage(i + 1)),
+    exhibitPage, exhibitPage,
+    ...Array.from({ length: 8 }, (_, i) => reporterPage(i + 7)),
+  ]);
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.segments.length, 2, `two runs (${JSON.stringify(v.segments)})`);
+  assert.deepStrictEqual(v.segments.map((s) => s.offset), [0, -2], 'offset 0, then -2');
+  assert.strictEqual(v.map.get(6), 6, 'before the insert, PDF p. 6 is printed p. 6');
+  assert.strictEqual(v.map.get(9), 7, 'after two inserted pages, PDF p. 9 is printed p. 7');
+  assert.strictEqual(v.map.has(7), false, 'the inserted exhibit pages get no printed page');
+  ok('front matter / inserted pages: the offset changes once and both runs are mapped');
+}
+
+// ---- 4. Volume 2 — the numbering continues from volume 1 ------------------
+{
+  const pages = asPages(Array.from({ length: 12 }, (_, i) => reporterPage(214 + i)));
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.segments[0].offset, 213, `offset +213 (${v.segments[0].offset})`);
+  assert.strictEqual(v.map.get(1), 214, 'PDF p. 1 is printed p. 214');
+  assert.strictEqual(v.map.get(12), 225, 'PDF p. 12 is printed p. 225');
+  ok('volume 2: printed page 214 on PDF page 1, and the whole volume follows');
+}
+
+// ---- 5. A noisy OCR page number, and two pages with none -----------------
+// "15" comes back "l5", "18" comes back "I8", two headers are lost entirely.
+// The sequence is what recovers them: no page is read in isolation.
+{
+  const texts = Array.from({ length: 12 }, (_, i) => {
+    const pdf = i + 1;
+    const printed = pdf + 10;
+    if (pdf === 3 || pdf === 9) return reporterPage(printed, { header: false, headerText: null });
+    if (pdf === 5) return reporterPage(printed, { headerText: 'l5' });
+    if (pdf === 8) return reporterPage(printed, { headerText: 'I8' });
+    return reporterPage(printed);
+  });
+  const v = analyzeTranscriptPages(asPages(texts));
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.segments[0].offset, 10, `offset +10 (${v.segments[0].offset})`);
+  assert.strictEqual(v.map.get(5), 15, '"l5" is read as 15');
+  assert.strictEqual(v.map.get(8), 18, '"I8" is read as 18');
+  assert.strictEqual(v.map.get(3), 13, 'the page with no readable number is recovered from the run');
+  assert.strictEqual(v.map.get(9), 19, 'and so is the second one');
+  assert.strictEqual(v.mapped_pages, 12, 'all twelve pages are mapped');
+  assert(v.evidence_pages < 12, `two pages carried no evidence of their own (${v.evidence_pages})`);
+  ok('OCR noise ("l5", "I8") and missing headers are recovered by the sequence fit');
+}
+
+// ---- 6. Line numbers that do not reset: the mapping is not trusted --------
+// A printout whose line numbers run on through 40-line blocks rather than
+// starting again on each page. The page numbers look perfect; the pagination
+// underneath them is the printer's, not the reporter's.
+{
+  const control = asPages(Array.from({ length: 12 }, (_, i) => reporterPage(i + 1, { count: 8 })));
+  const cv = analyzeTranscriptPages(control);
+  assert.strictEqual(cv.confidence, 'high', `control is high (${cv.confidence}: ${cv.reason})`);
+  assert.deepStrictEqual(cv.conflicts, [], 'the control has no conflict');
+
+  const runOn = asPages(Array.from({ length: 12 }, (_, i) =>
+    reporterPage(i + 1, { count: 8, firstLine: 1 + (i % 5) * 8 })));
+  const v = analyzeTranscriptPages(runOn);
+  assert(v.conflicts.some((c) => /line numbers do not reset/.test(c)), `the conflict is named (${JSON.stringify(v.conflicts)})`);
+  assert.notStrictEqual(v.confidence, 'high', `confidence is below high (${v.confidence})`);
+  assert.strictEqual(v.claimed, false, 'nothing is claimed');
+  const passages = chunkPages(runOn);
+  assert(passages.every((p) => p.metadata?.page_source === 'pdf_index'), 'every passage says its page is the PDF index');
+  assert(passages.every((p) => p.metadata.printed_page === undefined), 'no printed page is invented');
+  assert(passages.every((p) => p.metadata.printed_page_confidence === v.confidence), 'the confidence rides on the passage for the citation builder');
+  ok('line numbers that do not reset at a page boundary lower the confidence, and nothing is claimed');
+}
+
+// ---- 7. Genuinely ambiguous: two tokens, no sequence ---------------------
+{
+  const texts = Array.from({ length: 12 }, (_, i) => {
+    if (i === 2) return reporterPage(3);
+    if (i === 7) return reporterPage(41);
+    return reporterPage(null, { header: false, headerText: null });
+  });
+  const v = analyzeTranscriptPages(asPages(texts));
+  assert.strictEqual(v.confidence, 'none', `confidence none (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.claimed, false, 'nothing is claimed');
+  assert.deepStrictEqual(v.segments, [], 'no run was believed');
+  assert.match(v.reason, /sequence|printed outside/, `the reason says why (${v.reason})`);
+  const passages = chunkPages(asPages(texts));
+  assert(passages.every((p) => p.metadata?.page_source === 'pdf_index' && p.metadata.printed_page_confidence === 'none'),
+    'the passages carry "this page is the PDF index"');
+  ok('an ambiguous document claims no printed page and says the page is the PDF index');
+}
+
+// ---- 8. A document that is not a transcript is left alone ----------------
+{
+  const brief = (p) => `MEMORANDUM OF LAW\n\nThe court held that the officers acted reasonably under the\n`
+    + `circumstances then known to them. ${'The record shows otherwise. '.repeat(12)}\n\n${p}\n`;
+  const pages = asPages(Array.from({ length: 8 }, (_, i) => brief(i + 1)));
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.is_transcript, false, 'not a transcript');
+  assert.strictEqual(v.claimed, false, 'nothing claimed');
+  assert.strictEqual(v.method, 'none', 'no method ran');
+  const passages = chunkPages(pages);
+  assert(passages.length > 0, 'it still chunks');
+  assert(passages.every((p) => p.metadata === undefined), 'no page-source metadata is written on a non-transcript');
+  assert(passages.every((p) => p.passage_type === 'monologue'), 'it is still prose');
+  ok('a brief with page numbers in the footer is not touched');
+}
+
+// ---- 9. Condensed 4-up sheets: unchanged, plus the PDF page recovered ----
+{
+  const cd2 = chunkPages([{ pageNumber: 10, text: condensed }]);
+  const cd2Qa = cd2.filter((p) => p.passage_type === 'qa_pair');
+  assert(cd2Qa.some((p) => p.page_start === 34) && cd2Qa.some((p) => p.page_start === 35),
+    'cites still name the transcript page, not the sheet');
+  assert(cd2.every((p) => p.metadata.page_source === 'printed'), 'a condensed panel is a printed page');
+  assert(cd2.every((p) => p.metadata.printed_page === p.page_start), 'printed_page agrees with the cite');
+  assert(cd2.every((p) => p.metadata.pdf_page === 10), 'and the sheet\'s own PDF page is now kept, for the Reader');
+  const v = analyzeTranscriptPages([{ pageNumber: 10, text: condensed }]);
+  assert.strictEqual(v.method, 'condensed_marker', `method is the marker (${v.method})`);
+  assert.strictEqual(v.confidence, 'high', 'confidence high');
+  ok('condensed sheets are unchanged, and the sheet\'s PDF page is no longer thrown away');
+}
+
+// ---- 10. A transcript printed to a text file -----------------------------
+// The "TXT FILE" copy every reporter ships. Form feeds between pages: until
+// now the whole file arrived as ONE page and every passage cited p. 1.
+{
+  const txt = Array.from({ length: 10 }, (_, i) => reporterPage(101 + i)).join('\f\n');
+  const pages = paginatePlainText(txt);
+  assert.strictEqual(pages.length, 10, `form feeds paginate the file (${pages.length} pages)`);
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.confidence, 'high', `confidence high (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.map.get(1), 101, 'the first block is printed p. 101');
+  assert.strictEqual(v.map.get(10), 110, 'the last block is printed p. 110');
+  ok('a form-feed TXT printout paginates, and its cites carry the reporter\'s page');
+}
+
+// ---- 11. A TXT printout with zero-padded marker lines, no form feeds -----
+{
+  const txt = Array.from({ length: 8 }, (_, i) =>
+    `${String(15 + i).padStart(5, '0')}\n${reporterPage(null, { header: false, headerText: null })}`).join('\n');
+  const pages = paginatePlainText(txt);
+  assert.strictEqual(pages.length, 8, `the marker lines paginate the file (${pages.length} pages)`);
+  const v = analyzeTranscriptPages(pages);
+  assert.strictEqual(v.claimed, true, `a printed page is claimed (${v.confidence}: ${v.reason})`);
+  assert.strictEqual(v.map.get(1), 15, 'the first block is printed p. 15');
+  assert.strictEqual(v.map.get(8), 22, 'the last block is printed p. 22');
+  ok('a marker-line TXT printout paginates and carries the reporter\'s page');
+}
+
+// ---- 12. Ordinary text files are NOT paginated ---------------------------
+{
+  const note = 'Call with client 2026-09-02.\n\n1\n2\n3\n4\n5\n6\n\nFollow up on the scheduling order.\n';
+  assert.strictEqual(paginatePlainText(note).length, 1, 'a numbered list is not a transcript printout');
+  const md = '# Heading\n\nSome notes about the motion.\n\n- one\n- two\n';
+  assert.strictEqual(paginatePlainText(md).length, 1, 'a markdown note is one page, as before');
+  ok('a plain text file without form feeds or a page-marker sequence is still one page');
+}
+
+// ---- 13. The detector's verdict is on the document, for a later audit ----
+{
+  const pages = asPages([slipSheet, ...Array.from({ length: 16 }, (_, i) => reporterPage(i + 1))]);
+  const report = {};
+  chunkPages(pages, { report });
+  const v = report.printedPages;
+  assert(v && v.is_transcript && v.claimed, 'chunkPages reports its verdict through opts.report');
+  assert.strictEqual(typeof v.reason, 'string', 'the verdict carries a reason in words');
+  assert(v.segments.length === 1 && v.segments[0].printed_from === 1 && v.segments[0].printed_to === 16,
+    `the segments are compact enough to store (${JSON.stringify(v.segments)})`);
+  ok('the verdict rides out of chunkPages for documents.metadata.transcript_pages');
+}
+
+// ---- 14. The audit reports what would change, from a fixture -------------
+// Offline by construction: the same two functions the --db mode calls, fed
+// page text and parsed passages held here. No network, no credentials.
+{
+  const { auditFixture, auditParsed } = await import('./audit-transcript-pages.mjs');
+
+  const wrapped = auditFixture({
+    id: 'aaaaaaaa-1111-2222-3333-444444444444',
+    pages: [slipSheet, ...Array.from({ length: 16 }, (_, i) => reporterPage(i + 1))]
+      .map((text, i) => ({ pageNumber: i + 1, text })),
+  });
+  assert.strictEqual(wrapped.claimed, true, 'the exhibit-wrapped fixture claims a printed page');
+  assert.strictEqual(wrapped.maxShift, 1, `every cite in it moves by one page (${wrapped.maxShift})`);
+  // Every citation except the slip sheet's own — it is outside the transcript,
+  // so it is mapped to nothing and keeps the PDF index it always had.
+  assert.strictEqual(wrapped.changing, wrapped.citations - 1,
+    `every citation in the transcript would change (${wrapped.changing} of ${wrapped.citations})`);
+  assert.strictEqual(wrapped.id.length, 8, 'the report prints an id, shortened');
+
+  const clean = auditFixture({
+    id: 'bbbbbbbb-1111-2222-3333-444444444444',
+    pages: Array.from({ length: 12 }, (_, i) => ({ pageNumber: i + 1, text: reporterPage(i + 1) })),
+  });
+  assert.strictEqual(clean.changing, 0, 'a transcript whose index already matches changes nothing');
+
+  const legacy = auditParsed({
+    id: 'cccccccc-1111-2222-3333-444444444444',
+    page_count: 172,
+    passages: [{ id: 'p1', page_start: 16 }, { id: 'p2', page_start: 17 }],
+  });
+  assert.strictEqual(legacy.claimed, false, 'a document with no recorded verdict claims nothing');
+  assert.match(legacy.reason, /before the detector existed/, 'and says why');
+  assert.strictEqual(legacy.changing, 0, 'nothing can be said to change until it is re-indexed');
+
+  const reindexed = auditParsed({
+    id: 'dddddddd-1111-2222-3333-444444444444',
+    transcript_pages: { is_transcript: true, method: 'sequence_fit', confidence: 'high', claimed: true,
+      pages_total: 17, transcript_pages: 16, evidence_pages: 16, mapped_pages: 16,
+      segments: [{ from_pdf: 2, to_pdf: 17, offset: -1, printed_from: 1, printed_to: 16, evidence: 16 }],
+      reason: 'recorded at ingest' },
+    passages: [
+      { id: 'p1', page_start: 16, metadata: { printed_page: 15 } },
+      { id: 'p2', page_start: 16, metadata: { printed_page: 15 } },
+      { id: 'p3', page_start: 1, metadata: { page_source: 'pdf_index' } },
+    ],
+  });
+  assert.strictEqual(reindexed.changing, 2, 'two of the three citations move');
+  assert.strictEqual(reindexed.maxShift, 1, 'by one page');
+  assert.strictEqual(reindexed.offsets, '2–17:-1', `the offsets read plainly (${reindexed.offsets})`);
+  ok('the audit reports the mapping, the confidence and how many cites would change — offline, ids and numbers only');
+}
 
 console.log(`\nPASS (${n} checks)`);

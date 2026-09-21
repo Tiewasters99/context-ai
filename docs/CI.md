@@ -63,6 +63,7 @@ Then the twenty-three offline harness steps, one step each, each with
 | `_test-usage-meter.mjs` | The spend cap's handler half — `lib/usage-meter.mjs` and `lib/usage-prices.mjs` (31 tests). | `node --test`; the RPC is stubbed, no database and no network. |
 | `_verify-office-tenancy.mjs` | The Office serves one owner's published room; a widened query cannot widen the room. | Drives the pure exports of `api/office.mjs` with stubbed rows for two tenants. |
 | `_test-stamp-scans.mjs` | A CM/ECF-stamped scan routes to OCR, keeps its real page count, and a forced re-run swaps text in rather than wiping it. | In-memory fake Supabase; OCR and embeddings are stubs. |
+| `_test-transcript-parse.mjs` | Transcript chunking (blank numbered lines, Veritext text layers, letter-spaced witness names, condensed sheets) **and** the reporter's printed page: the exhibit-wrapped −1 offset, front matter, volume 2 starting at 214, TXT printouts, OCR noise, and the ambiguous document that claims nothing. | Synthetic fixtures built in the file; no network and no client transcript. |
 | `_verify-reflow.mjs` | The deterministic reading reflow. | Imports `src/lib/*.ts` via Node's built-in type stripping (needs Node ≥ 22.18). |
 | `_verify-findquote.mjs` | The assistant's "take me there" locator. | Same. |
 | `_verify-reader-copy.mjs` | Reader clean-copy extraction against a faked two-page PDF. | Same, plus `node --import ./scripts/_node-src-loader.mjs` — `reader-copy.ts` imports through the vite `@/` alias, which plain node cannot resolve. |
@@ -165,10 +166,17 @@ no failure path — they exit 0 whatever they find, so adding them would buy a
 green tick and no signal. Each needs an exit code before it becomes a step;
 that is a follow-up, not this change.
 
-Two other `_test-*` files do assert, and so are steps rather than probes:
-`_test-usage-meter.mjs` (a `node --test` suite) and `_test-stamp-scans.mjs`
-(`node:assert`, "PASS (14 checks)"). Both are in the "What runs" table above.
-The distinction is not the prefix — it is whether the file can fail.
+Three other `_test-*` files do assert, and so are steps rather than probes:
+`_test-usage-meter.mjs` (a `node --test` suite), `_test-stamp-scans.mjs`
+(`node:assert`, "PASS (14 checks)") and `_test-transcript-parse.mjs`
+(`node:assert`, "PASS (23 checks)"). All three are in the "What runs" table
+above. The distinction is not the prefix — it is whether the file can fail.
+
+`_test-transcript-parse.mjs` was listed here as **prints only** until
+2026-09-21, which was wrong on the facts: its `assert` calls are at the top
+level of an ES module, so a failure is an uncaught exception and Node exits 1
+(verified by making one fail). It had been sitting outside CI for that reason
+alone while it was the only check on deposition page:line coordinates.
 
 | Probe | Exits non-zero on failure? |
 | --- | --- |
@@ -178,7 +186,6 @@ The distinction is not the prefix — it is whether the file can fail.
 | `_test-triage.mjs` | yes |
 | `_test-pdf-portfolio.mjs` | yes |
 | `_test-embed-shrink.mjs` | **prints only** |
-| `_test-transcript-parse.mjs` | **prints only** |
 | `_test-ingest-containers.mjs` | **prints only** |
 | `_test-ingest-ocr.mjs` | **prints only** |
 | `_test-ocr-routes.mjs` | **prints only** (stubbed hosts) |
