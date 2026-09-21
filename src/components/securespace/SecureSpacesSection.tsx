@@ -4,6 +4,7 @@ import { Lock, LockOpen, MessageCircle, Plus, Upload } from 'lucide-react';
 import { useDroppable } from '@dnd-kit/core';
 import type { Serverspace, ServerspaceMatter } from '@/hooks/useServerspaces';
 import { persistVaultFile, moveVaultDocument, type MatterRef } from '@/lib/vault-persist';
+import { useUploadEstimateGate, UPLOAD_CANCELLED_NOTICE } from '@/components/vault/UploadEstimateGate';
 
 // The SecureSpaces shelf at the bottom of the rail (Beta). One product, one
 // seal: a SecureSpace is not a second vault, it is a matter whose ai_tier is
@@ -273,6 +274,7 @@ function SecureSpaceRowItem({
   const [fileOver, setFileOver] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const { gate: gateUpload, dialog: uploadEstimateDialog } = useUploadEstimateGate();
   const path = `/app/matterspace/${row.matter.id}`;
   const tier = row.matter.ai_tier;
 
@@ -308,11 +310,21 @@ function SecureSpaceRowItem({
 
     // Desktop files: upload each into this matter through the ordinary
     // pipeline. The server enforces the seal; nothing here needs to.
-    const files = Array.from(e.dataTransfer.files ?? []);
-    for (const file of files) {
+    //
+    // A drop onto a matter card is an upload like any other, so it goes
+    // through the same quote: silent below the threshold, and above it the
+    // same dialog the Vault shows, priced at THIS matter's sealed OCR rate.
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    const gated = await gateUpload(dropped, row.matter.id);
+    if (!gated) {
+      setUploadError(UPLOAD_CANCELLED_NOTICE);
+      return;
+    }
+    for (let i = 0; i < gated.files.length; i++) {
+      const file = gated.files[i];
       setUploading(file.name);
       try {
-        await persistVaultFile(matterRef, file);
+        await persistVaultFile(matterRef, file, { ingestDeclaration: gated.declarations[i] });
       } catch (err) {
         setUploadError(err instanceof Error ? `${file.name}: ${err.message}` : String(err));
         break;
@@ -392,6 +404,8 @@ function SecureSpaceRowItem({
           {uploadError}
         </span>
       )}
+      {/* Null unless this drop was big enough to be quoted first. */}
+      {uploadEstimateDialog}
     </div>
   );
 }
