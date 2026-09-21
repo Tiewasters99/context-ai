@@ -257,6 +257,21 @@ jobs:
       - name: Bucketizer — choosing documents, and what a re-run may write
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-chooser.mjs
+
+      # Cite-check's two model calls, held to their contracts. Inside a sealed
+      # matter both are answered by the sealed pen, which holds a forced-tool
+      # shape less literally than Claude — and the old code turned every
+      # off-contract answer into a FINDING: an unreadable extraction became
+      # "this brief cites nothing", and an unreadable rating became "medium".
+      # Asserted against the REAL call sites with /api/llm and
+      # /api/legal-source stubbed and witnessed: validate → one metered repair
+      # → "not checked", never "not found" and never verified; no citation the
+      # draft does not contain; 402 / 429 / a sealed refusal stop the run with
+      # the server's own sentence on the first turn AND on the repair turn; and
+      # the report's arithmetic reconciles (extracted = checked + not checked).
+      - name: Cite-check — output contracts, and the citation that was not checked
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-cite-check-contracts.mjs
       # The Vault's own read, at 2,500 and 12,000 documents with every
       # created_at tied — the dropped-folder case that makes an untiebroken
       # `.range()` loop lose rows. Offline: PostgREST is stubbed.
