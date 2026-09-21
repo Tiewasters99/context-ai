@@ -17,7 +17,7 @@
 // `run` that calls `postThroughSeal`, and the warning, the re-issue with
 // confirm_leave_seal, and the recorded/not-recorded note all work.
 
-import { Download, HardDrive, Mail, type LucideIcon } from 'lucide-react';
+import { Cloud, Download, HardDrive, Mail, Package, type LucideIcon } from 'lucide-react';
 
 // The banner the reader renders. 'ok' carries an optional link (e.g. the Drive
 // webViewLink or the Gmail draftsUrl) the user can click to open the result.
@@ -49,9 +49,28 @@ export interface ExportConnector {
   icon: LucideIcon;
   // When set, the connector is only runnable if the user has a `connections`
   // row with this `kind` and status 'connected'.
-  needsConnection?: 'google_drive' | 'gmail';
+  needsConnection?: ConnectionKind;
   run: (ctx: ExportContext) => Promise<void>;
 }
+
+export type ConnectionKind = 'google_drive' | 'gmail' | 'onedrive' | 'dropbox';
+
+// The three drives a document can be saved to, in the order they appear in
+// any menu. Google is first because it is the one that has always been there.
+export const DRIVE_KINDS = ['google_drive', 'onedrive', 'dropbox'] as const;
+export type DriveKind = (typeof DRIVE_KINDS)[number];
+
+export const DRIVE_LABEL: Record<DriveKind, string> = {
+  google_drive: 'Google Drive',
+  onedrive: 'OneDrive',
+  dropbox: 'Dropbox',
+};
+
+export const DRIVE_ICON: Record<DriveKind, LucideIcon> = {
+  google_drive: HardDrive,
+  onedrive: Cloud,
+  dropbox: Package,
+};
 
 // POSTs to an export endpoint with the session bearer token and returns the
 // parsed JSON body. Throws 'Not signed in' when there is no session.
@@ -98,6 +117,60 @@ async function postThroughSeal(
 // about the deployment, not something this file may assume.
 function withSealNote(text: string, body: { seal?: { note?: string } }): string {
   return body?.seal?.note ? `${text} ${body.seal.note}` : text;
+}
+
+// OneDrive and Dropbox share one endpoint and one set of error codes, so they
+// share one runner. Google keeps its own above: /api/drive-export is older,
+// it works, and nothing here is worth changing it for.
+async function runCloudExport(ctx: ExportContext, service: 'onedrive' | 'dropbox') {
+  const label = DRIVE_LABEL[service];
+  ctx.setBanner(null);
+  try {
+    const { ok, body, stopped } = await postThroughSeal(ctx, '/api/cloud-export', {
+      service,
+      documentId: ctx.documentId,
+    });
+    if (stopped === 'declined') return;
+    if (stopped === 'no_confirmer') {
+      ctx.setBanner({ kind: 'err', text: String(body.message ?? 'This matter is sealed.') });
+      return;
+    }
+    if (!ok) {
+      const msg =
+        body.error === 'not_configured'
+          ? `${label} is not available yet.`
+          : body.error === 'cloud_needs_reconnect'
+            ? `Reconnect ${label} in Connections — your access expired.`
+            : body.error === 'cloud_not_connected'
+              ? `Connect ${label} in Connections first.`
+              : body.error === 'file_too_large'
+                ? `File is too large for ${label} export (75 MB cap).`
+                : typeof body.detail === 'string' && body.detail
+                  ? `${label}: ${body.detail}`
+                  : body.error || `${label} export failed.`;
+      console.error('cloud-export failed:', body);
+      ctx.setBanner({ kind: 'err', text: msg });
+      return;
+    }
+    ctx.setBanner({
+      kind: 'ok',
+      text: withSealNote(
+        `Saved to your ${label}${body.folderPath ? ` › ${body.folderPath}` : ''}${
+          body.name ? ` as “${body.name}”` : ''
+        }.`,
+        body,
+      ),
+      // Dropbox is connected with one scope — files.content.write — which
+      // cannot mint a link, so there is nothing to offer and none is claimed.
+      link: body.link ?? null,
+      linkLabel: `Open in ${label}`,
+    });
+  } catch (e) {
+    ctx.setBanner({
+      kind: 'err',
+      text: e instanceof Error ? e.message : `${label} export failed.`,
+    });
+  }
 }
 
 export const EXPORT_CONNECTORS: ExportConnector[] = [
@@ -163,6 +236,20 @@ export const EXPORT_CONNECTORS: ExportConnector[] = [
         });
       }
     },
+  },
+  {
+    id: 'onedrive',
+    label: 'Save to OneDrive',
+    icon: DRIVE_ICON.onedrive,
+    needsConnection: 'onedrive',
+    run: (ctx) => runCloudExport(ctx, 'onedrive'),
+  },
+  {
+    id: 'dropbox',
+    label: 'Save to Dropbox',
+    icon: DRIVE_ICON.dropbox,
+    needsConnection: 'dropbox',
+    run: (ctx) => runCloudExport(ctx, 'dropbox'),
   },
   {
     id: 'gmail',

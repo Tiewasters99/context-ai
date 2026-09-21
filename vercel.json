@@ -57,6 +57,9 @@
     },
     "api/briefing-delta.mjs": {
       "maxDuration": 30
+    },
+    "api/cloud-export.mjs": {
+      "maxDuration": 60
     }
   },
   "headers": [
