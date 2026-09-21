@@ -94,6 +94,16 @@ const orphanA = await doc('scan.tif', 400);         // two empty copies, NO inde
 const orphanB = await doc('scan.tif', 400);
 const notReady = await doc('failed.pdf', 500, 'error');
 const nullName = await doc(null, 600);              // null filename must not crash
+// A same-name, same-size copy in ANOTHER matter is not a twin (081 looks it
+// up by key rather than grouping, so prove the matter still bounds it).
+const otherMatter = '22222222-2222-2222-2222-222222222222';
+const foreignIndexed = (await q(`insert into public.documents (matterspace_id, source_filename, file_size_bytes, processing_status)
+                                 values ($1, 'lonely.pdf', 700, 'ready') returning id`, [otherMatter]))[0].id;
+await passage(foreignIndexed);
+const lonely = await doc('lonely.pdf', 700);        // empty; its only indexed namesake is elsewhere
+// Null size: the key uses coalesce(size, -1), so two null-size copies group.
+const nullSizeIndexed = await doc('nosize.pdf', null); await passage(nullSizeIndexed);
+const nullSizeEmpty = await doc('nosize.pdf', null);
 
 const rows = await q(`select * from public.ready_but_empty() order by source_filename nulls first`);
 console.log(`\n--- results (${rows.length} rows) ------------------------------`);
@@ -108,7 +118,30 @@ check(byId[twinEmpty] && byId[twinEmpty].has_indexed_twin === true, 'the empty d
 check(byId[orphanA]?.has_indexed_twin === false && byId[orphanB]?.has_indexed_twin === false,
   'two empty copies with no indexed twin both returned, twin=false');
 check(byId[nullName] && byId[nullName].has_indexed_twin === false, 'null filename handled, twin=false');
-check(rows.length === 5, 'exactly the five empty-ready rows returned', `got ${rows.length}`);
+check(byId[lonely]?.has_indexed_twin === false, 'a same-name copy in ANOTHER matter is not a twin');
+check(byId[nullSizeEmpty]?.has_indexed_twin === true, 'null file_size groups with its indexed namesake, twin=TRUE');
+check(!byId[nullSizeIndexed], 'the indexed null-size copy not returned');
+check(rows.length === 7, 'exactly the seven empty-ready rows returned', `got ${rows.length}`);
+
+// ---------------------------------------------------------------------------
+// 081: the same answers, without grouping the whole corpus. Run the real file
+// over the same seed and compare row for row — a cheaper query that changed
+// the answer would be worse than a slow one.
+// ---------------------------------------------------------------------------
+console.log('\n--- migration 081 (cheaper, must be identical) ----------------');
+const before = await q(`select * from public.ready_but_empty() order by document_id`);
+await db.exec(migration('081_ready_but_empty_cheaper.sql'));
+const after = await q(`select * from public.ready_but_empty() order by document_id`);
+const norm = (rs) => JSON.stringify(rs.map((r) => [r.document_id, r.matterspace_id, r.source_filename, r.title, String(r.file_size_bytes), r.has_indexed_twin]));
+check(norm(before) === norm(after), '081 returns exactly what 059 returned, row for row',
+  `\n      059: ${norm(before)}\n      081: ${norm(after)}`);
+for (const r of after) console.log(`   ${String(r.source_filename).padEnd(14)} twin=${r.has_indexed_twin}`);
+check((await q(`select 1 from pg_indexes where indexname = 'idx_documents_ready_dedupe_key'`)).length === 1,
+  'the dedupe-key index exists after 081');
+// Printed, not asserted: PGlite has no production statistics, so the plan
+// here says nothing about cost. The timing claim belongs in production.
+console.log('\n   plan (informational — seven seed rows, not a cost measurement):');
+for (const r of await q(`explain (costs off) select * from public.ready_but_empty()`)) console.log(`     ${r['QUERY PLAN']}`);
 
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : failures + ' CHECK(S) FAILED'}`);
 process.exit(failures === 0 ? 0 : 1);

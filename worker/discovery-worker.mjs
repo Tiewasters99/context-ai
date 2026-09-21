@@ -48,6 +48,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
@@ -201,6 +202,15 @@ async function dispatch(job) {
     case 'stamp_production': return stampProduction(job);
     case 'package_production': return packageProduction(job);
     case 'ingest_document': return ingestDocument(job);
+    // One document of a Bucketizer run (migration 079). Everything it needs —
+    // the run row, the per-window progress, the seal, the pause, the meter and
+    // the matter's Record — is in lib/bucketizer-run.mjs; a policy refusal
+    // stops the RUN there and returns normally, so nothing here has to know
+    // about it.
+    case BUCKETIZER_JOB_TYPE:
+      return runBucketizerDocumentJob({
+        supabase, job, log, progress: (pct, note) => progress(job, pct, note),
+      });
     default: throw new Error(`Unknown job_type '${job.job_type}'`);
   }
 }

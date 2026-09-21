@@ -34,45 +34,20 @@ export type ContractCheck<T> =
   | { ok: true; value: T }
   | { ok: false; reason: string };
 
-/** Characters of the model's own answer echoed back to it in the repair turn. */
-export const REPAIR_ECHO_CHARS = 1200;
-
 /**
- * The repair turn's user content.
+ * The repair turn's PROSE — `REPAIR_ECHO_CHARS` and `buildRepairContent` — now
+ * lives in `lib/llm-repair-content.mjs`, and this module re-exports it.
  *
- * The narrowest possible restatement: the original request, what was wrong,
- * what the model actually sent, and the exact shape wanted. `shape` is one
- * line of literal JSON; `rules` is the prose that follows it — what an empty
- * answer looks like, and the two or three mistakes worth naming.
- *
- * Byte-for-byte the text `src/lib/bucketizer/windows.ts` and
- * `src/lib/bucketizer/evidence-prompt.ts` built before this module existed;
- * both now delegate here, and their harnesses hold that text unchanged.
+ * It moved because the SERVER-side Bucketizer runner (`lib/bucketizer-run.mjs`,
+ * running on the Fly worker) sends the same windowed classification and the
+ * same repair turn, and cannot import a browser module: this file resolves
+ * through the `@/` alias and is compiled by the SPA's tsconfig. A run that
+ * moves from the tab to the worker must not quietly start asking the model a
+ * different question, so there is one copy of the words and both sides import
+ * it. The text is byte-identical to what this file built; every harness
+ * holding it unchanged is unaffected.
  */
-export function buildRepairContent(args: {
-  original: string;
-  reason: string;
-  sent: unknown;
-  shape: string;
-  rules: string;
-}): string {
-  const { original, reason, sent, shape, rules } = args;
-  let shown: string;
-  try {
-    shown = JSON.stringify(sent).slice(0, REPAIR_ECHO_CHARS);
-  } catch {
-    shown = String(sent).slice(0, REPAIR_ECHO_CHARS);
-  }
-  return (
-    `${original}\n\n`
-    + `## Your previous answer could not be used\n`
-    + `Reason: ${reason}.\n`
-    + `You sent: ${shown}\n\n`
-    + `Answer again by calling the tool, with exactly this shape and nothing else:\n`
-    + `${shape}\n`
-    + `${rules}`
-  );
-}
+export { REPAIR_ECHO_CHARS, buildRepairContent } from '../../../lib/llm-repair-content.mjs';
 
 /** One turn of a contracted call. `attempt` is 1, or 2 on the repair. */
 export interface ContractAttempt {
