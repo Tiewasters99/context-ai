@@ -39,6 +39,18 @@ both are existing structured fields.
 `line_numbers: 'inferred'` (PR #138) is unchanged and orthogonal: it is about
 the **line** number, this is about the **page** number.
 
+**2026-09-21, the line side of the same mistake.** The number the reporter
+prints in the running header is a 1-2 digit token alone on its line — shaped
+exactly like a line number, and read as one until now. On a page with no
+numbers in the text layer that made the header text line 1 and put every
+inferred cite one line low (recorded as finding 1 of PR #205 §8); on a numbered
+page it made a phantom "line 35", and under the pre-2026-09-10 line regex it
+also swallowed the first real line, producing the impossible cite `35:35-7`
+whose text began `1  A. It did…`. `lineColumnBounds()` now says where the
+column starts, and both readers use it: nothing above the column is a line.
+Documents indexed before this date keep the old coordinates until they are
+re-indexed — an inferred page's cites move by one line when they are.
+
 ### On the document — `documents.metadata.transcript_pages`
 
 The verdict, so an audit can list every transcript still cited by index

@@ -243,6 +243,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-transcript-parse.mjs
 
+      # An email's headers and its body must be read through the same charset.
+      # A raw UTF-8 em dash in an 8-bit Subject: reached the index as "â" while
+      # the same em dash three lines lower, in the body, was right — the header
+      # pass never re-read the bytes. Messages are built as bytes in the file.
+      - name: Ingestion — email headers and body share one charset
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-eml-headers.mjs
+
       # The other half of the same bug: the step above proves the printed page
       # is DETECTED, this one proves a citation SHOWS it — and, where it could
       # not be read, says in words that the number is the PDF's. Its first
