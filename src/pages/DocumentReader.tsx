@@ -147,6 +147,60 @@ type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
 
+// Find every occurrence of `needle` in the text of a rendered document,
+// as DOM Ranges. The text nodes are joined into one string first, so a
+// hit may run across inline boundaries — a brief sets the case name in
+// italics and the reporter cite in roman, and "Smith v. Jones, 123 F.3d"
+// has to be found as one thing.
+function findInRendered(root: HTMLElement, needle: string): Range[] {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      const tag = n.parentElement?.tagName;
+      return tag === 'STYLE' || tag === 'SCRIPT' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const pieces: { node: Text; start: number }[] = [];
+  let flat = '';
+  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
+    pieces.push({ node: n, start: flat.length });
+    flat += n.data;
+  }
+  // A few letters change length when lower-cased (İ, ß…), which would put
+  // every offset after them off; match case-sensitively then, rather than
+  // light the wrong words.
+  const hay = flat.toLowerCase();
+  const exact = hay.length !== flat.length;
+  const text = exact ? flat : hay;
+  const q = exact ? needle : needle.toLowerCase();
+  const ranges: Range[] = [];
+  if (!q) return ranges;
+  let i = 0; // piece cursor — hits arrive in document order
+  let at = text.indexOf(q);
+  while (at !== -1) {
+    const end = at + q.length;
+    while (i < pieces.length - 1 && pieces[i + 1].start <= at) i++;
+    let j = i;
+    while (j < pieces.length - 1 && pieces[j + 1].start < end) j++;
+    const r = document.createRange();
+    r.setStart(pieces[i].node, at - pieces[i].start);
+    r.setEnd(pieces[j].node, end - pieces[j].start);
+    ranges.push(r);
+    at = text.indexOf(q, end);
+  }
+  return ranges;
+}
+
+// The CSS Custom Highlight API, where the browser has it. Highlights
+// paint over the text without touching the DOM, so nothing leaks into a
+// copy and there is nothing to unwrap when the search closes.
+type HighlightCtor = new (...ranges: Range[]) => unknown;
+function customHighlights(): { registry: Map<string, unknown>; Highlight: HighlightCtor } | null {
+  const g = globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: HighlightCtor };
+  return g.CSS?.highlights && g.Highlight ? { registry: g.CSS.highlights, Highlight: g.Highlight } : null;
+}
+const FIND_HL = 'reader-find';
+const FIND_HL_CURRENT = 'reader-find-current';
+
 // Vertical gap between page slots in the continuous stack.
 const PAGE_GAP = 16;
 
@@ -223,13 +277,24 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // Bumped whenever the content pane resizes, to re-fit the page.
   const [containerTick, setContainerTick] = useState(0);
 
-  // Search state — PDF only.
+  // Search state. A PDF's matches name a page and are drawn as boxes over
+  // the text layer; for the other formats the rendered document is the
+  // text itself, so each match is a DOM Range, kept here and lit with the
+  // CSS Custom Highlight API. `matches` carries one entry per range so the
+  // count and the arrows read the same either way.
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [matches, setMatches] = useState<Match[]>([]);
   const [matchIdx, setMatchIdx] = useState(0);
   const [searching, setSearching] = useState(false);
   const pageTextCacheRef = useRef<string[]>([]);
+  const textRangesRef = useRef<Range[]>([]);
+  // React 19 resets innerHTML whenever this object is a new one, which a
+  // fresh literal on every render would make it: the document re-parses,
+  // the reader's selection drops, and the search's ranges collapse. One
+  // object per document instead.
+  const docHtmlProp = useMemo(() => (docHtml ? { __html: docHtml } : undefined), [docHtml]);
+  const titlePageHtmlProp = useMemo(() => (titlePageHtml ? { __html: titlePageHtml } : undefined), [titlePageHtml]);
 
   // Sidebar state — PDF only.
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1920,15 +1985,58 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   }, [goPrev, goNext, toggleFullscreen, undoLastHighlight]);
 
   // ────────────────────────────────────────────────────────────────────
-  // Search (PDF only). On submit, scan every page's text content for the
+  // Search. For a PDF: on submit, scan every page's text content for the
   // query (caching results per page), collect matches, navigate to the
   // first hit, and highlight matching tokens in the text layer.
   // ────────────────────────────────────────────────────────────────────
+  // Light the matches of a rendered (non-PDF) document and bring the
+  // current one to the middle of the pane. Without the Highlight API the
+  // current hit is selected instead, so it still shows.
+  const showTextMatch = useCallback((ranges: Range[], current: number) => {
+    const hl = customHighlights();
+    const cur = ranges[current];
+    if (hl) {
+      if (ranges.length) hl.registry.set(FIND_HL, new hl.Highlight(...ranges));
+      else hl.registry.delete(FIND_HL);
+      if (cur) hl.registry.set(FIND_HL_CURRENT, new hl.Highlight(cur));
+      else hl.registry.delete(FIND_HL_CURRENT);
+    } else if (cur) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(cur);
+    }
+    const pane = contentRef.current;
+    if (!cur || !pane) return;
+    const rect = cur.getBoundingClientRect();
+    const pr = pane.getBoundingClientRect();
+    pane.scrollBy({ top: rect.top - pr.top - pr.height / 2 + rect.height / 2, behavior: 'smooth' });
+  }, []);
+  const clearTextMatches = useCallback(() => {
+    textRangesRef.current = [];
+    const hl = customHighlights();
+    hl?.registry.delete(FIND_HL);
+    hl?.registry.delete(FIND_HL_CURRENT);
+  }, []);
+  // A new document, or leaving: nothing of the old search should linger.
+  useEffect(() => clearTextMatches, [docHtml, clearTextMatches]);
+
   const runSearch = useCallback(async (query: string) => {
     const q = query.trim();
-    if (!q || fileKind !== 'pdf') {
+    if (!q) {
       setMatches([]);
       setMatchIdx(0);
+      clearTextMatches();
+      return;
+    }
+    if (fileKind !== 'pdf') {
+      // The rendered document is the text. Every non-PDF page carries
+      // .print-root, whatever wrapper sits inside it.
+      const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
+      const ranges = root ? findInRendered(root, q) : [];
+      textRangesRef.current = ranges;
+      setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
+      setMatchIdx(0);
+      showTextMatch(ranges, 0);
       return;
     }
     const pdf = pdfDocRef.current as
@@ -1999,20 +2107,29 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setMatchIdx(0);
     setSearching(false);
     if (found.length > 0) gotoPage(found[0].page);
-  }, [fileKind, gotoPage, id]);
+  }, [fileKind, gotoPage, id, clearTextMatches, showTextMatch]);
 
   const goNextMatch = useCallback(() => {
     if (matches.length === 0) return;
     const next = (matchIdx + 1) % matches.length;
     setMatchIdx(next);
-    gotoPage(matches[next].page);
-  }, [matchIdx, matches, gotoPage]);
+    if (fileKind === 'pdf') gotoPage(matches[next].page);
+    else showTextMatch(textRangesRef.current, next);
+  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch]);
   const goPrevMatch = useCallback(() => {
     if (matches.length === 0) return;
     const next = (matchIdx - 1 + matches.length) % matches.length;
     setMatchIdx(next);
-    gotoPage(matches[next].page);
-  }, [matchIdx, matches, gotoPage]);
+    if (fileKind === 'pdf') gotoPage(matches[next].page);
+    else showTextMatch(textRangesRef.current, next);
+  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch]);
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setMatches([]);
+    setMatchIdx(0);
+    clearTextMatches();
+  }, [clearTextMatches]);
 
   // ────────────────────────────────────────────────────────────────────
   // Render
@@ -2106,7 +2223,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           )}
         </div>
         <div className={`flex items-center gap-1 ${isMobile && searchOpen ? 'flex-1 min-w-0' : 'shrink-0'}`}>
-          {fileKind === 'pdf' && (
+          {(fileKind === 'pdf' || (loadState === 'ready' && !!docHtml)) && (
             <>
               {searchOpen ? (
                 <div className="flex items-center gap-1 flex-1 min-w-0">
@@ -2117,11 +2234,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') void runSearch(searchQuery);
-                      else if (e.key === 'Escape') {
-                        setSearchOpen(false);
-                        setSearchQuery('');
-                        setMatches([]);
-                      }
+                      else if (e.key === 'Escape') closeSearch();
                     }}
                     placeholder="Find in document…"
                     className={`h-8 ${isMobile ? 'flex-1 min-w-0' : 'w-44'} rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-2 text-xs text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]`}
@@ -2152,11 +2265,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     <ChevronRight size={13} />
                   </button>
                   <button
-                    onClick={() => {
-                      setSearchOpen(false);
-                      setSearchQuery('');
-                      setMatches([]);
-                    }}
+                    onClick={closeSearch}
                     className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
                     title="Close search"
                   >
@@ -2181,8 +2290,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             <button
               onClick={() => askAbout()}
               className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
-              title="Ask about this book — the Assistant, with this page in front of it"
-              aria-label="Ask about this book"
+              title="Ask about this document — the Assistant, with this page in front of it"
+              aria-label="Ask about this document"
             >
               <MessageCircle size={15} />
             </button>
@@ -2506,7 +2615,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                   lineHeight: 1.6,
                 }}
               >
-                <div dangerouslySetInnerHTML={{ __html: docHtml }} />
+                <div dangerouslySetInnerHTML={docHtmlProp} />
               </div>
             )}
             {loadState === 'ready' && fileKind === 'text' && docHtml && (
@@ -2522,14 +2631,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                   whiteSpace: 'pre-line',
                 }}
               >
-                <div dangerouslySetInnerHTML={{ __html: docHtml }} />
+                <div dangerouslySetInnerHTML={docHtmlProp} />
               </div>
             )}
             {loadState === 'ready' && fileKind === 'pptx' && docHtml && (
               <div
                 className="pptx-deck print-root max-w-3xl w-full mx-auto"
                 style={{ fontSize: `${Math.round(16 * (zoom / 1.5))}px` }}
-                dangerouslySetInnerHTML={{ __html: docHtml }}
+                dangerouslySetInnerHTML={docHtmlProp}
               />
             )}
             {loadState === 'ready' && fileKind === 'fountain' && (
@@ -2547,13 +2656,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                 {titlePageHtml && (
                   <div
                     className="fountain-title-page"
-                    dangerouslySetInnerHTML={{ __html: titlePageHtml }}
+                    dangerouslySetInnerHTML={titlePageHtmlProp}
                   />
                 )}
                 {docHtml && (
                   <div
                     className="fountain-script"
-                    dangerouslySetInnerHTML={{ __html: docHtml }}
+                    dangerouslySetInnerHTML={docHtmlProp}
                   />
                 )}
               </div>
@@ -3367,6 +3476,10 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         background: rgba(255, 150, 0, 0.8);
         box-shadow: 0 0 0 2px rgba(255, 120, 0, 0.95);
       }
+      /* The same two colors for a rendered document (docx, text, slides,
+         screenplay), painted by the Custom Highlight API over the words. */
+      ::highlight(${FIND_HL}) { background-color: rgba(255, 214, 0, 0.6); }
+      ::highlight(${FIND_HL_CURRENT}) { background-color: rgba(255, 150, 0, 0.85); }
       /* The reading pane's scrollbar wears the reader's theme — the app-wide
          white-on-dark bar washes out on parchment. The thumb rides the whole
          case; the step arrows move it a line at a time (hold to crawl). */
