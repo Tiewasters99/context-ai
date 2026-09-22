@@ -179,6 +179,14 @@ function supabaseAnswer(url, init) {
       app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z',
     });
   }
+  // The plan gate (lib/entitlements.mjs, migration 083). Connect is a frozen
+  // surface, so /api/meeting-chat now reads the caller's own pricing_tier
+  // before it does anything else. This harness is about the SEAL, not about
+  // the plan, so its caller is on `workshop` — the account that may open every
+  // room — and the sealed assertions below are unchanged.
+  if (url.includes('/rest/v1/profiles')) {
+    return jsonRes(200, [{ pricing_tier: 'workshop' }]);
+  }
   // PostgREST answers a GET with an ARRAY; maybeSingle() takes [0] client-side.
   if (url.includes('/rest/v1/meetings')) {
     if (world.meeting === 'error') return jsonRes(500, { message: 'meetings lookup failed (stub)', code: 'XX000' });

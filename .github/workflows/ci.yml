@@ -191,6 +191,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-connections-columns.mjs
 
+      # Hidden also means LOCKED. Two commands, one step: the surface table
+      # plus migration 083 in PGlite (a free, a pro and a workshop account,
+      # the hole reproduced as a negative control, the INSERT fences, the
+      # invite cap, and `profiles` fingerprinted before and after so 062/067
+      # can be shown untouched), then the real gated handlers driven offline
+      # with fetch replaced by a witness — 403 with the sentence for a free
+      # account, 503 while the plan cannot be read, and every one of
+      # api/mediation.mjs's four model calls metered BEFORE the provider is
+      # contacted, proved by what the witness saw and not by reading the code.
+      #
+      # The first half also FAILS THE BUILD when a surface exists in
+      # lib/surfaces.mjs without a declared server enforcement, which is how
+      # the next hidden room is stopped from shipping unlocked.
+      #
+      # It belongs here, with the other PGlite steps, and not at the end of
+      # the file: the later `npm i --no-save jsdom` steps prune PGlite.
+      - name: Migration 083 — hidden means locked (PGlite + real handlers)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/_verify-entitlements.mjs
+          node --test scripts/_test-entitlement-handlers.mjs
+
       - name: Migration 062 — profiles RLS, no email column (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-profiles-rls.mjs

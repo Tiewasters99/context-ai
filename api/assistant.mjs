@@ -26,6 +26,7 @@ import { createClient } from '@supabase/supabase-js';
 
 import { runAssistantStream, bedrockCredsFromEnv, PENS } from '../lib/assistant-core.mjs';
 import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -89,6 +90,21 @@ export default async function handler(req, res) {
   const charterId = typeof body?.charterId === 'string' && body.charterId ? body.charterId.slice(0, 80) : undefined;
   if (!Array.isArray(messages) || messages.length === 0) {
     return json(res, 400, { error: 'messages (non-empty array) required' });
+  }
+
+  // Agents is a frozen surface (lib/surfaces.mjs). This endpoint serves TWO
+  // things — the core Assistant, which every plan gets, and a turn run under a
+  // charter, which is the Agents surface itself — so the gate is keyed on the
+  // charter and not on the endpoint. That can only narrow: omitting charterId
+  // buys the plain Assistant, never an agent. The real lock is migration 083,
+  // which refuses a non-entitled account the charter row in the first place;
+  // this is the second door, for a charter written before the fence went up or
+  // shared into a matter. The getUser round trip is paid only on this path, so
+  // the core Assistant is exactly as fast as it was.
+  if (charterId) {
+    const { data: who } = await sb.auth.getUser();
+    const gate = await requireEntitlement(who?.user?.id ?? null, 'agents', { bearer: userToken });
+    if (!gate.ok) return sendEntitlementRefusal(res, gate);
   }
 
   // The spend cap (migration 063). Checked HERE, before a single SSE byte

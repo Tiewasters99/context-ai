@@ -19,6 +19,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { estimateDeepgramSessionCents } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -51,6 +52,12 @@ export default async function handler(req, res) {
   });
   const { data: userData, error: userErr } = await sb.auth.getUser();
   if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
+
+  // Connect is a frozen surface (lib/surfaces.mjs), and a live-transcription
+  // credential is the last thing a non-entitled account should be handed.
+  // src/lib/meetings/deepgram.ts is this endpoint's only caller.
+  const gate = await requireEntitlement(userData.user.id, 'connect', { bearer: userToken });
+  if (!gate.ok) return sendEntitlementRefusal(res, gate);
 
   // The SecureSpace seal. This endpoint hands the browser a key with which it
   // streams live room audio to Deepgram — the rawest content in the product,
