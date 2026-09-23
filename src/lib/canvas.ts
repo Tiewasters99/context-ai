@@ -39,6 +39,10 @@ export interface CanvasCard {
   /** Full screen. x/y/w/h keep the windowed rect, so leaving full screen
       returns the panel exactly where it was. */
   max?: boolean;
+  /** Fixed in place (the Pin button): the panel stops moving and resizing
+      and reopens exactly here. Separate from being kept open, which is what
+      putting a card on the canvas already means. */
+  fixed?: boolean;
 }
 
 // Every view that can appear both on its route and inside a canvas panel
@@ -235,6 +239,7 @@ function loadFromKey(storageKey: string): CanvasCard[] {
         title: typeof v.title === 'string' ? v.title : 'Untitled',
         x: v.x, y: v.y, w: v.w, h: v.h,
         max: (v as { max?: unknown }).max === true,
+        fixed: (v as { fixed?: unknown }).fixed === true,
       });
     }
     return out;
