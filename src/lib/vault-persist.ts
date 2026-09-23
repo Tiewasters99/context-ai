@@ -867,6 +867,7 @@ function mimeFor(ext: string): string {
     '.txt': 'text/plain',
     '.md': 'text/markdown',
     '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc': 'application/msword',
     '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   };

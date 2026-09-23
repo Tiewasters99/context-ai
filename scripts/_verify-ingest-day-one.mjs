@@ -14,6 +14,7 @@
 //      plus the page-count half of the rule that size cannot see.
 //   3. The nightly suite's deadlines, driven with a gate that never returns.
 //   4. The monitor digest's tenant privacy, with two owners in the same run.
+//   6. .doc (2026-09-23): accepted, and routed by its bytes to a reader.
 //
 // and then scripts/_verify-ocr-routes.mjs is run as a child process, because
 // its own offline assertions are the fifth thing and CI carries one step.
@@ -51,7 +52,6 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
     ['IMG_4021.HEIC', /Most Compatible/i, 'iPhone photo (High Efficiency)'],
     ['IMG_4021.heic', /JPEG/i, 'iPhone photo, lower case'],
     ['scan.heif', /JPEG or PNG/i, 'HEIF image'],
-    ['Motion to Dismiss.doc', /Save the legacy Word file as \.docx/i, 'pre-2007 Word'],
     ['Damages model.xls', /\.xlsx/i, 'pre-2007 Excel'],
     ['Opening.ppt', /\.pptx/i, 'pre-2007 PowerPoint'],
     ['RE Discovery schedule.msg', /\.eml/i, 'Outlook message'],
@@ -70,11 +70,11 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
     assert(/which the Vault can't read\./.test(r.message), `${what}: refusal lost its opening sentence`);
     assert(/Supported: PDF/.test(r.message), `${what}: refusal lost the supported list`);
   }
-  ok(`${REFUSED.length} day-one formats are refused at selection, each naming what to do instead (HEIC → Most Compatible/JPEG, .doc/.xls/.ppt → Save As, .msg/.pst → .eml or PDF)`);
+  ok(`${REFUSED.length} day-one formats are refused at selection, each naming what to do instead (HEIC → Most Compatible/JPEG, .xls/.ppt → Save As, .msg/.pst → .eml or PDF)`);
 
   // None of them may be quietly accepted: a half-accepted type that ingests
   // to zero passages is worse than a refusal, because nothing says so.
-  for (const ext of ['.heic', '.heif', '.doc', '.msg', '.pst', '.xls', '.ppt']) {
+  for (const ext of ['.heic', '.heif', '.msg', '.pst', '.xls', '.ppt']) {
     assert(!ACCEPTED_EXTENSIONS.includes(ext), `${ext} is refused by message but present in ACCEPTED_EXTENSIONS`);
     assert(!SUPPORTED_EXTENSIONS.includes(ext), `${ext} claims a text extractor it does not have`);
     assert(unsupportedHint(ext).length > 20, `${ext} has no named alternative`);
@@ -93,7 +93,7 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
 
   // What still works, unchanged. A refusal table is only safe if it cannot
   // creep over the formats people upload every day.
-  for (const name of ['Brief.docx', 'scan.pdf', 'page.jpg', 'page.JPEG', 'production.tif', 'notes.md', 'book.epub', 'thread.eml', 'memo.rtf', 'workbook.xlsx', 'deck.pptx', 'hearing.mp4', 'exhibits.zip', 'model.obj', 'index.csv']) {
+  for (const name of ['Brief.docx', 'scan.pdf', 'page.jpg', 'page.JPEG', 'production.tif', 'notes.md', 'book.epub', 'thread.eml', 'memo.rtf', 'Westlaw opinion.doc', 'workbook.xlsx', 'deck.pptx', 'hearing.mp4', 'exhibits.zip', 'model.obj', 'index.csv']) {
     assert.strictEqual(checkUpload({ name, size: 1_000 }), null, `${name} must still be accepted`);
   }
   assert.strictEqual(checkUpload({ name: 'no-extension-attachment', size: 1_000 }), null);
@@ -346,6 +346,37 @@ console.log('\n[5] OCR route policy — scripts/_verify-ocr-routes.mjs');
   assert(claimed >= 4, `expected at least 4 offline checks there, got ${claimed}`);
   n += claimed;
   ok(`route selection per tier and "a sealed route never picks a non-sealed provider" assert ${claimed} checks of their own (it used to print a table and exit 0 whatever it printed)`);
+}
+
+// =============================================================================
+// 6. Legacy Word (.doc) — accepted since 2026-09-23, read by what it really is
+// =============================================================================
+console.log('\n[6] .doc: routed by its bytes, and a real Word binary has a reader');
+{
+  const { docFormat, extractDocPages } = await import('../lib/doc-extract.mjs');
+  const { extractPages } = await import('../lib/ingest-core.mjs');
+  const ole = Buffer.alloc(1024);
+  Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]).copy(ole);
+  const cases = [
+    [ole, '.doc', 'Word 97–2003 binary'],
+    [Buffer.from('{\\rtf1\\ansi{\\fonttbl{\\f0 Times;}}\\f0 SMITH v. JONES, 123 F.3d 456 (fictional).\\par}'), '.rtf', 'Rich Text under a .doc name (Westlaw)'],
+    [Buffer.from('\uFEFF<html xmlns:w="urn:schemas-microsoft-com:office:word"><body><p>DOE v. ROE</p></body></html>'), '.html', 'Word web page under a .doc name'],
+    [Buffer.from('PK\x03\x04' + 'x'.repeat(40), 'latin1'), '.docx', '.docx under a .doc name'],
+    [Buffer.from('%PDF-1.7\n' + 'x'.repeat(40)), '.pdf', 'PDF under a .doc name'],
+    [Buffer.from('Plain words under a .doc name.\n'), '.txt', 'plain text under a .doc name'],
+  ];
+  for (const [buf, want, what] of cases) {
+    assert.strictEqual(docFormat(buf), want, `${what}: routed as ${docFormat(buf)}`);
+  }
+  ok(`docFormat routes all ${cases.length} shapes a .doc arrives in to the reader that fits`);
+
+  const rtfPages = await extractPages(cases[1][0], docFormat(cases[1][0]));
+  assert(/SMITH v\. JONES, 123 F\.3d 456/.test(rtfPages[0].text), `RTF .doc lost its text: ${JSON.stringify(rtfPages[0].text)}`);
+  assert(!/\\rtf1|fonttbl/.test(rtfPages[0].text), 'RTF .doc indexed its markup');
+  ok('an RTF .doc comes out as its prose, not its markup');
+
+  await assert.rejects(() => extractDocPages(ole), /could not read this Word 97–2003 file.*Save As \.docx/s);
+  ok('a Word binary the parser cannot open fails with a sentence that says what to do, not a parser trace');
 }
 
 console.log(`\nPASS — ${n} checks`);
