@@ -7,8 +7,9 @@
 //
 // New uploads get their star pages at ingest (lib/ingest-core.mjs). This is
 // the one-time pass for what was indexed before 2026-09-23. It changes ONE
-// thing: it merges the page keys lib/cite-page.mjs reads into
-// passages.metadata. Passage text, embeddings and ids are untouched — nothing
+// thing: it merges the page keys lib/cite-page.mjs reads — and each passage's
+// Bluebook cite (lib/bluebook.mjs) — into passages.metadata, and the parsed
+// case header into documents.metadata.westlaw_case. Passage text, embeddings and ids are untouched — nothing
 // is re-embedded (no provider call, no cost), and everything that points at a
 // passage (Bucketizer outlines, annotations) keeps pointing at the same row.
 //
@@ -27,6 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { westlawStarPages, westlawPageMeta, METHOD } from '../lib/westlaw-pages.mjs';
+import { bluebookCitesFor, westlawCaseSummary } from '../lib/bluebook.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const envFile = process.env.ENV_FILE || path.join(ROOT, '.env');
@@ -83,7 +85,7 @@ async function candidates() {
       select distinct document_id from passages
       where summary_level = 0 and text ilike '%no claim to original u.s. government works%'
     )
-    select d.id, lower(substring(d.source_filename from '\\.([A-Za-z0-9]+)$')) as ext,
+    select d.id, d.source_filename, lower(substring(d.source_filename from '\\.([A-Za-z0-9]+)$')) as ext,
            d.matterspace_id, (d.matterspace_id in (select id from sealed)) as sealed
     from w join documents d on d.id = w.document_id
     where true ${docFilter}
@@ -115,6 +117,8 @@ const report = [];
 let toWrite = 0;
 let written = 0;
 let keptOther = 0;
+let withCite = 0;
+const citeReasons = {};
 
 const docs = await candidates();
 console.log(`${docs.length} Westlaw document(s)${onlyDoc ? ' (one named)' : ''}; ${APPLY ? 'APPLYING' : 'dry run — nothing is written'}`);
@@ -134,15 +138,21 @@ for (const d of docs) {
   if (r.claimed) byExt[d.ext].claimed++;
 
   const patches = [];
+  const { info, cites } = bluebookCitesFor(rows, r, d.source_filename);
   if (r.claimed) {
+    const ck = info?.kind !== 'case' ? 'not a case (statute, article, …)'
+      : cites.some(Boolean) ? 'Bluebook cite built' : `no Bluebook cite: ${info.problems[0] || 'no page matched a reporter'}`;
+    citeReasons[ck] = (citeReasons[ck] || 0) + 1;
     rows.forEach((row, i) => {
-      const meta = westlawPageMeta(r.pages[i], row.page_start);
+      const base = westlawPageMeta(r.pages[i], row.page_start);
+      const meta = base && cites[i] ? { ...base, bluebook_cite: cites[i] } : base;
+      if (meta?.bluebook_cite) withCite++;
       if (!meta) return;
       const cur = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
       // A page another detector measured is left as it is.
       if (cur.printed_page != null && cur.printed_page_method !== METHOD) { keptOther++; return; }
       if (cur.printed_page === meta.printed_page && cur.printed_page_end === meta.printed_page_end &&
-          cur.printed_page_method === METHOD) return;   // already written
+          cur.printed_page_method === METHOD && (cur.bluebook_cite ?? null) === (meta.bluebook_cite ?? null)) return;   // already written
       patches.push({ id: row.id, metadata: { ...cur, ...meta } });
     });
   }
@@ -153,6 +163,17 @@ for (const d of docs) {
     markers: r.markers, skipped_cites: (r.rejected || 0) + (r.skipped || 0), to_write: patches.length,
   });
 
+  if (APPLY && r.claimed && info) {
+    // The parsed header, on the document, for audit (merged, not replaced).
+    const [docRow] = await rest(`documents?id=eq.${d.id}&select=metadata`);
+    const cur = docRow?.metadata && typeof docRow.metadata === 'object' ? docRow.metadata : {};
+    await rest(`documents?id=eq.${d.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+      body: JSON.stringify({ metadata: { ...cur, westlaw_case: westlawCaseSummary(info),
+        westlaw_pages: { claimed: r.claimed, reason: r.reason, first: r.first, last: r.last } } }),
+    });
+  }
   if (APPLY && patches.length) {
     // Eight at a time: one PATCH per passage, merged metadata as read above.
     for (let k = 0; k < patches.length; k += 8) {
@@ -174,6 +195,8 @@ console.log('\nBy outcome:');
 for (const [k, v] of Object.entries(tally).sort((a, b) => b[1] - a[1])) console.log(`  ${String(v).padStart(5)}  ${k}`);
 console.log('\nBy format (claimed / documents):');
 for (const [k, v] of Object.entries(byExt).sort((a, b) => b[1].docs - a[1].docs)) console.log(`  .${k.padEnd(5)} ${v.claimed} / ${v.docs}`);
-console.log(`\nPassages that would get a page: ${toWrite.toLocaleString()}${APPLY ? ` — written: ${written.toLocaleString()}` : ''}`);
+console.log('\nBluebook cites (claimed documents):');
+for (const [k, v] of Object.entries(citeReasons).sort((a, b) => b[1] - a[1])) console.log(`  ${String(v).padStart(5)}  ${k}`);
+console.log(`\nPassages that would get a page: ${toWrite.toLocaleString()} (${withCite.toLocaleString()} with a Bluebook cite)${APPLY ? ` — written: ${written.toLocaleString()}` : ''}`);
 if (keptOther) console.log(`Passages left alone (a printed page from another detector): ${keptOther}`);
 console.log(`Per-document report (ids and numbers only): ${outFile}`);

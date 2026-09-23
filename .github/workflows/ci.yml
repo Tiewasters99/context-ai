@@ -331,6 +331,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-westlaw-pages.mjs
 
+      - name: Bluebook cites for Westlaw opinions (reporters, courts, T6, WL-only)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-bluebook.mjs
+
       # Migration 066 + the worker's heartbeat + the sentence the Vault shows
       # while a document is processing + the nightly workflow itself. The
       # tenant boundary is the point: two signed-in users, each seeing only

@@ -48,7 +48,9 @@ export interface CitePassage {
   witness_name?: string | null;
   // The page keys lib/cite-page.mjs reads (a transcript's printed page, a
   // Westlaw opinion's star page) beside the line-numbering flag.
-  metadata?: (CitePageMetadata & { line_numbers?: string | null }) | null;
+  // bluebook_cite: a Westlaw opinion's full cite, pinpoint included
+  // (lib/bluebook.mjs, written with its star pages).
+  metadata?: (CitePageMetadata & { line_numbers?: string | null; bluebook_cite?: string | null }) | null;
 }
 
 export interface CiteDocument {
@@ -223,8 +225,11 @@ export function buildCite(passage: CitePassage, doc: CiteDocument): Cite {
   const pages = pageEnd != null && pageEnd !== pageStart
     ? `pp. ${pageStart}–${pageEnd}`
     : `p. ${pageStart}`;
+  const bluebook = typeof passage.metadata?.bluebook_cite === 'string' && passage.metadata.bluebook_cite
+    ? passage.metadata.bluebook_cite
+    : null;
   return {
-    text: `${shortTitle(doc.title)}, ${pages}`,
+    text: bluebook ?? `${shortTitle(doc.title)}, ${pages}`,
     tier: 'document_page',
     caveat: where.caveat,
     page: pageStart, readerPage, lineStart: null, lineEnd: null, witness, isTranscript: false,
