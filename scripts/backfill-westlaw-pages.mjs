@@ -138,10 +138,10 @@ for (const d of docs) {
   if (r.claimed) byExt[d.ext].claimed++;
 
   const patches = [];
-  const { info, cites } = bluebookCitesFor(rows, r, d.source_filename);
+  const { info, cites, reason: citeReason } = bluebookCitesFor(rows, r, d.source_filename);
   if (r.claimed) {
     const ck = info?.kind !== 'case' ? 'not a case (statute, article, …)'
-      : cites.some(Boolean) ? 'Bluebook cite built' : `no Bluebook cite: ${info.problems[0] || 'no page matched a reporter'}`;
+      : cites.some(Boolean) ? 'Bluebook cite built' : `no Bluebook cite: ${citeReason || 'no page matched a reporter'}`;
     citeReasons[ck] = (citeReasons[ck] || 0) + 1;
     rows.forEach((row, i) => {
       const base = westlawPageMeta(r.pages[i], row.page_start);

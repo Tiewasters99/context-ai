@@ -106,6 +106,33 @@ const FOOT = '© 2026 Thomson Reuters. No claim to original U.S. Government Work
   ok(`WL-only decision, numeric "Signed" date: "${cites[2]}"`);
 }
 
+// Never another case's U.S. cite: a 2002 Supreme Court download whose
+// synopsis cites Bivens (403 U.S. 388), with its own star run from *403.
+{
+  const passages = [
+    { text: `122 S.Ct. 2179\nSupreme Court of the United States\nChristopher DOE, Petitioner,\nv.\nJennifer ROE.\nNo. 01–394.\n|\nDecided June 20, 2002.\nSynopsis\nFictional; relies on Bivens v. Six Unknown Named Agents, 403 U.S. 388. ${FOOT}` },
+    { text: '*403 JUSTICE SOUTER delivered the opinion of the Court. **2182 Fictional. *404 More.' },
+    { text: 'And so. *405 **2183 Reversed.' },
+  ];
+  const wp = westlawStarPages(passages);
+  const { cites } = bluebookCitesFor(passages, wp, 'Doe v Roe.docx');
+  assert(!/403 U\.S\. 388/.test(String(cites[2])), `took the synopsis's Bivens cite: ${cites[2]}`);
+  assert.equal(cites[2], 'Doe v. Roe, 122 S. Ct. 2179, 2182–83 (2002)', 'no U.S. cite it can confirm, so S. Ct.');
+  ok(`a U.S. cite in the synopsis is never taken for the case's own: "${cites[2]}"`);
+}
+
+// A name Westlaw cut or mangled builds no cite.
+{
+  const info = parseWestlawCase({
+    headText: `103 S.Ct. 2177\nSupreme Court of the United States\nW.R. GRACE AND COMPANY, Petitioner v. LOCAL UNION 759.\nDecided May 31, 1983.\n${FOOT}`,
+    sourceFilename: 'WR Grace and Co v Local Union 759 Intern Union of United Rubber Cork Linoleum and Plastic Workers of.docx',
+  });
+  const r = bluebookCite(info, { 1: [2184, 2185] }, { 1: { first: 2178, last: 2190 } });
+  assert.equal(r.cite, null);
+  assert.match(r.reason, /case name looks truncated/);
+  ok(`a truncated file-name case name builds no cite (${r.reason})`);
+}
+
 // Nothing is guessed: an unknown court, or no date, builds no cite.
 {
   const info = parseWestlawCase({ headText: `10 Foo. 5\nCourt of Oyer and Terminer of Nowhere.\nA v. B.\n${FOOT}`, sourceFilename: 'A v B.docx' });
