@@ -14,6 +14,8 @@ import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import AiPauseControl from '@/components/matter/AiPauseControl';
 import AskAssistantButton from '@/components/ai/AskAssistantButton';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
+import { MATTER_COVER_KEY } from '@/hooks/useMatterCover';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
 import { setOrchestratorContext, clearOrchestratorContext } from '@/lib/orchestrator-context';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
@@ -196,6 +198,7 @@ export default function MatterspaceView() {
     navigate(`/app/bucketizer?matter=${encodeURIComponent(matter.id)}`);
   };
 
+  const queryClient = useQueryClient();
   const handleCoverChange = async (url: string | null) => {
     if (!matter) return;
     const { error } = await supabase
@@ -207,6 +210,8 @@ export default function MatterspaceView() {
       return;
     }
     setMatter({ ...matter, cover_url: url });
+    // Its sub-matters and the pages, lists and tables inside inherit it.
+    void queryClient.invalidateQueries({ queryKey: [MATTER_COVER_KEY] });
   };
 
   return (
@@ -216,6 +221,8 @@ export default function MatterspaceView() {
         onCoverChange={handleCoverChange}
         editable={true}
         persistKey={matter ? `cs.cover.matter.${matter.id}` : undefined}
+        inherit
+        matterId={matter?.parent_matterspace_id ?? null}
       />
 
       <div ref={cardRef} className={`max-w-5xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] ${

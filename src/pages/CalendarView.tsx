@@ -54,6 +54,7 @@ export default function CalendarView({ embedded = false, onClose }: EmbeddableVi
         onCoverChange={handleCover}
         editable={true}
         persistKey="cs.cover.calendar"
+        inherit
       />
 
       <div
