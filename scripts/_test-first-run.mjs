@@ -602,8 +602,9 @@ test('the Dashboard shows the docket and defers its three empty places to it', (
   assert.match(dash, /serverspaces\.length === 0 && !firstRun\.show/);
   // The deadlines section is left out while there is no matter to have one.
   assert.match(dash, /!\(firstRun\.show && !firstRun\.facts\.hasMatter\)/);
-  // The quick action is not the same button twice.
-  assert.match(dash, /\.filter\(\(\) => !\(firstRun\.show && serverspaces\.length === 0\)\)/);
+  // Create Serverspace is not the same button twice (it is docket step 1);
+  // other quick actions (Agents) stay.
+  assert.match(dash, /\.filter\(\(a\) => !\(a\.action === 'new-serverspace' && firstRun\.show && serverspaces\.length === 0\)\)/);
   // The original strings survive for an account that dismissed the docket.
   assert.ok(dash.includes('No serverspaces yet.'));
 });

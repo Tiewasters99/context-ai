@@ -47,6 +47,8 @@ interface CanvasContextValue {
   raise: (key: string) => void;
   /** Flip a card between full screen and its windowed rect. */
   toggleMax: (key: string) => void;
+  /** Pin a card in place, or release it. */
+  toggleFixed: (key: string) => void;
   setRect: (key: string, rect: { x: number; y: number; w: number; h: number }) => void;
   setTitle: (key: string, title: string) => void;
   /** Called by CanvasLayer as the route changes. */
@@ -175,6 +177,12 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
     );
   }, [editCards]);
 
+  const toggleFixed = useCallback((key: string) => {
+    editCards((prev) =>
+      prev.map((c) => (c.key === key ? { ...c, fixed: !c.fixed } : c)),
+    );
+  }, [editCards]);
+
   const setRect = useCallback(
     (key: string, rect: { x: number; y: number; w: number; h: number }) => {
       editCards((prev) =>
@@ -191,8 +199,8 @@ export function CanvasProvider({ children }: { children: ReactNode }) {
   }, [editCards]);
 
   const value = useMemo<CanvasContextValue>(
-    () => ({ space, cards, hydrated, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace }),
-    [space, cards, hydrated, isPinned, pin, unpin, raise, toggleMax, setRect, setTitle, setSpace],
+    () => ({ space, cards, hydrated, isPinned, pin, unpin, raise, toggleMax, toggleFixed, setRect, setTitle, setSpace }),
+    [space, cards, hydrated, isPinned, pin, unpin, raise, toggleMax, toggleFixed, setRect, setTitle, setSpace],
   );
 
   return <CanvasContext.Provider value={value}>{children}</CanvasContext.Provider>;

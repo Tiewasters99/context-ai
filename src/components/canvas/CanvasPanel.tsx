@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Layers, Maximize2, Minimize2, ExternalLink, X } from 'lucide-react';
+import PinToggle from '@/components/ui/PinToggle';
 import { CANVAS_FULLSCREEN_Z, MIN_H, MIN_W, type CanvasCard } from '@/lib/canvas';
 
 interface CanvasPanelProps {
@@ -21,6 +22,8 @@ interface CanvasPanelProps {
   onUnpin: () => void;
   onOpenFull: () => void;
   onToggleMax: () => void;
+  /** The Pin button: fix the panel in place, or release it. */
+  onToggleFixed: () => void;
   onRect: (rect: { x: number; y: number; w: number; h: number }) => void;
   children: ReactNode;
 }
@@ -60,9 +63,14 @@ export default function CanvasPanel({
   onUnpin,
   onOpenFull,
   onToggleMax,
+  onToggleFixed,
   onRect,
   children,
 }: CanvasPanelProps) {
+  // Pinned in place: no drag, no resize, no double-click to full screen.
+  // Right-click on the bare ribbon pins and double-click releases, as on
+  // every route card (useDraggableResizable).
+  const fixed = !!card.fixed;
   // Live rect during a drag. Committing on every pointermove would write to
   // localStorage sixty times a second; the gesture runs locally and the
   // committed rect lands once, on pointerup.
@@ -139,7 +147,7 @@ export default function CanvasPanel({
   }, [stacked, endGesture, apply]);
 
   const startMove = (e: React.PointerEvent) => {
-    if (stacked || card.max) return;
+    if (stacked || card.max || fixed) return;
     // Header buttons keep working — only bare ribbon starts a drag.
     if ((e.target as HTMLElement).closest('button')) return;
     onFocus();
@@ -154,7 +162,7 @@ export default function CanvasPanel({
   };
 
   const startResize = (edge: Edge) => (e: React.PointerEvent) => {
-    if (stacked || card.max) return;
+    if (stacked || card.max || fixed) return;
     onFocus();
     gesture.current = {
       mode: 'resize',
@@ -172,7 +180,15 @@ export default function CanvasPanel({
   const onRibbonDoubleClick = (e: React.MouseEvent) => {
     if (stacked) return;
     if ((e.target as HTMLElement).closest('button')) return;
+    if (fixed) { onToggleFixed(); return; }
     onToggleMax();
+  };
+
+  const onRibbonContextMenu = (e: React.MouseEvent) => {
+    if (stacked || card.max) return;
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    onToggleFixed();
   };
 
   const maximized = !stacked && !!card.max;
@@ -213,10 +229,11 @@ export default function CanvasPanel({
       <div
         onPointerDown={startMove}
         onDoubleClick={onRibbonDoubleClick}
+        onContextMenu={onRibbonContextMenu}
         className={`flex items-center gap-2 h-9 px-2.5 shrink-0 border-b border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.045)] ${
-          stacked || maximized ? '' : 'cursor-grab active:cursor-grabbing select-none'
+          stacked || maximized ? '' : fixed ? 'select-none' : 'cursor-grab active:cursor-grabbing select-none'
         }`}
-        title={stacked || maximized ? undefined : 'Drag to move · double-click for full screen'}
+        title={stacked || maximized ? undefined : fixed ? 'Pinned in place · double-click to release' : 'Drag to move · double-click for full screen · right-click to pin'}
       >
         {/* The layers glyph, not a pin: this card is KEPT OPEN, and it still
             drags freely. A gold pin here said "fixed in place" on a card
@@ -225,6 +242,7 @@ export default function CanvasPanel({
         <span className="text-[12px] text-[#f5f1e8] truncate flex-1 min-w-0">
           {card.title || 'Untitled'}
         </span>
+        {!stacked && !maximized && <PinToggle pinned={fixed} onToggle={onToggleFixed} />}
         {!stacked && (
           <button
             onClick={onToggleMax}
@@ -260,7 +278,7 @@ export default function CanvasPanel({
       {/* Resize handles on every edge and corner. They render after the
           content so they sit on top of it; the corners render after the
           edges so a corner grab wins where the zones overlap. */}
-      {!stacked && !maximized && (
+      {!stacked && !maximized && !fixed && (
         <>
           {EDGE_HANDLES.map(({ edge, className }) => (
             <div

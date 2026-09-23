@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate } from 'lucide-react';
+import { Users, Plus, ChevronRight, ChevronDown, Folder, X, DoorOpen, LayoutTemplate, Bot } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -20,8 +20,14 @@ import { useFirstRun } from '@/hooks/useFirstRun';
 // Creating a serverspace is the one onboarding step in the product, so it is
 // core and everybody gets it; the filter below exists so that the next quick
 // action cannot reach a free account without someone deciding it should.
-const quickActions: { label: string; icon: typeof Plus; action: 'new-serverspace'; surface: SurfaceId }[] = [
+//
+// Agents (Eden, 2026-09-23: "add a tab for agents" on the welcome card) goes
+// through the same filter. Its surface is frozen in lib/surfaces.mjs, so
+// today only the workshop plan sees the entry; promoting the tier there is
+// what shows it to everyone, and nothing here needs to change when it does.
+const quickActions: { label: string; icon: typeof Plus; action: 'new-serverspace' | 'agents'; surface: SurfaceId }[] = [
   { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace', surface: 'serverspaces' },
+  { label: 'Agents', icon: Bot, action: 'agents', surface: 'agents' },
 ];
 
 // What a brand-new account's very first screen looks like. A member of the
@@ -323,17 +329,20 @@ export default function Dashboard() {
           </section>
         )}
 
-        {/* The one quick action is step 1 of the docket. While the docket is
-            showing it to an account that has no serverspace, this is the same
-            button twice. */}
+        {/* Create Serverspace is step 1 of the docket. While the docket is
+            showing it to an account that has no serverspace, it would be the
+            same button twice, so it steps aside; the others stay. */}
         <div className="grid grid-cols-1 gap-3 mt-10">
           {quickActions
             .filter((a) => canOpenSurface(a.surface, plan))
-            .filter(() => !(firstRun.show && serverspaces.length === 0))
+            .filter((a) => !(a.action === 'new-serverspace' && firstRun.show && serverspaces.length === 0))
             .map((a) => (
               <button
                 key={a.label}
-                onClick={() => { if (a.action === 'new-serverspace') setShowNewServerspace(true); }}
+                onClick={() => {
+                  if (a.action === 'new-serverspace') setShowNewServerspace(true);
+                  else navigate('/app/agents');
+                }}
                 className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.14)] hover:border-[rgba(255,255,255,0.22)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
               >
                 <div className="w-8 h-8 rounded-md bg-[rgba(212,160,84,0.1)] group-hover:bg-[rgba(212,160,84,0.15)] flex items-center justify-center transition-colors">
