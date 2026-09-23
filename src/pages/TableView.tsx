@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare } from 'lucide-react';
+import { Plus, Trash2, X, ArrowUp, ArrowDown, Type, Hash, Calendar, CheckSquare, Download, Search, Loader2 } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
@@ -18,23 +18,22 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAutosave } from '@/hooks/useUnsavedGuard';
 import { saveStatusLine } from '@/lib/draft-store';
 
-type ColumnType = 'text' | 'number' | 'date' | 'checkbox';
+import {
+  coerce,
+  exportTable,
+  gridToTable,
+  isMultiCellPaste,
+  parseClipboardGrid,
+  type ColumnType,
+  type TableColumn,
+  type TableContent,
+  type TableRow,
+} from '@/lib/table-sheets';
+import { downloadBlob, safeFilename } from '@/lib/export-page';
 
-interface TableColumn {
-  id: string;
-  name: string;
-  type: ColumnType;
-}
-
-interface TableRow {
-  id: string;
-  cells: Record<string, string | number | boolean | null>;
-}
-
-interface TableContent {
-  columns: TableColumn[];
-  rows: TableRow[];
-}
+// A long sheet (an imported lead list) renders a page of rows at a time: a
+// few thousand rows of live inputs would make every keystroke crawl.
+const ROWS_PER_PAGE = 200;
 
 const COLUMN_TYPES: { value: ColumnType; label: string; Icon: typeof Type }[] = [
   { value: 'text',     label: 'Text',     Icon: Type },
@@ -124,6 +123,10 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
   const [columns, setColumns] = useState<TableColumn[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
   const [sort, setSort] = useState<SortState | null>(null);
+  const [filter, setFilter] = useState('');
+  const [shownRows, setShownRows] = useState(ROWS_PER_PAGE);
+  const [exporting, setExporting] = useState<'xlsx' | 'csv' | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const hydrated = useRef(false);
 
@@ -254,11 +257,97 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
     });
   };
 
-  // Sort is display-only; the underlying rows array stays in insertion order.
+  // A block of cells pasted from Excel, Google Sheets or Numbers lands with
+  // its top-left corner in the cell it was pasted into, in the order the
+  // table is shown (so a sorted or filtered table fills the rows you see).
+  // Rows and columns are added when the block runs past the edge; every
+  // value is converted to the type of the column it lands in.
+  const pasteBlock = (rowId: string, colId: string, text: string) => {
+    const grid = parseClipboardGrid(text);
+    if (grid.length === 0) return;
+    const startRow = displayRows.findIndex((r) => r.id === rowId);
+    const startCol = columns.findIndex((c) => c.id === colId);
+    if (startRow < 0 || startCol < 0) return;
+
+    const width = Math.max(...grid.map((r) => r.length));
+    const nextCols = [...columns];
+    for (let c = nextCols.length; c < startCol + width; c++) {
+      nextCols.push({ id: crypto.randomUUID(), name: `Column ${c + 1}`, type: 'text' });
+    }
+    const byId = new Map(rows.map((r) => [r.id, { ...r, cells: { ...r.cells } }]));
+    const appended: TableRow[] = [];
+    grid.forEach((values, r) => {
+      const existing = displayRows[startRow + r];
+      let target = existing ? byId.get(existing.id) : undefined;
+      if (!target) {
+        target = { id: crypto.randomUUID(), cells: {} };
+        appended.push(target);
+      }
+      values.forEach((value, c) => {
+        const col = nextCols[startCol + c];
+        target.cells[col.id] = coerce(value, col.type);
+      });
+    });
+    const nextRows = [...rows.map((r) => byId.get(r.id)!), ...appended];
+    setColumns(nextCols);
+    setRows(nextRows);
+    void persist(nextCols, nextRows);
+  };
+
+  const pasteAsRows = (text: string) => {
+    const grid = parseClipboardGrid(text);
+    if (grid.length === 0) return;
+    if (rows.length === 0) {
+      const table = gridToTable(grid);
+      if (!table) return;
+      setColumns(table.content.columns);
+      setRows(table.content.rows);
+      setSort(null);
+      void persist(table.content.columns, table.content.rows);
+      return;
+    }
+    const appended: TableRow[] = grid.map((values) => {
+      const cells: TableRow['cells'] = {};
+      columns.forEach((col, c) => {
+        const v = coerce(values[c], col.type);
+        if (v !== null) cells[col.id] = v;
+      });
+      return { id: crypto.randomUUID(), cells };
+    });
+    const next = [...rows, ...appended];
+    setRows(next);
+    void persist(columns, next);
+  };
+
+  const handleExport = async (format: 'xlsx' | 'csv') => {
+    if (exporting) return;
+    setExporting(format);
+    setExportError(null);
+    try {
+      const blob = await exportTable({ columns, rows }, title || 'Untitled Table', format);
+      downloadBlob(blob, safeFilename(title || 'Untitled Table', `.${format}`));
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Export failed');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  useEffect(() => { setShownRows(ROWS_PER_PAGE); }, [filter, id]);
+
+  // Sort and filter are display-only; the underlying rows array stays in
+  // insertion order and is what is saved.
   const displayRows = useMemo(() => {
-    if (!sort) return rows;
+    const needle = filter.trim().toLowerCase();
+    const visible = needle
+      ? rows.filter((r) => columns.some((c) => {
+          const v = r.cells[c.id];
+          return v !== null && v !== undefined && String(v).toLowerCase().includes(needle);
+        }))
+      : rows;
+    if (!sort) return visible;
     const col = columns.find((c) => c.id === sort.columnId);
-    if (!col) return rows;
+    if (!col) return visible;
     const sign = sort.direction === 'asc' ? 1 : -1;
     const cmp = (a: TableRow, b: TableRow) => {
       const av = a.cells[col.id];
@@ -275,8 +364,10 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
       // text + date: lexicographic on string form (date is YYYY-MM-DD so it sorts correctly).
       return sign * String(av).localeCompare(String(bv));
     };
-    return [...rows].sort(cmp);
-  }, [rows, columns, sort]);
+    return [...visible].sort(cmp);
+  }, [rows, columns, sort, filter]);
+
+  const pageRows = displayRows.length > shownRows ? displayRows.slice(0, shownRows) : displayRows;
 
   const handleCoverChange = async (url: string | null) => {
     if (!id) return;
@@ -308,12 +399,73 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
               onBlur={handleTitleBlur}
               className="text-2xl font-bold text-[#f5f2ed] outline-none mb-1 empty:before:content-['Untitled_Table'] empty:before:text-white/30"
             />
-            <p className="text-[11px] text-white/30 mb-6">
+            <p className="text-[11px] text-white/30 mb-4">
               {saveStatusLine(saver.status)
-                ?? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} · ${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`}
+                ?? `${rows.length.toLocaleString()} ${rows.length === 1 ? 'row' : 'rows'} · ${columns.length} ${columns.length === 1 ? 'column' : 'columns'}`}
             </p>
 
-            <div className="overflow-x-auto rounded-lg border border-[rgba(255,255,255,0.22)]">
+            {/* Find a row, and take the table away as a spreadsheet. Pasting
+                a block of cells from Excel or Google Sheets into any cell
+                fills the grid from that cell. */}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <label className="flex items-center gap-2 flex-1 min-w-[180px] max-w-sm px-2.5 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] focus-within:border-[#e8b84a]/40">
+                <Search size={12} className="text-white/40 shrink-0" />
+                <input
+                  type="text"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter rows"
+                  className="bg-transparent outline-none text-[12px] text-[#f5f1e8] placeholder:text-white/30 flex-1 min-w-0"
+                />
+                {filter && (
+                  <button onClick={() => setFilter('')} className="text-white/40 hover:text-white" title="Clear filter">
+                    <X size={11} />
+                  </button>
+                )}
+              </label>
+              {filter && (
+                <span className="text-[11px] text-white/45">
+                  {displayRows.length.toLocaleString()} of {rows.length.toLocaleString()} rows
+                </span>
+              )}
+              <div className="flex items-center gap-1.5 ml-auto">
+                {(['xlsx', 'csv'] as const).map((format) => (
+                  <button
+                    key={format}
+                    onClick={() => void handleExport(format)}
+                    disabled={!!exporting}
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] text-[12px] text-white/70 hover:text-white hover:bg-[rgba(255,255,255,0.05)] transition-colors disabled:opacity-40"
+                    title={format === 'xlsx'
+                      ? 'Download as an Excel workbook (opens in Excel, Google Sheets, Numbers)'
+                      : 'Download as CSV'}
+                  >
+                    {exporting === format ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                    {format === 'xlsx' ? 'Excel' : 'CSV'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {exportError && <p className="text-[12px] text-red-300 mb-3">{exportError}</p>}
+
+            <div
+              className="overflow-x-auto rounded-lg border border-[rgba(255,255,255,0.22)] outline-none"
+              tabIndex={-1}
+              // The grid is for cells, not for moving the card: without this
+              // a click on it starts a card drag, which keeps it from taking
+              // focus, and a paste with no cell focused would go nowhere.
+              data-card-inert
+              onPaste={(e) => {
+                // A paste inside a cell is the cell's (see Cell). This is a
+                // paste with no cell focused: into an empty table it becomes
+                // the table, headers and all; otherwise it adds rows.
+                const t = e.target as HTMLElement;
+                if (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.isContentEditable) return;
+                const text = e.clipboardData.getData('text/plain');
+                if (!text || !isMultiCellPaste(text)) return;
+                e.preventDefault();
+                pasteAsRows(text);
+              }}
+            >
               <table className="w-full text-[13px] text-[#f5f1e8] border-collapse">
                 <thead>
                   <tr className="bg-[rgba(255,255,255,0.06)]">
@@ -343,10 +495,12 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
                   {displayRows.length === 0 ? (
                     <tr>
                       <td colSpan={columns.length + 1} className="px-3 py-8 text-center text-[12px] text-white/40">
-                        No rows yet. Click <span className="text-[#e8b84a]">Add row</span> below to start.
+                        {filter
+                          ? 'No rows match the filter.'
+                          : <>No rows yet. Click <span className="text-[#e8b84a]">Add row</span> below to start — or click here and paste cells copied from Excel or Google Sheets (their first row becomes the headers).</>}
                       </td>
                     </tr>
-                  ) : displayRows.map((row) => (
+                  ) : pageRows.map((row) => (
                     <tr key={row.id} className="border-b border-[rgba(255,255,255,0.18)] hover:bg-[rgba(255,255,255,0.04)] group">
                       {columns.map((col) => (
                         <td key={col.id} className="border-r border-[rgba(255,255,255,0.18)] last:border-r-0 align-top">
@@ -355,6 +509,7 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
                             value={row.cells[col.id] ?? null}
                             onChangeLocal={(v) => setCellLocal(row.id, col.id, v)}
                             onPersist={(v) => persistCell(row.id, col.id, v)}
+                            onPasteBlock={(text) => pasteBlock(row.id, col.id, text)}
                           />
                         </td>
                       ))}
@@ -372,6 +527,15 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
                 </tbody>
               </table>
             </div>
+
+            {displayRows.length > pageRows.length && (
+              <button
+                onClick={() => setShownRows((n) => n + ROWS_PER_PAGE)}
+                className="mt-3 w-full px-3 py-2 rounded-lg text-[12px] text-white/60 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+              >
+                Showing {pageRows.length.toLocaleString()} of {displayRows.length.toLocaleString()} rows — show {Math.min(ROWS_PER_PAGE, displayRows.length - pageRows.length).toLocaleString()} more
+              </button>
+            )}
 
             <button
               onClick={addRow}
@@ -492,9 +656,20 @@ interface CellProps {
   value: string | number | boolean | null;
   onChangeLocal: (v: string | number | boolean | null) => void;
   onPersist: (v: string | number | boolean | null) => void;
+  /** A block of cells (tab/newline separated) pasted into this cell. */
+  onPasteBlock: (text: string) => void;
 }
 
-function Cell({ type, value, onChangeLocal, onPersist }: CellProps) {
+function Cell({ type, value, onChangeLocal, onPersist, onPasteBlock }: CellProps) {
+  // One value pastes into the cell as usual; a block copied from a
+  // spreadsheet fills the grid from here instead of landing as one string.
+  const onPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text || !isMultiCellPaste(text)) return;
+    e.preventDefault();
+    onPasteBlock(text);
+  };
+
   if (type === 'checkbox') {
     return (
       <div className="px-3 py-2 flex items-center">
@@ -515,6 +690,7 @@ function Cell({ type, value, onChangeLocal, onPersist }: CellProps) {
         type="number"
         value={display}
         onChange={(e) => onChangeLocal(e.target.value)}
+        onPaste={onPaste}
         onBlur={(e) => {
           const v = e.target.value;
           onPersist(v === '' ? null : Number(v));
@@ -531,6 +707,7 @@ function Cell({ type, value, onChangeLocal, onPersist }: CellProps) {
         type="date"
         value={display}
         onChange={(e) => onChangeLocal(e.target.value)}
+        onPaste={onPaste}
         onBlur={(e) => onPersist(e.target.value || null)}
         className="w-full px-3 py-2 bg-transparent outline-none text-[#f5f1e8] focus:bg-[rgba(232,184,74,0.04)]"
       />
@@ -544,6 +721,7 @@ function Cell({ type, value, onChangeLocal, onPersist }: CellProps) {
       type="text"
       value={display}
       onChange={(e) => onChangeLocal(e.target.value)}
+      onPaste={onPaste}
       onBlur={(e) => onPersist(e.target.value)}
       className="w-full px-3 py-2 bg-transparent outline-none text-[#f5f1e8] focus:bg-[rgba(232,184,74,0.04)]"
     />

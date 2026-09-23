@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight, Pencil } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight, Pencil, FileSpreadsheet } from 'lucide-react';
+import { SPREADSHEET_ACCEPT } from '@/lib/table-sheets';
+import { importSpreadsheetAsTables } from '@/lib/table-import';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -449,6 +451,11 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
   const invalidate = useContentInvalidate();
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  // Tables only: bring in an Excel / OpenDocument / CSV file, one table per
+  // sheet. Google Sheets: File → Download → Microsoft Excel, then import.
+  const importInput = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState<string | null>(null);
 
   // Multi-select + move-to-matter (re-file mis-filed items into the right
   // matter/sub-matter). Move reassigns space_id — never copies — so the
@@ -476,6 +483,26 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create');
       setCreating(false);
+    }
+  };
+
+  const handleImport = async (file: File | undefined) => {
+    if (!file || importing) return;
+    setImporting(true);
+    setCreateError(null);
+    setImportNote(null);
+    try {
+      const { ids, summary, truncated } = await importSpreadsheetAsTables(file, file.name, space);
+      invalidate.invalidateList(space, contentType);
+      // One table: open it. Several (a workbook's sheets): stay on the list,
+      // where they now all sit, and say what came in.
+      if (ids.length === 1 && !truncated) navigate(`/app/${route}/${ids[0]}`);
+      else setImportNote(summary);
+    } catch (e) {
+      setCreateError(e instanceof Error ? `Could not read that file: ${e.message}` : 'Could not read that file');
+    } finally {
+      setImporting(false);
+      if (importInput.current) importInput.current.value = '';
     }
   };
 
@@ -528,17 +555,42 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
             </>
           )}
         </div>
-        <button
-          onClick={handleCreate}
-          disabled={creating}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40 shrink-0"
-        >
-          <Plus size={12} strokeWidth={2} />
-          {creating ? 'Creating…' : `New ${verb}`}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {tab === 'Tables' && (
+            <>
+              <input
+                ref={importInput}
+                type="file"
+                accept={SPREADSHEET_ACCEPT}
+                className="hidden"
+                onChange={(e) => void handleImport(e.target.files?.[0])}
+              />
+              <button
+                onClick={() => importInput.current?.click()}
+                disabled={importing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+                title="Excel (.xlsx, .xls), OpenDocument (.ods), CSV or TSV — one table per sheet. From Google Sheets: File → Download → Microsoft Excel."
+              >
+                <FileSpreadsheet size={12} strokeWidth={2} />
+                {importing ? 'Importing…' : 'Import spreadsheet'}
+              </button>
+            </>
+          )}
+          <button
+            onClick={handleCreate}
+            disabled={creating}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+          >
+            <Plus size={12} strokeWidth={2} />
+            {creating ? 'Creating…' : `New ${verb}`}
+          </button>
+        </div>
       </div>
       {(createError || moveError) && (
         <p className="text-[12px] text-red-300 mb-3">{createError || moveError}</p>
+      )}
+      {importNote && (
+        <p className="text-[12px] text-white/60 mb-3">{importNote}</p>
       )}
       {isLoading && (
         <p className="text-center text-[12px] text-white/40 py-8">Loading…</p>
@@ -554,6 +606,13 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
           <p className="text-[13px] text-white/50">
             No {label} yet. Click <span className="text-[#e8b84a]">New {verb}</span> to create one.
           </p>
+          {tab === 'Tables' && (
+            <p className="text-[12px] text-white/40 mt-2 max-w-md">
+              Or bring one in: <span className="text-[#e8b84a]">Import spreadsheet</span> takes Excel, CSV and
+              OpenDocument files. From Google Sheets, use File → Download → Microsoft Excel, or copy the cells and
+              paste them into a new table.
+            </p>
+          )}
         </div>
       )}
       {!isLoading && items.length > 0 && (
