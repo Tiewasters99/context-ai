@@ -561,6 +561,8 @@ export default function TableView({ id: propId, embedded = false, onClose }: Emb
         expanded={coverExpanded}
         onExpandChange={setCoverExpanded}
         persistKey={id ? `cs.cover.${id}` : undefined}
+        inherit
+        matterId={item?.space_type === 'matterspace' ? item.space_id : null}
       />
 
       <div ref={cardRef} className="max-w-6xl mx-auto px-8 pt-0 pb-8 rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] my-8 cursor-grab select-none" style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>

@@ -205,8 +205,9 @@ test('the tier keys in the app are the tier keys in the migration', () => {
 
 test('the dashboard default and the plate categories are inside the core set', () => {
   const core = JSON.parse(readFileSync(join(ROOT, 'public/templates/core-covers.json'), 'utf8'));
-  const dash = readFileSync(join(ROOT, 'src/pages/Dashboard.tsx'), 'utf8');
+  // The default moved out of the Dashboard when it became every page's default.
+  const dash = readFileSync(join(ROOT, 'src/lib/default-cover.ts'), 'utf8');
   const m = dash.match(/DEFAULT_DASHBOARD_COVER\s*=\s*'([^']+)'/);
-  assert.ok(m, 'Dashboard no longer declares DEFAULT_DASHBOARD_COVER');
+  assert.ok(m, 'lib/default-cover.ts no longer declares DEFAULT_DASHBOARD_COVER');
   assert.ok(core.core.includes(m[1]), `dashboard default is not a core cover: ${m[1]}`);
 });

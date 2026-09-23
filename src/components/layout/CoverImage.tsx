@@ -12,12 +12,21 @@
 //
 // Click the banner to expand it to a full-viewport view; click again
 // (or press Esc) to collapse. Expansion is local state, not persisted.
+//
+// Inheritance (`inherit`): a surface with no cover of its own shows the one
+// its matter hands down, else the account's default cover — the rule is
+// written out in lib/default-cover.ts. A borrowed cover says so in its
+// controls: "Own cover here" gives THIS surface its own, and there is nothing
+// of its own to remove. "Hide covers everywhere" is on every such banner,
+// and while covers are off each banner is a slim strip that turns them on.
 
 import { useEffect, useState, useRef } from 'react';
 import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical, LayoutGrid } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import { useCoverLibrary } from '@/hooks/useCoverLibrary';
+import { useMatterCover } from '@/hooks/useMatterCover';
+import { setCoversOff, setDefaultCover, useCoversOff, useDefaultCover } from '@/lib/default-cover';
 
 interface CoverImageProps {
   coverUrl?: string | null;
@@ -31,6 +40,16 @@ interface CoverImageProps {
   // Optional storage key for the vertical reposition value of the
   // expanded cover (0–100). Without it, reposition is session-only.
   persistKey?: string;
+  // With no cover of its own, show the matter's (see `matterId`) or the
+  // account default. Off, the surface shows only its own cover, as before.
+  inherit?: boolean;
+  // The matter whose cover this surface inherits: an item's matter, or a
+  // sub-matter's parent. Absent → straight to the default.
+  matterId?: string | null;
+  // This banner IS the default (the welcome page): it shows the default, and
+  // changing it changes every page that inherits. `coverUrl` and
+  // `onCoverChange` are not used.
+  isDefault?: boolean;
 }
 
 export default function CoverImage({
@@ -40,6 +59,9 @@ export default function CoverImage({
   expanded: expandedProp,
   onExpandChange,
   persistKey,
+  inherit = false,
+  matterId,
+  isDefault = false,
 }: CoverImageProps) {
   const [isHovered, setIsHovered] = useState(false);
   // Touch has no hover-out: a tap toggles the controls instead, a tap
@@ -68,7 +90,17 @@ export default function CoverImage({
       }
     } catch {}
   }, [persistKey]);
-  const cover = coverUrl ?? '';
+  const defaultCover = useDefaultCover();
+  const coversOff = useCoversOff();
+  const matterCover = useMatterCover(inherit && !coverUrl ? matterId : null);
+  const own = isDefault ? defaultCover : coverUrl ?? null;
+  const borrowed = !isDefault && inherit && !own ? matterCover ?? defaultCover : null;
+  const inherited = !own && !!borrowed;
+  const cover = coversOff ? '' : own ?? borrowed ?? '';
+  const changeOwn = (url: string | null) => {
+    if (isDefault) setDefaultCover(url);
+    else onCoverChange?.(url);
+  };
 
   const isGradient = cover.startsWith('linear-gradient');
   const hasImage = cover && !isGradient;
@@ -146,12 +178,21 @@ export default function CoverImage({
     return () => window.removeEventListener('keydown', onKey);
   }, [expanded]);
 
-  const handleSelect = (value: string) => {
-    onCoverChange?.(value);
+  // `everywhere`: the picker's "Use on every page" — sets the default
+  // instead of this surface's own cover.
+  const handleSelect = (value: string, everywhere = false) => {
+    if (everywhere && !isDefault) setDefaultCover(value);
+    else changeOwn(value);
+    if (coversOff) setCoversOff(false);
     setShowPicker(false);
   };
   const handleRemove = () => {
-    onCoverChange?.(null);
+    changeOwn(null);
+    setShowPicker(false);
+    setExpanded(false);
+  };
+  const hideAll = () => {
+    setCoversOff(true);
     setShowPicker(false);
     setExpanded(false);
   };
@@ -159,6 +200,26 @@ export default function CoverImage({
   // No cover → a slim, discoverable bar with a centered "Add cover"
   // button when editable. Subtle until hovered, like Notion.
   if (!hasCover) {
+    // Covers switched off: one quiet strip that says so and turns them back
+    // on. Every cover that was set is kept, only not shown.
+    if (coversOff) {
+      return (
+        <div className="relative w-full">
+          {editable ? (
+            <button
+              onClick={() => setCoversOff(false)}
+              className="w-full h-8 flex items-center justify-center gap-2 text-[11px] text-white/25 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.04)] transition-colors"
+              title="Covers are hidden on every page. Click to show them again."
+            >
+              <ImageIcon size={12} strokeWidth={1.75} />
+              <span>Show covers</span>
+            </button>
+          ) : (
+            <div className="h-2" />
+          )}
+        </div>
+      );
+    }
     return (
       <div className="relative w-full">
         {editable ? (
@@ -177,6 +238,7 @@ export default function CoverImage({
                 onRemove={handleRemove}
                 onClose={() => setShowPicker(false)}
                 hasCover={false}
+                offerEverywhere={inherit && !isDefault}
               />
             )}
           </>
@@ -234,18 +296,39 @@ export default function CoverImage({
                 >
                   <Maximize2 size={12} /> Expand
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setTouchControls(false); handleRemove(); }}
-                  className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
-                >
-                  Hide cover
-                </button>
+                {!inherited && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setTouchControls(false); handleRemove(); }}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
+                    title={isDefault
+                      ? 'Remove the default cover. Pages and matters with a cover of their own keep it.'
+                      : inherit
+                        ? 'Remove this cover. The matter’s cover, or the default, shows here instead.'
+                        : 'Remove this cover'}
+                  >
+                    {isDefault || !inherit ? 'Hide cover' : 'Remove this cover'}
+                  </button>
+                )}
                 <button
                   onClick={(e) => { e.stopPropagation(); setTouchControls(false); setShowPicker(true); }}
                   className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
+                  title={isDefault
+                    ? 'Change the default cover: every page without a cover of its own shows it'
+                    : inherited
+                      ? 'Give this page its own cover (everywhere else keeps the one it has)'
+                      : 'Change this cover'}
                 >
-                  Change cover
+                  {inherited ? 'Own cover here' : 'Change cover'}
                 </button>
+                {(inherit || isDefault) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setTouchControls(false); hideAll(); }}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
+                    title="Turn covers off on every page: just the dark background. Nothing is deleted; “Show covers” brings them all back."
+                  >
+                    Hide covers everywhere
+                  </button>
+                )}
                 <button
                   onClick={(e) => { e.stopPropagation(); setTouchControls(false); setIsHovered(false); }}
                   className="px-2.5 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
@@ -264,7 +347,8 @@ export default function CoverImage({
             onSelect={handleSelect}
             onRemove={handleRemove}
             onClose={() => setShowPicker(false)}
-            hasCover={true}
+            hasCover={!inherited}
+            offerEverywhere={inherit && !isDefault}
           />
         )}
       </div>}
@@ -297,13 +381,18 @@ export default function CoverImage({
 
 
 interface CoverPickerProps {
-  onSelect: (value: string) => void;
+  onSelect: (value: string, everywhere?: boolean) => void;
   onRemove: () => void;
   onClose: () => void;
   hasCover: boolean;
+  // Offer "Use on every page": the pick becomes the default cover rather
+  // than this surface's own.
+  offerEverywhere?: boolean;
 }
 
-function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps) {
+function CoverPicker({ onSelect: pick, onRemove, onClose, hasCover, offerEverywhere = false }: CoverPickerProps) {
+  const [everywhere, setEverywhere] = useState(false);
+  const onSelect = (value: string) => pick(value, offerEverywhere && everywhere);
   // The eight on show before "Browse all covers" is opened. Core for every
   // account but workshop, which keeps the eight it has always had. Empty
   // while the list is loading — see lib/covers.ts.
@@ -369,6 +458,22 @@ function CoverPicker({ onSelect, onRemove, onClose, hasCover }: CoverPickerProps
             <X size={16} />
           </button>
         </div>
+        {offerEverywhere && (
+          <label className="flex items-start gap-2 mb-4 text-[12px] text-white/70 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={everywhere}
+              onChange={(e) => setEverywhere(e.target.checked)}
+              className="mt-0.5 accent-[#e8b84a]"
+            />
+            <span>
+              Use on every page
+              <span className="block text-[11px] text-white/40">
+                Makes it the default cover. Unticked, it is this page’s own cover only.
+              </span>
+            </span>
+          </label>
+        )}
 
         {/* Upload */}
         <div className="mb-5">
