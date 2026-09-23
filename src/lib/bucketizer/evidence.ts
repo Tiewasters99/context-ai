@@ -115,7 +115,7 @@ export async function fetchEvidenceForNode(nodeId: string): Promise<PagedRows<No
         witness_name: documents?.witness_name ?? null,
       };
       const cite = buildCite(passages ?? { id: row.passage_id }, doc);
-      return { row, documentTitle: doc.title, cite, readerUrl: readerUrl(doc.id, cite.page) };
+      return { row, documentTitle: doc.title, cite, readerUrl: readerUrl(doc.id, cite.readerPage) };
     }),
   };
 }

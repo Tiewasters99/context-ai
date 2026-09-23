@@ -20,6 +20,7 @@
 
 import { MAX_QUOTE_CHARS, MIN_QUOTE_CHARS } from './quote';
 import { buildRepairContent } from '@/lib/llm/contract';
+import { citePage, type CitePageMetadata } from '../../../lib/cite-page.mjs';
 
 export const EVIDENCE_TOOL_NAME = 'submit_supporting_passages';
 export const EVIDENCE_TOOL_DESCRIPTION =
@@ -71,8 +72,11 @@ export interface EvidencePromptPassage {
   id: string;
   text: string;
   page_start?: number | null;
+  page_end?: number | null;
   line_start?: number | null;
   line_end?: number | null;
+  /** Printed-page keys (lib/cite-page.mjs), when the caller selected them. */
+  metadata?: CitePageMetadata | null;
 }
 
 export interface EvidencePromptNode {
@@ -127,7 +131,7 @@ export function buildEvidenceUserContent(
 }
 
 function coordinates(p: EvidencePromptPassage): string {
-  const page = Number(p.page_start);
+  const page = Number(citePage(p).pageStart);
   if (!Number.isFinite(page) || page <= 0) return '';
   const l1 = Number(p.line_start);
   if (!Number.isFinite(l1) || l1 <= 0) return ` (p. ${page})`;
