@@ -128,7 +128,7 @@ export default function ReaderSidebar({
             {animations.length === 0 && !addingAnimation && (
               <p className="p-2 text-[11px] leading-relaxed text-white/40">
                 Nothing is animated yet. A clip filed in this matter can be laid over a picture
-                in the book, so it comes alive when a reader taps it.
+                in the document, so it comes alive when a reader taps it.
               </p>
             )}
 
