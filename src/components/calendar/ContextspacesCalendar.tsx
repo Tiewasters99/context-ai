@@ -376,7 +376,10 @@ export default function ContextspacesCalendar({
     : 'Agenda';
 
   return (
-    <div className="flex flex-col gap-3">
+    // Nearly every pixel of a calendar is a day button. `data-card-drag-
+    // through` lets the card it sits in be moved by a press-and-drag that
+    // starts on one, and pinned by a right-click (useDraggableResizable).
+    <div className="flex flex-col gap-3" data-card-drag-through>
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-0.5">
