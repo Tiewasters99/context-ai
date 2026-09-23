@@ -93,7 +93,7 @@ export async function readSpreadsheet(file: Blob, fileName: string): Promise<Imp
   // keeps its accents, and `raw` stops SheetJS from guessing: "00123" stays
   // a zip code instead of becoming 123. The column types are decided below.
   const workbook = ext === 'csv' || ext === 'tsv'
-    ? XLSX.read(await file.text(), { type: 'string', raw: true, dense: true, FS: ext === 'tsv' ? '\t' : undefined })
+    ? XLSX.read(await decodeText(file), { type: 'string', raw: true, dense: true, FS: ext === 'tsv' ? '\t' : undefined })
     : XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true, dense: true });
 
   const out: ImportedSheet[] = [];
@@ -115,6 +115,19 @@ export async function readSpreadsheet(file: Blob, fileName: string): Promise<Imp
     });
   }
   return out;
+}
+
+// A CSV is UTF-8 unless it came from Excel on Windows ("CSV (Comma
+// delimited)"), which writes the Windows-1252 code page: read as UTF-8,
+// "Renée" would arrive as "Ren�e". Strict UTF-8 first; if the bytes are
+// not valid UTF-8, they are Windows-1252.
+async function decodeText(file: Blob): Promise<string> {
+  const bytes = await file.arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder('windows-1252').decode(bytes);
+  }
 }
 
 /**
