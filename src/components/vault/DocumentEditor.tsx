@@ -1,5 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { X, Save, Loader2, FileText, Lock, CheckCircle, AlertCircle, Download } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { X, Save, Loader2, FileText, Lock, CheckCircle, AlertCircle, Download, Table } from 'lucide-react';
+import { isSpreadsheetName } from '@/lib/table-sheets';
+import { importSpreadsheetAsTables } from '@/lib/table-import';
 import type { VaultFile } from '@/lib/vault-types';
 import { extractText } from '@/lib/extract';
 import { downloadVaultDocument, saveVaultDocumentText } from '@/lib/vault-persist';
@@ -191,6 +194,36 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
     }
   }, [canDownload, persistent, file.storagePath, file.file, file.name]);
 
+  // A spreadsheet filed in a matter (by an upload, FileSaver, or an agent
+  // over the connector) can be worked on here as a Table: every sheet
+  // becomes a table in the same matter, the original stays filed untouched,
+  // and the table downloads again as .xlsx or .csv.
+  const navigate = useNavigate();
+  const [tabling, setTabling] = useState(false);
+  const [tableError, setTableError] = useState<string | null>(null);
+  const canOpenAsTable =
+    persistent && !!file.storagePath && !!file.matterspace_id && isSpreadsheetName(file.name);
+  const handleOpenAsTable = useCallback(async () => {
+    if (!canOpenAsTable || tabling || !file.storagePath || !file.matterspace_id) return;
+    setTabling(true);
+    setTableError(null);
+    try {
+      const blob = await downloadVaultDocument(file.storagePath);
+      const { ids } = await importSpreadsheetAsTables(blob, file.name, {
+        spaceId: file.matterspace_id,
+        spaceType: 'matterspace',
+      });
+      if (ids.length === 0) throw new Error('that file has no cells with anything in them');
+      onClose();
+      // One sheet opens straight away; a workbook opens the matter's Tables
+      // tab, where each sheet is now its own table.
+      navigate(ids.length === 1 ? `/app/table/${ids[0]}` : `/app/matterspace/${file.matterspace_id}?tab=Tables`);
+    } catch (err) {
+      setTableError(err instanceof Error ? err.message : 'Could not open as a table');
+      setTabling(false);
+    }
+  }, [canOpenAsTable, tabling, file.storagePath, file.matterspace_id, file.name, onClose, navigate]);
+
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 sm:p-8 animate-[fadeIn_0.15s_ease-out]"
@@ -232,6 +265,19 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
             >
               {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
               {saving ? 'Saving…' : 'Save'}
+            </button>
+          )}
+          {canOpenAsTable && (
+            <button
+              onClick={() => void handleOpenAsTable()}
+              disabled={tabling}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[#e8b84a] hover:bg-[#e8b84a]/20 transition-colors disabled:opacity-40"
+              title={tableError
+                ? `Could not open as a table: ${tableError}`
+                : 'Work on this spreadsheet in Contextspaces: sort, filter, edit, paste, and download it again as Excel or CSV. The original stays filed as it is.'}
+            >
+              {tabling ? <Loader2 size={13} className="animate-spin" /> : tableError ? <AlertCircle size={13} /> : <Table size={13} />}
+              {tabling ? 'Opening…' : 'Open as table'}
             </button>
           )}
           <button
