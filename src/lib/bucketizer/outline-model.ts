@@ -350,7 +350,7 @@ export function buildOutline(input: BuildOutlineInput): OutlineModel {
       rationale: row.rationale,
       status: row.status === 'confirmed' ? 'confirmed' : 'proposed',
       cite,
-      readerUrl: readerUrl(doc.id, cite.page),
+      readerUrl: readerUrl(doc.id, cite.readerPage),
     };
   };
 

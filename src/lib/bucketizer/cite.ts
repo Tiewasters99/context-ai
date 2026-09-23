@@ -25,6 +25,8 @@
 // citation, because it will be typed into a brief. So each tier states its own
 // limit on its own line, and no line number is ever synthesized.
 
+import { citePage, type CitePageMetadata } from '../../../lib/cite-page.mjs';
+
 export type CiteTier =
   /** page:line, from line numbers the chunker read off the page. */
   | 'page_line'
@@ -44,7 +46,11 @@ export interface CitePassage {
   line_start?: number | null;
   line_end?: number | null;
   witness_name?: string | null;
-  metadata?: { line_numbers?: string | null } | null;
+  // The page keys lib/cite-page.mjs reads (a transcript's printed page, a
+  // Westlaw opinion's star page) beside the line-numbering flag.
+  // bluebook_cite: a Westlaw opinion's full cite, pinpoint included
+  // (lib/bluebook.mjs, written with its star pages).
+  metadata?: (CitePageMetadata & { line_numbers?: string | null; bluebook_cite?: string | null }) | null;
 }
 
 export interface CiteDocument {
@@ -61,6 +67,8 @@ export interface Cite {
   /** One sentence naming this cite's limit, or null when it has none. */
   caveat: string | null;
   page: number | null;
+  /** The page the Reader opens (the file's own page), which a printed page is not. */
+  readerPage: number | null;
   lineStart: number | null;
   lineEnd: number | null;
   witness: string | null;
@@ -171,8 +179,13 @@ export const PDF_INDEX_PAGE_NOTE =
 export function buildCite(passage: CitePassage, doc: CiteDocument): Cite {
   const transcript = isTranscript(passage, doc);
   const witness = witnessOf(passage, doc);
-  const pageStart = num(passage.page_start) ?? num(passage.page_end);
-  const pageEnd = num(passage.page_end) ?? pageStart;
+  // Which page to cite is one rule shared with the MCP connector
+  // (lib/cite-page.mjs): the reporter's printed page where one was measured —
+  // a transcript's, or a Westlaw opinion's star page — else the file's page.
+  const where = citePage(passage);
+  const pageStart = num(where.pageStart) ?? num(where.pageEnd);
+  const pageEnd = num(where.pageEnd) ?? pageStart;
+  const readerPage = num(where.readerPage) ?? pageStart;
   const lineStart = num(passage.line_start);
   const lineEnd = num(passage.line_end) ?? lineStart;
   const inferred = passage.metadata?.line_numbers === 'inferred';
@@ -184,7 +197,7 @@ export function buildCite(passage: CitePassage, doc: CiteDocument): Cite {
       text: who,
       tier: 'no_page',
       caveat: NO_PAGE_CAVEAT,
-      page: null, lineStart: null, lineEnd: null, witness, isTranscript: transcript,
+      page: null, readerPage: null, lineStart: null, lineEnd: null, witness, isTranscript: transcript,
     };
   }
 
@@ -195,8 +208,8 @@ export function buildCite(passage: CitePassage, doc: CiteDocument): Cite {
     return {
       text: `${who} ${pageStart}:${lines}`,
       tier: inferred ? 'page_line_inferred' : 'page_line',
-      caveat: inferred ? INFERRED_LINES_CAVEAT : null,
-      page: pageStart, lineStart, lineEnd, witness, isTranscript: true,
+      caveat: where.caveat ?? (inferred ? INFERRED_LINES_CAVEAT : null),
+      page: pageStart, readerPage, lineStart, lineEnd, witness, isTranscript: true,
     };
   }
 
@@ -204,18 +217,21 @@ export function buildCite(passage: CitePassage, doc: CiteDocument): Cite {
     return {
       text: `${who}, p. ${pageStart}`,
       tier: 'page_only',
-      caveat: PAGE_ONLY_CAVEAT,
-      page: pageStart, lineStart: null, lineEnd: null, witness, isTranscript: true,
+      caveat: where.caveat ?? PAGE_ONLY_CAVEAT,
+      page: pageStart, readerPage, lineStart: null, lineEnd: null, witness, isTranscript: true,
     };
   }
 
   const pages = pageEnd != null && pageEnd !== pageStart
     ? `pp. ${pageStart}–${pageEnd}`
     : `p. ${pageStart}`;
+  const bluebook = typeof passage.metadata?.bluebook_cite === 'string' && passage.metadata.bluebook_cite
+    ? passage.metadata.bluebook_cite
+    : null;
   return {
-    text: `${shortTitle(doc.title)}, ${pages}`,
+    text: bluebook ?? `${shortTitle(doc.title)}, ${pages}`,
     tier: 'document_page',
-    caveat: null,
-    page: pageStart, lineStart: null, lineEnd: null, witness, isTranscript: false,
+    caveat: where.caveat,
+    page: pageStart, readerPage, lineStart: null, lineEnd: null, witness, isTranscript: false,
   };
 }

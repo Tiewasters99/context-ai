@@ -103,7 +103,7 @@ false for prose, and false where `metadata.line_numbers === 'inferred'` (PR
 * `formatCitation` substitutes the printed page and appends the caveat in
   words, inside the citation string an outside model is handed:
   `Blake Dep., 15:4-11` where the page was read, `Blake Dep., 16 (PDF page;
-  the transcript's printed page was not confirmed)` where it was not.
+  the printed page was not confirmed)` where it was not.
 * `handleSearch` and `handleGrep` fetch `id, metadata` for **exactly the
   passage ids they are returning**, in ONE query, through the same client and
   the same access path the handler already uses — so RLS, the SecureSpace seal
