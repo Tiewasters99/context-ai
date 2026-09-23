@@ -150,6 +150,23 @@ export function useDraggableResizable(
       card.style.maxHeight = `calc(100vh - ${TOP_INSET}px)`;
       card.style.overflowY = 'auto';
     }
+    // The fixed inset above assumed the card starts just under the app
+    // header. It does not when a cover sits above it (180px, plus margin),
+    // so the bottom edge — and the two bottom corners — hung below the
+    // window, out of reach of a resize (Eden, 2026-09-23, a matter's
+    // Calendar tab). Measure where the card really starts, and measure again
+    // whenever the page above it changes height (a cover arriving) or the
+    // window does. A height the person chose by resizing is left alone.
+    const fitToViewport = () => {
+      if (!boundToViewport || card.style.height) return;
+      const top = Math.max(card.getBoundingClientRect().top, 0);
+      card.style.maxHeight = `${Math.max(240, Math.floor(window.innerHeight - top - 16))}px`;
+    };
+    const fitObserver = boundToViewport && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(() => fitToViewport())
+      : null;
+    if (fitObserver && card.parentElement) fitObserver.observe(card.parentElement);
+    if (boundToViewport) window.addEventListener('resize', fitToViewport);
 
     // Restore last-known position from a prior session. Position is
     // applied even when the card was left unpinned so users come back to
@@ -229,11 +246,45 @@ export function useDraggableResizable(
       t.isContentEditable || t.closest('[contenteditable="true"]') !== null ||
       t.closest('[data-card-inert]') !== null;
 
+    // `data-card-drag-through` marks a region that is nearly all buttons
+    // (a calendar: every day is one). Left alone by the rule above, such a
+    // card could be grabbed only by its thin top strip, and a right-click
+    // anywhere on it could not pin it. Inside the region a press on a button
+    // is still a click; a press that MOVES more than a few pixels becomes a
+    // drag of the card (and the click it would have ended in is dropped);
+    // a right-click pins. Form fields keep their own gestures.
+    const inDragThrough = (t: HTMLElement) =>
+      t.closest('[data-card-drag-through]') !== null &&
+      t.closest('[data-card-inert]') === null &&
+      !(t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
+        t.closest('input, textarea, select') !== null || t.isContentEditable);
+    const DRAG_THRESHOLD = 6;
+    let pendingDrag = false;
+    let swallowNextClickOnUp = false;
+    const swallowNextClick = () => {
+      const stop = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); };
+      card.addEventListener('click', stop, { capture: true, once: true });
+      // The click, when there is one, arrives in the same task as the
+      // pointerup. If the pointer was released somewhere else there is no
+      // click at all, and the trap must not wait for the next real one.
+      setTimeout(() => card.removeEventListener('click', stop, { capture: true }), 0);
+    };
+
     const onDown = (e: PointerEvent) => {
       if (isPinned.current) return; // pinned cards don't drag or resize
       if (isFullscreen.current) return;
       const t = e.target as HTMLElement;
-      if (t.tagName === 'SPAN' || isInteractive(t)) return;
+      if (t.tagName === 'SPAN' || isInteractive(t)) {
+        if (e.button !== 0 || !inDragThrough(t)) return;
+        // Maybe a click, maybe a drag: onMove decides. No preventDefault,
+        // so the button still gets its click if the pointer stays put.
+        startX = e.clientX;
+        startY = e.clientY;
+        const r = card.getBoundingClientRect();
+        origX = r.left; origY = r.top; origW = r.width; origH = r.height;
+        pendingDrag = true;
+        return;
+      }
 
       const edge = getEdge(e);
       startX = e.clientX;
@@ -263,6 +314,16 @@ export function useDraggableResizable(
     };
 
     const onMove = (e: PointerEvent) => {
+      if (pendingDrag) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < DRAG_THRESHOLD) return;
+        // It moved: this press was a drag of the card, not a click.
+        pendingDrag = false;
+        isDragging = true;
+        makeFixed();
+        card.style.cursor = 'grabbing';
+        window.getSelection()?.removeAllRanges();
+        swallowNextClickOnUp = true;
+      }
       if (isDragging) {
         card.style.left = (origX + e.clientX - startX) + 'px';
         card.style.top = (origY + e.clientY - startY) + 'px';
@@ -290,6 +351,9 @@ export function useDraggableResizable(
           height: card.style.height,
         });
       }
+      if (swallowNextClickOnUp) swallowNextClick();
+      swallowNextClickOnUp = false;
+      pendingDrag = false;
       isDragging = false;
       isResizing = false;
       if (!isFullscreen.current && !isPinned.current) card.style.cursor = 'grab';
@@ -301,7 +365,7 @@ export function useDraggableResizable(
     const onContextMenu = (e: MouseEvent) => {
       if (isFullscreen.current) return;
       const t = e.target as HTMLElement;
-      if (isInteractive(t)) return;
+      if (isInteractive(t) && !inDragThrough(t)) return;
       e.preventDefault();
       if (isPinned.current) unpin();
       else pin();
@@ -322,12 +386,16 @@ export function useDraggableResizable(
     card.addEventListener('contextmenu', onContextMenu);
     card.addEventListener('dblclick', onDoubleClick);
 
+    fitToViewport();
+
     return () => {
       card.removeEventListener('pointerdown', onDown);
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
       card.removeEventListener('contextmenu', onContextMenu);
       card.removeEventListener('dblclick', onDoubleClick);
+      fitObserver?.disconnect();
+      window.removeEventListener('resize', fitToViewport);
     };
   }, [storageKey, pin, unpin, readState, writeState, isMobile, boundToViewport]);
 
