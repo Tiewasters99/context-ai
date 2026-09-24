@@ -1,5 +1,8 @@
 import { supabase } from './supabase';
 import { fetchPaged } from './paged';
+import type { TextAnchor } from './text-anchor';
+
+export type { TextAnchor } from './text-anchor';
 
 export type AnnotationColor = 'gold' | 'green' | 'pink' | 'blue';
 
@@ -42,6 +45,13 @@ export type Annotation = {
   visibility: AnnotationVisibility;
   line_start: number | null;
   line_end: number | null;
+  /**
+   * Where the mark sits in a document without pages (Word, text, markdown,
+   * screenplay): offsets into the rendered text plus the quote, per
+   * migration 084. Null for PDF marks, which use `page` + `rects`. Absent
+   * (undefined) when the column does not exist yet.
+   */
+  text_anchor?: TextAnchor | null;
   created_at: string;
   updated_at: string;
   author: AnnotationAuthor | null;
@@ -79,10 +89,45 @@ export function annotationAuthorName(a: Annotation['author']): string {
 
 // profiles is referenced twice from document_annotations since migration 048
 // (user_id + addressee_user_id), so the author embed must name its FK.
-const ANNOTATION_SELECT =
+const ANNOTATION_SELECT_BASE =
   'id, document_id, user_id, page, color, note, anchor_text, rects, visibility, line_start, line_end, created_at, updated_at, ' +
   'author:profiles!document_annotations_user_id_fkey(id, display_name, email, avatar_url), ' +
   'links:annotation_links(id, target_document_id, target_page, target_line, label, target:documents(id, title))';
+const ANNOTATION_SELECT = ANNOTATION_SELECT_BASE.replace('line_end, ', 'line_end, text_anchor, ');
+
+// text_anchor arrives with migration 084. Until that migration is applied a
+// select naming the column fails outright (42703), which would take every PDF
+// highlight down with it. So the first such failure is remembered, the read
+// is retried without the column, and marks on documents without pages are
+// switched off (the reader asks textAnchorsAvailable()). PDF marks never
+// depend on the column.
+let textAnchorColumn: 'unknown' | 'present' | 'absent' = 'unknown';
+
+function isMissingTextAnchorColumn(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  const msg = (e?.message ?? (err instanceof Error ? err.message : String(err ?? ''))).toLowerCase();
+  // 42703 = Postgres "column … does not exist" (the select); PGRST204 =
+  // PostgREST's "could not find the 'text_anchor' column … in the schema
+  // cache" (an insert body naming it). Both name the column.
+  const missing =
+    e?.code === '42703' || e?.code === 'PGRST204' ||
+    msg.includes('does not exist') || msg.includes('could not find');
+  return missing && msg.includes('text_anchor');
+}
+function markTextAnchorAbsent(): void {
+  if (textAnchorColumn !== 'absent') {
+    console.warn('[annotations] text_anchor column missing (migration 084 not applied); highlights on non-PDF documents are off.');
+  }
+  textAnchorColumn = 'absent';
+}
+function annotationSelect(): string {
+  return textAnchorColumn === 'absent' ? ANNOTATION_SELECT_BASE : ANNOTATION_SELECT;
+}
+
+/** False once the database has shown it lacks the text_anchor column. */
+export function textAnchorsAvailable(): boolean {
+  return textAnchorColumn !== 'absent';
+}
 
 export async function listAnnotations(documentId: string): Promise<Annotation[]> {
   // Paged: a deposition worked through by two people carries more marks than
@@ -94,18 +139,27 @@ export async function listAnnotations(documentId: string): Promise<Annotation[]>
   // The contract callers rely on is unchanged: a failure is a warning and an
   // empty list, never a throw (Marginalia and the reader overlay treat a
   // rejected load as a crash).
+  const read = () => fetchPaged<unknown>(
+    (from, to) => supabase
+      .from('document_annotations')
+      .select(annotationSelect())
+      .eq('document_id', documentId)
+      .order('created_at', { ascending: true })
+      .order('id')
+      .range(from, to),
+    { label: 'annotations' },
+  );
   try {
-    const { rows } = await fetchPaged<unknown>(
-      (from, to) => supabase
-        .from('document_annotations')
-        .select(ANNOTATION_SELECT)
-        .eq('document_id', documentId)
-        .order('created_at', { ascending: true })
-        .order('id')
-        .range(from, to),
-      { label: 'annotations' },
-    );
-    return rows as Annotation[];
+    let result;
+    try {
+      result = await read();
+      if (textAnchorColumn === 'unknown') textAnchorColumn = 'present';
+    } catch (err) {
+      if (textAnchorColumn === 'absent' || !isMissingTextAnchorColumn(err)) throw err;
+      markTextAnchorAbsent();
+      result = await read();
+    }
+    return result.rows as Annotation[];
   } catch (err) {
     console.warn('[annotations load] failed:', err instanceof Error ? err.message : err);
     return [];
@@ -122,30 +176,48 @@ export async function createAnnotation(args: {
   visibility?: AnnotationVisibility;
   lineStart?: number | null;
   lineEnd?: number | null;
+  /** Documents without pages only: where the mark sits in the text. */
+  textAnchor?: TextAnchor | null;
 }): Promise<Annotation | null> {
   const { data: userData } = await supabase.auth.getUser();
   const userId = userData.user?.id;
   if (!userId) return null;
-  const { data, error } = await supabase
+  if (args.textAnchor && textAnchorColumn === 'absent') {
+    console.warn('[annotation insert] skipped: text_anchor column missing (migration 084 not applied).');
+    return null;
+  }
+  const row: Record<string, unknown> = {
+    document_id: args.documentId,
+    user_id: userId,
+    page: args.page,
+    color: args.color,
+    rects: args.rects,
+    anchor_text: args.anchorText ?? null,
+    note: args.note ?? null,
+    visibility: args.visibility ?? 'matter',
+    line_start: args.lineStart ?? null,
+    line_end: args.lineEnd ?? null,
+  };
+  // Only a mark that has an anchor names the column, so a PDF highlight
+  // writes exactly the row it always has.
+  if (args.textAnchor) row.text_anchor = args.textAnchor;
+  const insert = () => supabase
     .from('document_annotations')
-    .insert({
-      document_id: args.documentId,
-      user_id: userId,
-      page: args.page,
-      color: args.color,
-      rects: args.rects,
-      anchor_text: args.anchorText ?? null,
-      note: args.note ?? null,
-      visibility: args.visibility ?? 'matter',
-      line_start: args.lineStart ?? null,
-      line_end: args.lineEnd ?? null,
-    })
-    .select(ANNOTATION_SELECT)
+    .insert(row)
+    .select(annotationSelect())
     .single();
+  let { data, error } = await insert();
+  if (error && textAnchorColumn !== 'absent' && isMissingTextAnchorColumn(error)) {
+    // The insert statement failed as a whole, so nothing was written.
+    markTextAnchorAbsent();
+    if (args.textAnchor) return null;
+    ({ data, error } = await insert());
+  }
   if (error) {
     console.warn('[annotation insert] failed:', error.message);
     return null;
   }
+  if (textAnchorColumn === 'unknown') textAnchorColumn = 'present';
   return data as unknown as Annotation;
 }
 

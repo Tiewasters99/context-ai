@@ -277,6 +277,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Highlights and margin notes on a rendered document (docx, text,
+      # markdown, screenplay) anchor to the text, not a page: offsets plus
+      # the quoted words. Pure functions in src/lib/text-anchor.ts; no DOM.
+      - name: Reader — text anchors for marks on documents without pages
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-text-anchor.mjs
+
       # Migration 067 executed against PGlite on top of the REAL 062 and 063,
       # then the real billing handlers driven against that database with Stripe
       # and PostgREST stubbed. Offline by construction: there is no Stripe
