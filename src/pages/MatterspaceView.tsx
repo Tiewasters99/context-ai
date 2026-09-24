@@ -10,6 +10,7 @@ import PinToggle from '@/components/ui/PinToggle';
 import ActivityFeed from '@/components/activity/ActivityFeed';
 import RecordTab from '@/components/record/RecordTab';
 import MatterCalendar from '@/components/matter/MatterCalendar';
+import MatterTasks from '@/components/agents/MatterTasks';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
@@ -29,9 +30,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Record', 'Calendar', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
+const tabs = ['Updates', 'Record', 'Calendar', 'Tasks', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar' | 'Tasks'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
@@ -411,6 +412,9 @@ export default function MatterspaceView() {
         {activeTab === 'Calendar' && matter && (
           <MatterCalendar matterId={matter.id} />
         )}
+        {activeTab === 'Tasks' && matter && (
+          <MatterTasks matterId={matter.id} />
+        )}
         {activeTab === 'Cite-Check' && matter && (
           <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
         )}
@@ -420,7 +424,7 @@ export default function MatterspaceView() {
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && activeTab !== 'Tasks' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

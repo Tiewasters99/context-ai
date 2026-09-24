@@ -28,6 +28,7 @@ import {
   type CloudDriveService,
   type Connection,
 } from '@/hooks/useConnections';
+import AgentsSection from '@/components/agents/AgentsSection';
 
 type ConnState =
   | 'connected'
@@ -464,13 +465,22 @@ export default function Connections() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
+      // An agent token (kind 'agent', migration 085) is not a Claude
+      // connection, so it must not light this badge. Before 085 there is no
+      // kind column; the first read fails and the plain one answers.
+      let { data, error } = await supabase
         .from('connector_tokens')
-        .select('revoked_at, expires_at');
+        .select('revoked_at, expires_at, kind');
+      if (error) {
+        ({ data, error } = await supabase
+          .from('connector_tokens')
+          .select('revoked_at, expires_at'));
+      }
       if (cancelled || error || !data) return;
       const now = Date.now();
-      const live = data.some(
+      const live = (data as { revoked_at: string | null; expires_at: string | null; kind?: string }[]).some(
         (t) =>
+          t.kind !== 'agent' &&
           !t.revoked_at &&
           (!t.expires_at || new Date(t.expires_at).getTime() > now),
       );
@@ -762,6 +772,8 @@ export default function Connections() {
             </div>
           </section>
         )}
+
+        <AgentsSection />
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
           Connecting Gmail or Calendar asks Google for access; connecting

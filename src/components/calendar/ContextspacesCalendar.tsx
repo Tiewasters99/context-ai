@@ -26,6 +26,7 @@ import {
   type CalendarEntry, type CalendarEventType,
 } from '@/hooks/useCalendarEvents';
 import { deleteMatterEvent, updateMatterEvent, type MatterEventType } from '@/hooks/useMatterEvents';
+import DelegateButton from '@/components/agents/DelegateButton';
 
 // ── date helpers: local days, kept as YYYY-MM-DD strings throughout ───
 
@@ -614,6 +615,18 @@ export default function ContextspacesCalendar({
             >
               Cancel
             </button>
+            {/* Delegate… — a saved calendar entry filed under a matter. A
+                matter deadline lives in matter_events, which a task cannot
+                attach (its attachments name calendar_events), so it is not
+                offered there. */}
+            {draft.id && draft.kind === 'calendar' && (
+              <DelegateButton
+                variant="text"
+                matterId={draft.matterId || null}
+                attachment={{ kind: 'calendar_event', id: draft.id, label: draft.title.trim() || 'Calendar entry' }}
+                defaultTitle={draft.title.trim() || 'Calendar entry'}
+              />
+            )}
             {draft.id && (
               <button
                 onClick={removeDraft}

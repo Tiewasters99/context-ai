@@ -25,6 +25,7 @@ import {
   MoreHorizontal,
   MessageCircle,
   Loader2,
+  Send,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
@@ -41,6 +42,7 @@ import {
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
 import DriveExportControl from '@/components/reader/DriveExportControl';
+import DelegateCard from '@/components/agents/DelegateCard';
 import { DRIVE_KINDS, DRIVE_LABEL, type DriveKind } from '@/lib/export-connectors';
 import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
@@ -1377,6 +1379,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // On a phone the toolbar keeps only what a thumb needs — close, the
   // sidebar, find, zoom — and the rest waits behind one "more" button.
   const [moreOpen, setMoreOpen] = useState(false);
+  // Delegate… (agents task board): hand this document to an agent that can
+  // see its matter. A document outside any matter cannot be delegated.
+  const [delegateOpen, setDelegateOpen] = useState(false);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // The companion. The Assistant is scoped to this document's matter and
@@ -2551,6 +2556,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             onExport={(kind) => runDriveExport(kind)}
             onConnect={() => navigate('/app/connections')}
           />
+          <button
+            onClick={() => setDelegateOpen(true)}
+            disabled={!doc?.matterspace_id}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            title={doc?.matterspace_id
+              ? 'Delegate… — hand this document to an agent that can see its matter'
+              : 'Delegate… is available once this document is filed under a matter.'}
+            aria-label="Delegate…"
+          >
+            <Send size={15} />
+          </button>
 
           <button
             onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
@@ -2602,6 +2618,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                           // told the feature exists and where to switch it on.
                           { icon: <HardDrive size={14} />, label: 'Connect a drive to export…', run: () => navigate('/app/connections') },
                         ]),
+                    { icon: <Send size={14} />, label: 'Delegate…', run: () => setDelegateOpen(true), disabled: !doc?.matterspace_id },
                     { icon: theme === 'parchment' ? <Moon size={14} /> : <Sun size={14} />, label: theme === 'parchment' ? 'Dark mode' : 'Light mode', run: () => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment')) },
                   ]}
                 />
@@ -2913,6 +2930,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         />
       )}
 
+      {delegateOpen && doc?.matterspace_id && (
+        <DelegateCard
+          matterId={doc.matterspace_id}
+          attachment={{ kind: 'document', id: doc.id, label: doc.title || doc.source_filename || 'Document' }}
+          defaultTitle={doc.title || doc.source_filename || 'Document'}
+          onClose={() => setDelegateOpen(false)}
+        />
+      )}
       {pageEditorOpen && doc && (
         <PdfPageEditor
           doc={doc}
