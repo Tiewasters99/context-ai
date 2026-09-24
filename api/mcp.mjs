@@ -32,6 +32,7 @@ import { createHash } from 'node:crypto';
 
 import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
 import { checkAccessGrant } from '../lib/oauth-grants.mjs';
+import { connectorTokenIdentity } from '../lib/connector-token-auth.mjs';
 import { verifyJwt } from '../lib/oauth-jwt.mjs';
 import { signSupabaseUserJwt, userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 
@@ -86,7 +87,11 @@ class AuthError extends Error {
   }
 }
 
-async function authenticate(req) {
+// Returns the caller's identity:
+//   { userId, kind: 'user' | 'agent', tokenId?, matterScope?, provider?, name? }
+// Path A can answer kind 'agent' (migration 085); paths B and C are always
+// 'user' — an OAuth grant is a person's own full-access connection.
+export async function authenticate(req) {
   const auth = req.headers.authorization || req.headers.Authorization;
   if (!auth || !auth.toLowerCase().startsWith('bearer ')) {
     throw new AuthError(401, 'missing_bearer');
@@ -101,7 +106,9 @@ async function authenticate(req) {
     const admin = adminClient();
     const { data, error } = await admin
       .from('connector_tokens')
-      .select('id, user_id, expires_at, revoked_at')
+      // '*', not a column list: before migration 085 the kind/matter_scope
+      // columns do not exist, and naming them would 42703 every token.
+      .select('*')
       .eq('token_hash', tokenHash)
       .maybeSingle();
     if (error) throw new AuthError(500, 'auth_db_error');
@@ -115,7 +122,7 @@ async function authenticate(req) {
       .update({ last_used_at: new Date().toISOString() })
       .eq('id', data.id)
       .then(() => {}).catch(() => {});
-    return data.user_id;
+    return connectorTokenIdentity(data);
   }
 
   // Path B — opaque-wrapped OAuth access token. Format: "cspa_" + base64url
@@ -154,7 +161,7 @@ async function authenticate(req) {
         throw new AuthError(401, 'invalid_token');
       }
       console.log('[mcp auth] opaque ok: sub=%s grant=%s', payload.sub, grant.reason);
-      return payload.sub;
+      return { userId: payload.sub, kind: 'user' };
     }
     console.warn('[mcp auth] opaque reject:',
       payload ? { typ: payload.typ, hasSub: !!payload.sub, exp: payload.exp } : 'verify failed (sig/exp)');
@@ -172,7 +179,7 @@ async function authenticate(req) {
     const payload = verifyJwt(token, process.env.MCP_OAUTH_SECRET);
     if (payload && payload.typ === 'access' && payload.sub) {
       console.log('[mcp auth] oauth ok: sub=%s', payload.sub);
-      return payload.sub;
+      return { userId: payload.sub, kind: 'user' };
     }
     console.warn('[mcp auth] oauth reject:',
       payload ? { typ: payload.typ, hasSub: !!payload.sub, exp: payload.exp } : 'verify failed (sig/exp)');
@@ -183,6 +190,51 @@ async function authenticate(req) {
     token.slice(0, 6), token.split('.').length - 1, token.length);
   throw new AuthError(401, 'malformed_token');
 }
+
+
+// -----------------------------------------------------------------------------
+// callTool options, per caller
+// -----------------------------------------------------------------------------
+// A user token (and every OAuth connection) gets exactly the options it
+// always got. An agent token (migration 085) adds two things:
+//   agentToken — { id, userId, matterScope }: lib/mcp-core.mjs confines every
+//                tool to those matters and their sub-matters (never a sealed
+//                one), and the task-board tools answer to it;
+//   actor      — so every call it makes is recorded in the matter's Record as
+//                this agent (connector_client_id = 'agent:<token id>').
+export function callToolOptsFor(identity, keys = {}) {
+  const opts = {
+    openaiApiKey: keys.openaiApiKey,
+    googleApiKey: keys.googleApiKey, // enables file_document OCR of scanned PDFs
+    // The SecureSpace seal: this is an EXTERNAL connector — sealed
+    // matters (tier B/C, inherited down the tree) are invisible here.
+    sealConnector: true,
+  };
+  if (identity?.kind !== 'agent') return opts;
+  return {
+    ...opts,
+    agentToken: {
+      id: identity.tokenId,
+      userId: identity.userId,
+      matterScope: Array.isArray(identity.matterScope) ? identity.matterScope : [],
+    },
+    actor: {
+      kind: 'connector',
+      ref: `agent:${identity.tokenId}`,
+      user_id: identity.userId,
+      label: identity.name || `agent (${identity.provider || 'other'})`,
+    },
+  };
+}
+
+const AGENT_INSTRUCTIONS =
+  ' THIS IS AN AGENT CONNECTION. It sees only the matters it has been granted ' +
+  '(and their sub-matters) — never a sealed SecureSpace matter. Work comes from ' +
+  'the task board: call my_tasks to see what is assigned to you, claim_task to ' +
+  'take one, then do the work with the normal tools (search, grep, get_outline, ' +
+  'get_passage, get_media, file_document …) inside that task\'s matter. If you are ' +
+  'blocked, call ask_human with one clear question and poll my_tasks until the ' +
+  'answer appears. Finish with post_result (status "failed" if you could not do it).';
 
 
 // -----------------------------------------------------------------------------
@@ -230,8 +282,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const user_id = await authenticate(req);
-    const sb = userScopedClient(user_id);
+    const identity = await authenticate(req);
+    const sb = userScopedClient(identity.userId);
+    const agentNote = identity.kind === 'agent' ? AGENT_INSTRUCTIONS : '';
 
     const server = new Server(
       { name: 'contextspaces-retrieval', version: '0.6.0' },
@@ -268,7 +321,8 @@ export default async function handler(req, res) {
           'new copy; create_deck builds a filed .pptx (you author the ' +
           'slides — bullets, tables, native charts, notes); create_chart ' +
           'renders an SVG chart from data you extracted. search works ' +
-          'matter-scoped or, with matter omitted, across every matter at once.',
+          'matter-scoped or, with matter omitted, across every matter at once.' +
+          agentNote,
       }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -277,13 +331,10 @@ export default async function handler(req, res) {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args = {} } = request.params;
       try {
-        const result = await callTool(sb, name, args, {
+        const result = await callTool(sb, name, args, callToolOptsFor(identity, {
           openaiApiKey: OPENAI_API_KEY,
-          googleApiKey: process.env.GOOGLE_API_KEY, // enables file_document OCR of scanned PDFs
-          // The SecureSpace seal: this is an EXTERNAL connector — sealed
-          // matters (tier B/C, inherited down the tree) are invisible here.
-          sealConnector: true,
-        });
+          googleApiKey: process.env.GOOGLE_API_KEY,
+        }));
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

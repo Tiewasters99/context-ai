@@ -503,6 +503,26 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-list-matters.mjs
 
+      # Agent connections (migration 085). The first drives the real callTool,
+      # authenticate() and /api/ext's token check over a stub client: an agent
+      # token sees only its granted matters and their sub-matters, never a
+      # sealed one (the seal wins over the grant), scope '{}' reaches nothing,
+      # refusals never name the matter, the four task-board tools work the
+      # claim → ask → result loop, and a USER token's options and answers are
+      # exactly what they were. The second executes 085 itself in PGlite with
+      # real RLS: additive, idempotent, and nobody can put a task in front of
+      # someone else's agent.
+      - name: Agents — scoped agent tokens + task-board tools (stub client, real handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-agent-scope.mjs
+      # Re-installs PGlite: this step comes after the `npm i --no-save jsdom`
+      # steps, which prune every earlier --no-save package (see the Vault step).
+      - name: Migration 085 — agent tokens and the task board (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-agent-tasks-rls.mjs
+
       # The connector page tells people to paste a command into a terminal, so
       # the command is checked whole — every flag, and the quoting that differs
       # between bash and PowerShell. It also asserts the endpoint URL appears
