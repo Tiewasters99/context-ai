@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive, Cloud, Package } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { readUserTokens } from '@/lib/agents-schema';
 import {
   useConnections,
   useConnectionsInvalidate,
@@ -466,21 +467,16 @@ export default function Connections() {
     let cancelled = false;
     (async () => {
       // An agent token (kind 'agent', migration 085) is not a Claude
-      // connection, so it must not light this badge. Before 085 there is no
-      // kind column; the first read fails and the plain one answers.
-      let { data, error } = await supabase
-        .from('connector_tokens')
-        .select('revoked_at, expires_at, kind');
-      if (error) {
-        ({ data, error } = await supabase
-          .from('connector_tokens')
-          .select('revoked_at, expires_at'));
-      }
+      // connection, so it must not light this badge. readUserTokens drops
+      // agent tokens in the browser: a kind filter would fail before 085.
+      const { data, error } = await readUserTokens<{ revoked_at: string | null; expires_at: string | null }>(
+        (cols) => supabase.from('connector_tokens').select(cols),
+        'revoked_at, expires_at',
+      );
       if (cancelled || error || !data) return;
       const now = Date.now();
-      const live = (data as { revoked_at: string | null; expires_at: string | null; kind?: string }[]).some(
+      const live = data.some(
         (t) =>
-          t.kind !== 'agent' &&
           !t.revoked_at &&
           (!t.expires_at || new Date(t.expires_at).getTime() > now),
       );

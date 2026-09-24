@@ -11,7 +11,9 @@ import { Send } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAgentsForMatter } from '@/hooks/useAgentTokens';
 import { agentLabel, providerLabel } from '@/lib/agentTokens';
-import { AGENTS_MIGRATION_MESSAGE, createTask, isAgentsNotReady, type TaskRef } from '@/lib/agentTasks';
+import {
+  AGENTS_MIGRATION_MESSAGE, INSTRUCTIONS_MAX, TITLE_MAX, createTask, isAgentsNotReady, type TaskRef,
+} from '@/lib/agentTasks';
 import AgentCard, { cardField, cardLegend } from './AgentCard';
 
 export const NO_AGENT_COPY = 'No agent can see this matter — grant one under Connections → Agents.';
@@ -41,7 +43,7 @@ export default function DelegateCard({
 }) {
   const qc = useQueryClient();
   const { eligible, sealed, loading, notReady, error: loadError } = useAgentsForMatter(matterId);
-  const [title, setTitle] = useState(defaultTitle);
+  const [title, setTitle] = useState(defaultTitle.slice(0, TITLE_MAX));
   const [instructions, setInstructions] = useState('');
   const [tokenId, setTokenId] = useState('');
   const [due, setDue] = useState('');
@@ -127,7 +129,13 @@ export default function DelegateCard({
       <>
         <div>
           <p className={cardLegend}>Task</p>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} className={cardField} autoFocus />
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={TITLE_MAX}
+            className={cardField}
+            autoFocus
+          />
         </div>
         <div>
           <p className={cardLegend}>Instructions</p>
@@ -135,9 +143,15 @@ export default function DelegateCard({
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             rows={6}
+            maxLength={INSTRUCTIONS_MAX}
             placeholder="What you want done, what to produce, and where to file it."
             className={`${cardField} leading-relaxed resize-y`}
           />
+          {instructions.length > INSTRUCTIONS_MAX * 0.9 && (
+            <p className="text-[11px] text-white/40 mt-1">
+              {instructions.length.toLocaleString()} of {INSTRUCTIONS_MAX.toLocaleString()} characters
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-3">
           <div className="flex-1 min-w-[200px]">
@@ -161,7 +175,7 @@ export default function DelegateCard({
           </p>
         )}
         <p className="text-[11px] text-white/35 leading-relaxed">
-          Only agents that can see this matter are listed.
+          Only your own agents that can see this matter are listed.
         </p>
       </>
     );

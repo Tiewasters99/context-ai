@@ -37,6 +37,7 @@ export interface AgentToken {
   created_at: string;
   last_used_at: string | null;
   expires_at: string | null;
+  revoked_at: string | null;
 }
 
 /** "Grok Bot — Discovery" style label for pickers and the log. */
@@ -45,18 +46,26 @@ export function agentLabel(a: Pick<AgentToken, 'name' | 'agent_provider'>): stri
   return name || `${providerLabel(a.agent_provider)} agent`;
 }
 
-/** Live agent tokens (not revoked, not expired), newest first. */
+/** A token that still authenticates: not revoked, not expired. */
+export function isLiveAgent(t: Pick<AgentToken, 'revoked_at' | 'expires_at'>, now = Date.now()): boolean {
+  return !t.revoked_at && (!t.expires_at || new Date(t.expires_at).getTime() > now);
+}
+
+/**
+ * Every agent token this account owns, revoked ones included, newest first.
+ * connector_tokens RLS returns only the caller's own rows, so this is also
+ * the answer to "is this task's agent mine?" (a revoked agent is still
+ * mine, and its history still names it). Filter with isLiveAgent for
+ * anything that hands out work.
+ */
 export async function listAgentTokens(): Promise<AgentToken[]> {
   const { data, error } = await supabase
     .from('connector_tokens')
     .select('id, name, token_prefix, agent_provider, matter_scope, created_at, last_used_at, expires_at, revoked_at')
     .eq('kind', 'agent')
-    .is('revoked_at', null)
     .order('created_at', { ascending: false });
   if (error) raise(error, 'Could not read your agents.');
-  const now = Date.now();
-  return ((data ?? []) as (AgentToken & { revoked_at: string | null })[])
-    .filter((t) => !t.expires_at || new Date(t.expires_at).getTime() > now)
+  return ((data ?? []) as AgentToken[])
     .map((t) => ({ ...t, matter_scope: Array.isArray(t.matter_scope) ? t.matter_scope : [] }));
 }
 

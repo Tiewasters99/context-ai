@@ -23,7 +23,12 @@ import {
   normalizeScope,
   scopeCoversMatter,
 } from '../src/lib/agent-scope.ts';
-import { AGENTS_MIGRATION_MESSAGE, isMissingSchema } from '../src/lib/agents-schema.ts';
+import {
+  AGENTS_MIGRATION_MESSAGE,
+  isMissingSchema,
+  isUserToken,
+  readUserTokens,
+} from '../src/lib/agents-schema.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -137,7 +142,6 @@ test('an agent token is a connector token with kind agent, and never lights the 
   assert.match(t, /generateConnectorToken\(\)/);
   assert.match(t, /kind: 'agent',\s*agent_provider: input\.provider,\s*matter_scope: input\.scope,/);
   assert.doesNotMatch(t, /token_hash[^:]/, 'the browser never reads token_hash back');
-  assert.match(src('src/pages/Connections.tsx'), /t\.kind !== 'agent' &&/);
 });
 
 test('the Delegate card lists only agents that can see the matter, and says so when none can', () => {
@@ -147,7 +151,10 @@ test('the Delegate card lists only agents that can see the matter, and says so w
   assert.match(d, /No agent can see this matter — grant one under\{' '\}/);
   assert.match(d, />\s*Connections → Agents\s*<\/Link>\s*\.\s*<\/p>/);
   const hook = src('src/hooks/useAgentTokens.ts');
-  assert.match(hook, /all\.filter\(\(a\) => scopeCoversMatter\(matters, a\.matter_scope, matterId\)\)/);
+  // Only the caller's OWN live agents: connector_tokens RLS returns only
+  // the caller's rows, and revoked or expired ones are dropped first.
+  assert.match(hook, /const live = own\.filter\(\(a\) => isLiveAgent\(a\)\);/);
+  assert.match(hook, /live\.filter\(\(a\) => scopeCoversMatter\(matters, a\.matter_scope, matterId\)\)/);
 });
 
 // ---------------------------------------------------------------------------
@@ -211,4 +218,96 @@ test('every agents card is draggable, resizable and pinnable', () => {
     assert.match(src(`src/components/agents/${f}`), /<AgentCard\b/, f);
     assert.doesNotMatch(src(`src/components/agents/${f}`), /fixed inset-0/, `${f} builds its own modal`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 6. Agent tokens stay out of the user-token surfaces (SCHEMA-NOTES 085)
+// ---------------------------------------------------------------------------
+
+test('readUserTokens drops agent tokens, and before 085 counts every row as a user token', async () => {
+  assert.equal(isUserToken({ kind: 'agent' }), false);
+  assert.equal(isUserToken({ kind: 'user' }), true);
+  assert.equal(isUserToken({}), true, 'no kind = a user token');
+
+  // After 085: the kind column is there.
+  const asked = [];
+  let r = await readUserTokens(async (cols) => {
+    asked.push(cols);
+    return { data: [{ id: 1, kind: 'user' }, { id: 2, kind: 'agent' }, { id: 3, kind: null }], error: null };
+  }, 'id');
+  assert.deepEqual(asked, ['id, kind']);
+  assert.deepEqual(r.data.map((x) => x.id), [1, 3]);
+
+  // Before 085: the first read fails on the missing column, the second answers.
+  asked.length = 0;
+  r = await readUserTokens(async (cols) => {
+    asked.push(cols);
+    return cols.includes('kind')
+      ? { data: null, error: { code: '42703', message: 'column connector_tokens.kind does not exist' } }
+      : { data: [{ id: 1 }, { id: 2 }], error: null };
+  }, 'id');
+  assert.deepEqual(asked, ['id, kind', 'id']);
+  assert.deepEqual(r.data.map((x) => x.id), [1, 2]);
+  assert.equal(r.error, null);
+
+  // Any other failure is passed through, not retried.
+  asked.length = 0;
+  r = await readUserTokens(async (cols) => {
+    asked.push(cols);
+    return { data: null, error: { code: '42501', message: 'permission denied' } };
+  }, 'id');
+  assert.deepEqual(asked, ['id, kind']);
+  assert.equal(r.data, null);
+  assert.equal(r.error.code, '42501');
+});
+
+test('every user-token read goes through readUserTokens, and none filters on kind', () => {
+  for (const f of [
+    'src/pages/ClaudeConnect.tsx',
+    'src/pages/ChatGPTConnect.tsx',
+    'src/pages/GeminiConnect.tsx',
+    'src/pages/GrokConnect.tsx',
+    'src/pages/Connections.tsx',
+    'src/hooks/useFirstRun.ts',
+  ]) {
+    const s = src(f);
+    assert.match(s, /readUserTokens</, `${f} reads tokens without dropping agent tokens`);
+    assert.doesNotMatch(s, /\.eq\('kind'/, `${f} filters on kind, which fails before 085`);
+    // Each select of connector_tokens is inside a readUserTokens builder.
+    const direct = s.match(/from\('connector_tokens'\)\s*\.select\('/g) ?? [];
+    assert.equal(direct.length, 0, `${f} selects connector_tokens directly`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. Ownership (085: only the agent token's owner may create or update a task)
+// ---------------------------------------------------------------------------
+
+test('a task on someone else\'s agent is read-only, and says whose agent it is', () => {
+  const t = src('src/components/agents/MatterTasks.tsx');
+  assert.match(t, /mine=\{byToken\.has\(t\.assigned_token_id\)\}/);
+  assert.match(t, /This task is assigned to \{ownerName\}'s agent\. Only \{ownerName\} can answer, cancel or/);
+  assert.match(t, /\{mine && \(<>\s*<textarea/, 'the Answer box is only for the owner');
+  assert.match(t, /\{live && mine && \(/, 'Cancel and Reassign are only for the owner');
+  assert.match(t, /reassignable=\{eligible\}/, 'reassign lists only the caller\'s own live agents');
+});
+
+test('the limits 085 enforces are enforced before the request', () => {
+  const lib = src('src/lib/agentTasks.ts');
+  assert.match(lib, /export const TITLE_MAX = 500;/);
+  assert.match(lib, /export const INSTRUCTIONS_MAX = 20_000;/);
+  assert.match(lib, /export const ANSWER_MAX = 4_000;/);
+  assert.match(lib, /title\.length > TITLE_MAX/);
+  assert.match(lib, /instructions\.length > INSTRUCTIONS_MAX/);
+  assert.match(lib, /text\.length > ANSWER_MAX/);
+  const d = src('src/components/agents/DelegateCard.tsx');
+  assert.match(d, /maxLength=\{TITLE_MAX\}/);
+  assert.match(d, /maxLength=\{INSTRUCTIONS_MAX\}/);
+  assert.match(src('src/components/agents/MatterTasks.tsx'), /maxLength=\{ANSWER_MAX\}/);
+});
+
+test('every human event names the signed-in user', () => {
+  const lib = src('src/lib/agentTasks.ts');
+  assert.match(lib, /task_id: taskId,\s*actor_kind: 'human',\s*actor_user: userId,\s*actor_token_id: null,\s*kind,\s*body,/);
+  assert.match(lib, /const uid = session\?\.user\?\.id;/);
 });

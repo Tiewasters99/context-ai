@@ -25,6 +25,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { readUserTokens } from '@/lib/agents-schema';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   generateConnectorToken,
@@ -55,10 +56,16 @@ export default function ChatGPTConnect() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('connector_tokens')
-      .select('id, token_prefix, name, created_at, last_used_at, revoked_at, expires_at')
-      .order('created_at', { ascending: false });
+    // Agent tokens (kind 'agent', migration 085) live under Connections ›
+    // Agents, not here; readUserTokens drops them without a kind filter,
+    // which would fail before 085 is applied.
+    const { data, error } = await readUserTokens<TokenRow>(
+      (cols) => supabase
+        .from('connector_tokens')
+        .select(cols)
+        .order('created_at', { ascending: false }),
+      'id, token_prefix, name, created_at, last_used_at, revoked_at, expires_at',
+    );
     if (error) setError(error.message); else setTokens((data ?? []) as TokenRow[]);
     setLoading(false);
   }, []);

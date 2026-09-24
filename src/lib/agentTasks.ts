@@ -55,6 +55,11 @@ export const TASK_STATUS_LABEL: Record<AgentTaskStatus, string> = {
   cancelled: 'Cancelled',
 };
 
+// Limits migration 085 enforces (and ask_human mirrors, for the answer).
+export const TITLE_MAX = 500;
+export const INSTRUCTIONS_MAX = 20_000;
+export const ANSWER_MAX = 4_000;
+
 /** Still in the agent's hands (or waiting on the human). */
 export const LIVE_STATUSES: AgentTaskStatus[] = ['open', 'claimed', 'needs_input'];
 
@@ -215,6 +220,11 @@ export interface NewTask {
 export async function createTask(input: NewTask): Promise<string> {
   const title = input.title.trim();
   if (!title) throw new Error('A task needs a title.');
+  if (title.length > TITLE_MAX) throw new Error(`A task title can be at most ${TITLE_MAX} characters.`);
+  const instructions = (input.instructions ?? '').trim();
+  if (instructions.length > INSTRUCTIONS_MAX) {
+    throw new Error(`Instructions can be at most ${INSTRUCTIONS_MAX.toLocaleString()} characters.`);
+  }
   const userId = await currentUserId();
   const id = crypto.randomUUID();
   const { error } = await supabase.from('agent_tasks').insert({
@@ -223,7 +233,7 @@ export async function createTask(input: NewTask): Promise<string> {
     created_by: userId,
     assigned_token_id: input.tokenId,
     title,
-    instructions: (input.instructions ?? '').trim(),
+    instructions,
     attachments: input.attachments ?? [],
     due_at: input.dueAt ?? null,
   });
@@ -236,6 +246,7 @@ export async function createTask(input: NewTask): Promise<string> {
 export async function answerQuestion(taskId: string, answer: string): Promise<void> {
   const text = answer.trim();
   if (!text) throw new Error('Write an answer first.');
+  if (text.length > ANSWER_MAX) throw new Error(`An answer can be at most ${ANSWER_MAX.toLocaleString()} characters.`);
   const userId = await currentUserId();
   const { error, count } = await supabase
     .from('agent_tasks')

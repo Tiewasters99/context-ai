@@ -14,6 +14,7 @@ import { useAgentsForMatter } from '@/hooks/useAgentTokens';
 import { agentLabel, type AgentToken } from '@/lib/agentTokens';
 import {
   AGENTS_MIGRATION_MESSAGE,
+  ANSWER_MAX,
   LIVE_STATUSES,
   TASK_STATUS_LABEL,
   answerQuestion,
@@ -102,11 +103,17 @@ function RefLinks({ refs, matterId }: { refs: TaskRef[]; matterId: string }) {
 function TaskDetail({
   task,
   agentName,
+  mine,
+  ownerName,
   reassignable,
   onChanged,
 }: {
   task: AgentTask;
   agentName: (tokenId: string | null) => string;
+  /** The assigned agent is the caller's own. Migration 085 lets only the
+   *  token's owner update a task; everyone else on the matter may read it. */
+  mine: boolean;
+  ownerName: string;
   reassignable: AgentToken[];
   onChanged: () => void;
 }) {
@@ -146,14 +153,23 @@ function TaskDetail({
 
   return (
     <div className="pl-6 pr-2 pb-4 pt-1 space-y-3">
+      {!mine && (
+        <p className="text-[12px] text-white/55 leading-relaxed">
+          This task is assigned to {ownerName}'s agent. Only {ownerName} can answer, cancel or
+          reassign it; you can read it and its log.
+        </p>
+      )}
+
       {task.status === 'needs_input' && task.question && (
         <div className="rounded-md border border-[#e8b84a]/40 bg-[#e8b84a]/[0.06] px-3 py-2.5">
           <p className="text-[11px] uppercase tracking-wider text-[#e8b84a] mb-1">The agent asks</p>
           <p className="text-[13px] text-white/90 whitespace-pre-wrap leading-relaxed">{task.question}</p>
+          {mine && (<>
           <textarea
             value={answer}
             onChange={(e) => setAnswer(e.target.value)}
             rows={3}
+            maxLength={ANSWER_MAX}
             placeholder="Your answer"
             className="mt-2 w-full px-2.5 py-1.5 rounded-md border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.04)] text-[12.5px] text-white placeholder-white/35 focus:outline-none focus:ring-1 focus:ring-[#e8b84a]"
           />
@@ -164,6 +180,12 @@ function TaskDetail({
           >
             {busy ? 'Sending…' : 'Answer'}
           </button>
+          {answer.length > ANSWER_MAX * 0.9 && (
+            <span className="ml-2 text-[11px] text-white/40">
+              {answer.length.toLocaleString()} of {ANSWER_MAX.toLocaleString()} characters
+            </span>
+          )}
+          </>)}
         </div>
       )}
 
@@ -199,7 +221,7 @@ function TaskDetail({
         </div>
       )}
 
-      {live && (
+      {live && mine && (
         <div className="flex flex-wrap items-center gap-2">
           {others.length > 0 && (
             <>
@@ -270,7 +292,7 @@ function TaskDetail({
 
 export default function MatterTasks({ matterId }: { matterId: string }) {
   const qc = useQueryClient();
-  const { all: agents, eligible } = useAgentsForMatter(matterId);
+  const { own: agents, eligible } = useAgentsForMatter(matterId);
   const [showAll, setShowAll] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState(false);
@@ -285,12 +307,35 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
   });
 
   const byToken = useMemo(() => new Map(agents.map((a) => [a.id, a] as const)), [agents]);
-  const agentName = (tokenId: string | null) => {
-    const a = tokenId ? byToken.get(tokenId) : undefined;
-    return a ? agentLabel(a) : 'A revoked agent';
+  const tasks = useMemo(() => q.data ?? [], [q.data]);
+
+  // Tasks on someone else's agent. The token's owner is the task's creator:
+  // 085 only lets a user create a task for, or reassign it to, their own
+  // agent. Their name comes from profiles, the way the activity feed reads it.
+  const otherOwners = useMemo(
+    () => [...new Set(tasks.filter((t) => !byToken.has(t.assigned_token_id)).map((t) => t.created_by))].sort(),
+    [tasks, byToken],
+  );
+  const { data: ownerNames } = useQuery({
+    queryKey: ['agent_task_owner_names', ...otherOwners],
+    enabled: otherOwners.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase.from('profiles').select('id, display_name, email').in('id', otherOwners);
+      const names = new Map<string, string>();
+      for (const p of (data ?? []) as { id: string; display_name: string | null; email: string | null }[]) {
+        const n = (p.display_name ?? '').trim() || p.email || '';
+        if (n) names.set(p.id, n);
+      }
+      return names;
+    },
+    staleTime: 300_000,
+  });
+  const ownerName = (userId: string) => ownerNames?.get(userId) ?? 'another member of this matter';
+  const taskAgentName = (t: AgentTask) => {
+    const a = byToken.get(t.assigned_token_id);
+    return a ? `${agentLabel(a)}${a.revoked_at ? ' (revoked)' : ''}` : `${ownerName(t.created_by)}'s agent`;
   };
 
-  const tasks = q.data ?? [];
   const shown = showAll ? tasks : tasks.filter((t) => LIVE_STATUSES.includes(t.status));
   const waiting = tasks.filter((t) => t.status === 'needs_input').length;
   const refresh = () => void qc.invalidateQueries({ queryKey: MATTER_TASKS_KEY(matterId) });
@@ -362,7 +407,7 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
                       <StatusChip status={t.status} />
                     </span>
                     <span className="block text-[11.5px] text-white/45 mt-0.5">
-                      {agentName(t.assigned_token_id)} · delegated {day(t.created_at)}
+                      {taskAgentName(t)} · delegated {day(t.created_at)}
                       {t.due_at ? ` · due ${day(t.due_at)}` : ''}
                     </span>
                   </span>
@@ -370,7 +415,12 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
                 {open && (
                   <TaskDetail
                     task={t}
-                    agentName={agentName}
+                    agentName={(tokenId) => (tokenId === t.assigned_token_id ? taskAgentName(t) : (() => {
+                      const a = tokenId ? byToken.get(tokenId) : undefined;
+                      return a ? agentLabel(a) : 'An agent';
+                    })())}
+                    mine={byToken.has(t.assigned_token_id)}
+                    ownerName={ownerName(t.created_by)}
                     reassignable={eligible}
                     onChanged={refresh}
                   />

@@ -4,7 +4,7 @@
 import { useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useServerspaces } from '@/hooks/useServerspaces';
-import { listAgentTokens, type AgentToken } from '@/lib/agentTokens';
+import { isLiveAgent, listAgentTokens, type AgentToken } from '@/lib/agentTokens';
 import { isAgentsNotReady } from '@/lib/agentTasks';
 import { isEffectivelySealed, scopeCoversMatter } from '@/lib/agent-scope';
 
@@ -25,9 +25,13 @@ export function useAgentTokensInvalidate() {
 }
 
 export interface MatterAgents {
-  /** Every live agent (for labels in a task list). */
-  all: AgentToken[];
-  /** Agents whose scope covers this matter, seal considered. */
+  /**
+   * Every agent token the caller owns, revoked ones included (connector_tokens
+   * RLS returns only the caller's own). A task whose assigned token is not in
+   * here belongs to someone else's agent, and 085's RLS makes it read-only.
+   */
+  own: AgentToken[];
+  /** The caller's own live agents whose scope covers this matter, seal considered. */
   eligible: AgentToken[];
   /** The matter is sealed: no agent can ever see it. */
   sealed: boolean;
@@ -42,12 +46,13 @@ export function useAgentsForMatter(matterId: string | null | undefined): MatterA
   const { data: serverspaces = [], isLoading: mattersLoading } = useServerspaces();
   return useMemo(() => {
     const matters = serverspaces.flatMap((s) => s.matterspaces ?? []);
-    const all = q.data ?? [];
+    const own = q.data ?? [];
+    const live = own.filter((a) => isLiveAgent(a));
     const sealed = !!matterId && isEffectivelySealed(matters, matterId);
-    const eligible = matterId ? all.filter((a) => scopeCoversMatter(matters, a.matter_scope, matterId)) : [];
+    const eligible = matterId ? live.filter((a) => scopeCoversMatter(matters, a.matter_scope, matterId)) : [];
     const notReady = !!q.error && isAgentsNotReady(q.error);
     return {
-      all,
+      own,
       eligible,
       sealed,
       loading: q.isLoading || mattersLoading,

@@ -22,6 +22,7 @@ import {
   AGENT_PROVIDERS,
   agentLabel,
   createAgentToken,
+  isLiveAgent,
   listAgentTokens,
   providerLabel,
   revokeAgentToken,
@@ -295,7 +296,7 @@ export default function AgentsSection() {
     // The Delegate cards read the same tokens through a shared cache.
     void invalidateAgents();
     try {
-      const rows = await listAgentTokens();
+      const rows = (await listAgentTokens()).filter((t) => isLiveAgent(t));
       setAgents(rows);
       setNotReady(false);
       setError(null);
