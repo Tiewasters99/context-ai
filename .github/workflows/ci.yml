@@ -243,6 +243,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-transcript-parse.mjs
 
+      - name: Transcript printed page vs the court's ECF stamp (and Watermark page numbers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-ecf-page-stamp.mjs
+
       # An email's headers and its body must be read through the same charset.
       # A raw UTF-8 em dash in an 8-bit Subject: reached the index as "â" while
       # the same em dash three lines lower, in the body, was right — the header
