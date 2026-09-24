@@ -515,9 +515,13 @@ jobs:
       - name: Agents — scoped agent tokens + task-board tools (stub client, real handlers)
         if: ${{ !cancelled() }}
         run: node scripts/_test-agent-scope.mjs
+      # Re-installs PGlite: this step comes after the `npm i --no-save jsdom`
+      # steps, which prune every earlier --no-save package (see the Vault step).
       - name: Migration 085 — agent tokens and the task board (PGlite + real RLS)
         if: ${{ !cancelled() }}
-        run: node scripts/_verify-agent-tasks-rls.mjs
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-agent-tasks-rls.mjs
 
       # The connector page tells people to paste a command into a terminal, so
       # the command is checked whole — every flag, and the quoting that differs
