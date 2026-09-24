@@ -195,6 +195,12 @@ export async function listEvents(taskId: string): Promise<AgentTaskEvent[]> {
 
 // ── writes (each one logged) ─────────────────────────────────────────
 
+// An update that matched no row: the agent moved the task on (answered,
+// finished, or it was already cancelled) between the read and the click.
+// Nothing changed, so nothing is logged.
+const STALE_MESSAGE =
+  'This task changed since the page was loaded, so nothing was saved. Reopen it to see where it stands.';
+
 export interface NewTask {
   matterId: string;
   tokenId: string;
@@ -231,12 +237,13 @@ export async function answerQuestion(taskId: string, answer: string): Promise<vo
   const text = answer.trim();
   if (!text) throw new Error('Write an answer first.');
   const userId = await currentUserId();
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from('agent_tasks')
-    .update({ answer: text, status: 'claimed', updated_at: new Date().toISOString() })
+    .update({ answer: text, status: 'claimed', updated_at: new Date().toISOString() }, { count: 'exact' })
     .eq('id', taskId)
     .eq('status', 'needs_input');
   if (error) raise(error, 'Could not save the answer.');
+  if (count === 0) throw new Error(STALE_MESSAGE);
   await logHumanEvent(taskId, userId, 'answered', text);
 }
 
@@ -244,12 +251,13 @@ export async function answerQuestion(taskId: string, answer: string): Promise<vo
 export async function cancelTask(taskId: string, reason?: string): Promise<void> {
   const userId = await currentUserId();
   const now = new Date().toISOString();
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from('agent_tasks')
-    .update({ status: 'cancelled', completed_at: now, updated_at: now })
+    .update({ status: 'cancelled', completed_at: now, updated_at: now }, { count: 'exact' })
     .eq('id', taskId)
     .in('status', LIVE_STATUSES);
   if (error) raise(error, 'Could not cancel the task.');
+  if (count === 0) throw new Error(STALE_MESSAGE);
   await logHumanEvent(taskId, userId, 'cancelled', reason?.trim() || null);
 }
 
@@ -264,7 +272,7 @@ export async function reassignTask(
   agentLabel?: string,
 ): Promise<void> {
   const userId = await currentUserId();
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from('agent_tasks')
     .update({
       assigned_token_id: tokenId,
@@ -273,10 +281,11 @@ export async function reassignTask(
       question: null,
       answer: null,
       updated_at: new Date().toISOString(),
-    })
+    }, { count: 'exact' })
     .eq('id', taskId)
     .in('status', LIVE_STATUSES);
   if (error) raise(error, 'Could not reassign the task.');
+  if (count === 0) throw new Error(STALE_MESSAGE);
   await logHumanEvent(taskId, userId, 'reassigned', agentLabel ? `Reassigned to ${agentLabel}.` : null);
 }
 

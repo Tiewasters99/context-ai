@@ -136,6 +136,7 @@ function TaskDetail({
       onChanged();
     } catch (e) {
       setError(isAgentsNotReady(e) ? AGENTS_MIGRATION_MESSAGE : e instanceof Error ? e.message : 'That did not go through.');
+      onChanged(); // re-read: the task may have moved on under us
     } finally {
       setBusy(false);
     }
