@@ -308,6 +308,9 @@ function makeClient() {
         gte(c, v) { state.filters.push([c, v, 'gte']); return b; },
         lte(c, v) { state.filters.push([c, v, 'lte']); return b; },
         ilike(c, v) { state.filters.push([c, v, 'ilike']); return b; },
+        // grep's full-text prefilter (2026-09-24): the ILIKE decides.
+        textSearch() { return b; },
+        range() { return b; },
         like(c, v) { state.filters.push([c, v, 'like']); return b; },
         filter(c, op, v) { state.filters.push([c, v, op]); return b; },
         order() { return b; },

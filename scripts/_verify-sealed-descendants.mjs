@@ -196,6 +196,10 @@ function makeClient() {
         gte(col, val) { state.filters.push([col, val, 'gte']); return builder; },
         lte(col, val) { state.filters.push([col, val, 'lte']); return builder; },
         ilike(col, val) { state.filters.push([col, val, 'ilike']); return builder; },
+        // grep's full-text prefilter (2026-09-24): the ILIKE that follows it
+        // decides, so the stand-in lets every row through the index step.
+        textSearch() { return builder; },
+        range() { return builder; },
         like(col, val) { state.filters.push([col, val, 'like']); return builder; },
         filter(col, op, val) { state.filters.push([col, val, op]); return builder; },
         order() { return builder; },
