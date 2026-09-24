@@ -61,6 +61,7 @@ import {
   derivePageLine,
   listAnnotations,
   listIncomingLinks,
+  textAnchorsAvailable,
   updateAnnotation,
   type Annotation,
   type AnnotationColor,
@@ -80,6 +81,14 @@ import {
   type ComposerLink,
 } from '@/components/reader/Marginalia';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  anchorFromRange,
+  flattenText,
+  isTextAnchor,
+  offsetsFromAnchor,
+  rangeFromOffsets,
+  type TextAnchor,
+} from '@/lib/text-anchor';
 import {
   interceptStyledCopy,
   pdfDocumentText,
@@ -153,18 +162,8 @@ type Match = { page: number; index: number };
 // italics and the reporter cite in roman, and "Smith v. Jones, 123 F.3d"
 // has to be found as one thing.
 function findInRendered(root: HTMLElement, needle: string): Range[] {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => {
-      const tag = n.parentElement?.tagName;
-      return tag === 'STYLE' || tag === 'SCRIPT' ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const pieces: { node: Text; start: number }[] = [];
-  let flat = '';
-  for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
-    pieces.push({ node: n, start: flat.length });
-    flat += n.data;
-  }
+  // The same text walk the margin marks anchor to (src/lib/text-anchor.ts).
+  const { text: flat, pieces } = flattenText(root);
   // A few letters change length when lower-cased (İ, ß…), which would put
   // every offset after them off; match case-sensitively then, rather than
   // light the wrong words.
@@ -200,6 +199,12 @@ function customHighlights(): { registry: Map<string, unknown>; Highlight: Highli
 }
 const FIND_HL = 'reader-find';
 const FIND_HL_CURRENT = 'reader-find-current';
+// Marks on a rendered document: one Highlight per color, plus one for the
+// dotted underline under a margin note's words. Painted at priority -1 so
+// the find highlights (priority 0) always sit on top of them.
+const ANN_HL_COLORS: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
+const annHl = (c: AnnotationColor) => `reader-ann-${c}`;
+const ANN_HL_NOTE = 'reader-ann-note';
 
 // Vertical gap between page slots in the continuous stack.
 const PAGE_GAP = 16;
@@ -304,12 +309,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // Annotations state — PDF only. Loaded once per document; updated
   // optimistically on create/delete so we don't round-trip the DB for UX.
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  // Marks on documents without pages need migration 084's text_anchor
+  // column; false once the database has shown it is missing.
+  const [textMarksOn, setTextMarksOn] = useState(true);
   const [selectionMenu, setSelectionMenu] = useState<{
     x: number;
     y: number;
     page: number;
     rects: FractionalRect[];
     anchorText: string;
+    /** Documents without pages: where the selection sits in the text. */
+    textAnchor?: TextAnchor;
   } | null>(null);
 
   // Marginalia state — the margin rails and their popovers. `incomingLinks`
@@ -321,6 +331,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     page: number;
     rects: FractionalRect[];
     anchorText: string;
+    /** Documents without pages: where the selection sits in the text. */
+    textAnchor?: TextAnchor;
   } | null>(null);
   const [openNote, setOpenNote] = useState<{ id: string; x: number; y: number } | null>(null);
   const [openRef, setOpenRef] = useState<{ link: IncomingLink; x: number; y: number } | null>(null);
@@ -1632,8 +1644,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // keep them live: margin notes are collaborative, so a teammate's note
   // should appear without a reload (the matter_comments realtime pattern;
   // RLS filters what each subscriber may see).
+  // Documents without pages load the same rows; theirs carry text_anchor.
   useEffect(() => {
-    if (!id || loadState !== 'ready' || fileKind !== 'pdf') return;
+    if (!id || loadState !== 'ready') return;
     let cancelled = false;
     const refresh = async () => {
       const [rows, incoming] = await Promise.all([
@@ -1643,6 +1656,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       if (!cancelled) {
         setAnnotations(rows);
         setIncomingLinks(incoming);
+        setTextMarksOn(textAnchorsAvailable());
       }
     };
     void refresh();
@@ -1791,6 +1805,68 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     };
   }, [loadState, fileKind]);
 
+  // The same selection menu for a rendered document (Word, text, markdown,
+  // slides, screenplay). There is no page and no text layer: the selection
+  // is anchored by its character offsets in the rendered text plus the
+  // quoted words (src/lib/text-anchor.ts), and the menu opens over it.
+  // PDFs never reach this effect.
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind === 'pdf' || !textMarksOn) return;
+
+    function captureTextSelection() {
+      const sel = window.getSelection();
+      const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0 || !root) {
+        setSelectionMenu(null);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const anchor = anchorFromRange(root, range);
+      if (!anchor) {
+        setSelectionMenu(null);
+        return;
+      }
+      const union = range.getBoundingClientRect();
+      if (union.width === 0 && union.height === 0) {
+        setSelectionMenu(null);
+        return;
+      }
+      setSelectionMenu({
+        x: union.left + union.width / 2,
+        y: union.top - 8,
+        page: 1,
+        rects: [],
+        anchorText: anchor.exact.slice(0, 1000),
+        textAnchor: anchor,
+      });
+    }
+
+    // Mouse: on release. Touch (iPhone): the selection is made and adjusted
+    // with handles, which fire no mouseup, so settle on selectionchange once
+    // it has been still for a moment and no finger or button is down.
+    let down = false;
+    let timer: number | undefined;
+    const onDown = () => { down = true; };
+    const onUp = () => { down = false; };
+    const onSelChange = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { if (!down) captureTextSelection(); }, 350);
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    document.addEventListener('mouseup', captureTextSelection);
+    document.addEventListener('selectionchange', onSelChange);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      document.removeEventListener('mouseup', captureTextSelection);
+      document.removeEventListener('selectionchange', onSelChange);
+    };
+  }, [loadState, fileKind, textMarksOn]);
+
   const saveAnnotation = useCallback(
     async (color: AnnotationColor) => {
       if (!id || !selectionMenu) return;
@@ -1800,7 +1876,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         color,
         rects: selectionMenu.rects,
         anchorText: selectionMenu.anchorText,
+        textAnchor: selectionMenu.textAnchor ?? null,
       });
+      // A text mark refused because migration 084 is missing switches the
+      // menu off for rendered documents (a PDF never takes this branch).
+      if (!ann && selectionMenu.textAnchor) setTextMarksOn(textAnchorsAvailable());
       if (ann) {
         setAnnotations((prev) => [...prev, ann]);
         // A highlight is easy to regret and, until now, hard to take back:
@@ -1905,7 +1985,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const saveNote = useCallback(
     async (args: { body: string; visibility: AnnotationVisibility; links: ComposerLink[] }) => {
       if (!id || !noteComposer) return;
-      const derived = await derivePageLine(id, noteComposer.page, noteComposer.anchorText);
+      // page:line comes from ingested transcript passages, which a document
+      // without pages cannot be matched against; its anchor is the text.
+      const derived = noteComposer.textAnchor
+        ? null
+        : await derivePageLine(id, noteComposer.page, noteComposer.anchorText);
       const ann = await createAnnotation({
         documentId: id,
         page: noteComposer.page,
@@ -1916,6 +2000,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         visibility: args.visibility,
         lineStart: derived?.lineStart ?? null,
         lineEnd: derived?.lineEnd ?? null,
+        textAnchor: noteComposer.textAnchor ?? null,
       });
       if (ann) {
         const savedLinks: AnnotationLink[] = [];
@@ -2019,6 +2104,66 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   }, []);
   // A new document, or leaving: nothing of the old search should linger.
   useEffect(() => clearTextMatches, [docHtml, clearTextMatches]);
+
+  // Paint the marks of a rendered document. Each anchor is turned back into
+  // a Range over the current DOM (offsets first, then the quote), and the
+  // Ranges are handed to the Custom Highlight API, which paints without
+  // touching the DOM, so copy and find see the text exactly as before.
+  // Runs again whenever the rendered HTML changes (new nodes, stale Ranges).
+  // A mark whose words cannot be found is listed as unplaced, not painted.
+  // Without the Highlight API (older Safari) nothing is painted, and the
+  // marks panel still lists every mark.
+  const textMarks = useMemo(
+    () => (fileKind === 'pdf' ? [] : annotations.filter((a) => isTextAnchor(a.text_anchor))),
+    [annotations, fileKind],
+  );
+  const textMarkRangesRef = useRef<Map<string, Range>>(new Map());
+  const [unplacedMarks, setUnplacedMarks] = useState<string[]>([]);
+  useEffect(() => {
+    if (fileKind === 'pdf' || loadState !== 'ready') return;
+    const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
+    const ranges = new Map<string, Range>();
+    const unplaced: string[] = [];
+    if (root && textMarks.length) {
+      const flat = flattenText(root);
+      for (const a of textMarks) {
+        const at = offsetsFromAnchor(flat.text, a.text_anchor as TextAnchor);
+        const r = at ? rangeFromOffsets(flat, at.start, at.end) : null;
+        if (r) ranges.set(a.id, r);
+        else unplaced.push(a.id);
+      }
+    }
+    textMarkRangesRef.current = ranges;
+    setUnplacedMarks((prev) => (prev.join() === unplaced.join() ? prev : unplaced));
+    const hl = customHighlights();
+    if (!hl) return;
+    const names: string[] = [];
+    const paint = (name: string, list: Annotation[]) => {
+      const rs = list.map((a) => ranges.get(a.id)).filter((r): r is Range => !!r);
+      if (!rs.length) return;
+      const h = new hl.Highlight(...rs) as { priority?: number };
+      h.priority = -1;
+      hl.registry.set(name, h);
+      names.push(name);
+    };
+    const highlights = textMarks.filter((a) => !annotationIsNote(a));
+    for (const c of ANN_HL_COLORS) paint(annHl(c), highlights.filter((a) => a.color === c));
+    paint(ANN_HL_NOTE, textMarks.filter(annotationIsNote));
+    return () => {
+      for (const n of names) hl.registry.delete(n);
+    };
+  }, [fileKind, loadState, textMarks, docHtml, titlePageHtml]);
+
+  // Bring a mark's words to the middle of the pane.
+  const scrollToTextMark = useCallback((annId: string) => {
+    const r = textMarkRangesRef.current.get(annId);
+    const pane = contentRef.current;
+    if (!r || !pane) return;
+    const rect = r.getBoundingClientRect();
+    const pr = pane.getBoundingClientRect();
+    pane.scrollBy({ top: rect.top - pr.top - pr.height / 2 + rect.height / 2, behavior: 'smooth' });
+  }, []);
+  const [marksOpen, setMarksOpen] = useState(!isMobile);
 
   const runSearch = useCallback(async (query: string) => {
     const q = query.trim();
@@ -2668,6 +2813,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               </div>
             )}
           </div>
+          {fileKind !== 'pdf' && loadState === 'ready' && textMarks.length > 0 && (
+            <TextMarksPanel
+              marks={textMarks}
+              unplaced={unplacedMarks}
+              open={marksOpen}
+              isMobile={isMobile}
+              currentUserId={user?.id ?? null}
+              onToggle={() => setMarksOpen((o) => !o)}
+              onGo={(ann, at) => {
+                scrollToTextMark(ann.id);
+                if (annotationIsNote(ann)) setOpenNote({ id: ann.id, x: at.x, y: at.y });
+              }}
+              onRemove={removeAnnotationCb}
+            />
+          )}
           {fileKind === 'pdf' && loadState === 'ready' && totalPages > 1 && (
             <PageRail
               page={page}
@@ -2797,6 +2957,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               page: selectionMenu.page,
               rects: selectionMenu.rects,
               anchorText: selectionMenu.anchorText,
+              textAnchor: selectionMenu.textAnchor,
             });
             window.getSelection()?.removeAllRanges();
             setSelectionMenu(null);
@@ -3332,6 +3493,119 @@ function AnnotationsOverlay({
   );
 }
 
+// The marks on a rendered document, listed down the right of the pane.
+// A PDF shows its marks on the page and its notes in the margin rail; a
+// rendered document has neither, so this list is where each mark can be
+// found again (click to scroll to it; a note also opens its card), taken
+// back (×, the author's own marks), or seen to be unplaced when its words
+// are no longer in the document. It appears only once a mark exists, so an
+// unmarked document looks exactly as before.
+function TextMarksPanel({
+  marks,
+  unplaced,
+  open,
+  isMobile,
+  currentUserId,
+  onToggle,
+  onGo,
+  onRemove,
+}: {
+  marks: Annotation[];
+  unplaced: string[];
+  open: boolean;
+  isMobile: boolean;
+  currentUserId: string | null;
+  onToggle: () => void;
+  onGo: (ann: Annotation, at: { x: number; y: number }) => void;
+  onRemove: (id: string) => void;
+}) {
+  const lost = new Set(unplaced);
+  if (!open) {
+    return (
+      <button
+        onClick={onToggle}
+        className="absolute right-2 top-2 z-10 h-7 px-2 inline-flex items-center gap-1.5 rounded-md bg-[#1a1a22]/90 border border-white/15 text-[11px] text-white/80 hover:text-white shadow-lg"
+        title="Show the marks in this document"
+      >
+        <StickyNote size={12} />
+        Marks {marks.length}
+      </button>
+    );
+  }
+  return (
+    <aside
+      className={
+        (isMobile ? 'absolute right-0 top-0 bottom-0 z-10 w-64 ' : 'w-64 shrink-0 ') +
+        'flex flex-col min-h-0 border-l border-[var(--color-border)] bg-[var(--color-surface)]'
+      }
+      aria-label="Marks in this document"
+    >
+      <div className="flex items-center gap-2 px-3 h-9 shrink-0 border-b border-[var(--color-border)]">
+        <span className="text-[12px] font-medium text-white/85">Marks</span>
+        <span className="text-[11px] text-white/40 tabular-nums">{marks.length}</span>
+        <span className="flex-1" />
+        <button
+          onClick={onToggle}
+          className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/55 hover:text-white"
+          title="Hide the marks list"
+          aria-label="Hide the marks list"
+        >
+          ×
+        </button>
+      </div>
+      <ul className="flex-1 overflow-auto py-1">
+        {marks.map((m) => {
+          const isNote = annotationIsNote(m);
+          const missing = lost.has(m.id);
+          const quote = (m.text_anchor?.exact ?? m.anchor_text ?? '').replace(/\s+/g, ' ').trim();
+          return (
+            <li key={m.id} className="group relative">
+              <button
+                onClick={(e) => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  onGo(m, { x: r.left, y: r.top + r.height / 2 });
+                }}
+                className="w-full text-left px-3 py-2 pr-7 hover:bg-white/5 flex gap-2 items-start"
+                title={missing ? 'These words are no longer in this version of the document.' : 'Go to this mark'}
+              >
+                {isNote ? (
+                  <StickyNote size={12} className="mt-0.5 shrink-0 text-[#d4a054]" />
+                ) : (
+                  <span
+                    className="mt-1 w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: ANNOTATION_DOT[m.color] }}
+                  />
+                )}
+                <span className="min-w-0 flex-1">
+                  {isNote && (
+                    <span className="block text-[12px] text-white/85 line-clamp-2">{m.note}</span>
+                  )}
+                  <span className={'block text-[11px] line-clamp-2 ' + (isNote ? 'text-white/45 italic' : 'text-white/75')}>
+                    {quote.length > 140 ? `${quote.slice(0, 140)}…` : quote}
+                  </span>
+                  {missing && (
+                    <span className="block text-[10px] text-amber-300/80 mt-0.5">Unplaced: words not found</span>
+                  )}
+                </span>
+              </button>
+              {m.user_id === currentUserId && (
+                <button
+                  onClick={() => onRemove(m.id)}
+                  className="absolute right-1.5 top-1.5 w-5 h-5 rounded-full text-white/40 hover:text-white hover:bg-white/10 text-[12px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
+                  title={isNote ? 'Delete note' : 'Remove highlight'}
+                  aria-label={isNote ? 'Delete note' : 'Remove highlight'}
+                >
+                  ×
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </aside>
+  );
+}
+
 function SelectionMenu({
   x,
   y,
@@ -3480,6 +3754,19 @@ function ReaderStyle({ theme }: { theme: Theme }) {
          screenplay), painted by the Custom Highlight API over the words. */
       ::highlight(${FIND_HL}) { background-color: rgba(255, 214, 0, 0.6); }
       ::highlight(${FIND_HL_CURRENT}) { background-color: rgba(255, 150, 0, 0.85); }
+      /* Highlights and margin-note underlines on a rendered document, in the
+         PDF overlay's colors. Registered at priority -1, so a find hit over a
+         highlighted word shows the find color. */
+      ::highlight(${annHl('gold')}) { background-color: ${ANNOTATION_FILL.gold}; }
+      ::highlight(${annHl('green')}) { background-color: ${ANNOTATION_FILL.green}; }
+      ::highlight(${annHl('pink')}) { background-color: ${ANNOTATION_FILL.pink}; }
+      ::highlight(${annHl('blue')}) { background-color: ${ANNOTATION_FILL.blue}; }
+      ::highlight(${ANN_HL_NOTE}) {
+        text-decoration-line: underline;
+        text-decoration-style: dotted;
+        text-decoration-color: rgba(212, 160, 84, 0.8);
+        text-decoration-thickness: 1.5px;
+      }
       /* The reading pane's scrollbar wears the reader's theme — the app-wide
          white-on-dark bar washes out on parchment. The thumb rides the whole
          case; the step arrows move it a line at a time (hold to crawl). */

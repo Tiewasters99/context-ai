@@ -228,7 +228,8 @@ export function NoteCard({
         )}
         <span className="flex-1" />
         <span className="text-[11px] text-white/40 tabular-nums shrink-0">
-          {formatNoteCite(note.page, note.line_start, note.line_end)}
+          {/* A note on a document without pages has no page to cite. */}
+          {note.text_anchor ? null : formatNoteCite(note.page, note.line_start, note.line_end)}
         </span>
         <button
           onClick={onClose}
