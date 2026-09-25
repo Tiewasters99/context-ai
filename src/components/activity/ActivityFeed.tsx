@@ -45,7 +45,12 @@ export function describe(e: ActivityEvent): string {
     case 'page_created':         return `${who} created the page “${e.title}”`;
     case 'list_created':         return `${who} created the list “${e.title}”`;
     case 'table_created':        return `${who} created the table “${e.title}”`;
-    case 'comment_posted':       return `${who} commented: “${e.title}”`;
+    case 'comment_posted':
+      // Migration 091 writes one of these two titles instead of a message's
+      // words when its conversation is private, or shared but closed to AI.
+      if (e.title === 'Message in a private conversation') return `${who} posted in a private conversation`;
+      if (e.title?.startsWith('Message in ')) return `${who} posted in “${e.title.slice('Message in '.length)}”`;
+      return `${who} commented: “${e.title}”`;
     case 'cite_check_completed': return `Cite-check completed on ${e.title}`;
     case 'meeting_started':      return `${who} started the meeting “${e.title}”`;
     case 'meeting_ended':        return `Meeting “${e.title}” ended`;
@@ -60,7 +65,7 @@ function routeFor(e: ActivityEvent): string {
     case 'page_created':         return `/app/page/${e.ref_id}`;
     case 'list_created':         return `/app/list/${e.ref_id}`;
     case 'table_created':        return `/app/table/${e.ref_id}`;
-    case 'comment_posted':       return `/app/matterspace/${e.matter_id}?tab=Thread`;
+    case 'comment_posted':       return `/app/matterspace/${e.matter_id}?tab=Thread&message=${e.ref_id}`;
     case 'cite_check_completed': return `/app/matterspace/${e.matter_id}?tab=Cite-Check`;
     case 'meeting_started':
     case 'meeting_ended':        return `/app/m/${e.ref_id}`;

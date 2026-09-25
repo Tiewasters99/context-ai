@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Loader2, X, FileText, AlertCircle } from 'lucide-react';
+import { Search, Loader2, X, FileText, AlertCircle, Lock, MessageSquare } from 'lucide-react';
 import { sandboxApi } from '@/lib/sandbox-api';
+// Thread messages (migration 091) are searched as the PERSON, straight from
+// the browser under RLS — every conversation they can read, AI switch or not.
+// The sandbox search above is shared with the AI paths and only ever returns
+// AI-readable messages, so its `correspondence` is not used here.
+import { matterSubtree, searchThreads, type ThreadSearchHit } from '@/components/matter/thread/api';
+import { conversationCitation } from '../../../lib/conversation-cite.mjs';
 
 // Real content search over the corpus — the same hybrid engine (semantic +
 // keyword, page:line citations) the MCP tools use, via /api/sandbox. With a
@@ -38,6 +44,7 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
   const navigate = useNavigate();
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<SearchHit[] | null>(null);
+  const [threadHits, setThreadHits] = useState<ThreadSearchHit[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [wordOnly, setWordOnly] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -50,6 +57,15 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
     setHits(null);
     setNote(null);
     setWordOnly(false);
+    setThreadHits([]);
+    // Correspondence runs beside the passage search and never holds it up; a
+    // failure (091 not applied yet, say) simply shows no thread results.
+    void (async () => {
+      try {
+        const scope = matterId ? await matterSubtree(matterId) : null;
+        setThreadHits(await searchThreads(scope, q.trim(), 10));
+      } catch { setThreadHits([]); }
+    })();
     try {
       const out = await sandboxApi<SearchResponse>('search', {
         q: q.trim(),
@@ -66,7 +82,7 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
     }
   };
 
-  const clear = () => { setQ(''); setHits(null); setError(null); setNote(null); setWordOnly(false); };
+  const clear = () => { setQ(''); setHits(null); setThreadHits([]); setError(null); setNote(null); setWordOnly(false); };
 
   return (
     <div className="mt-6">
@@ -137,6 +153,36 @@ export default function ContentSearch({ matterId, onOpen }: { matterId?: string;
               </button>
             ))
           )}
+        </div>
+      )}
+
+      {hits && threadHits.length > 0 && (
+        <div className="mt-4">
+          <p className="text-[11px] uppercase tracking-wider text-white/40 mb-1.5 px-1">Correspondence — Thread messages</p>
+          <div className="space-y-1.5">
+            {threadHits.map((h) => (
+              <button
+                key={h.comment_id}
+                onClick={() => navigate(`/app/matterspace/${h.matterspace_id}?tab=Thread&message=${h.comment_id}`)}
+                className="w-full text-left px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.07)] hover:border-[rgba(232,184,74,0.35)] hover:bg-[rgba(232,184,74,0.04)] transition-colors"
+              >
+                <div className="flex items-center gap-2 mb-1 min-w-0">
+                  {h.audience === 'members'
+                    ? <Lock size={12} className="text-white/55 shrink-0" />
+                    : <MessageSquare size={12} className="text-[#e8b84a] shrink-0" />}
+                  <span className="text-[12px] text-[#e8b84a]/90 font-medium truncate">{conversationCitation(h)}</span>
+                  {!matterId && h.matter_name && (
+                    <span className="text-[10px] text-white/40 bg-[rgba(255,255,255,0.06)] rounded-full px-2 py-0.5 ml-auto shrink-0">
+                      {h.matter_name}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-white/60 leading-relaxed line-clamp-3">
+                  {(h.snippet ?? h.body).replace(/[«»]/g, '').slice(0, 280)}
+                </p>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </div>
