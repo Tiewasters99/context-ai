@@ -218,6 +218,28 @@ test('dates: read with confidence or not at all', () => {
   assert.equal(parseEmailDate(''), null);
 });
 
+test('the audience line and the AI switch defaults, as the Thread tab words them', async () => {
+  const c = await import('../src/lib/conversations.ts');
+  const people = new Map([
+    ['eden', { display_name: 'Eden Quainton', email: 'eden@firm.test' }],
+    ['james', { display_name: 'James Bushell', email: 'james@client.test' }],
+    ['yfat', { display_name: '', email: 'yfat@cocounsel.test' }],
+  ]);
+  assert.equal(c.audienceLine({ audience: 'members', created_by: 'eden', member_ids: ['eden', 'james'] }, people, 'eden'),
+    'Only you, James Bushell');
+  assert.equal(c.audienceLine({ audience: 'members', created_by: 'eden', member_ids: ['eden', 'james'] }, people, 'james'),
+    'Only you, Eden Quainton');
+  assert.equal(c.audienceLine({ audience: 'members', created_by: 'eden', member_ids: ['eden', 'yfat'] }, people, 'james'),
+    'Only Eden Quainton, yfat@cocounsel.test');
+  assert.equal(c.audienceLine({ audience: 'matter', created_by: 'eden', member_ids: [] }, people, 'eden'),
+    'Everyone on this matter');
+  assert.equal(c.defaultAiReadable('matter'), true, 'AI on by default when the conversation is for everyone');
+  assert.equal(c.defaultAiReadable('members'), false, 'AI off by default when it is private');
+  assert.match(c.aiSwitchHelp('members'), /Off by default/);
+  assert.match(c.aiSwitchHelp('matter'), /On by default/);
+  assert.equal(c.AUDIENCE_LABEL.members, 'Only these people');
+});
+
 test('the Thread cite: "Thread › <title>, <author>, <date>"', () => {
   assert.equal(senderName('Opposing Counsel <oc@radiant.test>'), 'Opposing Counsel');
   assert.equal(senderName('"Quainton, Eden" <eden@firm.test>'), 'Quainton, Eden');
