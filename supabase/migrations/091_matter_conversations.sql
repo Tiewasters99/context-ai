@@ -12,8 +12,14 @@
 --              people they chose, each of whom must already be able to open
 --              the matter.
 --
--- A private conversation is invisible to everyone else: not its messages, not
--- its title, not the fact that it exists. That is enforced HERE, by row-level
+-- A private conversation is invisible to everyone else EXCEPT the matter's
+-- owners and admins, who can always read — and post in — every conversation
+-- in their matter (Eden, 2026-09-25: nobody should believe a conversation is
+-- hidden from the people responsible for the matter). To everyone else it is
+-- invisible: not its messages, not its title, not the fact that it exists.
+-- "Owner or admin" is the effective matter role exactly as can_manage_matter
+-- decides it (owner/admin of the serverspace, or admin on the matter or any
+-- ancestor through matterspace_members). That is enforced HERE, by row-level
 -- security, and therefore holds for every path that reads the tables — the
 -- Thread tab, search, the activity feed, the realtime channel, the Updates
 -- tab, the briefing endpoint, the MCP connector and the in-app assistant,
@@ -41,13 +47,15 @@
 -- policies still treat a null as General, audience 'matter', so a comment
 -- that somehow keeps one is never more hidden OR more exposed than today.
 --
--- The two open questions (Eden has not ruled; each is ONE line below)
+-- The two settings (each is ONE line below)
 -- ---------------------------------------------------------------------------
---   conversations_internal.setting_private_started_by()  = 'anyone_on_matter'
---       Anyone who can open the matter may start a private conversation, and
---       only with people who can open the matter. The alternative value
---       'managers' limits starting one to the matter's owners and admins.
---   conversations_internal.setting_new_members_see_history() = true
+--   conversations_internal.setting_private_started_by()  = 'managers'
+--       Decided by Eden 2026-09-25: only the matter's owners and admins may
+--       START a private conversation, and only with people who can open the
+--       matter. ('anyone_on_matter' would let anyone on the matter start one.)
+--       Either way the owners and admins can always read it.
+--   conversations_internal.setting_new_members_see_history() = true (default;
+--       Eden has not ruled)
 --       Someone added to a private conversation later reads its earlier
 --       messages (the co-counsel norm). false = they read only from the
 --       moment they were added.
@@ -114,7 +122,7 @@ comment on schema conversations_internal is
 -- 1. The two open questions, one line each
 -- ============================================================================
 create or replace function conversations_internal.setting_private_started_by()
-returns text language sql immutable as $$ select 'anyone_on_matter'::text $$;
+returns text language sql immutable as $$ select 'managers'::text $$;
 
 create or replace function conversations_internal.setting_new_members_see_history()
 returns boolean language sql immutable as $$ select true $$;
@@ -348,6 +356,11 @@ begin
 
   if v_audience = 'matter' then return true; end if;
   if v_creator = p_uid then return true; end if;
+  -- The matter's owners and admins read every conversation in it, private
+  -- ones included, whether or not they are on its member list. There is no
+  -- way to leave them out. (Same effective role as can_manage_matter; the
+  -- harness checks the two agree for every person and matter.)
+  if conversations_internal.user_can_manage_matter(p_uid, v_matter) then return true; end if;
 
   select m.added_at into v_added
     from public.matter_conversation_members m

@@ -9,7 +9,8 @@ import {
 } from 'lucide-react';
 import DocumentPicker from '../DocumentPicker';
 import {
-  AUDIENCE_LABEL, HISTORY_NOTE, audienceLine, personName, type ConversationRow, type Person,
+  AUDIENCE_LABEL, HISTORY_NOTE, MANAGERS_ALWAYS_READ, audienceLine, audienceLineFull, personName,
+  type ConversationRow, type Person,
 } from '@/lib/conversations';
 import {
   addPeople, deleteMessage, documentTitles, listMessages, markRead, postMessage, removePerson,
@@ -56,6 +57,7 @@ export default function ConversationView({
   const isPrivate = conversation.audience === 'members';
   const archived = !!conversation.archived_at;
   const line = audienceLine(conversation, peopleById, viewerId);
+  const fullLine = audienceLineFull(conversation, peopleById, viewerId);
   const inIt = new Set([...(conversation.created_by ? [conversation.created_by] : []), ...conversation.member_ids]);
   const addable = people.filter((p) => !inIt.has(p.user_id));
 
@@ -202,7 +204,7 @@ export default function ConversationView({
         </div>
       )}
       <p className="text-[10.5px] text-white/35 mt-1.5">
-        {isPrivate ? `${line}. ` : 'Visible to everyone on this matter. '}
+        {isPrivate ? `${fullLine}. ` : 'Visible to everyone on this matter. '}
         {conversation.ai_readable ? 'AI may read this conversation.' : 'Closed to AI.'} Cmd/Ctrl+Enter to send.
       </p>
     </div>
@@ -218,7 +220,7 @@ export default function ConversationView({
         </div>
         <p className="mt-1 flex items-center gap-1.5 text-[12px] text-white/60">
           {isPrivate ? <Lock size={12} className="shrink-0" /> : <Users size={12} className="shrink-0" />}
-          <span className="break-words">{isPrivate ? line : AUDIENCE_LABEL.matter}</span>
+          <span className="break-words">{isPrivate ? fullLine : AUDIENCE_LABEL.matter}</span>
           <span className="text-white/25">·</span>
           {conversation.ai_readable
             ? <span className="inline-flex items-center gap-1"><Bot size={12} /> AI may read this</span>
@@ -239,7 +241,7 @@ export default function ConversationView({
               <UserPlus size={12} /> Add people
             </button>
           )}
-          {isPrivate && conversation.created_by !== viewerId && (
+          {isPrivate && conversation.created_by !== viewerId && conversation.member_ids.includes(viewerId) && (
             <button onClick={leave} className="inline-flex items-center gap-1 text-white/55 hover:text-white">
               <LogOut size={12} /> Leave
             </button>
@@ -289,7 +291,7 @@ export default function ConversationView({
         {loading && <p className="text-[12px] text-white/40 py-6 text-center">Loading…</p>}
         {!loading && messages.length === 0 && (
           <p className="text-[12px] text-white/40 py-8 text-center max-w-sm mx-auto leading-relaxed">
-            No messages yet. {isPrivate ? `${line} can read what is written here.` : 'Everyone on this matter can read what is written here.'}
+            No messages yet. {isPrivate ? `${line} can read what is written here, and ${MANAGERS_ALWAYS_READ.replace(/ this$/, " it")}.` : 'Everyone on this matter can read what is written here.'}
           </p>
         )}
         {!loading && threaded.length > 0 && (

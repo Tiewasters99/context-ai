@@ -10,6 +10,7 @@
 //   Yfat    co-counsel, a MEMBER on Bushell, no JDA yet
 //   Sam     co-counsel shared ONLY on a Bushell sub-matter
 //   Stella  another firm: a stranger to all of it
+//   Adam    an ADMIN on the Bushell matter (matterspace_members), not the owner
 //
 // What it proves (every assertion is made from SET ROLE authenticated with
 // request.jwt.claims set the way PostgREST sets it, unless it says otherwise)
@@ -195,7 +196,8 @@ const JAMES = await signup('james@client.test', 'James Bushell');
 const YFAT = await signup('yfat@cocounsel.test', 'Yfat');
 const SAM = await signup('sam@subcounsel.test', 'Sam');
 const STELLA = await signup('stella@elsewhere.test', 'Stella');
-const WHO = { [EDEN]: 'Eden', [JAMES]: 'James', [YFAT]: 'Yfat', [SAM]: 'Sam', [STELLA]: 'Stella' };
+const ADAM = await signup('adam@firm.test', 'Adam Admin');
+const WHO = { [EDEN]: 'Eden', [JAMES]: 'James', [YFAT]: 'Yfat', [SAM]: 'Sam', [STELLA]: 'Stella', [ADAM]: 'Adam' };
 
 const [firm] = await q(`insert into public.serverspaces (clientspace_id, name)
   select id, 'Quainton Law' from public.clientspaces where user_id = $1 returning id`, [EDEN]);
@@ -222,6 +224,7 @@ const MATTERS = { BUSHELL, BSUB, BPAUSED, OTHER, SEALED, STELLA_M };
 const member = (m, u, role) => q(`insert into public.matterspace_members (matterspace_id, user_id, role) values ($1,$2,$3)`, [m, u, role]);
 await member(BUSHELL, JAMES, 'viewer');
 await member(BUSHELL, YFAT, 'member');
+await member(BUSHELL, ADAM, 'admin');
 await member(BSUB, SAM, 'member');
 await member(SEALED, YFAT, 'member');
 
@@ -316,7 +319,7 @@ section('the helpers agree with can_access_matter / can_manage_matter');
 // ===========================================================================
 {
   let agree = 0; const disagree = [];
-  for (const uid of [EDEN, JAMES, YFAT, SAM, STELLA]) {
+  for (const uid of [EDEN, JAMES, YFAT, SAM, STELLA, ADAM]) {
     for (const [mName, m] of Object.entries(MATTERS)) {
       const [a] = await as(uid, () => q(`select coalesce(public.can_access_matter($1), false) a, coalesce(public.can_manage_matter($1), false) b`, [m]));
       const [b] = await q(`select conversations_internal.user_can_open_matter($1,$2) a,
@@ -563,12 +566,76 @@ section('guards');
   check(general[0]?.conversation_id === GEN_B, 'a message with no conversation (Moot Bench, the deployed app) lands in General');
   const startGeneral = await as(YFAT, () => attempt(`insert into public.matter_conversations (matterspace_id, title, audience, is_general, created_by) values ($1,'Fake General','matter',true,$2)`, [BUSHELL, YFAT]));
   check(!!startGeneral.err, 'nobody can insert a second "General" from the app');
-  const defaults = await as(YFAT, () => q(`insert into public.matter_conversations (matterspace_id, title, created_by) values ($1,'Bare insert',$2) returning audience, ai_readable`, [BUSHELL, YFAT]));
+  const defaults = await as(EDEN, () => q(`insert into public.matter_conversations (matterspace_id, title, created_by) values ($1,'Bare insert',$2) returning audience, ai_readable`, [BUSHELL, EDEN]));
   check(defaults[0]?.audience === 'members' && defaults[0]?.ai_readable === false,
     'a bare insert fails closed: private, AI off');
   const people = await as(YFAT, () => q(`select display_name, role from public.matter_conversation_people($1)`, [BUSHELL]));
   const names = people.map((p) => p.display_name).sort().join(', ');
-  check(names === 'Eden Quainton, James Bushell, Yfat', 'the picker offers exactly the people who can open Bushell', names);
+  check(names === 'Adam Admin, Eden Quainton, James Bushell, Yfat', 'the picker offers exactly the people who can open Bushell', names);
+  const roles = Object.fromEntries(people.map((p) => [p.display_name, p.role]));
+  check(roles['Eden Quainton'] === 'owner' && roles['Adam Admin'] === 'admin' && roles['James Bushell'] === 'viewer',
+    'the picker carries each person\'s effective role, so it can show the owners and admins as always included');
+}
+
+// ===========================================================================
+section('owners and admins: only they START a private conversation, and they ALWAYS read');
+// ===========================================================================
+{
+  const jamesPriv = await create(JAMES, BUSHELL, 'James tries a private one', 'members', false, [EDEN]);
+  check(!!jamesPriv.err, 'James (viewer) cannot start a private conversation', jamesPriv.err?.message ?? 'CREATED');
+  const yfatPriv = await create(YFAT, BUSHELL, 'Yfat tries a private one', 'members', false, [JAMES]);
+  check(!!yfatPriv.err, 'Yfat (member) cannot start one either', yfatPriv.err?.message ?? 'CREATED');
+  const jamesShared = await create(JAMES, BUSHELL, 'James — questions for the team', 'matter', true);
+  check(!jamesShared.err && jamesShared.rows?.[0]?.id, '…but James can still start a conversation for everyone',
+    jamesShared.err?.message ?? '');
+  const leftovers = await q(`select count(*)::int n from public.matter_conversations where title like '% tries a private one'`);
+  check(leftovers[0].n === 0, 'the refused private conversations were not created at all');
+
+  const adamPriv = (await create(ADAM, BUSHELL, 'Adam and James', 'members', false, [JAMES])).rows?.[0]?.id;
+  check(!!adamPriv, 'Adam (matter admin, not the owner) can start one');
+  const p1 = await post(ADAM, BUSHELL, adamPriv, 'Privileged note: kiwicode.');
+  const p2 = await post(JAMES, BUSHELL, adamPriv, 'Understood on kiwicode.');
+  check(!p1.err && !p2.err, 'Adam and James post in it');
+
+  // Eden: the owner, neither its starter nor on its member list.
+  const [inIt] = await q(`select count(*)::int n from public.matter_conversation_members where conversation_id=$1 and user_id=$2`, [adamPriv, EDEN]);
+  check(inIt.n === 0, 'Eden is NOT on its member list');
+  const edenRead = await as(EDEN, () => q(`select body from public.matter_comments where conversation_id=$1`, [adamPriv]));
+  check(edenRead.length === 2, 'Eden (owner) reads the private conversation he is not in — both messages', `${edenRead.length}`);
+  const edenList = await as(EDEN, () => q(`select title, unread_count from public.list_matter_conversations($1)`, [BUSHELL]));
+  const row = edenList.find((c) => c.title === 'Adam and James');
+  check(row && row.unread_count === 2, 'it is in Eden\'s conversation list, with its unread count');
+  const edenSearch = await as(EDEN, () => q(`select body from public.search_conversations(array[$1]::uuid[], 'kiwicode')`, [BUSHELL]));
+  check(edenSearch.length === 2, 'Eden\'s own search finds it');
+  const edenMembers = await as(EDEN, () => q(`select user_id from public.matter_conversation_members where conversation_id=$1`, [adamPriv]));
+  check(edenMembers.length === 2, 'Eden sees its member list (Adam, James)');
+  const edenPost = await post(EDEN, BUSHELL, adamPriv, 'Owner here: noted, kiwicode.');
+  check(!edenPost.err, 'Eden may post in it (owners and admins are responsible for the matter)', edenPost.err?.message ?? '');
+  const edenFeed = await as(EDEN, () => q(`select title from public.activity_feed where event_type='comment_posted' and matter_id=$1`, [BUSHELL]));
+  check(!has(edenFeed, 'kiwicode') && edenFeed.some((f) => f.title === 'Message in a private conversation'),
+    'his feed still says "Message in a private conversation", never its words');
+  const edenAi = await as(EDEN, () => q(`select body from public.search_conversations_for_ai(array[$1]::uuid[], 'kiwicode')`, [BUSHELL]));
+  const edenGrep = await as(EDEN, () => q(`select body from public.grep_conversations_for_ai(array[$1]::uuid[], 'kiwicode')`, [BUSHELL]));
+  check(edenAi.length === 0 && edenGrep.length === 0, 'the AI rule is unchanged: AI is off, so the AI door returns nothing, even to the owner');
+
+  // Adam: an admin, reads Eden's Strategy (Eden + James) without being in it.
+  const adamRead = await as(ADAM, () => q(`select body from public.matter_comments where conversation_id=$1`, [PRIV]));
+  check(adamRead.length === 3 && has(adamRead, 'zebracode'), 'Adam (admin) reads Eden\'s private "Strategy" he is not in');
+
+  // Yfat and Sam: still nothing.
+  const yRead = await as(YFAT, () => q(`select body from public.matter_comments where body like '%kiwicode%'`));
+  const yList = await as(YFAT, () => q(`select title from public.list_matter_conversations($1)`, [BUSHELL]));
+  const ySearch = await as(YFAT, () => q(`select body from public.search_conversations(null, 'kiwicode or zebracode')`));
+  const yFeed = await as(YFAT, () => q(`select title from public.activity_feed where title = 'Message in a private conversation'`));
+  check(yRead.length === 0 && !yList.some((c) => /Adam and James|Strategy/.test(c.title)) && ySearch.length === 0 && yFeed.length === 0,
+    'Yfat (member, not an admin) still sees nothing of either private conversation: no messages, titles, search hits or feed rows');
+  const sRead = await as(SAM, () => q(`select body from public.matter_comments where body like '%kiwicode%'`));
+  check(sRead.length === 0, 'Sam (sub-matter only) sees none of it');
+  // A sub-matter's ADMIN is not an admin of the parent.
+  await q(`update public.matterspace_members set role='admin' where matterspace_id=$1 and user_id=$2`, [BSUB, SAM]);
+  const sAdmin = await as(SAM, () => q(`select body from public.matter_comments where matterspace_id=$1`, [BUSHELL]));
+  check(sAdmin.length === 0, 'even as ADMIN of the sub-matter, Sam reads nothing of the parent matter');
+  await q(`update public.matterspace_members set role='member' where matterspace_id=$1 and user_id=$2`, [BSUB, SAM]);
 }
 
 // ===========================================================================
@@ -649,7 +716,7 @@ function bridgeFor(uid) {
 const mcp = await import(pathToFileURL(path.resolve(ROOT, 'lib', 'mcp-core.mjs')).href);
 {
   const everyWord = 'zebracode OR mangocode OR sharedcode OR quietcode OR sealedcode OR pausedcode OR retainer';
-  const who = [EDEN, JAMES, YFAT, SAM, STELLA];
+  const who = [EDEN, JAMES, YFAT, SAM, STELLA, ADAM];
   let privateLeaks = 0;
   for (const uid of who) {
     for (const m of [BUSHELL, null]) {
@@ -670,6 +737,10 @@ const mcp = await import(pathToFileURL(path.resolve(ROOT, 'lib', 'mcp-core.mjs')
     hit?.citation ?? JSON.stringify(eden).slice(0, 200));
   check(eden.result_count === 0 && Array.isArray(eden.results) && eden.results.length === 0,
     'the passage results are untouched (none in this harness), and result_count still counts passages only');
+  const ownerPriv = await mcp.handleSearch(bridgeFor(EDEN), { q: 'kiwicode', matter: BUSHELL }, {});
+  const ownerGrep = await mcp.handleGrep(bridgeFor(EDEN), { matter: BUSHELL, pattern: 'kiwicode' }, {});
+  check(!ownerPriv.correspondence && !ownerGrep.correspondence_matches,
+    'the owner reads Adam\'s private AI-off conversation himself, but the connector returns none of it to him');
   const jamesPriv = await mcp.handleSearch(bridgeFor(JAMES), { q: 'zebracode', matter: BUSHELL }, {});
   check(!jamesPriv.correspondence, 'James asks for the private, AI-off conversation by its words: nothing', JSON.stringify(jamesPriv.correspondence ?? null));
   const jamesAi = await mcp.handleSearch(bridgeFor(JAMES), { q: 'mangocode', matter: BUSHELL }, {});

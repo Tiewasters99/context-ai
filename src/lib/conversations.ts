@@ -4,13 +4,34 @@
 // The database is what enforces who can read a conversation; this file only
 // says it. The two settings below are one-line mirrors of the two one-line
 // SQL functions in 091 (conversations_internal.setting_private_started_by and
-// setting_new_members_see_history). Eden has not ruled on either;
+// setting_new_members_see_history). Eden ruled on the first (2026-09-25:
+// 'managers'); the second is still the default.
 // scripts/_verify-matter-conversations.mjs fails if the pair ever disagree.
+//
+// Also decided 2026-09-25, and not a setting: the matter's owners and admins
+// can ALWAYS read (and post in) every conversation in their matter, private
+// ones included. The wording below says so wherever a conversation is private,
+// so nobody believes a conversation is hidden from them.
 //
 // Plain module, no '@/' imports, so node can import it in a harness.
 
 /** Who may start a private conversation. 'anyone_on_matter' | 'managers'. */
-export const PRIVATE_CONVERSATIONS_STARTED_BY: 'anyone_on_matter' | 'managers' = 'anyone_on_matter';
+export const PRIVATE_CONVERSATIONS_STARTED_BY: 'anyone_on_matter' | 'managers' = 'managers';
+
+/** The effective matter roles that read every conversation (can_manage_matter). */
+export function isMatterManager(role: string | null | undefined): boolean {
+  return role === 'owner' || role === 'admin';
+}
+
+/** May someone with this role start a private conversation? */
+export function canStartPrivate(role: string | null | undefined): boolean {
+  return PRIVATE_CONVERSATIONS_STARTED_BY === 'anyone_on_matter' ? !!role : isMatterManager(role);
+}
+
+export const MANAGERS_ALWAYS_READ = 'the matter’s owners and admins can always read this';
+
+export const PRIVATE_START_REFUSED =
+  'Only the matter’s owners and admins can start a private conversation.';
 
 /** Someone added to a private conversation later reads its earlier messages. */
 export const NEW_MEMBERS_SEE_HISTORY = true;
@@ -64,7 +85,7 @@ export const HISTORY_NOTE = NEW_MEMBERS_SEE_HISTORY
   : 'Anyone you add later will see only messages from then on.';
 
 export const PRIVATE_PICKER_NOTE =
-  'Only people who can already open this matter can be added. Nobody else on the matter will see this conversation, its title or its messages.';
+  'Only people who can already open this matter can be added. The matter’s owners and admins can always read it, whether or not they are listed. Nobody else on the matter will see this conversation, its title or its messages.';
 
 export const PRIVATE_ATTACHMENTS_NOTE =
   'Files are not filed from a private conversation: everything in this matter’s Vault can be opened by everyone on the matter, and by AI where the matter allows it. The email itself is saved; send its attachments to these people another way.';
@@ -94,4 +115,18 @@ export function audienceLine(
   }
   const all = you ? ['you', ...names] : names;
   return all.length ? `Only ${all.join(', ')}` : 'Only these people';
+}
+
+/**
+ * The audience line as the conversation header shows it, honest about who
+ * else can read: "Only you, James Bushell — the matter’s owners and admins
+ * can always read this".
+ */
+export function audienceLineFull(
+  c: Pick<ConversationRow, 'audience' | 'member_ids' | 'created_by'>,
+  people: Map<string, Pick<Person, 'display_name' | 'email'>>,
+  viewerId: string | null | undefined,
+): string {
+  const line = audienceLine(c, people, viewerId);
+  return c.audience === 'members' ? `${line} — ${MANAGERS_ALWAYS_READ}` : line;
 }

@@ -6,8 +6,9 @@ import { useMemo, useState } from 'react';
 import { Lock, Users } from 'lucide-react';
 import AgentCard, { cardField, cardLegend } from '@/components/agents/AgentCard';
 import {
-  AI_SWITCH_LABEL, AUDIENCE_LABEL, HISTORY_NOTE, PRIVATE_PICKER_NOTE,
-  aiSwitchHelp, defaultAiReadable, personName, type Audience, type Person,
+  AI_SWITCH_LABEL, AUDIENCE_LABEL, HISTORY_NOTE, PRIVATE_PICKER_NOTE, PRIVATE_START_REFUSED,
+  aiSwitchHelp, canStartPrivate, defaultAiReadable, isMatterManager, personName,
+  type Audience, type Person,
 } from '@/lib/conversations';
 import { createConversation } from './api';
 
@@ -32,7 +33,13 @@ export default function NewConversationCard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const viewerRole = people.find((p) => p.user_id === viewerId)?.role ?? null;
+  const mayStartPrivate = canStartPrivate(viewerRole);
   const others = useMemo(() => people.filter((p) => p.user_id !== viewerId), [people, viewerId]);
+  // The matter's owners and admins read every conversation whatever is
+  // ticked; they are shown as always included, never as a choice.
+  const managers = useMemo(() => others.filter((p) => isMatterManager(p.role)), [others]);
+  const choosable = useMemo(() => others.filter((p) => !isMatterManager(p.role)), [others]);
 
   const chooseAudience = (a: Audience) => {
     setAudience(a);
@@ -40,7 +47,7 @@ export default function NewConversationCard({
     if (!aiTouched) setAiReadable(defaultAiReadable(a));
   };
 
-  const canSave = title.trim().length > 0 && (audience === 'matter' || picked.size > 0) && !saving;
+  const canSave = title.trim().length > 0 && (audience === 'matter' || mayStartPrivate) && !saving;
 
   const save = async () => {
     if (!canSave) return;
@@ -102,11 +109,12 @@ export default function NewConversationCard({
         <legend className={cardLegend}>Who can read it</legend>
         <div className="space-y-1.5">
           {(['matter', 'members'] as const).map((a) => (
-            <label key={a} className="flex items-start gap-2.5 cursor-pointer text-[13px] text-white/85">
+            <label key={a} className={`flex items-start gap-2.5 text-[13px] ${a === 'members' && !mayStartPrivate ? 'text-white/35 cursor-not-allowed' : 'text-white/85 cursor-pointer'}`}>
               <input
                 type="radio"
                 name="audience"
                 checked={audience === a}
+                disabled={a === 'members' && !mayStartPrivate}
                 onChange={() => chooseAudience(a)}
                 className="mt-1 accent-[#e8b84a]"
               />
@@ -117,6 +125,7 @@ export default function NewConversationCard({
             </label>
           ))}
         </div>
+        {!mayStartPrivate && <p className="text-[11px] text-white/45 mt-1.5 pl-6">{PRIVATE_START_REFUSED}</p>}
       </fieldset>
 
       {audience === 'members' && (
@@ -128,7 +137,12 @@ export default function NewConversationCard({
           ) : (
             <ul className="space-y-1 max-h-48 overflow-y-auto pr-1">
               <li className="text-[12.5px] text-white/45 pl-6">You (always included)</li>
-              {others.map((p) => (
+              {managers.map((p) => (
+                <li key={p.user_id} className="text-[12.5px] text-white/45 pl-6">
+                  {personName(p)} (matter {p.role} — can always read it)
+                </li>
+              ))}
+              {choosable.map((p) => (
                 <li key={p.user_id}>
                   <label className="flex items-center gap-2.5 cursor-pointer text-[13px] text-white/85">
                     <input

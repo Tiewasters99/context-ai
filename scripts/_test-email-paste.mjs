@@ -238,6 +238,17 @@ test('the audience line and the AI switch defaults, as the Thread tab words them
   assert.match(c.aiSwitchHelp('members'), /Off by default/);
   assert.match(c.aiSwitchHelp('matter'), /On by default/);
   assert.equal(c.AUDIENCE_LABEL.members, 'Only these people');
+  assert.equal(c.audienceLineFull({ audience: 'members', created_by: 'eden', member_ids: ['eden', 'james'] }, people, 'eden'),
+    'Only you, James Bushell — the matter’s owners and admins can always read this',
+    'a private conversation never claims to be hidden from the owners and admins');
+  assert.equal(c.audienceLineFull({ audience: 'matter', created_by: 'eden', member_ids: [] }, people, 'eden'),
+    'Everyone on this matter');
+  assert.equal(c.PRIVATE_CONVERSATIONS_STARTED_BY, 'managers');
+  assert.equal(c.canStartPrivate('owner'), true);
+  assert.equal(c.canStartPrivate('admin'), true);
+  assert.equal(c.canStartPrivate('member'), false);
+  assert.equal(c.canStartPrivate('viewer'), false);
+  assert.match(c.PRIVATE_PICKER_NOTE, /owners and admins can always read it/);
 });
 
 test('the Thread cite: "Thread › <title>, <author>, <date>"', () => {
