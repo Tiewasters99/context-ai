@@ -48,7 +48,7 @@ import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 const openStack: symbol[] = [];
 
 const FIRST_FIELD =
-  'input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])';
+  'input:not([type=hidden]):not([type=file]):not([disabled]), textarea:not([disabled]), select:not([disabled])';
 
 export interface CardDialogProps {
   /** Per-dialog localStorage key for position + pin, e.g. 'cs.dialog.newMatter'. */

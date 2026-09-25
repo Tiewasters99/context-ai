@@ -440,7 +440,19 @@ const CONVERTED = {
   'src/components/vault/UploadEstimateDialog.tsx': ['cs.dialog.uploadEstimate'],
   'src/components/vault/DeckComposerModal.tsx': ['cs.dialog.deckComposer'],
   'src/components/vault/SandboxPanel.tsx': ['cs.dialog.sandboxAddFromMatter'],
+  'src/components/serverspace/ShareModal.tsx': ['cs.dialog.share'],
+  'src/components/layout/MusicLibrary.tsx': ['cs.dialog.musicLibrary'],
+  'src/components/reader/AnimationAttach.tsx': ['cs.dialog.animationAttach'],
+  'src/components/vault/DocumentEditor.tsx': ['cs.dialog.documentEditor'],
 };
+
+test('the document editor: unsaved edits survive the backdrop, and one Escape handler', () => {
+  const s = src('src/components/vault/DocumentEditor.tsx');
+  assert.match(s, /closeOnBackdrop=\{!dirty\}/, 'the backdrop used to close it whatever was typed');
+  assert.match(s, /busy=\{saving\}/, 'no closing mid-save');
+  assert.doesNotMatch(s, /e\.key === 'Escape'/, 'Escape is CardDialog\'s, not a second listener');
+  assert.match(s, /data-card-inert/, 'the read-only text can be selected, not dragged');
+});
 
 // A file whose own route card or page shell is `fixed inset-0` legitimately:
 // only the named dialog inside it is held to the shell.
