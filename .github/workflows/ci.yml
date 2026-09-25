@@ -758,3 +758,19 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-matter-conversations.mjs
+
+      # Migration 093: the per-person "Can post messages" switch on matter
+      # shares. Executes the 091 chain + 092 + 093 (three times, and its own
+      # rollback) in PGlite with real RLS: a co-counsel switched off reads
+      # everything but cannot post, reply, paste an email, post the old way or
+      # start a conversation; she cannot flip her own switch and a non-admin
+      # cannot flip hers; owners, admins, serverspace members and backfilled
+      # shares always post; a parent's share grants its folders; someone put on
+      # a private conversation posts there (the one-line setting, mirrored in
+      # src/lib/conversations.ts); a negative control puts 091's wrapper back
+      # and watches the hole. Re-installs PGlite: it comes after the jsdom steps.
+      - name: Migration 093 — "Can post messages" on shares (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-can-post.mjs

@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import DocumentPicker from '../DocumentPicker';
 import {
-  AUDIENCE_LABEL, HISTORY_NOTE, MANAGERS_ALWAYS_READ, audienceLine, audienceLineFull, personName,
+  AUDIENCE_LABEL, HISTORY_NOTE, MANAGERS_ALWAYS_READ, POSTING_OFF_NOTE, audienceLine, audienceLineFull, personName,
   type ConversationRow, type Person,
 } from '@/lib/conversations';
 import {
@@ -22,6 +22,7 @@ export default function ConversationView({
   conversation,
   people,
   viewerId,
+  canPost = true,
   refreshKey,
   highlightMessageId,
   onChanged,
@@ -32,6 +33,8 @@ export default function ConversationView({
   conversation: ConversationRow;
   people: Person[];
   viewerId: string;
+  /** Migration 093: false = read-only for this person (no composer, reply or paste). */
+  canPost?: boolean;
   refreshKey: number;
   highlightMessageId: string | null;
   onChanged: () => void;
@@ -101,7 +104,7 @@ export default function ConversationView({
 
   const send = async () => {
     const body = draft.trim();
-    if ((!body && attachments.length === 0) || sending || archived) return;
+    if ((!body && attachments.length === 0) || sending || archived || !canPost) return;
     setSending(true);
     setError(null);
     try {
@@ -227,7 +230,7 @@ export default function ConversationView({
             : <span className="inline-flex items-center gap-1"><BotOff size={12} /> Closed to AI</span>}
         </p>
         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1.5 text-[11.5px]">
-          {!archived && (
+          {!archived && canPost && (
             <button onClick={onPasteEmail} className="inline-flex items-center gap-1 text-[#e8b84a] hover:text-[#f0c865]">
               <ClipboardPaste size={12} /> Paste an email
             </button>
@@ -299,7 +302,7 @@ export default function ConversationView({
             {threaded.map(({ top, replies }) => (
               <li key={top.id} className="space-y-2">
                 <MessageItem m={top} viewerId={viewerId} docTitles={docTitles} highlighted={top.id === highlightMessageId}
-                  onReply={archived ? null : () => { setReplyTo(top); setTimeout(() => composerRef.current?.focus(), 0); }}
+                  onReply={archived || !canPost ? null : () => { setReplyTo(top); setTimeout(() => composerRef.current?.focus(), 0); }}
                   onDelete={() => { if (confirm('Delete this message? Replies will remain.')) void deleteMessage(top.id).then(load); }} />
                 {replyTo?.id === top.id && <div className="ml-10">{composer(true)}</div>}
                 {replies.length > 0 && (
@@ -307,7 +310,7 @@ export default function ConversationView({
                     {replies.map((r) => (
                       <li key={r.id} className="space-y-2">
                         <MessageItem m={r} viewerId={viewerId} docTitles={docTitles} highlighted={r.id === highlightMessageId} isReply
-                          onReply={archived ? null : () => { setReplyTo(r); setTimeout(() => composerRef.current?.focus(), 0); }}
+                          onReply={archived || !canPost ? null : () => { setReplyTo(r); setTimeout(() => composerRef.current?.focus(), 0); }}
                           onDelete={() => { if (confirm('Delete this message?')) void deleteMessage(r.id).then(load); }} />
                         {replyTo?.id === r.id && <div className="ml-8">{composer(true)}</div>}
                       </li>
@@ -323,7 +326,9 @@ export default function ConversationView({
       {error && <p className="text-[11.5px] text-red-300 mt-1">{error}</p>}
       {archived
         ? <p className="mt-3 border-t border-white/[0.06] pt-3 text-[12px] text-white/45">Archived — read only.</p>
-        : !replyTo && composer(false)}
+        : !canPost
+          ? <p className="mt-3 border-t border-white/[0.06] pt-3 text-[12px] text-white/55">{POSTING_OFF_NOTE}</p>
+          : !replyTo && composer(false)}
 
       {pickerOpen && (
         <DocumentPicker

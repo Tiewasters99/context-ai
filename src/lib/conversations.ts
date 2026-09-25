@@ -33,6 +33,34 @@ export const MANAGERS_ALWAYS_READ = 'the matter’s owners and admins can always
 export const PRIVATE_START_REFUSED =
   'Only the matter’s owners and admins can start a private conversation.';
 
+/**
+ * Migration 093: someone an owner or admin has put on a private conversation's
+ * member list may post in THAT conversation even when "Can post messages" is
+ * off on their share — being added is the authorisation for it. One-line
+ * mirror of conversations_internal.setting_private_members_may_post();
+ * scripts/_verify-can-post.mjs fails if the two disagree.
+ */
+export const PRIVATE_MEMBERS_MAY_POST = true;
+
+/** The Thread tab, for someone whose posting is off. */
+export const POSTING_OFF_NOTE =
+  'You can read this matter’s conversations. Posting is off for you — the matter’s owner can turn it on.';
+
+/** The Share dialog, under "Add member by email" for a matter. */
+export const SHARE_CAN_POST_NOTE =
+  'People you share with can read. Turn on ‘Can post messages’ when they may write in the Thread.';
+
+export const CAN_POST_LABEL = 'Can post messages';
+
+/** May this conversation be written in by someone whose matter-wide posting is off? */
+export function postsByMembership(
+  c: Pick<ConversationRow, 'audience' | 'member_ids' | 'created_by'>,
+  viewerId: string | null | undefined,
+): boolean {
+  if (!PRIVATE_MEMBERS_MAY_POST || !viewerId || c.audience !== 'members') return false;
+  return c.member_ids.includes(viewerId) || c.created_by === viewerId;
+}
+
 /** Someone added to a private conversation later reads its earlier messages. */
 export const NEW_MEMBERS_SEE_HISTORY = true;
 
