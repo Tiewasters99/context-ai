@@ -6,6 +6,11 @@
 // sub-matters show as included rather than as separate boxes to tick.
 // Sealed matters (SecureSpace, own tier or inherited) are shown, disabled,
 // with the reason — never hidden, and never grantable.
+//
+// Migration 088: when the caller passes onScopeAllChange, a box at the top
+// offers "All my matters (except SecureSpaces)". Ticking it greys and
+// disables the tree but leaves `value` alone, so unticking it gives back
+// exactly the matters that were ticked before.
 
 import { useMemo, type ReactElement } from 'react';
 import { Lock } from 'lucide-react';
@@ -13,14 +18,23 @@ import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
 const SEALED_REASON = 'In a SecureSpace. No outside agent can see it, whatever is ticked.';
+export const SCOPE_ALL_LABEL = 'All my matters (except SecureSpaces)';
+export const SCOPE_ALL_HINT = 'Includes matters you create later. You can narrow it any time.';
 
 export default function AgentMatterPicker({
   value,
   onChange,
+  scopeAll = false,
+  onScopeAllChange,
 }: {
   value: string[];
   onChange: (next: string[]) => void;
+  /** 088: "All my matters (except SecureSpaces)" is ticked. */
+  scopeAll?: boolean;
+  /** Shows the "All my matters" box; omit it to offer the tree alone. */
+  onScopeAllChange?: (next: boolean) => void;
 }) {
+  const allOn = !!onScopeAllChange && scopeAll;
   const { data: serverspaces = [], isLoading, error } = useServerspaces();
   const ticked = useMemo(() => new Set(value), [value]);
 
@@ -30,14 +44,30 @@ export default function AgentMatterPicker({
   );
 
   const toggle = (id: string) => {
+    if (allOn) return;
     if (ticked.has(id)) onChange(value.filter((x) => x !== id));
     else onChange([...value, id]);
   };
 
-  if (isLoading) return <p className="text-[12px] text-white/40 italic">Reading your matters…</p>;
-  if (error) return <p className="text-[12px] text-red-300">Could not read your matters.</p>;
+  const allBox = onScopeAllChange ? (
+    <label className="flex items-start gap-2 px-2 py-2 mb-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] cursor-pointer hover:bg-white/[0.03]" data-card-inert>
+      <input
+        type="checkbox"
+        className="mt-0.5 accent-[#e8b84a]"
+        checked={scopeAll}
+        onChange={(e) => onScopeAllChange(e.target.checked)}
+      />
+      <span className="leading-snug">
+        <span className="block text-[13px] text-white/90">{SCOPE_ALL_LABEL}</span>
+        <span className="block text-[11px] text-white/45 mt-0.5">{SCOPE_ALL_HINT}</span>
+      </span>
+    </label>
+  ) : null;
+
+  if (isLoading) return <>{allBox}<p className="text-[12px] text-white/40 italic">Reading your matters…</p></>;
+  if (error) return <>{allBox}<p className="text-[12px] text-red-300">Could not read your matters.</p></>;
   if (groups.every((g) => g.roots.length === 0)) {
-    return <p className="text-[12px] text-white/50">You have no matters yet.</p>;
+    return <>{allBox}<p className="text-[12px] text-white/50">You have no matters yet.</p></>;
   }
 
   const renderNode = (
@@ -51,7 +81,7 @@ export default function AgentMatterPicker({
     const own = ticked.has(m.id);
     const included = parentTicked && !sealed;
     const checked = !sealed && (own || parentTicked);
-    const disabled = sealed || parentTicked;
+    const disabled = allOn || sealed || parentTicked;
     return (
       <div key={m.id}>
         <label
@@ -85,7 +115,14 @@ export default function AgentMatterPicker({
   };
 
   return (
-    <div className="rounded-lg border border-[rgba(255,255,255,0.08)] max-h-[320px] overflow-y-auto py-1" data-card-inert>
+    <>
+    {allBox}
+    <div
+      className={`rounded-lg border border-[rgba(255,255,255,0.08)] max-h-[320px] overflow-y-auto py-1 ${allOn ? 'opacity-40' : ''}`}
+      aria-disabled={allOn || undefined}
+      title={allOn ? 'Every matter is included. Untick "All my matters" to choose.' : undefined}
+      data-card-inert
+    >
       {groups.map((g) => (
         g.roots.length === 0 ? null : (
           <div key={g.id} className="py-1">
@@ -95,5 +132,6 @@ export default function AgentMatterPicker({
         )
       ))}
     </div>
+    </>
   );
 }

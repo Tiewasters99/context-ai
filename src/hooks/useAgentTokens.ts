@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { isLiveAgent, listAgentTokens, type AgentToken } from '@/lib/agentTokens';
 import { isAgentsNotReady } from '@/lib/agentTasks';
-import { isEffectivelySealed, scopeCoversMatter } from '@/lib/agent-scope';
+import { agentCoversMatter, isEffectivelySealed } from '@/lib/agent-scope';
 
 export const AGENT_TOKENS_KEY = ['agent_tokens'] as const;
 
@@ -49,7 +49,7 @@ export function useAgentsForMatter(matterId: string | null | undefined): MatterA
     const own = q.data ?? [];
     const live = own.filter((a) => isLiveAgent(a));
     const sealed = !!matterId && isEffectivelySealed(matters, matterId);
-    const eligible = matterId ? live.filter((a) => scopeCoversMatter(matters, a.matter_scope, matterId)) : [];
+    const eligible = matterId ? live.filter((a) => agentCoversMatter(matters, a, matterId)) : [];
     const notReady = !!q.error && isAgentsNotReady(q.error);
     return {
       own,

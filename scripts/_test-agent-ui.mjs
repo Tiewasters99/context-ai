@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  agentCoversMatter,
   ancestorsInclusive,
   coveredMatterIds,
   isEffectivelySealed,
@@ -140,7 +141,7 @@ test('the Agents section says what an agent sees', () => {
 test('an agent token is a connector token with kind agent, and never lights the Claude badge', () => {
   const t = src('src/lib/agentTokens.ts');
   assert.match(t, /generateConnectorToken\(\)/);
-  assert.match(t, /kind: 'agent',\s*agent_provider: input\.provider,\s*matter_scope: input\.scope,/);
+  assert.match(t, /kind: 'agent',\s*agent_provider: input\.provider,\s*matter_scope: all \? \[\] : input\.scope,/);
   assert.doesNotMatch(t, /token_hash[^:]/, 'the browser never reads token_hash back');
 });
 
@@ -154,7 +155,7 @@ test('the Delegate card lists only agents that can see the matter, and says so w
   // Only the caller's OWN live agents: connector_tokens RLS returns only
   // the caller's rows, and revoked or expired ones are dropped first.
   assert.match(hook, /const live = own\.filter\(\(a\) => isLiveAgent\(a\)\);/);
-  assert.match(hook, /live\.filter\(\(a\) => scopeCoversMatter\(matters, a\.matter_scope, matterId\)\)/);
+  assert.match(hook, /live\.filter\(\(a\) => agentCoversMatter\(matters, a, matterId\)\)/);
 });
 
 // ---------------------------------------------------------------------------
@@ -322,9 +323,9 @@ test('the OAuth consent screen offers both ways to connect, full assistant by de
   assert.match(s, /FULL_ASSISTANT_COPY = 'Sees every matter you can see, except SecureSpaces\.'/);
   assert.match(s, /import \{ AGENT_SCOPE_COPY \} from '@\/components\/agents\/AgentsSection'/,
     'the agent wording is the Agents section\'s own constant, not a retyped copy');
-  assert.match(s, /<AgentMatterPicker value=\{agentScope\} onChange=\{setAgentScope\} \/>/, 'the same matter picker');
+  assert.match(s, /<AgentMatterPicker\s+value=\{agentScope\}\s+onChange=\{setAgentScope\}/, 'the same matter picker');
   assert.match(s, /connect_as: 'agent'/);
-  assert.match(s, /matter_scope: normalizeScope\(allMatters, agentScope\)/, 'sealed and covered matters dropped before sending');
+  assert.match(s, /matter_scope: agentScopeAll \? \[\] : normalizeScope\(allMatters, agentScope\)/, 'sealed and covered matters dropped before sending');
   assert.doesNotMatch(s, /from\('connector_tokens'\)\s*\.select\('\*'/, 'never select * on connector_tokens (086)');
 });
 
@@ -337,4 +338,56 @@ test('an OAuth-backed agent says how it connected, and offers no token to copy',
   assert.match(c, /from\('oauth_grants'\)\s*\.select\('\*'\)/, 'oauth_grants read with * so a database without 087 still lists grants');
   const t = src('src/lib/agentTokens.ts');
   assert.match(t, /return t\.token_prefix === 'oauth';/);
+});
+
+// ---------------------------------------------------------------------------
+// 10. "All my matters (except SecureSpaces)" (migration 088)
+// ---------------------------------------------------------------------------
+
+test('an agent with scope_all covers every matter except a sealed one, including one it never listed', () => {
+  const all = { matter_scope: [], scope_all: true };
+  for (const id of ['A', 'A1', 'B', 'B1']) assert.equal(agentCoversMatter(M, all, id), true, id);
+  for (const id of ['A2', 'A2x', 'S', 'S1']) assert.equal(agentCoversMatter(M, all, id), false, id);
+  // A matter created later, not in the tree the grant was made from.
+  const later = [...M, { id: 'N', parent_matterspace_id: null, ai_tier: 'A' }];
+  assert.equal(agentCoversMatter(later, all, 'N'), true);
+  // Without it, the list rules exactly as before; only a literal true is "all".
+  assert.equal(agentCoversMatter(M, { matter_scope: ['A'], scope_all: false }, 'B'), false);
+  assert.equal(agentCoversMatter(M, { matter_scope: ['A'] }, 'A1'), true);
+  assert.equal(agentCoversMatter(M, { matter_scope: [], scope_all: 'true' }, 'A'), false);
+});
+
+test('the picker offers "All my matters", greys the tree, and keeps the ticks underneath', () => {
+  const p = src('src/components/agents/AgentMatterPicker.tsx');
+  assert.ok(p.includes("SCOPE_ALL_LABEL = 'All my matters (except SecureSpaces)'"));
+  assert.ok(p.includes("SCOPE_ALL_HINT = 'Includes matters you create later. You can narrow it any time.'"));
+  assert.match(p, /const disabled = allOn \|\| sealed \|\| parentTicked;/, 'every box in the tree is disabled while "all" is on');
+  assert.match(p, /if \(allOn\) return;/, 'and a click cannot change the ticks');
+  assert.match(p, /\$\{allOn \? 'opacity-40' : ''\}/, 'the tree is greyed');
+  assert.doesNotMatch(p, /onScopeAllChange\([^)]*\);\s*onChange\(/, 'ticking "all" does not clear the ticks (unticking restores them)');
+  // Both callers pass it through: Connections › Agents add/edit and the consent page.
+  const a = src('src/components/agents/AgentsSection.tsx');
+  assert.equal((a.match(/scopeAll=\{scopeAll\} onScopeAllChange=\{setScopeAll\}/g) ?? []).length, 2, 'Add and Edit both offer it');
+  assert.match(a, /scope: normalizeScope\(all, scope\),\s*scopeAll,/);
+  assert.match(a, /updateAgentScope\(agent\.id, normalizeScope\(all, scope\), \{ scopeAll, wasAll: agent\.scope_all === true \}\)/);
+  assert.ok(a.includes("ALL_MATTERS_LABEL = 'All matters (except SecureSpaces)'"));
+  assert.match(a, /a\.scope_all\s*\?\s*`Sees: \$\{ALL_MATTERS_LABEL\}\.`/, 'the list says "All matters (except SecureSpaces)" instead of a list');
+  const o = src('src/pages/OAuthAuthorize.tsx');
+  assert.match(o, /scopeAll=\{agentScopeAll\}\s+onScopeAllChange=\{setAgentScopeAll\}/);
+  assert.match(o, /\.\.\.\(agentScopeAll \? \{ scope_all: true \} : \{\}\)/, 'the consent POST carries scope_all only when ticked');
+  assert.match(o, /useState<'assistant' \| 'agent'>\('assistant'\)/, 'the default is still "a full assistant"');
+  assert.match(o, /setAgentScopeAll\(a\.scope_all === true\)/, 're-consent starts from the agent as it is');
+});
+
+test('scope_all never breaks a database without 088, and never widens a write', () => {
+  const t = src('src/lib/agentTokens.ts');
+  // Reads name it (086 forbids *) and fall back without it.
+  assert.match(t, /read\(`\$\{AGENT_COLUMNS\}, scope_all`\)/);
+  assert.match(t, /if \(error && isScopeAllUnreadable\(error\)\) \(\{ data, error \} = await read\(AGENT_COLUMNS\)\);/);
+  assert.match(t, /scope_all: t\.scope_all === true,/);
+  // Writes name it only when it is (or was) true.
+  assert.match(t, /\.\.\.\(all \? \{ scope_all: true \} : \{\}\),/);
+  assert.match(t, /if \(all \|\| opts\.wasAll === true\) patch\.scope_all = all;/);
+  assert.match(t, /matter_scope: all \? \[\] : scope/);
+  assert.doesNotMatch(t, /select\('\*'\)[\s\S]{0,40}connector_tokens|from\('connector_tokens'\)\s*\.select\('\*'/);
 });

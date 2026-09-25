@@ -100,7 +100,14 @@ export default async function handler(req, res) {
           return fetchMatterTier(SUPABASE_URL, SERVICE_KEY, id);
         },
       });
-      agent = { name: parsed.name, provider: parsed.provider, matterScope, tokenHash: unusableTokenHash() };
+      agent = {
+        name: parsed.name,
+        provider: parsed.provider,
+        matterScope,
+        // 088: "All my matters (except SecureSpaces)" — no ids to check.
+        scopeAll: parsed.scopeAll === true,
+        tokenHash: unusableTokenHash(),
+      };
     }
   } catch (e) {
     if (e instanceof AgentConsentError) return json(res, e.status, { error: e.code, detail: e.detail });
@@ -132,7 +139,9 @@ export default async function handler(req, res) {
   if (agent && !approval.ok) {
     return json(res, 503, {
       error: 'agent_connect_unavailable',
-      detail: approval.undeployed
+      detail: approval.undeployed && agent.scopeAll
+        ? '"All my matters" for an agent is not switched on yet. Nothing was granted; tick the matters instead.'
+        : approval.undeployed
         ? 'Connecting as an agent is not switched on yet. Nothing was granted.'
         : 'Contextspaces could not record the agent connection, so nothing was granted. Try again.',
     });

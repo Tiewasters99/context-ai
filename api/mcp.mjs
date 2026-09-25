@@ -255,6 +255,8 @@ export function callToolOptsFor(identity, keys = {}) {
       id: identity.tokenId,
       userId: identity.userId,
       matterScope: Array.isArray(identity.matterScope) ? identity.matterScope : [],
+      // 088: every matter the user can open, except SecureSpaces.
+      scopeAll: identity.scopeAll === true,
     },
     actor: {
       kind: 'connector',
@@ -273,6 +275,12 @@ const AGENT_INSTRUCTIONS =
   'get_passage, get_media, file_document …) inside that task\'s matter. If you are ' +
   'blocked, call ask_human with one clear question and poll my_tasks until the ' +
   'answer appears. Finish with post_result (status "failed" if you could not do it).';
+
+// An agent given "All my matters (except SecureSpaces)" (migration 088).
+const AGENT_ALL_INSTRUCTIONS = AGENT_INSTRUCTIONS.replace(
+  'It sees only the matters it has been granted (and their sub-matters)',
+  'It sees every matter its owner can open, including ones created later',
+);
 
 
 // -----------------------------------------------------------------------------
@@ -322,7 +330,8 @@ export default async function handler(req, res) {
   try {
     const identity = await authenticate(req);
     const sb = userScopedClient(identity.userId);
-    const agentNote = identity.kind === 'agent' ? AGENT_INSTRUCTIONS : '';
+    const agentNote = identity.kind !== 'agent' ? ''
+      : identity.scopeAll === true ? AGENT_ALL_INSTRUCTIONS : AGENT_INSTRUCTIONS;
 
     const server = new Server(
       // title + icons + websiteUrl are what connector hosts (Grok, Claude,
