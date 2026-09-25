@@ -523,6 +523,21 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-agent-tasks-rls.mjs
 
+      # Migration 086 §1: connector_tokens.token_hash is server-only. Executes
+      # 086 in PGlite over the real chain with Supabase's blanket grant in
+      # place (the negative control reads the hash first), then proves from
+      # SET ROLE authenticated that the hash, `select *`, and WHERE/ORDER BY on
+      # the hash are refused while every Connect page and Connections › Agents
+      # write still works, the task board still works, the service role still
+      # reads by hash, a second paste changes nothing, and no src/ read of the
+      # table asks for `*` or token_hash. Re-installs PGlite (after the jsdom
+      # steps; see the Vault step).
+      - name: Migration 086 — connector token hash is server-only (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-connector-token-columns.mjs
+
       # The connector page tells people to paste a command into a terminal, so
       # the command is checked whole — every flag, and the quoting that differs
       # between bash and PowerShell. It also asserts the endpoint URL appears
