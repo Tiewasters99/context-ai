@@ -1,6 +1,7 @@
 // Migration 093 — the per-person "Can post messages" switch on matter shares —
-// EXECUTED in PGlite on the real chain (001…022, 017, 021, 062, 042's view,
-// 091, 092) with real RLS, as each person, from SET ROLE authenticated.
+// EXECUTED in PGlite on the real chain (001…022, 051, 017, 021, 062, 042's view,
+// 064 + 072 — the Record, whose ACL trigger fires on the switch — 091, 092)
+// with real RLS, as each person, from SET ROLE authenticated.
 //
 // The cast:
 //   Eden    owns the firm's serverspace
@@ -97,7 +98,7 @@ const as = async (uid, fn) => {
 };
 
 // ===========================================================================
-section('the chain: 001…022, 017, 021, 062, 042, 091, 092');
+section('the chain: 001…022, 051, 017, 021, 062, 042, 064, 072, 091, 092');
 // ===========================================================================
 await db.exec(`
   do $$ begin create role anon;                     exception when duplicate_object then null; end $$;
@@ -145,6 +146,7 @@ await db.exec(`
 for (const f of [
   '001_initial_schema.sql', '005_fix_rls_recursion.sql', '008_submatters.sql',
   '016_matterspace_members.sql', '022_matterspaces_rls_invoker_wrappers.sql',
+  '051_securespace.sql',
   '017_matter_comments.sql', '021_matter_comment_attachments.sql',
 ]) await db.exec(migration(f));
 await db.exec(`
@@ -161,6 +163,11 @@ await db.exec(migration('062_profiles_rls_plan.sql'));
 }
 await db.exec(`grant select, insert, update, delete on all tables in schema public to anon, authenticated, service_role;
   grant execute on all functions in schema public to anon, authenticated, service_role;`);
+// The matter's Record (064 + 072): its ACL trigger fires on every
+// matterspace_members change, including the can_post UPDATE this file adds,
+// and does NOT swallow its own failure, so it has to be here for real.
+await db.exec(migration('064_events_ledger.sql'));
+await db.exec(migration('072_account_chain_and_session_immutability.sql'));
 
 const signup = async (email, name) => (await q(`insert into auth.users (email, raw_user_meta_data)
   values ($1, jsonb_build_object('display_name', $2::text)) returning id`, [email, name]))[0].id;
@@ -198,7 +205,7 @@ await share(FOLDER, KIM, 'member');
 
 await db.exec(migration('091_matter_conversations.sql'));
 await db.exec(migration('092_conversations_revoke_anon.sql'));
-check(true, 'the chain 093 sits on is applied (091 and 092 included)');
+check(true, 'the chain 093 sits on is applied (051, 064 and 072 for the Record; 091 and 092)');
 
 // ===========================================================================
 section('093, applied twice; the backfill; new shares start off');
@@ -234,7 +241,11 @@ await as(EDEN, () => q(`insert into public.matterspace_members (matterspace_id, 
 // The lead switches Yfat off after the paste, as Eden asked.
 {
   const off = await as(EDEN, () => q(`update public.matterspace_members set can_post=false where user_id=$1 returning id`, [YFAT]));
-  check(off.length === 1, 'Eden (owner) switches Yfat off through the app\'s own UPDATE');
+  check(off.length === 1, 'Eden (owner) switches Yfat off through the app\'s own UPDATE; 064\'s ACL trigger lets it through');
+  const ev = await q(`select actor_kind, actor_ref, payload from public.events
+    where kind='acl.changed' and matterspace_id=$1 and payload->>'op'='update' and payload->>'target_user_id'=$2`, [FOLDER, YFAT]);
+  check(ev.length === 1 && ev[0].actor_ref === EDEN,
+    'the switch is written to the folder\'s Record as acl.changed (op update, by Eden)', JSON.stringify(ev[0] ?? null));
   const r3 = await execAttempt(migration(M093));
   const [y] = await q(`select can_post from public.matterspace_members where user_id=$1`, [YFAT]);
   check(!r3.err && y.can_post === false, 'pasting 093 again afterwards leaves her OFF (the backfill never re-runs)');

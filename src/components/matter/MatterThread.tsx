@@ -84,15 +84,17 @@ export default function MatterThread({ matterId }: { matterId: string }) {
   const [hits, setHits] = useState<ThreadSearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
   // Migration 093: may this person post here (and start conversations)?
-  // Re-asked on every reload, so an owner switching it on shows up live.
+  // Asked alongside the list on every reload (a new message, a conversation
+  // change) and when the tab regains focus — not the instant an owner flips
+  // the switch. Known before the tab first renders, so no composer flashes.
   const [mayPost, setMayPost] = useState(true);
 
   const reload = useCallback(async () => {
     try {
-      const rows = await listConversations(matterId);
+      const [rows, allowed] = await Promise.all([listConversations(matterId), matterPostingAllowed(matterId)]);
       setConversations(rows);
+      setMayPost(allowed);
       setStatus('ready');
-      void matterPostingAllowed(matterId).then(setMayPost);
       return rows;
     } catch (e) {
       if (e instanceof NotDeployedError) setStatus('legacy');
@@ -153,6 +155,20 @@ export default function MatterThread({ matterId }: { matterId: string }) {
     channel.subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [matterId, status, reload, user?.id]);
+
+  // Migration 093: an owner may have switched posting on or off meanwhile.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const recheck = () => {
+      if (document.visibilityState === 'visible') void matterPostingAllowed(matterId).then(setMayPost);
+    };
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
+    return () => {
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+    };
+  }, [matterId, status]);
 
   const select = (id: string, messageId: string | null = null) => {
     setSelectedId(id);

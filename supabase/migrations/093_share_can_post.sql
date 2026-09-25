@@ -63,7 +63,8 @@
 --
 -- Rollback: at the bottom, commented out.
 --
--- Verified by execution in PGlite on 001…022 + 017 + 021 + 062 + 042 + 091 +
+-- Verified by execution in PGlite on 001…022 + 051 + 017 + 021 + 062 + 042 +
+-- 064 + 072 (the Record: its ACL trigger fires on the switch) + 091 +
 -- 092 with real RLS from SET ROLE authenticated:
 --   node scripts/_verify-can-post.mjs
 
