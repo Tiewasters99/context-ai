@@ -563,6 +563,27 @@ reset();
   check(b.ok && b.out.result_count === 1, 'user token: B is searchable');
   const sealed = await call('search', { matter: 'vashti-privileged', q: 'Ormsby' }, USER_OPTS);
   check(!sealed.ok && sealed.err?.code === 'sealed_matter', 'user token: the sealed child is refused as SEALED, as before');
+  // edit_pdf's inserts bring ANOTHER document's pages into the output. The
+  // seal used to look only at document_id, so a user token could pull a
+  // sealed matter's pages into an open matter's PDF (PR #228 closed this for
+  // agents only). The refusal must come from the seal, before any PDF loads.
+  const sealedInsert = await call('edit_pdf',
+    { document_id: DOC[A], inserts: [{ at: 1, document_id: DOC[A_SEALED], pages: '1' }] }, USER_OPTS);
+  check(!sealedInsert.ok && sealedInsert.err?.code === 'sealed_matter',
+    'user token: edit_pdf inserting pages FROM a sealed document is refused as SEALED',
+    sealedInsert.ok ? 'it ran' : sealedInsert.err?.code ?? sealedInsert.err?.message);
+  const openInsert = await call('edit_pdf',
+    { document_id: DOC[A], inserts: [{ at: 1, document_id: DOC[B], pages: '1' }] }, USER_OPTS);
+  check(openInsert.err?.code !== 'sealed_matter' && openInsert.err?.code !== 'agent_scope',
+    'user token: negative control — an insert from an unsealed document is not refused by the seal',
+    openInsert.ok ? 'ran' : `${openInsert.err?.code ?? ''} ${String(openInsert.err?.message).slice(0, 60)}`);
+  db.matterspaces.find((m) => m.id === B).ai_paused = true;
+  const pausedInsert = await call('edit_pdf',
+    { document_id: DOC[A], inserts: [{ at: 1, document_id: DOC[B], pages: '1' }] }, USER_OPTS);
+  db.matterspaces.find((m) => m.id === B).ai_paused = false;
+  check(!pausedInsert.ok && pausedInsert.err?.code === 'ai_paused',
+    'user token: and an insert from a PAUSED matter is refused as paused (the pause reads inserts too)',
+    pausedInsert.ok ? 'it ran' : pausedInsert.err?.code);
   const top = await call('create_matter', { name: '' }, USER_OPTS);
   check(!top.ok && top.err?.code !== 'agent_scope', 'user token: create_matter is not agent-gated');
   check(taskQueries.length === 0, 'user token: no task table was touched by any of that');
