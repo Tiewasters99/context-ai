@@ -846,9 +846,207 @@ section('OAUTH — a sign-in connected as an agent (migration 087)');
   delete process.env.MCP_OAUTH_SECRET;
 }
 
+// ===========================================================================
+section('ALL MATTERS — an agent with scope_all (migration 088)');
+// ===========================================================================
+// "All my matters (except SecureSpaces)": every matter the user's own RLS
+// shows, now or later, minus the sealed (own tier or inherited) — and still
+// an agent: task tools, the pause, the ledger ref, /api/ext refused.
+{
+  const AG_ALL = id(105);
+  const S = id(40);             // a sealed top-level matter
+  const S_CHILD = id(41);       // its tier-A child — inherits the seal
+  const D = id(50);             // created AFTER the grant
+  const D_SEALED = id(51);      // a sealed child of D, also created later
+  const addMatter = (mid, name, code, parent = null, tier = 'A') => {
+    db.matterspaces.push({
+      id: mid, parent_matterspace_id: parent, ai_tier: tier, ai_paused: false,
+      serverspace_id: SPACE, short_code: code, name, description: null, created_at: '2026-09-25',
+    });
+    const n = Number(mid.slice(-4));
+    const did = id(n + 2000);
+    const pid = id(n + 3000);
+    DOC[mid] = did; PASSAGE[mid] = pid;
+    db.documents.push({
+      id: did, matterspace_id: mid, title: `Memo ${code}`, doc_type: 'other', witness_name: null,
+      volume_number: null, processing_status: 'ready', source_filename: 'memo.txt', created_at: '2026-09-25', page_count: 1,
+    });
+    db.passages.push({
+      id: pid, document_id: did, matterspace_id: mid, sequence_number: 90 + db.passages.length, summary_level: 0,
+      page_start: 1, page_end: 1, line_start: 1, line_end: 4, text: `${code.toUpperCase()}-TEXT Ormsby appears here.`,
+      passage_type: 'body', witness_name: null, examination_type: null, speaker: null, parent_passage_id: null,
+    });
+    matterIdOfDoc.set(did, mid);
+    matterIdOfPassage.set(pid, mid);
+  };
+  addMatter(S, 'Sealed Estate (fiction)', 'sealed-estate', null, 'B');
+  addMatter(S_CHILD, 'Sealed Estate — Notes', 'sealed-notes', S);
+  const allIdentity = { kind: 'agent', userId: USER, tokenId: AG_ALL, matterScope: [], scopeAll: true, provider: 'grok', name: 'Grok everywhere' };
+  const allOpts = () => callToolOptsFor(allIdentity, { openaiApiKey: 'sk-test' });
+  const SEALED_ALL = [A_SEALED, S, S_CHILD];
+  const noSealRead = () => SEALED_ALL.every((m) => !contentScope().has(m));
+  const noSealText = (r) => !/PRIVILEGED|SEALED-ESTATE-TEXT|SEALED-NOTES-TEXT|Sealed Estate/.test(text(r));
+
+  check(allOpts().agentToken?.scopeAll === true && allOpts().agentToken.id === AG_ALL && allOpts().actor?.ref === `agent:${AG_ALL}`,
+    'callToolOptsFor: an "all" identity gives agentToken.scopeAll + actor agent:<id> + the seal');
+
+  reset();
+  const lm = await call('list_matters', { format: 'full' }, allOpts());
+  const seen = (lm.out ?? []).map((m) => m.id).sort();
+  check(lm.ok && JSON.stringify(seen) === JSON.stringify([A, A_CHILD, B, C, C_CHILD].sort()),
+    'list_matters: every matter the user can see (A, its open child, B, C, C\'s child)', seen.join(','));
+  check(!seen.some((m) => SEALED_ALL.includes(m)), 'never a sealed matter, a sealed child, or a tier-A child of a sealed matter');
+  check(noSealRead(), 'and no sealed matter was even counted');
+
+  addMatter(D, 'Delacroix Trust (fiction)', 'delacroix');
+  addMatter(D_SEALED, 'Delacroix — Privileged', 'delacroix-privileged', D, 'C');
+  reset();
+  const later = await call('list_matters', {}, allOpts());
+  const tree = later.out?.tree ?? '';
+  check(later.ok && tree.includes(D), 'a matter created AFTER the grant is on its map, with nothing re-ticked');
+  check(!tree.includes(D_SEALED) && !tree.includes('Delacroix — Privileged'), 'but not that new matter\'s sealed child');
+  reset();
+  const inD = await call('search', { matter: 'delacroix', q: 'Ormsby' }, allOpts());
+  check(inD.ok && inD.out.result_count === 1 && !contentScope().has(D_SEALED),
+    'search in the new matter answers from it, never from its sealed child', `n=${inD.out?.result_count}`);
+
+  reset();
+  const everywhere = await call('search', { q: 'Ormsby' }, allOpts());
+  check(everywhere.ok && [A, A_CHILD, B, C, C_CHILD, D].every((m) => contentScope().has(m)), 'search with no matter reaches every visible matter, the new one included', [...contentScope()].join(','));
+  check(noSealRead() && !contentScope().has(D_SEALED) && noSealText(everywhere), 'and never a sealed one (no query, no text)');
+
+  reset();
+  const b = await call('get_outline', { doc: DOC[B] }, allOpts());
+  check(b.ok, 'a document in B (never ticked) is readable', b.ok ? '' : b.err?.message);
+  for (const [label, tool, args] of [
+    ['naming the sealed child by short code', 'search', { matter: 'vashti-privileged', q: 'Ormsby' }],
+    ['naming a sealed matter by UUID', 'search', { matter: S, q: 'Ormsby' }],
+    ['the tier-A child of a sealed matter', 'list_matter_contents', { matter: 'sealed-notes' }],
+    ['a document in a sealed matter', 'get_outline', { doc: DOC[S_CHILD] }],
+    ['a passage in the sealed child', 'get_passage', { id: PASSAGE[A_SEALED] }],
+    ['document_ids reaching into a seal', 'search', { q: 'Ormsby', document_ids: [DOC[B], DOC[A_SEALED]] }],
+    ['send_to_sandbox (still refused to every agent)', 'send_to_sandbox', { document_ids: [DOC[A]] }],
+    ['an unknown document id', 'get_media', { document_id: id(9999) }],
+  ]) {
+    reset();
+    const r = await call(tool, args, allOpts());
+    check(refusedScope(r) && noSealText(r) && !/Privileged|sealed-notes/i.test(String(r.err?.message)),
+      `refused without naming it: ${label}`, r.ok ? 'it ran' : r.err?.code ?? r.err?.message);
+  }
+  reset();
+  const top = await call('create_matter', { name: '' }, allOpts());
+  check(!top.ok && top.err?.code !== 'agent_scope', 'create_matter at the top level is not agent-gated (as for the user)', top.err?.code ?? '');
+  const unkeyed = await call('check_ingest_status', {}, allOpts());
+  check(unkeyed.ok || unkeyed.err?.code !== 'agent_scope', 'a call naming no matter is not refused as out of scope');
+
+  // The pause still applies.
+  reset();
+  db.matterspaces.find((m) => m.id === B).ai_paused = true;
+  const paused = await call('search', { matter: 'brannock', q: 'Ormsby' }, allOpts());
+  check(!paused.ok && paused.err?.code === 'ai_paused', 'a paused matter is refused as paused', paused.err?.code ?? 'ran');
+  const lmp = await call('list_matters', { format: 'full' }, allOpts());
+  check(lmp.ok && !(lmp.out ?? []).some((m) => m.id === B), 'and drops off its map');
+  db.matterspaces.find((m) => m.id === B).ai_paused = false;
+
+  // Recorded as this agent.
+  reset();
+  await call('search', { matter: 'brannock', q: 'Ormsby' }, allOpts());
+  const led = ledger.find((p) => p.rpc === 'ledger_append' && p.p_kind === 'tool.invoked');
+  check(led?.p_matter === B && led?.p_actor_ref === `agent:${AG_ALL}`, 'the call is in B\'s Record as agent:<id>');
+
+  // The task board.
+  const TA_B = id(610);
+  const TA_SEALED = id(611);
+  const TA_D = id(612);
+  db.agent_tasks.push(
+    task(TA_B, B, AG_ALL, { title: 'ALL-TASK-B' }),
+    task(TA_SEALED, S_CHILD, AG_ALL, { title: 'ALL-TASK-SEALED' }),
+    task(TA_D, D, AG_ALL, { title: 'ALL-TASK-D', attachments: [{ kind: 'document', id: DOC[D_SEALED], label: 'PRIV-LABEL' }] }),
+  );
+  reset();
+  const mine = await call('my_tasks', {}, allOpts());
+  const mineIds = (mine.out?.tasks ?? []).map((t) => t.task_id).sort();
+  check(mine.ok && JSON.stringify(mineIds) === JSON.stringify([TA_B, TA_D].sort()),
+    'my_tasks: its tasks in any visible matter (B, the new D) — not the one in a sealed matter', mineIds.join(','));
+  const dTask = (mine.out?.tasks ?? []).find((t) => t.task_id === TA_D);
+  check(dTask?.attachments?.[0]?.available === false && !text(mine).includes('PRIV-LABEL'),
+    'an attachment in a sealed child is withheld');
+  const claimB = await call('claim_task', { task_id: TA_B }, allOpts());
+  check(claimB.ok && db.agent_tasks.find((t) => t.id === TA_B).status === 'claimed', 'claim_task works on a task in B');
+  const claimS = await call('claim_task', { task_id: TA_SEALED }, allOpts());
+  check(refusedScope(claimS) && db.agent_tasks.find((t) => t.id === TA_SEALED).status === 'open',
+    'a task in a sealed matter: agent_scope, unchanged');
+  const done = await call('post_result', {
+    task_id: TA_B, result: 'Done.', result_refs: [{ kind: 'document', id: DOC[C_CHILD] }],
+  }, allOpts());
+  check(done.ok && db.agent_tasks.find((t) => t.id === TA_B).status === 'done', 'post_result with a ref in another visible matter works');
+  const sealedRef = await call('post_result', {
+    task_id: TA_D, result: 'x', result_refs: [{ kind: 'document', id: DOC[D_SEALED] }],
+  }, allOpts());
+  check(refusedScope(sealedRef), 'a result_ref in a sealed child is refused');
+
+  // Auth: path A, /api/ext, fail-closed parsing, and the two unchanged kinds.
+  const TOK_ALL = 'csp_allMATTERSallMATTERSall0005';
+  tokenRows.set(hash(TOK_ALL), { id: AG_ALL, user_id: USER, kind: 'agent', matter_scope: [], scope_all: true, agent_provider: 'grok', name: 'Grok everywhere', revoked_at: null, expires_at: null });
+  const pa = await tryAuth(authenticate, TOK_ALL);
+  check(pa.kind === 'agent' && pa.scopeAll === true && pa.tokenId === AG_ALL, '/api/mcp path A: a scope_all row is an agent with scopeAll');
+  const ext = await tryAuth(authenticateConnectorToken, TOK_ALL);
+  check(ext.err?.status === 403 && ext.err?.code === 'agent_token_not_allowed', '/api/ext: still refused (403)');
+  const str = connectorTokenIdentity({ id: AG_ALL, user_id: USER, kind: 'agent', matter_scope: [], scope_all: 'true' });
+  check(str.scopeAll === false, 'scope_all "true" (not a boolean) is NOT all — fails closed to the listed scope');
+  reset();
+  const strList = await call('list_matters', { format: 'full' }, callToolOptsFor(str, {}));
+  check(strList.ok && (strList.out ?? []).length === 0, 'and with its empty list it sees nothing');
+  const bogus = callToolOptsFor({ ...allIdentity, scopeAll: 1 }, {});
+  check(bogus.agentToken.scopeAll === false, 'callToolOptsFor passes only a literal true');
+  const userIdentity = connectorTokenIdentity({ id: id(700), user_id: USER, kind: 'user', scope_all: true });
+  check(userIdentity.kind === 'user' && !('scopeAll' in userIdentity), 'a USER row is untouched by scope_all (identity shape unchanged)');
+  const u = await tryAuth(authenticate, TOK_USER);
+  check(JSON.stringify(callToolOptsFor(u, { openaiApiKey: 'k' })) === JSON.stringify({ openaiApiKey: 'k', googleApiKey: undefined, sealConnector: true }),
+    'a user token\'s callTool options are exactly what they were');
+  const listedId = await tryAuth(authenticate, TOK_AGENT);
+  check(listedId.kind === 'agent' && listedId.scopeAll === false && JSON.stringify(listedId.matterScope) === JSON.stringify([A]),
+    'a listed agent is unchanged (scopeAll false, its list)');
+  reset();
+  const listed = await call('list_matters', { format: 'full' }, callToolOptsFor(listedId, {}));
+  check(listed.ok && JSON.stringify((listed.out ?? []).map((m) => m.id).sort()) === JSON.stringify([A, A_CHILD].sort()),
+    'and still sees only A and its open child — not B, not the new D');
+
+  // An OAuth-linked "all" agent (087 + 088).
+  process.env.MCP_OAUTH_SECRET = 'agent-scope-harness-oauth-secret-32chars+';
+  const { signJwt } = await import('../lib/oauth-jwt.mjs');
+  const { _resetGrantCache } = await import('../lib/oauth-grants.mjs');
+  _resetGrantCache();
+  const cspa = (claims) => 'cspa_' + Buffer.from(signJwt(
+    { iss: 'https://www.contextspaces.ai', typ: 'access', sub: USER, aud: 'x', client_id: 'grok-client', scope: 'mcp', ...claims },
+    process.env.MCP_OAUTH_SECRET, 600, 'at+jwt'), 'utf8').toString('base64url');
+  const G_ALL = id(804);
+  grantRows.set(G_ALL, { owner_id: USER, revoked: false, client_name: 'Grok', agent_token_id: AG_ALL });
+  const viaOauth = await tryAuth(authenticate, cspa({ gid: G_ALL, agt: AG_ALL }));
+  check(viaOauth.kind === 'agent' && viaOauth.scopeAll === true && JSON.stringify(viaOauth) === JSON.stringify(pa),
+    'an OAuth grant linked to a scope_all agent authenticates as it — same identity as path A', JSON.stringify(viaOauth));
+  const oOpts = callToolOptsFor(viaOauth, { openaiApiKey: 'sk-test' });
+  reset();
+  const ol = await call('list_matters', { format: 'full' }, oOpts);
+  const oseen = (ol.out ?? []).map((m) => m.id);
+  check(ol.ok && oseen.includes(B) && oseen.includes(D) && !oseen.some((m) => [...SEALED_ALL, D_SEALED].includes(m)),
+    'over OAuth: every visible matter incl. the new one, never a sealed one or sealed child');
+  const om = await call('my_tasks', { status: 'all' }, oOpts);
+  check(om.ok && (om.out?.tasks ?? []).some((t) => t.task_id === TA_D) && !om.out?.error, 'my_tasks works over OAuth');
+  db.matterspaces.find((m) => m.id === D).ai_paused = true;
+  const op = await call('search', { matter: 'delacroix', q: 'Ormsby' }, oOpts);
+  check(!op.ok && op.err?.code === 'ai_paused', 'the pause applies over OAuth too');
+  db.matterspaces.find((m) => m.id === D).ai_paused = false;
+  _resetGrantCache();
+  grantRows.set(G_ALL, { owner_id: USER, revoked: true, client_name: 'Grok', agent_token_id: AG_ALL });
+  const rev = await tryAuth(authenticate, cspa({ gid: G_ALL, agt: AG_ALL }));
+  check(rev.err?.status === 401, 'revoking the grant cuts it off (401)');
+  delete process.env.MCP_OAUTH_SECRET;
+}
+
 // ---------------------------------------------------------------------------
 globalThis.fetch = realFetch;
 console.log(`\n${failures === 0
-  ? `AGENT SCOPE HOLDS — ${passes} checks: an agent sees only its grant, never a seal; user tokens unchanged.`
+  ? `AGENT SCOPE HOLDS — ${passes} checks: an agent sees only its grant (or, with scope_all, every matter the user can), never a seal; user tokens unchanged.`
   : `${failures} FAILURE(S) of ${passes + failures}`}\n`);
 process.exit(failures === 0 ? 0 : 1);
