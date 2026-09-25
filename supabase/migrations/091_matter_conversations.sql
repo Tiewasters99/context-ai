@@ -1292,6 +1292,14 @@ begin
     ) then
       execute 'alter publication supabase_realtime add table public.matter_conversations';
     end if;
+    -- So a conversation someone is added to appears in their open Thread tab.
+    if not exists (
+      select 1 from pg_publication_tables
+       where pubname = 'supabase_realtime' and schemaname = 'public'
+         and tablename = 'matter_conversation_members'
+    ) then
+      execute 'alter publication supabase_realtime add table public.matter_conversation_members';
+    end if;
   end if;
 end $$;
 

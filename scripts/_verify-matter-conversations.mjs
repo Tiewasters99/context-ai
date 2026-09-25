@@ -258,6 +258,10 @@ const shape = async () => JSON.stringify({
   const s2 = await shape();
   check(!r2.err, '091 applies again over itself', r2.err?.message ?? '');
   check(s1 === s2, 'the second paste converges: same policies, constraints, conversations and filing');
+  const pub = (await q(`select tablename from pg_publication_tables where pubname='supabase_realtime' order by 1`))
+    .map((r) => r.tablename).join(', ');
+  check(pub === 'matter_comments, matter_conversation_members, matter_conversations',
+    'realtime carries messages, conversations and member lists (RLS filters on receive)', pub);
 }
 
 // ===========================================================================

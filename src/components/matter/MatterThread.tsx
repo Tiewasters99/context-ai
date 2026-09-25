@@ -137,13 +137,18 @@ export default function MatterThread({ matterId }: { matterId: string }) {
   useEffect(() => {
     if (status !== 'ready') return;
     const bump = () => { void reload(); setRefreshKey((k) => k + 1); };
-    const channel = supabase
+    let channel = supabase
       .channel(`matter-conversations-${matterId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'matter_comments', filter: `matterspace_id=eq.${matterId}` }, bump)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'matter_conversations', filter: `matterspace_id=eq.${matterId}` }, bump)
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'matter_conversations', filter: `matterspace_id=eq.${matterId}` }, bump);
+    // Being added to a private conversation while this tab is open.
+    if (user?.id) {
+      channel = channel.on('postgres_changes',
+        { event: '*', schema: 'public', table: 'matter_conversation_members', filter: `user_id=eq.${user.id}` }, bump);
+    }
+    channel.subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [matterId, status, reload]);
+  }, [matterId, status, reload, user?.id]);
 
   const select = (id: string, messageId: string | null = null) => {
     setSelectedId(id);
