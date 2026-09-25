@@ -22,6 +22,7 @@ import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import PinToggle from '@/components/ui/PinToggle';
+import DelegateButton from '@/components/agents/DelegateButton';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import ModalPortal from '@/components/ui/ModalPortal';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -653,6 +654,12 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
           </button>
           <div className="w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors" title="Drag to move" />
           <div className="flex items-center gap-1">
+            <DelegateButton
+              variant="ribbon"
+              matterId={item?.space_type === 'matterspace' ? item.space_id : null}
+              attachment={item ? { kind: 'content_item', id: item.id, label: title || item.title || 'Untitled List' } : null}
+              defaultTitle={title || item?.title || 'Untitled List'}
+            />
             <CoverModeToggle hasCover={!!item?.cover_url} expanded={coverExpanded} onToggle={() => setCoverExpanded(!coverExpanded)} />
             {/* Fix in place. See the note in PageView. */}
             {!embedded && !isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}

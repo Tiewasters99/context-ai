@@ -16,6 +16,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { readUserTokens } from '@/lib/agents-schema';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   generateConnectorToken,
@@ -46,10 +47,16 @@ export default function GrokConnect() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('connector_tokens')
-      .select('id, token_prefix, name, created_at, last_used_at, revoked_at, expires_at')
-      .order('created_at', { ascending: false });
+    // Agent tokens (kind 'agent', migration 085) live under Connections ›
+    // Agents, not here; readUserTokens drops them without a kind filter,
+    // which would fail before 085 is applied.
+    const { data, error } = await readUserTokens<TokenRow>(
+      (cols) => supabase
+        .from('connector_tokens')
+        .select(cols)
+        .order('created_at', { ascending: false }),
+      'id, token_prefix, name, created_at, last_used_at, revoked_at, expires_at',
+    );
     if (error) setError(error.message); else setTokens((data ?? []) as TokenRow[]);
     setLoading(false);
   }, []);
@@ -126,14 +133,24 @@ export default function GrokConnect() {
 
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-            A connector token carries your own access — no more, no less.
-            There is no per-matter setting on a token: whatever your
-            Contextspaces account can open, a client holding the token can
-            open, except matters kept in a SecureSpace, which are invisible to
-            every outside connector. It can read, search, file new documents
-            and organise them; it cannot delete a document or overwrite an
-            original. Revoke a token below and it stops working on the next
-            request.
+            A connector token made on this page carries your own access — no
+            more, no less: whatever your Contextspaces account can open, a
+            client holding the token can open, except matters kept in a
+            SecureSpace, which are invisible to every outside connector. It can
+            read, search, file new documents and organise them; it cannot
+            delete a document or overwrite an original. Revoke a token below
+            and it stops working on the next request.
+          </div>
+
+          <div className="mt-3 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">A Grok Bot that works tasks.</strong>{' '}
+            To hand a Grok Bot tasks from a document, list, page or calendar
+            entry, and limit it to the matters you choose, add it as an agent
+            instead. An agent's token sees only the matters you tick, and never
+            a SecureSpace.{' '}
+            <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">
+              Connections › Agents
+            </Link>
           </div>
         </header>
 

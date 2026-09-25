@@ -14,6 +14,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
+import { readUserTokens } from '@/lib/agents-schema';
 import { useAuth } from '@/contexts/AuthContext';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { defaultCoverFor, loadCoreCovers } from '@/lib/covers';
@@ -148,8 +149,14 @@ export function useFirstRun(): FirstRunState {
         // The Claude path leaves no grant, only a token — and an expired one
         // is not a connection, so the rows are judged by the same rule the
         // Connections page applies rather than merely counted.
+        // Agent tokens (migration 085) are not an AI connection of the
+        // account's own; readUserTokens drops them without a kind filter,
+        // which would fail before 085 is applied.
         peekWhere(
-          () => supabase.from('connector_tokens').select('revoked_at, expires_at').limit(50),
+          () => readUserTokens<{ revoked_at: string | null; expires_at: string | null }>(
+            (cols) => supabase.from('connector_tokens').select(cols).limit(50),
+            'revoked_at, expires_at',
+          ),
           (row) => tokenIsLive(row, now),
         ),
       ]);

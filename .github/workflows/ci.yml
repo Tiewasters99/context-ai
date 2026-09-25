@@ -600,6 +600,16 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-first-run.mjs
 
+      # The agents task board, browser side: which matters an agent can see
+      # (a grant covers what is beneath it; a SecureSpace never, whatever is
+      # ticked; an empty grant nothing), the one sentence shown before
+      # migration 085 is applied, the copy the spec requires verbatim, every
+      # human write logged, and where Delegate… and the Tasks tab live. Pure
+      # modules plus source assertions: no loader, no network, no database.
+      - name: Agents — Connections › Agents, Delegate…, and the matter's Tasks
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-agent-ui.mjs
+
       # Finding ONE document by name in a 7,600-document matter, and reading a
       # matter in Table-of-Authorities order. Migration 081 is EXECUTED in
       # PGlite with real pg_trgm, real RLS, real anon/authenticated/service_role

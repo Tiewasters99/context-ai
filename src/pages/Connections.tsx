@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plug, Mail, Calendar, ChevronRight, X, HardDrive, Cloud, Package } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { readUserTokens } from '@/lib/agents-schema';
 import {
   useConnections,
   useConnectionsInvalidate,
@@ -28,6 +29,7 @@ import {
   type CloudDriveService,
   type Connection,
 } from '@/hooks/useConnections';
+import AgentsSection from '@/components/agents/AgentsSection';
 
 type ConnState =
   | 'connected'
@@ -464,9 +466,13 @@ export default function Connections() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const { data, error } = await supabase
-        .from('connector_tokens')
-        .select('revoked_at, expires_at');
+      // An agent token (kind 'agent', migration 085) is not a Claude
+      // connection, so it must not light this badge. readUserTokens drops
+      // agent tokens in the browser: a kind filter would fail before 085.
+      const { data, error } = await readUserTokens<{ revoked_at: string | null; expires_at: string | null }>(
+        (cols) => supabase.from('connector_tokens').select(cols),
+        'revoked_at, expires_at',
+      );
       if (cancelled || error || !data) return;
       const now = Date.now();
       const live = data.some(
@@ -762,6 +768,8 @@ export default function Connections() {
             </div>
           </section>
         )}
+
+        <AgentsSection />
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
           Connecting Gmail or Calendar asks Google for access; connecting
