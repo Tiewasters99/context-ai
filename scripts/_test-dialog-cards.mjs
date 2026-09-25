@@ -289,6 +289,75 @@ test('it resizes from an edge, and not from a field', async () => {
   await view.unmount();
 });
 
+// A picker, a member list, a track grid: rows that are buttons wall to wall.
+function ButtonRowDialog({ storageKey, onRow }) {
+  return h(CardDialog, { storageKey, title: 'Attach documents', onClose() {}, bodyClassName: 'p-0' },
+    h('button', { 'data-row': '', onClick: onRow, style: { display: 'block', width: '100%' } },
+      h('span', { 'data-row-label': '' }, 'Exhibit A')));
+}
+
+test('the side edge resizes even over a full-width button row, and does not click it', async () => {
+  window.localStorage.clear();
+  const KEY = 'cs.dialog.test.rowedge';
+  let clicks = 0;
+  const view = await mount(h(ButtonRowDialog, { storageKey: KEY, onRow: () => { clicks += 1; } }));
+  const card = cardFor(KEY);
+  const row = card.querySelector('[data-row]');
+  // The card spans x 300..740. 3px inside the right edge, on the button.
+  await act(async () => {
+    fire(row, 'pointerdown', { clientX: 737, clientY: 300 });
+    fire(window.document, 'pointermove', { clientX: 787, clientY: 300 });
+    fire(window.document, 'pointerup', { clientX: 787, clientY: 300 });
+    fire(row, 'click', { clientX: 787, clientY: 300 });
+  });
+  assert.equal(cardFor(KEY).style.width, '490px', 'the right edge resized the card');
+  assert.equal(clicks, 0, 'and the row under it was not clicked');
+
+  // The same on the left edge, pressing on the row's label (a span).
+  await act(async () => {
+    fire(row.querySelector('[data-row-label]'), 'pointerdown', { clientX: 303, clientY: 300 });
+    fire(window.document, 'pointermove', { clientX: 263, clientY: 300 });
+    fire(window.document, 'pointerup', { clientX: 263, clientY: 300 });
+    fire(row, 'click', { clientX: 263, clientY: 300 });
+  });
+  assert.equal(cardFor(KEY).style.width, '530px', 'the left edge resized it too');
+  assert.equal(clicks, 0);
+  await view.unmount();
+});
+
+test('a click in the middle of that row still clicks it, and moves nothing', async () => {
+  window.localStorage.clear();
+  const KEY = 'cs.dialog.test.rowmiddle';
+  let clicks = 0;
+  const view = await mount(h(ButtonRowDialog, { storageKey: KEY, onRow: () => { clicks += 1; } }));
+  const row = cardFor(KEY).querySelector('[data-row]');
+  await act(async () => {
+    fire(row, 'pointerdown', { clientX: 520, clientY: 300 });
+    fire(window.document, 'pointerup', { clientX: 520, clientY: 300 });
+    fire(row, 'click', { clientX: 520, clientY: 300 });
+  });
+  assert.equal(clicks, 1, 'the row was clicked');
+  const card = cardFor(KEY);
+  assert.equal(card.style.width, '', 'no resize');
+  assert.equal(card.style.position, '', 'no drag');
+  await view.unmount();
+});
+
+test('an edge press on a text field goes to the field, not to a resize', async () => {
+  window.localStorage.clear();
+  const KEY = 'cs.dialog.test.fieldedge';
+  const view = await mount(h(CardDialog, { storageKey: KEY, title: 'Share', onClose() {}, bodyClassName: 'p-0' },
+    h('input', { 'data-field': '', style: { width: '100%' } })));
+  const input = cardFor(KEY).querySelector('[data-field]');
+  await act(async () => {
+    fire(input, 'pointerdown', { clientX: 737, clientY: 300 });
+    fire(window.document, 'pointermove', { clientX: 787, clientY: 300 });
+    fire(window.document, 'pointerup', { clientX: 787, clientY: 300 });
+  });
+  assert.equal(cardFor(KEY).style.width, '', 'the field kept its own gesture');
+  await view.unmount();
+});
+
 test('Pin fixes it in place and it reopens pinned, where it was left', async () => {
   window.localStorage.clear();
   const KEY = 'cs.dialog.test.pin';

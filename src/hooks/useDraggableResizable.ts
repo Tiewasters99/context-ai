@@ -294,7 +294,25 @@ export function useDraggableResizable(
       if (isPinned.current) return; // pinned cards don't drag or resize
       if (isFullscreen.current) return;
       const t = e.target as HTMLElement;
-      if (t.tagName === 'SPAN' || isInteractive(t)) {
+      // The edge comes first. A card whose rows run the full width (a picker,
+      // a member list, a track grid) is buttons wall to wall, and "resizable
+      // along all four edges" meant nothing there if a press on a button
+      // could never resize: its side edges could be grabbed only beside the
+      // header and footer. So within the resize margin a press on a button,
+      // link, label or drag-through region resizes the card, and the click it
+      // would have ended in is dropped. Text fields keep their own gestures
+      // (placing the caret, selecting), and so does a `data-card-inert`
+      // region. Away from the edge nothing changes.
+      const edgeFirst = e.button === 0 ? getEdge(e) : '';
+      const isTextField =
+        t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
+        t.closest('input, textarea, select') !== null ||
+        t.isContentEditable || t.closest('[contenteditable="true"]') !== null;
+      const edgeWinsOverTarget =
+        edgeFirst !== '' && !isTextField && t.closest('[data-card-inert]') === null;
+      if (edgeWinsOverTarget && (t.tagName === 'SPAN' || isInteractive(t))) {
+        swallowNextClickOnUp = true;
+      } else if (t.tagName === 'SPAN' || isInteractive(t)) {
         if (e.button !== 0 || !inDragThrough(t)) return;
         // Maybe a click, maybe a drag: onMove decides. No preventDefault,
         // so the button still gets its click if the pointer stays put.
