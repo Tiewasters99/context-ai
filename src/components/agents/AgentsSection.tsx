@@ -285,7 +285,7 @@ function EditMattersCard({
 
 // ── the section ──────────────────────────────────────────────────────
 
-export default function AgentsSection() {
+export default function AgentsSection({ refreshKey = 0 }: { refreshKey?: number } = {}) {
   const { all: allMatters, name: matterName } = useMatterIndex();
   const [agents, setAgents] = useState<AgentToken[] | null>(null);
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
@@ -319,7 +319,9 @@ export default function AgentsSection() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { void load(); }, [load]);
+  // refreshKey: Connections bumps it after revoking an OAuth grant, which
+  // also revokes the agent behind it (migration 087).
+  useEffect(() => { void load(); }, [load, refreshKey]);
 
   // /app/connections#agents (the link from the Grok page and from an empty
   // Delegate card) lands on this section, once it has something to show.

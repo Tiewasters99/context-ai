@@ -30,7 +30,7 @@ import { Shield, Loader2, AlertCircle, Check, X, Bot, Plug } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { stashAuthorizeRequest } from '@/lib/oauthAuthorizeResume';
-import { useServerspaces } from '@/hooks/useServerspaces';
+import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { normalizeScope } from '@/lib/agent-scope';
 import { AGENT_PROVIDERS, type AgentProvider } from '@/lib/agentTokens';
 import AgentMatterPicker from '@/components/agents/AgentMatterPicker';
@@ -115,6 +115,12 @@ export default function OAuthAuthorize() {
   const [agentScope, setAgentScope] = useState<string[]>([]);
   const [existingAgent, setExistingAgent] = useState<string | null>(null);
   const { data: serverspaces = [] } = useServerspaces();
+  const refreshServerspaces = useServerspacesRefresh();
+  // Someone who signs in on this page had an empty matter list cached while
+  // signed out (30 s staleTime); re-read it once they are in.
+  useEffect(() => {
+    if (user) void refreshServerspaces();
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const allMatters = useMemo(() => serverspaces.flatMap((s) => s.matterspaces ?? []), [serverspaces]);
 
   useEffect(() => {

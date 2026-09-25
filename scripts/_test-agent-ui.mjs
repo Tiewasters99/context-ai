@@ -133,7 +133,7 @@ test('the Agents section says what an agent sees', () => {
   assert.ok(s.includes("'This agent sees only the matters you tick. Nothing else, and never a SecureSpace.'"));
   assert.match(s, /<section id="agents"/);
   const page = src('src/pages/Connections.tsx');
-  assert.match(page, /<AgentsSection \/>/);
+  assert.match(page, /<AgentsSection( refreshKey=\{agentsRefresh\})? \/>/);
   assert.match(src('src/pages/GrokConnect.tsx'), /to="\/app\/connections#agents"/);
 });
 

@@ -415,6 +415,7 @@ export default function Connections() {
   // migration 065 is not pasted yet and the table cannot be read. Neither is
   // an error worth putting in front of a lawyer.
   const [grants, setGrants] = useState<Grant[] | null>(null);
+  const [agentsRefresh, setAgentsRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
     () => {
@@ -557,7 +558,10 @@ export default function Connections() {
       // An agent connected by sign-in has no other way in: its row holds no
       // usable token. Revoke it too so Connections › Agents does not list a
       // dead agent as live. (The server already refuses it either way.)
-      if (grant.agent_token_id) await revokeAgentToken(grant.agent_token_id).catch(() => {});
+      if (grant.agent_token_id) {
+        await revokeAgentToken(grant.agent_token_id).catch(() => {});
+        setAgentsRefresh((n) => n + 1);
+      }
       await loadGrants();
       setBanner({
         kind: 'ok',
@@ -791,7 +795,7 @@ export default function Connections() {
           </section>
         )}
 
-        <AgentsSection />
+        <AgentsSection refreshKey={agentsRefresh} />
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
           Connecting Gmail or Calendar asks Google for access; connecting
