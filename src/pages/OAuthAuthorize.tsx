@@ -11,7 +11,12 @@
 //      request (src/lib/oauthAuthorizeResume.ts) so /auth/callback can put
 //      the visitor back here with it intact.
 //   3. Show a plain-language consent screen enumerating what the connected
-//      client can and cannot do with the MCP tools (lib/mcp-core.mjs TOOLS).
+//      client can and cannot do with the MCP tools (lib/mcp-core.mjs TOOLS),
+//      and offer two ways to connect (migration 087):
+//        * as a full assistant — today's behaviour and still the default;
+//        * as an agent — a named identity that sees only the matters ticked
+//          here (Connections › Agents' rule and wording), for OAuth-only
+//          hosts such as Grok. The server re-checks every ticked matter.
 //   4. On Approve, POST the Supabase access token + OAuth params to
 //      /api/oauth-approve, which mints the auth code and returns the
 //      redirect URL. The page then navigates the browser to that URL,
@@ -19,12 +24,35 @@
 //   5. On Cancel, redirect to the client's redirect_uri with
 //      error=access_denied (per OAuth 2.1).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { Shield, Loader2, AlertCircle, Check, X } from 'lucide-react';
+import { Shield, Loader2, AlertCircle, Check, X, Bot, Plug } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { stashAuthorizeRequest } from '@/lib/oauthAuthorizeResume';
+import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
+import { normalizeScope } from '@/lib/agent-scope';
+import { AGENT_PROVIDERS, type AgentProvider } from '@/lib/agentTokens';
+import AgentMatterPicker from '@/components/agents/AgentMatterPicker';
+import { AGENT_SCOPE_COPY } from '@/components/agents/AgentsSection';
+
+export const FULL_ASSISTANT_COPY = 'Sees every matter you can see, except SecureSpaces.';
+
+/** Best guess at the provider from the name the client registered under. */
+export function guessAgentProvider(clientName: string): AgentProvider {
+  const n = clientName || '';
+  if (/grok|xai|x\.ai/i.test(n)) return 'grok';
+  if (/chatgpt|openai|\bgpt\b/i.test(n)) return 'chatgpt';
+  if (/claude|anthropic/i.test(n)) return 'claude';
+  if (/gemini|antigravity|google/i.test(n)) return 'gemini';
+  return 'other';
+}
+
+/** sha256 hex, the same hash oauth_grants.client_id_hash stores (065). */
+async function sha256Hex(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 // Decode (without verifying) a JWT's payload. We use this only to display
 // the registered client_name to the user before they consent. The /approve
@@ -77,6 +105,53 @@ export default function OAuthAuthorize() {
   const clientMeta = useMemo(() => readJwtPayload(oauth.client_id), [oauth.client_id]);
   const clientName = clientMeta?.client_name || 'an MCP client';
 
+  // How to connect (migration 087). Full assistant is the default for every
+  // client, as before. The one exception is a client already connected here
+  // as an agent: re-approving it starts from that agent (same name, same
+  // matters) so a routine re-sign-in never silently widens it to full access.
+  const [connectAs, setConnectAs] = useState<'assistant' | 'agent'>('assistant');
+  const [agentName, setAgentName] = useState<string>(clientMeta?.client_name || '');
+  const [agentProvider, setAgentProvider] = useState<AgentProvider>(() => guessAgentProvider(clientMeta?.client_name || ''));
+  const [agentScope, setAgentScope] = useState<string[]>([]);
+  const [existingAgent, setExistingAgent] = useState<string | null>(null);
+  const { data: serverspaces = [] } = useServerspaces();
+  const refreshServerspaces = useServerspacesRefresh();
+  // Someone who signs in on this page had an empty matter list cached while
+  // signed out (30 s staleTime); re-read it once they are in.
+  useEffect(() => {
+    if (user) void refreshServerspaces();
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allMatters = useMemo(() => serverspaces.flatMap((s) => s.matterspaces ?? []), [serverspaces]);
+
+  useEffect(() => {
+    if (!user || !oauth.client_id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const hash = await sha256Hex(oauth.client_id);
+        // '*' so a database without 087 (no agent_token_id column) still answers.
+        const { data: g } = await supabase
+          .from('oauth_grants').select('*')
+          .eq('client_id_hash', hash).is('revoked_at', null).maybeSingle();
+        const agentId = (g as Record<string, unknown> | null)?.agent_token_id;
+        if (typeof agentId !== 'string') return;
+        const { data: a } = await supabase
+          .from('connector_tokens')
+          .select('id, name, agent_provider, matter_scope, revoked_at')
+          .eq('id', agentId).maybeSingle();
+        if (cancelled || !a || a.revoked_at) return;
+        setConnectAs('agent');
+        setExistingAgent(a.name || clientName);
+        if (a.name) setAgentName(a.name);
+        if (a.agent_provider) setAgentProvider(a.agent_provider as AgentProvider);
+        setAgentScope(Array.isArray(a.matter_scope) ? a.matter_scope : []);
+      } catch {
+        /* no prefill; the defaults stand */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, oauth.client_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Cancel → redirect back with error.
   const cancel = () => {
     if (!oauth.redirect_uri) { window.history.back(); return; }
@@ -102,7 +177,19 @@ export default function OAuthAuthorize() {
           'content-type': 'application/json',
           authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify(oauth),
+        body: JSON.stringify(
+          connectAs === 'agent'
+            ? {
+                ...oauth,
+                connect_as: 'agent',
+                agent: {
+                  name: agentName.trim() || clientName,
+                  provider: agentProvider,
+                  matter_scope: normalizeScope(allMatters, agentScope),
+                },
+              }
+            : { ...oauth, connect_as: 'assistant' },
+        ),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body?.detail || body?.error || `approve failed (${res.status})`);
@@ -263,6 +350,71 @@ export default function OAuthAuthorize() {
         <span className="text-white font-medium">{clientName}</span> is requesting access to your Contextspaces account
         as <span className="text-[#e8b84a]">{user.email}</span>.
       </p>
+      <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-2">Connect {clientName} as</p>
+      <div className="space-y-2 mb-4" role="radiogroup" aria-label="How to connect">
+        <ModeOption
+          selected={connectAs === 'assistant'}
+          onSelect={() => setConnectAs('assistant')}
+          icon={<Plug size={14} className="text-[#e8b84a]" />}
+          title="A full assistant"
+          blurb={`${FULL_ASSISTANT_COPY} For Claude, ChatGPT and other assistants you talk to yourself.`}
+        />
+        <ModeOption
+          selected={connectAs === 'agent'}
+          onSelect={() => setConnectAs('agent')}
+          icon={<Bot size={14} className="text-[#e8b84a]" />}
+          title="An agent"
+          blurb={`${AGENT_SCOPE_COPY} For a bot you hand tasks to, such as a Grok Bot.`}
+        />
+      </div>
+
+      {connectAs === 'agent' && (
+        <div className="rounded-lg border border-[rgba(232,184,74,0.25)] bg-[rgba(232,184,74,0.04)] p-4 mb-4 space-y-3">
+          {existingAgent && (
+            <p className="text-[12px] text-white/70">
+              {clientName} is already connected here as the agent <span className="text-white">{existingAgent}</span>.
+              Approving again keeps that agent and its tasks, with the name and matters below.
+            </p>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="block">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-white/50 mb-1">Name</span>
+              <input
+                value={agentName}
+                onChange={(e) => setAgentName(e.target.value)}
+                placeholder={clientName}
+                className="w-full px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.04)] text-[13px] text-white placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-[#e8b84a]"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-white/50 mb-1">Provider</span>
+              <select
+                value={agentProvider}
+                onChange={(e) => setAgentProvider(e.target.value as AgentProvider)}
+                className="w-full px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[rgba(20,20,30,0.9)] text-[13px] text-white focus:outline-none focus:ring-1 focus:ring-[#e8b84a]"
+              >
+                {AGENT_PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </label>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-white/50 mb-1">Matters it may see</p>
+            <AgentMatterPicker value={agentScope} onChange={setAgentScope} />
+            <p className="text-[11px] text-white/45 mt-1.5 leading-relaxed">
+              A ticked matter includes its sub-matters. Tick nothing and the agent can see nothing
+              until you grant a matter under Connections › Agents.
+            </p>
+          </div>
+          <p className="text-[12px] text-white/70 leading-relaxed">{AGENT_SCOPE_COPY}</p>
+          <p className="text-[11px] text-white/45 leading-relaxed">
+            It works a task board: you hand it tasks from a document, a list, a page or a calendar
+            entry, and it posts its results back into the matter. It appears under Connections ›
+            Agents, where you can change its matters or revoke it.
+          </p>
+        </div>
+      )}
+
+      {connectAs === 'assistant' && (
       <div className="rounded-lg border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.03)] p-4 mb-4 space-y-2">
         <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider">It will be able to:</p>
         <ul className="space-y-1.5 text-[12px] text-white/80">
@@ -281,11 +433,11 @@ export default function OAuthAuthorize() {
           <li className="flex items-start gap-2"><X size={12} className="text-red-300 shrink-0 mt-0.5" /> Touch your account, your billing, or who a matter is shared with.</li>
         </ul>
       </div>
+      )}
       <p className="text-[11px] text-white/40 mb-4">
-        To end this access, remove the Contextspaces connector in {clientName}, which is what stops it
-        asking for more. A token already issued stays valid for 12 hours, and the renewal token that
-        comes with it is replaced each time the client uses it — so access ends when the client stops,
-        not on a fixed date. Revoking one connection from inside Contextspaces is not built yet.
+        To end this access, revoke it under Connections in Contextspaces
+        {connectAs === 'agent' ? ' (or revoke the agent under Connections › Agents)' : ''}, or remove the
+        Contextspaces connector in {clientName}.
       </p>
       {submitError && (
         <p className="text-[12px] text-red-300 mb-3 flex items-start gap-1.5">
@@ -306,17 +458,49 @@ export default function OAuthAuthorize() {
           className="flex-1 py-2 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
         >
           {submitting && <Loader2 size={13} className="animate-spin" />}
-          {submitting ? 'Authorizing…' : 'Allow access'}
+          {submitting ? 'Authorizing…' : connectAs === 'agent' ? 'Connect as an agent' : 'Allow access'}
         </button>
       </div>
     </Frame>
   );
 }
 
+function ModeOption({
+  selected, onSelect, icon, title, blurb,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  icon: React.ReactNode;
+  title: string;
+  blurb: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={`w-full text-left rounded-lg border px-3.5 py-3 transition-colors flex items-start gap-3 ${
+        selected
+          ? 'border-[rgba(232,184,74,0.55)] bg-[rgba(232,184,74,0.06)]'
+          : 'border-[rgba(255,255,255,0.08)] bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.04)]'
+      }`}
+    >
+      <span className={`mt-0.5 w-3.5 h-3.5 rounded-full border shrink-0 flex items-center justify-center ${selected ? 'border-[#e8b84a]' : 'border-white/30'}`}>
+        {selected && <span className="w-1.5 h-1.5 rounded-full bg-[#e8b84a]" />}
+      </span>
+      <span className="min-w-0">
+        <span className="flex items-center gap-1.5 text-[13px] font-medium text-white">{icon}{title}</span>
+        <span className="block text-[12px] text-white/60 mt-0.5 leading-relaxed">{blurb}</span>
+      </span>
+    </button>
+  );
+}
+
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-6" style={{ backgroundColor: '#0a0a10' }}>
-      <div className="w-full max-w-md rounded-2xl border border-[rgba(255,255,255,0.08)] p-6" style={{ backgroundColor: 'rgba(20,20,28,0.95)' }}>
+      <div className="w-full max-w-lg rounded-2xl border border-[rgba(255,255,255,0.08)] p-6" style={{ backgroundColor: 'rgba(20,20,28,0.95)' }}>
         <div className="mb-6 text-center">
           <span className="text-[18px] font-semibold tracking-tight">
             <span className="text-white">Context</span><span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>

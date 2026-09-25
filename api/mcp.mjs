@@ -31,7 +31,7 @@ import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 
 import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
-import { checkAccessGrant } from '../lib/oauth-grants.mjs';
+import { agentRowRefusal, checkAccessGrant, readAgentTokenRow, touchAgentToken } from '../lib/oauth-grants.mjs';
 import { connectorTokenIdentity } from '../lib/connector-token-auth.mjs';
 import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { verifyJwt } from '../lib/oauth-jwt.mjs';
@@ -90,8 +90,11 @@ class AuthError extends Error {
 
 // Returns the caller's identity:
 //   { userId, kind: 'user' | 'agent', tokenId?, matterScope?, provider?, name? }
-// Path A can answer kind 'agent' (migration 085); paths B and C are always
-// 'user' — an OAuth grant is a person's own full-access connection.
+// Path A can answer kind 'agent' (migration 085). Paths B and C answer
+// 'user' for a person's own full-access OAuth connection, and — since
+// migration 087 — 'agent' for an OAuth connection made "as an agent" on the
+// consent screen, with the SAME identity shape path A returns for that
+// agent's connector_tokens row (see oauthIdentity below).
 export async function authenticate(req) {
   const auth = req.headers.authorization || req.headers.Authorization;
   if (!auth || !auth.toLowerCase().startsWith('bearer ')) {
@@ -146,23 +149,8 @@ export async function authenticate(req) {
     }
     const payload = verifyJwt(inner, process.env.MCP_OAUTH_SECRET);
     if (payload && payload.typ === 'access' && payload.sub) {
-      // Per-connection grants (migration 065). The token names the
-      // oauth_grants row it belongs to; if the user has revoked that row,
-      // this client is done — without touching any other client or any
-      // other customer. Cached ≤60s per instance, so revocation takes
-      // effect within about a minute and the hot path adds no round trip.
-      // Fails CLOSED on revoked/missing, OPEN-with-log when the table is
-      // not deployed yet. A token with no `gid` predates 065; see
-      // lib/oauth-grants.mjs for that transition and its cut-off.
-      const grant = await checkAccessGrant(payload);
-      if (!grant.ok) {
-        console.warn('[mcp auth] grant refused: sub=%s reason=%s', payload.sub, grant.reason);
-        // RFC 6750 has no code for "the user revoked this"; invalid_token is
-        // what an OAuth client keys its re-authorization on.
-        throw new AuthError(401, 'invalid_token');
-      }
-      console.log('[mcp auth] opaque ok: sub=%s grant=%s', payload.sub, grant.reason);
-      return { userId: payload.sub, kind: 'user' };
+      // Grant check (065) and agent link (087): see oauthIdentity below.
+      return oauthIdentity(payload, 'opaque');
     }
     console.warn('[mcp auth] opaque reject:',
       payload ? { typ: payload.typ, hasSub: !!payload.sub, exp: payload.exp } : 'verify failed (sig/exp)');
@@ -179,6 +167,11 @@ export async function authenticate(req) {
     }
     const payload = verifyJwt(token, process.env.MCP_OAUTH_SECRET);
     if (payload && payload.typ === 'access' && payload.sub) {
+      // A bare JWT that names a grant is simply a cspa_ token with its
+      // envelope taken off (anyone holding one can do that), so it gets the
+      // same grant and agent checks. Only a truly old token with neither
+      // gid nor agt keeps the old unchecked path.
+      if (payload.gid || payload.agt) return oauthIdentity(payload, 'bare');
       console.log('[mcp auth] oauth ok: sub=%s', payload.sub);
       return { userId: payload.sub, kind: 'user' };
     }
@@ -190,6 +183,50 @@ export async function authenticate(req) {
   console.warn('[mcp auth] malformed token shape: prefix=%s dots=%d len=%d',
     token.slice(0, 6), token.split('.').length - 1, token.length);
   throw new AuthError(401, 'malformed_token');
+}
+
+
+// An OAuth access token's identity. Per-connection grants (migration 065):
+// the token names the oauth_grants row it belongs to; if the user has
+// revoked that row, this client is done — without touching any other client
+// or any other customer. Cached ≤60s per instance for a full-access grant;
+// fails CLOSED on revoked/missing, OPEN-with-log when the table is not
+// deployed yet. A token with no `gid` predates 065; see lib/oauth-grants.mjs.
+//
+// Agent connections (migration 087): when the grant is linked to an agent
+// (connector_tokens kind='agent'), the connection IS that agent. Its row is
+// read fresh on every request, as path A reads a csp_ token's — so Edit
+// matters and Revoke in Connections › Agents bite on the next request — and
+// the identity is connectorTokenIdentity(row), the very shape path A returns.
+// Scope enforcement, the task tools, metering per agent token and the ledger
+// ref 'agent:<id>' therefore apply unchanged. Every failure here refuses; an
+// agent is never served as the user.
+async function oauthIdentity(payload, via) {
+  const grant = await checkAccessGrant(payload);
+  if (!grant.ok) {
+    console.warn('[mcp auth] grant refused: sub=%s reason=%s', payload.sub, grant.reason);
+    // RFC 6750 has no code for "the user revoked this"; invalid_token is
+    // what an OAuth client keys its re-authorization on.
+    throw new AuthError(401, 'invalid_token');
+  }
+  const agentTokenId = grant.agentTokenId || null;
+  if (!agentTokenId) {
+    console.log('[mcp auth] %s ok: sub=%s grant=%s', via, payload.sub, grant.reason);
+    return { userId: payload.sub, kind: 'user' };
+  }
+  const { row, error } = await readAgentTokenRow(agentTokenId);
+  if (error) {
+    console.warn('[mcp auth] agent row unreadable, refused: sub=%s', payload.sub);
+    throw new AuthError(401, 'invalid_token');
+  }
+  const why = agentRowRefusal(row, payload.sub);
+  if (why) {
+    console.warn('[mcp auth] oauth agent refused: sub=%s reason=%s', payload.sub, why);
+    throw new AuthError(401, 'invalid_token');
+  }
+  touchAgentToken(row.id);
+  console.log('[mcp auth] %s ok as agent: sub=%s agent=%s', via, payload.sub, row.id);
+  return connectorTokenIdentity(row);
 }
 
 

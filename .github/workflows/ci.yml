@@ -556,6 +556,22 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-connector-meter.mjs
 
+      # Migration 087: an OAuth sign-in can connect AS AN AGENT (Grok is
+      # OAuth-only). Executes 001…022 + 065 + 085 + 087 (twice) in PGlite with
+      # real RLS and drives the real consent POST, token endpoint and
+      # api/mcp.mjs authenticate() against it: an agent-linked grant is served
+      # only as that agent (the same identity path A returns), an unlinked
+      # grant is unchanged, refresh keeps the link, revoking either end is a
+      # 401 on the next request, the consent POST refuses sealed and
+      # inaccessible matters and writes nothing, and an agent token fails
+      # CLOSED when grant state is unreadable. Re-installs PGlite (after the
+      # jsdom steps).
+      - name: Migration 087 — connect as an agent over OAuth (PGlite + real handlers)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-oauth-agent.mjs
+
       # The connector page tells people to paste a command into a terminal, so
       # the command is checked whole — every flag, and the quoting that differs
       # between bash and PowerShell. It also asserts the endpoint URL appears

@@ -30,6 +30,7 @@ import {
   type Connection,
 } from '@/hooks/useConnections';
 import AgentsSection from '@/components/agents/AgentsSection';
+import { agentNamesById, revokeAgentToken } from '@/lib/agentTokens';
 
 type ConnState =
   | 'connected'
@@ -302,6 +303,11 @@ type Grant = {
   client_name: string;
   created_at: string;
   last_used_at: string | null;
+  // Migration 087: set when the client connected AS AN AGENT on the consent
+  // screen. Absent on a database without 087.
+  agent_token_id?: string | null;
+  // Display only: the agent's name, read separately.
+  agent_name?: string | null;
 };
 
 // An AI client registers itself and picks its own name, so the only truthful
@@ -352,6 +358,9 @@ function GrantRow({
           <StateBadge state="connected" />
         </span>
         <span className="block text-[13px] text-[var(--color-text-secondary)] mt-0.5">
+          {grant.agent_token_id
+            ? `Connected as agent ${grant.agent_name || 'an agent'}: it sees only that agent's matters (Connections › Agents). `
+            : ''}
           {connected ? `Connected ${connected}.` : 'Connected.'}{' '}
           {used ? `Last used ${used}.` : 'Not used yet.'}
         </span>
@@ -406,6 +415,7 @@ export default function Connections() {
   // migration 065 is not pasted yet and the table cannot be read. Neither is
   // an error worth putting in front of a lawyer.
   const [grants, setGrants] = useState<Grant[] | null>(null);
+  const [agentsRefresh, setAgentsRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; text: string } | null>(
     () => {
@@ -493,16 +503,25 @@ export default function Connections() {
   // migration is not pasted yet the select fails (PGRST205) and the section
   // simply does not appear.
   const loadGrants = useCallback(async () => {
+    // '*', not a column list: agent_token_id (migration 087) must not be
+    // named while 087 may be unapplied, or this read fails (42703) and the
+    // whole section disappears. oauth_grants has no server-only column.
     const { data, error } = await supabase
       .from('oauth_grants')
-      .select('id, client_name, created_at, last_used_at')
+      .select('*')
       .is('revoked_at', null)
       .order('created_at', { ascending: false });
     if (error || !data) {
       setGrants(null);
       return;
     }
-    setGrants(data as Grant[]);
+    const rows = data as Grant[];
+    const agentIds = rows.map((g) => g.agent_token_id).filter((x): x is string => typeof x === 'string');
+    if (agentIds.length) {
+      const names = await agentNamesById(agentIds);
+      for (const g of rows) if (g.agent_token_id) g.agent_name = names.get(g.agent_token_id) ?? null;
+    }
+    setGrants(rows);
   }, []);
 
   useEffect(() => {
@@ -536,6 +555,13 @@ export default function Connections() {
         .update({ revoked_at: new Date().toISOString() })
         .eq('id', grant.id);
       if (error) throw new Error(error.message);
+      // An agent connected by sign-in has no other way in: its row holds no
+      // usable token. Revoke it too so Connections › Agents does not list a
+      // dead agent as live. (The server already refuses it either way.)
+      if (grant.agent_token_id) {
+        await revokeAgentToken(grant.agent_token_id).catch(() => {});
+        setAgentsRefresh((n) => n + 1);
+      }
       await loadGrants();
       setBanner({
         kind: 'ok',
@@ -769,7 +795,7 @@ export default function Connections() {
           </section>
         )}
 
-        <AgentsSection />
+        <AgentsSection refreshKey={agentsRefresh} />
 
         <p className="text-xs text-[var(--color-text-muted)] mt-8 leading-relaxed max-w-xl">
           Connecting Gmail or Calendar asks Google for access; connecting
