@@ -35,11 +35,17 @@ const ROUTE_CARD_FULLSCREEN_Z = 60;
 // bound caps the card at the window height and lets its own content scroll
 // inside, so the frame stays put: all four resize edges and the header are
 // on screen at all times. An explicit height from a resize overrides it.
+//
+// Since 2026-09-25 the bound is ON BY DEFAULT for every card (Eden: "All
+// cards throughout should be draggable, resizable along all four edges, and
+// pinnable"). The Dashboard's welcome card was 1,309px tall with no bound, so
+// its bottom edge sat below the window and could not be grabbed. A card that
+// must grow past the window can still pass `{ boundToViewport: false }`.
 export function useDraggableResizable(
   storageKey?: string,
   options?: { boundToViewport?: boolean },
 ) {
-  const boundToViewport = !!options?.boundToViewport;
+  const boundToViewport = options?.boundToViewport !== false;
   const isMobile = useIsMobile();
   const cardRef = useRef<HTMLDivElement>(null);
   const isFullscreen = useRef(false);
@@ -148,7 +154,6 @@ export function useDraggableResizable(
     // restore below overrides this.
     if (boundToViewport) {
       card.style.maxHeight = `calc(100vh - ${TOP_INSET}px)`;
-      card.style.overflowY = 'auto';
     }
     // The fixed inset above assumed the card starts just under the app
     // header. It does not when a cover sits above it (180px, plus margin),
@@ -158,14 +163,29 @@ export function useDraggableResizable(
     // whenever the page above it changes height (a cover arriving) or the
     // window does. A height the person chose by resizing is left alone.
     const fitToViewport = () => {
-      if (!boundToViewport || card.style.height) return;
+      if (!boundToViewport || card.style.height || isFullscreen.current) return;
       const top = Math.max(card.getBoundingClientRect().top, 0);
       card.style.maxHeight = `${Math.max(240, Math.floor(window.innerHeight - top - 16))}px`;
+      // Scroll inside only when the content is actually taller than the
+      // bound, so a short card — and any menu that pops out of it — is not
+      // clipped by an overflow it never needed.
+      card.style.overflowY = card.scrollHeight > card.clientHeight + 1 ? 'auto' : '';
     };
     const fitObserver = boundToViewport && typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(() => fitToViewport())
       : null;
     if (fitObserver && card.parentElement) fitObserver.observe(card.parentElement);
+    // Content usually arrives after the card mounts (the Dashboard's tiles,
+    // a matter's lists). Watch the card's own children, and any added later,
+    // so the scroll decision above is made against what is actually there.
+    if (fitObserver) for (const child of Array.from(card.children)) fitObserver.observe(child);
+    const childWatcher = fitObserver && typeof MutationObserver !== 'undefined'
+      ? new MutationObserver((records) => {
+          for (const r of records) r.addedNodes.forEach((n) => { if (n instanceof Element) fitObserver.observe(n); });
+          fitToViewport();
+        })
+      : null;
+    childWatcher?.observe(card, { childList: true });
     if (boundToViewport) window.addEventListener('resize', fitToViewport);
 
     // Restore last-known position from a prior session. Position is
@@ -351,6 +371,9 @@ export function useDraggableResizable(
           height: card.style.height,
         });
       }
+      // A card dragged lower (or restored low) must not push its bottom edge
+      // off the screen: re-measure the bound where it now sits.
+      if (isDragging) fitToViewport();
       if (swallowNextClickOnUp) swallowNextClick();
       swallowNextClickOnUp = false;
       pendingDrag = false;
@@ -395,6 +418,7 @@ export function useDraggableResizable(
       card.removeEventListener('contextmenu', onContextMenu);
       card.removeEventListener('dblclick', onDoubleClick);
       fitObserver?.disconnect();
+      childWatcher?.disconnect();
       window.removeEventListener('resize', fitToViewport);
     };
   }, [storageKey, pin, unpin, readState, writeState, isMobile, boundToViewport]);

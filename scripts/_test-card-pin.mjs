@@ -313,3 +313,28 @@ test('a second item inherits nothing from the first', async () => {
 
   await view.unmount();
 });
+
+// 2026-09-25: every card fits the window by default. The Dashboard's welcome
+// card passed no options, grew to 1,309px, and its bottom edge sat below the
+// window where it could not be grabbed to resize.
+function DefaultCard({ api }) {
+  const hook = useDraggableResizable('cs.test.card.default');
+  api.current = hook;
+  return React.createElement('div', { ref: hook.cardRef, 'data-card': 'default' }, 'card body');
+}
+
+test('a card with no options is still bounded to the window (all four edges reachable)', async () => {
+  window.localStorage.clear();
+  const container = window.document.createElement('div');
+  window.document.body.appendChild(container);
+  const api = { current: null };
+  let root;
+  await act(async () => {
+    root = createRoot(container);
+    root.render(React.createElement(DefaultCard, { api }));
+  });
+  const card = container.querySelector('[data-card="default"]');
+  assert.ok(card.style.maxHeight && card.style.maxHeight !== 'none',
+    `a default card gets a max height that keeps its bottom edge on screen (got "${card.style.maxHeight}")`);
+  await act(async () => { root.unmount(); });
+});
