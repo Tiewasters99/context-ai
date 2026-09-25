@@ -42,6 +42,8 @@ export const AGENT_SCOPE_COPY =
 
 /** The agents list's line for an agent with scope_all (migration 088). */
 export const ALL_MATTERS_LABEL = 'All matters (except SecureSpaces)';
+const ALL_MATTERS_SUBTITLE =
+  'This agent sees every matter you can see, including ones you create later. Never a SecureSpace.';
 
 // The setup guide (B8) is not written yet; until it is, each provider's
 // connect page is the nearest thing to one.
@@ -258,7 +260,7 @@ function EditMattersCard({
     <AgentCard
       storageKey="cs.agents.editMatters"
       title={`Matters ${agentLabel(agent)} may see`}
-      subtitle={AGENT_SCOPE_COPY}
+      subtitle={scopeAll ? ALL_MATTERS_SUBTITLE : AGENT_SCOPE_COPY}
       onClose={onClose}
       footer={
         <>
