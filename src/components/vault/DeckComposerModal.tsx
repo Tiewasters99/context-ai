@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { X, Loader2, Presentation, ChevronLeft, Check, FileText } from 'lucide-react';
+import { Loader2, Presentation, ChevronLeft, Check, FileText } from 'lucide-react';
+import CardDialog from '@/components/ui/CardDialog';
 import { supabase } from '@/lib/supabase';
 import { sandboxApi } from '@/lib/sandbox-api';
 import { generateStructured } from '@/lib/llm/structured';
@@ -204,81 +205,80 @@ export default function DeckComposerModal({ box, docs, preselectedIds, onClose, 
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-[60] bg-black/50" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-lg max-h-[85vh] rounded-xl border border-[rgba(255,255,255,0.12)] bg-[#12121a] p-6 flex flex-col">
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
-            <Presentation size={15} className="text-[#e8b84a]" /> Generate deck
-          </h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white"><X size={16} /></button>
-        </div>
-        <p className="text-[11px] text-white/50 mb-4">
-          From documents in “{box.name}” — drafted by AI, rendered as a real .pptx you can edit.
-        </p>
+    <CardDialog
+      storageKey="cs.dialog.deckComposer"
+      z={60}
+      maxWidth={512}
+      onClose={onClose}
+      // An instruction typed or slides drafted are not lost to a stray click
+      // outside; an untouched composer still closes on the backdrop.
+      closeOnBackdrop={!instruction.trim() && !deck}
+      icon={<Presentation size={15} className="text-[#e8b84a]" />}
+      title="Generate deck"
+      subtitle={<>From documents in “{box.name}” — drafted by AI, rendered as a real .pptx you can edit.</>}
+      bodyClassName="px-5 py-4 flex flex-col"
+    >
+      {(phase === 'compose' || phase === 'generating') && (
+        <>
+          <textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            rows={3}
+            placeholder='e.g., "Mediation deck: liability themes, damages summary table, and a timeline chart of the key filings."'
+            disabled={phase === 'generating'}
+            className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.03)] text-[13px] text-white placeholder-white/30 resize-none focus:outline-none focus:ring-1 focus:ring-[#e8b84a] mb-3"
+          />
+          <p className="text-[10px] font-semibold text-white/60 uppercase tracking-wider mb-1.5">Source documents</p>
+          <div className="flex-1 overflow-y-auto space-y-0.5 min-h-[80px] mb-3">
+            {docs.map((d) => (
+              <button key={d.id} onClick={() => toggle(d.id)} disabled={phase === 'generating'}
+                className="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-left">
+                <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked.has(d.id) ? 'bg-[#e8b84a] border-[#e8b84a]' : 'border-white/20'}`}>
+                  {checked.has(d.id) && <Check size={10} className="text-black" strokeWidth={3} />}
+                </div>
+                <FileText size={12} className="text-white/50 shrink-0" />
+                <span className="text-[12px] text-white/80 truncate">{d.title}</span>
+              </button>
+            ))}
+          </div>
+          {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
+          <button
+            onClick={handleGenerate}
+            disabled={!instruction.trim() || checked.size === 0 || phase === 'generating'}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40"
+          >
+            {phase === 'generating' ? <><Loader2 size={14} className="animate-spin" /> Drafting slides…</> : 'Draft slides'}
+          </button>
+        </>
+      )}
 
-        {(phase === 'compose' || phase === 'generating') && (
-          <>
-            <textarea
-              value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
-              rows={3}
-              placeholder='e.g., "Mediation deck: liability themes, damages summary table, and a timeline chart of the key filings."'
-              disabled={phase === 'generating'}
-              className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.03)] text-[13px] text-white placeholder-white/30 resize-none focus:outline-none focus:ring-1 focus:ring-[#e8b84a] mb-3"
-            />
-            <p className="text-[10px] font-semibold text-white/60 uppercase tracking-wider mb-1.5">Source documents</p>
-            <div className="flex-1 overflow-y-auto space-y-0.5 min-h-[80px] mb-3">
-              {docs.map((d) => (
-                <button key={d.id} onClick={() => toggle(d.id)} disabled={phase === 'generating'}
-                  className="flex items-center gap-2.5 w-full px-2 py-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-left">
-                  <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${checked.has(d.id) ? 'bg-[#e8b84a] border-[#e8b84a]' : 'border-white/20'}`}>
-                    {checked.has(d.id) && <Check size={10} className="text-black" strokeWidth={3} />}
-                  </div>
-                  <FileText size={12} className="text-white/50 shrink-0" />
-                  <span className="text-[12px] text-white/80 truncate">{d.title}</span>
-                </button>
+      {(phase === 'review' || phase === 'creating') && deck && (
+        <>
+          <div className="flex-1 overflow-y-auto mb-3">
+            <p className="text-[14px] text-white font-semibold">{deck.title}</p>
+            {deck.subtitle && <p className="text-[11px] text-white/50 mb-2">{deck.subtitle}</p>}
+            <div className="space-y-1 mt-2">
+              {deck.slides.map((s, i) => (
+                <div key={i} className="px-3 py-2 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)]">
+                  <span className="text-[12px] text-white/85 block">{i + 1}. {s.title ?? '(untitled)'}</span>
+                  <span className="text-[10px] text-white/40">{slideSummary(s)}</span>
+                </div>
               ))}
             </div>
-            {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
-            <button
-              onClick={handleGenerate}
-              disabled={!instruction.trim() || checked.size === 0 || phase === 'generating'}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40"
-            >
-              {phase === 'generating' ? <><Loader2 size={14} className="animate-spin" /> Drafting slides…</> : 'Draft slides'}
+          </div>
+          {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
+          <div className="flex items-center gap-2">
+            <button onClick={() => setPhase('compose')} disabled={phase === 'creating'}
+              className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.1)] text-white/80 text-[12px] font-medium transition-colors">
+              <ChevronLeft size={13} /> Revise
             </button>
-          </>
-        )}
-
-        {(phase === 'review' || phase === 'creating') && deck && (
-          <>
-            <div className="flex-1 overflow-y-auto mb-3">
-              <p className="text-[14px] text-white font-semibold">{deck.title}</p>
-              {deck.subtitle && <p className="text-[11px] text-white/50 mb-2">{deck.subtitle}</p>}
-              <div className="space-y-1 mt-2">
-                {deck.slides.map((s, i) => (
-                  <div key={i} className="px-3 py-2 rounded-lg bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)]">
-                    <span className="text-[12px] text-white/85 block">{i + 1}. {s.title ?? '(untitled)'}</span>
-                    <span className="text-[10px] text-white/40">{slideSummary(s)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {error && <p className="text-[11px] text-red-400 mb-2">{error}</p>}
-            <div className="flex items-center gap-2">
-              <button onClick={() => setPhase('compose')} disabled={phase === 'creating'}
-                className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.1)] text-white/80 text-[12px] font-medium transition-colors">
-                <ChevronLeft size={13} /> Revise
-              </button>
-              <button onClick={handleCreate} disabled={phase === 'creating'}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-50">
-                {phase === 'creating' ? <><Loader2 size={14} className="animate-spin" /> Rendering…</> : 'Create PPTX'}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </>
+            <button onClick={handleCreate} disabled={phase === 'creating'}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-50">
+              {phase === 'creating' ? <><Loader2 size={14} className="animate-spin" /> Rendering…</> : 'Create PPTX'}
+            </button>
+          </div>
+        </>
+      )}
+    </CardDialog>
   );
 }

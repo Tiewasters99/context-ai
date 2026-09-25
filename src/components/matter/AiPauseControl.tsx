@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Pause, Play, X } from 'lucide-react';
-import ModalPortal from '@/components/ui/ModalPortal';
+import { AlertTriangle, Pause, Play } from 'lucide-react';
+import CardDialog from '@/components/ui/CardDialog';
 import {
   readAiPause, setAiPause, aiPausedSentence, NOT_PAUSED,
   nextPauseState, isPauseUnknown, PAUSE_UNKNOWN_SENTENCE, type AiPauseState,
@@ -130,95 +130,86 @@ export default function AiPauseControl({ matterId, matterName, onChange }: Props
       )}
 
       {dialog && (
-        <ModalPortal>
-          <>
-            <div className="fixed inset-0 z-[60] bg-black/40" onClick={() => !busy && setDialog(null)} />
-            <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-sm rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a]">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-[15px] font-semibold text-white flex items-center gap-2">
-                  {dialog === 'pause'
-                    ? <Pause size={15} style={{ color: PAUSE_AMBER }} />
-                    : <Play size={15} style={{ color: PAUSE_AMBER }} />}
-                  {dialog === 'pause' ? 'Pause AI on this matter' : 'Resume AI on this matter'}
-                </h3>
-                <button
-                  onClick={() => setDialog(null)}
-                  disabled={busy}
-                  className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors disabled:opacity-40"
-                >
-                  <X size={16} />
-                </button>
+        <CardDialog
+          storageKey="cs.dialog.aiPause"
+          z={60}
+          maxWidth={384}
+          onClose={() => setDialog(null)}
+          // A typed note is not lost to a stray click outside.
+          closeOnBackdrop={!(dialog === 'pause' && note.trim())}
+          busy={busy}
+          icon={dialog === 'pause'
+            ? <Pause size={15} style={{ color: PAUSE_AMBER }} />
+            : <Play size={15} style={{ color: PAUSE_AMBER }} />}
+          title={dialog === 'pause' ? 'Pause AI on this matter' : 'Resume AI on this matter'}
+        >
+          {dialog === 'pause' ? (
+            <>
+              <p className="text-[13px] text-white/80 mb-2">
+                Stop every AI step on{' '}
+                <span className="text-[#e8b84a] font-semibold">{matterName}</span> and everything
+                inside it?
+              </p>
+              <div className="rounded-lg border border-[rgba(232,184,74,0.35)] bg-[rgba(232,184,74,0.07)] px-3 py-2.5 mb-3 text-[12px] leading-relaxed text-white/75">
+                Chat, agents, the Editor, Bucketizer and cite-check all refuse. Connected
+                assistants stop seeing this matter at all. New uploads are stored and held
+                unread rather than processed — nothing is lost, and resuming puts them back in
+                the queue. A model request already in flight finishes; everything after it
+                stops.
               </div>
-
-              {dialog === 'pause' ? (
-                <>
-                  <p className="text-[13px] text-white/80 mb-2">
-                    Stop every AI step on{' '}
-                    <span className="text-[#e8b84a] font-semibold">{matterName}</span> and everything
-                    inside it?
-                  </p>
-                  <div className="rounded-lg border border-[rgba(232,184,74,0.35)] bg-[rgba(232,184,74,0.07)] px-3 py-2.5 mb-3 text-[12px] leading-relaxed text-white/75">
-                    Chat, agents, the Editor, Bucketizer and cite-check all refuse. Connected
-                    assistants stop seeing this matter at all. New uploads are stored and held
-                    unread rather than processed — nothing is lost, and resuming puts them back in
-                    the queue. A model request already in flight finishes; everything after it
-                    stops.
-                  </div>
-                  <label className="block text-[12px] text-white/55 mb-1.5" htmlFor="ai-pause-note">
-                    Why, if you want a note in the record (optional)
-                  </label>
-                  <input
-                    id="ai-pause-note"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    maxLength={500}
-                    placeholder="e.g. client call pending"
-                    className="w-full mb-3 px-3 py-2 rounded-md bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.12)] text-[13px] text-white placeholder:text-white/30 focus:outline-none focus:border-[rgba(232,184,74,0.5)]"
-                  />
-                </>
-              ) : (
-                <>
-                  <p className="text-[13px] text-white/80 mb-2">
-                    Turn AI back on for{' '}
-                    <span className="text-[#e8b84a] font-semibold">{state.pausedMatterName || matterName}</span>?
-                  </p>
-                  <div className="rounded-lg border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-3 py-2.5 mb-3 text-[12px] leading-relaxed text-white/75">
-                    {aiPausedSentence(state)}
-                    {state.note ? <><br />Note: “{state.note}”</> : null}
-                    {state.inherited ? (
-                      <><br />This pause was set on a parent matter, so resuming here resumes it there too.</>
-                    ) : null}
-                    <br />
-                    Resuming lets chat, agents and connectors reach this matter again, and puts any
-                    uploads held while it was paused back into the queue.
-                  </div>
-                </>
-              )}
-
-              {error && <p className="text-[12px] text-amber-200/80 mb-3">{error}</p>}
-
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setDialog(null)}
-                  disabled={busy}
-                  className="px-3 py-1.5 rounded-md text-[13px] text-white/70 hover:bg-[rgba(255,255,255,0.06)] transition-colors disabled:opacity-40"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => apply(dialog === 'pause')}
-                  disabled={busy}
-                  className="px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors disabled:opacity-40"
-                  style={{ backgroundColor: 'rgba(232,184,74,0.16)', color: PAUSE_AMBER }}
-                >
-                  {busy
-                    ? (dialog === 'pause' ? 'Pausing…' : 'Resuming…')
-                    : (dialog === 'pause' ? 'Pause AI' : 'Resume AI')}
-                </button>
+              <label className="block text-[12px] text-white/55 mb-1.5" htmlFor="ai-pause-note">
+                Why, if you want a note in the record (optional)
+              </label>
+              <input
+                id="ai-pause-note"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                maxLength={500}
+                placeholder="e.g. client call pending"
+                className="w-full mb-3 px-3 py-2 rounded-md bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.12)] text-[13px] text-white placeholder:text-white/30 focus:outline-none focus:border-[rgba(232,184,74,0.5)]"
+              />
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] text-white/80 mb-2">
+                Turn AI back on for{' '}
+                <span className="text-[#e8b84a] font-semibold">{state.pausedMatterName || matterName}</span>?
+              </p>
+              <div className="rounded-lg border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-3 py-2.5 mb-3 text-[12px] leading-relaxed text-white/75">
+                {aiPausedSentence(state)}
+                {state.note ? <><br />Note: “{state.note}”</> : null}
+                {state.inherited ? (
+                  <><br />This pause was set on a parent matter, so resuming here resumes it there too.</>
+                ) : null}
+                <br />
+                Resuming lets chat, agents and connectors reach this matter again, and puts any
+                uploads held while it was paused back into the queue.
               </div>
-            </div>
-          </>
-        </ModalPortal>
+            </>
+          )}
+
+          {error && <p className="text-[12px] text-amber-200/80 mb-3">{error}</p>}
+
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setDialog(null)}
+              disabled={busy}
+              className="px-3 py-1.5 rounded-md text-[13px] text-white/70 hover:bg-[rgba(255,255,255,0.06)] transition-colors disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => apply(dialog === 'pause')}
+              disabled={busy}
+              className="px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors disabled:opacity-40"
+              style={{ backgroundColor: 'rgba(232,184,74,0.16)', color: PAUSE_AMBER }}
+            >
+              {busy
+                ? (dialog === 'pause' ? 'Pausing…' : 'Resuming…')
+                : (dialog === 'pause' ? 'Pause AI' : 'Resume AI')}
+            </button>
+          </div>
+        </CardDialog>
       )}
     </>
   );

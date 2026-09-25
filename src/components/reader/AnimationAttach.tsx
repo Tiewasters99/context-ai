@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { X, RotateCw, Loader2, Check } from 'lucide-react';
+import { RotateCw, Loader2, Check } from 'lucide-react';
+import CardDialog from '@/components/ui/CardDialog';
 import {
   createAnimation, listMatterClips, type AnimationMedia, type DocumentAnimation, type Turn,
 } from '@/lib/document-animations';
@@ -94,82 +94,21 @@ export default function AnimationAttach({
 
   const field = 'h-8 w-full rounded-md border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.05)] px-2 text-[12px] text-white focus:outline-none focus:ring-1 focus:ring-[#e8b84a]';
 
-  return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 px-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg overflow-hidden rounded-xl border border-white/12 bg-[#12121a] shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label={`Add an animation on page ${page}`}
-      >
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <div>
-            <h3 className="text-[15px] font-semibold text-white">Add an animation — p. {page}</h3>
-            <p className="mt-0.5 text-[11px] text-white/50">
-              The clip plays on this part of the page. Turn the picture upright if the plate is printed sideways.
-            </p>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="rounded p-1.5 text-white/50 hover:bg-white/5 hover:text-white">
-            <X size={16} />
-          </button>
-        </div>
-
-        <div className="flex gap-4 px-4 py-4">
-          <div className="flex w-40 shrink-0 flex-col items-center gap-2">
-            <div className="flex h-44 w-full items-center justify-center overflow-hidden rounded border border-white/10 bg-white/95">
-              {preview && preview.turn === turn
-                ? <img src={preview.url} alt={`page ${page}, the chosen area`} className="max-h-full max-w-full" />
-                : <Loader2 size={14} className="animate-spin text-black/30" />}
-            </div>
-            <button
-              onClick={() => setTurn(TURNS[(TURNS.indexOf(turn) + 1) % TURNS.length])}
-              className="inline-flex items-center gap-1.5 rounded-md border border-white/12 px-2 py-1 text-[11px] text-white/75 hover:bg-white/5 hover:text-white"
-              title="Turn until the picture is upright"
-            >
-              <RotateCw size={12} /> Turn{turn ? ` · ${turn}°` : ''}
-            </button>
-          </div>
-
-          <div className="flex-1 space-y-3">
-            <label className="block">
-              <span className="mb-1 block text-[11px] text-white/55">Clip</span>
-              {offered === null ? (
-                <p className="flex items-center gap-2 text-[12px] text-white/50">
-                  <Loader2 size={12} className="animate-spin" /> Looking for clips in this matter…
-                </p>
-              ) : offered.length === 0 ? (
-                <p className="text-[12px] text-white/50">
-                  No video is filed in this matter yet. Upload the clip into the matter first, then come back.
-                </p>
-              ) : (
-                <select value={chosen} onChange={(e) => setChosen(e.target.value)} className={field} aria-label="The clip to play here">
-                  <option value="">Choose a clip…</option>
-                  {offered.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-                </select>
-              )}
-            </label>
-
-            <label className="block">
-              <span className="mb-1 block text-[11px] text-white/55">Name (optional)</span>
-              <input
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                placeholder="e.g. the kneeling fairy"
-                className={field}
-                aria-label="A name for this animation"
-              />
-            </label>
-
-            <label className="flex items-center gap-2 text-[12px] text-white/75">
-              <input type="checkbox" checked={loops} onChange={(e) => setLoops(e.target.checked)} className="accent-[#e8b84a]" />
-              Play over and over
-            </label>
-
-            {error && <p className="text-[12px] text-red-400">{error}</p>}
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-white/10 px-4 py-3">
+  return (
+    <CardDialog
+      storageKey="cs.dialog.animationAttach"
+      z={80}
+      maxWidth={512}
+      onClose={onClose}
+      // A clip chosen or a name typed is not lost to a stray click outside.
+      closeOnBackdrop={!chosen && !label.trim()}
+      title={`Add an animation — p. ${page}`}
+      label={`Add an animation on page ${page}`}
+      subtitle="The clip plays on this part of the page. Turn the picture upright if the plate is printed sideways."
+      bodyClassName="p-0"
+      footerClassName="flex items-center justify-end gap-2 px-4 py-3"
+      footer={
+        <>
           <button onClick={onClose} className="rounded-lg px-3 py-2 text-[12px] text-white/60 hover:bg-white/5 hover:text-white">
             Cancel
           </button>
@@ -181,9 +120,63 @@ export default function AnimationAttach({
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
             Attach the clip
           </button>
+        </>
+      }
+    >
+      <div className="flex gap-4 px-4 py-4">
+        <div className="flex w-40 shrink-0 flex-col items-center gap-2">
+          <div className="flex h-44 w-full items-center justify-center overflow-hidden rounded border border-white/10 bg-white/95">
+            {preview && preview.turn === turn
+              ? <img src={preview.url} alt={`page ${page}, the chosen area`} className="max-h-full max-w-full" />
+              : <Loader2 size={14} className="animate-spin text-black/30" />}
+          </div>
+          <button
+            onClick={() => setTurn(TURNS[(TURNS.indexOf(turn) + 1) % TURNS.length])}
+            className="inline-flex items-center gap-1.5 rounded-md border border-white/12 px-2 py-1 text-[11px] text-white/75 hover:bg-white/5 hover:text-white"
+            title="Turn until the picture is upright"
+          >
+            <RotateCw size={12} /> Turn{turn ? ` · ${turn}°` : ''}
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-white/55">Clip</span>
+            {offered === null ? (
+              <p className="flex items-center gap-2 text-[12px] text-white/50">
+                <Loader2 size={12} className="animate-spin" /> Looking for clips in this matter…
+              </p>
+            ) : offered.length === 0 ? (
+              <p className="text-[12px] text-white/50">
+                No video is filed in this matter yet. Upload the clip into the matter first, then come back.
+              </p>
+            ) : (
+              <select value={chosen} onChange={(e) => setChosen(e.target.value)} className={field} aria-label="The clip to play here">
+                <option value="">Choose a clip…</option>
+                {offered.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+              </select>
+            )}
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-[11px] text-white/55">Name (optional)</span>
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. the kneeling fairy"
+              className={field}
+              aria-label="A name for this animation"
+            />
+          </label>
+
+          <label className="flex items-center gap-2 text-[12px] text-white/75">
+            <input type="checkbox" checked={loops} onChange={(e) => setLoops(e.target.checked)} className="accent-[#e8b84a]" />
+            Play over and over
+          </label>
+
+          {error && <p className="text-[12px] text-red-400">{error}</p>}
         </div>
       </div>
-    </div>,
-    document.body,
+    </CardDialog>
   );
 }
