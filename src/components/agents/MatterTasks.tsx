@@ -1,17 +1,20 @@
-// The matter's Tasks tab (spec B7): what has been handed to agents in this
-// matter, where each task stands, the agent's question when it is waiting on
+// The matter's Tasks tab (spec B7): what has been handed to a connected AI in
+// this matter, where each task stands, the question when it is waiting on
 // you, its result, and the log of everything either side did.
+//
+// A shortcut into the one task system: every task here is also on the Agents
+// page (every matter, every connected AI), and the tab says so. The pieces
+// below (StatusChip, TaskDetail, TaskLine) are the Agents page's too.
 //
 // A docket, not a spectacle: one line per task, newest first; open a line to
 // see the rest. Before migration 085 the tab says so in one sentence.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/lib/supabase';
-import { useAgentsForMatter } from '@/hooks/useAgentTokens';
-import { agentLabel, type AgentToken } from '@/lib/agentTokens';
+import { useRecipientsForMatter, useTaskRecipients } from '@/hooks/useTaskRecipients';
 import {
   AGENTS_MIGRATION_MESSAGE,
   ANSWER_MAX,
@@ -29,7 +32,17 @@ import {
   type AgentTaskStatus,
   type TaskRef,
 } from '@/lib/agentTasks';
-import DelegateCard, { MATTER_TASKS_KEY } from './DelegateCard';
+import {
+  AGENTS_PAGE_PATH,
+  GROUP_LABEL,
+  OPEN_IN_AGENTS,
+  recipientLabel,
+  refOf,
+  type TaskRecipient,
+} from '@/lib/task-recipients';
+import { ALL_TASKS_KEY, MATTER_TASKS_KEY, day, taskKey, when } from '@/lib/task-ui';
+import { useTaskOwnerNames } from '@/hooks/useTaskOwnerNames';
+import DelegateCard from './DelegateCard';
 
 const CHIP: Record<AgentTaskStatus, string> = {
   open: 'border-white/20 text-white/70',
@@ -52,21 +65,7 @@ const EVENT_VERB: Record<string, string> = {
   note: 'noted',
 };
 
-function when(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ''
-    : d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
-
-function day(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function StatusChip({ status }: { status: AgentTaskStatus }) {
+export function StatusChip({ status }: { status: AgentTaskStatus }) {
   return (
     <span className={`text-[10.5px] px-1.5 py-0.5 rounded border whitespace-nowrap ${CHIP[status] ?? CHIP.open}`}>
       {TASK_STATUS_LABEL[status] ?? status}
@@ -100,21 +99,30 @@ function RefLinks({ refs, matterId }: { refs: TaskRef[]; matterId: string }) {
   );
 }
 
-function TaskDetail({
+/** Who wrote a log entry: the grant (089) or the token it came in on. */
+function eventActorKey(ev: AgentTaskEvent): string | null {
+  if (ev.actor_grant_id) return `grant:${ev.actor_grant_id}`;
+  if (ev.actor_token_id) return `token:${ev.actor_token_id}`;
+  return null;
+}
+
+export function TaskDetail({
   task,
-  agentName,
+  recipientName,
   mine,
   ownerName,
   reassignable,
   onChanged,
 }: {
   task: AgentTask;
-  agentName: (tokenId: string | null) => string;
-  /** The assigned agent is the caller's own. Migration 085 lets only the
-   *  token's owner update a task; everyone else on the matter may read it. */
+  /** The display name for a recipient key; the task's own recipient when null. */
+  recipientName: (key: string | null) => string;
+  /** The task's recipient is one of the caller's own connections. 085/089 let
+   *  only its owner update a task; everyone else on the matter may read it. */
   mine: boolean;
   ownerName: string;
-  reassignable: AgentToken[];
+  /** Live connections that can see this task's matter (Reassign offers them). */
+  reassignable: TaskRecipient[];
   onChanged: () => void;
 }) {
   const [events, setEvents] = useState<AgentTaskEvent[] | null>(null);
@@ -133,7 +141,11 @@ function TaskDetail({
   }, [task.id, task.updated_at]);
 
   const live = LIVE_STATUSES.includes(task.status);
-  const others = reassignable.filter((a) => a.id !== task.assigned_token_id);
+  const current = taskKey(task);
+  const others = reassignable.filter((r) => r.key !== current);
+  const otherAgents = others.filter((r) => r.kind === 'agent');
+  const otherAssistants = others.filter((r) => r.kind !== 'agent');
+  const askedBy = recipientName(null);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -155,14 +167,14 @@ function TaskDetail({
     <div className="pl-6 pr-2 pb-4 pt-1 space-y-3">
       {!mine && (
         <p className="text-[12px] text-white/55 leading-relaxed">
-          This task is assigned to {ownerName}'s agent. Only {ownerName} can answer, cancel or
+          This task is assigned to {ownerName}'s connected AI. Only {ownerName} can answer, cancel or
           reassign it; you can read it and its log.
         </p>
       )}
 
       {task.status === 'needs_input' && task.question && (
         <div className="rounded-md border border-[#e8b84a]/40 bg-[#e8b84a]/[0.06] px-3 py-2.5">
-          <p className="text-[11px] uppercase tracking-wider text-[#e8b84a] mb-1">The agent asks</p>
+          <p className="text-[11px] uppercase tracking-wider text-[#e8b84a] mb-1">{askedBy} asks</p>
           <p className="text-[13px] text-white/90 whitespace-pre-wrap leading-relaxed">{task.question}</p>
           {mine && (<>
           <textarea
@@ -213,7 +225,7 @@ function TaskDetail({
 
       {(task.result || task.result_refs.length > 0) && (
         <div>
-          <p className={label}>{task.status === 'failed' ? 'What the agent reported' : 'Result'}</p>
+          <p className={label}>{task.status === 'failed' ? 'What it reported' : 'Result'}</p>
           {task.result && (
             <p className="text-[12.5px] text-white/85 whitespace-pre-wrap leading-relaxed">{task.result}</p>
           )}
@@ -228,16 +240,30 @@ function TaskDetail({
               <select
                 value={reassignTo}
                 onChange={(e) => setReassignTo(e.target.value)}
-                className="px-2 py-1 rounded-md border border-[rgba(255,255,255,0.12)] bg-[rgba(20,20,30,0.8)] text-[11.5px] text-white/80"
+                className="max-w-full px-2 py-1 rounded-md border border-[rgba(255,255,255,0.12)] bg-[rgba(20,20,30,0.8)] text-[11.5px] text-white/80"
+                aria-label="Reassign to"
               >
                 <option value="">Reassign to…</option>
-                {others.map((a) => <option key={a.id} value={a.id}>{agentLabel(a)}</option>)}
+                {otherAgents.length > 0 && (
+                  <optgroup label={GROUP_LABEL.agents}>
+                    {otherAgents.map((r) => <option key={r.key} value={r.key}>{recipientLabel(r)}</option>)}
+                  </optgroup>
+                )}
+                {otherAssistants.length > 0 && (
+                  <optgroup label={GROUP_LABEL.assistants}>
+                    {otherAssistants.map((r) => <option key={r.key} value={r.key}>{recipientLabel(r)}</option>)}
+                  </optgroup>
+                )}
               </select>
               <button
                 onClick={() => void run(async () => {
-                  const a = others.find((x) => x.id === reassignTo);
-                  if (!a) return;
-                  await reassignTask(task.id, a.id, agentLabel(a));
+                  const r = others.find((x) => x.key === reassignTo);
+                  if (!r) return;
+                  await reassignTask(task.id, refOf(r), {
+                    label: recipientLabel(r),
+                    fromGrant: !!task.assigned_grant_id,
+                    chatAssistant: r.kind !== 'agent',
+                  });
                   setReassignTo('');
                 })}
                 disabled={busy || !reassignTo}
@@ -249,7 +275,7 @@ function TaskDetail({
           )}
           <button
             onClick={() => {
-              if (!confirm(`Cancel "${task.title}"? The agent will no longer see it. The log stays.`)) return;
+              if (!confirm(`Cancel "${task.title}"? It will no longer be offered to ${askedBy}. The log stays.`)) return;
               void run(() => cancelTask(task.id));
             }}
             disabled={busy}
@@ -275,7 +301,7 @@ function TaskDetail({
               <li key={ev.id} className="text-[12px] text-white/65 leading-relaxed">
                 <span className="text-white/40">{when(ev.at)}</span>{' · '}
                 <span className="text-white/80">
-                  {ev.actor_kind === 'agent' ? agentName(ev.actor_token_id) : 'You'}
+                  {ev.actor_kind === 'agent' ? recipientName(eventActorKey(ev)) : 'You'}
                 </span>{' '}
                 {EVENT_VERB[ev.kind] ?? ev.kind}
                 {ev.body && ev.kind !== 'created' ? (
@@ -290,9 +316,50 @@ function TaskDetail({
   );
 }
 
+/** One docket line: title, status, who has it, where, when; opens to the detail. */
+export function TaskLine({
+  task,
+  open,
+  onToggle,
+  who,
+  matterName,
+  children,
+}: {
+  task: AgentTask;
+  open: boolean;
+  onToggle: () => void;
+  who: string;
+  /** Shown on the Agents page, where tasks from every matter are listed together. */
+  matterName?: string | null;
+  children?: ReactNode;
+}) {
+  return (
+    <div>
+      <button onClick={onToggle} className="w-full flex items-start gap-2 px-2 py-2 text-left hover:bg-white/[0.02]">
+        {open
+          ? <ChevronDown size={14} className="mt-0.5 text-white/40 shrink-0" />
+          : <ChevronRight size={14} className="mt-0.5 text-white/40 shrink-0" />}
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-2 flex-wrap">
+            <span className="text-[13px] text-white/90 break-words">{task.title}</span>
+            <StatusChip status={task.status} />
+          </span>
+          <span className="block text-[11.5px] text-white/45 mt-0.5">
+            {who}
+            {matterName ? ` · ${matterName}` : ''} · delegated {day(task.created_at)}
+            {task.due_at ? ` · due ${day(task.due_at)}` : ''}
+          </span>
+        </span>
+      </button>
+      {open && children}
+    </div>
+  );
+}
+
 export default function MatterTasks({ matterId }: { matterId: string }) {
   const qc = useQueryClient();
-  const { own: agents, eligible } = useAgentsForMatter(matterId);
+  const { byKey } = useTaskRecipients();
+  const { agents, assistants } = useRecipientsForMatter(matterId);
   const [showAll, setShowAll] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState(false);
@@ -301,44 +368,27 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
     queryKey: MATTER_TASKS_KEY(matterId),
     queryFn: () => listTasks({ matterId }),
     staleTime: 15_000,
-    // An agent works on its own clock; look again while the tab is open.
+    // A connected AI works on its own clock; look again while the tab is open.
     refetchInterval: 60_000,
     retry: (count, err) => !isAgentsNotReady(err) && count < 2,
   });
 
-  const byToken = useMemo(() => new Map(agents.map((a) => [a.id, a] as const)), [agents]);
   const tasks = useMemo(() => q.data ?? [], [q.data]);
-
-  // Tasks on someone else's agent. The token's owner is the task's creator:
-  // 085 only lets a user create a task for, or reassign it to, their own
-  // agent. Their name comes from profiles, the way the activity feed reads it.
-  const otherOwners = useMemo(
-    () => [...new Set(tasks.filter((t) => !byToken.has(t.assigned_token_id)).map((t) => t.created_by))].sort(),
-    [tasks, byToken],
-  );
-  const { data: ownerNames } = useQuery({
-    queryKey: ['agent_task_owner_names', ...otherOwners],
-    enabled: otherOwners.length > 0,
-    queryFn: async () => {
-      const { data } = await supabase.from('profiles').select('id, display_name, email').in('id', otherOwners);
-      const names = new Map<string, string>();
-      for (const p of (data ?? []) as { id: string; display_name: string | null; email: string | null }[]) {
-        const n = (p.display_name ?? '').trim() || p.email || '';
-        if (n) names.set(p.id, n);
-      }
-      return names;
-    },
-    staleTime: 300_000,
-  });
-  const ownerName = (userId: string) => ownerNames?.get(userId) ?? 'another member of this matter';
-  const taskAgentName = (t: AgentTask) => {
-    const a = byToken.get(t.assigned_token_id);
-    return a ? `${agentLabel(a)}${a.revoked_at ? ' (revoked)' : ''}` : `${ownerName(t.created_by)}'s agent`;
+  const ownerName = useTaskOwnerNames(tasks, byKey);
+  const nameOf = (t: AgentTask) => (key: string | null) => {
+    const r = byKey.get(key ?? taskKey(t) ?? '');
+    if (r) return `${recipientLabel(r)}${r.live ? '' : ' (disconnected)'}`;
+    if (key === null || key === taskKey(t)) return `${ownerName(t.created_by)}'s connected AI`;
+    return 'A connected AI';
   };
 
   const shown = showAll ? tasks : tasks.filter((t) => LIVE_STATUSES.includes(t.status));
   const waiting = tasks.filter((t) => t.status === 'needs_input').length;
-  const refresh = () => void qc.invalidateQueries({ queryKey: MATTER_TASKS_KEY(matterId) });
+  const reassignable = useMemo(() => [...agents, ...assistants], [agents, assistants]);
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: MATTER_TASKS_KEY(matterId) });
+    void qc.invalidateQueries({ queryKey: ALL_TASKS_KEY });
+  };
 
   if (q.error && isAgentsNotReady(q.error)) {
     return <p className="text-[13px] text-white/60 py-4">{AGENTS_MIGRATION_MESSAGE}</p>;
@@ -348,13 +398,16 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="text-[14px] font-semibold text-[#f5f1e8] tracking-tight mr-auto">
-          Tasks for agents
+          Tasks
           {waiting > 0 && (
             <span className="ml-2 text-[12px] font-normal text-[#e8b84a]">
               {waiting} waiting on your answer
             </span>
           )}
         </h2>
+        <Link to={AGENTS_PAGE_PATH} className="text-[11.5px] text-[#e8b84a] hover:underline">
+          {OPEN_IN_AGENTS}
+        </Link>
         <div className="flex rounded-md border border-[rgba(255,255,255,0.12)] overflow-hidden">
           {[false, true].map((all) => (
             <button
@@ -376,6 +429,9 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
           New task
         </button>
       </div>
+      <p className="text-[11.5px] text-white/40 -mt-1">
+        This matter's tasks. Every task, in every matter, is on the Agents page.
+      </p>
 
       {q.error && <p className="text-[12px] text-red-300">{(q.error as Error).message}</p>}
       {q.isLoading && <p className="text-[12px] text-white/35 py-6 text-center">Reading the tasks…</p>}
@@ -393,39 +449,16 @@ export default function MatterTasks({ matterId }: { matterId: string }) {
           {shown.map((t) => {
             const open = openId === t.id;
             return (
-              <div key={t.id}>
-                <button
-                  onClick={() => setOpenId(open ? null : t.id)}
-                  className="w-full flex items-start gap-2 px-2 py-2 text-left hover:bg-white/[0.02]"
-                >
-                  {open
-                    ? <ChevronDown size={14} className="mt-0.5 text-white/40 shrink-0" />
-                    : <ChevronRight size={14} className="mt-0.5 text-white/40 shrink-0" />}
-                  <span className="flex-1 min-w-0">
-                    <span className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13px] text-white/90">{t.title}</span>
-                      <StatusChip status={t.status} />
-                    </span>
-                    <span className="block text-[11.5px] text-white/45 mt-0.5">
-                      {taskAgentName(t)} · delegated {day(t.created_at)}
-                      {t.due_at ? ` · due ${day(t.due_at)}` : ''}
-                    </span>
-                  </span>
-                </button>
-                {open && (
-                  <TaskDetail
-                    task={t}
-                    agentName={(tokenId) => (tokenId === t.assigned_token_id ? taskAgentName(t) : (() => {
-                      const a = tokenId ? byToken.get(tokenId) : undefined;
-                      return a ? agentLabel(a) : 'An agent';
-                    })())}
-                    mine={byToken.has(t.assigned_token_id)}
-                    ownerName={ownerName(t.created_by)}
-                    reassignable={eligible}
-                    onChanged={refresh}
-                  />
-                )}
-              </div>
+              <TaskLine key={t.id} task={t} open={open} onToggle={() => setOpenId(open ? null : t.id)} who={nameOf(t)(null)}>
+                <TaskDetail
+                  task={t}
+                  recipientName={nameOf(t)}
+                  mine={byKey.has(taskKey(t) ?? '')}
+                  ownerName={ownerName(t.created_by)}
+                  reassignable={reassignable}
+                  onChanged={refresh}
+                />
+              </TaskLine>
             );
           })}
         </div>

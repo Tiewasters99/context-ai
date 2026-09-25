@@ -91,7 +91,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 // ── Add an agent ─────────────────────────────────────────────────────
 
-function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+export function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const { user } = useAuth();
   const { all } = useMatterIndex();
   const [name, setName] = useState('');
@@ -227,7 +227,7 @@ function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: 
 
 // ── Edit matters ─────────────────────────────────────────────────────
 
-function EditMattersCard({
+export function EditMattersCard({
   agent,
   onClose,
   onSaved,

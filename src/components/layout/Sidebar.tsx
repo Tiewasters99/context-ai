@@ -15,6 +15,7 @@ import {
   UserPlus,
   Folder,
   LayoutGrid,
+  ListChecks,
   Lock,
 } from 'lucide-react';
 import {
@@ -309,8 +310,25 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           {!collapsed && <span>Assistant</span>}
         </button>
 
+        {/* Agents (2026-09-25): every connected AI and every task handed to
+            one — the front door for tasks. Core ('agentTasks' in
+            lib/surfaces.mjs), so it needs no plan filter here. Not the frozen
+            agent-charters room at /app/agents. */}
+        <Link
+          to="/app/agent-tasks"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            location.pathname.startsWith('/app/agent-tasks')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+          title="Every connected AI, and the tasks you have handed them"
+        >
+          <ListChecks size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Agents</span>}
+        </Link>
+
         {/* The top level is deliberately short (2026-09-08): home, the
-            Assistant, the Suite. Calendar, the Mediation Center, the Student
+            Assistant, Agents (09-25), the Suite. Calendar, the Mediation Center, the Student
             Hub and The Office keep their routes and are reached from the
             Productivity Suite — every tool a room, not every room a door.
             The Document Builder is still a stub (/app/document-builder).
