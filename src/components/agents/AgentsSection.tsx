@@ -23,12 +23,16 @@ import {
   agentLabel,
   createAgentToken,
   isLiveAgent,
+  isOauthAgent,
   listAgentTokens,
+  listOauthAgentLinks,
+  revokeOauthGrant,
   providerLabel,
   revokeAgentToken,
   updateAgentScope,
   type AgentProvider,
   type AgentToken,
+  type OauthAgentLink,
 } from '@/lib/agentTokens';
 import AgentCard, { cardField, cardLegend } from './AgentCard';
 import AgentMatterPicker from './AgentMatterPicker';
@@ -285,6 +289,8 @@ export default function AgentsSection() {
   const { all: allMatters, name: matterName } = useMatterIndex();
   const [agents, setAgents] = useState<AgentToken[] | null>(null);
   const [counts, setCounts] = useState<Map<string, number>>(new Map());
+  // Agents connected on the OAuth consent screen (migration 087), by agent id.
+  const [oauthLinks, setOauthLinks] = useState<Map<string, OauthAgentLink>>(new Map());
   const [notReady, setNotReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -305,6 +311,7 @@ export default function AgentsSection() {
       } catch {
         setCounts(new Map()); // a count is a courtesy; the list stands without it
       }
+      setOauthLinks(rows.some((r) => isOauthAgent(r)) ? await listOauthAgentLinks() : new Map());
     } catch (e) {
       if (isAgentsNotReady(e)) setNotReady(true);
       else setError(e instanceof Error ? e.message : 'Could not read your agents.');
@@ -323,10 +330,15 @@ export default function AgentsSection() {
   }, [loaded]);
 
   const revoke = async (a: AgentToken) => {
-    if (!confirm(`Revoke ${agentLabel(a)}?\n\nIt stops working on its next request. Its tasks and their log stay in each matter.`)) return;
+    const link = oauthLinks.get(a.id);
+    const how = link ? ` Its sign-in from ${link.clientName} ends with it.` : '';
+    if (!confirm(`Revoke ${agentLabel(a)}?\n\nIt stops working on its next request.${how} Its tasks and their log stay in each matter.`)) return;
     setBusyId(a.id);
     try {
       await revokeAgentToken(a.id);
+      // The server already refuses an OAuth connection whose agent is revoked;
+      // ending the grant too keeps Approved AI clients truthful.
+      if (link) await revokeOauthGrant(link.grantId).catch(() => {});
       await load();
     } catch (e) {
       setError(isAgentsNotReady(e) ? AGENTS_MIGRATION_MESSAGE : e instanceof Error ? e.message : 'Could not revoke.');
@@ -378,6 +390,7 @@ export default function AgentsSection() {
             });
             const used = shortDate(a.last_used_at);
             const open = counts.get(a.id) ?? 0;
+            const link = oauthLinks.get(a.id);
             return (
               <div
                 key={a.id}
@@ -393,6 +406,13 @@ export default function AgentsSection() {
                       {providerLabel(a.agent_provider)}
                     </span>
                   </span>
+                  {isOauthAgent(a) && (
+                    <span className="block text-[12px] text-[var(--color-text-muted)] mt-1">
+                      {link
+                        ? `Connected by sign-in (OAuth) from ${link.clientName}.`
+                        : 'Connected by sign-in (OAuth). That sign-in has ended; connect it again from the client.'}
+                    </span>
+                  )}
                   <span className="block text-[13px] text-[var(--color-text-secondary)] mt-1">
                     {granted.length ? `Sees: ${granted.join('; ')}.` : 'Sees nothing yet. No matter is ticked.'}
                   </span>

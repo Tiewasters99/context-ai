@@ -111,3 +111,66 @@ export async function revokeAgentToken(id: string): Promise<void> {
     .eq('kind', 'agent');
   if (error) raise(error, 'Could not revoke the agent.');
 }
+
+// ── Agents connected by OAuth sign-in (migration 087) ────────────────
+
+/**
+ * An agent made on the OAuth consent screen ("Connect as an agent") rather
+ * than here. Its row holds no usable secret — the server stored the hash of
+ * random bytes nobody kept — so there is never a token to show or copy; the
+ * connection lives in its oauth_grants row. token_prefix 'oauth' marks it.
+ */
+export function isOauthAgent(t: Pick<AgentToken, 'token_prefix'>): boolean {
+  return t.token_prefix === 'oauth';
+}
+
+export interface OauthAgentLink {
+  grantId: string;
+  agentTokenId: string;
+  clientName: string;
+}
+
+/**
+ * The live OAuth grants that are agent connections, keyed by agent token id.
+ * `select('*')` on purpose: before 087 the agent_token_id column does not
+ * exist, and naming it would fail the whole read. With '*' a pre-087 row
+ * simply has no link, which is the truth (no agent grant can exist then).
+ * Any error answers an empty map: this is a label, not a permission.
+ */
+export async function listOauthAgentLinks(): Promise<Map<string, OauthAgentLink>> {
+  const out = new Map<string, OauthAgentLink>();
+  try {
+    const { data, error } = await supabase.from('oauth_grants').select('*').is('revoked_at', null);
+    if (error || !data) return out;
+    for (const g of data as Array<Record<string, unknown>>) {
+      const agentId = typeof g.agent_token_id === 'string' ? g.agent_token_id : null;
+      if (!agentId) continue;
+      out.set(agentId, {
+        grantId: String(g.id),
+        agentTokenId: agentId,
+        clientName: typeof g.client_name === 'string' ? g.client_name : 'an AI client',
+      });
+    }
+  } catch {
+    /* a label only */
+  }
+  return out;
+}
+
+/** Agent names for display (Approved AI clients: "connected as agent X"). */
+export async function agentNamesById(ids: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (!ids.length) return out;
+  const { data } = await supabase.from('connector_tokens').select('id, name').in('id', ids);
+  for (const a of (data ?? []) as Array<{ id: string; name: string | null }>) out.set(a.id, a.name);
+  return out;
+}
+
+/** Ends the sign-in behind an OAuth agent (revokes its grant). */
+export async function revokeOauthGrant(grantId: string): Promise<void> {
+  const { error } = await supabase
+    .from('oauth_grants')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('id', grantId);
+  if (error) raise(error, 'Could not end the sign-in.');
+}

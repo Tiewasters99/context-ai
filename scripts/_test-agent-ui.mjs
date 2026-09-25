@@ -311,3 +311,30 @@ test('every human event names the signed-in user', () => {
   assert.match(lib, /task_id: taskId,\s*actor_kind: 'human',\s*actor_user: userId,\s*actor_token_id: null,\s*kind,\s*body,/);
   assert.match(lib, /const uid = session\?\.user\?\.id;/);
 });
+
+// ---------------------------------------------------------------------------
+// 9. Connect as an agent over OAuth (migration 087)
+// ---------------------------------------------------------------------------
+
+test('the OAuth consent screen offers both ways to connect, full assistant by default', () => {
+  const s = src('src/pages/OAuthAuthorize.tsx');
+  assert.match(s, /useState<'assistant' \| 'agent'>\('assistant'\)/, 'full assistant stays the default');
+  assert.match(s, /FULL_ASSISTANT_COPY = 'Sees every matter you can see, except SecureSpaces\.'/);
+  assert.match(s, /import \{ AGENT_SCOPE_COPY \} from '@\/components\/agents\/AgentsSection'/,
+    'the agent wording is the Agents section\'s own constant, not a retyped copy');
+  assert.match(s, /<AgentMatterPicker value=\{agentScope\} onChange=\{setAgentScope\} \/>/, 'the same matter picker');
+  assert.match(s, /connect_as: 'agent'/);
+  assert.match(s, /matter_scope: normalizeScope\(allMatters, agentScope\)/, 'sealed and covered matters dropped before sending');
+  assert.doesNotMatch(s, /from\('connector_tokens'\)\s*\.select\('\*'/, 'never select * on connector_tokens (086)');
+});
+
+test('an OAuth-backed agent says how it connected, and offers no token to copy', () => {
+  const a = src('src/components/agents/AgentsSection.tsx');
+  assert.match(a, /Connected by sign-in \(OAuth\) from \$\{link\.clientName\}\./);
+  assert.match(a, /if \(link\) await revokeOauthGrant\(link\.grantId\)/, 'revoking the agent ends its sign-in too');
+  const c = src('src/pages/Connections.tsx');
+  assert.match(c, /Connected as agent \$\{grant\.agent_name \|\| 'an agent'\}/);
+  assert.match(c, /from\('oauth_grants'\)\s*\.select\('\*'\)/, 'oauth_grants read with * so a database without 087 still lists grants');
+  const t = src('src/lib/agentTokens.ts');
+  assert.match(t, /return t\.token_prefix === 'oauth';/);
+});
