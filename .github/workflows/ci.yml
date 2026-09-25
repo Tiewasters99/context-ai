@@ -295,6 +295,12 @@ jobs:
       - name: Migration 067 — billing, credits and the webhook (PGlite + real handlers)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-billing.mjs
+      # A sealed matter's name never reaches a Stripe receipt: the credit-pack
+      # matter tag resolves a sealed matter (or a sub-matter of one, or one
+      # whose ancestor the buyer cannot read) to null. Pure fetch stub.
+      - name: Credit packs — a sealed matter is never named on a receipt
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-credit-pack-sealed.mjs
       - name: Migration 064 — the matter Record is append-only (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs

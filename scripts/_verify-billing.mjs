@@ -164,7 +164,10 @@ async function buildDb({ withExtras = true, applyTwice = false } = {}) {
 
   for (const m of ['001_initial_schema.sql', '005_fix_rls_recursion.sql',
                    '008_submatters.sql', '016_matterspace_members.sql',
-                   '022_matterspaces_rls_invoker_wrappers.sql']) {
+                   '022_matterspaces_rls_invoker_wrappers.sql',
+                   // matterspaces.ai_tier: the credit-pack matter tag reads it,
+                   // because a sealed matter is never named on a receipt.
+                   '051_securespace.sql']) {
     await db.exec(migration(m));
   }
 
