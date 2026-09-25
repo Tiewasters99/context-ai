@@ -7,6 +7,7 @@ import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument } f
 import { sandboxApi } from '@/lib/sandbox-api';
 import PdfPageEditor from './PdfPageEditor';
 import DeckComposerModal from './DeckComposerModal';
+import CardDialog from '@/components/ui/CardDialog';
 
 // The Sandbox: the AI Workbench's scratch workspace. One serverspace named
 // "Sandbox" per account, subdivided into mini-boxes (matters) so materials
@@ -508,70 +509,69 @@ function AddFromMatterModal({
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-[60] bg-black/40" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[60] w-full max-w-md rounded-xl border border-[rgba(255,255,255,0.12)] p-6 bg-[#12121a] max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-[15px] font-semibold text-white">Add from matter</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors"><X size={16} /></button>
-        </div>
-        <p className="text-[11px] text-white/50 mb-4">
-          Copies go into a Sandbox box named after the matter — originals stay filed.
-        </p>
+    <CardDialog
+      storageKey="cs.dialog.sandboxAddFromMatter"
+      z={60}
+      maxWidth={448}
+      onClose={onClose}
+      // Documents ticked are not lost to a stray click outside.
+      closeOnBackdrop={checked.size === 0}
+      title="Add from matter"
+      subtitle="Copies go into a Sandbox box named after the matter — originals stay filed."
+      bodyClassName="px-5 py-4 flex flex-col"
+    >
+      <select
+        value={matterId}
+        onChange={(e) => setMatterId(e.target.value)}
+        className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#181820] text-[13px] text-white focus:outline-none focus:ring-1 focus:ring-[#e8b84a] mb-3"
+      >
+        <option value="">Choose a matter…</option>
+        {serverspaces.map((s) => (
+          <optgroup key={s.id} label={s.name}>
+            {s.matterspaces.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
 
-        <select
-          value={matterId}
-          onChange={(e) => setMatterId(e.target.value)}
-          className="w-full px-3 py-2.5 rounded-lg border border-[rgba(255,255,255,0.08)] bg-[#181820] text-[13px] text-white focus:outline-none focus:ring-1 focus:ring-[#e8b84a] mb-3"
-        >
-          <option value="">Choose a matter…</option>
-          {serverspaces.map((s) => (
-            <optgroup key={s.id} label={s.name}>
-              {s.matterspaces.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-
-        <div className="flex-1 overflow-y-auto space-y-0.5 min-h-[120px]">
-          {loadingDocs ? (
-            <p className="text-[11px] text-white/40 px-2 py-2">Loading documents…</p>
-          ) : pickerDocs.length === 0 && matterId ? (
-            <p className="text-[11px] text-white/40 px-2 py-2">No documents in this matter.</p>
-          ) : (
-            pickerDocs.map((d) => (
-              <button
-                key={d.id}
-                onClick={() => toggle(d.id)}
-                className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md hover:bg-[rgba(255,255,255,0.04)] transition-colors text-left"
-              >
-                <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                  checked.has(d.id) ? 'bg-[#e8b84a] border-[#e8b84a]' : 'border-white/20'
-                }`}>
-                  {checked.has(d.id) && <Check size={10} className="text-black" strokeWidth={3} />}
-                </div>
-                <FileText size={13} className="text-white/60 shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <span className="text-[12px] text-white/85 truncate block">{d.title}</span>
-                  {d.source_filename && <span className="text-[9px] text-white/35">{d.source_filename}</span>}
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-
-        {error && <p className="text-[11px] text-red-400 mt-2">{error}</p>}
-
-        <button
-          onClick={handleSend}
-          disabled={checked.size === 0 || sending}
-          className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40"
-        >
-          {sending ? <Loader2 size={14} className="animate-spin" /> : <FolderInput size={14} />}
-          Copy {checked.size > 0 ? `${checked.size} ` : ''}to Sandbox
-        </button>
+      <div className="flex-1 overflow-y-auto space-y-0.5 min-h-[120px]">
+        {loadingDocs ? (
+          <p className="text-[11px] text-white/40 px-2 py-2">Loading documents…</p>
+        ) : pickerDocs.length === 0 && matterId ? (
+          <p className="text-[11px] text-white/40 px-2 py-2">No documents in this matter.</p>
+        ) : (
+          pickerDocs.map((d) => (
+            <button
+              key={d.id}
+              onClick={() => toggle(d.id)}
+              className="flex items-center gap-2.5 w-full px-2.5 py-2 rounded-md hover:bg-[rgba(255,255,255,0.04)] transition-colors text-left"
+            >
+              <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+                checked.has(d.id) ? 'bg-[#e8b84a] border-[#e8b84a]' : 'border-white/20'
+              }`}>
+                {checked.has(d.id) && <Check size={10} className="text-black" strokeWidth={3} />}
+              </div>
+              <FileText size={13} className="text-white/60 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <span className="text-[12px] text-white/85 truncate block">{d.title}</span>
+                {d.source_filename && <span className="text-[9px] text-white/35">{d.source_filename}</span>}
+              </div>
+            </button>
+          ))
+        )}
       </div>
-    </>
+
+      {error && <p className="text-[11px] text-red-400 mt-2">{error}</p>}
+
+      <button
+        onClick={handleSend}
+        disabled={checked.size === 0 || sending}
+        className="mt-4 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40"
+      >
+        {sending ? <Loader2 size={14} className="animate-spin" /> : <FolderInput size={14} />}
+        Copy {checked.size > 0 ? `${checked.size} ` : ''}to Sandbox
+      </button>
+    </CardDialog>
   );
 }

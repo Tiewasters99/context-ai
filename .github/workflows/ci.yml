@@ -482,6 +482,20 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-card-pin.mjs
+      # Every dialog is a card. The shared CardDialog mounted for real (jsdom +
+      # the real hook; TypeScript's transpiler compiles the .tsx for the run):
+      # ribbon, Pin, fullscreen, a drag that moves and is remembered, resize
+      # from the edges and never from a field, Pin across a reopen, Escape on
+      # the topmost only and never while busy, a backdrop that never eats a
+      # half-typed form or closes after a drag, first-field focus, the phone
+      # layout. Then each converted dialog, as source: it renders CardDialog
+      # with its own cs.dialog.* key and builds no overlay of its own. Same
+      # --no-save jsdom as the step above.
+      - name: Dialogs — every dialog is a card (jsdom + the real hook)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-dialog-cards.mjs
       # What the Assistant panel SAYS on a sealed matter before the first
       # message: the scope strip, the pen named in advance (and corrected when
       # the server names another), the word-search note, the pause, the

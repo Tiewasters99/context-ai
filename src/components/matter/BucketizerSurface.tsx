@@ -6,6 +6,7 @@ import {
   Quote, Scale, FolderOpen, Info, ArrowLeft,
 } from 'lucide-react';
 import DocumentPicker from '@/components/matter/DocumentPicker';
+import CardDialog from '@/components/ui/CardDialog';
 import CorpusDocumentPicker, { type PickerDocument } from '@/components/matter/CorpusDocumentPicker';
 import BucketizerEvidence from '@/components/matter/BucketizerEvidence';
 import BucketizerEvidenceRunDialog from '@/components/matter/BucketizerEvidenceRunDialog';
@@ -959,99 +960,96 @@ function RunEstimateDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  // Escape cancels. Nothing is spent here, so leaving must be effortless.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
+  // Escape cancels (CardDialog). Nothing is spent here, so leaving must be
+  // effortless — but the backdrop does not: it never did, and a stray click
+  // is not a decision about a bill.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-lg rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-2xl">
-        <h3 className="text-base font-medium text-zinc-100">
-          Classify {estimate.documents.toLocaleString()} document{estimate.documents === 1 ? '' : 's'}?
-        </h3>
-
-        {/* THE NAMES. A dialog that said "Classify 1 document?" and then read
-            the complaint is what this list exists to prevent. */}
-        {groups.length > 0 && (
-          <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
-            {groups.map((g) => (
-              <div key={g.matterName} className="mb-2 last:mb-0">
-                <p className="text-[11px] uppercase tracking-wider text-zinc-500">{g.matterName}</p>
-                <ul className="mt-0.5 space-y-0.5">
-                  {/* Keyed by position: three exhibits called "Exhibit A" is
-                      the normal case in a matter, not an edge case. */}
-                  {g.titles.map((t, i) => (
-                    <li key={`${g.matterName}:${i}`} className="flex items-start gap-1.5 text-xs text-zinc-300">
-                      <FileText className="mt-0.5 w-3 h-3 shrink-0 text-zinc-600" />
-                      <span className="min-w-0 break-words">{t}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <dl className="mt-4 space-y-2 text-sm">
-          <Row label="Documents" value={estimate.documents.toLocaleString()} />
-          <Row
-            label="Model calls"
-            value={estimate.windows.toLocaleString()}
-            hint={estimate.longDocuments > 0
-              ? `${estimate.longDocuments.toLocaleString()} are long enough to be read in parts (largest: ${estimate.largestDocumentWindows} parts)`
-              : 'one per document'}
-          />
-          <Row
-            label="Estimated cost"
-            value={formatCents(estimate.cents)}
-            hint={`at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
-          />
-        </dl>
-
-        <p className="mt-4 text-xs leading-relaxed text-zinc-500">
-          Every page of every document is read — long documents are split into parts and the
-          results merged, so a deposition is no longer bucketed on its opening pages.
-          {estimate.documentsWithoutPageCount > 0 && (
-            <> {estimate.documentsWithoutPageCount.toLocaleString()} document
-              {estimate.documentsWithoutPageCount === 1 ? ' has' : 's have'} no page count recorded and
-              {estimate.documentsWithoutPageCount === 1 ? ' is' : ' are'} assumed short here; if
-              {estimate.documentsWithoutPageCount === 1 ? ' it turns' : ' they turn'} out to be long,
-              the real cost will be higher than this.</>
-          )}
-          {' '}Page counts are converted at about {estimate.assumedCharsPerPage.toLocaleString()} characters
-          a page. You can stop the run at any time, and closing the tab does not lose the parts already done.
-        </p>
-        {notices.length > 0 && (
-          <ul className="mt-3 space-y-1 rounded-lg border border-[#d4a054]/30 bg-[#d4a054]/[0.07] px-3 py-2 text-xs leading-relaxed text-[#d4a054]">
-            {notices.map((n, i) => <li key={i}>{n}</li>)}
-          </ul>
-        )}
-
-        <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-          If this matter is sealed, it is served by the sealed pen inside our own AWS account,
-          which costs less than the figure above — you are metered at the price of the model that
-          actually answers.
-        </p>
-
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 hover:bg-white/5"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20"
-          >
-            <Play className="w-4 h-4" /> Run it
-          </button>
+    <CardDialog
+      storageKey="cs.dialog.bucketizerRunEstimate"
+      z={50}
+      maxWidth={512}
+      onClose={onCancel}
+      title={<>Classify {estimate.documents.toLocaleString()} document{estimate.documents === 1 ? '' : 's'}?</>}
+      label="Classify documents?"
+    >
+      {/* THE NAMES. A dialog that said "Classify 1 document?" and then read
+          the complaint is what this list exists to prevent. */}
+      {groups.length > 0 && (
+        <div className="mt-3 max-h-52 overflow-y-auto rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+          {groups.map((g) => (
+            <div key={g.matterName} className="mb-2 last:mb-0">
+              <p className="text-[11px] uppercase tracking-wider text-zinc-500">{g.matterName}</p>
+              <ul className="mt-0.5 space-y-0.5">
+                {/* Keyed by position: three exhibits called "Exhibit A" is
+                    the normal case in a matter, not an edge case. */}
+                {g.titles.map((t, i) => (
+                  <li key={`${g.matterName}:${i}`} className="flex items-start gap-1.5 text-xs text-zinc-300">
+                    <FileText className="mt-0.5 w-3 h-3 shrink-0 text-zinc-600" />
+                    <span className="min-w-0 break-words">{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
+      )}
+
+      <dl className="mt-4 space-y-2 text-sm">
+        <Row label="Documents" value={estimate.documents.toLocaleString()} />
+        <Row
+          label="Model calls"
+          value={estimate.windows.toLocaleString()}
+          hint={estimate.longDocuments > 0
+            ? `${estimate.longDocuments.toLocaleString()} are long enough to be read in parts (largest: ${estimate.largestDocumentWindows} parts)`
+            : 'one per document'}
+        />
+        <Row
+          label="Estimated cost"
+          value={formatCents(estimate.cents)}
+          hint={`at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
+        />
+      </dl>
+
+      <p className="mt-4 text-xs leading-relaxed text-zinc-500">
+        Every page of every document is read — long documents are split into parts and the
+        results merged, so a deposition is no longer bucketed on its opening pages.
+        {estimate.documentsWithoutPageCount > 0 && (
+          <> {estimate.documentsWithoutPageCount.toLocaleString()} document
+            {estimate.documentsWithoutPageCount === 1 ? ' has' : 's have'} no page count recorded and
+            {estimate.documentsWithoutPageCount === 1 ? ' is' : ' are'} assumed short here; if
+            {estimate.documentsWithoutPageCount === 1 ? ' it turns' : ' they turn'} out to be long,
+            the real cost will be higher than this.</>
+        )}
+        {' '}Page counts are converted at about {estimate.assumedCharsPerPage.toLocaleString()} characters
+        a page. You can stop the run at any time, and closing the tab does not lose the parts already done.
+      </p>
+      {notices.length > 0 && (
+        <ul className="mt-3 space-y-1 rounded-lg border border-[#d4a054]/30 bg-[#d4a054]/[0.07] px-3 py-2 text-xs leading-relaxed text-[#d4a054]">
+          {notices.map((n, i) => <li key={i}>{n}</li>)}
+        </ul>
+      )}
+
+      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+        If this matter is sealed, it is served by the sealed pen inside our own AWS account,
+        which costs less than the figure above — you are metered at the price of the model that
+        actually answers.
+      </p>
+
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-zinc-300 hover:bg-white/5"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-300 hover:bg-emerald-500/20"
+        >
+          <Play className="w-4 h-4" /> Run it
+        </button>
       </div>
-    </div>
+    </CardDialog>
   );
 }
 

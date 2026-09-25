@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Save, Loader2, FileText, Lock, CheckCircle, AlertCircle, Download, Table } from 'lucide-react';
+import { Save, Loader2, FileText, Lock, CheckCircle, AlertCircle, Download, Table } from 'lucide-react';
 import { isSpreadsheetName } from '@/lib/table-sheets';
 import { importSpreadsheetAsTables } from '@/lib/table-import';
 import type { VaultFile } from '@/lib/vault-types';
@@ -9,6 +9,7 @@ import { downloadVaultDocument, saveVaultDocumentText } from '@/lib/vault-persis
 import { supabase } from '@/lib/supabase';
 import { fetchPaged } from '@/lib/paged';
 import { downloadBlob } from '@/lib/export-page';
+import CardDialog from '@/components/ui/CardDialog';
 
 // File extensions we treat as plain text — these open in an editable textarea
 // and can be saved back. Everything else opens read-only (text is extracted
@@ -158,10 +159,10 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
     if (state.phase === 'ready' && state.editable) textareaRef.current?.focus();
   }, [state]);
 
-  // Esc closes (when not mid-save); Ctrl/⌘+S saves.
+  // Ctrl/⌘+S saves. Esc closes when not mid-save — CardDialog does that
+  // (`busy={saving}`), so there is one Escape handler, not two.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !saving) onClose();
       if ((e.key === 's' || e.key === 'S') && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         void handleSave();
@@ -169,7 +170,7 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [saving, onClose, handleSave]);
+  }, [handleSave]);
 
   const canSave = state.phase === 'ready' && state.editable && dirty && !saving;
 
@@ -225,26 +226,30 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
   }, [canOpenAsTable, tabling, file.storagePath, file.matterspace_id, file.name, onClose, navigate]);
 
   return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 sm:p-8 animate-[fadeIn_0.15s_ease-out]"
-      onMouseDown={(e) => { if (e.target === e.currentTarget && !saving) onClose(); }}
-    >
-      <div
-        className="w-[min(960px,100%)] h-[min(82vh,900px)] flex flex-col rounded-xl border border-[rgba(255,255,255,0.1)] shadow-2xl overflow-hidden"
-        style={{ backgroundColor: 'rgba(10,10,16,0.97)' }}
-      >
-        {/* Header */}
-        <div className="flex items-center gap-3 px-5 h-14 shrink-0 border-b border-[rgba(255,255,255,0.08)]">
-          <FileText size={16} className="text-[#e8b84a] shrink-0" strokeWidth={1.75} />
-          <div className="min-w-0 flex-1">
-            <p className="text-[14px] text-white font-medium truncate">{file.name}</p>
-            <p className="text-[10px] text-white/40 uppercase tracking-wide">
-              {ext || 'file'}
-              {file.matterspace_name && <span className="text-white/30 normal-case tracking-normal"> · {file.matterspace_name}</span>}
-            </p>
-          </div>
+    <CardDialog
+      storageKey="cs.dialog.documentEditor"
+      z={70}
+      maxWidth={960}
+      height="min(82vh, 900px)"
+      onClose={onClose}
+      busy={saving}
+      // Unsaved edits are never lost to a stray click outside (the backdrop
+      // used to close this editor whatever was in it). Untouched, it still
+      // closes on the backdrop as before.
+      closeOnBackdrop={!dirty}
+      icon={<FileText size={16} className="text-[#e8b84a] shrink-0" strokeWidth={1.75} />}
+      title={<span className="block truncate text-[14px] font-medium">{file.name}</span>}
+      label={file.name}
+      subtitle={
+        <span className="uppercase tracking-wide text-[10px] text-white/40">
+          {ext || 'file'}
+          {file.matterspace_name && <span className="text-white/30 normal-case tracking-normal"> · {file.matterspace_name}</span>}
+        </span>
+      }
+      actions={
+        <>
           {state.phase === 'ready' && !state.editable && (
-            <span className="flex items-center gap-1.5 text-[11px] text-white/40 px-2 py-1 rounded-md bg-[rgba(255,255,255,0.04)]">
+            <span className="hidden sm:flex items-center gap-1.5 text-[11px] text-white/40 px-2 py-1 rounded-md bg-[rgba(255,255,255,0.04)]">
               <Lock size={11} /> Read-only
             </span>
           )}
@@ -288,58 +293,60 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
           >
             {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} strokeWidth={2} />}
           </button>
-          <button
-            onClick={() => !saving && onClose()}
-            className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors"
-            title="Close (Esc)"
-          >
-            <X size={16} strokeWidth={2} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 min-h-0 relative">
-          {state.phase === 'loading' && (
-            <div className="absolute inset-0 flex items-center justify-center text-white/40 text-[13px]">
-              <Loader2 size={16} className="animate-spin mr-2" /> Opening document…
-            </div>
-          )}
-          {state.phase === 'error' && (
-            <div className="absolute inset-0 flex items-center justify-center px-8">
-              <p className="flex items-center gap-2 text-[13px] text-red-300/90 text-center">
-                <AlertCircle size={15} className="shrink-0" /> {state.message}
-              </p>
-            </div>
-          )}
-          {state.phase === 'ready' && state.editable && (
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onChange={(e) => { setDraft(e.target.value); setDirty(e.target.value !== state.text); }}
-              spellCheck={false}
-              className="absolute inset-0 w-full h-full resize-none bg-transparent text-[13.5px] leading-relaxed text-[#e8e4da] font-mono px-6 py-5 outline-none placeholder-white/20 selection:bg-[#e8b84a]/25"
-              placeholder="(empty file)"
-            />
-          )}
-          {state.phase === 'ready' && !state.editable && (
-            <pre className="absolute inset-0 w-full h-full overflow-auto whitespace-pre-wrap break-words bg-transparent text-[13.5px] leading-relaxed text-[#cfcabd] px-6 py-5 m-0 font-sans">
-              {draft || '(no extractable text)'}
-            </pre>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between px-5 h-10 shrink-0 border-t border-[rgba(255,255,255,0.08)] text-[11px] text-white/35">
+        </>
+      }
+      // The body is the editor itself: no padding; the textarea and the
+      // read-only view fill it and scroll inside themselves.
+      bodyClassName="relative p-0"
+      footerClassName="flex items-center justify-between px-5 h-10 text-[11px] text-white/35"
+      footer={
+        <>
           <span>
             {state.phase === 'ready' && state.editable
               ? `${draft.length.toLocaleString()} chars${dirty ? ' · unsaved' : ''}`
               : state.phase === 'ready'
                 ? `${draft.length.toLocaleString()} chars extracted${typeEditable ? '' : ' — this format opens read-only'}`
-                : ' '}
+                : ' '}
           </span>
           <span>{saveError ? <span className="text-red-300/90">{saveError}</span> : (state.phase === 'ready' && state.editable) ? 'Ctrl/⌘+S to save · Esc to close' : 'Esc to close'}</span>
-        </div>
+        </>
+      }
+      // The textarea takes the cursor itself once the text has loaded.
+      autoFocus={false}
+    >
+      {/* Body. Inset 8px at the sides so the card's left and right resize
+          edges land on the frame, not on the text; the read-only view is
+          `data-card-inert` so its text can be selected and copied rather
+          than dragging the card. */}
+      <div className="absolute inset-y-0 inset-x-2">
+        {state.phase === 'loading' && (
+          <div className="absolute inset-0 flex items-center justify-center text-white/40 text-[13px]">
+            <Loader2 size={16} className="animate-spin mr-2" /> Opening document…
+          </div>
+        )}
+        {state.phase === 'error' && (
+          <div className="absolute inset-0 flex items-center justify-center px-8">
+            <p className="flex items-center gap-2 text-[13px] text-red-300/90 text-center">
+              <AlertCircle size={15} className="shrink-0" /> {state.message}
+            </p>
+          </div>
+        )}
+        {state.phase === 'ready' && state.editable && (
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            onChange={(e) => { setDraft(e.target.value); setDirty(e.target.value !== state.text); }}
+            spellCheck={false}
+            className="absolute inset-0 w-full h-full resize-none bg-transparent text-[13.5px] leading-relaxed text-[#e8e4da] font-mono px-6 py-5 outline-none placeholder-white/20 selection:bg-[#e8b84a]/25"
+            placeholder="(empty file)"
+          />
+        )}
+        {state.phase === 'ready' && !state.editable && (
+          <pre data-card-inert="" className="absolute inset-0 w-full h-full overflow-auto whitespace-pre-wrap break-words bg-transparent text-[13.5px] leading-relaxed text-[#cfcabd] px-6 py-5 m-0 font-sans">
+            {draft || '(no extractable text)'}
+          </pre>
+        )}
       </div>
-    </div>
+    </CardDialog>
   );
 }

@@ -14,16 +14,19 @@
 // Portalling to <body> puts the modal above every such ancestor, so `fixed`
 // means viewport-fixed again regardless of where the modal is declared.
 
-import { useEffect, useState, type ReactNode } from 'react';
+// It portals on the FIRST render. Until 2026-09-25 it waited one effect
+// before mounting its children, and that broke every draggable card built on
+// it: the card's useDraggableResizable ran its effect in the same pass, found
+// its ref still empty because the portal had not mounted yet, and never bound
+// — the AgentCard, CharterEditor, CalendarOverlay and SiteSearch cards showed
+// a drag handle and a Pin that could not move or restore anything. This is a
+// client-only SPA, so there is always a document; the guard is for a render
+// without one.
+
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 export default function ModalPortal({ children }: { children: ReactNode }) {
-  // Mount-gate so the portal target is never touched during SSR/first render.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) return null;
+  if (typeof document === 'undefined') return null;
   return createPortal(children, document.body);
 }

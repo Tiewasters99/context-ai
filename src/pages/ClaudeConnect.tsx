@@ -20,6 +20,7 @@ import {
   claudeCodeAddCommand,
   MCP_ENDPOINT_URL,
 } from '@/lib/connectorTokens';
+import CardDialog from '@/components/ui/CardDialog';
 
 // What stands in for a real token in the commands printed on the page. The
 // token dialog prints the same commands with the actual value substituted;
@@ -740,158 +741,148 @@ function NewTokenModal({
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
+    // The token is shown once. Only the explicit close button dismisses this
+    // card: no Escape, no backdrop, so a stray key cannot throw it away.
+    <CardDialog
+      storageKey="cs.dialog.newToken"
+      z={50}
+      maxWidth={672}
+      onClose={onClose}
+      closeOnEscape={false}
+      title="Token ready"
+      subtitle={
+        <>
+          <span className="text-[var(--color-primary)]">{name}</span> —
+          visible only now. Copy both values below before closing.
+        </>
+      }
+      surface="var(--color-surface-raised)"
+      bodyClassName="px-6 py-5"
     >
-      <div className="w-full max-w-2xl bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-auto">
-        <div className="flex items-start justify-between mb-5">
-          <div>
-            <h3
-              className="text-2xl font-semibold text-[var(--color-text-bright)]"
-              style={{ fontFamily: 'Playfair Display Variable, serif' }}
-            >
-              Token ready
-            </h3>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">
-              <span className="text-[var(--color-primary)]">{name}</span> —
-              visible only now. Copy both values below before closing.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)]"
-          >
-            <X size={20} />
-          </button>
-        </div>
+      {/* What to do */}
+      <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
+        In Claude Desktop's settings, add a custom connector, paste the two
+        values below, name it <em>Contextspaces</em>, and save. For Claude
+        Code, skip past them to the command — it already has this token in
+        it.
+      </p>
 
-        {/* What to do */}
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-          In Claude Desktop's settings, add a custom connector, paste the two
-          values below, name it <em>Contextspaces</em>, and save. For Claude
-          Code, skip past them to the command — it already has this token in
-          it.
-        </p>
-
-        {/* Endpoint URL */}
-        <div className="mb-4">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
-            Endpoint URL
-          </label>
-          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
-              {MCP_ENDPOINT_URL}
-            </code>
-            <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
-          </div>
-        </div>
-
-        {/* Bearer token */}
-        <div className="mb-6">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
-            Bearer token
-          </label>
-          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
-              {token}
-            </code>
-            <CopyButton value={token} label="token" />
-          </div>
-        </div>
-
-        {/* Claude Code — the same token, already inside the command */}
-        <div className="mb-6 border-t border-[var(--color-border)] pt-4">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
-            Claude Code — one command, this token already in it
-          </label>
-          <p className="text-xs text-[var(--color-text-muted)] mb-1 leading-relaxed">
-            Paste it into a terminal: PowerShell on Windows, Terminal on a
-            Mac. Then <code className="font-mono">claude mcp list</code> should
-            show Contextspaces as connected. To undo it,{' '}
-            <code className="font-mono">claude mcp remove contextspaces</code>.
-          </p>
-          <span className="block mt-3 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
-            macOS or Linux — Terminal (bash, zsh)
-          </span>
-          <CommandLine
-            command={claudeCodeAddCommand(token, 'posix')}
-            label="command"
-          />
-          <span className="block mt-4 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
-            Windows — PowerShell
-          </span>
-          <CommandLine
-            command={claudeCodeAddCommand(token, 'powershell')}
-            label="command"
-          />
-          <p className="text-xs text-[var(--color-text-muted)] mt-3 leading-relaxed">
-            This command writes the token into Claude Code's configuration on
-            that machine (<code className="font-mono">~/.claude.json</code> at
-            user scope), and into your shell history. Treat the machine as
-            holding a key, and revoke the token on this page if it leaves your
-            hands. Prefer no token at all? Run the command without the{' '}
-            <code className="font-mono">--header</code> part and sign in from{' '}
-            <code className="font-mono">/mcp</code> instead.
-          </p>
-        </div>
-
-        {/* Advanced disclosure — JSON config snippet */}
-        <div className="mb-6 border-t border-[var(--color-border)] pt-4">
-          <button
-            onClick={() => setShowAdvanced((v) => !v)}
-            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5"
-          >
-            <ChevronRight
-              size={12}
-              className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
-            />
-            Advanced: paste a config file instead
-          </button>
-          {showAdvanced && (
-            <div className="mt-3">
-              <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
-                If your Claude Desktop version doesn't have the Connectors UI
-                yet, paste this snippet into{' '}
-                <code className="font-mono text-[var(--color-text-secondary)]">
-                  claude_desktop_config.json
-                </code>{' '}
-                and restart.
-              </p>
-              <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-                <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">
-                  {snippet}
-                </pre>
-                <div className="absolute top-2 right-2">
-                  <CopyButton value={snippet} label="config" />
-                </div>
-              </div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed">
-                Windows:{' '}
-                <code className="font-mono">
-                  %APPDATA%\Claude\claude_desktop_config.json
-                </code>
-                . macOS:{' '}
-                <code className="font-mono">
-                  ~/Library/Application Support/Claude/claude_desktop_config.json
-                </code>
-                .
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition"
-          >
-            I have what I need — close
-          </button>
+      {/* Endpoint URL */}
+      <div className="mb-4">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
+          Endpoint URL
+        </label>
+        <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+          <code data-card-inert="" className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
+            {MCP_ENDPOINT_URL}
+          </code>
+          <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
         </div>
       </div>
-    </div>
+
+      {/* Bearer token */}
+      <div className="mb-6">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
+          Bearer token
+        </label>
+        <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+          <code data-card-inert="" className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
+            {token}
+          </code>
+          <CopyButton value={token} label="token" />
+        </div>
+      </div>
+
+      {/* Claude Code — the same token, already inside the command */}
+      <div className="mb-6 border-t border-[var(--color-border)] pt-4">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
+          Claude Code — one command, this token already in it
+        </label>
+        <p className="text-xs text-[var(--color-text-muted)] mb-1 leading-relaxed">
+          Paste it into a terminal: PowerShell on Windows, Terminal on a
+          Mac. Then <code data-card-inert="" className="font-mono">claude mcp list</code> should
+          show Contextspaces as connected. To undo it,{' '}
+          <code data-card-inert="" className="font-mono">claude mcp remove contextspaces</code>.
+        </p>
+        <span className="block mt-3 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
+          macOS or Linux — Terminal (bash, zsh)
+        </span>
+        <CommandLine
+          command={claudeCodeAddCommand(token, 'posix')}
+          label="command"
+        />
+        <span className="block mt-4 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">
+          Windows — PowerShell
+        </span>
+        <CommandLine
+          command={claudeCodeAddCommand(token, 'powershell')}
+          label="command"
+        />
+        <p className="text-xs text-[var(--color-text-muted)] mt-3 leading-relaxed">
+          This command writes the token into Claude Code's configuration on
+          that machine (<code data-card-inert="" className="font-mono">~/.claude.json</code> at
+          user scope), and into your shell history. Treat the machine as
+          holding a key, and revoke the token on this page if it leaves your
+          hands. Prefer no token at all? Run the command without the{' '}
+          <code data-card-inert="" className="font-mono">--header</code> part and sign in from{' '}
+          <code data-card-inert="" className="font-mono">/mcp</code> instead.
+        </p>
+      </div>
+
+      {/* Advanced disclosure — JSON config snippet */}
+      <div className="mb-6 border-t border-[var(--color-border)] pt-4">
+        <button
+          onClick={() => setShowAdvanced((v) => !v)}
+          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5"
+        >
+          <ChevronRight
+            size={12}
+            className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+          />
+          Advanced: paste a config file instead
+        </button>
+        {showAdvanced && (
+          <div className="mt-3">
+            <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
+              If your Claude Desktop version doesn't have the Connectors UI
+              yet, paste this snippet into{' '}
+              <code data-card-inert="" className="font-mono text-[var(--color-text-secondary)]">
+                claude_desktop_config.json
+              </code>{' '}
+              and restart.
+            </p>
+            <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+              <pre data-card-inert="" className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">
+                {snippet}
+              </pre>
+              <div className="absolute top-2 right-2">
+                <CopyButton value={snippet} label="config" />
+              </div>
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed">
+              Windows:{' '}
+              <code data-card-inert="" className="font-mono">
+                %APPDATA%\Claude\claude_desktop_config.json
+              </code>
+              . macOS:{' '}
+              <code data-card-inert="" className="font-mono">
+                ~/Library/Application Support/Claude/claude_desktop_config.json
+              </code>
+              .
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-3">
+        <button
+          onClick={onClose}
+          className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition"
+        >
+          I have what I need — close
+        </button>
+      </div>
+    </CardDialog>
   );
 }
 
@@ -905,7 +896,7 @@ function NewTokenModal({
 function CommandLine({ command, label }: { command: string; label: string }) {
   return (
     <span className="mt-2 flex items-start gap-2 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-3 py-2">
-      <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1 leading-relaxed">
+      <code data-card-inert="" className="text-xs text-[var(--color-primary)] font-mono break-all flex-1 leading-relaxed">
         {command}
       </code>
       <CopyButton value={command} label={label} />
