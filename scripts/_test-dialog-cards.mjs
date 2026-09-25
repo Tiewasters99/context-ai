@@ -438,7 +438,28 @@ const CONVERTED = {
   'src/components/matter/BucketizerEvidenceRunDialog.tsx': ['cs.dialog.bucketizerEvidenceRun'],
   'src/components/matter/BucketizerOutlineDialog.tsx': ['cs.dialog.bucketizerOutline'],
   'src/components/vault/UploadEstimateDialog.tsx': ['cs.dialog.uploadEstimate'],
+  'src/components/vault/DeckComposerModal.tsx': ['cs.dialog.deckComposer'],
+  'src/components/vault/SandboxPanel.tsx': ['cs.dialog.sandboxAddFromMatter'],
 };
+
+// A file whose own route card or page shell is `fixed inset-0` legitimately:
+// only the named dialog inside it is held to the shell.
+const CONVERTED_INSIDE = {
+  'src/pages/MatterspaceView.tsx': { fn: 'MoveToMatterModal', key: 'cs.dialog.moveToMatter' },
+};
+
+for (const [file, { fn, key }] of Object.entries(CONVERTED_INSIDE)) {
+  test(`${fn} (${file.split('/').pop()}) is a card`, () => {
+    const s = src(file);
+    const start = s.indexOf(`function ${fn}(`);
+    assert.ok(start >= 0, `${fn} is still in ${file}`);
+    const next = s.indexOf('\nfunction ', start + 1);
+    const body = s.slice(start, next < 0 ? undefined : next);
+    assert.match(body, /<CardDialog\b/);
+    assert.ok(body.includes(`storageKey="${key}"`), `uses its own key ${key}`);
+    assert.doesNotMatch(body, /fixed inset-0|top-1\/2 left-1\/2/);
+  });
+}
 
 for (const [file, keys] of Object.entries(CONVERTED)) {
   test(`${file.split('/').pop()} is a card`, () => {

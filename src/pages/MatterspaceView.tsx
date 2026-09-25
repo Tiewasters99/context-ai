@@ -7,6 +7,7 @@ import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMa
 import CoverImage from '@/components/layout/CoverImage';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import PinToggle from '@/components/ui/PinToggle';
+import CardDialog from '@/components/ui/CardDialog';
 import ActivityFeed from '@/components/activity/ActivityFeed';
 import RecordTab from '@/components/record/RecordTab';
 import MatterCalendar from '@/components/matter/MatterCalendar';
@@ -737,45 +738,44 @@ function MoveToMatterModal({
   };
 
   return (
-    <>
-      <div className="fixed inset-0 z-[70] bg-black/50" onClick={onClose} />
-      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[70] w-full max-w-md max-h-[70vh] overflow-y-auto rounded-xl border border-[rgba(255,255,255,0.12)] p-5 bg-[#12121a]">
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-[15px] font-semibold text-white">Move {count} {noun}</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-[rgba(255,255,255,0.06)] text-white/50 hover:text-white transition-colors">
-            <X size={16} />
-          </button>
-        </div>
-        <p className="text-[11px] text-white/50 mb-4">Choose a destination matter or sub-matter.</p>
-        <div className="space-y-3">
-          {serverspaces.map((s) => (
-            <div key={s.id}>
-              <p className="text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-1 px-1">{s.name}</p>
-              <div className="space-y-px">
-                {flatten(buildMatterTree(s.matterspaces)).map((m) => {
-                  const isCurrent = m.id === excludeId;
-                  return (
-                    <button
-                      key={m.id}
-                      disabled={isCurrent || busy}
-                      onClick={() => onPick(m.id)}
-                      style={{ paddingLeft: `${8 + m.depth * 16}px` }}
-                      className={`flex items-center gap-2 w-full pr-3 py-1.5 rounded text-left text-[13px] transition-colors ${
-                        isCurrent
-                          ? 'text-white/30 cursor-default'
-                          : 'text-[#f5f1e8] hover:bg-[rgba(232,184,74,0.12)] hover:text-[#e8b84a]'
-                      }`}
-                    >
-                      <Folder size={13} className="shrink-0 text-[#d4a054]" strokeWidth={1.75} />
-                      <span className="truncate">{m.name}{isCurrent ? '  (current)' : ''}</span>
-                    </button>
-                  );
-                })}
-              </div>
+    <CardDialog
+      storageKey="cs.dialog.moveToMatter"
+      z={70}
+      maxWidth={448}
+      onClose={onClose}
+      closeOnBackdrop
+      busy={busy}
+      title={`Move ${count} ${noun}`}
+      subtitle="Choose a destination matter or sub-matter."
+    >
+      <div className="space-y-3">
+        {serverspaces.map((s) => (
+          <div key={s.id}>
+            <p className="text-[10px] font-semibold text-white/40 uppercase tracking-wider mb-1 px-1">{s.name}</p>
+            <div className="space-y-px">
+              {flatten(buildMatterTree(s.matterspaces)).map((m) => {
+                const isCurrent = m.id === excludeId;
+                return (
+                  <button
+                    key={m.id}
+                    disabled={isCurrent || busy}
+                    onClick={() => onPick(m.id)}
+                    style={{ paddingLeft: `${8 + m.depth * 16}px` }}
+                    className={`flex items-center gap-2 w-full pr-3 py-1.5 rounded text-left text-[13px] transition-colors ${
+                      isCurrent
+                        ? 'text-white/30 cursor-default'
+                        : 'text-[#f5f1e8] hover:bg-[rgba(232,184,74,0.12)] hover:text-[#e8b84a]'
+                    }`}
+                  >
+                    <Folder size={13} className="shrink-0 text-[#d4a054]" strokeWidth={1.75} />
+                    <span className="truncate">{m.name}{isCurrent ? '  (current)' : ''}</span>
+                  </button>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
-    </>
+    </CardDialog>
   );
 }
