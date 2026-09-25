@@ -110,7 +110,9 @@ export default function CardDialog({
 
   // Latest values for the listeners below, without re-binding them.
   const live = useRef({ onClose, busy, closeOnEscape, closeOnBackdrop });
-  live.current = { onClose, busy, closeOnEscape, closeOnBackdrop };
+  useEffect(() => {
+    live.current = { onClose, busy, closeOnEscape, closeOnBackdrop };
+  });
 
   useEffect(() => {
     const me = Symbol('card-dialog');
@@ -147,7 +149,7 @@ export default function CardDialog({
   // Backdrop: decided on the press (see the header note on drags).
   const pressedBackdrop = useRef(false);
 
-  const requestClose = () => { if (!live.current.busy) onClose(); };
+  const requestClose = () => { if (!busy) onClose(); };
 
   // The width cap rides in a custom property, not in `max-width`: the hook
   // owns the card's inline geometry (it clears max-width on mount and sets it
