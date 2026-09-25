@@ -259,15 +259,19 @@ section('3. an AGENT token hits its own ceiling');
 {
   const bot = identityFor(PRO, AGENT_1, 'agent', 'Grok bot');
   for (let i = 0; i < 3; i += 1) {
-    const r = await call(bot, 'my_tasks');
+    const r = await call(bot, 'list_matters');
     if (r.isError) check(false, `agent call ${i + 1} should be admitted`, refusedText(r));
   }
-  const r = await call(bot, 'my_tasks');
+  const r = await call(bot, 'list_matters');
   const t = refusedText(r);
   check(r.isError === true && /This agent connection \("Grok bot"\) has reached its limit of 3 Contextspaces calls per hour/.test(t || ''),
     'the fourth call from this agent is refused, naming the agent and its limit', t);
   check(/resets at \d\d:\d\d UTC\./.test(t || '') && looksLikeSentence(t), 'with the reset time, as a sentence');
-  const other = await call(identityFor(PRO, AGENT_2, 'agent', 'Docket bot'), 'my_tasks');
+  // my_tasks is exempt (Eden 09-25): a capped agent can still ask for its
+  // tasks, and asking is never counted against any window.
+  const poll = await call(bot, 'my_tasks');
+  check(!poll.isError, 'my_tasks is still admitted for an agent at its ceiling (exempt from the rate limit)', refusedText(poll));
+  const other = await call(identityFor(PRO, AGENT_2, 'agent', 'Docket bot'), 'list_matters');
   check(!other.isError, 'a second agent on the same account is unaffected (the ceiling is per token)');
   const user = await call(identityFor(PRO, PRO_TOK, 'user', 'ChatGPT'), 'list_matters');
   check(!user.isError, 'and so is the account owner\'s own connection');
