@@ -454,6 +454,44 @@ export async function runHandlerChecks({ db, check, makeUser, asOwner, asUser, m
       'an event type this endpoint does not handle is acknowledged, never 4xx-ed into a retry loop');
   }
 
+  console.log('\n--- the first invoice does not move the renewal date -----------');
+  {
+    // Newer Stripe API versions put the period on the ITEM only (subEvent's
+    // shape). The first invoice's own period_end is the creation instant.
+    const periodEndOf = async () => {
+      await asOwner(db);
+      const { rows } = await db.query(
+        `select extract(epoch from current_period_end)::bigint as e from public.billing_accounts where user_id = $1`,
+        [customer]);
+      return Number(rows[0]?.e ?? 0);
+    };
+    const s = await post({ ...subEvent('evt_h13', 9_000_013, 'active', 'price_pro'), type: 'customer.subscription.created' });
+    wrapped(s.statusCode === 200 && await periodEndOf() === 1790000000,
+      'the subscription event stores the real period end (items.data[].current_period_end)', await periodEndOf());
+    const inv = await post({
+      id: 'evt_h14', type: 'invoice.paid', created: 9_000_014,
+      data: { object: {
+        id: 'in_first', customer: custId, subscription: 'sub_hook', billing_reason: 'subscription_create',
+        period_start: 9_000_014, period_end: 9_000_014,
+        lines: { data: [{ type: 'subscription', period: { start: 9_000_014, end: 1790000000 } }] },
+      } },
+    });
+    wrapped(inv.statusCode === 200 && await periodEndOf() === 1790000000,
+      'invoice.paid for the FIRST invoice (period_end = the creation instant) leaves it alone — no "Renews on <today>"',
+      await periodEndOf());
+    const pack = await post({
+      id: 'evt_h15', type: 'invoice.paid', created: 9_000_015,
+      data: { object: { id: 'in_pack', customer: custId, period_start: 9_000_015, period_end: 9_000_015 } },
+    });
+    wrapped(pack.statusCode === 200 && await periodEndOf() === 1790000000,
+      'nor does a one-off invoice with no subscription (a credit pack)', await periodEndOf());
+    const renewal = await post({ ...subEvent('evt_h16', 9_000_016, 'active', 'price_pro'),
+      data: { object: { ...subEvent('x', 0, 'active', 'price_pro').data.object,
+        items: { data: [{ price: { id: 'price_pro' }, current_period_end: 1792600000 }] } } } });
+    wrapped(renewal.statusCode === 200 && await periodEndOf() === 1792600000,
+      'and the renewal\'s subscription.updated moves it forward, as the source of truth', await periodEndOf());
+  }
+
   console.log('\n--- the webhook fulfils a credit pack --------------------------');
   {
     const balBefore = await balanceOfUser(db, buyer2);
