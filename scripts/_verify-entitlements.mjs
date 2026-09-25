@@ -154,17 +154,36 @@ for (const pair of fencePairs) {
   );
 }
 
-console.log('\n--- A. 083 and the shared table hold the same list ---------------');
+// plan_can_open is re-created by a later migration whenever a surface is
+// added (089 added 'agentTasks'). The list that counts is the one in the
+// NEWEST migration carrying the `NNN-CORE-LIST-BEGIN` markers; 083 keeps the
+// fences. Part B applies that newest definition on top of 083.
+const LIST_MIGRATION = fs.readdirSync(path.join(ROOT, 'supabase', 'migrations'))
+  .filter((f) => /^\d{3}_.*\.sql$/.test(f))
+  .filter((f) => new RegExp(`${f.slice(0, 3)}-CORE-LIST-BEGIN`).test(read(`supabase/migrations/${f}`)))
+  .sort()
+  .pop();
+const LIST_NO = LIST_MIGRATION.slice(0, 3);
+const sqlList = read(`supabase/migrations/${LIST_MIGRATION}`);
+/** The newest plan_can_open, as SQL that can be run on its own. */
+const PLAN_FN_SQL = LIST_MIGRATION === MIGRATION ? null : (() => {
+  const a = sqlList.indexOf('create or replace function public.plan_can_open');
+  const b = sqlList.indexOf('end $$;', a);
+  return a < 0 || b < 0 ? null : sqlList.slice(a, b + 'end $$;'.length);
+})();
+console.log(`\n--- A. ${LIST_MIGRATION.slice(0, 3)} and the shared table hold the same list ---------------`);
 const idsIn = (block) => [...(block || '').matchAll(/'([A-Za-z][A-Za-z0-9_]*)'/g)].map((m) => m[1]);
-const sqlCore = idsIn(between(sql083, '083-CORE-LIST-BEGIN', '083-CORE-LIST-END'));
-const sqlNonCore = idsIn(between(sql083, '083-NONCORE-LIST-BEGIN', '083-NONCORE-LIST-END'));
+const sqlCore = idsIn(between(sqlList, `${LIST_NO}-CORE-LIST-BEGIN`, `${LIST_NO}-CORE-LIST-END`));
+const sqlNonCore = idsIn(between(sqlList, `${LIST_NO}-NONCORE-LIST-BEGIN`, `${LIST_NO}-NONCORE-LIST-END`));
 const tableCore = SURFACE_IDS.filter((id) => SURFACES[id].tier === 'core');
 const tableNonCore = SURFACE_IDS.filter((id) => SURFACES[id].tier !== 'core');
 const sameSet = (a, b) => a.length === b.length && [...a].sort().join(',') === [...b].sort().join(',');
-check(sameSet(sqlCore, tableCore), `${MIGRATION}: the core list matches lib/surfaces.mjs`,
+check(sameSet(sqlCore, tableCore), `${LIST_MIGRATION}: the core list matches lib/surfaces.mjs`,
   `sql=[${sqlCore.join(',')}]`);
-check(sameSet(sqlNonCore, tableNonCore), `${MIGRATION}: the frozen+beta list matches lib/surfaces.mjs`,
+check(sameSet(sqlNonCore, tableNonCore), `${LIST_MIGRATION}: the frozen+beta list matches lib/surfaces.mjs`,
   `sql=[${sqlNonCore.join(',')}]`);
+check(LIST_MIGRATION === MIGRATION || PLAN_FN_SQL !== null,
+  `${LIST_MIGRATION}: its plan_can_open can be read out for Part B`);
 
 console.log('\n--- A. one list, not two -----------------------------------------');
 const dmts = read('lib/surfaces.d.mts');
@@ -428,6 +447,11 @@ const first = await applyMigration();
 check(first === null, '083 applies', first?.message ?? '');
 const second = await applyMigration();
 check(second === null, '083 is idempotent — a second run is a no-op', second?.message ?? '');
+if (PLAN_FN_SQL) {
+  let e = null;
+  try { await db.exec(PLAN_FN_SQL); } catch (err) { e = err; }
+  check(e === null, `${LIST_MIGRATION}'s plan_can_open applies on top of 083`, e?.message ?? '');
+}
 
 check(await profilesFingerprint() === profilesBefore,
   'profiles is untouched: the same policies, constraint and column grants as before');

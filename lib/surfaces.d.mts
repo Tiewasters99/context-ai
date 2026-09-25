@@ -55,6 +55,7 @@ export declare const SURFACES: {
   readonly suite: Surface;
   readonly matterPages: Surface;
   readonly fileSaver: Surface;
+  readonly agentTasks: Surface;
   readonly office: Surface;
   readonly agents: Surface;
   readonly mootBench: Surface;
