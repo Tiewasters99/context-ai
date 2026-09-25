@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, X, FileText, Check } from 'lucide-react';
+import { Search, FileText, Check } from 'lucide-react';
+import CardDialog from '@/components/ui/CardDialog';
 import { supabase } from '@/lib/supabase';
 import { fetchPaged, showingOf } from '@/lib/paged';
 
@@ -88,89 +89,24 @@ export default function DocumentPicker({
     onConfirm(picked);
   }
 
+  // A search typed or a selection changed is not thrown away by a stray
+  // click outside; an untouched picker still closes on the backdrop.
+  const dirty = search.trim() !== ''
+    || selected.size !== initiallySelected.length
+    || initiallySelected.some((id) => !selected.has(id));
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
-      onMouseDown={(e) => { if (e.target === e.currentTarget) onCancel(); }}
-    >
-      <div className="w-[480px] max-h-[70vh] flex flex-col rounded-xl border border-[rgba(255,255,255,0.1)] bg-[#1a1a22] shadow-2xl">
-        <div className="flex items-center justify-between px-4 h-11 border-b border-[rgba(255,255,255,0.08)]">
-          <span className="text-[13px] font-medium text-[var(--color-text-bright)]">
-            Attach documents
-          </span>
-          <button
-            onClick={onCancel}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white"
-            title="Cancel"
-          >
-            <X size={14} />
-          </button>
-        </div>
-        <div className="px-3 py-2 border-b border-[rgba(255,255,255,0.06)]">
-          <div className="relative">
-            <Search
-              size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35"
-            />
-            <input
-              autoFocus
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search documents…"
-              className="w-full h-8 pl-7 pr-2 rounded-md bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-[12px] text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]"
-            />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {loading && (
-            <p className="text-[12px] text-white/40 py-8 text-center">Loading…</p>
-          )}
-          {error && (
-            <p className="text-[12px] text-red-300 py-8 text-center">{error}</p>
-          )}
-          {!loading && !error && filtered.length === 0 && (
-            <p className="text-[12px] text-white/40 py-8 text-center">
-              No documents {search ? 'matched' : 'in this matter'}.
-            </p>
-          )}
-          {!loading && notice && (
-            <p className="px-3 py-2 text-[11px] text-[var(--color-primary)]">{notice}</p>
-          )}
-          {!loading && filtered.length > 0 && (
-            <ul className="py-1">
-              {filtered.map((f) => {
-                const isPicked = selected.has(f.id);
-                return (
-                  <li key={f.id}>
-                    <button
-                      onClick={() => toggle(f.id)}
-                      className={`flex items-center gap-3 w-full px-3 py-2 text-left transition ${
-                        isPicked ? 'bg-[var(--color-primary-light)]' : 'hover:bg-white/4'
-                      }`}
-                    >
-                      <FileText
-                        size={14}
-                        className="text-[var(--color-primary)] shrink-0"
-                        strokeWidth={1.75}
-                      />
-                      <span className="text-[12.5px] text-[var(--color-text-bright)] truncate flex-1">
-                        {f.title}
-                      </span>
-                      {isPicked && (
-                        <Check
-                          size={13}
-                          className="text-[var(--color-primary)] shrink-0"
-                          strokeWidth={2.5}
-                        />
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-        <div className="flex items-center justify-between px-3 h-12 border-t border-[rgba(255,255,255,0.08)]">
+    <CardDialog
+      storageKey="cs.dialog.documentPicker"
+      z={50}
+      maxWidth={480}
+      onClose={onCancel}
+      closeOnBackdrop={!dirty}
+      title="Attach documents"
+      bodyClassName="p-0 flex flex-col"
+      footerClassName="flex items-center justify-between px-3 h-12"
+      footer={
+        <>
           <span className="text-[11px] text-white/45">
             {selected.size} selected
           </span>
@@ -189,8 +125,73 @@ export default function DocumentPicker({
               Attach {selected.size > 0 ? selected.size : ''}
             </button>
           </div>
+        </>
+      }
+    >
+      <div className="px-3 py-2 border-b border-[rgba(255,255,255,0.06)]">
+        <div className="relative">
+          <Search
+            size={13}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/35"
+          />
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search documents…"
+            className="w-full h-8 pl-7 pr-2 rounded-md bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-[12px] text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]"
+          />
         </div>
       </div>
-    </div>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {loading && (
+          <p className="text-[12px] text-white/40 py-8 text-center">Loading…</p>
+        )}
+        {error && (
+          <p className="text-[12px] text-red-300 py-8 text-center">{error}</p>
+        )}
+        {!loading && !error && filtered.length === 0 && (
+          <p className="text-[12px] text-white/40 py-8 text-center">
+            No documents {search ? 'matched' : 'in this matter'}.
+          </p>
+        )}
+        {!loading && notice && (
+          <p className="px-3 py-2 text-[11px] text-[var(--color-primary)]">{notice}</p>
+        )}
+        {!loading && filtered.length > 0 && (
+          <ul className="py-1">
+            {filtered.map((f) => {
+              const isPicked = selected.has(f.id);
+              return (
+                <li key={f.id}>
+                  <button
+                    onClick={() => toggle(f.id)}
+                    className={`flex items-center gap-3 w-full px-3 py-2 text-left transition ${
+                      isPicked ? 'bg-[var(--color-primary-light)]' : 'hover:bg-white/4'
+                    }`}
+                  >
+                    <FileText
+                      size={14}
+                      className="text-[var(--color-primary)] shrink-0"
+                      strokeWidth={1.75}
+                    />
+                    <span className="text-[12.5px] text-[var(--color-text-bright)] truncate flex-1">
+                      {f.title}
+                    </span>
+                    {isPicked && (
+                      <Check
+                        size={13}
+                        className="text-[var(--color-primary)] shrink-0"
+                        strokeWidth={2.5}
+                      />
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </CardDialog>
   );
 }

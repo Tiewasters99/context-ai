@@ -433,6 +433,11 @@ const CONVERTED = {
   'src/components/serverspace/NewServerspaceModal.tsx': ['cs.dialog.newServerspace'],
   'src/components/securespace/SealMatterModal.tsx': ['cs.dialog.sealMatter'],
   'src/components/reader/SealedExportDialog.tsx': ['cs.dialog.sealedExport'],
+  'src/components/matter/DocumentPicker.tsx': ['cs.dialog.documentPicker'],
+  'src/components/matter/BucketizerSurface.tsx': ['cs.dialog.bucketizerRunEstimate'],
+  'src/components/matter/BucketizerEvidenceRunDialog.tsx': ['cs.dialog.bucketizerEvidenceRun'],
+  'src/components/matter/BucketizerOutlineDialog.tsx': ['cs.dialog.bucketizerOutline'],
+  'src/components/vault/UploadEstimateDialog.tsx': ['cs.dialog.uploadEstimate'],
 };
 
 for (const [file, keys] of Object.entries(CONVERTED)) {
