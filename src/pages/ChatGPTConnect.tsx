@@ -32,6 +32,7 @@ import {
   openaiResponsesSnippet,
   MCP_ENDPOINT_URL,
 } from '@/lib/connectorTokens';
+import CardDialog from '@/components/ui/CardDialog';
 
 interface TokenRow {
   id: string;
@@ -364,57 +365,57 @@ function TokenItem({ token, onRevoke }: { token: TokenRow; onRevoke: (id: string
 function NewTokenModal({ token, name, onClose }: { token: string; name: string; onClose: () => void }) {
   const snippet = openaiResponsesSnippet(token);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true">
-      <div className="w-full max-w-2xl bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-auto">
-        <div className="flex items-start justify-between mb-5">
-          <div>
-            <h3 className="text-2xl font-semibold text-[var(--color-text-bright)]" style={{ fontFamily: 'Playfair Display Variable, serif' }}>
-              Token ready
-            </h3>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">
-              <span className="text-[var(--color-primary)]">{name}</span> —
-              visible only now. Copy it before closing.
-            </p>
-          </div>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)]">
-            <X size={20} />
-          </button>
-        </div>
+    // The token is shown once. Only the explicit close button dismisses this
+    // card: no Escape, no backdrop, so a stray key cannot throw it away.
+    <CardDialog
+      storageKey="cs.dialog.newToken"
+      z={50}
+      maxWidth={672}
+      onClose={onClose}
+      closeOnEscape={false}
+      title="Token ready"
+      subtitle={
+        <>
+          <span className="text-[var(--color-primary)]">{name}</span> —
+          visible only now. Copy it before closing.
+        </>
+      }
+      surface="var(--color-surface-raised)"
+      bodyClassName="px-6 py-5"
+    >
+      <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
+        This token is for the{' '}
+        <strong className="text-[var(--color-text-bright)]">OpenAI API</strong>,
+        not the ChatGPT app — the app connects over OAuth and never asks for
+        one.
+      </p>
 
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-          This token is for the{' '}
-          <strong className="text-[var(--color-text-bright)]">OpenAI API</strong>,
-          not the ChatGPT app — the app connects over OAuth and never asks for
-          one.
-        </p>
-
-        <div className="mb-6">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">Bearer token</label>
-          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">{token}</code>
-            <CopyButton value={token} label="token" />
-          </div>
-        </div>
-
-        <div className="mb-6">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
-            Responses API request
-          </label>
-          <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">{snippet}</pre>
-            <div className="absolute top-2 right-2">
-              <CopyButton value={snippet} label="config" />
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition">
-            I have what I need — close
-          </button>
+      <div className="mb-6">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">Bearer token</label>
+        <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+          <code data-card-inert="" className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">{token}</code>
+          <CopyButton value={token} label="token" />
         </div>
       </div>
-    </div>
+
+      <div className="mb-6">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">
+          Responses API request
+        </label>
+        <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+          <pre data-card-inert="" className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">{snippet}</pre>
+          <div className="absolute top-2 right-2">
+            <CopyButton value={snippet} label="config" />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-3">
+        <button onClick={onClose} className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition">
+          I have what I need — close
+        </button>
+      </div>
+    </CardDialog>
   );
 }
 

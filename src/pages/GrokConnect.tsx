@@ -23,6 +23,7 @@ import {
   grokConfigSnippet,
   MCP_ENDPOINT_URL,
 } from '@/lib/connectorTokens';
+import CardDialog from '@/components/ui/CardDialog';
 
 interface TokenRow {
   id: string;
@@ -332,74 +333,74 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
   const snippet = grokConfigSnippet(token);
   const [showAdvanced, setShowAdvanced] = useState(false);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm" role="dialog" aria-modal="true">
-      <div className="w-full max-w-2xl bg-[var(--color-surface-raised)] border border-[var(--color-border-strong)] rounded-xl shadow-2xl p-6 max-h-[90vh] overflow-auto">
-        <div className="flex items-start justify-between mb-5">
-          <div>
-            <h3 className="text-2xl font-semibold text-[var(--color-text-bright)]" style={{ fontFamily: 'Playfair Display Variable, serif' }}>
-              Token ready
-            </h3>
-            <p className="text-sm text-[var(--color-text-muted)] mt-1">
-              <span className="text-[var(--color-primary)]">{name}</span> —
-              visible only now. Copy both values before closing.
-            </p>
-          </div>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)]">
-            <X size={20} />
-          </button>
-        </div>
+    // The token is shown once. Only the explicit close button dismisses this
+    // card: no Escape, no backdrop, so a stray key cannot throw it away.
+    <CardDialog
+      storageKey="cs.dialog.newToken"
+      z={50}
+      maxWidth={672}
+      onClose={onClose}
+      closeOnEscape={false}
+      title="Token ready"
+      subtitle={
+        <>
+          <span className="text-[var(--color-primary)]">{name}</span> —
+          visible only now. Copy both values before closing.
+        </>
+      }
+      surface="var(--color-surface-raised)"
+      bodyClassName="px-6 py-5"
+    >
+      <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
+        In Grok's settings, open the{' '}
+        <strong className="text-[var(--color-text-bright)]">MCP Connectors</strong>{' '}
+        panel and add a new server with the URL and token below. Name it{' '}
+        <em>Contextspaces</em>.
+      </p>
 
-        <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-          In Grok's settings, open the{' '}
-          <strong className="text-[var(--color-text-bright)]">MCP Connectors</strong>{' '}
-          panel and add a new server with the URL and token below. Name it{' '}
-          <em>Contextspaces</em>.
-        </p>
-
-        <div className="mb-4">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">Endpoint URL</label>
-          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">{MCP_ENDPOINT_URL}</code>
-            <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
-          </div>
-        </div>
-
-        <div className="mb-6">
-          <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">Bearer token</label>
-          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-            <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">{token}</code>
-            <CopyButton value={token} label="token" />
-          </div>
-        </div>
-
-        <div className="mb-6 border-t border-[var(--color-border)] pt-4">
-          <button onClick={() => setShowAdvanced((v) => !v)} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5">
-            <ChevronRight size={12} className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
-            Advanced: paste a config block instead
-          </button>
-          {showAdvanced && (
-            <div className="mt-3">
-              <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
-                For any HTTP-MCP client that takes a JSON config (Grok via the
-                xAI API, scripted setups, etc.), this is the canonical block:
-              </p>
-              <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
-                <pre className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">{snippet}</pre>
-                <div className="absolute top-2 right-2">
-                  <CopyButton value={snippet} label="config" />
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition">
-            I have what I need — close
-          </button>
+      <div className="mb-4">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">Endpoint URL</label>
+        <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+          <code data-card-inert="" className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">{MCP_ENDPOINT_URL}</code>
+          <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
         </div>
       </div>
-    </div>
+
+      <div className="mb-6">
+        <label className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] block mb-2">Bearer token</label>
+        <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+          <code data-card-inert="" className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">{token}</code>
+          <CopyButton value={token} label="token" />
+        </div>
+      </div>
+
+      <div className="mb-6 border-t border-[var(--color-border)] pt-4">
+        <button onClick={() => setShowAdvanced((v) => !v)} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-bright)] transition flex items-center gap-1.5">
+          <ChevronRight size={12} className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`} />
+          Advanced: paste a config block instead
+        </button>
+        {showAdvanced && (
+          <div className="mt-3">
+            <p className="text-xs text-[var(--color-text-muted)] mb-2 leading-relaxed">
+              For any HTTP-MCP client that takes a JSON config (Grok via the
+              xAI API, scripted setups, etc.), this is the canonical block:
+            </p>
+            <div className="relative bg-[var(--color-surface)] border border-[var(--color-border)] rounded p-3">
+              <pre data-card-inert="" className="text-xs text-[var(--color-text)] font-mono whitespace-pre-wrap break-all">{snippet}</pre>
+              <div className="absolute top-2 right-2">
+                <CopyButton value={snippet} label="config" />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-3">
+        <button onClick={onClose} className="px-4 py-2 text-sm font-medium rounded bg-[var(--color-primary)] text-[#0a0a0a] hover:bg-[var(--color-primary-hover)] transition">
+          I have what I need — close
+        </button>
+      </div>
+    </CardDialog>
   );
 }
 

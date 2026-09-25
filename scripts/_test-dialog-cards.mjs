@@ -458,7 +458,23 @@ test('the document editor: unsaved edits survive the backdrop, and one Escape ha
 // only the named dialog inside it is held to the shell.
 const CONVERTED_INSIDE = {
   'src/pages/MatterspaceView.tsx': { fn: 'MoveToMatterModal', key: 'cs.dialog.moveToMatter' },
+  'src/pages/ClaudeConnect.tsx': { fn: 'NewTokenModal', key: 'cs.dialog.newToken' },
+  'src/pages/ChatGPTConnect.tsx': { fn: 'NewTokenModal', key: 'cs.dialog.newToken' },
+  'src/pages/GeminiConnect.tsx': { fn: 'NewTokenModal', key: 'cs.dialog.newToken' },
+  'src/pages/GrokConnect.tsx': { fn: 'NewTokenModal', key: 'cs.dialog.newToken' },
 };
+
+// A token is shown once: its card closes only on a deliberate click, and the
+// token and config text can be selected rather than dragging the card.
+for (const f of ['ClaudeConnect', 'ChatGPTConnect', 'GeminiConnect', 'GrokConnect']) {
+  test(`${f}: the one-time token card ignores Escape and keeps its text selectable`, () => {
+    const s = src(`src/pages/${f}.tsx`);
+    const body = s.slice(s.indexOf('function NewTokenModal('));
+    assert.match(body, /closeOnEscape=\{false\}/);
+    assert.doesNotMatch(body.slice(0, body.indexOf('</CardDialog>')), /closeOnBackdrop/);
+    assert.match(body, /<code data-card-inert=""/);
+  });
+}
 
 for (const [file, { fn, key }] of Object.entries(CONVERTED_INSIDE)) {
   test(`${fn} (${file.split('/').pop()}) is a card`, () => {
