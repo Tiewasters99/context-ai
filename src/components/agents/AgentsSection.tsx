@@ -40,6 +40,9 @@ import AgentMatterPicker from './AgentMatterPicker';
 export const AGENT_SCOPE_COPY =
   'This agent sees only the matters you tick. Nothing else, and never a SecureSpace.';
 
+/** The agents list's line for an agent with scope_all (migration 088). */
+export const ALL_MATTERS_LABEL = 'All matters (except SecureSpaces)';
+
 // The setup guide (B8) is not written yet; until it is, each provider's
 // connect page is the nearest thing to one.
 function setupGuideHref(p: AgentProvider): string {
@@ -92,6 +95,7 @@ function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [name, setName] = useState('');
   const [provider, setProvider] = useState<AgentProvider>('grok');
   const [scope, setScope] = useState<string[]>([]);
+  const [scopeAll, setScopeAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ token: string; name: string; provider: AgentProvider } | null>(null);
@@ -108,6 +112,7 @@ function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: 
         name: n,
         provider,
         scope: normalizeScope(all, scope),
+        scopeAll,
       });
       setIssued({ token, name: n, provider });
       onCreated();
@@ -208,7 +213,7 @@ function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: 
       </div>
       <div>
         <p className={cardLegend}>Matters it may see</p>
-        <AgentMatterPicker value={scope} onChange={setScope} />
+        <AgentMatterPicker value={scope} onChange={setScope} scopeAll={scopeAll} onScopeAllChange={setScopeAll} />
         <p className="text-[11px] text-white/40 mt-1.5 leading-relaxed">
           A ticked matter includes its sub-matters. Tick nothing and the agent can see nothing
           until you come back and grant a matter.
@@ -231,6 +236,7 @@ function EditMattersCard({
 }) {
   const { all } = useMatterIndex();
   const [scope, setScope] = useState<string[]>(agent.matter_scope);
+  const [scopeAll, setScopeAll] = useState<boolean>(agent.scope_all === true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -238,7 +244,7 @@ function EditMattersCard({
     setBusy(true);
     setError(null);
     try {
-      await updateAgentScope(agent.id, normalizeScope(all, scope));
+      await updateAgentScope(agent.id, normalizeScope(all, scope), { scopeAll, wasAll: agent.scope_all === true });
       onSaved();
       onClose();
     } catch (e) {
@@ -274,7 +280,7 @@ function EditMattersCard({
         </>
       }
     >
-      <AgentMatterPicker value={scope} onChange={setScope} />
+      <AgentMatterPicker value={scope} onChange={setScope} scopeAll={scopeAll} onScopeAllChange={setScopeAll} />
       <p className="text-[11px] text-white/40 leading-relaxed">
         Removing a matter takes effect on the agent's next request. Tasks it already holds in
         that matter stay on the matter's Tasks tab, where you can cancel or reassign them.
@@ -416,7 +422,9 @@ export default function AgentsSection({ refreshKey = 0 }: { refreshKey?: number 
                     </span>
                   )}
                   <span className="block text-[13px] text-[var(--color-text-secondary)] mt-1">
-                    {granted.length ? `Sees: ${granted.join('; ')}.` : 'Sees nothing yet. No matter is ticked.'}
+                    {a.scope_all
+                      ? `Sees: ${ALL_MATTERS_LABEL}.`
+                      : granted.length ? `Sees: ${granted.join('; ')}.` : 'Sees nothing yet. No matter is ticked.'}
                   </span>
                   <span className="block text-[12px] text-[var(--color-text-muted)] mt-0.5">
                     {used ? `Last used ${used}.` : 'Not used yet.'}{' '}

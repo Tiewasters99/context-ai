@@ -32,11 +32,14 @@ import { supabase } from '@/lib/supabase';
 import { stashAuthorizeRequest } from '@/lib/oauthAuthorizeResume';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
 import { normalizeScope } from '@/lib/agent-scope';
-import { AGENT_PROVIDERS, type AgentProvider } from '@/lib/agentTokens';
+import { AGENT_PROVIDERS, readAgentForConsent, type AgentProvider } from '@/lib/agentTokens';
 import AgentMatterPicker from '@/components/agents/AgentMatterPicker';
 import { AGENT_SCOPE_COPY } from '@/components/agents/AgentsSection';
 
 export const FULL_ASSISTANT_COPY = 'Sees every matter you can see, except SecureSpaces.';
+// The agent choice with "All my matters" ticked (migration 088).
+export const AGENT_ALL_SCOPE_COPY =
+  'This agent sees every matter you can see, including ones you create later. Never a SecureSpace.';
 
 /** Best guess at the provider from the name the client registered under. */
 export function guessAgentProvider(clientName: string): AgentProvider {
@@ -113,6 +116,8 @@ export default function OAuthAuthorize() {
   const [agentName, setAgentName] = useState<string>(clientMeta?.client_name || '');
   const [agentProvider, setAgentProvider] = useState<AgentProvider>(() => guessAgentProvider(clientMeta?.client_name || ''));
   const [agentScope, setAgentScope] = useState<string[]>([]);
+  // 088: "All my matters (except SecureSpaces)". Off by default.
+  const [agentScopeAll, setAgentScopeAll] = useState(false);
   const [existingAgent, setExistingAgent] = useState<string | null>(null);
   const { data: serverspaces = [] } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
@@ -135,16 +140,15 @@ export default function OAuthAuthorize() {
           .eq('client_id_hash', hash).is('revoked_at', null).maybeSingle();
         const agentId = (g as Record<string, unknown> | null)?.agent_token_id;
         if (typeof agentId !== 'string') return;
-        const { data: a } = await supabase
-          .from('connector_tokens')
-          .select('id, name, agent_provider, matter_scope, revoked_at')
-          .eq('id', agentId).maybeSingle();
+        // Named columns (086), scope_all only where the database has it.
+        const a = await readAgentForConsent(agentId);
         if (cancelled || !a || a.revoked_at) return;
         setConnectAs('agent');
         setExistingAgent(a.name || clientName);
         if (a.name) setAgentName(a.name);
         if (a.agent_provider) setAgentProvider(a.agent_provider as AgentProvider);
         setAgentScope(Array.isArray(a.matter_scope) ? a.matter_scope : []);
+        setAgentScopeAll(a.scope_all === true);
       } catch {
         /* no prefill; the defaults stand */
       }
@@ -185,7 +189,9 @@ export default function OAuthAuthorize() {
                 agent: {
                   name: agentName.trim() || clientName,
                   provider: agentProvider,
-                  matter_scope: normalizeScope(allMatters, agentScope),
+                  matter_scope: agentScopeAll ? [] : normalizeScope(allMatters, agentScope),
+                  // Sent only when ticked, so the POST is byte-identical otherwise.
+                  ...(agentScopeAll ? { scope_all: true } : {}),
                 },
               }
             : { ...oauth, connect_as: 'assistant' },
@@ -399,13 +405,18 @@ export default function OAuthAuthorize() {
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-white/50 mb-1">Matters it may see</p>
-            <AgentMatterPicker value={agentScope} onChange={setAgentScope} />
+            <AgentMatterPicker
+              value={agentScope}
+              onChange={setAgentScope}
+              scopeAll={agentScopeAll}
+              onScopeAllChange={setAgentScopeAll}
+            />
             <p className="text-[11px] text-white/45 mt-1.5 leading-relaxed">
               A ticked matter includes its sub-matters. Tick nothing and the agent can see nothing
               until you grant a matter under Connections › Agents.
             </p>
           </div>
-          <p className="text-[12px] text-white/70 leading-relaxed">{AGENT_SCOPE_COPY}</p>
+          <p className="text-[12px] text-white/70 leading-relaxed">{agentScopeAll ? AGENT_ALL_SCOPE_COPY : AGENT_SCOPE_COPY}</p>
           <p className="text-[11px] text-white/45 leading-relaxed">
             It works a task board: you hand it tasks from a document, a list, a page or a calendar
             entry, and it posts its results back into the matter. It appears under Connections ›

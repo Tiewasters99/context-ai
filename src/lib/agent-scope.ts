@@ -68,6 +68,21 @@ export function scopeCoversMatter(
   return ancestorsInclusive(matters, matterId).some((id) => granted.has(id));
 }
 
+/**
+ * Whether an AGENT can see `matterId`, given its row: with scope_all
+ * (migration 088, "All my matters (except SecureSpaces)") every matter the
+ * user can see except a sealed one; otherwise its listed grant. Only a literal
+ * `true` counts as all, as on the server.
+ */
+export function agentCoversMatter(
+  matters: readonly ScopeMatter[],
+  agent: { matter_scope: readonly string[] | null | undefined; scope_all?: boolean | null },
+  matterId: string,
+): boolean {
+  if (agent.scope_all === true) return !isEffectivelySealed(matters, matterId);
+  return scopeCoversMatter(matters, agent.matter_scope, matterId);
+}
+
 /** Every matter the scope reaches, descendants included, seals excluded. */
 export function coveredMatterIds(
   matters: readonly ScopeMatter[],
