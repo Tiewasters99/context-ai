@@ -127,11 +127,21 @@ async function resolveDocIds(args) {
       .eq(col, args.matter)
       .maybeSingle();
     if (mErr || !m) throw new Error(`matter lookup: ${mErr?.message ?? 'not found'}`);
-    const { data: docs, error: dErr } = await supabase
-      .from('documents')
-      .select('id, source_filename')
-      .eq('matterspace_id', m.id);
-    if (dErr) throw new Error(`docs lookup: ${dErr.message}`);
+    // Paged: PostgREST returns at most 1,000 rows per request, so a single
+    // select silently dropped the rest (2026-09-25: patel-world has ~2,400
+    // documents and `--ext .eml` re-indexed only 575 of its 1,088 emails).
+    const docs = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: page, error: dErr } = await supabase
+        .from('documents')
+        .select('id, source_filename')
+        .eq('matterspace_id', m.id)
+        .order('id')
+        .range(from, from + 999);
+      if (dErr) throw new Error(`docs lookup: ${dErr.message}`);
+      docs.push(...(page ?? []));
+      if (!page || page.length < 1000) break;
+    }
     let picked = docs;
     if (args.ext) {
       const wanted = String(args.ext).split(',').map((e) => e.trim().toLowerCase())
