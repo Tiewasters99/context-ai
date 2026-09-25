@@ -716,6 +716,16 @@ jobs:
           node scripts/_verify-vault-document-search.mjs
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-vault-grouping.mjs
 
+      # "Paste an email" in the Thread tab: Gmail and Outlook forwards and
+      # copies, Apple Mail, Gmail's web view, wrapped recipients, the quoted
+      # history kept apart (or kept in, when asked), dates read with
+      # confidence or not at all, and UTF-8-read-as-Windows-1252 repaired
+      # without touching real accents. Plus the "Thread › title, author,
+      # date" cite. Pure modules; no DOM, no network.
+      - name: Thread — paste an email (parser, mojibake, the Thread cite)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-email-paste.mjs
+
       # Migration 091: matter conversations — named, private-or-shared,
       # searchable, and a pasted email. Executes 001…022 + 017 + 021 + 062 +
       # 042's activity_feed + 091 (twice) in PGlite with real RLS, as the
