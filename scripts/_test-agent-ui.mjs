@@ -30,6 +30,14 @@ import {
   isUserToken,
   readUserTokens,
 } from '../src/lib/agents-schema.ts';
+import {
+  AGENTS_PAGE_PATH,
+  CHAT_ASSISTANT_NOTE,
+  GROUP_LABEL,
+  buildRecipients,
+  recipientsForMatter,
+  taskRecipientRef,
+} from '../src/lib/task-recipients.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -145,12 +153,18 @@ test('an agent token is a connector token with kind agent, and never lights the 
   assert.doesNotMatch(t, /token_hash[^:]/, 'the browser never reads token_hash back');
 });
 
-test('the Delegate card lists only agents that can see the matter, and says so when none can', () => {
+test('the Delegate card lists every connection that can see the matter, grouped, and says so when none can', () => {
   const d = src('src/components/agents/DelegateCard.tsx');
-  assert.ok(d.includes("'No agent can see this matter — grant one under Connections → Agents.'"));
+  assert.ok(d.includes("'No connected AI can see this matter — connect one, or grant an agent, under Connections.'"));
   // The rendered sentence (with its link) must read the same as the constant.
-  assert.match(d, /No agent can see this matter — grant one under\{' '\}/);
-  assert.match(d, />\s*Connections → Agents\s*<\/Link>\s*\.\s*<\/p>/);
+  assert.match(d, /No connected AI can see this matter — connect one, or grant an agent, under\{' '\}/);
+  assert.match(d, />\s*Connections\s*<\/Link>\s*\.\s*<\/p>/);
+  assert.match(d, /useRecipientsForMatter\(matterId \|\| null\)/, 'agents AND assistants, per matter');
+  assert.match(d, /<optgroup label=\{GROUP_LABEL\.agents\}>/);
+  assert.match(d, /<optgroup label=\{GROUP_LABEL\.assistants\}>/);
+  assert.match(d, /chosen\.kind !== 'agent' && \(\s*<p[^>]*>\{CHAT_ASSISTANT_NOTE\}<\/p>/, 'the quiet note for a chat assistant');
+  assert.match(d, /\{OPEN_IN_AGENTS\}/, 'the card says where tasks live');
+  assert.match(d, /recipient: refOf\(chosen\)/);
   const hook = src('src/hooks/useAgentTokens.ts');
   // Only the caller's OWN live agents: connector_tokens RLS returns only
   // the caller's rows, and revoked or expired ones are dropped first.
@@ -284,13 +298,15 @@ test('every user-token read goes through readUserTokens, and none filters on kin
 // 7. Ownership (085: only the agent token's owner may create or update a task)
 // ---------------------------------------------------------------------------
 
-test('a task on someone else\'s agent is read-only, and says whose agent it is', () => {
+test('a task on someone else\'s connection is read-only, and says whose it is', () => {
   const t = src('src/components/agents/MatterTasks.tsx');
-  assert.match(t, /mine=\{byToken\.has\(t\.assigned_token_id\)\}/);
-  assert.match(t, /This task is assigned to \{ownerName\}'s agent\. Only \{ownerName\} can answer, cancel or/);
+  assert.match(t, /mine=\{byKey\.has\(taskKey\(t\) \?\? ''\)\}/, 'mine = the recipient is one of the caller\'s own connections');
+  assert.match(t, /This task is assigned to \{ownerName\}'s connected AI\. Only \{ownerName\} can answer, cancel or/);
   assert.match(t, /\{mine && \(<>\s*<textarea/, 'the Answer box is only for the owner');
   assert.match(t, /\{live && mine && \(/, 'Cancel and Reassign are only for the owner');
-  assert.match(t, /reassignable=\{eligible\}/, 'reassign lists only the caller\'s own live agents');
+  assert.match(t, /const reassignable = useMemo\(\(\) => \[\.\.\.agents, \.\.\.assistants\], \[agents, assistants\]\)/,
+    'reassign offers the same list as the Delegate card');
+  assert.match(t, /\{OPEN_IN_AGENTS\}/, 'the tab says where every task lives');
 });
 
 test('the limits 085 enforces are enforced before the request', () => {
@@ -390,4 +406,108 @@ test('scope_all never breaks a database without 088, and never widens a write', 
   assert.match(t, /if \(all \|\| opts\.wasAll === true\) patch\.scope_all = all;/);
   assert.match(t, /matter_scope: all \? \[\] : scope/);
   assert.doesNotMatch(t, /select\('\*'\)[\s\S]{0,40}connector_tokens|from\('connector_tokens'\)\s*\.select\('\*'/);
+});
+
+// ---------------------------------------------------------------------------
+// 11. Any connected AI takes a task, and the Agents page (migration 089)
+// ---------------------------------------------------------------------------
+
+const CONNECTIONS = {
+  agents: [
+    { id: 'ag-a', name: 'Grok bot', agent_provider: 'grok', matter_scope: ['A'], scope_all: false, last_used_at: null, revoked_at: null },
+    { id: 'ag-all', name: '', agent_provider: 'claude', matter_scope: [], scope_all: true, last_used_at: null, revoked_at: null },
+    { id: 'ag-gone', name: 'Old bot', agent_provider: 'other', matter_scope: ['A'], last_used_at: null, revoked_at: '2026-09-01' },
+    { id: 'ag-linked', name: 'Grok (sign-in)', token_prefix: 'oauth', agent_provider: 'grok', matter_scope: ['B'], last_used_at: null, revoked_at: null },
+  ],
+  userTokens: [
+    { id: 'tok-1', name: 'Claude Desktop', last_used_at: '2026-09-20', revoked_at: null },
+    { id: 'tok-x', name: 'Expired CLI', last_used_at: null, revoked_at: null, expires_at: '2020-01-01' },
+  ],
+  grants: [
+    { id: 'gr-1', client_name: 'ChatGPT', last_used_at: null, revoked_at: null, agent_token_id: null },
+    { id: 'gr-link', client_name: 'Grok', last_used_at: null, revoked_at: null, agent_token_id: 'ag-linked' },
+    { id: 'gr-gone', client_name: 'Claude', last_used_at: null, revoked_at: '2026-09-02', agent_token_id: null },
+  ],
+};
+
+test('every connection is a recipient: agents, full-access tokens and full-assistant sign-ins', () => {
+  const all = buildRecipients(CONNECTIONS);
+  const byKey = new Map(all.map((r) => [r.key, r]));
+  // All three kinds, each keyed the way a task's columns name it.
+  assert.equal(byKey.get('token:ag-a').kind, 'agent');
+  assert.equal(byKey.get('token:tok-1').kind, 'token');
+  assert.equal(byKey.get('grant:gr-1').kind, 'grant');
+  assert.equal(byKey.get('grant:gr-1').provider, 'ChatGPT');
+  assert.equal(byKey.get('token:tok-1').provider, 'Claude');
+  assert.equal(byKey.get('token:ag-all').name, 'Claude agent', 'an unnamed agent is named for its provider');
+  assert.equal(byKey.get('token:ag-linked').how, 'Agent (sign-in)');
+  // An agent-linked sign-in IS its agent: it is not a second recipient.
+  assert.equal(byKey.has('grant:gr-link'), false);
+  // Revoked and expired ones stay (an old task names them) but are not live.
+  assert.equal(byKey.get('token:ag-gone').live, false);
+  assert.equal(byKey.get('token:tok-x').live, false);
+  assert.equal(byKey.get('grant:gr-gone').live, false);
+  assert.deepEqual(all.filter((r) => r.group === 'assistants').map((r) => r.key).sort(),
+    ['grant:gr-1', 'grant:gr-gone', 'token:tok-1', 'token:tok-x']);
+  assert.equal(GROUP_LABEL.agents, 'Agents');
+  assert.equal(GROUP_LABEL.assistants, 'Assistants you chat with');
+  assert.equal(CHAT_ASSISTANT_NOTE, 'Waits until you ask it to check its tasks.');
+});
+
+test('the recipient list for a matter includes chat assistants; a sealed matter has nobody', () => {
+  const all = buildRecipients(CONNECTIONS);
+  const inA = recipientsForMatter(M, all, 'A1');
+  assert.deepEqual(inA.agents.map((r) => r.id).sort(), ['ag-a', 'ag-all'], 'agents whose scope covers it (incl. scope_all)');
+  assert.deepEqual(inA.assistants.map((r) => r.key).sort(), ['grant:gr-1', 'token:tok-1'], 'live assistants only');
+  const inB = recipientsForMatter(M, all, 'B1');
+  assert.deepEqual(inB.agents.map((r) => r.id).sort(), ['ag-all', 'ag-linked']);
+  assert.equal(inB.assistants.length, 2, 'an assistant sees every unsealed matter');
+  for (const sealed of ['A2', 'A2x', 'S', 'S1']) {
+    const r = recipientsForMatter(M, all, sealed);
+    assert.equal(r.sealed, true, sealed);
+    assert.equal(r.agents.length + r.assistants.length, 0, `${sealed}: the seal hides it from every connector`);
+  }
+  assert.deepEqual(taskRecipientRef({ assigned_token_id: null, assigned_grant_id: 'g' }), { kind: 'grant', id: 'g' });
+  assert.deepEqual(taskRecipientRef({ assigned_token_id: 't' }), { kind: 'token', id: 't' }, 'a pre-089 row has no grant column');
+});
+
+test('the browser writes the right recipient column, and survives a database without 089', () => {
+  const lib = src('src/lib/agentTasks.ts');
+  assert.match(lib, /if \(to\.kind === 'grant'\) return \{ assigned_token_id: null, assigned_grant_id: to\.id \};/);
+  assert.match(lib, /return clearGrant \? \{ assigned_token_id: to\.id, assigned_grant_id: null \} : \{ assigned_token_id: to\.id \};/,
+    'a token write names the grant column only when it has to clear it');
+  assert.match(lib, /read089\(build, TASK_COLUMNS, 'assigned_grant_id'\)/, 'task reads retry without the 089 column');
+  assert.match(lib, /read089\(build, EVENT_COLUMNS, 'actor_grant_id'\)/, 'event reads too');
+  assert.ok(lib.includes("'Handing tasks to an assistant you chat with needs a database update (migration 089). Agents work now.'"));
+  const hook = src('src/hooks/useTaskRecipients.ts');
+  assert.match(hook, /readUserTokens<UserTokenRow>\(/, 'user tokens through readUserTokens (never select *, never token_hash)');
+  assert.match(hook, /from\('oauth_grants'\)\s*\.select\('\*'\)/, 'grants with * so a database without 087 still reads');
+});
+
+test('the Agents page is the front door: every connection, all tasks, New task', () => {
+  assert.equal(AGENTS_PAGE_PATH, '/app/agent-tasks');
+  const p = src('src/pages/AgentTasks.tsx');
+  assert.match(p, /const \{ all, byKey, loading, notReady, error: recipientsError \} = useTaskRecipients\(\);/,
+    'it lists every connection (agents, tokens, grants)');
+  assert.match(p, /const groups: RecipientGroup\[\] = \['agents', 'assistants'\];/);
+  assert.match(p, /\{GROUP_LABEL\[g\]\}/);
+  assert.match(p, /listTasks\(\{ all: true \}, \{ limit: 500 \}\)/, 'all tasks, across every matter');
+  assert.match(p, /section\('Waiting for you', waiting,/);
+  assert.match(p, /section\('Open', open,/);
+  assert.match(p, /'Recently done'/);
+  assert.match(p, /<DelegateCard\s+matterId=\{null\}\s+attachment=\{null\}\s+defaultTitle=""\s+pickMatter\s+recipientKey=\{selectedKey\}/,
+    'New task: one card, matter chosen there, recipient preselected');
+  assert.match(p, /r\.kind === 'agent' \? \(/, 'Edit matters / Revoke for an agent');
+  assert.match(p, /<Link to="\/app\/connections"/, 'Connections for the others');
+  assert.match(src('src/components/agents/MatterSelect.tsx'), /disabled=\{sealed\}/, 'a SecureSpace cannot be chosen');
+  // Registered as its own core surface; the frozen charters surface is untouched.
+  const surfaces = src('lib/surfaces.mjs');
+  assert.match(surfaces, /agentTasks: \{\s*tier: 'core',\s*paths: \['\/app\/agent-tasks'\]/);
+  assert.match(surfaces, /agents: \{\s*tier: 'frozen',\s*paths: \['\/app\/agents'\]/);
+  assert.match(src('src/App.tsx'), /<Route path="agent-tasks" element=\{<AgentTasks \/>\} \/>/);
+  assert.match(src('src/components/layout/Sidebar.tsx'), /to="\/app\/agent-tasks"[\s\S]{0,600}<span>Agents<\/span>/);
+  assert.match(src('src/components/layout/MainLayout.tsx'), /<NavLink to="\/app\/agent-tasks"/, 'on the phone tab bar too');
+  const dash = src('src/pages/Dashboard.tsx');
+  assert.match(dash, /\{ label: 'Agents', icon: Bot, action: 'agents', surface: 'agentTasks' \}/);
+  assert.match(dash, /navigate\('\/app\/agent-tasks'\)/);
 });

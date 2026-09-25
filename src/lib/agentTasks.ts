@@ -1,8 +1,9 @@
 // The agents task board, human side (spec B5).
 //
-// A task is work Eden hands to an outside agent (a Grok Bot, a ChatGPT GPT,
-// any MCP client holding an agent token). The agent polls for it over MCP;
-// nothing here calls the agent. These helpers are the browser's half: create,
+// A task is work Eden hands to a connected AI: an agent (a Grok Bot, any MCP
+// client holding an agent token) or, since migration 089, an assistant he
+// chats with (a full-access token, or Claude / ChatGPT / Grok signed in as a
+// full assistant). The AI picks it up over MCP; nothing here calls it. These helpers are the browser's half: create,
 // list, answer, cancel, reassign, and read the log. RLS on agent_tasks and
 // agent_task_events (migration 085) decides what a user may touch, so every
 // call goes straight through supabase-js as the signed-in user.
@@ -75,7 +76,10 @@ export interface AgentTask {
   id: string;
   matterspace_id: string;
   created_by: string;
-  assigned_token_id: string;
+  /** An agent or full-access token (085). Null when the task is for a grant. */
+  assigned_token_id: string | null;
+  /** 089: a full-assistant OAuth sign-in. Null (or absent before 089) otherwise. */
+  assigned_grant_id: string | null;
   title: string;
   instructions: string;
   attachments: TaskRef[];
@@ -102,6 +106,8 @@ export interface AgentTaskEvent {
   actor_kind: 'human' | 'agent';
   actor_user: string | null;
   actor_token_id: string | null;
+  /** 089: the OAuth assistant that wrote the entry. */
+  actor_grant_id: string | null;
   kind: TaskEventKind;
   body: string | null;
 }
@@ -111,6 +117,26 @@ const TASK_COLUMNS =
   + 'status, question, answer, result, result_refs, claimed_at, completed_at, created_at, updated_at';
 
 const EVENT_COLUMNS = 'id, task_id, at, actor_kind, actor_user, actor_token_id, kind, body';
+
+/**
+ * A read that named a column 089 adds and failed because it is not there
+ * yet (42703 from Postgres, PGRST204 from PostgREST). Retried without it:
+ * before 089 no task can have a grant, so leaving it out is the truth.
+ */
+function isMissing089Column(err: { code?: string; message?: string } | null | undefined): boolean {
+  if (!err) return false;
+  return err.code === '42703' || err.code === 'PGRST204'
+    || /assigned_grant_id|actor_grant_id/.test(err.message ?? '');
+}
+
+type Read = PromiseLike<{ data: unknown; error: { code?: string; message?: string } | null }>;
+
+/** Run `build(columns)` with the 089 column, then without it if it is missing. */
+async function read089(build: (cols: string) => Read, base: string, extra: string) {
+  let r = await build(`${base}, ${extra}`);
+  if (r.error && isMissing089Column(r.error)) r = await build(base);
+  return r;
+}
 
 async function currentUserId(): Promise<string> {
   const { data: { session } } = await supabase.auth.getSession();
@@ -123,6 +149,8 @@ function normalizeTask(row: Record<string, unknown>): AgentTask {
   const t = row as unknown as AgentTask;
   return {
     ...t,
+    assigned_token_id: t.assigned_token_id ?? null,
+    assigned_grant_id: t.assigned_grant_id ?? null,
     attachments: Array.isArray(t.attachments) ? t.attachments : [],
     result_refs: Array.isArray(t.result_refs) ? t.result_refs : [],
   };
@@ -150,22 +178,32 @@ async function logHumanEvent(
 
 // ── reads ────────────────────────────────────────────────────────────
 
-export type TaskFilter = { matterId: string } | { tokenId: string };
+/**
+ * matterId: one matter's tasks (the matter's Tasks tab). tokenId / grantId:
+ * one connection's tasks. all: every task this account can read, across
+ * every matter (the Agents page), which it narrows to its own connections.
+ */
+export type TaskFilter = { matterId: string } | { tokenId: string } | { grantId: string } | { all: true };
 
 /** Newest first. `statuses` narrows; omitted means every status. */
 export async function listTasks(
   filter: TaskFilter,
   opts: { statuses?: AgentTaskStatus[]; limit?: number } = {},
 ): Promise<AgentTask[]> {
-  let q = supabase.from('agent_tasks').select(TASK_COLUMNS);
-  q = 'matterId' in filter
-    ? q.eq('matterspace_id', filter.matterId)
-    : q.eq('assigned_token_id', filter.tokenId);
-  if (opts.statuses?.length) q = q.in('status', opts.statuses);
-  const { data, error } = await q
-    .order('created_at', { ascending: false })
-    .limit(opts.limit ?? 200);
-  if (error) raise(error, 'Could not read the tasks.');
+  const build = (cols: string) => {
+    let q = supabase.from('agent_tasks').select(cols);
+    if ('matterId' in filter) q = q.eq('matterspace_id', filter.matterId);
+    else if ('tokenId' in filter) q = q.eq('assigned_token_id', filter.tokenId);
+    else if ('grantId' in filter) q = q.eq('assigned_grant_id', filter.grantId);
+    if (opts.statuses?.length) q = q.in('status', opts.statuses);
+    return q.order('created_at', { ascending: false }).limit(opts.limit ?? 200);
+  };
+  const { data, error } = await read089(build, TASK_COLUMNS, 'assigned_grant_id');
+  if (error) {
+    // Before 089 a grant has no tasks; the filter column is what is missing.
+    if ('grantId' in filter && isMissing089Column(error)) return [];
+    raise(error, 'Could not read the tasks.');
+  }
   return ((data ?? []) as unknown as Record<string, unknown>[]).map(normalizeTask);
 }
 
@@ -180,7 +218,8 @@ export async function countLiveTasksByToken(tokenIds: string[]): Promise<Map<str
     .in('status', LIVE_STATUSES)
     .limit(5000);
   if (error) raise(error, 'Could not count the tasks.');
-  for (const r of (data ?? []) as { assigned_token_id: string }[]) {
+  for (const r of (data ?? []) as { assigned_token_id: string | null }[]) {
+    if (!r.assigned_token_id) continue;
     out.set(r.assigned_token_id, (out.get(r.assigned_token_id) ?? 0) + 1);
   }
   return out;
@@ -188,14 +227,15 @@ export async function countLiveTasksByToken(tokenIds: string[]): Promise<Map<str
 
 /** The task's log, oldest first. */
 export async function listEvents(taskId: string): Promise<AgentTaskEvent[]> {
-  const { data, error } = await supabase
+  const build = (cols: string) => supabase
     .from('agent_task_events')
-    .select(EVENT_COLUMNS)
+    .select(cols)
     .eq('task_id', taskId)
     .order('at', { ascending: true })
     .limit(500);
+  const { data, error } = await read089(build, EVENT_COLUMNS, 'actor_grant_id');
   if (error) raise(error, 'Could not read the task log.');
-  return (data ?? []) as AgentTaskEvent[];
+  return ((data ?? []) as unknown as AgentTaskEvent[]).map((e) => ({ ...e, actor_grant_id: e.actor_grant_id ?? null }));
 }
 
 // ── writes (each one logged) ─────────────────────────────────────────
@@ -206,9 +246,23 @@ export async function listEvents(taskId: string): Promise<AgentTaskEvent[]> {
 const STALE_MESSAGE =
   'This task changed since the page was loaded, so nothing was saved. Reopen it to see where it stands.';
 
+/** Who a task goes to: a token (agent or full access), or an OAuth grant (089). */
+export interface TaskRecipientRef {
+  kind: 'token' | 'grant';
+  id: string;
+}
+
+/** The two recipient columns for a write. The grant column is named only when it matters (it is 089's). */
+function recipientColumns(to: TaskRecipientRef, clearGrant: boolean): Record<string, string | null> {
+  if (to.kind === 'grant') return { assigned_token_id: null, assigned_grant_id: to.id };
+  return clearGrant ? { assigned_token_id: to.id, assigned_grant_id: null } : { assigned_token_id: to.id };
+}
+
 export interface NewTask {
   matterId: string;
-  tokenId: string;
+  recipient: TaskRecipientRef;
+  /** A full-access token or OAuth assistant rather than an agent (for the pre-089 message). */
+  chatAssistant?: boolean;
   title: string;
   instructions?: string;
   attachments?: TaskRef[];
@@ -231,16 +285,26 @@ export async function createTask(input: NewTask): Promise<string> {
     id,
     matterspace_id: input.matterId,
     created_by: userId,
-    assigned_token_id: input.tokenId,
+    ...recipientColumns(input.recipient, false),
     title,
     instructions,
     attachments: input.attachments ?? [],
     due_at: input.dueAt ?? null,
   });
-  if (error) raise(error, 'Could not create the task.');
+  if (error) {
+    // Before 089: a grant column that is not there, or 085's policy refusing
+    // a task for anything but an agent. Say which update is missing.
+    if (input.chatAssistant && (isMissing089Column(error) || error.code === '42501')) {
+      throw new Error(ASSISTANT_TASKS_NOT_READY);
+    }
+    raise(error, 'Could not create the task.');
+  }
   await logHumanEvent(id, userId, 'created', title);
   return id;
 }
+
+export const ASSISTANT_TASKS_NOT_READY =
+  'Handing tasks to an assistant you chat with needs a database update (migration 089). Agents work now.';
 
 /** Answers the agent's question; the task goes back to the agent (claimed). */
 export async function answerQuestion(taskId: string, answer: string): Promise<void> {
@@ -273,20 +337,22 @@ export async function cancelTask(taskId: string, reason?: string): Promise<void>
 }
 
 /**
- * Hands an unfinished task to a different agent. It goes back to 'open' so
- * the new agent claims it afresh; any question the old agent asked is kept
- * in the log but cleared from the task.
+ * Hands an unfinished task to a different connection. It goes back to
+ * 'open' so the new one claims it afresh; any question the old one asked is
+ * kept in the log but cleared from the task. `fromGrant`: the task is on an
+ * OAuth grant now, so the grant column must be cleared.
  */
 export async function reassignTask(
   taskId: string,
-  tokenId: string,
-  agentLabel?: string,
+  to: TaskRecipientRef,
+  opts: { label?: string; fromGrant?: boolean; chatAssistant?: boolean } = {},
 ): Promise<void> {
+  const agentLabel = opts.label;
   const userId = await currentUserId();
   const { error, count } = await supabase
     .from('agent_tasks')
     .update({
-      assigned_token_id: tokenId,
+      ...recipientColumns(to, opts.fromGrant === true),
       status: 'open',
       claimed_at: null,
       question: null,
@@ -295,7 +361,12 @@ export async function reassignTask(
     }, { count: 'exact' })
     .eq('id', taskId)
     .in('status', LIVE_STATUSES);
-  if (error) raise(error, 'Could not reassign the task.');
+  if (error) {
+    if (opts.chatAssistant && (isMissing089Column(error) || error.code === '42501')) {
+      throw new Error(ASSISTANT_TASKS_NOT_READY);
+    }
+    raise(error, 'Could not reassign the task.');
+  }
   if (count === 0) throw new Error(STALE_MESSAGE);
   await logHumanEvent(taskId, userId, 'reassigned', agentLabel ? `Reassigned to ${agentLabel}.` : null);
 }

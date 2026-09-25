@@ -22,12 +22,13 @@ import { useFirstRun } from '@/hooks/useFirstRun';
 // action cannot reach a free account without someone deciding it should.
 //
 // Agents (Eden, 2026-09-23: "add a tab for agents" on the welcome card) goes
-// through the same filter. Its surface is frozen in lib/surfaces.mjs, so
-// today only the workshop plan sees the entry; promoting the tier there is
-// what shows it to everyone, and nothing here needs to change when it does.
+// through the same filter. Since 2026-09-25 it opens the Agents page
+// (surface 'agentTasks', core): every connected AI and every task handed to
+// one. The frozen 'agents' surface — the agent-charters workshop at
+// /app/agents — is not this entry any more.
 const quickActions: { label: string; icon: typeof Plus; action: 'new-serverspace' | 'agents'; surface: SurfaceId }[] = [
   { label: 'Create Serverspace', icon: Plus, action: 'new-serverspace', surface: 'serverspaces' },
-  { label: 'Agents', icon: Bot, action: 'agents', surface: 'agents' },
+  { label: 'Agents', icon: Bot, action: 'agents', surface: 'agentTasks' },
 ];
 
 // The welcome page's cover is the account default (DEFAULT_DASHBOARD_COVER
@@ -311,7 +312,7 @@ export default function Dashboard() {
                 key={a.label}
                 onClick={() => {
                   if (a.action === 'new-serverspace') setShowNewServerspace(true);
-                  else navigate('/app/agents');
+                  else navigate('/app/agent-tasks');
                 }}
                 className="flex items-center gap-3 px-4 py-3.5 rounded-lg border border-[rgba(255,255,255,0.14)] hover:border-[rgba(255,255,255,0.22)] transition-all text-left group bg-[rgba(10,10,16,0.72)] backdrop-blur-[20px]"
               >

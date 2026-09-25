@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Outlet, useNavigate, useLocation, NavLink } from 'react-router-dom';
-import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot } from 'lucide-react';
+import { ArrowLeft, Menu, Home, DoorOpen, Plug, Bot, ListChecks } from 'lucide-react';
 import Sidebar from './Sidebar';
 import Assistant from '@/components/ai/Assistant';
 import CanvasLayer from '@/components/canvas/CanvasLayer';
@@ -171,6 +171,10 @@ function MobileTabBar({
       <NavLink to="/app/vault" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
         <DoorOpen size={19} strokeWidth={1.75} />
         <span>Vault</span>
+      </NavLink>
+      <NavLink to="/app/agent-tasks" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
+        <ListChecks size={19} strokeWidth={1.75} />
+        <span>Agents</span>
       </NavLink>
       <NavLink to="/app/connections" className={({ isActive }) => `${tab} ${isActive ? active : idle}`}>
         <Plug size={19} strokeWidth={1.75} />

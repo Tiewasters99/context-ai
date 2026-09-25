@@ -24,7 +24,7 @@ export default function DelegateButton({
 }) {
   const [open, setOpen] = useState(false);
   const disabled = !matterId;
-  const title = disabled ? NO_MATTER_TITLE : 'Delegate… — hand this to an agent that can see this matter';
+  const title = disabled ? NO_MATTER_TITLE : 'Delegate… — hand this to a connected AI that can see this matter';
 
   const button =
     variant === 'toolbar' ? (

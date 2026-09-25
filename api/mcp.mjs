@@ -89,7 +89,8 @@ class AuthError extends Error {
 }
 
 // Returns the caller's identity:
-//   { userId, kind: 'user' | 'agent', tokenId?, matterScope?, provider?, name? }
+//   { userId, kind: 'user' | 'agent', tokenId?, grantId?, matterScope?, provider?, name? }
+// grantId (089) is set for a full-assistant OAuth sign-in: its oauth_grants row.
 // Path A can answer kind 'agent' (migration 085). Paths B and C answer
 // 'user' for a person's own full-access OAuth connection, and — since
 // migration 087 — 'agent' for an OAuth connection made "as an agent" on the
@@ -212,7 +213,10 @@ async function oauthIdentity(payload, via) {
   const agentTokenId = grant.agentTokenId || null;
   if (!agentTokenId) {
     console.log('[mcp auth] %s ok: sub=%s grant=%s', via, payload.sub, grant.reason);
-    return { userId: payload.sub, kind: 'user' };
+    // 089: the grant id is this full assistant's task-board identity (and its
+    // meter attribution, oauth:<grant id>). Absent on a token with no gid.
+    const grantId = typeof grant.gid === 'string' && grant.gid ? grant.gid : null;
+    return grantId ? { userId: payload.sub, kind: 'user', grantId } : { userId: payload.sub, kind: 'user' };
   }
   const { row, error } = await readAgentTokenRow(agentTokenId);
   if (error) {
@@ -233,8 +237,10 @@ async function oauthIdentity(payload, via) {
 // -----------------------------------------------------------------------------
 // callTool options, per caller
 // -----------------------------------------------------------------------------
-// A user token (and every OAuth connection) gets exactly the options it
-// always got. An agent token (migration 085) adds two things:
+// A user token (and every OAuth connection) gets the options it always got,
+// plus — since 089 — `taskRecipient`, the token or grant a task can be
+// assigned to, so the task-board tools answer to it. An agent token
+// (migration 085) adds two things:
 //   agentToken — { id, userId, matterScope }: lib/mcp-core.mjs confines every
 //                tool to those matters and their sub-matters (never a sealed
 //                one), and the task-board tools answer to it;
@@ -248,7 +254,17 @@ export function callToolOptsFor(identity, keys = {}) {
     // matters (tier B/C, inherited down the tree) are invisible here.
     sealConnector: true,
   };
-  if (identity?.kind !== 'agent') return opts;
+  if (identity?.kind !== 'agent') {
+    // 089: any connection can be handed a task. A full-access token (path A)
+    // is its token; a full-assistant OAuth sign-in is its grant. Neither (a
+    // pre-065 token) → no task identity, and the task tools say "no tasks".
+    if (typeof identity?.tokenId === 'string' && identity.tokenId) {
+      opts.taskRecipient = { kind: 'token', id: identity.tokenId, userId: identity.userId ?? null };
+    } else if (typeof identity?.grantId === 'string' && identity.grantId) {
+      opts.taskRecipient = { kind: 'grant', id: identity.grantId, userId: identity.userId ?? null };
+    }
+    return opts;
+  }
   return {
     ...opts,
     agentToken: {
@@ -275,6 +291,13 @@ const AGENT_INSTRUCTIONS =
   'get_passage, get_media, file_document …) inside that task\'s matter. If you are ' +
   'blocked, call ask_human with one clear question and poll my_tasks until the ' +
   'answer appears. Finish with post_result (status "failed" if you could not do it).';
+
+// 089: a chat assistant (Claude, ChatGPT, Gemini, Grok …) can be handed tasks
+// too. It never polls; it acts when its user asks.
+export const ASSISTANT_TASKS_INSTRUCTIONS =
+  ' TASKS: when the user asks you to check their Contextspaces tasks, call ' +
+  'my_tasks, claim_task the one to do, do the work with the normal tools inside ' +
+  'that task\'s matter, call ask_human if you are blocked, and finish with post_result.';
 
 // An agent given "All my matters (except SecureSpaces)" (migration 088).
 const AGENT_ALL_INSTRUCTIONS = AGENT_INSTRUCTIONS.replace(
@@ -330,7 +353,7 @@ export default async function handler(req, res) {
   try {
     const identity = await authenticate(req);
     const sb = userScopedClient(identity.userId);
-    const agentNote = identity.kind !== 'agent' ? ''
+    const agentNote = identity.kind !== 'agent' ? ASSISTANT_TASKS_INSTRUCTIONS
       : identity.scopeAll === true ? AGENT_ALL_INSTRUCTIONS : AGENT_INSTRUCTIONS;
 
     const server = new Server(

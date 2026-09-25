@@ -53,7 +53,7 @@ for (const k of [
   'AWS_SESSION_TOKEN', 'AWS_REGION', 'SAGEMAKER_VOYAGE_ENDPOINT', 'MCP_OAUTH_SECRET',
 ]) delete process.env[k];
 
-const { callTool, TOOLS, AGENT_TOOLS_ONLY_MESSAGE } = await import('../lib/mcp-core.mjs');
+const { callTool, TOOLS, NO_TASKS_MESSAGE } = await import('../lib/mcp-core.mjs');
 const { ROUTES } = await import('../lib/embed-routes.mjs');
 const { connectorTokenIdentity, authenticateConnectorToken } = await import('../lib/connector-token-auth.mjs');
 const { authenticate, callToolOptsFor } = await import('../api/mcp.mjs');
@@ -602,9 +602,14 @@ reset();
   check(taskQueries.length === 0, 'user token: no task table was touched by any of that');
 }
 reset();
+// USER_OPTS names no token and no grant (a caller with no task identity, like
+// a pre-065 OAuth token): since 089 the task tools say it has no tasks.
 for (const tool of ['my_tasks', 'claim_task', 'ask_human', 'post_result']) {
   const r = await call(tool, { task_id: T_OPEN, question: 'q', result: 'r' }, USER_OPTS);
-  check(r.ok && r.out?.error === AGENT_TOOLS_ONLY_MESSAGE, `user token: ${tool} answers the one-line pointer`);
+  const ok = tool === 'my_tasks'
+    ? r.ok && r.out?.note === NO_TASKS_MESSAGE && r.out?.tasks?.length === 0
+    : r.ok && typeof r.out?.error === 'string' && r.out.error.startsWith(NO_TASKS_MESSAGE);
+  check(ok, `no task identity: ${tool} answers "${NO_TASKS_MESSAGE}"`, JSON.stringify(r.out ?? r.err?.message).slice(0, 120));
 }
 check(taskQueries.length === 0, 'and read no task');
 check(db.agent_tasks.find((t) => t.id === T_OPEN).status === 'open', 'and changed nothing');
@@ -829,9 +834,11 @@ section('OAUTH — a sign-in connected as an agent (migration 087)');
     'my_tasks works over OAuth: this agent sees its own tasks', `${mt.out?.tasks?.length ?? mt.out?.error}`);
 
   const plain = await tryAuth(authenticate, cspa({ gid: G_USER }));
-  check(plain.kind === 'user' && plain.userId === USER && !plain.tokenId, 'an unlinked grant is unchanged: the user, full access');
+  check(plain.kind === 'user' && plain.userId === USER && !plain.tokenId && plain.grantId === G_USER,
+    'an unlinked grant is the user, full access — now carrying its grant id (089)');
   const plainTasks = await call('my_tasks', {}, callToolOptsFor(plain, {}));
-  check(plainTasks.out?.error === AGENT_TOOLS_ONLY_MESSAGE, 'and my_tasks still tells it these tools are for agents');
+  check(plainTasks.ok && plainTasks.out?.tasks?.length === 0 && plainTasks.out?.note === NO_TASKS_MESSAGE,
+    'and my_tasks answers for that grant: none assigned yet', JSON.stringify(plainTasks.out ?? plainTasks.err?.message).slice(0, 120));
 
   _resetGrantCache();
   grantRows.set(G_AGENT, { owner_id: USER, revoked: true, client_name: 'Grok', agent_token_id: AG_A });
@@ -1002,8 +1009,12 @@ section('ALL MATTERS — an agent with scope_all (migration 088)');
   const userIdentity = connectorTokenIdentity({ id: id(700), user_id: USER, kind: 'user', scope_all: true });
   check(userIdentity.kind === 'user' && !('scopeAll' in userIdentity), 'a USER row is untouched by scope_all (identity shape unchanged)');
   const u = await tryAuth(authenticate, TOK_USER);
-  check(JSON.stringify(callToolOptsFor(u, { openaiApiKey: 'k' })) === JSON.stringify({ openaiApiKey: 'k', googleApiKey: undefined, sealConnector: true }),
-    'a user token\'s callTool options are exactly what they were');
+  // 089 changes this on purpose: a user token is now a task recipient, and
+  // that is the ONLY new key.
+  check(JSON.stringify(callToolOptsFor(u, { openaiApiKey: 'k' })) === JSON.stringify({
+    openaiApiKey: 'k', googleApiKey: undefined, sealConnector: true,
+    taskRecipient: { kind: 'token', id: id(700), userId: USER },
+  }), 'a user token\'s callTool options are what they were, plus taskRecipient (089)');
   const listedId = await tryAuth(authenticate, TOK_AGENT);
   check(listedId.kind === 'agent' && listedId.scopeAll === false && JSON.stringify(listedId.matterScope) === JSON.stringify([A]),
     'a listed agent is unchanged (scopeAll false, its list)');
@@ -1044,9 +1055,106 @@ section('ALL MATTERS — an agent with scope_all (migration 088)');
   delete process.env.MCP_OAUTH_SECRET;
 }
 
+// ===========================================================================
+section('ANY RECIPIENT (089) — a user token and a full-assistant OAuth sign-in');
+// ===========================================================================
+{
+  const { actorRef } = await import('../lib/connector-meter.mjs');
+  const U_TOKEN = id(700);            // TOK_USER's row
+  const G_FULL = id(810);             // Ada's ChatGPT, signed in as a full assistant
+  const G_ELSE = id(811);             // another grant (another assistant)
+  const T_U1 = id(620);               // user token, matter A
+  const T_U_SEALED = id(621);         // user token, the sealed child
+  const T_G1 = id(622);               // grant, matter B (no agent grant covers B)
+  const T_G_SEALED = id(623);         // grant, the sealed child
+  const T_G_ELSE = id(624);           // the other grant, matter A
+  const gtask = (tid, matter, grant, extra = {}) => task(tid, matter, null, { assigned_grant_id: grant, ...extra });
+  db.agent_tasks.push(
+    task(T_U1, A, U_TOKEN, { title: 'USER-TOKEN-TASK' }),
+    task(T_U_SEALED, A_SEALED, U_TOKEN, { title: 'SEALED-USER-TASK' }),
+    gtask(T_G1, B, G_FULL, { title: 'GRANT-TASK', attachments: [{ kind: 'document', id: DOC[B], label: 'Brannock memo' }] }),
+    gtask(T_G_SEALED, A_SEALED, G_FULL, { title: 'SEALED-GRANT-TASK' }),
+    gtask(T_G_ELSE, A, G_ELSE, { title: 'OTHER-GRANT-TASK' }),
+  );
+
+  const u = await tryAuth(authenticate, TOK_USER);
+  const uOpts = callToolOptsFor(u, { openaiApiKey: 'sk-test' });
+  const gIdentity = { userId: USER, kind: 'user', grantId: G_FULL };
+  const gOpts = callToolOptsFor(gIdentity, { openaiApiKey: 'sk-test' });
+  check(uOpts.taskRecipient?.kind === 'token' && uOpts.taskRecipient.id === U_TOKEN && !('agentToken' in uOpts),
+    'a user token is a task recipient (its token id), not an agent');
+  check(gOpts.taskRecipient?.kind === 'grant' && gOpts.taskRecipient.id === G_FULL && !('agentToken' in gOpts) && gOpts.sealConnector === true,
+    'a full-assistant grant is a task recipient (its grant id), sealed like every connector');
+  check(actorRef(u) === `token:${U_TOKEN}` && actorRef(gIdentity) === `oauth:${G_FULL}`,
+    'meter attribution: token:<id> for the token, oauth:<grant id> for the sign-in');
+
+  // --- the user token ------------------------------------------------------
+  reset();
+  const um = await call('my_tasks', { status: 'all' }, uOpts);
+  const uIds = (um.out?.tasks ?? []).map((t) => t.task_id);
+  check(um.ok && uIds.length === 1 && uIds[0] === T_U1,
+    'user token: my_tasks lists only its own task — not the agent\'s, not the grant\'s, not the sealed one', uIds.join(','));
+  check(!JSON.stringify(um.out).includes('SEALED-USER-TASK'), 'user token: the sealed task\'s title never appears');
+  const uc = await call('claim_task', { task_id: T_U1 }, uOpts);
+  check(uc.ok && uc.out?.status === 'claimed', 'user token: claim_task works', JSON.stringify(uc.out ?? uc.err?.message).slice(0, 100));
+  const uEv = db.agent_task_events.filter((e) => e.task_id === T_U1);
+  check(uEv.length === 1 && uEv[0].actor_token_id === U_TOKEN && !('actor_grant_id' in uEv[0]) && uEv[0].actor_kind === 'agent',
+    'user token: the claim is logged with its token id (and no grant column named)');
+  const up = await call('post_result', { task_id: T_U1, result: 'Summarised.' }, uOpts);
+  check(up.ok && up.out?.status === 'done', 'user token: post_result finishes it');
+  const agentTaskBefore = JSON.stringify(db.agent_tasks.find((t) => t.id === T_OPEN));
+  for (const [tid, what] of [[T_OPEN, 'an agent\'s task'], [T_G1, 'a grant\'s task'], [T_U_SEALED, 'its own task in a sealed matter']]) {
+    const r = await call('claim_task', { task_id: tid }, uOpts);
+    check(!r.ok && /No task with that id/.test(r.err?.message ?? ''), `user token: cannot touch ${what} (not found)`, r.err?.message);
+  }
+  check(JSON.stringify(db.agent_tasks.find((t) => t.id === T_OPEN)) === agentTaskBefore, 'and the agent\'s task is unchanged');
+
+  // --- the full-assistant OAuth grant ---------------------------------------
+  reset();
+  const gm = await call('my_tasks', {}, gOpts);
+  const gIds = (gm.out?.tasks ?? []).map((t) => t.task_id);
+  check(gm.ok && gIds.length === 1 && gIds[0] === T_G1,
+    'OAuth assistant: my_tasks lists only its own task, never the sealed one or another grant\'s', gIds.join(','));
+  const gAtt = gm.out?.tasks?.[0]?.attachments?.[0];
+  check(gAtt?.available === true && gAtt.title === `Memo ${CODES[B]}`,
+    'OAuth assistant: its attachment resolves (it sees what its user sees)');
+  const gc = await call('claim_task', { task_id: T_G1 }, gOpts);
+  check(gc.ok && gc.out?.status === 'claimed', 'OAuth assistant: claim_task works');
+  const ga = await call('ask_human', { task_id: T_G1, question: 'Which year?' }, gOpts);
+  check(ga.ok && ga.out?.status === 'needs_input', 'OAuth assistant: ask_human works');
+  db.agent_tasks.find((t) => t.id === T_G1).status = 'claimed';
+  const gp = await call('post_result', { task_id: T_G1, result: 'Done.', result_refs: [{ kind: 'document', id: DOC[B] }] }, gOpts);
+  check(gp.ok && gp.out?.status === 'done', 'OAuth assistant: post_result finishes it (a ref in its user\'s matter is fine)');
+  const gEv = db.agent_task_events.filter((e) => e.task_id === T_G1);
+  check(gEv.length === 3 && gEv.every((e) => e.actor_grant_id === G_FULL && e.actor_token_id === null),
+    'OAuth assistant: every step is logged with its grant id', `n=${gEv.length}`);
+  const refSealed = await call('post_result', { task_id: T_G1, result: 'x', result_refs: [{ kind: 'document', id: DOC[A_SEALED] }] }, gOpts);
+  check(!refSealed.ok, 'OAuth assistant: nothing more can be posted on a finished task');
+  for (const [tid, what] of [[T_G_ELSE, 'another grant\'s task'], [T_U1, 'a token\'s task'], [T_OPEN, 'an agent\'s task'], [T_G_SEALED, 'its own task in a sealed matter']]) {
+    const r = await call('claim_task', { task_id: tid }, gOpts);
+    check(!r.ok && /No task with that id/.test(r.err?.message ?? ''), `OAuth assistant: cannot touch ${what} (not found)`, r.err?.message);
+  }
+  check(!JSON.stringify(ledger).includes('SEALED-GRANT-TASK'), 'the Record never carries the sealed task');
+
+  // --- the pause hides a task from a full assistant as well -----------------
+  db.agent_tasks.push(gtask(id(625), C, G_FULL, { title: 'PAUSED-GRANT-TASK' }));
+  db.matterspaces.find((m) => m.id === C).ai_paused = true;
+  const gPaused = await call('my_tasks', {}, gOpts);
+  check(gPaused.ok && !(gPaused.out?.tasks ?? []).some((t) => t.task_id === id(625)),
+    'OAuth assistant: a task in a PAUSED matter is left out of my_tasks');
+  db.matterspaces.find((m) => m.id === C).ai_paused = false;
+
+  // --- agents are unchanged --------------------------------------------------
+  const am = await call('my_tasks', { status: 'all' }, agentOpts(AG_A));
+  const aIds = (am.out?.tasks ?? []).map((t) => t.task_id);
+  check(am.ok && ![T_U1, T_G1, T_G_ELSE].some((t) => aIds.includes(t)) && aIds.includes(T_OPEN),
+    'an agent still sees only its own tasks: none of the token\'s or the grants\'');
+  check(!(am.out?.tasks ?? []).some((t) => t.task_id === T_SEALED), 'and still never its sealed one');
+}
+
 // ---------------------------------------------------------------------------
 globalThis.fetch = realFetch;
 console.log(`\n${failures === 0
-  ? `AGENT SCOPE HOLDS — ${passes} checks: an agent sees only its grant (or, with scope_all, every matter the user can), never a seal; user tokens unchanged.`
+  ? `AGENT SCOPE HOLDS — ${passes} checks: an agent sees only its grant (or, with scope_all, every matter the user can), never a seal; user tokens unchanged; any connection can take a task (089).`
   : `${failures} FAILURE(S) of ${passes + failures}`}\n`);
 process.exit(failures === 0 ? 0 : 1);
