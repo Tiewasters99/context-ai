@@ -225,7 +225,10 @@ test('the matter has a Tasks tab, rendered by MatterTasks', () => {
 });
 
 test('every agents card is draggable, resizable and pinnable', () => {
-  const card = src('src/components/agents/AgentCard.tsx');
+  // AgentCard is the agents' face of the shared dialog card (2026-09-25):
+  // the hook, the ribbon Pin and the ref live in CardDialog.
+  assert.match(src('src/components/agents/AgentCard.tsx'), /<CardDialog\b/);
+  const card = src('src/components/ui/CardDialog.tsx');
   assert.match(card, /useDraggableResizable\(storageKey\)/);
   assert.match(card, /\{!isMobile && <PinToggle pinned=\{pinned\} onToggle=\{togglePin\} \/>\}/);
   assert.match(card, /ref=\{cardRef\}/);

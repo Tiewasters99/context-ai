@@ -17,9 +17,17 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
+//
+// It portals on the FIRST render whenever there is a document (always, in
+// this SPA). Until 2026-09-25 it waited one effect before mounting its
+// children, and that broke every draggable card built on it: a card's
+// useDraggableResizable runs its effect in the same pass, finds its ref
+// still empty because the portal had not mounted yet, and never binds —
+// the AgentCard, CharterEditor, CalendarOverlay and SiteSearch cards showed
+// a drag handle and a Pin that could not move or restore anything. The gate
+// is kept only for a render with no document at all.
 export default function ModalPortal({ children }: { children: ReactNode }) {
-  // Mount-gate so the portal target is never touched during SSR/first render.
-  const [mounted, setMounted] = useState(false);
+  const [mounted, setMounted] = useState(() => typeof document !== 'undefined');
   useEffect(() => {
     setMounted(true);
   }, []);
