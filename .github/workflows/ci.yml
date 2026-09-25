@@ -729,3 +729,32 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-vault-document-search.mjs
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-vault-grouping.mjs
+
+      # "Paste an email" in the Thread tab: Gmail and Outlook forwards and
+      # copies, Apple Mail, Gmail's web view, wrapped recipients, the quoted
+      # history kept apart (or kept in, when asked), dates read with
+      # confidence or not at all, and UTF-8-read-as-Windows-1252 repaired
+      # without touching real accents. Plus the "Thread › title, author,
+      # date" cite. Pure modules; no DOM, no network.
+      - name: Thread — paste an email (parser, mojibake, the Thread cite)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-email-paste.mjs
+
+      # Migration 091: matter conversations — named, private-or-shared,
+      # searchable, and a pasted email. Executes 001…022 + 017 + 021 + 062 +
+      # 042's activity_feed + 091 (twice) in PGlite with real RLS, as the
+      # Bushell cast: a co-counsel on the matter but not in a private
+      # conversation cannot select, list, search, grep, see in the activity
+      # feed, post into, join or move a message into it; a co-counsel shared
+      # only on a sub-matter sees none of the parent's conversations; the
+      # backfill puts the old thread in "General"; the AI door never returns a
+      # conversation whose "AI may read this" is off, nor one in a sealed or
+      # paused matter; a negative control puts 017's policy back and watches
+      # the leak. Then the REAL lib/mcp-core.mjs search and grep are driven
+      # against the same database as each person, fetch witnessed. Re-installs
+      # PGlite: it comes after the jsdom steps.
+      - name: Migration 091 — matter conversations stay with their audience (PGlite + real RLS + real MCP handlers)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-matter-conversations.mjs
