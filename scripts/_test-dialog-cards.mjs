@@ -178,7 +178,10 @@ async function press(target) {
 }
 async function escape() {
   await act(async () => {
-    window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    // From the page, as a browser sends it (the focused element, or <body>),
+    // so it travels window-capture → target → document → window.
+    (window.document.activeElement ?? window.document.body)
+      .dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
   });
 }
 function readStored(key) {
@@ -336,6 +339,35 @@ test('Escape closes only the topmost dialog', async () => {
   await escape();
   assert.deepEqual(log, ['over']);
   await view.unmount();
+});
+
+test('the Escape a dialog takes never reaches the surface under it', async () => {
+  window.localStorage.clear();
+  // The reader's margin panel, a menu: they close themselves on Escape from a
+  // window/document listener, and must not close along with the dialog.
+  let hostClosed = 0;
+  const host = () => { hostClosed += 1; };
+  window.document.addEventListener('keydown', host);
+  window.addEventListener('keydown', host);
+  let closed = 0;
+  let view = await mount(h(CardDialog, { storageKey: 'cs.dialog.test.host', title: 'Over', onClose: () => { closed += 1; } }, h('p', null, 'x')));
+  await escape();
+  assert.equal(closed, 1);
+  assert.equal(hostClosed, 0, 'the host did not see the Escape');
+  await view.unmount();
+
+  // Even when the dialog declines to close (a one-time token card).
+  view = await mount(h(CardDialog, { storageKey: 'cs.dialog.test.host2', title: 'Token', closeOnEscape: false, onClose: () => { closed += 1; } }, h('p', null, 'x')));
+  await escape();
+  assert.equal(closed, 1, 'the token card stayed open');
+  assert.equal(hostClosed, 0, 'and the host still did not see it');
+  await view.unmount();
+
+  // No dialog open: the host has it again.
+  await escape();
+  assert.equal(hostClosed, 2);
+  window.document.removeEventListener('keydown', host);
+  window.removeEventListener('keydown', host);
 });
 
 test('the backdrop: closes a clean form, keeps a half-typed one, never closes after a drag', async () => {

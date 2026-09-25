@@ -16,8 +16,8 @@
 //
 //   * ESCAPE CLOSES — only the topmost open dialog, and not while `busy`
 //     (a save or a delete in flight is not something to walk away from
-//     mid-write). A field that handles Escape itself calls preventDefault
-//     and is left alone.
+//     mid-write). The key goes no further: the surface under the dialog
+//     never sees it.
 //   * THE BACKDROP CLOSES ONLY WHEN THE DIALOG SAYS SO (`closeOnBackdrop`).
 //     A dialog holding a half-typed form passes `closeOnBackdrop={!dirty}`:
 //     an untouched one still dismisses with a click outside, a typed one
@@ -117,17 +117,22 @@ export default function CardDialog({
   useEffect(() => {
     const me = Symbol('card-dialog');
     openStack.push(me);
+    // Capture phase, and the key stops here: the dialog is modal, so an
+    // Escape meant for it must not also reach the surface underneath (the
+    // reader's margin panel, a menu) and close that too. It is swallowed even
+    // when this dialog declines to close (busy, or a one-time token card).
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (openStack[openStack.length - 1] !== me) return;
+      e.preventDefault();
+      e.stopPropagation();
       const { busy: b, closeOnEscape: esc, onClose: close } = live.current;
       if (!esc || b) return;
-      e.preventDefault();
       close();
     };
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
     return () => {
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, true);
       const i = openStack.indexOf(me);
       if (i >= 0) openStack.splice(i, 1);
     };
