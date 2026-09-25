@@ -69,6 +69,23 @@ export async function ensureGeneral(matterId: string): Promise<string | null> {
   return (data as string | null) ?? null;
 }
 
+/**
+ * May the signed-in person post in this matter as a matter-wide right
+ * (migration 093's "Can post messages", or owner/admin, or serverspace
+ * member)? Asks the very helper the conversations INSERT policy uses, so the
+ * screen offers exactly what the database allows. Before 093 is applied the
+ * helper answers 091's rule (anyone who can open the matter). If the question
+ * itself fails, answer true: the database still refuses a post that is not
+ * allowed, and the composer then shows its message.
+ */
+export async function matterPostingAllowed(matterId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('_mconv_can_start', {
+    p_matter: matterId, p_audience: 'matter', p_is_general: false,
+  });
+  if (error) return true;
+  return data !== false;
+}
+
 export async function listConversations(matterId: string): Promise<ConversationRow[]> {
   const { data, error } = await supabase.rpc('list_matter_conversations', { p_matter: matterId });
   if (error) fail(error);

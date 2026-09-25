@@ -6,6 +6,7 @@
 // Supabase with owner-only RLS (migration 034).
 
 import { supabase } from '@/lib/supabase';
+import { POSTING_OFF_NOTE } from '@/lib/conversations';
 
 export interface PrepSource {
   name: string;
@@ -219,5 +220,11 @@ export async function shareToThread(
     parent_id: null,
     body: formatTranscript(session, messages),
   });
-  if (error) throw new Error(error.message);
+  if (error) {
+    // Migration 093: posting in a matter's Thread can be switched off per person.
+    if (/row-level security/i.test(error.message)) {
+      throw new Error(POSTING_OFF_NOTE);
+    }
+    throw new Error(error.message);
+  }
 }

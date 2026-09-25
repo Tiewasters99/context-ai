@@ -487,5 +487,34 @@ section('rollback: the commented block runs and restores 091');
   check(!reapply.err, '093 applies again after its own rollback', reapply.err?.message ?? '');
 }
 
+// ===========================================================================
+section('the screens: what someone without the right is offered');
+// ===========================================================================
+{
+  const read = (p) => fs.readFileSync(path.resolve(ROOT, p), 'utf8');
+  const conv = read('src/lib/conversations.ts');
+  const thread = read('src/components/matter/MatterThread.tsx');
+  const view = read('src/components/matter/thread/ConversationView.tsx');
+  const api = read('src/components/matter/thread/api.ts');
+  const share = read('src/components/serverspace/ShareModal.tsx');
+  check(conv.includes('You can read this matter’s conversations. Posting is off for you — the matter’s owner can turn it on.'),
+    'the read-only line is worded as Eden asked');
+  check(conv.includes('People you share with can read. Turn on ‘Can post messages’ when they may write in the Thread.'),
+    'the Share dialog line is worded as Eden asked');
+  check(/rpc\('_mconv_can_start'/.test(api), 'the Thread tab asks the same helper the INSERT policy uses (_mconv_can_start)');
+  check(/const newButton = !mayPost \?/.test(thread) && /\{mayPost && \(\s*<button onClick=\{\(\) => setNewOpen\(true\)\}/.test(thread)
+    && /newOpen && mayPost/.test(thread),
+  'no "New conversation" (desktop or phone) without the right');
+  check(/canPost=\{mayPost \|\| postsByMembership\(selected, user\.id\)\}/.test(thread),
+    'a conversation is writable when the matter allows it, or by private-list membership (the setting)');
+  check(/!archived && canPost && \(\s*<button onClick=\{onPasteEmail\}/.test(view), 'no "Paste an email" without the right');
+  check((view.match(/archived \|\| !canPost \? null/g) ?? []).length === 2, 'no Reply without the right');
+  check(/!canPost\s*\?\s*<p[^>]*>\{POSTING_OFF_NOTE\}<\/p>/.test(view), 'the composer becomes the read-only line');
+  check(/\.update\(\{ can_post: next \}\)/.test(share) && /CAN_POST_LABEL/.test(share) && /SHARE_CAN_POST_NOTE/.test(share),
+    'the Share dialog has the per-person switch and its line');
+  check(!/can_post:\s*(true|false)/.test(share.replace(/\.update\(\{ can_post: next \}\)/, '')),
+    'the Share dialog never sends can_post on insert: new shares take the database default (off)');
+}
+
 console.log(`\n${passes} passed, ${failures} failed`);
 process.exit(failures ? 1 : 0);

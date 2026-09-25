@@ -25,13 +25,13 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { conversationCitation } from '../../../lib/conversation-cite.mjs';
-import type { ConversationRow, Person } from '@/lib/conversations';
+import { POSTING_OFF_NOTE, postsByMembership, type ConversationRow, type Person } from '@/lib/conversations';
 import MatterThreadLegacy from './MatterThreadLegacy';
 import ConversationView from './thread/ConversationView';
 import NewConversationCard from './thread/NewConversationCard';
 import PasteEmailCard from './thread/PasteEmailCard';
 import {
-  NotDeployedError, conversationOfMessage, ensureGeneral, listConversations, listPeople, searchThreads,
+  NotDeployedError, conversationOfMessage, ensureGeneral, listConversations, listPeople, matterPostingAllowed, searchThreads,
   type ThreadSearchHit,
 } from './thread/api';
 
@@ -83,12 +83,16 @@ export default function MatterThread({ matterId }: { matterId: string }) {
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<ThreadSearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
+  // Migration 093: may this person post here (and start conversations)?
+  // Re-asked on every reload, so an owner switching it on shows up live.
+  const [mayPost, setMayPost] = useState(true);
 
   const reload = useCallback(async () => {
     try {
       const rows = await listConversations(matterId);
       setConversations(rows);
       setStatus('ready');
+      void matterPostingAllowed(matterId).then(setMayPost);
       return rows;
     } catch (e) {
       if (e instanceof NotDeployedError) setStatus('legacy');
@@ -205,7 +209,9 @@ export default function MatterThread({ matterId }: { matterId: string }) {
     </div>
   );
 
-  const newButton = (
+  const newButton = !mayPost ? (
+    <p className="text-[11.5px] leading-snug text-white/50 px-1">{POSTING_OFF_NOTE}</p>
+  ) : (
     <button
       onClick={() => setNewOpen(true)}
       className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[#e8b84a] text-[12px] font-medium hover:bg-[#e8b84a]/20"
@@ -278,6 +284,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
       conversation={selected}
       people={people}
       viewerId={user.id}
+      canPost={mayPost || postsByMembership(selected, user.id)}
       refreshKey={refreshKey}
       highlightMessageId={highlight}
       onChanged={() => { void reload(); }}
@@ -309,9 +316,11 @@ export default function MatterThread({ matterId }: { matterId: string }) {
                 </option>
               ))}
             </select>
-            <button onClick={() => setNewOpen(true)} className="shrink-0 p-2 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[#e8b84a]" aria-label="New conversation">
-              <Plus size={15} />
-            </button>
+            {mayPost && (
+              <button onClick={() => setNewOpen(true)} className="shrink-0 p-2 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[#e8b84a]" aria-label="New conversation">
+                <Plus size={15} />
+              </button>
+            )}
           </div>
           {searchBox}
           {results ?? view}
@@ -332,7 +341,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
         </div>
       )}
 
-      {newOpen && (
+      {newOpen && mayPost && (
         <NewConversationCard
           matterId={matterId}
           people={people}
@@ -344,7 +353,7 @@ export default function MatterThread({ matterId }: { matterId: string }) {
           }}
         />
       )}
-      {pasteOpen && selected && (
+      {pasteOpen && selected && (mayPost || postsByMembership(selected, user.id)) && (
         <PasteEmailCard
           matterId={matterId}
           conversation={selected}

@@ -20,6 +20,7 @@ import { X, UserPlus, Trash2, Loader2, AlertCircle, Check } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import ModalPortal from '@/components/ui/ModalPortal';
+import { CAN_POST_LABEL, SHARE_CAN_POST_NOTE } from '@/lib/conversations';
 
 type Scope = 'serverspace' | 'matterspace';
 type Role = 'owner' | 'admin' | 'member' | 'viewer';
@@ -31,6 +32,8 @@ interface MemberRow {
   displayName: string | null;
   role: Role;
   joinedAt: string;
+  /** Migration 093 (matter shares only). undefined = column not there yet. */
+  canPost?: boolean;
 }
 
 interface ShareModalProps {
@@ -83,17 +86,30 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  // Migration 093: the "Can post messages" switch, matter shares only, shown
+  // to the matter's owners and admins once the column exists.
+  const [canPostColumn, setCanPostColumn] = useState(false);
+  const [canManage, setCanManage] = useState(false);
 
   const loadMembers = async () => {
     setLoading(true);
     setListError(null);
-    const { data, error } = await supabase
+    const cols = 'id, role, joined_at, user_id, user:profiles(id, email, display_name)';
+    const read = (withCanPost: boolean) => supabase
       .from(cfg.table)
-      .select('id, role, joined_at, user_id, user:profiles(id, email, display_name)')
+      .select(withCanPost ? `${cols}, can_post` : cols)
       .eq(cfg.fk, scopeId)
       .order('joined_at', { ascending: true });
+    let withCanPost = scope === 'matterspace';
+    let { data, error } = await read(withCanPost);
+    if (error && withCanPost && /can_post|42703|PGRST204/i.test(`${error.code ?? ''} ${error.message}`)) {
+      withCanPost = false;   // 093 not applied yet: no switch to show
+      ({ data, error } = await read(false));
+    }
+    setCanPostColumn(withCanPost && !error);
     if (error) { setListError(error.message); setLoading(false); return; }
     const rows: MemberRow[] = (data ?? []).map((r: any) => ({
+      canPost: withCanPost ? !!r.can_post : undefined,
       membershipId: r.id,
       userId: r.user_id,
       role: r.role as Role,
@@ -106,6 +122,29 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
   };
 
   useEffect(() => { void loadMembers(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [scopeId, scope]);
+
+  useEffect(() => {
+    if (scope !== 'matterspace') { setCanManage(false); return; }
+    let cancelled = false;
+    void supabase.rpc('can_manage_matter', { p_matter_id: scopeId })
+      .then(({ data }) => { if (!cancelled) setCanManage(data === true); });
+    return () => { cancelled = true; };
+  }, [scope, scopeId]);
+
+  const handleCanPost = async (m: MemberRow, next: boolean) => {
+    setListError(null);
+    setFlash(null);
+    const { data, error } = await supabase.from(cfg.table)
+      .update({ can_post: next }).eq('id', m.membershipId).select('id');
+    if (error || !data?.length) {
+      setListError(error && !/row-level security|permission/i.test(error.message)
+        ? error.message
+        : `Only owners and admins of this ${cfg.label} can change who can post.`);
+      return;
+    }
+    setMembers((prev) => prev.map((x) => (x.membershipId === m.membershipId ? { ...x, canPost: next } : x)));
+    setFlash(`${m.displayName || m.email} ${next ? 'can now post messages' : 'can read but no longer post'}.`);
+  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -244,6 +283,9 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
               </button>
             </div>
             <p className="text-[10px] text-white/40 mt-2">{ROLE_OPTIONS.find((o) => o.value === role)?.help}</p>
+            {canPostColumn && (
+              <p className="text-[10px] text-white/55 mt-1">{SHARE_CAN_POST_NOTE}</p>
+            )}
             {formError && (
               <p className="mt-2 flex items-start gap-1.5 text-[11px] text-red-300">
                 <AlertCircle size={12} className="shrink-0 mt-0.5" /> {formError}
@@ -287,6 +329,23 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
                         </p>
                         <p className="text-[11px] text-white/40 truncate">{m.email}</p>
                       </div>
+                      {/* Migration 093: the per-person "Can post messages" switch. */}
+                      {canPostColumn && canManage && m.canPost !== undefined && (
+                        m.role === 'admin' || m.role === 'owner' ? (
+                          <span className="text-[10px] text-white/40 shrink-0" title="Owners and admins can always post">Always posts</span>
+                        ) : (
+                          <label className="flex items-center gap-1.5 text-[10.5px] text-white/65 shrink-0 cursor-pointer" title={isSelf ? 'You cannot change your own' : undefined}>
+                            <input
+                              type="checkbox"
+                              className="accent-[#e8b84a]"
+                              checked={!!m.canPost}
+                              disabled={isSelf}
+                              onChange={(e) => void handleCanPost(m, e.target.checked)}
+                            />
+                            {CAN_POST_LABEL}
+                          </label>
+                        )
+                      )}
                       <span className={`text-[10px] font-medium px-2 py-1 rounded uppercase tracking-wide ${ROLE_BADGE[m.role]}`}>
                         {m.role}
                       </span>
