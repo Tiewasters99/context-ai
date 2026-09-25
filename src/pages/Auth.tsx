@@ -5,6 +5,13 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type View = 'signin' | 'signup' | 'reset';
 
+// New accounts are closed until launch (Eden, 2026-09-25): Supabase Auth has
+// "disable_signup" on, so the form could only ever fail. Until October 15 the
+// Sign Up tab explains that and says how to ask for early access. At launch:
+// flip this to true AND turn sign-ups back on in Supabase Auth.
+const SIGNUPS_OPEN = false;
+const EARLY_ACCESS_EMAIL = 'quaintonlaw@gmail.com';
+
 export default function Auth() {
   const navigate = useNavigate();
   const { signInWithEmail, signUpWithEmail, signInWithGoogle, signInWithApple, resetPassword } = useAuth();
@@ -110,6 +117,22 @@ export default function Auth() {
             </div>
           )}
 
+          {view === 'signup' && !SIGNUPS_OPEN ? (
+            <div className="space-y-3 text-sm text-white/85 leading-relaxed">
+              <p className="text-white font-medium">Contextspaces opens on October 15, 2026.</p>
+              <p>
+                New accounts are by invitation until then. To request early access, email{' '}
+                <a
+                  href={`mailto:${EARLY_ACCESS_EMAIL}?subject=${encodeURIComponent('Contextspaces early access')}`}
+                  className="text-[#d4a054] hover:text-[#c4903a] underline underline-offset-2"
+                >
+                  {EARLY_ACCESS_EMAIL}
+                </a>
+                .
+              </p>
+              <p className="text-white/60">Already have an account? Use Sign In.</p>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {view === 'signup' && (
               <div className="relative">
@@ -172,8 +195,9 @@ export default function Auth() {
               {loading ? 'Please wait...' : view === 'reset' ? 'Send Reset Link' : view === 'signin' ? 'Sign In' : 'Create Account'}
             </button>
           </form>
+          )}
 
-          {view !== 'reset' && (
+          {view !== 'reset' && !(view === 'signup' && !SIGNUPS_OPEN) && (
             <>
               <div className="flex items-center gap-3 my-6">
                 <div className="flex-1 h-px bg-[rgba(255,255,255,0.06)]" />
