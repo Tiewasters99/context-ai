@@ -17,6 +17,8 @@ import {
   sendUsageRefusal,
   clampMaxTokens,
   clientIp,
+  DEGRADED_CEILING,
+  resetDegradedCeiling,
 } from '../lib/usage-meter.mjs';
 import {
   PRICES_PER_MTOK,
@@ -376,4 +378,100 @@ test('the client IP is read from Vercel\'s proxy headers', () => {
   assert.equal(clientIp({ headers: { 'x-real-ip': '203.0.113.5' } }), '203.0.113.5');
   assert.equal(clientIp({ headers: { 'x-forwarded-for': '203.0.113.6, 10.0.0.1' } }), '203.0.113.6');
   assert.equal(clientIp({ headers: {} }), 'unknown');
+});
+
+// ---------------------------------------------------------------------------
+// Meter outage: a degraded ceiling, not unlimited (2026-09-25).
+// ---------------------------------------------------------------------------
+test('meter outage: costed calls are admitted up to the ceiling, then refused with a sentence', async () => {
+  resetDegradedCeiling();
+  const nowMs = Date.UTC(2026, 8, 25, 14, 23, 0);
+  const down = stubFetch(500, { message: 'db down' });
+  const call = () => consumeUsage({
+    ...ENV, serviceKey: 'svc', userId: 'u-ceiling', kind: 'llm', estimateCents: 1,
+    fetchImpl: down, nowMs, env: {},
+  });
+  for (let i = 0; i < DEGRADED_CEILING.maxRequests; i += 1) {
+    const d = await call();
+    assert.equal(d.allowed, true, `call ${i + 1} is under the ceiling`);
+    assert.equal(d.degraded, true);
+  }
+  const over = await call();
+  assert.equal(over.allowed, false, 'the next costed call is refused — NOT unlimited');
+  assert.equal(over.status, 429);
+  assert.equal(over.reason, 'meter_unavailable_ceiling');
+  assert.match(over.message, /briefly unavailable/);
+  assert.match(over.message, /resets at 14:30 UTC/);
+  assert.ok(!/[{}]/.test(over.message), 'a sentence, not JSON');
+  assert.ok(over.retryAfterSeconds > 0 && over.retryAfterSeconds <= DEGRADED_CEILING.windowSeconds);
+  // A different user has their own ceiling.
+  const other = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'u-other', kind: 'llm', estimateCents: 1, fetchImpl: down, nowMs, env: {} });
+  assert.equal(other.allowed, true);
+  // The next window starts fresh.
+  const later = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'u-ceiling', kind: 'llm', estimateCents: 1, fetchImpl: down, nowMs: nowMs + DEGRADED_CEILING.windowSeconds * 1000, env: {} });
+  assert.equal(later.allowed, true);
+});
+
+test('meter outage: the cents ceiling applies too', async () => {
+  resetDegradedCeiling();
+  const nowMs = Date.UTC(2026, 8, 25, 9, 0, 0);
+  const down = stubFetch(503, 'upstream');
+  const a = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'u-cents', estimateCents: DEGRADED_CEILING.maxCents, fetchImpl: down, nowMs, env: {} });
+  assert.equal(a.allowed, true);
+  const b = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'u-cents', estimateCents: 1, fetchImpl: down, nowMs, env: {} });
+  assert.equal(b.allowed, false);
+});
+
+test('meter outage: a free call (reading) is never refused', async () => {
+  resetDegradedCeiling();
+  const down = async () => { throw new Error('ECONNRESET'); };
+  for (let i = 0; i < DEGRADED_CEILING.maxRequests * 3; i += 1) {
+    const d = await consumeUsage({ ...ENV, bearer: 'jwt', kind: 'connector', estimateCents: 0, fetchImpl: down });
+    assert.equal(d.allowed, true);
+  }
+});
+
+test('meter outage: workshop is never refused — from knownTier, from METER_UNLIMITED_USER_IDS, or from the profile', async () => {
+  resetDegradedCeiling();
+  const down = stubFetch(500, { message: 'boom' });
+  const n = DEGRADED_CEILING.maxRequests * 2;
+  for (let i = 0; i < n; i += 1) {
+    const d = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'eden', estimateCents: 5, knownTier: 'workshop', fetchImpl: down, env: {} });
+    assert.equal(d.allowed, true, 'knownTier workshop');
+  }
+  for (let i = 0; i < n; i += 1) {
+    const d = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'eden-2', estimateCents: 5, fetchImpl: down, env: { METER_UNLIMITED_USER_IDS: 'x, eden-2' } });
+    assert.equal(d.allowed, true, 'env list');
+  }
+  // The RPC is down but the profile read answers workshop.
+  const split = async (url, init) => ({
+    status: String(url).includes('/rest/v1/profiles') ? 200 : 500,
+    ok: String(url).includes('/rest/v1/profiles'),
+    text: async () => (String(url).includes('/rest/v1/profiles') ? JSON.stringify([{ pricing_tier: 'workshop' }]) : '{"message":"boom"}'),
+  });
+  for (let i = 0; i < n; i += 1) {
+    const d = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'eden-3', estimateCents: 5, fetchImpl: split, env: {} });
+    assert.equal(d.allowed, true, 'profile read');
+  }
+  // And an ordinary account on the same path IS limited.
+  const pro = async (url) => ({
+    status: String(url).includes('/rest/v1/profiles') ? 200 : 500,
+    ok: false,
+    text: async () => (String(url).includes('/rest/v1/profiles') ? JSON.stringify([{ pricing_tier: 'pro' }]) : 'x'),
+  });
+  let refused = 0;
+  for (let i = 0; i < n; i += 1) {
+    const d = await consumeUsage({ ...ENV, serviceKey: 'svc', userId: 'pro-user', estimateCents: 1, fetchImpl: pro, env: {} });
+    if (!d.allowed) refused += 1;
+  }
+  assert.equal(refused, n - DEGRADED_CEILING.maxRequests);
+});
+
+test('meter up: an ordinary answer is untouched by the outage ceiling', async () => {
+  resetDegradedCeiling();
+  for (let i = 0; i < DEGRADED_CEILING.maxRequests * 2; i += 1) {
+    const d = await consumeUsage({ ...ENV, bearer: 'jwt', estimateCents: 5, fetchImpl: stubFetch(200, { allowed: true, reason: 'ok', event_id: 'e' }) });
+    assert.equal(d.allowed, true);
+    assert.equal(d.degraded, false);
+  }
 });
