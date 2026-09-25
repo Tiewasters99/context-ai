@@ -325,7 +325,20 @@ export default async function handler(req, res) {
     const agentNote = identity.kind === 'agent' ? AGENT_INSTRUCTIONS : '';
 
     const server = new Server(
-      { name: 'contextspaces-retrieval', version: '0.6.0' },
+      // title + icons + websiteUrl are what connector hosts (Grok, Claude,
+      // ChatGPT) can show in their app lists instead of a blank tile. `name`
+      // stays as it was: clients may key saved connections on it.
+      {
+        name: 'contextspaces-retrieval',
+        title: 'Contextspaces',
+        version: '0.6.0',
+        websiteUrl: 'https://www.contextspaces.ai',
+        icons: [
+          { src: 'https://www.contextspaces.ai/contextspaces-mark.svg', mimeType: 'image/svg+xml', sizes: ['any'] },
+          { src: 'https://www.contextspaces.ai/icon-192.png', mimeType: 'image/png', sizes: ['192x192'] },
+          { src: 'https://www.contextspaces.ai/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] },
+        ],
+      },
       {
         capabilities: { tools: {} },
         instructions:
