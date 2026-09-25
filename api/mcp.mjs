@@ -33,6 +33,7 @@ import { createHash } from 'node:crypto';
 import { TOOLS, callTool, timeoutFetch } from '../lib/mcp-core.mjs';
 import { checkAccessGrant } from '../lib/oauth-grants.mjs';
 import { connectorTokenIdentity } from '../lib/connector-token-auth.mjs';
+import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { verifyJwt } from '../lib/oauth-jwt.mjs';
 import { signSupabaseUserJwt, userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 
@@ -330,22 +331,20 @@ export default async function handler(req, res) {
     }));
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args = {} } = request.params;
-      try {
-        const result = await callTool(sb, name, args, callToolOptsFor(identity, {
+      // Metered (migration 086, lib/connector-meter.mjs): the rate ceiling on
+      // every call, a charge through usage_consume on the costed ones, and a
+      // plain-sentence refusal. The result and error shapes are unchanged —
+      // runMeteredToolCall returns exactly what this handler used to.
+      return runMeteredToolCall({
+        identity,
+        name,
+        args,
+        sb,
+        invoke: () => callTool(sb, name, args, callToolOptsFor(identity, {
           openaiApiKey: OPENAI_API_KEY,
           googleApiKey: process.env.GOOGLE_API_KEY,
-        }));
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err) {
-        return {
-          content: [
-            { type: 'text', text: `ERROR: ${err.message || String(err)}` },
-          ],
-          isError: true,
-        };
-      }
+        })),
+      });
     });
 
     // Stateless: one transport per request. For Phase 1 this is simpler

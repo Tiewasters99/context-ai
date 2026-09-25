@@ -248,7 +248,16 @@ async function onInvoice(event, invoice, created, fetchImpl) {
     p_subscription: idOf(invoice.subscription) || idOf(invoice.parent?.subscription_details?.subscription),
     p_invoice_id: invoice.id || null,
     p_paid: paid,
-    p_period_end: Number(invoice.period_end || 0) || null,
+    // NEVER the invoice's own period. `invoice.period_end` is the window of
+    // usage the invoice bills in arrears, and on a subscription's FIRST
+    // invoice it is the creation instant — so writing it here overwrote the
+    // real renewal date the subscription event had just stored, and Settings
+    // said "Renews on <today>". A one-off invoice (a credit pack) has no
+    // subscription at all and would have done the same. The subscription
+    // events (created / updated at every renewal / checkout's fetch) carry the
+    // real current_period_end and are the only source of it; null here makes
+    // billing_apply_invoice's coalesce keep what they wrote.
+    p_period_end: null,
     p_invoice_url: invoice.hosted_invoice_url || null,
   }, { fetchImpl });
   if (!ok) return { transport_error: error };
