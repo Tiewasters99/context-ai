@@ -97,6 +97,15 @@ export default async function handler(req, res) {
     // deploy that lands before the migration starts recording grants the
     // moment the migration does land, without anybody reconnecting.
     let gid = codePayload.gid || null;
+    // Migration 087: a code minted for an AGENT connection names the agent
+    // (`agt`). It always comes with a gid — /api/oauth-approve refuses to mint
+    // an agent code it could not record — so a code with agt and no gid is
+    // not one this server issued, and is refused rather than repaired.
+    const agt = codePayload.agt || null;
+    if (agt && !gid) {
+      console.warn('[oauth-token] agent code without a grant id; refused');
+      return json(res, 400, { error: 'invalid_grant', error_description: 'bad code' });
+    }
     if (!gid) {
       const client = verifyJwt(client_id, secret);
       const recorded = await ensureGrantOnApprove({
@@ -108,8 +117,8 @@ export default async function handler(req, res) {
       gid = recorded.gid;
     }
 
-    console.log('[oauth-token] success: sub=%s gid=%s', codePayload.sub, gid || 'none');
-    return issueTokens(res, secret, codePayload.sub, client_id, codePayload.scope || 'mcp', resource, issuer, gid);
+    console.log('[oauth-token] success: sub=%s gid=%s agent=%s', codePayload.sub, gid || 'none', agt ? 'yes' : 'no');
+    return issueTokens(res, secret, codePayload.sub, client_id, codePayload.scope || 'mcp', resource, issuer, gid, agt);
   }
 
   if (grant === 'refresh_token') {
@@ -143,6 +152,7 @@ export default async function handler(req, res) {
     const client = verifyJwt(client_id, secret);
     const check = await checkRefreshGrant({
       gid: rPayload.gid || null,
+      agt: rPayload.agt || null,
       user_id: rPayload.sub,
       client_id,
       client_name: (client && client.typ === 'client' && client.client_name) || null,
@@ -160,7 +170,10 @@ export default async function handler(req, res) {
 
     console.log('[oauth-token] refresh success: sub=%s gid=%s reason=%s',
       rPayload.sub, check.gid || 'none', check.reason);
-    return issueTokens(res, secret, rPayload.sub, client_id, rPayload.scope || 'mcp', resource, issuer, check.gid);
+    // The agent link (087) survives the refresh: check.agentTokenId is the
+    // grant's link, or the token's own `agt` when the state was unreadable.
+    return issueTokens(res, secret, rPayload.sub, client_id, rPayload.scope || 'mcp', resource, issuer, check.gid,
+      check.agentTokenId || null);
   }
 
   console.warn('[oauth-token] unsupported grant_type=%s', grant);
@@ -170,9 +183,13 @@ export default async function handler(req, res) {
 // Build-time marker so we can confirm in production logs which version
 // of this file is actually serving traffic. Bump this string whenever
 // you change token shape so a stale Vercel deploy is obvious at a glance.
-const TOKEN_BUILD = '2026-09-20-grants065';
+const TOKEN_BUILD = '2026-09-25-agent087';
 
-function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, gid = null) {
+function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, gid = null, agt = null) {
+  // `agt` (migration 087): the connector_tokens id of the agent this OAuth
+  // connection IS. Omitted, like gid, when there is none. /api/mcp serves an
+  // agt token only as that agent and fails closed when it cannot verify it.
+  const agentClaim = gid && agt ? { agt } : {};
   // Internally we sign a normal JWT carrying everything we need to
   // verify the request at /api/mcp (iss/sub/aud/client_id/scope/exp),
   // plus `gid` — the oauth_grants row this connection belongs to, which
@@ -190,6 +207,7 @@ function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, g
       client_id,
       scope,
       ...(gid ? { gid } : {}),
+      ...agentClaim,
     },
     secret,
     ACCESS_TTL_SEC,
@@ -214,7 +232,7 @@ function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, g
   // back to /api/oauth-token, which knows how to verify them, and
   // claude.ai shouldn't be introspecting refresh tokens.
   const refresh_token = signJwt(
-    { iss: issuer, typ: 'refresh', sub: user_id, client_id, scope, ...(gid ? { gid } : {}) },
+    { iss: issuer, typ: 'refresh', sub: user_id, client_id, scope, ...(gid ? { gid } : {}), ...agentClaim },
     secret,
     REFRESH_TTL_SEC,
   );

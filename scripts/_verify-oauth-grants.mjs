@@ -740,14 +740,17 @@ section('10. source facts');
 {
   const mcp = fs.readFileSync(repoFile('api', 'mcp.mjs'), 'utf8');
   const pathB = mcp.slice(mcp.indexOf("token.startsWith('cspa_')"), mcp.indexOf('// Path C'));
-  check(/checkAccessGrant\(payload\)/.test(pathB),
+  // Since 087 path B hands the verified payload to oauthIdentity(), which is
+  // where the grant check (and the agent link) lives.
+  const oauthFn = mcp.slice(mcp.indexOf('async function oauthIdentity('), mcp.indexOf('// callTool options, per caller'));
+  check(/oauthIdentity\(payload, 'opaque'\)/.test(pathB) && /checkAccessGrant\(payload\)/.test(oauthFn),
     'api/mcp.mjs checks the grant on the opaque access-token path');
-  check(/throw new AuthError\(401, 'invalid_token'\)/.test(pathB),
+  check(/throw new AuthError\(401, 'invalid_token'\)/.test(oauthFn),
     'a refused grant becomes a 401 invalid_token, the code clients re-authorize on');
 
-  const pathC = mcp.slice(mcp.indexOf('// Path C'));
-  check(!/checkAccessGrant/.test(pathC),
-    'Path C (bare pre-envelope JWTs) is deliberately untouched — those tokens predate the cspa_ wrapper and their refresh tokens expired long ago');
+  const pathC = mcp.slice(mcp.indexOf('// Path C'), mcp.indexOf('async function oauthIdentity('));
+  check(!/checkAccessGrant/.test(pathC) && /if \(payload\.gid \|\| payload\.agt\) return oauthIdentity\(payload, 'bare'\)/.test(pathC),
+    'Path C: a truly old bare JWT (no gid) is untouched; one that names a grant is an unwrapped cspa_ token and gets the same checks (087)');
 
   const reg = fs.readFileSync(repoFile('api', 'oauth-register.mjs'), 'utf8');
   check(/consumeIpUsage/.test(reg),
@@ -757,7 +760,7 @@ section('10. source facts');
   const token = fs.readFileSync(repoFile('api', 'oauth-token.mjs'), 'utf8');
   check(!/usage-meter/.test(approve) && !/usage-meter/.test(token),
     'approve/token carry no usage guard today, and this change did not invent one');
-  check(/ensureGrantOnApprove/.test(approve) && /checkRefreshGrant/.test(token),
+  check(/approveGrant\(/.test(approve) && /checkRefreshGrant/.test(token),
     'the approve and refresh paths go through lib/oauth-grants.mjs');
 
   const conn = fs.readFileSync(repoFile('src', 'pages', 'Connections.tsx'), 'utf8');

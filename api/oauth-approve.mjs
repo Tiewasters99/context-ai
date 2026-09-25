@@ -3,6 +3,8 @@
 // Inputs (POST body):
 //   client_id, redirect_uri, code_challenge, code_challenge_method ('S256'),
 //   state, resource, scope
+//   connect_as ('assistant' | 'agent') and, for 'agent',
+//   agent: { name, provider, matter_scope: [matter ids] }   (migration 087)
 // Plus Authorization: Bearer <supabase access_token> — proves the caller is
 // the logged-in Contextspaces user. We verify it with SUPABASE_JWT_SECRET
 // to extract the user_id (sub).
@@ -13,11 +15,16 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { ensureGrantOnApprove } from '../lib/oauth-grants.mjs';
+import { fetchMatterTier } from '../lib/ai-tier-policy.mjs';
+import {
+  AgentConsentError, checkAgentScope, parseAgentConsent, unusableTokenHash,
+} from '../lib/oauth-agent-consent.mjs';
+import { approveGrant } from '../lib/oauth-grants.mjs';
 import { signJwt, verifyJwt, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -71,26 +78,67 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'invalid_redirect_uri', detail: 'redirect_uri not in registration' });
   }
 
-  // 4. Record the approval (migration 065). This is the row the Connections
-  // page reads to say "Connected" truthfully, and the row the user revokes to
-  // cut this one client off. Re-approving a client that is already connected
-  // attaches to the grant that exists rather than making a second one.
+  // 4. Which connection the user chose (migration 087). "Full assistant" is
+  // today's behaviour and the default; "agent" confines the client to the
+  // matters ticked on the consent screen. The agent's matters are checked
+  // here, as the signed-in user, before anything is written: each must be a
+  // matter this account can open (the user's own session, so RLS answers)
+  // and none may be in a SecureSpace (service role, so a sealed ancestor the
+  // user cannot see still counts). Any failure refuses the whole consent.
+  let agent = null;
+  try {
+    const parsed = parseAgentConsent(body, client.client_name || null);
+    if (parsed) {
+      const matterScope = await checkAgentScope(parsed.matterIds, {
+        visibleIds: async (ids) => {
+          const { data, error } = await sb.from('matterspaces').select('id').in('id', ids);
+          if (error) throw new Error(error.message);
+          return new Set((data ?? []).map((r) => String(r.id).toLowerCase()));
+        },
+        tierOf: (id) => {
+          if (!SERVICE_KEY) throw new Error('service key unset');
+          return fetchMatterTier(SUPABASE_URL, SERVICE_KEY, id);
+        },
+      });
+      agent = { name: parsed.name, provider: parsed.provider, matterScope, tokenHash: unusableTokenHash() };
+    }
+  } catch (e) {
+    if (e instanceof AgentConsentError) return json(res, e.status, { error: e.code, detail: e.detail });
+    throw e;
+  }
+
+  // 5. Record the approval (migrations 065, 087). This is the row the
+  // Connections page reads to say "Connected" truthfully, and the row the
+  // user revokes to cut this one client off. Re-approving a client that is
+  // already connected in the same way attaches to the grant that exists.
   //
-  // It never blocks consent. If the grants table is not deployed yet, or the
-  // database is unreachable, ensureGrantOnApprove logs and returns gid = null
-  // and the flow continues exactly as it did before 065 — which is what makes
-  // it safe to deploy this code before pasting the migration.
-  const { gid, outcome } = await ensureGrantOnApprove({
+  // Full assistant: it never blocks consent. If the grants table is not
+  // deployed yet, or the database is unreachable, gid comes back null and
+  // the flow continues exactly as it did before 065.
+  //
+  // Agent: it DOES block consent. An agent connection that could not be
+  // recorded is refused, never quietly turned into a full-access one.
+  const approval = await approveGrant({
     user_id,
     client_id,
     client_name: client.client_name || null,
     scope: scope || 'mcp',
+    agent,
   });
-  console.log('[oauth-approve] grant %s for sub=%s client=%s',
+  const { gid, outcome, agentTokenId } = approval;
+  console.log('[oauth-approve] grant %s for sub=%s client=%s as=%s',
     gid ? `${outcome} (${gid})` : `not recorded (${outcome})`, user_id,
-    (client.client_name || 'unknown').slice(0, 40));
+    (client.client_name || 'unknown').slice(0, 40), agent ? 'agent' : 'assistant');
+  if (agent && !approval.ok) {
+    return json(res, 503, {
+      error: 'agent_connect_unavailable',
+      detail: approval.undeployed
+        ? 'Connecting as an agent is not switched on yet. Nothing was granted.'
+        : 'Contextspaces could not record the agent connection, so nothing was granted. Try again.',
+    });
+  }
 
-  // 5. Mint the authorization code. 60-second TTL. `gid` rides along so the
+  // 6. Mint the authorization code. 60-second TTL. `gid` rides along so the
   // token endpoint can stamp it into the access and refresh tokens; omitted
   // entirely when there is none, which keeps the payload byte-identical to
   // the pre-065 shape.
@@ -104,12 +152,14 @@ export default async function handler(req, res) {
       resource: resource || null,
       scope: scope || 'mcp',
       ...(gid ? { gid } : {}),
+      // 087: the agent this connection is. Only ever with a gid.
+      ...(gid && agentTokenId ? { agt: agentTokenId } : {}),
     },
     oauthSecret,
     60,
   );
 
-  // 6. Build the redirect URL.
+  // 7. Build the redirect URL.
   const url = new URL(redirect_uri);
   url.searchParams.set('code', code);
   if (state) url.searchParams.set('state', state);
