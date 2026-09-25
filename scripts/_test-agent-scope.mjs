@@ -29,6 +29,10 @@
 //         * an agent row carries its scope; path A reads with select('*');
 //         * /api/ext refuses agent tokens (403 agent_token_not_allowed);
 //         * a user token's callTool options are byte-for-byte the old ones.
+//   OAUTH (migration 087) an OAuth grant linked to an agent authenticates as
+//         that agent (same identity as its csp_ row), sees only its grant,
+//         never a seal, and my_tasks works; an unlinked grant is the user as
+//         before; a revoked grant or agent, or a mismatched link, is a 401.
 //
 // THE WITNESS IS THE QUERY, NOT ONLY THE RESULT: every read that could carry
 // a matter's own words is logged with the matter ids it asked for.
@@ -68,6 +72,7 @@ const section = (t) => console.log(`\n--- ${t} ${'-'.repeat(Math.max(0, 62 - t.l
 const EMBED_DIM = ROUTES['openai-3-small'].dim;
 const tokenRows = new Map();   // token_hash -> connector_tokens row
 const authRequests = [];
+const grantRows = new Map();   // grant id -> { owner_id, revoked, client_name, agent_token_id } (migration 087)
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input?.url ?? String(input);
@@ -78,13 +83,21 @@ globalThis.fetch = async (input, init = {}) => {
       data: inputs.map(() => ({ embedding: Array(EMBED_DIM).fill(0.01) })),
     }), { status: 200, headers: { 'content-type': 'application/json' } });
   }
+  const rpcM = url.match(/^http:\/\/stub\.supabase\.local\/rest\/v1\/rpc\/(oauth_grant_[a-z_]+)$/);
+  if (rpcM) {
+    const body = JSON.parse(init.body || '{}');
+    const g = grantRows.get(body.p_grant_id);
+    const rows = rpcM[1] === 'oauth_grant_link_state' && g ? [{ grant_id: body.p_grant_id, ...g }] : [];
+    return new Response(JSON.stringify(rows), { status: 200, headers: { 'content-type': 'application/json' } });
+  }
   if (url.startsWith('http://stub.supabase.local/rest/v1/connector_tokens')) {
     const u = new URL(url);
     const method = (init.method || 'GET').toUpperCase();
     authRequests.push({ method, select: u.searchParams.get('select') });
     if (method !== 'GET') return new Response(null, { status: 204 });
     const hash = (u.searchParams.get('token_hash') || '').replace(/^eq\./, '');
-    const row = tokenRows.get(hash);
+    const byId = (u.searchParams.get('id') || '').replace(/^eq\./, '');
+    const row = byId ? [...tokenRows.values()].find((r) => r.id === byId) : tokenRows.get(hash);
     const headers = init.headers instanceof Headers ? Object.fromEntries(init.headers) : (init.headers || {});
     const accept = String(headers.Accept || headers.accept || '');
     const body = accept.includes('vnd.pgrst.object') ? (row ?? null) : (row ? [row] : []);
@@ -781,6 +794,56 @@ const tryAuth = async (fn, tok) => { try { return await fn(req(tok)); } catch (e
   check(a.err?.status === 403 && a.err?.code === 'agent_token_not_allowed',
     '/api/ext: an agent token is refused (403 agent_token_not_allowed) — those endpoints know no scope',
     a.err?.code ?? String(a));
+}
+
+// ===========================================================================
+section('OAUTH — a sign-in connected as an agent (migration 087)');
+// ===========================================================================
+{
+  process.env.MCP_OAUTH_SECRET = 'agent-scope-harness-oauth-secret-32chars+';
+  const { signJwt } = await import('../lib/oauth-jwt.mjs');
+  const { _resetGrantCache } = await import('../lib/oauth-grants.mjs');
+  const cspa = (claims) => 'cspa_' + Buffer.from(signJwt(
+    { iss: 'https://www.contextspaces.ai', typ: 'access', sub: USER, aud: 'x', client_id: 'grok-client', scope: 'mcp', ...claims },
+    process.env.MCP_OAUTH_SECRET, 600, 'at+jwt'), 'utf8').toString('base64url');
+  const G_AGENT = id(801);
+  const G_USER = id(802);
+  grantRows.set(G_AGENT, { owner_id: USER, revoked: false, client_name: 'Grok', agent_token_id: AG_A });
+  grantRows.set(G_USER, { owner_id: USER, revoked: false, client_name: 'Claude', agent_token_id: null });
+
+  const viaOauth = await tryAuth(authenticate, cspa({ gid: G_AGENT, agt: AG_A }));
+  const viaPathA = await tryAuth(authenticate, TOK_AGENT);
+  check(viaOauth.kind === 'agent' && JSON.stringify(viaOauth) === JSON.stringify(viaPathA),
+    'an OAuth grant linked to an agent authenticates as that agent — the same identity as its csp_ token', JSON.stringify(viaOauth));
+
+  const opts = callToolOptsFor(viaOauth, { openaiApiKey: 'sk-test' });
+  reset();
+  const lm = await call('list_matters', {}, opts);
+  const tree = lm.out?.tree ?? '';
+  check(lm.ok && tree.includes(A) && tree.includes(A_CHILD) && !tree.includes(A_SEALED) && !tree.includes(B) && !tree.includes(C),
+    'over OAuth it sees only its grant (A and its open child), never the sealed child, never B or C');
+  check(onlyIn([A, A_CHILD]), 'and no other matter was even counted', [...contentScope()].join(','));
+  reset();
+  const mt = await call('my_tasks', { status: 'all' }, opts);
+  check(mt.ok && Array.isArray(mt.out?.tasks) && mt.out.tasks.length > 0 && !mt.out?.error,
+    'my_tasks works over OAuth: this agent sees its own tasks', `${mt.out?.tasks?.length ?? mt.out?.error}`);
+
+  const plain = await tryAuth(authenticate, cspa({ gid: G_USER }));
+  check(plain.kind === 'user' && plain.userId === USER && !plain.tokenId, 'an unlinked grant is unchanged: the user, full access');
+  const plainTasks = await call('my_tasks', {}, callToolOptsFor(plain, {}));
+  check(plainTasks.out?.error === AGENT_TOOLS_ONLY_MESSAGE, 'and my_tasks still tells it these tools are for agents');
+
+  _resetGrantCache();
+  grantRows.set(G_AGENT, { owner_id: USER, revoked: true, client_name: 'Grok', agent_token_id: AG_A });
+  const revokedGrant = await tryAuth(authenticate, cspa({ gid: G_AGENT, agt: AG_A }));
+  check(revokedGrant.err?.status === 401 && revokedGrant.err.code === 'invalid_token', 'grant revoked → 401 invalid_token');
+  const G_REV = id(803);
+  grantRows.set(G_REV, { owner_id: USER, revoked: false, client_name: 'Grok', agent_token_id: id(702) }); // TOK_REVOKED's row
+  const revokedAgent = await tryAuth(authenticate, cspa({ gid: G_REV, agt: id(702) }));
+  check(revokedAgent.err?.status === 401 && revokedAgent.err.code === 'invalid_token', 'agent revoked → 401 invalid_token');
+  const mismatch = await tryAuth(authenticate, cspa({ gid: G_USER, agt: AG_A }));
+  check(mismatch.err?.status === 401, 'a token naming an agent its grant is not linked to → 401, never the user');
+  delete process.env.MCP_OAUTH_SECRET;
 }
 
 // ---------------------------------------------------------------------------
