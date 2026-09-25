@@ -94,6 +94,10 @@ export default function MatterspaceView() {
 
   const [matter, setMatter] = useState<MatterRow | null>(null);
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
+  // The matters between the serverspace and this one, root first, so the
+  // breadcrumb reads Legal / Bushell / Direct Challenges — not Legal / Direct
+  // Challenges with the parent silently dropped (2026-09-25, Eden on iPhone).
+  const [ancestors, setAncestors] = useState<{ id: string; name: string }[]>([]);
   const [subMatters, setSubMatters] = useState<{ id: string; name: string }[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
@@ -161,6 +165,7 @@ export default function MatterspaceView() {
     setLoadError(null);
     setMatter(null);
     setServerspace(null);
+    setAncestors([]);
     setSubMatters([]);
     (async () => {
       const { data: m, error } = await supabase
@@ -179,6 +184,18 @@ export default function MatterspaceView() {
       if (cancelled) return;
       if (s) setServerspace(s as ServerspaceRow);
       setSubMatters(kids ?? []);
+      // Walk up the parent links. Trees here are a few levels deep; the cap
+      // only guards against a cycle in bad data.
+      const chain: { id: string; name: string }[] = [];
+      let parentId = m.parent_matterspace_id;
+      for (let depth = 0; parentId && depth < 12; depth++) {
+        const { data: p } = await supabase
+          .from('matterspaces').select('id, name, parent_matterspace_id').eq('id', parentId).maybeSingle();
+        if (cancelled || !p) break;
+        chain.unshift({ id: p.id, name: p.name });
+        parentId = p.parent_matterspace_id;
+      }
+      if (!cancelled) setAncestors(chain);
     })();
     return () => { cancelled = true; };
   }, [id]);
@@ -229,7 +246,9 @@ export default function MatterspaceView() {
       />
 
       <div ref={cardRef} className={`max-w-5xl mx-auto rounded-xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.06)] ${
-        isMobile ? 'px-4 py-6 my-4' : 'px-8 pt-0 pb-8 my-8 cursor-grab select-none'
+        // overflow-x clip on a phone: nothing inside may make the card wider than
+        // the screen, which is what let it slide sideways as you scrolled.
+        isMobile ? 'px-4 py-6 my-4 overflow-x-clip' : 'px-8 pt-0 pb-8 my-8 cursor-grab select-none'
       }`} style={{ backgroundColor: 'rgba(8,8,14,0.8)' }}>
         {/* Close + drag handle + fullscreen — desktop only; on a phone the
             card flows in place (same treatment as the Dashboard card). */}
@@ -254,17 +273,29 @@ export default function MatterspaceView() {
             <Link to={`/app/serverspace/${serverspace.id}`} className="hover:text-[#e8b84a] transition-colors">
               {serverspace.name}
             </Link>
+            {ancestors.map((a) => (
+              <span key={a.id}>
+                <span className="mx-1.5">/</span>
+                <Link to={`/app/matterspace/${a.id}`} className="hover:text-[#e8b84a] transition-colors">
+                  {a.name}
+                </Link>
+              </span>
+            ))}
             <span className="mx-1.5">/</span>
             <span className="text-white/60">{matter?.name ?? '…'}</span>
           </div>
         )}
 
-        {/* Header */}
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center">
+        {/* Header. On a phone the four matter buttons (Pause AI, Ask, Discovery,
+            Vault) no longer share one row with the title: they wrap onto their
+            own line below it. Sharing the row squeezed the title to one
+            character wide, so it ran down the side letter by letter, and pushed
+            the card wider than the screen, so it slid sideways (2026-09-25). */}
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          <div className="w-10 h-10 rounded-lg bg-[#d4a054]/10 flex items-center justify-center shrink-0">
             <Folder size={20} className="text-[#d4a054]" />
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-[10rem]">
             {matter && !loadError ? (
               <div className="flex items-center gap-1.5 group/title">
                 <h1
@@ -300,7 +331,7 @@ export default function MatterspaceView() {
             {loadError && <p className="text-sm text-red-300">{loadError}</p>}
           </div>
           {matter && (
-            <div className="flex items-center gap-2 shrink-0">
+            <div className={`flex flex-wrap items-center gap-2 ${isMobile ? 'w-full' : 'shrink-0'}`}>
               {/* "Pause all AI on this matter". It sits first because when it
                   is on it is the most important fact on the page, and because
                   it is the control a user reaches for in a hurry. The seal's
