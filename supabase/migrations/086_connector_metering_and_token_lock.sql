@@ -1,13 +1,23 @@
 -- Contextspaces Migration 086: the launch sweep
 --
 -- NOT APPLIED BY THE PR THAT ADDS IT. Eden pastes it into the SQL editor after
--- the PR merges. Apply order: after 085 (it names 085's columns). Every section
--- is idempotent — the file can be pasted twice and converges to the same state.
+-- the PR merges. Apply order: after 063, 067 and 085 (it names 085's columns
+-- and 063's tables). Every section is idempotent — the file can be pasted
+-- twice and converges to the same state.
 --
 -- Sections:
 --   1. connector_tokens.token_hash is server-only (column-level SELECT grants).
+--   2. The connector rate ceilings: usage_budgets rows for kind 'connector'
+--      (per account) and 'connector_agent' (per agent token), per plan.
+--   3. connector_rate_consume() — the one round trip api/mcp.mjs makes before
+--      every tool call to count it against those ceilings.
 --
--- Rollback, per section, is written at the end of each section.
+-- Rollback is written at the end of each section.
+--
+-- Code/SQL order: the code on this branch works BEFORE 086 is applied (the
+-- rate RPC is missing, which the meter treats as "no rate ceiling yet" and
+-- admits; costed calls are still charged through 063/067's usage_consume). So
+-- merge first, then paste.
 -- ---------------------------------------------------------------------------
 
 
@@ -159,6 +169,204 @@ begin
   end if;
 end
 $$;
+
+
+-- ===========================================================================
+-- 2. The connector rate ceilings — rows in usage_budgets, where the caps live
+-- ===========================================================================
+--
+-- WHAT IS WRONG TODAY. api/mcp.mjs runs every tool call with no meter and no
+-- cap. Since 085 an agent token (a Grok bot on a schedule) can call it
+-- unattended, so a loop can run searches, file documents and queue OCR
+-- without bound while the in-app paths are metered and capped.
+--
+-- WHAT THIS SECTION DOES. Adds two `kind`s to 063's usage_budgets, per plan:
+--   * 'connector'       — every connector tool call on the ACCOUNT, from any
+--                         connection (Claude, ChatGPT, Gemini, Grok, OAuth,
+--                         agents), per window_seconds.
+--   * 'connector_agent' — every call from ONE agent token, per window_seconds.
+-- Only window_seconds and window_max_requests are read. monthly_cents stays
+-- null: MONEY is charged through usage_consume on the same wallet as the app
+-- (kind 'ingest' for file_document / ingest_document), not through these rows.
+-- null window_max_requests = unlimited, which is what 'workshop' gets.
+--
+-- THE DEFAULTS, and why. The window is one hour. A lawyer's assistant doing a
+-- heavy research turn makes perhaps 20–60 tool calls; a scheduled agent that
+-- wakes, reads its tasks and does one piece of work makes a few dozen, and one
+-- that polls my_tasks every 30 seconds while it waits makes 120 an hour. A
+-- runaway loop at one call a second makes 3,600.
+--
+--   plan       per account / hour    per agent token / hour
+--   free                600                    240
+--   basic              1000                    400
+--   pro                1500                    600
+--   max                3000                   1200
+--   workshop       unlimited              unlimited
+--
+-- A tier with no row reads the 'free' row: an unknown tier is never unlimited.
+-- These are `on conflict do nothing`, so once Eden edits a number a second
+-- paste of this file does not put it back. To change one:
+--   update public.usage_budgets set window_max_requests = 2000
+--    where pricing_tier = 'pro' and kind = 'connector';
+--
+-- ROLLBACK:
+--   delete from public.usage_budgets where kind in ('connector', 'connector_agent');
+
+insert into public.usage_budgets
+  (pricing_tier, kind, monthly_cents, window_seconds, window_max_requests,
+   max_output_tokens, max_request_bytes, note)
+values
+  ('free',     'connector',       null, 3600,  600, null, null, '086 default — connector tool calls per account per hour'),
+  ('free',     'connector_agent', null, 3600,  240, null, null, '086 default — calls per agent token per hour'),
+  ('basic',    'connector',       null, 3600, 1000, null, null, '086 default — connector tool calls per account per hour'),
+  ('basic',    'connector_agent', null, 3600,  400, null, null, '086 default — calls per agent token per hour'),
+  ('pro',      'connector',       null, 3600, 1500, null, null, '086 default — connector tool calls per account per hour'),
+  ('pro',      'connector_agent', null, 3600,  600, null, null, '086 default — calls per agent token per hour'),
+  ('max',      'connector',       null, 3600, 3000, null, null, '086 default — connector tool calls per account per hour'),
+  ('max',      'connector_agent', null, 3600, 1200, null, null, '086 default — calls per agent token per hour'),
+  ('workshop', 'connector',       null, 3600, null, null, null, 'Eden''s own account — unlimited by design'),
+  ('workshop', 'connector_agent', null, 3600, null, null, null, 'Eden''s own account — unlimited by design')
+on conflict (pricing_tier, kind) do nothing;
+
+
+-- ===========================================================================
+-- 3. connector_rate_consume(p_user, p_agent_token) — count one connector call
+-- ===========================================================================
+--
+-- One round trip before every connector tool call. It counts the call in
+-- 063's usage_windows (the same table and the same row-lock mechanism
+-- usage_consume uses, so two calls arriving together serialise), first
+-- against the agent token's own window when the caller is an agent, then
+-- against the account's. It charges NOTHING and writes no usage_events row:
+-- a free read costs nothing, and a costed call is charged separately through
+-- usage_consume, where the wallet and the credits live.
+--
+-- What it stores: user_id, kind ('connector' | 'connector_agent'), a window
+-- key (the window's start, prefixed by the agent token's id for an agent), a
+-- count, an expiry. No tool name, no argument, no query, no document — there
+-- is nowhere in these rows for content to go.
+--
+-- The answer is jsonb: {allowed, reason, status, tier, scope, window_seconds,
+-- window_max_requests, window_requests, retry_after_seconds, reset_at}. A
+-- refusal is status 429 with reason 'over_agent_rate' or 'over_connector_rate'
+-- and reset_at (epoch seconds) so the caller can say "resets at 15:00 UTC".
+-- 'workshop' is admitted before anything is counted: it is never refused,
+-- whatever the rows say.
+--
+-- service_role only. The caller (api/mcp.mjs, through lib/connector-meter.mjs)
+-- has already authenticated the token and passes its owner; a browser has no
+-- reason to call it and is not granted it.
+--
+-- ROLLBACK:
+--   drop function if exists public.connector_rate_consume(uuid, uuid);
+--   delete from public.usage_windows where kind in ('connector', 'connector_agent');
+
+create or replace function public.connector_rate_consume(
+  p_user        uuid,
+  p_agent_token uuid default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_tier      text;
+  v_acct      public.usage_budgets%rowtype;
+  v_agent     public.usage_budgets%rowtype;
+  v_secs      integer;
+  v_start     timestamptz;
+  v_key       text;
+  v_reqs      integer;
+  v_acct_reqs integer := null;
+  v_agent_reqs integer := null;
+begin
+  if p_user is null then
+    return jsonb_build_object('allowed', false, 'reason', 'unauthenticated', 'status', 401);
+  end if;
+
+  select p.pricing_tier into v_tier from public.profiles p where p.id = p_user;
+  v_tier := coalesce(nullif(trim(v_tier), ''), 'free');
+
+  if v_tier = 'workshop' then
+    return jsonb_build_object('allowed', true, 'reason', 'ok', 'status', 200,
+      'tier', v_tier, 'scope', 'unlimited');
+  end if;
+
+  select * into v_acct from public.usage_budgets where pricing_tier = v_tier and kind = 'connector';
+  if not found then
+    select * into v_acct from public.usage_budgets where pricing_tier = 'free' and kind = 'connector';
+  end if;
+  select * into v_agent from public.usage_budgets where pricing_tier = v_tier and kind = 'connector_agent';
+  if not found then
+    select * into v_agent from public.usage_budgets where pricing_tier = 'free' and kind = 'connector_agent';
+  end if;
+
+  delete from public.usage_windows w
+   where w.user_id = p_user
+     and w.kind in ('connector', 'connector_agent')
+     and w.expires_at < now() - interval '1 hour';
+
+  -- ---- the agent token's own window ----------------------------------------
+  if p_agent_token is not null and v_agent.window_max_requests is not null then
+    v_secs  := greatest(coalesce(v_agent.window_seconds, 3600), 1);
+    v_start := to_timestamp(floor(extract(epoch from now()) / v_secs) * v_secs);
+    v_key   := p_agent_token::text || '@'
+               || to_char(v_start at time zone 'utc', 'YYYYMMDD"T"HH24MISS');
+    insert into public.usage_windows (user_id, kind, window_key, requests, expires_at)
+    values (p_user, 'connector_agent', v_key, 1, v_start + make_interval(secs => v_secs * 2))
+    on conflict (user_id, kind, window_key) do update
+      set requests = public.usage_windows.requests + 1
+    returning requests into v_reqs;
+    v_agent_reqs := v_reqs;
+
+    if v_reqs > v_agent.window_max_requests then
+      return jsonb_build_object(
+        'allowed', false, 'reason', 'over_agent_rate', 'status', 429,
+        'message', 'This agent connection has made as many calls as it may this hour.',
+        'tier', v_tier, 'scope', 'agent',
+        'window_seconds', v_secs, 'window_max_requests', v_agent.window_max_requests,
+        'window_requests', v_reqs,
+        'reset_at', extract(epoch from v_start)::bigint + v_secs,
+        'retry_after_seconds',
+          greatest(1, ceil(extract(epoch from (v_start + make_interval(secs => v_secs) - now())))::integer));
+    end if;
+  end if;
+
+  -- ---- the account's window -------------------------------------------------
+  if v_acct.window_max_requests is not null then
+    v_secs  := greatest(coalesce(v_acct.window_seconds, 3600), 1);
+    v_start := to_timestamp(floor(extract(epoch from now()) / v_secs) * v_secs);
+    v_key   := to_char(v_start at time zone 'utc', 'YYYYMMDD"T"HH24MISS');
+    insert into public.usage_windows (user_id, kind, window_key, requests, expires_at)
+    values (p_user, 'connector', v_key, 1, v_start + make_interval(secs => v_secs * 2))
+    on conflict (user_id, kind, window_key) do update
+      set requests = public.usage_windows.requests + 1
+    returning requests into v_reqs;
+    v_acct_reqs := v_reqs;
+
+    if v_reqs > v_acct.window_max_requests then
+      return jsonb_build_object(
+        'allowed', false, 'reason', 'over_connector_rate', 'status', 429,
+        'message', 'This account has made as many connector calls as its plan allows this hour.',
+        'tier', v_tier, 'scope', 'account',
+        'window_seconds', v_secs, 'window_max_requests', v_acct.window_max_requests,
+        'window_requests', v_reqs,
+        'reset_at', extract(epoch from v_start)::bigint + v_secs,
+        'retry_after_seconds',
+          greatest(1, ceil(extract(epoch from (v_start + make_interval(secs => v_secs) - now())))::integer));
+    end if;
+  end if;
+
+  return jsonb_build_object(
+    'allowed', true, 'reason', 'ok', 'status', 200, 'tier', v_tier,
+    'scope', case when p_agent_token is null then 'account' else 'agent' end,
+    'window_requests', v_acct_reqs, 'window_max_requests', v_acct.window_max_requests,
+    'agent_window_requests', v_agent_reqs, 'agent_window_max_requests', v_agent.window_max_requests);
+end $$;
+
+revoke all on function public.connector_rate_consume(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.connector_rate_consume(uuid, uuid) to service_role;
 
 
 notify pgrst, 'reload schema';

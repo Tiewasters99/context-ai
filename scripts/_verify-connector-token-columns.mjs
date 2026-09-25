@@ -102,7 +102,9 @@ async function bootstrap({ with085 = true } = {}) {
       ), '')::uuid
     $$;
     create table public.documents (
-      id uuid primary key default gen_random_uuid(), matterspace_id uuid, created_by uuid);
+      id uuid primary key default gen_random_uuid(), matterspace_id uuid, created_by uuid,
+      page_count int, file_size_bytes bigint, ingested_at timestamptz,
+      created_at timestamptz not null default now());
     create table public.passages (
       id uuid primary key default gen_random_uuid(), matterspace_id uuid);
     create table storage.objects (
@@ -117,6 +119,10 @@ async function bootstrap({ with085 = true } = {}) {
     '001_initial_schema.sql', '003_connector_tokens.sql', '005_fix_rls_recursion.sql',
     '008_submatters.sql', '016_matterspace_members.sql', '022_matterspaces_rls_invoker_wrappers.sql',
   ]) await db.exec(migration(f));
+  // 086 §2–3 write to 063's usage_budgets / usage_windows (062 first: 063
+  // reads profiles.pricing_tier).
+  await db.exec(migration('062_profiles_rls_plan.sql'));
+  await db.exec(migration('063_usage_budgets.sql'));
   if (with085) await db.exec(migration('085_agent_tokens_and_tasks.sql'));
   // Supabase's own blanket default, applied after the tables exist — the
   // state the live database is in, and the one 086 exists to undo.
