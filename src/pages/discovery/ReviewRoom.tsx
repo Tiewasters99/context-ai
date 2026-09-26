@@ -670,7 +670,7 @@ function NativePlaceholder({ item }: { item: ProductionItem }) {
   const download = async () => {
     if (!item.native_storage_path) return;
     try {
-      const url = await getDiscoverySignedUrl(item.native_storage_path, 600);
+      const url = await getDiscoverySignedUrl(item.native_storage_path, 600, 'download');
       window.open(url, '_blank', 'noopener');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to sign download URL');
