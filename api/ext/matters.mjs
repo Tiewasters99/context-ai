@@ -23,6 +23,9 @@
 // the way lib/mcp-core.mjs hides them from list_matters: a connected app
 // cannot reach a paused matter, so it is not offered one to pick. If the pause
 // cannot be read, the list is refused (503) rather than served unfiltered.
+// Read with the service role, like the seal below: a pause set on a parent
+// the caller cannot see still pauses the child they can. It asks from the
+// paused side (the few paused roots and their descendants), never scans.
 
 import {
   authenticateConnectorToken,

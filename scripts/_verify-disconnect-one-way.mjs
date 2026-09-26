@@ -680,7 +680,10 @@ section('R. HIGH-1 — nothing un-revokes (the reviewer\'s R probe, now refused)
       await asClaims(C(tok));
       const r = await attempt(sql, [TOK[name].id]);
       await asSuperuser();
-      if (r.err) refused.push(label); else console.log(`      (allowed: ${label})`);
+      // Refused BY THE GUARD (or 003's own-row check for user_id), not by a
+      // typo in the probe: the error must be the permission error.
+      if (r.err && (r.err.code === '42501' || /connector_tokens:|connections_locked|row-level security/.test(r.err.message))) refused.push(label);
+      else console.log(`      (not refused by the guard: ${label} — ${r.err?.message ?? 'allowed'})`);
     }
     check(refused.length === tries.length, `${who}: every one of ${tries.length} un-revoking UPDATEs is refused`, `${refused.length}/${tries.length}`);
   }
@@ -806,6 +809,11 @@ section('U. a sign-in from after the lock — and the one row that says so');
   check(Boolean(wide.err) && /connections_locked/.test(wide.err.message), 'widening it to "all my matters" from the pre-lock sign-in is refused');
   check(!rev.err && new Date(rev.rows[0].revoked_at).getFullYear() > 2000,
     'revoking is always allowed (one-way), and the server stamps the time, not the browser');
+  await asClaims(C(S_NEW));
+  const again = await attempt(`update public.connector_tokens set revoked_at = now() + interval '1 day' where id = $1 returning revoked_at`, [TOK['New desktop'].id]);
+  await asSuperuser();
+  check(!again.err && String(again.rows[0].revoked_at) === String(rev.rows[0].revoked_at),
+    'revoking twice (a double click) is not an error, and keeps the first time');
 
   // A second press; this time the first reconnection is the consent screen.
   await asSuperuser();

@@ -86,7 +86,8 @@
 --   name           freely.
 --   last_used_at   freely (the server stamps it; a browser forging its own
 --                  "last used" deceives only itself).
---   revoked_at     null → set, once; the server stamps now(). Never back.
+--   revoked_at     null → set, once; the server stamps now(). Never back
+--                  (a second revoke keeps the first time).
 --   expires_at     earlier only (null → a date, or a date → an earlier one).
 --   matter_scope,  on a LIVE agent row only, and only through the gate:
 --   scope_all      Connections › Agents › Edit matters is a real browser
@@ -449,10 +450,12 @@ begin
 
   -- Revocation is one-way, and the server stamps the time.
   if old.revoked_at is not null then
-    if new.revoked_at is distinct from old.revoked_at then
+    if new.revoked_at is null then
       raise exception 'connector_tokens: a revoked token stays revoked'
         using errcode = '42501';
     end if;
+    -- Revoking twice (a double click) keeps the first time, silently.
+    new.revoked_at := old.revoked_at;
   elsif new.revoked_at is not null then
     new.revoked_at := now();
   end if;
