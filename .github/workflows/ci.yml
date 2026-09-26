@@ -181,6 +181,18 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-stepup-seal.mjs
 
+      # Migration 097 — a document's stored file lives under its own matter.
+      # The CHECK refuses a row whose storage_path names another matter's
+      # object (insert, update, a move that leaves the path behind), and the
+      # five routes that read bytes with the service role after a user-scoped
+      # lookup — cloud-export, drive-export, ext/push-to-drive, gmail-send,
+      # ingest — plus get_media refuse such a POINTER row with zero storage
+      # reads; each has a control that the correctly filed row gets through.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 097 — storage_path belongs to its matter (PGlite + the six call sites)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-storage-path.mjs
+
       # Migration 095 (S2). "Disconnect everything": one press revokes every
       # OAuth grant, connector token and agent of the presser, switches their
       # charters off and pauses AI on every root matter of the serverspaces

@@ -116,7 +116,9 @@ const DOC = Object.freeze({
   id: 'doc-1',
   title: 'Calder v. Atlas — settlement memo',
   source_filename: 'settlement-memo.pdf',
-  storage_path: 'user-1/doc-1.pdf',
+  // The tail of the stored path; the row served below puts it under its own
+  // matter, as migration 097 requires ("<matter>/<doc>/<file>").
+  storage_path: 'doc-1/settlement-memo.pdf',
   file_size_bytes: 21,
 });
 const FILE_BYTES = Buffer.from('CONFIDENTIAL-PAYLOAD!', 'utf8'); // 21 bytes
@@ -233,7 +235,7 @@ function supabaseAnswer(url, init) {
     }]);
   }
   if (url.includes('/rest/v1/documents')) {
-    return jsonRes(200, [{ ...DOC, matterspace_id: world.docMatter }]);
+    return jsonRes(200, [{ ...DOC, matterspace_id: world.docMatter, storage_path: `${world.docMatter}/${DOC.storage_path}` }]);
   }
   if (url.includes('/rest/v1/rpc/matterspace_descendants')) {
     return jsonRes(200, [{ id: 'matter-child' }]);
@@ -700,10 +702,15 @@ try {
     check(gated.json?.seal === undefined, `${p.name}: no 'seal' key on an unsealed export`, gated.json);
   }
   {
+    // Until 097 this row exported, as /api/llm treats an unbound draft. A
+    // stored file in NO matter cannot exist in the database
+    // (documents.matterspace_id is NOT NULL since 002), and since 097 every
+    // route refuses a file not filed under its row's own matter before the
+    // service role reads a byte (lib/storage-path.mjs) — fail closed.
     install({ tier: 'B', docMatter: null });
     const res = await post(driveExport, { documentId: 'doc-1' });
-    check(res.statusCode === 200 && res.json?.seal === undefined,
-      'a document in no matter has no seal to leave — exported, as /api/llm treats an unbound draft', { status: res.statusCode });
+    check(res.statusCode === 409 && res.json?.error === 'storage_path_mismatch' && storageReads().length === 0,
+      'a stored file in no matter is refused before any read (097), not exported', { status: res.statusCode, body: res.json });
   }
 
   // ── 10. NEGATIVE CONTROL ────────────────────────────────────────────────
