@@ -856,3 +856,21 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node --import ./scripts/_node-src-loader.mjs scripts/_verify-brief-md-roundtrip.mjs
+
+      # Migration 101 + the Brief Desk, slice D2 (docs/specs/
+      # BRIEF-DESK-2026-09-26.md §3.4): the two resolvers. One reporter
+      # spelling both ways (a Westlaw header parsed at ingest and the same cite
+      # as a brief writes it; F. App'x included); pins, parallel cites, star
+      # levels. Then 101 in PGlite with real roles and RLS, twice, the rows
+      # written by the real upsertDocumentCitations: reporter hit, parallel
+      # reporter via star_pages, two copies, the name fallback (never after a
+      # reporter miss), another firm's matter never returned, a sealed
+      # sub-matter only at aal2, no uid → nothing, service_role passes; the
+      # page resolver's printed / parallel / pin_not_found / pdf_index_declined
+      # (the caveat word for word) / unknown; the backfill idempotent; and two
+      # weakened copies of 101 must fail by name.
+      - name: Migration 101 — Brief Desk resolvers (resolve_citation, passage_for_printed_page)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node --import ./scripts/_node-src-loader.mjs scripts/_verify-citation-resolvers.mjs
