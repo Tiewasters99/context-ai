@@ -457,6 +457,15 @@ await q(`delete from public.matterspace_members where matterspace_id = $1 and us
     'the four helpers, at aal1: no role on the sealed matter, "member" on the open one', helpers);
   const helpers2 = (await qa(aal2(EDEN), `select public.matter_role($1) r, public.can_manage_matter($1) m`, [SEALED]))[0];
   check(helpers2.r === 'owner' && helpers2.m === true, 'at aal2 the owner is the owner');
+  // 095's kill switch asks public.matter_role for matter scope. At aal2 it
+  // works on a sealed matter; at aal1 the owner is refused on it (the matter
+  // is hidden from that session by 094 anyway); account scope asks no helper.
+  const kill2 = await tryAs(aal2(EDEN), `select public.disconnect_all_preview('matter', $1) p`, [SEALED]);
+  check(!kill2.err && kill2.rows[0].p, 'disconnect_all_preview(matter, sealed) works for the owner at aal2', kill2.err?.message);
+  const kill1 = await tryAs(aal1(EDEN), `select public.disconnect_all_preview('matter', $1) p`, [SEALED]);
+  check(kill1.err?.code === '42501', 'at aal1 it is refused on the sealed matter (not owner/admin — to this session it is not there)', kill1.err?.message);
+  const killAcct = await tryAs(aal1(EDEN), `select public.disconnect_all_preview('account', null) p`);
+  check(!killAcct.err && killAcct.rows[0].p, 'account scope still works at aal1 — the one press never needs a factor', killAcct.err?.message);
   const secdef = (await q(`select proname, prosecdef from pg_proc where pronamespace = 'public'::regnamespace
     and proname in ('matter_role','can_access_matter','can_write_matter','can_manage_matter')`));
   check(secdef.length === 4 && secdef.every((p) => p.prosecdef === false), 'the public helpers are INVOKER wrappers now (house rule)');

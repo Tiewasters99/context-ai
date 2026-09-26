@@ -61,10 +61,11 @@
 -- once per matter exactly as 078 arranged; scripts/_verify-seal-in-access.mjs
 -- times both that path and a direct per-row read before and after this file.
 -- In PGlite (WASM, one process — a smoke check of the shape, not a production
--- figure) on 2,501 passages per matter: search_passages within noise of 095;
--- a direct read of an open matter ~1.4× 095's per-row cost; of a sealed matter
--- at aal2 ~1.7× (the `aal` claim is parsed per row). The per-row cost that
--- 078 removed from search stays removed. After pasting, run in the SQL editor
+-- figure), 2,501 passages per matter, four runs: search_passages 1.1–1.6× on
+-- a ~5 ms call (a few more function calls per MATTER, nothing per row); a
+-- direct read of an open matter 1.3–1.7× 095's per-row cost; of a sealed
+-- matter at aal2 1.7–2.1× (the JWT is parsed per sealed row). The per-row cost
+-- that 078 removed from search stays removed. After pasting, run in the SQL editor
 --   explain analyze select count(*) from passages where matterspace_id = '<a big matter>';
 -- as an aal2 session to see production's number.
 --
@@ -211,11 +212,21 @@ grant execute on function stepup_internal.effective_tier_walk(uuid) to service_r
 -- BEFORE INSERT OR UPDATE, on EVERY update: the value is always recomputed
 -- from the row's own tier and its parent's stored value, so a matter admin
 -- who writes `sealed_effective = false` (023's UPDATE policy has no column
--- list) gets the true value back. FOR SHARE on the parent: a child inserted
--- while its parent's tier is being changed waits for that change and reads
--- its result, and the change waits for the insert, so neither can miss the
--- other. DEFINER because a sub-matter's parent can be invisible to the person
--- creating the sub-matter (a matter-level admin under a sealed root).
+-- list) gets the true value back. DEFINER because a sub-matter's parent can be
+-- invisible to the person creating the sub-matter (a matter-level admin under
+-- a sealed root).
+--
+-- The parent row is locked FOR SHARE only when this row is being ATTACHED to
+-- it — an insert, or a change of parent. Those are the two cases a concurrent
+-- change of the parent's tier could otherwise miss (its cascade would not yet
+-- see the new child): with the lock, one waits for the other and reads its
+-- result. An ordinary update of a child (a rename, a pause, its own tier) does
+-- not lock the parent: taking it there would deadlock against the parent's
+-- cascade, which holds the parent and waits for the child. Without the lock
+-- that case still converges — the cascade's UPDATE re-reads the child after
+-- the child's transaction commits and re-applies the parent's value. What
+-- remains is a rare deadlock between an attach and a re-tier of the same
+-- parent: loud and retryable (40P01), never a silent wrong value.
 create or replace function stepup_internal.sealed_effective_compute()
 returns trigger
 language plpgsql
@@ -226,11 +237,18 @@ declare
   v_parent boolean := false;
 begin
   if new.parent_matterspace_id is not null then
-    select m.sealed_effective
-      into v_parent
-      from public.matterspaces m
-     where m.id = new.parent_matterspace_id
-       for share;
+    if tg_op = 'INSERT' or new.parent_matterspace_id is distinct from old.parent_matterspace_id then
+      select m.sealed_effective
+        into v_parent
+        from public.matterspaces m
+       where m.id = new.parent_matterspace_id
+         for share;
+    else
+      select m.sealed_effective
+        into v_parent
+        from public.matterspaces m
+       where m.id = new.parent_matterspace_id;
+    end if;
   end if;
   new.sealed_effective := coalesce(new.ai_tier in ('B', 'C'), false) or coalesce(v_parent, false);
   return new;
@@ -269,7 +287,10 @@ revoke all on function stepup_internal.sealed_effective_compute() from public, a
 revoke all on function stepup_internal.sealed_effective_cascade() from public, anon, authenticated;
 
 -- Backfill with the triggers out of the way, top-down in one statement, so a
--- deep tree cannot be computed from a parent's not-yet-updated value.
+-- deep tree cannot be computed from a parent's not-yet-updated value. Only
+-- rows whose value changes are written — on the first paste, every sealed
+-- matter and everything under one — and 001's updated_at trigger stamps them
+-- now(), so those matters sort as "recently updated" once.
 drop trigger if exists matterspaces_sealed_effective on public.matterspaces;
 drop trigger if exists matterspaces_sealed_effective_cascade on public.matterspaces;
 
