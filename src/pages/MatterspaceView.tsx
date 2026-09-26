@@ -17,6 +17,8 @@ import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import AiPauseControl from '@/components/matter/AiPauseControl';
 import AskAssistantButton from '@/components/ai/AskAssistantButton';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
+import { matterEntry } from '@/lib/second-factor';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { MATTER_COVER_KEY } from '@/hooks/useMatterCover';
 import { useQueryClient } from '@tanstack/react-query';
@@ -101,6 +103,13 @@ export default function MatterspaceView() {
   const [ancestors, setAncestors] = useState<{ id: string; name: string }[]>([]);
   const [subMatters, setSubMatters] = useState<{ id: string; name: string }[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Migration 094: a sealed matter is invisible to a session that has not
+  // confirmed a second factor. When the row comes back empty, the page asks
+  // why (matter_entry) and, if the answer is the seal, draws the factor
+  // prompt in place of the matter instead of "not found". Confirming bumps
+  // reloadKey and the matter is read again, now at aal2.
+  const [gate, setGate] = useState<'stepup' | 'enrol' | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const refreshServerspaces = useServerspacesRefresh();
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -164,6 +173,7 @@ export default function MatterspaceView() {
     if (!id) return;
     let cancelled = false;
     setLoadError(null);
+    setGate(null);
     setMatter(null);
     setServerspace(null);
     setAncestors([]);
@@ -175,8 +185,16 @@ export default function MatterspaceView() {
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
-      if (error) { setLoadError(error.message); return; }
-      if (!m) { setLoadError('Matter not found'); return; }
+      // 42501 is the gate refusing outright; an empty row is the gate (or
+      // nothing) hiding it. Either way, ask before saying "not found".
+      if (error && error.code !== '42501') { setLoadError(error.message); return; }
+      if (error || !m) {
+        const entry = await matterEntry(id);
+        if (cancelled) return;
+        if (entry === 'stepup' || entry === 'enrol') { setGate(entry); return; }
+        setLoadError('Matter not found');
+        return;
+      }
       setMatter(m as MatterRow);
       const [{ data: s }, { data: kids }] = await Promise.all([
         supabase.from('serverspaces').select('id, name').eq('id', m.serverspace_id).maybeSingle(),
@@ -199,7 +217,7 @@ export default function MatterspaceView() {
       if (!cancelled) setAncestors(chain);
     })();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, reloadKey]);
 
   const enterVault = () => {
     if (!matter) return;
@@ -325,7 +343,7 @@ export default function MatterspaceView() {
               </div>
             ) : (
               <h1 className="text-2xl font-bold text-[#f5f2ed] truncate">
-                {loadError ? 'Matterspace' : 'Loading…'}
+                {loadError || gate ? 'Matterspace' : 'Loading…'}
               </h1>
             )}
             {matter?.description && <p className="text-sm text-white/80">{matter.description}</p>}
@@ -411,9 +429,25 @@ export default function MatterspaceView() {
           </section>
         )}
 
+        {gate && id && (
+          <div className="mt-6">
+            <StepUpPrompt
+              mode={gate}
+              matterId={id}
+              onConfirmed={() => {
+                setGate(null);
+                setReloadKey((k) => k + 1);
+                // The sidebar and dashboard read matters too; at aal2 the
+                // sealed ones are now theirs to show.
+                refreshServerspaces();
+              }}
+            />
+          </div>
+        )}
+
         {/* Tabs — wrap onto extra rows as the card narrows so no tab ever
             spills outside the card (the card resizes down to 300px wide). */}
-        <div className="flex flex-wrap gap-x-1 gap-y-0.5 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">
+        {!gate && <div className="flex flex-wrap gap-x-1 gap-y-0.5 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">
           {tabs.map((tab) => (
             <button
               key={tab}
@@ -432,7 +466,7 @@ export default function MatterspaceView() {
               {tab}
             </button>
           ))}
-        </div>
+        </div>}
 
         {/* Content */}
         {activeTab === 'Updates' && matter && (

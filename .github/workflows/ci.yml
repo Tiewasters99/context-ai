@@ -166,6 +166,21 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-search-rls-authorize.mjs
 
+      # Migration 094 (S1). A sealed matter opens only to a session that has
+      # confirmed a second factor — at matter entry (the matterspaces SELECT
+      # policy) and in the search functions' scope, never per row on passages.
+      # Real roles, real RLS, request.jwt.claims set the way PostgREST sets
+      # them; opens with the negative control (no 094: aal1 reads the seal).
+      # Also: the inherited seal holds for a caller who cannot see the sealed
+      # parent, the connector-stamped token is not gated and a token with
+      # neither aal2 nor the stamp is, E2's grace by sign-in time, the fifteen
+      # new Record kinds, the account chain's list against the JS, the
+      # actor_ref index, and the two account endpoints with fetch stubbed.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 094 — second factor at the door of a sealed matter (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-stepup-seal.mjs
+
       # Migration 080. A connection's stored refresh token is ciphertext, but
       # it is still the credential for someone's mailbox and cloud drive, and
       # RLS plus Supabase's blanket column grant let a signed-in browser ask

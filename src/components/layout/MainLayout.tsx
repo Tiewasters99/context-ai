@@ -7,6 +7,7 @@ import Assistant from '@/components/ai/Assistant';
 import CanvasLayer from '@/components/canvas/CanvasLayer';
 import AmbientControls from './AmbientControls';
 import RefusalBanner from '@/components/ui/RefusalBanner';
+import FactorBanner from '@/components/account/FactorBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
 
@@ -104,6 +105,7 @@ export default function MainLayout() {
         {/* Content — extra bottom padding on mobile so the fixed tab bar
             never covers the last line of a page. */}
         <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
+          <FactorBanner />
           <Outlet />
           {/* Pinned cards. On a laptop these float over the cover as fixed
               panels; on a phone they fall into the page under the route's
