@@ -43,6 +43,17 @@
 //     asks for the factor and calls again with {sign_out_only: true}, which
 //     signs the others out and revokes nothing further.
 //
+// And who may sign the others out at all (round 3). The database decides who
+// the PRESSER is (099 §6a): only a session that is eligible (the factor rule
+// above) and admissible under any existing lock (the presser's own, or one
+// created after it) takes that slot. The press path signs the others out only
+// when the database says this caller is the presser; {sign_out_only} first
+// lets the pending session claim the slot after a step-up
+// (disconnect_claim_presser) and then requires the caller to be admissible
+// under the current lock AND to pass the factor rule. A thief's session that
+// survived the first press can still press (revoking is always allowed) but
+// never becomes the presser and never signs the owner out.
+//
 // The lock no longer depends on the sign-out at all (099 round 2): a session
 // that survives it — logout failed, or a refresh landed between the commit
 // and the logout — is refused by the database, because it began before the
@@ -70,18 +81,32 @@ export default async function handler(req, res, deps = {}) {
   const body = await readJsonBody(req);
   const signOutOnly = body?.sign_out_only === true;
 
+  const db = userRpcClient(bearer, { fetchImpl });
   let counts = null;
+  let mayOut;
   if (!signOutOnly) {
-    const { data, error } = await userRpcClient(bearer, { fetchImpl })
-      .rpc('disconnect_all', { p_scope: 'account', p_matter: null });
+    const { data, error } = await db.rpc('disconnect_all', { p_scope: 'account', p_matter: null });
     if (error) {
       if (NOT_DEPLOYED.has(String(error.code))) return json(res, 503, { error: 'not_available' });
       return json(res, 502, { error: 'disconnect_failed', message: error.message ?? null });
     }
     counts = data && typeof data === 'object' ? data : {};
+    // 099 answers `presser`; a database with 095 alone does not, and then the
+    // factor rule is all there is.
+    mayOut = typeof counts.presser === 'boolean'
+      ? counts.presser
+      : await maySignOutOthers(user, bearer, { fetchImpl });
+  } else {
+    const { data, error } = await db.rpc('disconnect_claim_presser', {});
+    if (error && !NOT_DEPLOYED.has(String(error.code))) return json(res, 403, { error: 'not_allowed' });
+    if (!error && data?.admissible !== true) {
+      // The session that pressed at aal1 is told to step up; anyone else, no.
+      return json(res, 403, { error: data?.pending === true ? 'step_up_required' : 'not_allowed' });
+    }
+    mayOut = await maySignOutOthers(user, bearer, { fetchImpl });
   }
 
-  if (!(await maySignOutOthers(user, bearer, { fetchImpl }))) {
+  if (!mayOut) {
     if (signOutOnly) return json(res, 403, { error: 'step_up_required' });
     return json(res, 200, { counts, others_signed_out: false, sign_out: 'step_up_required' });
   }

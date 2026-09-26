@@ -135,6 +135,7 @@
 --   drop function if exists public.oauth_grant_approve_session(jsonb, uuid, text, text, text[], text, text, text, uuid[], text, boolean);
 --   drop function if exists public.oauth_grant_lock_state(uuid);
 --   drop function if exists public.account_connections_lock_state(uuid);
+--   drop function if exists public.disconnect_claim_presser();
 --   -- then re-paste 065 §4b (oauth_grant_adopt) and 095 §2 and §4 (run and
 --   -- the unlock writers), and last:
 --   drop table if exists public.account_connection_locks;
@@ -193,6 +194,10 @@ create table if not exists public.account_connection_locks (
 );
 -- The presser's own session (round 2): it may reconnect by identity.
 alter table public.account_connection_locks add column if not exists presser_session_id uuid;
+-- The session that pressed but could not yet BECOME the presser (round 3):
+-- it pressed at aal1 while a factor older than it exists, so it may claim the
+-- presser slot only after a step-up (disconnect_claim_presser).
+alter table public.account_connection_locks add column if not exists pending_session_id uuid;
 
 comment on table public.account_connection_locks is
   'One row per account that has pressed "Disconnect everything" (migrations 095/099). '
@@ -329,7 +334,8 @@ begin
   if not found then
     return false;   -- signed out (or never this account's)
   end if;
-  return v_sid::uuid = p_lock.presser_session_id or v_created > p_lock.locked_at;
+  -- coalesce: with no presser yet (round 3), the comparison is null, not false.
+  return coalesce(v_sid::uuid = p_lock.presser_session_id, false) or v_created > p_lock.locked_at;
 end $$;
 
 revoke all on function disconnect_internal.session_ok(public.account_connection_locks, jsonb) from public, anon, authenticated, service_role;
@@ -569,7 +575,175 @@ create trigger connector_tokens_guard_update
 --       must not be able to make the owner's press answer "step up". Only
 --       the sign-out of other sessions is gated, in api/account-lockdown.mjs.
 --   (d) the lock remembers the presser's session, which may reconnect by
---       identity (see the header).
+--       identity — but only a session that is eligible and admissible
+--       becomes it (§6a, round 3).
+-- ============================================================================
+-- 6a. Who becomes the presser (round 3, review R4)
+-- ============================================================================
+-- Round 2 set the presser to whoever pressed, on every press — and the press
+-- is open to any session, because revoking is always allowed. So a thief
+-- session that survived the first press (its sign-out waiting on a step-up, a
+-- failed logout, an RPC-only press, the commit→logout gap) could simply press
+-- again, become the presser, and reconnect in the owner's name while the
+-- owner's own tab was refused.
+--
+-- The rule now:
+--   * the caller's session must exist in auth.sessions, and — when the
+--     account has a verified factor OLDER than that session — be at aal2
+--     (the same rule api/account-lockdown.mjs applies to signing others out:
+--     a factor added after I signed in is not mine to prove). Otherwise the
+--     session may press (revoke) but cannot BECOME the presser;
+--   * with no lock yet, an eligible caller becomes the presser; an ineligible
+--     one is remembered as pending, and becomes the presser after a step-up
+--     (disconnect_claim_presser);
+--   * with a lock already there, the caller changes who the presser is only if
+--     its session is ADMISSIBLE under that lock (the presser's own, or created
+--     after it). Then locked_at moves forward to this press. A caller that is
+--     not admissible — the thief — revokes, re-locks the account (unlocked_at
+--     back to null) and changes nothing else: not the presser, not the pending
+--     session, and not locked_at. Not moving locked_at is deliberate: moving it
+--     would shut out a session the owner signed in with after the first press,
+--     and would add nothing, because the thief's session is already on the
+--     wrong side of the existing lock.
+create or replace function disconnect_internal.session_may_press(p_uid uuid, p_sid uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_created timestamptz;
+begin
+  if p_uid is null or p_sid is null then
+    return false;
+  end if;
+  select s.created_at into v_created from auth.sessions s where s.id = p_sid and s.user_id = p_uid;
+  if not found then
+    return false;
+  end if;
+  if public.auth_is_aal2() then
+    return true;
+  end if;
+  return not exists (
+    select 1 from auth.mfa_factors f
+     where f.user_id = p_uid and f.status::text = 'verified' and f.created_at <= v_created);
+end $$;
+
+create or replace function disconnect_internal.caller_session_id()
+returns uuid
+language plpgsql
+stable
+as $$
+declare
+  v text;
+begin
+  begin
+    v := auth.jwt() ->> 'session_id';
+  exception when others then
+    return null;
+  end;
+  if coalesce(v, '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return v::uuid;
+  end if;
+  return null;
+end $$;
+
+-- Stamps the lock for an account press. Returns whether the caller is the
+-- presser afterwards (the endpoint signs other sessions out only then).
+create or replace function disconnect_internal.stamp_lock(p_uid uuid, p_now timestamptz)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sid  uuid := disconnect_internal.caller_session_id();
+  v_may  boolean := disconnect_internal.session_may_press(p_uid, v_sid);
+  v_lock public.account_connection_locks;
+begin
+  select * into v_lock from public.account_connection_locks where user_id = p_uid for update;
+  if not found then
+    insert into public.account_connection_locks (user_id, locked_at, presser_session_id, pending_session_id)
+    values (p_uid, p_now, case when v_may then v_sid end, v_sid);
+    return v_may;
+  end if;
+
+  if v_sid is not null
+     and disconnect_internal.session_ok(v_lock, disconnect_internal.session()) then
+    update public.account_connection_locks
+       set locked_at = p_now,
+           presser_session_id = case when v_may then v_sid else presser_session_id end,
+           pending_session_id = v_sid,
+           unlocked_at = null, unlocked_session_id = null, unlocked_iat = null
+     where user_id = p_uid;
+    return v_may or coalesce(v_lock.presser_session_id = v_sid, false);
+  end if;
+
+  update public.account_connection_locks
+     set unlocked_at = null, unlocked_session_id = null, unlocked_iat = null
+   where user_id = p_uid;
+  return false;
+end $$;
+
+-- After a step-up: the pending session (the one that pressed at aal1) claims
+-- the presser slot if it is now eligible. Returns {presser, admissible} for
+-- the caller under the current lock — api/account-lockdown.mjs signs other
+-- sessions out on {sign_out_only} only when the caller is admissible.
+create or replace function disconnect_internal.claim_presser()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid  uuid := auth.uid();
+  v_sid  uuid := disconnect_internal.caller_session_id();
+  v_lock public.account_connection_locks;
+begin
+  if v_uid is null then
+    raise exception 'a signed-in caller is required' using errcode = '42501';
+  end if;
+  select * into v_lock from public.account_connection_locks where user_id = v_uid for update;
+  if not found then
+    return jsonb_build_object('presser', false, 'admissible', false, 'locked', false);
+  end if;
+  if v_sid is not null and v_sid = v_lock.pending_session_id
+     and v_lock.presser_session_id is distinct from v_sid
+     and disconnect_internal.session_may_press(v_uid, v_sid) then
+    update public.account_connection_locks set presser_session_id = v_sid where user_id = v_uid
+    returning * into v_lock;
+  end if;
+  return jsonb_build_object(
+    'presser', v_sid is not null and coalesce(v_lock.presser_session_id = v_sid, false),
+    'pending', v_sid is not null and coalesce(v_lock.pending_session_id = v_sid, false),
+    'admissible', coalesce(disconnect_internal.session_ok(v_lock, disconnect_internal.session()), false),
+    'locked', true);
+end $$;
+
+revoke all on function disconnect_internal.session_may_press(uuid, uuid) from public, anon, authenticated, service_role;
+revoke all on function disconnect_internal.stamp_lock(uuid, timestamptz) from public, anon, authenticated, service_role;
+revoke all on function disconnect_internal.claim_presser() from public, anon;
+grant execute on function disconnect_internal.claim_presser() to authenticated;
+
+create or replace function public.disconnect_claim_presser()
+returns jsonb
+language plpgsql
+security invoker
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'a signed-in caller is required' using errcode = '42501';
+  end if;
+  return disconnect_internal.claim_presser();
+end $$;
+
+revoke all on function public.disconnect_claim_presser() from public, anon;
+grant execute on function public.disconnect_claim_presser() to authenticated;
+
+
 create or replace function disconnect_internal.run(
   p_scope  text,
   p_matter uuid,
@@ -594,6 +768,7 @@ declare
   v_counts       jsonb;
   v_name         text;
   v_now          timestamptz := now();
+  v_presser      boolean;
   r              record;
 begin
   if v_uid is null then
@@ -712,15 +887,9 @@ begin
 
   -- (a) the lock. Inside the same transaction: a press that fails stamps
   -- nothing, and a press that commits cannot leave the account unlocked.
+  -- Who the presser is afterwards: §6a (round 3).
   if v_scope = 'account' then
-    insert into public.account_connection_locks (user_id, locked_at, presser_session_id)
-    values (v_uid, v_now,
-            case when coalesce(auth.jwt() ->> 'session_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-                 then (auth.jwt() ->> 'session_id')::uuid end)
-    on conflict (user_id) do update
-      set locked_at = excluded.locked_at,
-          presser_session_id = excluded.presser_session_id,
-          unlocked_at = null, unlocked_session_id = null, unlocked_iat = null;
+    v_presser := disconnect_internal.stamp_lock(v_uid, v_now);
   end if;
 
   for r in
@@ -766,7 +935,8 @@ begin
       'matter.disconnected', p_matter, null, null, 'user', v_uid::text, null, v_counts);
   end if;
 
-  return v_counts || jsonb_build_object('done', true);
+  return v_counts || jsonb_build_object('done', true)
+                  || case when v_scope = 'account' then jsonb_build_object('presser', v_presser) else '{}'::jsonb end;
 end $$;
 
 revoke all on function disconnect_internal.run(text, uuid, boolean) from public;

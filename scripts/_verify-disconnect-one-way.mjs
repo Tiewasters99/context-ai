@@ -23,7 +23,12 @@
 //      sign-out, the thief's surviving session REFRESHED (the reviewer's R3)
 //      is refused and writes nothing. A factor a thief enrolled on a
 //      factor-less account (newer than the owner's session) stops neither
-//      the press nor the sign-out.
+//      the press nor the sign-out. (Round 3, R4) the surviving thief session
+//      pressing AGAIN does not become the presser, moves nothing, mints
+//      nothing and unlocks nothing; sign_out_only from it is refused even at
+//      aal2; Ada's pending session claims the presser slot on its step-up.
+//      In U, a further press from Ada's post-lock sign-in moves locked_at
+//      forward, becomes the presser, and keeps working.
 //   O. owner vs admin: a serverspace ADMIN's own press pauses nothing of the
 //      firm's (Eden's decision; see the PR).
 //   R. (HIGH-1) after the press no UPDATE brings a token back — revoked_at,
@@ -574,7 +579,7 @@ const unlocks = async (uid) => {
 };
 const lockRow = async (uid) => {
   await asSuperuser();
-  return (await q(`select locked_at, unlocked_at, unlocked_session_id, unlocked_iat, presser_session_id from public.account_connection_locks where user_id = $1`, [uid]))[0] ?? null;
+  return (await q(`select locked_at, unlocked_at, unlocked_session_id, unlocked_iat, presser_session_id, pending_session_id from public.account_connection_locks where user_id = $1`, [uid]))[0] ?? null;
 };
 const floorOf = (ts) => Math.floor(new Date(ts).getTime() / 1000);
 // A pasted token's INSERT, as the Connect pages and Connections › Agents do it.
@@ -668,8 +673,8 @@ let LOCK;
   const m = await mcp(TOK['Claude Desktop'].plain);
   check(m.err?.status === 401, 'her pasted token is already refused', m.err?.code);
   LOCK = await lockRow(ADA);
-  check(LOCK?.locked_at && LOCK.unlocked_at === null && LOCK.presser_session_id === sid('sess-tab'),
-    'the lock is stamped, Ada is locked, and the lock remembers the session that pressed');
+  check(LOCK?.locked_at && LOCK.unlocked_at === null && LOCK.presser_session_id === null && LOCK.pending_session_id === sid('sess-tab'),
+    'the lock is stamped and Ada is locked; her aal1 session (a factor older than it) is PENDING, not yet the presser');
   const ms = await q(`select name from public.matterspaces where serverspace_id = $1 and ai_paused order by name`, [s1.id]);
   check(ms.map((x) => x.name).join(',') === 'Brannock,Okafor,Vashti', 'every ROOT matter of the serverspace Ada owns is paused', ms.map((x) => x.name).join(','));
 
@@ -685,20 +690,45 @@ let LOCK;
   check((await unlocks(ADA)).length === 0 && (await lockRow(ADA)).unlocked_at === null,
     'and writes no account.unlocked — the block does not depend on the sign-out');
 
+  // R4 (the reviewer's round-3 probe): the surviving thief session PRESSES
+  // AGAIN, over the RPC, to take the presser slot.
+  const before4 = await lockRow(ADA);
+  await asClaims(C(S_THIEF_REFRESHED));
+  const rp = await attempt(`select public.disconnect_all('account', null) v`);
+  await asSuperuser();
+  check(!rp.err && rp.rows[0].v.presser === false, 'R4: the thief may press again (revoking is always allowed) — the database answers presser:false', rp.err?.message);
+  const lk4 = await lockRow(ADA);
+  check(lk4.presser_session_id === null && lk4.pending_session_id === sid('sess-tab')
+    && String(lk4.locked_at) === String(before4.locked_at),
+  'R4: the lock is unchanged — no presser taken, the pending session is still Ada\'s, locked_at not moved');
+  const t4 = await insertTokenAs(C(S_THIEF_REFRESHED), 'Thief as presser');
+  check(t4.err && /connections_locked/.test(t4.err.message), 'R4: and the thief\'s csp_ mint is refused', t4.err?.message?.slice(0, 60));
+  check((await unlocks(ADA)).length === 0, 'R4: no account.unlocked');
+  // sign_out_only from the thief — even with an aal2 token for that session.
+  const thiefAal2 = await signIn(ADA, { iat: nowS() + 6, session: 'sess-thief', aal: 'aal2' });
+  logouts.length = 0;
+  const so = await lockdown(thiefAal2, { sign_out_only: true });
+  check(so.statusCode === 403 && so.json()?.error === 'not_allowed' && logouts.length === 0,
+    'sign_out_only from a pre-lock session that is not the presser: refused, even at aal2 — nobody signed out', `${so.statusCode} ${so.json()?.error}`);
+
   const r2 = await lockdown(S_TAB, { sign_out_only: true });
   check(r2.statusCode === 403 && r2.json()?.error === 'step_up_required' && logouts.length === 0,
     'sign_out_only at aal1 (old factor) → 403 step_up_required, nobody signed out');
+  await asSuperuser();
+  const lockedRowsBefore = (await q(`select count(*)::int n from public.events where chain_key = $1 and kind = 'account.locked'`, [ADA]))[0].n;
   calls.length = 0;
   const r3 = await lockdown(S_TAB_AAL2, { sign_out_only: true });
   check(r3.statusCode === 200 && r3.json()?.others_signed_out === true && logouts[0]?.scope === 'others'
     && !calls.some((c) => c.includes('/rpc/disconnect_all')),
     'stepped up: sign_out_only signs the others out and presses nothing again');
+  check((await lockRow(ADA)).presser_session_id === sid('sess-tab'),
+    'and Ada\'s pending session, now at aal2, has claimed the presser slot');
   await asSuperuser();
   const [gone] = await q(`select count(*)::int n from auth.sessions where id = $1`, [sid('sess-thief')]);
   const [kept] = await q(`select count(*)::int n from auth.sessions where id = $1`, [sid('sess-tab')]);
   check(gone.n === 0 && kept.n === 1, 'the thief\'s session is gone; the presser\'s is kept');
   const [again] = await q(`select count(*)::int n from public.events where chain_key = $1 and kind = 'account.locked'`, [ADA]);
-  check(again.n === 1, 'one account.locked row: the sign-out half wrote no second press');
+  check(again.n === lockedRowsBefore, 'the sign-out half wrote no further press (no new account.locked row)');
 
   // NEW-2: a thief enrols a factor on a factor-less account.
   const FRANK = await signup('frank@example.test', 'Frank');
@@ -910,6 +940,25 @@ section('U. the presser\'s own session, and a fresh sign-in — and the one row 
   const a = await mcp(fresh.access);
   check(a.userId === ADA, 'and the reconnected Claude works');
   U_FRESH = fresh;
+
+  // A legitimate further press by the owner from a POST-lock session (the
+  // consent sign-in, stepped up): locked_at moves forward, that session
+  // becomes the presser, and it keeps working.
+  const before5 = await lockRow(ADA);
+  const S_CONSENT_AAL2 = await signIn(ADA, { iat: nowS() + 130, session: 'sess-consent', aal: 'aal2' });
+  await asClaims(C(S_CONSENT_AAL2));
+  const r5 = await attempt(`select public.disconnect_all('account', null) v`);
+  await asSuperuser();
+  const lk5 = await lockRow(ADA);
+  check(!r5.err && r5.rows[0].v.presser === true && new Date(lk5.locked_at) > new Date(before5.locked_at)
+    && lk5.presser_session_id === sid('sess-consent'),
+  'Ada presses again from her post-lock sign-in: locked_at moves forward and that session becomes the presser', r5.err?.message);
+  const t5 = await insertTokenAs(C(S_CONSENT_AAL2), 'After third press');
+  check(!t5.err, 'and it keeps working — it reconnects a token', t5.err?.message);
+
+  const again5 = await connect(S_CONSENT_AAL2, CLAUDE);
+  check(Boolean(again5.access), 'and reconnects Claude through consent');
+  U_FRESH = again5;
 }
 
 // ===========================================================================
