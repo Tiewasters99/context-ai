@@ -64,6 +64,40 @@ interface MatterOption {
   name: string;
 }
 
+interface MatterTierRow extends MatterOption {
+  ai_tier: string | null;
+  parent_matterspace_id: string | null;
+}
+
+/**
+ * The matters a credit pack may be tagged to: every readable matter except
+ * the SEALED ones. The tag prints the matter's name on a Stripe receipt, and a
+ * sealed matter's name never leaves the system (Eden, 2026-09-25). The seal is
+ * inherited — tier B or C anywhere on the path to the root seals the matter —
+ * so this walks each row's parents through the rows already in hand. A parent
+ * that is not in hand (RLS lets a member of a sub-matter read it without its
+ * parent) could be the sealed one, so that matter is left out too. The server
+ * applies the same rule (lib/billing.mjs matterNameForBuyer); this only keeps
+ * the picker from offering what the server would refuse.
+ */
+function taggableMatters(rows: MatterTierRow[]): MatterOption[] {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const sealed = (tier: string | null) => tier === 'B' || tier === 'C';
+  const open = (row: MatterTierRow): boolean => {
+    const seen = new Set<string>();
+    for (let r: MatterTierRow | undefined = row; r; ) {
+      if (sealed(r.ai_tier)) return false;
+      if (!r.parent_matterspace_id) return true;
+      if (seen.has(r.id)) return false; // a cycle is not a clean chain
+      seen.add(r.id);
+      r = byId.get(r.parent_matterspace_id);
+      if (!r) return false; // parent unreadable — fail closed
+    }
+    return false;
+  };
+  return rows.filter(open).map(({ id, name }) => ({ id, name }));
+}
+
 const money = (cents: number | null | undefined) =>
   typeof cents === 'number' ? `$${(cents / 100).toFixed(2)}` : '—';
 
@@ -163,7 +197,7 @@ export default function BillingSection() {
         supabase.from('billing_accounts').select('*').eq('user_id', user.id).maybeSingle(),
         supabase.from('usage_credit_balance').select('cents_available').eq('user_id', user.id).maybeSingle(),
         supabase.from('usage_credit_purchases').select('*').order('created_at', { ascending: false }).limit(10),
-        supabase.from('matterspaces').select('id,name').order('name'),
+        supabase.from('matterspaces').select('id,name,ai_tier,parent_matterspace_id').order('name'),
       ]);
       if (cancelled) return;
 
@@ -174,7 +208,7 @@ export default function BillingSection() {
       setAccount((acctRes.data as Account | null) ?? null);
       setCreditCents(Number(creditRes.data?.cents_available ?? 0));
       setPurchases((purchaseRes.data as Purchase[] | null) ?? []);
-      setMatters((matterRes.data as MatterOption[] | null) ?? []);
+      setMatters(taggableMatters((matterRes.data as MatterTierRow[] | null) ?? []));
 
       // This month against the allowance. Both rows are the account's own, so
       // migration 063's read policies already allow them.

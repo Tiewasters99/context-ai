@@ -25,7 +25,9 @@
 // The matter's name is about to be printed on a document that leaves the
 // building; the only honest way to decide whether this buyer may put it there
 // is to ask the database as them and let RLS answer. A matter they cannot read
-// is refused in the same words as a matter that does not exist.
+// is refused in the same words as a matter that does not exist. So is a SEALED
+// matter (tier B/C, inherited from any ancestor): a sealed matter's name never
+// leaves the system, and matterNameForBuyer answers null for it.
 //
 // Credits are ONE balance per account today. The tag is for the receipt and for
 // reporting, not a lock — see the header of migration 067 for how to make it a
