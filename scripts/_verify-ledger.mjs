@@ -560,7 +560,7 @@ await db.exec('reset role');
 console.log('\n--- lib/ledger.mjs: redaction ------------------------------------');
 const {
   redact, redactToolArgs, scrubArgValues, record, recordStrict, LedgerWriteError,
-  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, _resetWarnings,
+  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, _resetWarnings,
 } = await import('../lib/ledger.mjs');
 
 {
@@ -898,12 +898,14 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   check(dbKinds.length === 14 && missing.length === 0,
     "the JS kind list covers every kind 064's CHECK constraint allows",
     missing.length ? `missing ${missing.join(' ')}` : `${dbKinds.length} kinds`);
-  // 072 adds connector.connected; 073 adds completion.requested. This
-  // database has only 064, so the JS list legitimately runs ahead of the
-  // constraint by exactly those two and by nothing else.
-  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested'];
+  // 072 adds connector.connected; 073 adds completion.requested; 094 adds
+  // the security build's fifteen (scripts/_verify-stepup-seal.mjs holds
+  // those to the constraint). This database has only 064, so the JS list
+  // legitimately runs ahead of the constraint by exactly those and by
+  // nothing else.
+  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094];
   check(ahead.every((k) => LATER_MIGRATION_KINDS.includes(k)),
-    'and runs ahead of it only by what a later migration adds (072, 073)',
+    'and runs ahead of it only by what a later migration adds (072, 073, 094)',
     ahead.join(' ') || 'none');
 
   // ── 073: a kind the CHECK constraint does not admit yet ──────────────────
@@ -942,7 +944,9 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   const [after073] = await q(
     `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'events_kind_check'`);
   const kinds073 = [...String(after073.def).matchAll(/'([a-z]+\.[a-z]+)'/g)].map((m) => m[1]);
-  check(EVENT_KINDS.every((k) => kinds073.includes(k)) && kinds073.length === EVENT_KINDS.length,
+  // Everything the JS knows except 094's fifteen, which 073 predates.
+  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k));
+  check(through073.every((k) => kinds073.includes(k)) && kinds073.length === through073.length,
     "073's list is the UNION — 064's fourteen plus 072's kind plus its own, never a subset",
     `${kinds073.length} kinds`);
   check(kinds073.includes('connector.connected'),

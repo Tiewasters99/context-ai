@@ -348,7 +348,13 @@ const adaClient = clientFor(ADA);
     `select public.ledger_append_account(p_kind := 'seal.changed')`);
   check(badSql !== null, 'and the database refuses it too, not only the JS',
     badSql?.message?.slice(0, 60));
-  check(ACCOUNT_EVENT_KINDS.length === 6, 'six kinds are account-legal', ACCOUNT_EVENT_KINDS.join(' '));
+  // 072 made six kinds account-legal; 094 adds nine more (auth.*, account.*,
+  // tripwire.*, share.reviewed), and scripts/_verify-stepup-seal.mjs holds
+  // the JS list to 094's SQL list exactly. Here: 072's six are all still in it.
+  check(['tool.invoked', 'connector.registered', 'connector.connected', 'connector.revoked',
+    'ai.paused', 'ai.resumed'].every((k) => ACCOUNT_EVENT_KINDS.includes(k))
+    && ACCOUNT_EVENT_KINDS.length === 15,
+    "072's six kinds are account-legal (fifteen with 094's)", ACCOUNT_EVENT_KINDS.join(' '));
 }
 
 console.log('\n--- B3. the account chain is a record, not a table ---------------');

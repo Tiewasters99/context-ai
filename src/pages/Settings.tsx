@@ -2,18 +2,34 @@
 // shell was built; until now the route didn't exist and the links 404'd. This
 // page covers the essentials (account, billing, sign out, pointer to
 // Connections) and grows as real preferences land.
+//
+// Account also holds the second factor and the devices list (S1,
+// docs/specs/SECURITY-BUILD-2026-09-26.md). ?enrol=required is where the
+// sign-in lands someone who must add a factor before the rest of the app.
 
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Plug, LogOut, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import BillingSection from '@/components/billing/BillingSection';
+import SecondFactorSection from '@/components/account/SecondFactorSection';
+import DevicesSection from '@/components/account/DevicesSection';
+import { useFactorStatus } from '@/hooks/useFactorStatus';
 
 export default function Settings() {
   const { user, signOut } = useAuth();
+  const [params] = useSearchParams();
+  const status = useFactorStatus(user?.id);
+  const enrolRequired = params.get('enrol') === 'required' && status?.has_factor === false;
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-10">
       <h1 className="text-2xl font-semibold text-[var(--color-text)]">Settings</h1>
+      {enrolRequired && (
+        <p className="mt-3 text-sm text-[#f0dfa8]">
+          Your account needs a second factor before the rest of Contextspaces opens. Add one below —
+          it takes a minute.
+        </p>
+      )}
 
       <section className="mt-8">
         <h2 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
@@ -32,6 +48,8 @@ export default function Settings() {
             Sign out
           </button>
         </div>
+        <SecondFactorSection />
+        <DevicesSection />
       </section>
 
       <BillingSection />

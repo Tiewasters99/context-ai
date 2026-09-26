@@ -442,6 +442,12 @@ function describeSeal(event: LedgerEvent): string {
   return `Seal changed: Tier ${tierLabel(oldTier)} → Tier ${tierLabel(newTier)}`;
 }
 
+function factorKind(value: unknown): string {
+  if (value === 'totp') return ' (authenticator app)';
+  if (value === 'webauthn') return ' (passkey)';
+  return '';
+}
+
 /** One plain-language line for one row. Never throws, never returns empty. */
 export function describeEvent(event: LedgerEvent, people: People = {}): string {
   const who = actorSentence(event, people);
@@ -503,6 +509,14 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
       return 'AI was resumed on this matter';
     case 'run.aborted':
       return `${who} stopped a run in progress`;
+    // 094 / S1 — account-chain rows. The factor's own name is never stored,
+    // only its kind: an authenticator app or a passkey.
+    case 'auth.factor_enrolled':
+      return `${who} added a second factor${factorKind(payload.factor_type)}`;
+    case 'auth.factor_unenrolled':
+      return `${who} removed a second factor${factorKind(payload.factor_type)}`;
+    case 'auth.stepup':
+      return `${who} confirmed a second factor to open a sealed matter`;
     default:
       // A kind this build does not know. Say who and what it was called,
       // and say no more than that.
@@ -543,6 +557,12 @@ export function kindLabel(kind: string): string {
       return 'AI resumed';
     case 'run.aborted':
       return 'Run stopped';
+    case 'auth.factor_enrolled':
+      return 'Factor added';
+    case 'auth.factor_unenrolled':
+      return 'Factor removed';
+    case 'auth.stepup':
+      return 'Factor confirmed';
     default:
       return kind;
   }
