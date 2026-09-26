@@ -2872,10 +2872,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               </div>
             )}
             {loadState === 'ready' && fileKind === 'image' && imageUrl && (
-              <figure
-                className="image-page print-root w-full mx-auto flex flex-col items-center gap-3"
-                style={{ width: `${Math.round(100 * (zoom / 1.5))}%`, maxWidth: 'none' }}
-              >
+              // The figure is the pane's width and scrolls sideways when the
+              // picture is zoomed past it; the picture is a block with auto
+              // margins, so it is centred while it fits and left-anchored
+              // (every pixel reachable by scrolling) once it does not. A
+              // flex column with items-center would clip both edges instead.
+              <figure className="image-page print-root w-full mx-auto overflow-x-auto">
                 <img
                   src={imageUrl}
                   alt={doc?.title ?? 'Image'}
@@ -2884,17 +2886,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     const el = e.currentTarget;
                     if (el.naturalWidth && el.naturalHeight) setImageDims({ w: el.naturalWidth, h: el.naturalHeight });
                   }}
-                  className="w-full h-auto shadow-2xl select-none"
+                  className="block mx-auto h-auto shadow-2xl select-none"
                   // At 100% the picture is its own size or the pane's width,
                   // whichever is smaller — a 1024-px render stretched to a wide
-                  // pane goes soft. Zooming past 100% enlarges it deliberately.
+                  // pane goes soft. Past 100% it is natural × zoom, deliberately
+                  // wider than the pane if need be.
                   style={{
-                    maxWidth: imageDims ? `${Math.round(imageDims.w * (zoom / 1.5))}px` : undefined,
+                    width: imageDims ? `${Math.round(imageDims.w * (zoom / 1.5))}px` : 'auto',
+                    maxWidth: zoom <= 1.5 ? '100%' : 'none',
                     imageRendering: zoom > 3 ? 'pixelated' : 'auto',
                   }}
                 />
                 {imageDims && (
-                  <figcaption className="text-[11px] text-white/45 tracking-wide print:hidden">
+                  <figcaption className="mt-3 text-center text-[11px] text-white/45 tracking-wide print:hidden">
                     {imageDims.w} × {imageDims.h} px
                     {doc?.source_filename ? ` · ${doc.source_filename.slice(doc.source_filename.lastIndexOf('.') + 1).toUpperCase()}` : ''}
                     {doc?.file_size_bytes ? ` · ${doc.file_size_bytes >= 1048576 ? `${(doc.file_size_bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(doc.file_size_bytes / 1024))} KB`}` : ''}
