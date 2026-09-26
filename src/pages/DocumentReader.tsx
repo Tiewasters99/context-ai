@@ -286,16 +286,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
 
   // A brief with an editable body lives in the Brief Desk (spec §3.1). The
   // standalone route only: an embedded Reader (a canvas card, the desk's own
-  // authority pane) must never take over the page. `?reader=1` opens the
+  // authority pane, the Vault's overlay) must never take over the page, so only
+  // the Reader mounted by the route itself redirects. `?reader=1` opens the
   // filed text here anyway.
   useEffect(() => {
-    if (embedded || !id || searchParams.get('reader') === '1') return;
+    if (propId !== undefined || embedded || !id || searchParams.get('reader') === '1') return;
     let live = true;
     void hasDraftBody(id).then((yes) => {
       if (live && yes) navigate(`/app/brief/${id}`, { replace: true });
     });
     return () => { live = false; };
-  }, [embedded, id, navigate, searchParams]);
+  }, [propId, embedded, id, navigate, searchParams]);
 
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');

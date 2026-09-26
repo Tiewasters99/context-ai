@@ -645,7 +645,7 @@ export function kindLabel(kind: string): string {
     case 'draft.snapshot':
       return 'Brief version';
     case 'cite.checked':
-      return 'Cite check';
+      return 'Brief cite check';
     case 'draft.exported':
       return 'Export';
     default:
