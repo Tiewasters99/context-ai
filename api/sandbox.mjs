@@ -18,6 +18,7 @@ import { EMBED_USD_PER_MTOK } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // The workspace-organization / document-task surface, plus hybrid content
 // search (which needs the server-held embedding key the client can't have).
@@ -83,6 +84,11 @@ export default async function handler(req, res) {
     const result = await callTool(sb, action, args, {
       openaiApiKey: process.env.OPENAI_API_KEY,
       googleApiKey: process.env.GOOGLE_API_KEY,
+      // move_document carries a moved document's queued ingest job along;
+      // the member's own client cannot update processing_jobs (097 round 4).
+      ...(action === 'move_document' && SERVICE_KEY
+        ? { jobClient: createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) }
+        : {}),
     });
     return json(res, 200, result);
   } catch (err) {

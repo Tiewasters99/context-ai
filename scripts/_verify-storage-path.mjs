@@ -456,6 +456,10 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
   const { runBucketizerDocumentJob } = await import('../lib/bucketizer-run.mjs');
   const u = () => crypto.randomUUID();
   const A = u(); const B = u();
+  // Round 4: a tree under A — a folder, a folder inside it, and a sealed sub-matter.
+  const A_CHILD = u(); const A_GRAND = u(); const A_SEALED = u();
+  const docGrand = u(); const docSealedKid = u(); const docMoved = u(); const docAway = u();
+  const parentOf = { [A]: null, [B]: null, [A_CHILD]: A, [A_GRAND]: A_CHILD, [A_SEALED]: A };
   const docA = u(); const docA2 = u(); const docB = u();
   const prodA = u(); const prodB = u();
   const runA = u(); const runB = u();
@@ -466,6 +470,17 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
     do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
     do $$ begin create role anon; exception when duplicate_object then null; end $$;
     do $$ begin create role service_role bypassrls; exception when duplicate_object then null; end $$;
+    create table public.matterspaces (id uuid primary key, parent_matterspace_id uuid, ai_tier text not null default 'A');
+    -- 016's definer walk, word for word.
+    create or replace function public.matter_ancestry(p_matter_id uuid)
+    returns table (id uuid) language sql stable security definer set search_path = public as $f$
+      with recursive a(id, parent_matterspace_id) as (
+        select id, parent_matterspace_id from public.matterspaces where id = p_matter_id
+        union all
+        select m.id, m.parent_matterspace_id from public.matterspaces m join a on m.id = a.parent_matterspace_id
+      )
+      select id from a
+    $f$;
     create table public.documents (id uuid primary key, matterspace_id uuid not null, title text, storage_path text);
     create table public.productions (id uuid primary key, matterspace_id uuid not null);
     create table public.bucketizer_runs (id uuid primary key, matterspace_id uuid not null);
@@ -477,10 +492,17 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
     grant select, insert, update on public.processing_jobs to authenticated, service_role;
   `);
   await db.exec(fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '097_storage_path_matter.sql'), 'utf8'));
+  for (const [id, parent] of Object.entries(parentOf)) {
+    await db.query(`insert into public.matterspaces values ($1, $2, $3)`, [id, parent, id === A_SEALED ? 'B' : 'A']);
+  }
   await db.query(`insert into public.documents values ($1,$2,'a',null), ($3,$2,'a2',null), ($4,$5,'sealed b',null)`, [docA, A, docA2, docB, B]);
+  await db.query(`insert into public.documents values ($1,$2,'in a folder of a folder',null), ($3,$4,'in a sealed sub-matter',null),
+    ($5,$6,'filed into a folder after upload',null), ($7,$8,'filed into another tree after upload',null)`,
+    [docGrand, A_GRAND, docSealedKid, A_SEALED, docMoved, A_CHILD, docAway, B]);
   await db.query(`insert into public.productions values ($1,$2), ($3,$4)`, [prodA, A, prodB, B]);
   await db.query(`insert into public.bucketizer_runs values ($1,$2), ($3,$4)`, [runA, A, runB, B]);
-  await db.query(`insert into public.bucketizer_run_documents values ($1,$2), ($3,$4)`, [runA, docA, runB, docB]);
+  await db.query(`insert into public.bucketizer_run_documents values ($1,$2), ($3,$4), ($1,$5), ($1,$6), ($1,$4)`,
+    [runA, docA, runB, docB, docGrand, docSealedKid]);   // runA also (wrongly) lists docB: the tree check must still refuse it
 
   const asRole = async (role, sql, params) => {
     await db.exec(`set role ${role}`);
@@ -507,6 +529,14 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
     ['intake_zip: a traversal path', 'intake_zip', prodA, { storage_paths: [`${A}/${prodA}/../../${B}/${prodB}/intake/x.zip`] }, false],
     ['intake_zip: own production\'s intake file', 'intake_zip', prodA, { storage_paths: [`${A}/${prodA}/intake/box 1.zip`] }, true],
     ['intake_folder from a signed-in caller', 'intake_folder', prodA, { local_path: '/proc/self' }, false],
+    // Round 4 — trees.
+    ['Bucketizer: run in A, a document in a folder of a folder of A (listed)', BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docGrand }, true],
+    ['Bucketizer: run in A, a document in an unrelated matter even though the run lists it', BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docB }, false],
+    // The seal is not this check's rule (lib/bucketizer-run judges it by the RUN's matter);
+    // a sealed sub-matter's document inside the run's tree is IN SCOPE here.
+    ['Bucketizer: run in open A, a document in A\'s sealed sub-matter (listed) — scope accepts; the seal rule is unchanged', BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docSealedKid }, true],
+    ['ingest_document queued in A for a document since filed into A/folder', 'ingest_document', null, { document_id: docMoved }, true],
+    ['ingest_document queued in A for a document now in another tree (never re-pointed)', 'ingest_document', null, { document_id: docAway }, false],
   ];
   for (const [label, type, prod, payload, ok] of CASES) {
     const e = await job('authenticated', A, type, prod, payload);
@@ -527,13 +557,22 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
 
   // D2. The worker's assert, as the service role, over an in-memory client.
   const tables = {
-    documents: [{ id: docA, matterspace_id: A }, { id: docA2, matterspace_id: A }, { id: docB, matterspace_id: B }],
+    documents: [{ id: docA, matterspace_id: A }, { id: docA2, matterspace_id: A }, { id: docB, matterspace_id: B },
+      { id: docGrand, matterspace_id: A_GRAND }, { id: docSealedKid, matterspace_id: A_SEALED },
+      { id: docMoved, matterspace_id: A_CHILD }, { id: docAway, matterspace_id: B }],
     productions: [{ id: prodA, matterspace_id: A }, { id: prodB, matterspace_id: B }],
     bucketizer_runs: [{ id: runA, matterspace_id: A, status: 'running', kind: 'classify', model_id: 'm' }, { id: runB, matterspace_id: B, status: 'running', kind: 'classify', model_id: 'm' }],
-    bucketizer_run_documents: [{ id: u(), run_id: runA, document_id: docA }, { id: u(), run_id: runB, document_id: docB }],
+    bucketizer_run_documents: [{ id: u(), run_id: runA, document_id: docA }, { id: u(), run_id: runB, document_id: docB },
+      { id: u(), run_id: runA, document_id: docGrand }, { id: u(), run_id: runA, document_id: docSealedKid },
+      { id: u(), run_id: runA, document_id: docB }],
   };
   const touched = [];
+  const ancestryOf = (m) => { const out = []; for (let x = m; x; x = parentOf[x]) out.push({ id: x }); return out; };
   const fake = {
+    async rpc(fn, args) {
+      if (fn === 'matter_ancestry') return { data: ancestryOf(args.p_matter_id), error: null };
+      return { data: null, error: { message: `no rpc ${fn}` } };
+    },
     from(t) {
       touched.push(t);
       const filters = [];
@@ -559,6 +598,13 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
     ['ingest_document, own', { matterspace_id: A }, { documentId: docA }, true],
     ['intake, a path outside the production', { matterspace_id: A }, { productionId: prodA, storagePaths: [`${A}/${prodB}/intake/x.zip`] }, false],
     ['a job with no matter', { matterspace_id: null }, { documentId: docA }, false],
+    // Round 4 — trees, as the worker's dispatch asks them.
+    ['bucketizer, a document in a folder of a folder of the run\'s matter', { matterspace_id: A }, { runId: runA, documentId: docGrand, documentScope: 'subtree' }, true],
+    ['bucketizer, a document in an unrelated matter the run lists', { matterspace_id: A }, { runId: runA, documentId: docB, documentScope: 'subtree' }, false],
+    ['bucketizer, a document in the run matter\'s sealed sub-matter (scope accepts; seal rule unchanged)', { matterspace_id: A }, { runId: runA, documentId: docSealedKid, documentScope: 'subtree' }, true],
+    ['ingest_document queued in A, document since filed into A/folder', { matterspace_id: A }, { documentId: docMoved, documentScope: 'tree' }, true],
+    ['ingest_document queued in A, document moved to another tree and never re-pointed', { matterspace_id: A }, { documentId: docAway, documentScope: 'tree' }, false],
+    ['ingest_document re-pointed by the move to the document\'s new tree', { matterspace_id: B }, { documentId: docAway, documentScope: 'tree' }, true],
   ];
   for (const [label, j, refs, ok] of W) {
     let e = null;
@@ -577,6 +623,60 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
       `${e?.message ?? 'no error'} | touched ${[...new Set(touched)].join(',')}`);
   }
 
+  // D2b. The move carries the queued job with it, with the SERVICE ROLE.
+  {
+    const { repointDocumentJobs } = await import('../lib/job-scope.mjs');
+    const jobs = [
+      { id: 'j1', job_type: 'ingest_document', status: 'queued', matterspace_id: A, payload: { document_id: docAway } },
+      { id: 'j2', job_type: 'ingest_document', status: 'done', matterspace_id: A, payload: { document_id: docAway } },
+      { id: 'j3', job_type: 'ingest_document', status: 'queued', matterspace_id: A, payload: { document_id: docA } },
+    ];
+    const svc = {
+      from(t) {
+        const f = [];
+        let patch = null;
+        const api = {
+          update(p) { patch = p; return api; },
+          eq(k, v) { f.push((r) => (k === 'job_type' ? r.job_type === v : r[k] === v)); return api; },
+          in(k, vs) {
+            f.push((r) => (k === 'payload->>document_id' ? vs.includes(r.payload.document_id) : vs.includes(r[k])));
+            return api;
+          },
+          then(res, rej) {
+            if (t === 'processing_jobs' && patch) for (const r of jobs) if (f.every((g) => g(r))) Object.assign(r, patch);
+            return Promise.resolve({ data: null, error: null }).then(res, rej);
+          },
+        };
+        return api;
+      },
+    };
+    await repointDocumentJobs(svc, [docAway], B);
+    check(jobs[0].matterspace_id === B && jobs[1].matterspace_id === A && jobs[2].matterspace_id === A,
+      'repointDocumentJobs: the moved document\'s QUEUED job follows it to the new matter; a finished job and another document\'s job stay put');
+    let e = null;
+    try { await assertJobBelongsToMatter(fake, jobs[0], { documentId: docAway, documentScope: 'tree' }); } catch (x) { e = x; }
+    check(!e, 'the re-pointed job is accepted by the worker', e?.message ?? '');
+    const md = fs.readFileSync(path.join(ROOT, 'api', 'move-document.mjs'), 'utf8');
+    const mc = fs.readFileSync(path.join(ROOT, 'lib', 'mcp-core.mjs'), 'utf8');
+    const sbx = fs.readFileSync(path.join(ROOT, 'api', 'sandbox.mjs'), 'utf8');
+    const mcp = fs.readFileSync(path.join(ROOT, 'api', 'mcp.mjs'), 'utf8');
+    check(/repointDocumentJobs\(\s*createClient\(SUPABASE_URL, SERVICE_KEY/.test(md)
+      && /repointDocumentJobs\(opts\.jobClient \?\? supabase, moved\.map/.test(mc)
+      && /jobClient: createClient\(SUPABASE_URL, SERVICE_KEY/.test(sbx)
+      && /name === 'move_document' \? \{ jobClient: adminClient\(\) \}/.test(mcp),
+    'every move re-points with the service role: /api/move-document, and move_document via /api/sandbox and /api/mcp (the stdio client is the service role)');
+  }
+  {
+    // Round 4, LOW: the trigger reaches the lookups through ONE definer wrapper.
+    const sql = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '097_storage_path_matter.sql'), 'utf8');
+    const trig = sql.slice(sql.indexOf('create or replace function public._processing_jobs_scope_check'));
+    check(/jobs_internal\.job_refusal\(/.test(trig) && !/jobs_internal\.matter_of_/.test(trig.slice(0, trig.indexOf('end $$')))
+      && ['matter_of_document(uuid)', 'matter_of_production(uuid)', 'matter_of_run(uuid)', 'run_lists_document(uuid, uuid)']
+        .every((f) => sql.includes(`revoke all on function jobs_internal.${f} from public, anon, authenticated;`))
+      && !/grant execute on function jobs_internal\.(matter_of|run_lists)/.test(sql),
+    'the trigger calls one definer wrapper (job_refusal); the lookup helpers are revoked from authenticated and anon');
+  }
+
   // D3. The worker is a long-running script: held to its source.
   const w = fs.readFileSync(path.join(ROOT, 'worker', 'discovery-worker.mjs'), 'utf8');
   const dispatchSrc = w.slice(w.indexOf('async function dispatch(job)'), w.indexOf('async function claimJob'));
@@ -591,8 +691,8 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
   check(/async function stampProduction\(job\) \{\s*const prod = await getProduction\(job\.production_id\);\s*assertJobPaths\(job, prod, \[\]/.test(w)
     && /async function packageProduction\(job\) \{\s*const prod = await getProduction\(job\.production_id\);\s*assertJobPaths\(job, prod, \[\]/.test(w),
     'worker: stamp and package also check the job\'s matter against the production\'s in place');
-  check(/doc\.matterspace_id !== job\.matterspace_id\) throw new JobScopeError/.test(w),
-    'worker: ingest_document also checks the document\'s matter in place');
+  check(/sameMatterTree\(supabase, doc\.matterspace_id, job\.matterspace_id\)\)\) throw new JobScopeError/.test(w),
+    'worker: ingest_document also checks the document\'s tree in place');
   const b = fs.readFileSync(path.join(ROOT, 'lib', 'bucketizer-run.mjs'), 'utf8');
   const runFn = b.slice(b.indexOf('export async function runBucketizerDocumentJob'));
   check(runFn.indexOf('assertJobBelongsToMatter(') > -1 && runFn.indexOf('assertJobBelongsToMatter(') < runFn.indexOf(".from('bucketizer_runs')"),

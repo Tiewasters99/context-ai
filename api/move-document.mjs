@@ -12,9 +12,11 @@
 //                or { error: string } with status code
 
 import { createClient } from '@supabase/supabase-js';
+import { repointDocumentJobs } from '../lib/job-scope.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -104,6 +106,16 @@ export default async function handler(req, res) {
     .from('passages')
     .update({ matterspace_id: newMatterspaceId })
     .eq('document_id', documentId);
+
+  // 4) Carry its queued ingest job along (097 round 4). The member cannot
+  //    update processing_jobs; the service role can, and the move above was
+  //    authorized as the member. Without this a document filed into another
+  //    matter tree right after upload would sit 'pending' for ever.
+  if (SERVICE_KEY) {
+    await repointDocumentJobs(
+      createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }),
+      [documentId], newMatterspaceId);
+  }
   if (passUpdErr) {
     return json(res, 500, { error: `passages update: ${passUpdErr.message} (document moved but passages still scoped to old matter)` });
   }

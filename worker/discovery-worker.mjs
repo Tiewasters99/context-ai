@@ -49,7 +49,7 @@ import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
 import { pathInMatter, assertPathInProduction } from '../lib/storage-path.mjs';
-import { assertJobBelongsToMatter, isJobScopeError, JobScopeError } from '../lib/job-scope.mjs';
+import { assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree } from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
@@ -228,10 +228,14 @@ async function assertJobScope(job) {
     case 'stamp_production':
     case 'package_production':
       return assertJobBelongsToMatter(supabase, job, { productionId: job.production_id });
+    // Round 4: the document's CURRENT matter in the same tree as the job's —
+    // an upload filed into a folder after it was queued is still this job's.
     case 'ingest_document':
-      return p.document_id === undefined ? null : assertJobBelongsToMatter(supabase, job, { documentId: p.document_id });
+      return p.document_id === undefined ? null
+        : assertJobBelongsToMatter(supabase, job, { documentId: p.document_id, documentScope: 'tree' });
+    // Round 4: a run over a matter includes its folders and sub-matters.
     case BUCKETIZER_JOB_TYPE:
-      return assertJobBelongsToMatter(supabase, job, { runId: p.run_id, documentId: p.document_id });
+      return assertJobBelongsToMatter(supabase, job, { runId: p.run_id, documentId: p.document_id, documentScope: 'subtree' });
     default:
       return null;
   }
@@ -825,8 +829,8 @@ async function ingestDocument(job) {
     .eq('id', docId).single();
   if (error) throw new Error(`document ${docId}: ${error.message}`);
   if (!doc.storage_path) throw new Error('document has no storage_path');
-  // 097 round 3: a job re-indexes only a document of its own matter.
-  if (doc.matterspace_id !== job.matterspace_id) throw new JobScopeError('the document');
+  // 097 round 3/4: a job re-indexes only a document of its own matter's tree.
+  if (!(await sameMatterTree(supabase, doc.matterspace_id, job.matterspace_id))) throw new JobScopeError('the document');
   // 097: the worker reads with the service role, so a row pointing at another
   // matter's object would be indexed into this one. Refused (lib/storage-path.mjs).
   if (!pathInMatter(doc.storage_path, doc.matterspace_id)) {
