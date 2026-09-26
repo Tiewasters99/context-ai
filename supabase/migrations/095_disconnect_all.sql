@@ -107,6 +107,19 @@
 -- 088 and 094 — asserted in §1. Re-runnable; scripts/_verify-disconnect-all.mjs
 -- executes it twice end-to-end.
 --
+-- ROLLBACK (in this order):
+--   drop trigger if exists matterspaces_unlock_on_resume on public.matterspaces;
+--   drop trigger if exists oauth_grants_unlock_on_connect on public.oauth_grants;
+--   drop trigger if exists connector_tokens_unlock_on_connect on public.connector_tokens;
+--   drop trigger if exists agent_charters_unlock_on_enable on public.agent_charters;
+--   drop function if exists public.disconnect_all(text, uuid);
+--   drop function if exists public.disconnect_all_preview(text, uuid);
+--   drop schema if exists disconnect_internal cascade;
+--   drop index if exists public.events_account_lock_idx;
+--   -- What a press already revoked or paused stays revoked or paused (rolling
+--   -- back narrows nothing and widens nothing); the Record rows are
+--   -- append-only and stay.
+--
 -- ⚠ After pasting this file, run:  notify pgrst, 'reload schema';
 --   (it is the last statement here.) Until it is pasted, the preview RPC is
 --   missing (PGRST202) and both buttons hide themselves; nothing else changes.

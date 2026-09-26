@@ -78,7 +78,7 @@ export default function DisconnectMatterControl({ matterId, matterName, onDone }
         aria-label="Disconnect all assistants from this matter"
       >
         <Unplug size={15} strokeWidth={1.75} />
-        Disconnect
+        Disconnect assistants
       </button>
 
       {open && (
