@@ -48,7 +48,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
-import { pathInMatter } from '../lib/storage-path.mjs';
+import { pathInMatter, assertPathInProduction } from '../lib/storage-path.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
@@ -199,7 +199,13 @@ async function dispatch(job) {
   switch (job.job_type) {
     case 'intake_zip': return intakeZip(job);
     case 'intake_files': return intakeFiles(job);
-    case 'intake_folder': return intakeFolder(job);
+    // A folder on THIS machine's disk. It exists for the operator's CLI
+    // (`--intake`, which calls intakeFolder directly and never comes through
+    // here). From the queue it is refused: processing_jobs rows are
+    // member-writable (032), and a payload naming a local path would have the
+    // worker read its own filesystem — /proc/self/environ included — into a
+    // production the member can download.
+    case 'intake_folder': return refuseQueuedFolderIntake(job);
     case 'stamp_production': return stampProduction(job);
     case 'package_production': return packageProduction(job);
     case 'ingest_document': return ingestDocument(job);
@@ -425,11 +431,30 @@ async function requeueOcrPendingIfDue() {
 // ---------------------------------------------------------------------------
 // Intake
 // ---------------------------------------------------------------------------
+// A job is a member-writable row (032 checks only that its matterspace_id is
+// theirs) and its payload is free-form jsonb, yet the worker reads what it
+// names with the service role. So a job may only read files inside its OWN
+// production: the job's matter is the production's matter, and every path is
+// "<matter>/<production>/…" with no traversal (lib/storage-path.mjs; 097).
+function assertJobPaths(job, prod, paths, label) {
+  if (!job.matterspace_id || job.matterspace_id !== prod.matterspace_id) {
+    throw new Error(`${label}: the job's matter is not the production's matter; refused`);
+  }
+  for (const p of paths) {
+    try {
+      assertPathInProduction(p, prod.matterspace_id, prod.id);
+    } catch {
+      throw new Error(`${label}: a storage path outside this production was refused`);
+    }
+  }
+}
+
 async function intakeZip(job) {
   const prod = await getProduction(job.production_id);
-  await setProductionStatus(prod.id, 'processing');
   const paths = job.payload?.storage_paths ?? [];
   if (paths.length === 0) throw new Error('intake_zip: payload.storage_paths is empty');
+  assertJobPaths(job, prod, paths, 'intake_zip');
+  await setProductionStatus(prod.id, 'processing');
 
   const StreamZip = (await import('node-stream-zip')).default;
   let fileIndex = 0;
@@ -480,9 +505,10 @@ async function intakeZip(job) {
 
 async function intakeFiles(job) {
   const prod = await getProduction(job.production_id);
-  await setProductionStatus(prod.id, 'processing');
   const paths = job.payload?.storage_paths ?? [];
   if (paths.length === 0) throw new Error('intake_files: payload.storage_paths is empty');
+  assertJobPaths(job, prod, paths, 'intake_files');
+  await setProductionStatus(prod.id, 'processing');
 
   for (const [i, storagePath] of paths.entries()) {
     const filename = path.basename(storagePath);
@@ -979,6 +1005,9 @@ async function stampProduction(job) {
       });
       await uploadToStorage(`${base}/stamped.pdf`, sheet, 'application/pdf');
     } else {
+      // Member-writable while the production is a draft (030); read with the
+      // service role — so only from inside this production (097).
+      assertPathInProduction(item.display_storage_path, prod.matterspace_id, prod.id);
       const pdfBuf = await downloadFromStorage(item.display_storage_path);
       const out = await stampPdf(pdfBuf, {
         prefix, pad, startSeq: seq, position: prod.bates_position, endorsements,
@@ -1057,6 +1086,7 @@ async function preflightStamp(prod, included, endorsementsByItem, { locked }) {
     if (item.kind === 'native') { plan.push({ item, pages: 1 }); continue; }
     try {
       if (!item.display_storage_path) throw new Error('no display PDF was stored for this document');
+      assertPathInProduction(item.display_storage_path, prod.matterspace_id, prod.id);
       const pages = await pdfPageCount(await downloadFromStorage(item.display_storage_path));
       if (!Number.isInteger(pages) || pages < 1) throw new Error('its display PDF has no pages');
       if (pages !== item.page_count && !locked) {
@@ -1229,6 +1259,7 @@ async function packageProduction(job) {
     let nativeLink = '';
     if (item.kind === 'native') {
       const ext = extOf(item.original_filename);
+      assertPathInProduction(item.native_storage_path, prod.matterspace_id, prod.id);
       const nativeBuf = await downloadFromStorage(item.native_storage_path);
       nativeLink = `NATIVES/${item.bates_first}${ext}`;
       archive.append(nativeBuf, { name: `${volumeName}/${nativeLink}` });
@@ -1352,6 +1383,11 @@ async function packageProduction(job) {
 //     is closed, the process is killed — no other machine can be handed a job
 //     it has no way to run. The reaper takes such a job straight to a terminal
 //     error and writes a sentence on the production that names the machine.
+async function refuseQueuedFolderIntake(job) {
+  throw new Error(
+    `intake_folder runs only from the worker CLI (--intake), never from the queue; job ${job.id} refused`);
+}
+
 async function directFolderIntake(folder, productionId) {
   if (!productionId) die('--intake requires --production <production uuid>');
   const root = path.resolve(folder);
