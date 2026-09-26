@@ -3,6 +3,7 @@ import { Lock, LockOpen } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import CardDialog from '@/components/ui/CardDialog';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
 import { alreadyProcessed, type AlreadyProcessed } from '@/lib/seal-facts';
 
 // Sealing is the one click in the product with contractual weight, so it gets
@@ -52,6 +53,7 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
   const refreshServerspaces = useServerspacesRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stepUp, setStepUp] = useState(false);
   const sealing = target.mode === 'seal';
 
   // What has already left, for a seal. Read once when the dialog opens; a
@@ -78,6 +80,9 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
       .eq('id', target.matterId);
     setBusy(false);
     if (updErr) {
+      // 098: unsealing takes everything in the matter out of the seal, so it
+      // asks for this session's second factor first.
+      if (/step_up_required/.test(updErr.message ?? '')) { setStepUp(true); return; }
       setError(updErr.message);
       return;
     }
@@ -177,6 +182,15 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
         </div>
       )}
 
+      {stepUp && (
+        <div className="mb-3">
+          <StepUpPrompt
+            mode="stepup"
+            heading="Confirm it’s you to unseal this matter."
+            onConfirmed={() => { setStepUp(false); void apply(); }}
+          />
+        </div>
+      )}
       {error && (
         <p className="text-[12px] text-red-300 mb-3">{error}</p>
       )}

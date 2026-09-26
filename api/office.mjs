@@ -37,6 +37,7 @@
 // local depth-parallax build; later its own domain).
 
 import { createClient } from '@supabase/supabase-js';
+import { isSealedTier, matterTierWithClient } from '../lib/ai-tier-policy.mjs';
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -49,6 +50,25 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
+
+// Is this document in a sealed matter (its own tier or an ancestor's is B or
+// C)? Read with the service role the room already runs on. After 098 it is one
+// column; before 098 is pasted (42703) the ancestry is walked. Any other
+// failure throws, and the caller refuses.
+export async function documentIsSealed(supabase, documentId) {
+  if (!documentId) return false;
+  const { data: d, error: dErr } = await supabase
+    .from('documents').select('matterspace_id').eq('id', documentId).maybeSingle();
+  if (dErr) throw new Error(`seal lookup: ${dErr.message}`);
+  if (!d?.matterspace_id) return false;
+  const { data: m, error: mErr } = await supabase
+    .from('matterspaces').select('sealed_effective').eq('id', d.matterspace_id).maybeSingle();
+  if (!mErr) return m?.sealed_effective === true;
+  if (mErr.code !== '42703' && !/sealed_effective/.test(mErr.message ?? '')) {
+    throw new Error(`seal lookup: ${mErr.message}`);
+  }
+  return isSealedTier(await matterTierWithClient(supabase, d.matterspace_id));
+}
 
 // The room's owner comes from the environment, never from the request.
 // Missing or malformed closes the office rather than opening it to everyone.
@@ -198,6 +218,20 @@ export default async function handler(req, res) {
     }
     const item = selectBook({ ownerId, item: row });
     if (!item) {
+      res.status(404).json({ error: 'No such book on the shelves' });
+      return;
+    }
+    // 098: a sealed matter's document is never read out in the public room,
+    // whatever the item row says (an item shelved before 098, or by a session
+    // that had confirmed its factor). Unknown is refused, not served.
+    let sealed;
+    try {
+      sealed = await documentIsSealed(supabase, item.document_id);
+    } catch {
+      res.status(503).json({ error: 'The book cannot be opened just now' });
+      return;
+    }
+    if (sealed) {
       res.status(404).json({ error: 'No such book on the shelves' });
       return;
     }

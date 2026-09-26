@@ -198,6 +198,7 @@ const EDEN = await signup('eden@firm.test');      // serverspace owner, has a fa
 const MEM = await signup('mem@firm.test');        // serverspace member, has a factor
 const GRACE = await signup('grace@firm.test');    // serverspace member, NO factor
 const OUT = await signup('out@elsewhere.test');   // nobody here
+const ADM = await signup('adm@firm.test');        // serverspace ADMIN, NO factor (round 2: may unseal?)
 for (const u of [EDEN, MEM]) {
   await q(`insert into auth.mfa_factors (user_id, factor_type, status) values ($1, 'totp', 'verified')`, [u]);
 }
@@ -206,7 +207,7 @@ await q(`insert into auth.mfa_factors (user_id, factor_type, status) values ($1,
 
 const [firm] = await q(`insert into public.serverspaces (clientspace_id, name)
   select id, 'Quainton Law' from public.clientspaces where user_id = $1 returning id`, [EDEN]);
-for (const [u, role] of [[EDEN, 'owner'], [MEM, 'member'], [GRACE, 'member']]) {
+for (const [u, role] of [[EDEN, 'owner'], [MEM, 'member'], [GRACE, 'member'], [ADM, 'admin']]) {
   await q(`insert into public.serverspace_members (serverspace_id, user_id, role) values ($1,$2,$3)
     on conflict (serverspace_id, user_id) do update set role = excluded.role`, [firm.id, u, role]);
 }
@@ -244,6 +245,16 @@ await q(`insert into public.matter_comments (matterspace_id, user_id, body) valu
 const PAGE_S = (await q(`insert into public.content_items (space_id, space_type, content_type, title, created_by)
   values ($1,'matterspace','page','SEALED-TITLE strategy page',$2) returning id`, [SEALED, EDEN]))[0].id;
 await q(`insert into public.meetings (matterspace_id, created_by, title) values ($1,$2,'SEALED-TITLE meeting')`, [SEALED, EDEN]);
+// Round 2 (N1): the reviewer's sealed-pen transcript, and a Record row Eden
+// wrote in the sealed matter (as her aal2 self, through ledger_append).
+const [PEN] = await q(`insert into public.ai_sessions (matterspace_id, owner_id, title, tier)
+  values ($1,$2,'SEALED-TITLE pen session','B') returning id`, [SEALED, EDEN]);
+await q(`insert into public.ai_messages (session_id, seq, role, content)
+  values ($1,1,'assistant','[{"type":"text","text":"SEALED-TEXT: the deposition strategy is ..."}]'::jsonb)`, [PEN.id]);
+// Round 2 (N2): Office shelves, one for Eden (the room's owner) and one for Mem.
+const shelf = async (u) => (await q(`insert into public.office_sections (owner_id, kind, title) values ($1,'library','Shelf') returning id`, [u]))[0].id;
+const SHELF_E = await shelf(EDEN);
+const SHELF_M = await shelf(MEM);
 
 // The timing fixture: a few thousand passages in each of the two matters.
 const BULK = 2500;
@@ -296,7 +307,25 @@ async function measure(label) {
 // ===========================================================================
 section('A. negative control — the chain through 095, no 098');
 // ===========================================================================
+await qa(aal2(EDEN), `select public.ledger_append('tool.invoked', $1, null, null, 'user', $2, null,
+  '{"tool":"get_passage","document_ids":["x"]}'::jsonb)`, [SEALED, EDEN]);
+const PEN_READS = {
+  'ai_messages (the sealed pen transcript)': `select content::text c from public.ai_messages where content::text like '%SEALED-TEXT%'`,
+  'ai_sessions': `select id from public.ai_sessions where matterspace_id = '${SEALED}'`,
+  'events (the Record) of the sealed matter': `select id from public.events where matterspace_id = '${SEALED}'`,
+};
 {
+  for (const [label, sql] of Object.entries(PEN_READS)) {
+    const r = await qa(aal1(EDEN), sql);
+    check(r.length > 0, `pre-098: aal1 owner reads their own ${label} in the sealed matter (N1 reproduced)`);
+  }
+  const viaServerspace = await qa(aal1(MEM), PEN_READS['events (the Record) of the sealed matter']);
+  check(viaServerspace.length > 0, 'pre-098: a serverspace member at aal1 reads the sealed matter Record through the serverspace fallback');
+  const shelved = await tryAs(aal1(MEM), `insert into public.office_items (owner_id, section_id, document_id, title)
+    values ($1,$2,$3,'shelved') returning id`, [MEM, SHELF_M, DOC_S]);
+  check(!shelved.err, 'pre-098: an aal1 password holder shelves a SEALED document in the Office (N2 reproduced)', shelved.err?.message ?? '');
+  await q(`delete from public.office_items where title = 'shelved'`);
+
   const byId = await qa(aal1(MEM), `select id, title from public.documents where id = $1`, [DOC_S]);
   check(byId.length === 1, 'pre-098: an aal1 session WITH a factor reads a sealed document by id (HIGH-3 reproduced)');
   const ent = await qa(aal1(MEM), `select public.matter_entry($1) e`, [SEALED]);
@@ -561,6 +590,14 @@ section('G. connector tokens: one door, and it asks for the factor');
   check(!revoke.err && revoke.rows.length === 1, 'revoking still works, at any aal (closing a door never needs a factor)', revoke.err?.message);
   const scope = await tryAs(aal2(MEM), `update public.connector_tokens set matter_scope = $2::uuid[] where id = $1 returning id`, [agent.rows?.[0]?.id, [OPEN, ROOT_M]]);
   check(!scope.err && scope.rows.length === 1, 'an agent\'s matters can still be edited (Connections › Agents)', scope.err?.message);
+  const grants = (await q(`select column_name c from information_schema.column_privileges
+    where table_name = 'connector_tokens' and grantee = 'authenticated' and privilege_type = 'UPDATE' order by 1`)).map((r) => r.c);
+  check(JSON.stringify(grants) === JSON.stringify(['expires_at', 'last_used_at', 'matter_scope', 'name', 'revoked_at', 'scope_all']),
+    'N3: the browser may UPDATE exactly the columns 099 §5 names', grants);
+  const prov = await tryAs(aal2(MEM), `update public.connector_tokens set agent_provider = 'claude' where id = $1`, [agent.rows?.[0]?.id]);
+  check(prov.err?.code === '42501', 'N3: agent_provider is not writable (099 refuses it too)');
+  const exp = await tryAs(aal2(MEM), `update public.connector_tokens set expires_at = now() + interval '1 day' where id = $1 returning id`, [agent.rows?.[0]?.id]);
+  check(!exp.err && exp.rows.length === 1, 'N3: expires_at is writable (099 trigger decides "earlier only")', exp.err?.message);
   const others = await tryAs(aal2(EDEN), `update public.connector_tokens set revoked_at = now() where id = $1 returning id`, [agent.rows?.[0]?.id]);
   check(!others.err && others.rows.length === 0, 'and only by their owner');
 }
@@ -596,16 +633,17 @@ section('I. /api/ext/* as the connector JWT, against this database');
 // or as the superuser for the service role. Real handlers, real policies.
 function pgClient(claims) {
   const run = (sql, params) => as(claims, () => q(sql, params));
-  const ident = (c) => { if (!/^[a-z_]+$/.test(c)) throw new Error(`bad identifier ${c}`); return c; };
+  const ident = (c) => { if (!/^[a-z_]+(->>[a-z_]+)?$/.test(c)) throw new Error(`bad identifier ${c}`); return c.replace(/->>([a-z_]+)$/, "->>'$1'"); };
   return {
     from(table) {
-      const st = { cols: '*', where: [], params: [], order: null };
+      const st = { cols: '*', where: [], params: [], order: null, limit: null };
       const exec = async () => {
         const cols = st.cols === '*' ? '*'
           : st.cols.split(',').map((c) => c.trim()).filter((c) => /^[a-z_]+$/.test(c)).join(', ');
         const where = st.where.length ? ` where ${st.where.join(' and ')}` : '';
         const order = st.order ? ` order by ${ident(st.order[0])} ${st.order[1] ? 'asc' : 'desc'}` : '';
-        try { return { data: await run(`select ${cols} from public.${ident(table)}${where}${order}`, st.params), error: null }; }
+        const lim = st.limit ? ` limit ${Number(st.limit)}` : '';
+        try { return { data: await run(`select ${cols} from public.${ident(table)}${where}${order}${lim}`, st.params), error: null }; }
         catch (e) { return { data: null, error: { message: e.message, code: e.code } }; }
       };
       const api = {
@@ -613,6 +651,8 @@ function pgClient(claims) {
         eq(c, v) { st.params.push(v); st.where.push(`${ident(c)} = $${st.params.length}`); return api; },
         in(c, vs) { st.params.push(vs); st.where.push(`${ident(c)}::text = any($${st.params.length}::text[])`); return api; },
         order(c, o = {}) { st.order = [c, o.ascending !== false]; return api; },
+        gte(c, v) { st.params.push(v); st.where.push(`${ident(c)} >= $${st.params.length}`); return api; },
+        limit(n) { st.limit = n; return api; },
         async maybeSingle() { const r = await exec(); return { data: r.data?.[0] ?? null, error: r.error }; },
         then(ok, bad) { return exec().then(ok, bad); },
       };
@@ -688,11 +728,88 @@ function pgClient(claims) {
   check(pushConfirmed.status === 403 && pushConfirmed.json?.error === 'sealed_matter',
     'push-to-drive: and WITH confirm_leave_seal:true in the body — a token holder\'s "yes" is not the person\'s', pushConfirmed.json);
   check(outbound.length === 0, 'push-to-drive: nothing left the process (no Google, no storage)', outbound);
-  check(await refusals(SEALED) === before + 3, 'both refusals are in the Record');
+  check(await refusals(SEALED) === before + 2,
+    'N4: the push refusal is recorded once — the second, within the minute, is not a second row');
+  for (let i = 0; i < 5; i += 1) await call(extDocuments, { query: { matter: SEALED } });
+  check(await refusals(SEALED) === before + 2, 'N4: five more /api/ext/documents refusals in the same minute add no rows (no flooding the Record)');
   const src = fs.readFileSync(path.join(ROOT, 'api/ext/push-to-drive.mjs'), 'utf8');
   check(!/confirm_leave_seal\s*:\s*true/.test(src) && /confirmed: body\.confirm_leave_seal === true/.test(src),
     'push-to-drive never supplies confirm_leave_seal itself; the export gate reads only the request body');
   globalThis.fetch = realFetch;
+}
+
+// ===========================================================================
+section('K. round 2: the Record, the sealed pen, the Office, unsealing, drift');
+// ===========================================================================
+{
+  // N1 — the reviewer's case.
+  for (const [label, sql] of Object.entries(PEN_READS)) {
+    const r1 = await qa(aal1(EDEN), sql);
+    const r2 = await qa(aal2(EDEN), sql);
+    check(r1.length === 0 && r2.length > 0, `N1: ${label} — the aal1 owner sees none, aal2 sees it`, { aal1: r1.length, aal2: r2.length });
+  }
+  const viaServerspace = await qa(aal1(MEM), PEN_READS['events (the Record) of the sealed matter']);
+  check(viaServerspace.length === 0, 'N1: no serverspace fallback into a sealed matter\'s Record at aal1');
+  await qa(aal2(EDEN), `select public.ledger_append('tool.invoked', $1, null, null, 'user', $2, null, '{}'::jsonb)`, [OPEN, EDEN]);
+  const openRows = await qa(aal1(EDEN), `select id from public.events where matterspace_id = $1`, [OPEN]);
+  check(openRows.length > 0, 'N1: the Record of an open matter is read as before');
+
+  // N2 — the Office.
+  const shelve = (claims, u, sec, d) => tryAs(claims, `insert into public.office_items (owner_id, section_id, document_id, title)
+    values ($1,$2,$3,'shelved') returning id`, [u, sec, d]);
+  const s1 = await shelve(aal1(MEM), MEM, SHELF_M, DOC_S);
+  check(s1.err?.code === '42501', 'N2: an aal1 password holder cannot shelve a sealed document', s1.err?.message);
+  const s2 = await shelve(aal1(MEM), MEM, SHELF_M, DOC_O);
+  check(!s2.err, 'N2: an open document can be shelved as before', s2.err?.message);
+  const s3 = await shelve(aal1(OUT), OUT, SHELF_M, DOC_O);
+  check(Boolean(s3.err), 'N2: nobody can shelve a document they cannot read');
+  const repoint = await tryAs(aal1(MEM), `update public.office_items set document_id = $2 where id = $1 returning id`, [s2.rows?.[0]?.id, DOC_S]);
+  check(repoint.err?.code === '42501', 'N2: an item cannot be re-pointed at a sealed document either', repoint.err?.message);
+  // A row shelved before 098 (or by an aal2 session) for a sealed document.
+  await q(`insert into public.office_items (owner_id, section_id, document_id, title) values ($1,$2,$3,'legacy sealed')`, [EDEN, SHELF_E, DOC_S]);
+  const { documentIsSealed } = await import('../api/office.mjs');
+  const svc = pgClient(null);
+  check(await documentIsSealed(svc, DOC_S) === true && await documentIsSealed(svc, DOC_K) === true
+    && await documentIsSealed(svc, DOC_O) === false,
+    'N2: api/office.mjs documentIsSealed (service role): sealed, inherited-sealed, open');
+  const officeSrc = fs.readFileSync(path.join(ROOT, 'api/office.mjs'), 'utf8');
+  const asked = officeSrc.indexOf('documentIsSealed(supabase, item.document_id)');
+  check(asked > 0 && asked < officeSrc.indexOf(".from('passages')"),
+    'N2: the reading room asks before any passage is read, so a pre-existing sealed item is not served');
+
+  // N5 — unsealing a matter needs aal2.
+  const grace = aal1(ADM, Date.now() - 864e5);
+  const retier = await tryAs(grace, `update public.matterspaces set ai_tier = 'A' where id = $1 returning id`, [SEALED]);
+  check(retier.err?.code === '42501' && /step_up_required/.test(retier.err.message),
+    'N5: a grace-session admin cannot re-tier a sealed matter to A', retier.err?.message ?? retier.rows);
+  const reparent = await tryAs(grace, `update public.matterspaces set parent_matterspace_id = $2 where id = $1 returning id`, [SEALED_KID, OPEN]);
+  check(reparent.err?.code === '42501', 'N5: nor move an inherited-seal sub-matter under an open parent', reparent.err?.message ?? reparent.rows);
+  const rename = await tryAs(grace, `update public.matterspaces set name = name || '' where id = $1 returning id`, [SEALED]);
+  check(!rename.err && rename.rows.length === 1, 'N5: an ordinary edit of the sealed matter is not refused', rename.err?.message);
+  const sealIt = await tryAs(grace, `update public.matterspaces set ai_tier = 'B' where id = $1 returning id`, [ROOT_M]);
+  check(!sealIt.err && sealIt.rows.length === 1, 'N5: sealing is never refused — only leaving the seal is', sealIt.err?.message);
+  const unseal2 = await tryAs(aal2(EDEN), `update public.matterspaces set ai_tier = 'A' where id = $1 returning id`, [ROOT_M]);
+  check(!unseal2.err && unseal2.rows.length === 1, 'N5: at aal2 a matter can be unsealed (and its children with it)', unseal2.err?.message);
+
+  // Drift: the monitor's check.
+  const { fetchSealDrift, sealDriftLines } = await import('./ingest-monitor.mjs');
+  const clean = await fetchSealDrift(svc);
+  check(clean.available && !clean.red && clean.rows.length === 0, 'drift: none on a healthy database', clean);
+  const denied = await tryAs(aal2(EDEN), `select * from public.sealed_effective_drift()`);
+  check(Boolean(denied.err), 'drift: service role only');
+  await db.exec(`alter table public.matterspaces disable trigger matterspaces_sealed_effective`);
+  await q(`update public.matterspaces set sealed_effective = false where id = $1`, [SEALED_KID]);
+  await db.exec(`alter table public.matterspaces enable trigger matterspaces_sealed_effective`);
+  const drifted = await fetchSealDrift(svc);
+  const lines = sealDriftLines(drifted).join('\n');
+  check(drifted.red && drifted.rows.length === 1 && drifted.rows[0].matterspace_id === SEALED_KID && /SEAL DRIFT: 1 matter/.test(lines),
+    'drift: a corrupted column is found, and the monitor reports it red', lines.split('\n')[0]);
+  await q(`update public.matterspaces set ai_tier = ai_tier where id = $1`, [SEALED_KID]);
+  check((await fetchSealDrift(svc)).rows.length === 0, 'drift: the repair the monitor prints works');
+  const missing = await fetchSealDrift({ rpc: async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function' } }) });
+  check(!missing.red && /not deployed/.test(sealDriftLines(missing)[0]), 'drift: before 098 is pasted the monitor says so and is not red');
+  const broken = await fetchSealDrift({ rpc: async () => ({ data: null, error: { code: '57014', message: 'timeout' } }) });
+  check(broken.red && /NOT GREEN/.test(sealDriftLines(broken)[0]), 'drift: a check that could not run is not green');
 }
 
 // ===========================================================================

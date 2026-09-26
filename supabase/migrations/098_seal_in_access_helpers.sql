@@ -9,11 +9,12 @@
 -- never looked at the seal; an aal1 session could move a sealed matter's rows
 -- into an open matter (and the seal was gone for everyone); and any browser
 -- session could mint a connector token whose JWT 094 exempts. This file
--- closes those, in eleven parts:
+-- closes those, in fourteen parts (11–13 from the second review):
 --
 --   1. matterspaces.sealed_effective — "this matter or an ancestor is Tier B
 --      or C", stored on the row and kept true by two triggers (§1). The seal
---      becomes ONE COLUMN, so it can be asked per row.
+--      becomes ONE COLUMN, so it can be asked per row. Unsealing a matter (a
+--      re-tier to A, or re-parenting an inherited seal away) needs aal2.
 --   2. stepup_internal.effective_tier_is_sealed() reads that column. The
 --      ancestry walk survives as stepup_internal.effective_tier_walk(), used
 --      by the backfill and by the harness to prove the column never drifts.
@@ -38,11 +39,18 @@
 --      session has confirmed a second factor (CRITICAL-2).
 --   9. connector_tokens: no direct INSERT from the browser; a definer RPC
 --      connector_token_create() that asks for the second factor when the
---      person has one; UPDATE narrowed to the columns the app writes, so a
---      token cannot be minted by overwriting token_hash either (CRITICAL-1).
+--      person has one; UPDATE narrowed to 099's writable columns, so a token
+--      cannot be minted by overwriting token_hash either (CRITICAL-1). 099
+--      must land with or before this file (its trigger refuses un-revoking).
 --  10. account_session_revoke() takes the caller's aal and refuses a person
 --      with a factor who has not confirmed it (MEDIUM-7).
---  11. notify pgrst.
+--  11. _ledger_visible() asks the seal first: the Record, and the sealed
+--      pen's own sessions and messages, are not readable at aal1 — not even
+--      one's own, and not through the serverspace fallback.
+--  12. office_items may name only a document the caller can read (and
+--      api/office.mjs refuses a sealed document whatever the row says).
+--  13. sealed_effective_drift(), which the nightly monitor calls.
+--  14. notify pgrst.
 --
 -- WHY PER ROW IS NOW AFFORDABLE (and 078's objection does not apply)
 -- ---------------------------------------------------------------------------
@@ -98,9 +106,10 @@
 --   * meetings / can_access_meeting keep `or created_by = auth.uid()`: the
 --     person who started a meeting in a sealed matter still sees that meeting
 --     row at aal1.
---   * api/office.mjs serves a published Office item's passages with the
---     service role. Publishing a sealed matter's document to the public Office
---     is the owner's own act and is not refused here.
+--   * A password holder on an account WITHOUT a factor can enrol one and
+--     then step up (H4). Closing that needs a second channel for enrolment
+--     (mail, E1 — not built); the enrolment is on the Record
+--     (auth.factor_enrolled) for S5 to surface.
 --   * OAuth consent (api/oauth-approve.mjs → 087's oauth_grant_approve, as the
 --     service role) is not asked for a second factor. What it creates is an
 --     MCP connection, which the seal already refuses sealed matters to.
@@ -123,8 +132,8 @@
 -- stepup_internal, whose USAGE anon does not have — an anon read of a table
 -- whose policy calls a helper must stay "no rows", not "permission denied".
 --
--- Apply order: after 094 and 095 (097 and 099 are independent). Needs 016,
--- 051, 085, 088, 091 and 094 — asserted in §0. Re-runnable; executed twice
+-- Apply order: after 094 and 095, and with or after 099 (see §9); 097 is
+-- independent. Needs 016, 050, 051, 064, 085, 088, 091 and 094 — asserted in §0. Re-runnable; executed twice
 -- end-to-end by scripts/_verify-seal-in-access.mjs.
 --
 -- ROLLBACK (in this order; each line restores the pre-098 behaviour of its
@@ -141,6 +150,8 @@
 --   drop function if exists public.connector_token_create(text, text, text, text, text, uuid[], boolean);
 --   drop function if exists public.document_entry(uuid);
 --   drop function if exists public.seal_leave_allowed(uuid, uuid);
+--   drop function if exists public.sealed_effective_drift();
+--   -- and re-run 064 §2's _ledger_visible and 050's office_items policies.
 --
 -- ⚠ After pasting this file, run:  notify pgrst, 'reload schema';
 --   (it is the last statement here.)
@@ -158,6 +169,7 @@ begin
     'public.matter_ancestry(uuid)',                       -- 016
     'public.sealed_entry_allowed()',                      -- 094
     'public.matter_entry(uuid)',                          -- 094
+    'public._ledger_visible(uuid,uuid,uuid)',             -- 064
     'stepup_internal.has_verified_factor(uuid)',          -- 094
     'public.account_sessions(uuid)',                      -- 094
     'conversations_internal.user_matter_role(uuid,uuid)'  -- 091
@@ -167,6 +179,9 @@ begin
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'matterspaces' and column_name = 'ai_tier') then
     v_missing := v_missing || 'matterspaces.ai_tier (051)'::text;
+  end if;
+  if to_regclass('public.office_items') is null then
+    v_missing := v_missing || 'office_items (050)'::text;
   end if;
   if not exists (select 1 from information_schema.columns
                   where table_schema = 'public' and table_name = 'connector_tokens' and column_name = 'scope_all') then
@@ -251,6 +266,22 @@ begin
     end if;
   end if;
   new.sealed_effective := coalesce(new.ai_tier in ('B', 'C'), false) or coalesce(v_parent, false);
+
+  -- Unsealing is leaving the seal, for everything in the matter at once: a
+  -- re-tier from B/C to A, or a re-parent of a matter that was sealed only by
+  -- inheritance under an open parent. The documents/passages trigger (§8)
+  -- asks aal2 of one row leaving; this asks the same of the whole matter, so a
+  -- grace session (no factor, before the hard end) cannot do in one step what
+  -- it cannot do row by row. Children the cascade unseals after an allowed
+  -- change pass: the same aal2 session is asking. The worker and the SQL
+  -- editor (no auth.uid()) are not browser sessions and are not asked.
+  if tg_op = 'UPDATE' and old.sealed_effective and not new.sealed_effective
+     and auth.uid() is not null and not public.auth_is_aal2() then
+    raise exception 'step_up_required'
+      using errcode = '42501',
+            detail = 'Unsealing a matter takes everything in it out of the seal.',
+            hint = 'Confirm your second factor, then change the matter again.';
+  end if;
   return new;
 end $$;
 
@@ -779,14 +810,18 @@ create trigger passages_refuse_leaving_seal
 drop policy if exists "Users can insert their own connector tokens" on public.connector_tokens;
 revoke insert on table public.connector_tokens from anon, authenticated;
 
--- UPDATE: exactly the columns the app writes (revoke, rename, an agent's
--- matters and "all my matters").
+-- UPDATE: exactly the columns 099 (§5) lets a browser write — name,
+-- last_used_at, revoked_at, expires_at, matter_scope, scope_all — so the
+-- grant and 099's guard name one set. The grant cannot say HOW a column may
+-- change: `set revoked_at = null` (un-revoke) and a later expires_at are
+-- refused only by 099's BEFORE UPDATE trigger, which this file deliberately
+-- does not duplicate. 099 must land with or before 098.
 revoke update on table public.connector_tokens from anon, authenticated;
 do $migration$
 declare
   v_col text;
 begin
-  foreach v_col in array array['name', 'revoked_at', 'matter_scope', 'scope_all', 'agent_provider'] loop
+  foreach v_col in array array['name', 'last_used_at', 'revoked_at', 'expires_at', 'matter_scope', 'scope_all'] loop
     if exists (select 1 from information_schema.columns
                 where table_schema = 'public' and table_name = 'connector_tokens' and column_name = v_col) then
       execute format('grant update (%I) on table public.connector_tokens to authenticated', v_col);
@@ -920,6 +955,123 @@ end $$;
 
 revoke all on function public.account_session_revoke(uuid, uuid, text) from public, anon, authenticated;
 grant execute on function public.account_session_revoke(uuid, uuid, text) to service_role;
+
+
+-- ============================================================================
+-- 11. The Record and the sealed pen's transcripts obey the seal (round 2, N1)
+-- ============================================================================
+-- 064's _ledger_visible decides who reads `events` and — since 064 §9 —
+-- `ai_sessions` (and through them `ai_messages`: the sealed pen's own
+-- transcripts). Two of its answers ignored the seal:
+--   * "you are the actor / the owner" returned true before the matter was
+--     looked at, so at aal1 a person read their own sealed-pen sessions and
+--     messages, and their own Record rows (tool names, document ids);
+--   * when the matter was hidden from the caller — which 094 makes true of a
+--     sealed matter at aal1 — it fell through to "a member of the row's
+--     serverspace", so a serverspace member read the sealed matter's Record.
+-- The seal is now asked first, for any row that names a matter which still
+-- exists: a sealed one answers false to a session that may not enter it,
+-- whoever wrote the row. A row whose matter is gone keeps 064's promise
+-- ("readable after the matter is gone"): seal_allows() treats a missing
+-- matter as unsealed. The rest of the body is 064's, unchanged.
+create or replace function public._ledger_visible(
+  p_matter uuid,
+  p_serverspace uuid,
+  p_actor_user uuid
+) returns boolean
+language plpgsql
+security invoker
+stable
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_ss uuid;
+  v_parent uuid;
+begin
+  if v_uid is null then return false; end if;
+  -- 098: the seal before anything else.
+  if p_matter is not null and not stepup_internal.seal_allows(p_matter) then return false; end if;
+  if p_actor_user is not null and p_actor_user = v_uid then return true; end if;
+
+  if p_matter is not null then
+    -- Runs as the caller, so matterspaces' own RLS answers "can you see it?".
+    select m.serverspace_id, m.parent_matterspace_id
+      into v_ss, v_parent
+      from public.matterspaces m
+     where m.id = p_matter;
+    if v_ss is not null then
+      return public._mtspc_select_check(p_matter, v_ss, v_parent);
+    end if;
+  end if;
+
+  if p_serverspace is not null then
+    return exists (
+      select 1 from public.serverspace_members sm
+       where sm.serverspace_id = p_serverspace and sm.user_id = v_uid
+    );
+  end if;
+  return false;
+end $$;
+
+grant execute on function public._ledger_visible(uuid, uuid, uuid) to authenticated, service_role;
+
+
+-- ============================================================================
+-- 12. The Office: nothing sealed goes on a public shelf (round 2, N2)
+-- ============================================================================
+-- An Office item (050) names a document; api/office.mjs serves that
+-- document's passages, with the service role, to anyone, when the item's
+-- owner is the room's owner. 050's policies asked only "is it your item",
+-- never "can you read the document" — so a password holder could shelve a
+-- sealed document by id. Now the document must be one the caller can read
+-- (documents' own policy, seal-aware since §4), and api/office.mjs refuses a
+-- document whose matter is sealed whatever the row says, so an item shelved
+-- before this file — or by an aal2 session — is still not served.
+create or replace function public._office_document_ok(p_document uuid)
+returns boolean
+language plpgsql
+stable
+security invoker
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then return false; end if;
+  if p_document is null then return true; end if;
+  return exists (select 1 from public.documents d where d.id = p_document);
+end $$;
+grant execute on function public._office_document_ok(uuid) to authenticated, service_role;
+
+drop policy if exists office_items_insert on public.office_items;
+create policy office_items_insert on public.office_items
+  for insert with check (owner_id = auth.uid() and public._office_document_ok(document_id));
+drop policy if exists office_items_update on public.office_items;
+create policy office_items_update on public.office_items
+  for update using (owner_id = auth.uid())
+  with check (owner_id = auth.uid() and public._office_document_ok(document_id));
+
+
+-- ============================================================================
+-- 13. A check the nightly monitor runs: the column against the walk
+-- ============================================================================
+-- sealed_effective is maintained by triggers; this is the independent check
+-- that it still says what the ancestry walk says. Empty = healthy. Service
+-- role only (it names matters across tenants); scripts/ingest-monitor.mjs
+-- calls it and turns any row red.
+create or replace function public.sealed_effective_drift()
+returns table (matterspace_id uuid, column_value boolean, walk_value boolean)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select m.id, m.sealed_effective, stepup_internal.effective_tier_walk(m.id)
+    from public.matterspaces m
+   where m.sealed_effective is distinct from stepup_internal.effective_tier_walk(m.id)
+   limit 200
+$$;
+revoke all on function public.sealed_effective_drift() from public, anon, authenticated;
+grant execute on function public.sealed_effective_drift() to service_role;
 
 
 notify pgrst, 'reload schema';

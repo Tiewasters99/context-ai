@@ -96,7 +96,7 @@ export default async function handler(req, res, deps = {}) {
       return json(res, 503, { error: 'seal_status_unknown' });
     }
     if (isSealedTier(tier)) {
-      await recordExtRefusal(sb, { route: 'ext.push_to_drive', matterId: doc.matterspace_id, documentId: doc.id });
+      await recordExtRefusal(sb, { route: 'ext.push_to_drive', matterId: doc.matterspace_id, documentId: doc.id, userId });
       return json(res, 403, sealedRefusal());
     }
   }
