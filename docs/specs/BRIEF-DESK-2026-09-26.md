@@ -93,9 +93,11 @@ create table public.cite_notes (                   -- the telegraphic note, per 
 
 RLS: all three tables SELECT/INSERT/UPDATE for members of the document's matter through the same helper the `documents` policies use; DELETE on `draft_snapshots` for nobody (a snapshot a run points at must outlive edits); `cite_notes` DELETE by its author. Sealed matters: the body is text inside the matter, governed by the seal like passages. **Do not touch the shared RLS helpers** — S4b is changing them.
 
-Ledger kinds added in 100 and mirrored in `EVENT_KINDS`, the 064 lesson: `draft.snapshot {document_id, snapshot_id, sha256, label}`, `cite.checked {document_id, run_id, snapshot_id, counts}`, `draft.exported {document_id, snapshot_id, destination: 'md'|'docx'|'agent', task_id?}`. Autosave writes no event.
+Ledger kinds added in 100 and mirrored in `EVENT_KINDS`, the 064 lesson: `draft.snapshot {document_id, snapshot_id, sha256, label}`, `cite.checked {document_id, run_id, snapshot_id, counts}`, `draft.exported {document_id, snapshot_id, destination: 'md'|'docx'|'agent', task_id?}`. Autosave writes no event. ⚠ **Dependency:** the security build's 094 re-declares `events_kind_check` from a hardcoded list; whichever of 094 and 100 applies second would silently drop the other's kinds. **D1 does not start until 094 is on main**, and 100 re-declares the constraint with the **union** of `EVENT_KINDS` as it stands then.
 
 **Lineage without a versions table:** `draft_snapshots` is the version history. The Reader's "Versions" is a later nicety; the desk shows snapshots as a list with "Open read-only" and "Restore" (restore = copy into `draft_bodies`, new snapshot of what it replaced).
+
+**The rest of the product must see the latest text.** A brief filed through `file_document` has a storage object and passages; edits then live in `draft_bodies`, and search, `grep`, `get_passage` and the standalone Reader would keep returning the first cut. So on every snapshot the desk uploads `body_md` to the brief's own `storage_path` and enqueues `ingest_document` with `force`, and passages track the latest snapshot. This is the one sanctioned overwrite of a filed object (S3 asserts the worker never overwrites; the desk does, deliberately, for its own drafts, and the snapshot row is the history). `/app/document/:id` redirects to `/app/brief/:id` when a `draft_bodies` row exists.
 
 ### 3.2 The editor schema (the brief subset of Word, chosen now)
 
@@ -104,17 +106,18 @@ TipTap document, schema name `brief`, version 1. Chosen so it can grow into the 
 - **Nodes:** `doc`, `heading` (levels 1–3 = `##` part headings / `### I.` point headings / `**A.**` sub-points, per the dialect), `paragraph`, `blockquote`, `footnote` (inline node with block content; numbered by position, never by attr), `signatureBlock` (from `Dated:` to the end), `hardBreak`, `passthrough` (a block the parser could not classify, kept verbatim as text so nothing is lost).
 - **Marks:** `bold`, `italic`, `underline`, `highlight {color}`, `cite {cite_key, run_id, flag, raw, authority_document_id?, passage_id?, pin?, stale}`, `flag {kind: STAR|OPP|EDEN|verify}` (the bracketed red flags the dialect already has).
 - **Serialiser and parser** live in `src/lib/brief/md.ts`, pure and environment-neutral (Node 24 and browser; the rewrite engine's pattern). Round trip is lossless for the schema: `parse(serialize(doc)) ≡ doc` is the first harness. Cite marks serialise to nothing (they are derived; §3.3 rebuilds them) — the .md a human or an assistant reads is clean.
+- **A third projection, `toPlainText(doc)`**, also in `md.ts`: markup dropped, paragraph breaks kept, footnote bodies appended in document order, deterministic. **This is the string the cite-check reads and the marks anchor to** — never `body_md`. In the dialect a case name is `*Owen v. Jones*`; the extractor's contract check would keep the asterisks inside `raw`, and anchoring against the editor's text (no asterisks) would then fail on every italicised case name. Footnote text also moves in the dialect, so `location` snippets would land in the wrong place. `sha256` stays on `body_md` (identity); both derive from `body`.
 - **No `yjs`** in V1: one editor per brief, autosave every 2 s of quiet and on blur (`draft_bodies.updated_at` as the optimistic lock; a stale save shows "changed elsewhere — reload" rather than overwriting).
 
 ### 3.3 Cite marks and the table
 
-A run's `ReportEntry[]` becomes marks by **text anchoring**: for each entry, find `raw` (then `location`) in the editor's text with the verifier's normalisation (curly quotes, whitespace, hyphenation) and wrap it in a `cite` mark. Entries that do not anchor (the extractor's contract check makes this rare) appear in the table as "not located in the text" and never as a silent drop.
+A run's `ReportEntry[]` becomes marks by **text anchoring**: for each entry, find `raw` (then `location`) in the `toPlainText` projection (§3.2) with the verifier's normalisation (curly quotes, whitespace, hyphenation), map the offsets to ProseMirror positions (the projection keeps a position map, as `verifier.ts` keeps an index map), and wrap the range in a `cite` mark. Entries that do not anchor (the extractor's contract check makes this rare) appear in the table as "not located in the text" and never as a silent drop.
 
 `cite_key` = `normalize(citation without pin) + '|' + (pin ?? '')`, where normalize lowercases, collapses whitespace and strips punctuation except the reporter's dots. It is stable across runs and across snapshots, so notes and (later) attestations attach to it. The Cite Verification Record adopts this key.
 
 **The table is a projection of the marks in document order**, not a second list: flag · citation + pin · "in corpus" (title, or "not in corpus") · pin ("p. 1221" resolved, "first page — no star pages", or "pin not found") · note (inline, 280 chars, `cite_notes`) · location (click = scroll the editor to the mark). Filters by flag as today. `CiteDetail` (the existing expander) opens from a row for the model's justification, source and sub-flags.
 
-**Edit rule:** on every transaction, a `cite` mark whose current text no longer normalises to its `raw` gets `stale = true`; the row reads "changed since check" and its flag renders as `unchecked`. The run row is never mutated. **Confirm** (B6) takes a fresh snapshot, diffs its cites against the last run by `cite_key + raw`, re-checks only new or stale ones, carries the rest forward into a new run row with `snapshot_id`, and rebuilds the marks. "Re-check all" ignores the diff. Both write `cite.checked`.
+**Edit rule:** on every transaction, a `cite` mark whose current text no longer normalises to its `raw` gets `stale = true`; the row reads "changed since check" and its flag renders as `unchecked`. The run row is never mutated. **Confirm** (B6) takes a fresh snapshot, runs the extraction call over the whole `toPlainText` projection (extraction is one call and cannot be skipped), diffs the extracted cites against the last run by `cite_key + raw`, calls `checkOne` only for new or stale ones, carries the rest forward with their flags into a new run row with `snapshot_id`, and rebuilds the marks. The saving is in `checkOne`, where the per-cite model calls are. "Re-check all" ignores the diff. Both write `cite.checked`.
 
 ### 3.4 Two resolvers (deterministic, matter-scoped, no model)
 
@@ -153,13 +156,13 @@ The authority pane is `<DocumentReader id={authorityId} embedded goto={…} />`.
 - `goto?: { page?: number; passageId?: string; anchor?: TextAnchor; nonce: number }` — imperative, applied when `nonce` changes. `passageId` → fetch `page_start` + text; PDF: `gotoPage` then paint the passage's first twelve words through the existing `.search-hits` path; DOCX/text: `findInRendered`. `page` → `gotoPage`. The `?page=` reads at 763/775 stay for the standalone route and are skipped when `embedded`.
 - `chrome?: 'full' | 'pane'` — `pane` hides the cover, the sidebar toggle and the page editor button (today's `embedded` hides some of these already; make the set explicit).
 
-Click a cite mark → the pane opens `authority_document_id` at `passage_id` (or first page with the caveat under the title: "No star pages in this copy — showing page 1"). Click the pin text in the table → same. "Not in corpus" rows offer "Search the matter" (the existing all-matters search, prefilled) and nothing else in V1 (B4). Long note: the composer in the authority pane is the Reader's own `NoteComposer`; saving from the desk sets `cite_notes.annotation_id`, and the table shows the note's first line under the telegraphic one.
+Click a cite mark → the pane opens `authority_document_id` at `passage_id` (or first page with the caveat under the title: "No star pages in this copy — showing page 1"). Click the pin text in the table → same. "Not in corpus" rows offer "Search the matter" (the existing all-matters search, prefilled) and nothing else in V1 (B4). Long note: the composer in the authority pane is the Reader's own `NoteComposer`; saving from the desk sets `cite_notes.annotation_id`, and the table shows the note's first line under the telegraphic one. "Send a message" from the desk is the same composer with an addressee — `document_annotations.addressee_user_id` / `addressed_to_ai` (048) — so a note to co-counsel or to the assistant about a cite is a marginalia row, not a new channel.
 
 Toolbar: bold · italic · underline · highlight · footnote · flag (STAR/OPP/EDEN/verify) · undo/redo · **Confirm this brief** · Snapshot · Export ▾ (Markdown · Word · Send to your assistant). The Confirm button shows the last run's counts and "N changed since".
 
 ### 3.6 Export
 
-All three take a snapshot first (`draft.snapshot`) and then write `draft.exported`. Every path runs through `lib/export-gate.mjs` for sealed matters (S4a's gate), so a sealed brief leaving as a file or to an assistant is recorded or refused exactly like any other egress.
+All three take a snapshot first (`draft.snapshot`) and then write `draft.exported`. **Gating follows the S4a shape**, because a browser-minted download cannot be gated server-side (W6 §2): for a **sealed** matter, Markdown and Word are built by an endpoint, `api/brief-export.mjs` (the `docx` library runs in Node), which calls `lib/export-gate.mjs`, records `draft.exported`, and returns the file, or refuses in a sentence. For a **Tier A** matter the client builds the file and records the event only. Send to your assistant is server-side on every tier, so it is gated on every tier.
 
 1. **Markdown** — `body_md` of the snapshot, filename `<title> — v<n>.md`. This is the file the `brief-format` skill's build consumes (after B8).
 2. **Word** — `src/lib/brief/export-docx.ts` from the snapshot's TipTap JSON: TNR 12, double-spaced, justified, 0.5" first-line indent; headings per level; **real Word footnotes** (`docx` 9 supports footnote references); flags as bold red; the signature block indented 3.5". No cover, no TOC/TOA, no section breaks — the file says "Captures your words. House formatting is the assistant's job." in its DRAFT header line. (`export-page.ts` is the pattern; do not extend `export-docx.ts`, which is the redline builder.)
@@ -169,14 +172,14 @@ All three take a snapshot first (`draft.snapshot`) and then write `draft.exporte
 
 ## 4. The slices
 
-Order = dependency. Each = one Opus PR from a fresh worktree off `origin/main`, one offline harness wired into CI (`docs/CI.md`), no prod access, Eden merges. Keep off `mcp-core.mjs` except to add a tool, and off the RLS helpers.
+Order = dependency. Each = one Opus PR from a fresh worktree off `origin/main`, one offline harness wired into CI (`docs/CI.md`), no prod access, Eden merges. Keep off `mcp-core.mjs` except the `.md` brief branch in `handleFileDocument` (D1) and a new tool (D4), and off the RLS helpers.
 
 ### D1 — The brief as an editable document (migration 100)
 
 **What a customer can say after:** "My brief lives in the matter as text I can edit, with footnotes, and I can download it as markdown or Word at any time."
 
 Schema (§3.2) in `src/lib/brief/schema.ts` (TipTap extensions: `Footnote`, `SignatureBlock`, `Passthrough`, `Highlight`, `Flag`, `Cite` — `Cite` is defined here and used in D3); `md.ts` parse/serialise; `import-docx.ts` (mammoth `convertToHtml` with a style map for headings, footnote refs re-attached from mammoth's end-list by number; produces the loss list); `export-docx.ts` (§3.6.2); `draft-store.ts` (load/autosave/snapshot/restore with the optimistic lock); the `BriefDesk` page with the editor column only and the toolbar minus Confirm; "New brief", "Open in the desk"; `file_document` `.md` + `doc_type:'brief'` → body (in `handleFileDocument`, one branch). Snapshots list. Events.
-**Migration 100:** `draft_bodies`, `draft_snapshots`, `cite_notes`, `cite_check_runs.snapshot_id`, the three kinds (and the CHECK re-declaration in the 073 pattern).
+**Migration 100:** `draft_bodies`, `draft_snapshots`, `cite_notes`, `cite_check_runs.snapshot_id`, the three kinds (the CHECK re-declared in the 073 pattern with the **union** of kinds — **wait for 094 on main first**, §3.1). Also the snapshot → `storage_path` upload + forced re-index, and the Reader redirect.
 **Harness:** `_verify-brief-md-roundtrip.mjs` — fixtures: a Webster-style master.md with footnotes, flags and a signature block; `parse → serialize` byte-identical; docx import of a fixture produces the expected loss list; export-docx contains `w:footnoteReference` for every footnote; PGlite: RLS member/non-member on the three tables, snapshot DELETE refused, kinds accepted.
 **Eden:** B2, B8 (and the skill-script change on his side).
 
@@ -215,14 +218,14 @@ Reader `goto` + `chrome` props; the three-panel layout and the phone mode (B3, B
 
 | After | Can say | Cannot say |
 | --- | --- | --- |
-| D1 | "Your brief is text you edit in the matter, with real footnotes, exportable as Markdown or Word." | "Word round trip" — the export is a clean rebuild, not your file. |
+| D1 | "Your brief is text you edit in the matter, with real footnotes, exportable as Markdown or Word." | "Word round trip" — the export is a clean rebuild, not your file. "Every export is recorded" — on an unsealed matter the download is built in the browser and the event is written on trust; only sealed matters and assistant hand-offs go through the gate. |
 | D2 | (internal) | — |
 | D3 | "Click a cite, read the case beside your brief at the pinned page; every cite's status in one table; edits are tracked against the last check." | "Verified" in the SB 574 / McCarthy sense — that is W6's verify control and the attestation record, which attach here later. "Every case is in your corpus" — rows say when one is not. |
 | D4 | "Hand it to your own assistant for house formatting; the formatted copy files back; the Record shows the hand-off." | "We format it" — the house style is the assistant's job in V1. |
 
 ## 7. Kickoff prompts (one per slice)
 
-**D1.** "Read `docs/specs/BRIEF-DESK-2026-09-26.md` and build slice D1 exactly: migration `100_brief_desk.sql` (execute in PGlite first; probe prod columns before ALTER, per `project_dev_environment_cautions`), `src/lib/brief/{schema,md,import-docx,export-docx,draft-store}.ts`, `src/pages/brief/BriefDesk.tsx` (editor column only), the `file_document` `.md` branch, `_verify-brief-md-roundtrip.mjs` wired into CI. Do not build Confirm, the table or the authority pane. Fresh worktree from origin/main; one PR; no Co-Authored-By."
+**D1.** "Read `docs/specs/BRIEF-DESK-2026-09-26.md` and build slice D1 exactly. First confirm migration 094 is on `origin/main`; if not, stop and say so. Then: migration `100_brief_desk.sql` (execute in PGlite first; probe prod columns before ALTER, per `project_dev_environment_cautions`; re-declare `events_kind_check` with the union of `EVENT_KINDS`), `src/lib/brief/{schema,md,import-docx,export-docx,draft-store}.ts`, `src/pages/brief/BriefDesk.tsx` (editor column only), the `file_document` `.md` branch, `_verify-brief-md-roundtrip.mjs` wired into CI. Do not build Confirm, the table or the authority pane. Fresh worktree from origin/main; one PR; no Co-Authored-By."
 
 **D2.** "… build slice D2 exactly: migration `101_citation_resolvers.sql` with both RPCs wrapped INVOKER, `upsertDocumentCitations` in `lib/ingest-core.mjs` beside the `westlaw_case` write, `scripts/backfill-document-citations.mjs` with `--dry-run`, `src/lib/brief/resolve.ts`, `_verify-citation-resolvers.mjs`. No UI. Reuse `lib/bluebook.mjs`'s reporter grammar; do not re-implement it."
 
