@@ -305,15 +305,15 @@ function filtersOf(u, params) {
     if (!IDENT.test(k)) return null;
     if (v.startsWith('eq.')) {
       params.push(v.slice(3));
-      where.push(`${k}::text = $${params.length}`);
+      where.push(`${k} = $${params.length}`);
     } else if (v.startsWith('neq.')) {
       params.push(v.slice(4));
-      where.push(`${k}::text is distinct from $${params.length}`);
+      where.push(`${k} is distinct from $${params.length}`);
     } else if (v.startsWith('in.(') && v.endsWith(')')) {
       const items = v.slice(4, -1).split(',').map((x) => x.replace(/^"|"$/g, '')).filter(Boolean);
       if (!items.length) { where.push('false'); continue; }
       const marks = items.map((x) => { params.push(x); return `$${params.length}`; });
-      where.push(`${k}::text in (${marks.join(', ')})`);
+      where.push(`${k} in (${marks.join(', ')})`);
     } else {
       return null;
     }
@@ -961,6 +961,51 @@ for (const [action, to, code] of [
   check(r.status === 200 && (await matterOfDoc(T_OPEN_TXT)) === OPEN2 && exportsIn(r.newEvents).length === 0,
     'sandbox move_document, open → open (even at aal1): unchanged — moved, no file.exported', JSON.stringify(r.body)?.slice(0, 160));
 }
+// Round 4: Postgres accepts other spellings of a uuid (no hyphens, {braces},
+// upper case). The guard used to SKIP an id it did not recognise and let the
+// handler act on it. It must refuse — and this witness must compare ids the
+// way PostgREST does (a real uuid cast), or it cannot see the difference.
+{
+  const T_SEALED_TXT2 = await textDoc(SEALED, 'Privileged strategy note');
+  const plain = T_SEALED_TXT2.replace(/-/g, '');
+  const braced = `{${T_SEALED_TXT2}}`;
+  const upper = T_SEALED_TXT2.toUpperCase();
+  const viaStub = await (await stubFetch(`${SUPABASE_URL}/rest/v1/documents?select=id&id=eq.${plain}`,
+    { headers: { authorization: `Bearer ${T_CAL1}` } })).json();
+  check(Array.isArray(viaStub) && viaStub[0]?.id === T_SEALED_TXT2,
+    'the witness now reads an unhyphenated uuid the way PostgREST does (so the cases below are not vacuous)');
+  for (const action of ['copy_document', 'move_document', 'send_to_sandbox']) {
+    for (const [spelling, id] of [['unhyphenated', plain], ['braced', braced], ['upper-case', upper]]) {
+      for (const shape of ['document_ids', 'document_id']) {
+        if (action === 'send_to_sandbox' && shape === 'document_id') continue;
+        const n0 = await docCount();
+        const args = { ...(shape === 'document_ids' ? { document_ids: [id] } : { document_id: id }), ...(action !== 'send_to_sandbox' ? { to_matter: OPEN } : {}) };
+        const r = await aroundStorage(() => sandbox(T_CAL1, action, args));
+        check(r.status === 400 && r.body?.error === 'invalid_document_id' && r.newEvents.length === 0
+          && (await docCount()) === n0 && (await matterOfDoc(T_SEALED_TXT2)) === SEALED,
+        `sandbox ${action}, aal1, ${spelling} id in ${shape}: 400 invalid_document_id — nothing copied, moved or written`,
+        JSON.stringify(r.body));
+      }
+    }
+  }
+  {
+    const n0 = await docCount();
+    const r = await aroundStorage(() => sandbox(T_CAL2, 'copy_document',
+      { document_ids: [T_SEALED_TXT2, 'deadbeef-0000-4000-8000-000000000000'], to_matter: SEALED_KID }));
+    check(r.status === 404 && r.newEvents.length === 0 && (await docCount()) === n0,
+      'sandbox copy_document: an id that is not found (or not yours) refuses the whole call — found ≠ asked');
+  }
+  {
+    const r = await aroundStorage(() => sandbox(T_CAL2, 'copy_document',
+      { document_ids: [T_SEALED_TXT2], to_matter: OPEN.toUpperCase() }));
+    const r2 = await aroundStorage(() => sandbox(T_CAL2, 'assemble_documents',
+      { matter: OPEN.replace(/-/g, ''), document_ids: [T_OPEN_TXT, T_OPEN_TXT] }));
+    check(r.status === 400 && r.body?.error === 'invalid_matter_id' && r2.status === 400 && r2.body?.error === 'invalid_matter_id'
+      && r.newEvents.length === 0,
+    'sandbox: a matter named by a non-canonical uuid spelling (to_matter, matter) is refused on every action');
+  }
+}
+
 {
   // An external connector: enforceConnectorSeal refuses before any handler.
   const n0 = await docCount();

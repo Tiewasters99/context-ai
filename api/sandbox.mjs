@@ -14,7 +14,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { callTool, timeoutFetch, resolveMatter } from '../lib/mcp-core.mjs';
 import { jwtClaims } from '../lib/account-security.mjs';
-import { guardSandboxCrossing } from '../lib/seal-crossing.mjs';
+import { guardSandboxCrossing, nonCanonicalMatterArg } from '../lib/seal-crossing.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { EMBED_USD_PER_MTOK } from '../lib/usage-prices.mjs';
 
@@ -71,7 +71,7 @@ export default async function handler(req, res) {
 
   const body = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
   const action = body?.action;
-  const args = body?.args ?? {};
+  let args = body?.args ?? {};
   if (!action || !ALLOWED_ACTIONS.has(action)) {
     return json(res, 400, { error: `action must be one of: ${[...ALLOWED_ACTIONS].join(', ')}` });
   }
@@ -81,6 +81,11 @@ export default async function handler(req, res) {
   // source matter's Record before it runs. Asked before the meter, so a
   // refusal costs nothing. A TEXT-ONLY document has no stored file for 096's
   // bucket rule to refuse, which is why this cannot be left to storage.
+  // A matter named by uuid must be named canonically, on every action: any
+  // other spelling reaches the same row under a name no check compared.
+  const badMatter = nonCanonicalMatterArg(args);
+  if (badMatter) return json(res, 400, { error: 'invalid_matter_id', field: badMatter });
+
   if (CROSSING_ACTIONS.has(action)) {
     if (jwtClaims(userToken).cs_via === 'connector') return json(res, 403, { error: 'browser_sessions_only' });
     const { data: userData, error: userErr } = await sb.auth.getUser();
@@ -91,6 +96,8 @@ export default async function handler(req, res) {
       resolveDestination: (key) => resolveMatter(sb, key),
     });
     if (guard.refusal) return json(res, guard.refusal.status, guard.refusal.body);
+    // Round 4: run on exactly the ids the guard checked.
+    args = guard.args ?? args;
   }
 
   // Spend cap (migration 063). Most actions here are database and PDF work on
