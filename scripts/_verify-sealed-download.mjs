@@ -47,6 +47,13 @@
 //      database — is not in this chain: it stands for a row that predates 097
 //      or a database where 097 is not pasted. scripts/_verify-storage-path.mjs
 //      proves 097 itself.)
+//   C3. round 3 — /api/sandbox and TEXT-ONLY documents (no stored file, so
+//      096's bucket rule has nothing to refuse): move_document /
+//      copy_document / send_to_sandbox at aal1 → step_up_required; at aal2
+//      sealed → open → sealed_move_refused / sealed_copy_refused; a connector
+//      token refused; sealed → sealed moves and copies, recorded on the
+//      source chain; open → open unchanged; a connector's copy_document of a
+//      sealed text-only document refused by the connector seal.
 //   D. get_media on a sealed matter: file.opened with the connector actor;
 //      without a service-role mint the bucket refuses and nothing is written;
 //      an open matter writes no file.opened.
@@ -200,6 +207,21 @@ await db.exec(`
   alter table public.documents enable row level security;
   drop policy if exists d_sel on public.documents;
   create policy d_sel on public.documents for select using (public.can_access_matter(matterspace_id));
+  -- The two bits of 002/012 mcp-core's matter tools read (resolveMatter's
+  -- short_code / description, the seal's matterspace_descendants), as 002/012 define them.
+  alter table public.matterspaces add column if not exists short_code text;
+  alter table public.passages add column if not exists summary_level int not null default 0;
+  alter table public.passages add column if not exists text text;
+  alter table public.matterspaces add column if not exists description text;
+  create or replace function public.matterspace_descendants(p_root uuid)
+  returns table (id uuid) language sql stable as $$
+    with recursive tree as (
+      select m.id from public.matterspaces m where m.id = p_root
+      union all
+      select c.id from public.matterspaces c join tree t on c.parent_matterspace_id = t.id
+    )
+    select id from tree;
+  $$;
   drop policy if exists d_upd on public.documents;
   create policy d_upd on public.documents for update
     using (public.can_write_matter(matterspace_id)) with check (public.can_write_matter(matterspace_id));
@@ -284,6 +306,9 @@ function filtersOf(u, params) {
     if (v.startsWith('eq.')) {
       params.push(v.slice(3));
       where.push(`${k}::text = $${params.length}`);
+    } else if (v.startsWith('neq.')) {
+      params.push(v.slice(4));
+      where.push(`${k}::text is distinct from $${params.length}`);
     } else if (v.startsWith('in.(') && v.endsWith(')')) {
       const items = v.slice(4, -1).split(',').map((x) => x.replace(/^"|"$/g, '')).filter(Boolean);
       if (!items.length) { where.push('false'); continue; }
@@ -359,11 +384,15 @@ async function stubFetch(input, init = {}) {
     }
     const args = init.body ? JSON.parse(init.body) : {};
     const names = Object.keys(args).filter((k) => IDENT.test(k));
-    const sql = `select to_jsonb(public.${fn}(${names.map((k, i) => `${k} => $${i + 1}`).join(', ')})) as r`;
+    const call = `public.${fn}(${names.map((k, i) => `${k} => $${i + 1}`).join(', ')})`;
+    // A set-returning function answers as PostgREST does: an array of rows.
+    const setof = (await q(`select bool_or(p.proretset) as s from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.proname = $1`, [fn]))[0]?.s === true;
+    const sql = setof ? `select * from ${call}` : `select to_jsonb(${call}) as r`;
     const params = names.map((k) => (args[k] !== null && typeof args[k] === 'object' ? JSON.stringify(args[k]) : args[k]));
     try {
       const rows = await sqlAs(bearer, sql, params);
-      return reply(200, rows[0]?.r ?? null);
+      return reply(200, setof ? rows : (rows[0]?.r ?? null));
     } catch (err) {
       const code = err?.code ?? 'XX000';
       if (code === '42883') return reply(404, { code: 'PGRST202', message: err.message });
@@ -862,6 +891,90 @@ const rowOf = async (id) => (await q('select matterspace_id, storage_path from p
   const r = await aroundStorage(() => drive(ingestHandler, T_CAL2, { documentId: D_POINTER.id }));
   check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newStorage.length === 0,
     'R3: /api/ingest refuses a POINTER row in an open matter before any download', JSON.stringify(r.body));
+}
+
+// ---------------------------------------------------------------------------
+// C3. Round 3: the Workbench's /api/sandbox and TEXT-ONLY documents
+// ---------------------------------------------------------------------------
+// A document with no stored file (pasted text, conversation-filed notes) is a
+// row and its passages: 096's bucket rule has nothing to refuse. The sandbox
+// ran move_document / copy_document / send_to_sandbox with the browser token
+// and no seal check, so an aal1 member could carry one out of a sealed matter.
+console.log('\n--- C3. /api/sandbox, text-only documents ------------------------------');
+const { default: sandboxHandler } = await import('../api/sandbox.mjs');
+const { callTool } = await import('../lib/mcp-core.mjs');
+const OPEN2 = await matter('Vashti v. Ormsby / correspondence');
+const textDoc = async (m, title) => (await q(
+  `insert into public.documents (matterspace_id, title, source_filename, created_by, storage_path)
+   values ($1, $2, null, $3, null) returning id`, [m, title, ADA]))[0].id;
+const T_SEALED_TXT = await textDoc(SEALED, 'Privileged call notes');
+const T_OPEN_TXT = await textDoc(OPEN, 'Hearing logistics');
+const docCount = async () => Number((await q('select count(*)::int as n from public.documents'))[0].n);
+const matterOfDoc = async (id) => (await q('select matterspace_id from public.documents where id = $1', [id]))[0]?.matterspace_id;
+const sandbox = (token, action, args) => drive(sandboxHandler, token, { action, args });
+const exportsIn = (evs) => evs.filter((e) => e.kind === 'file.exported');
+
+for (const [action, to] of [['move_document', OPEN], ['copy_document', OPEN], ['send_to_sandbox', null]]) {
+  const n0 = await docCount();
+  const r = await aroundStorage(() => sandbox(T_CAL1, action, { document_ids: [T_SEALED_TXT], ...(to ? { to_matter: to } : {}) }));
+  check(r.status === 403 && r.body?.error === 'step_up_required' && r.newEvents.length === 0
+    && (await matterOfDoc(T_SEALED_TXT)) === SEALED && (await docCount()) === n0,
+  `sandbox ${action}, aal1, text-only sealed document: step_up_required — nothing moved, copied or written`, JSON.stringify(r.body));
+}
+for (const [action, to, code] of [
+  ['move_document', OPEN, 'sealed_move_refused'],
+  ['copy_document', OPEN, 'sealed_copy_refused'],
+  ['send_to_sandbox', null, 'sealed_copy_refused'],
+]) {
+  const n0 = await docCount();
+  const r = await aroundStorage(() => sandbox(T_CAL2, action, { document_ids: [T_SEALED_TXT], ...(to ? { to_matter: to } : {}) }));
+  check(r.status === 409 && r.body?.error === code && r.newEvents.length === 0
+    && (await matterOfDoc(T_SEALED_TXT)) === SEALED && (await docCount()) === n0,
+  `sandbox ${action}, aal2, sealed → open: ${code} — no Record row, nothing moved or copied`, JSON.stringify(r.body));
+}
+{
+  const r = await aroundStorage(() => sandbox(T_CONN, 'move_document', { document_ids: [T_SEALED_TXT], to_matter: OPEN }));
+  check(r.status === 403 && r.body?.error === 'browser_sessions_only' && (await matterOfDoc(T_SEALED_TXT)) === SEALED,
+    'sandbox: a connector-stamped token is refused on the crossing actions');
+}
+{
+  const n0 = await docCount();
+  const r = await aroundStorage(() => sandbox(T_CAL2, 'copy_document', { document_ids: [T_SEALED_TXT], to_matter: SEALED_KID }));
+  const e = exportsIn(r.newEvents);
+  const copies = await q(`select id from public.documents where matterspace_id = $1 and title = 'Privileged call notes'`, [SEALED_KID]);
+  check(r.status === 200 && (await docCount()) === n0 + 1 && copies.length === 1,
+    'sandbox copy_document, aal2, sealed → sealed sub-matter: allowed', JSON.stringify(r.body)?.slice(0, 160));
+  check(e.length === 1 && e[0].matterspace_id === SEALED && e[0].payload.destination === 'copy'
+    && e[0].payload.to_matter === SEALED_KID && e[0].payload.sealed === true && e[0].payload.document_id === T_SEALED_TXT,
+  '…file.exported {destination:copy, to_matter, sealed:true} on the SOURCE chain', JSON.stringify(e.map((x) => x.payload)));
+}
+{
+  const r = await aroundStorage(() => sandbox(T_CAL2, 'move_document', { document_ids: [T_SEALED_TXT], to_matter: SEALED_KID }));
+  const e = exportsIn(r.newEvents);
+  check(r.status === 200 && (await matterOfDoc(T_SEALED_TXT)) === SEALED_KID,
+    'sandbox move_document, aal2, sealed → sealed sub-matter: allowed', JSON.stringify(r.body)?.slice(0, 160));
+  check(e.length === 1 && e[0].matterspace_id === SEALED && e[0].payload.destination === 'move' && e[0].payload.to_matter === SEALED_KID,
+    '…file.exported {destination:move, to_matter} on the SOURCE chain');
+}
+{
+  const r = await aroundStorage(() => sandbox(T_CAL1, 'move_document', { document_ids: [T_OPEN_TXT], to_matter: OPEN2 }));
+  check(r.status === 200 && (await matterOfDoc(T_OPEN_TXT)) === OPEN2 && exportsIn(r.newEvents).length === 0,
+    'sandbox move_document, open → open (even at aal1): unchanged — moved, no file.exported', JSON.stringify(r.body)?.slice(0, 160));
+}
+{
+  // An external connector: enforceConnectorSeal refuses before any handler.
+  const n0 = await docCount();
+  const connClient3 = (await import('@supabase/supabase-js')).createClient(SUPABASE_URL, ANON_KEY, {
+    global: { fetch: stubFetch, headers: { Authorization: `Bearer ${T_CONN}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  let err = null;
+  try {
+    await callTool(connClient3, 'copy_document', { document_ids: [T_SEALED_TXT], to_matter: OPEN }, { sealConnector: true });
+  } catch (e) { err = e; }
+
+  check(err?.code === 'sealed_matter' && (await docCount()) === n0,
+    'connector copy_document of a sealed text-only document: refused by the connector seal, nothing copied', `${err?.code} ${err?.message}`);
 }
 
 // ---------------------------------------------------------------------------
