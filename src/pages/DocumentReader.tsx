@@ -41,6 +41,8 @@ import {
 } from '@/lib/document-animations';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
+import { documentEntry } from '@/lib/second-factor';
 import DriveExportControl from '@/components/reader/DriveExportControl';
 import DelegateCard from '@/components/agents/DelegateCard';
 import { DRIVE_KINDS, DRIVE_LABEL, type DriveKind } from '@/lib/export-connectors';
@@ -264,6 +266,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // What the loader is doing right now, for the card shown while it works.
   const [loadProgress, setLoadProgress] = useState<PdfOpenProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // 098: the document is in a sealed matter this session has not confirmed
+  // its second factor for. The prompt replaces the error; confirming reloads.
+  const [sealGate, setSealGate] = useState<'stepup' | 'enrol' | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
   const [docHtml, setDocHtml] = useState<string | null>(null);
   // For .fountain — the parser produces a separate title-page block we
@@ -436,6 +442,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setLoadState('loading');
     setLoadProgress(null);
     setErrorMsg(null);
+    setSealGate(null);
     setDocHtml(null);
     pageTextCacheRef.current = [];
     setMatches([]);
@@ -458,6 +465,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
+      if (!error && !data) {
+        // 098: a sealed document reads as nothing until this session confirms
+        // its second factor. Ask whether that nothing is "confirm it's you"
+        // before calling it missing.
+        const entry = await documentEntry(id);
+        if (cancelled) return;
+        if (entry === 'stepup' || entry === 'enrol') {
+          setSealGate(entry);
+          setLoadState('error');
+          return;
+        }
+      }
       if (error || !data) {
         setErrorMsg(error?.message || "Document not found, or you don't have access.");
         setLoadState('error');
@@ -603,7 +622,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     })();
 
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, reloadKey]);
 
   // ── The continuous page stack ───────────────────────────────────────
   // Every page owns a fixed-height slot in one scrollable column, so the
@@ -2734,7 +2753,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             {loadState === 'loading' && (
               <LoadingCard title={doc?.title ?? null} progress={loadProgress} pageCount={doc?.page_count ?? null} />
             )}
-            {loadState === 'error' && (
+            {loadState === 'error' && sealGate && (
+              <div className="mt-10 w-full">
+                <StepUpPrompt
+                  mode={sealGate}
+                  heading={sealGate === 'enrol'
+                    ? 'This document is in a sealed matter. Add a second factor to open it.'
+                    : 'This document is in a sealed matter. Confirm it’s you.'}
+                  onConfirmed={() => { setSealGate(null); setReloadKey((k) => k + 1); }}
+                />
+              </div>
+            )}
+            {loadState === 'error' && !sealGate && (
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
             )}
             {loadState === 'ready' && fileKind === 'pdf' && pageDims && (

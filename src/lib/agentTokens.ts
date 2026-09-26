@@ -12,6 +12,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { generateConnectorToken } from '@/lib/connectorTokens';
+import { createTokenRow } from '@/lib/connector-token-create';
 import { raise } from '@/lib/agentTasks';
 
 export type AgentProvider = 'grok' | 'chatgpt' | 'claude' | 'gemini' | 'other';
@@ -136,7 +137,12 @@ export async function createAgentToken(input: {
 }): Promise<{ token: string }> {
   const { token, tokenHash, tokenPrefix } = await generateConnectorToken();
   const all = input.scopeAll === true;
-  const { error } = await supabase.from('connector_tokens').insert({
+  // 098: through connector_token_create, which asks a person who has a second
+  // factor to confirm it first; the object below is the pre-098 insert.
+  const error = await createTokenRow({
+    tokenHash, tokenPrefix, name: input.name, kind: 'agent',
+    agentProvider: input.provider, matterScope: all ? [] : input.scope, scopeAll: all,
+  }, {
     user_id: input.userId,
     token_hash: tokenHash,
     token_prefix: tokenPrefix,

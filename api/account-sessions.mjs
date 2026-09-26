@@ -28,6 +28,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /** PostgREST's "that function is not in the schema" — 094 not pasted yet. */
 const notDeployed = (r) => r.status === 404 || r.error === 'PGRST202';
+/** 098's refusal: this person has a second factor and this session has not confirmed it. */
+const stepUpRequired = (r) => r.error === '42501' && /step_up_required/.test(String(r.data?.message ?? ''));
 
 export default async function handler(req, res, deps = {}) {
   const fetchImpl = deps.fetchImpl || null;
@@ -38,7 +40,8 @@ export default async function handler(req, res, deps = {}) {
   if (!bearer) return json(res, 401, { error: 'missing_bearer' });
   const user = await authUser(bearer, { fetchImpl });
   if (!user) return json(res, 401, { error: 'invalid_session' });
-  const currentSession = jwtClaims(bearer).session_id ?? null;
+  const claims = jwtClaims(bearer);
+  const currentSession = claims.session_id ?? null;
 
   if (req.method === 'GET') {
     const r = await serviceRpc('account_sessions', { p_user: user.id }, { fetchImpl });
@@ -64,8 +67,19 @@ export default async function handler(req, res, deps = {}) {
   if (!sessionId) return json(res, 400, { error: 'session_id_required' });
   if (sessionId === currentSession) return json(res, 400, { error: 'current_session' });
 
-  const r = await serviceRpc('account_session_revoke', { p_user: user.id, p_session: sessionId }, { fetchImpl });
+  // 098: the database refuses a person who has a second factor and has not
+  // confirmed it in this session (a stolen password must not be able to sign
+  // the owner's other devices out). The aal is read from the bearer Supabase
+  // Auth accepted just above. Before 098 the function takes two arguments;
+  // PGRST202 on the three-argument call means exactly that.
+  const aal = typeof claims.aal === 'string' ? claims.aal : null;
+  let r = await serviceRpc('account_session_revoke',
+    { p_user: user.id, p_session: sessionId, p_aal: aal }, { fetchImpl });
+  if (!r.ok && notDeployed(r)) {
+    r = await serviceRpc('account_session_revoke', { p_user: user.id, p_session: sessionId }, { fetchImpl });
+  }
   if (!r.ok) {
+    if (stepUpRequired(r)) return json(res, 403, { error: 'step_up_required', mode: 'stepup' });
     if (notDeployed(r)) return json(res, 503, { error: 'not_available' });
     return json(res, 502, { error: 'revoke_failed' });
   }

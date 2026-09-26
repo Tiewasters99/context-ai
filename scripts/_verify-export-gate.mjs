@@ -437,7 +437,10 @@ function readsLikeAWarning(msg) {
 
 const PATHS = [
   { name: '/api/drive-export', rel: 'api/drive-export.mjs', handler: driveExport, service: 'google_drive', party: 'Google', body: (x) => ({ documentId: 'doc-1', folderName: 'Contextspaces', ...x }), call: post },
-  { name: '/api/ext/push-to-drive', rel: 'api/ext/push-to-drive.mjs', handler: pushToDrive, service: 'google_drive', party: 'Google', body: (x) => ({ documentId: 'doc-1', ...x }), call: (h, b) => post(h, b, { token: CSP_TOKEN }) },
+  // /api/ext/push-to-drive left this table in 098 (S1b): a connected app no
+  // longer carries a sealed document out at all, confirmed or not — so the
+  // warn-and-record matrix below does not apply to it. Section 11b holds it
+  // to the refusal instead, and to "unchanged" for an unsealed document.
   { name: '/api/gmail-send', rel: 'api/gmail-send.mjs', handler: gmailSend, service: 'gmail', party: 'Google', body: (x) => ({ documentId: 'doc-1', ...x }), call: post },
   // The same handler, twice. /api/cloud-export takes the service in its body,
   // so both drives run the WHOLE table below — every assertion the three
@@ -718,8 +721,8 @@ try {
     check(sentBytes, `${p.name} on main: the document's own bytes leave the building — the checks above are not vacuous`);
   }
 
-  // ── 11. The extension's listing endpoints ───────────────────────────────
-  console.log('\nThe extension’s listings: names, never content — and the seal is marked');
+  // ── 11. The extension's listing endpoints (098: the seal is enforced) ───
+  console.log('\nThe extension’s listings: names, never content — and never a sealed matter (098)');
   {
     install({ tier: 'B' });
     const res = await get(extMatters, {});
@@ -727,31 +730,64 @@ try {
     const child = body?.matters?.find((m) => m.id === 'matter-child');
     const open = body?.matters?.find((m) => m.id === 'matter-open');
     check(res.statusCode === 200 && body?.seal_status === 'ok', '/api/ext/matters answers', body);
-    check(child?.sealed === true, 'a matter sealed by an ancestor the user cannot see is marked sealed', child);
-    check(open?.sealed === false, 'an open matter is not', open);
-    check(Boolean(child?.name), 'the user’s own tool still sees their own matters — names are not content');
+    check(child === undefined, 'a matter sealed by an ancestor the user cannot see is NOT listed', body?.matters);
+    check(open?.sealed === false, 'an open matter is listed, unsealed', open);
     check(!/passage|storage_path|signed|token|CONFIDENTIAL/i.test(res.text), 'nothing in the answer is document content', res.text.slice(0, 200));
     check(outside().length === 0, 'and the listing contacts nothing outside Supabase', outsideHosts());
 
     install({ tier: 'B', sealRoots: 'error' });
     const failed = await get(extMatters, {});
-    check(failed.json?.seal_status === 'unknown' && failed.json?.matters?.every((m) => m.sealed === true),
-      'a seal lookup that fails marks everything sealed — over-warning, never under-warning', failed.json);
+    check(failed.statusCode === 503 && !failed.json?.matters,
+      'a seal lookup that fails lists NOTHING — fail closed, never a list that might include a sealed matter', failed.json);
   }
   {
     install({ tier: 'B' });
     const res = await get(extDocuments, { matter: 'matter-child' });
-    check(res.statusCode === 200 && res.json?.sealed === true && res.json?.ai_tier === 'B',
-      '/api/ext/documents marks the matter sealed (service-role tier, so an unseen parent still counts)', res.json);
-    check(res.json?.documents?.[0]?.sealed === true && res.json.documents[0].title === DOC.title,
-      'each document carries the flag beside its title', res.json?.documents?.[0]);
-    check(!/storage_path|signed|CONFIDENTIAL|passage/i.test(res.text),
-      'titles and sizes only — no storage path, no signed URL, no text of the document', res.text.slice(0, 300));
+    check(res.statusCode === 403 && res.json?.error === 'sealed_matter' && /sealed/i.test(res.json?.message ?? ''),
+      '/api/ext/documents REFUSES a sealed matter (service-role tier, so an unseen parent still counts)', res.json);
+    check(!res.text.includes(DOC.title) && !/storage_path|signed|CONFIDENTIAL|passage/i.test(res.text),
+      'not even the titles are listed', res.text.slice(0, 300));
+    const ev = ledgerBody() ?? {};
+    check(ev.p_kind === 'tool.invoked' && ev.p_matter === 'matter-child' && ev.p_payload?.refused === 'sealed'
+      && ev.p_payload?.connector === true,
+      'and the refusal is in the sealed matter’s Record, as an MCP connector’s would be', ev);
 
     install({ tier: 'error' });
     const failed = await get(extDocuments, { matter: 'matter-child' });
-    check(failed.json?.seal_status === 'unknown' && failed.json?.sealed === true,
-      'an unreadable tier reports sealed, not open', failed.json);
+    check(failed.statusCode === 503 && !failed.json?.documents, 'an unreadable tier is refused, not listed', failed.json);
+
+    install({ tier: 'A' });
+    const open = await get(extDocuments, { matter: 'matter-child' });
+    check(open.statusCode === 200 && open.json?.sealed === false && open.json?.documents?.[0]?.title === DOC.title,
+      'an unsealed matter lists its documents as before', open.json);
+  }
+
+  // ── 11b. The extension's push obeys the seal (098) ──────────────────────
+  console.log('\nThe extension’s push: a sealed document never leaves, confirmed or not (098)');
+  for (const confirm of [undefined, true]) {
+    install({ tier: 'B' });
+    __setLedgerForTests(null);
+    const body = confirm === undefined ? { documentId: 'doc-1' } : { documentId: 'doc-1', confirm_leave_seal: true };
+    const res = await post(pushToDrive, body, { token: CSP_TOKEN });
+    const label = confirm ? 'WITH confirm_leave_seal:true in the body' : 'with no confirmation';
+    check(res.statusCode === 403 && res.json?.error === 'sealed_matter', `push-to-drive ${label}: refused`, { status: res.statusCode, body: res.json });
+    check(storageReads().length === 0 && outside().length === 0,
+      `push-to-drive ${label}: egress witness — no storage read, nothing sent outside Supabase`, requests.map((r) => r.url));
+    const refusal = ledgerCalls().map((c) => { try { return JSON.parse(c.body); } catch { return null; } })
+      .find((b) => b?.p_kind === 'tool.invoked');
+    check(refusal?.p_payload?.refused === 'sealed' && refusal?.p_payload?.document_ids?.[0] === 'doc-1',
+      `push-to-drive ${label}: the refusal is recorded`, refusal);
+  }
+  {
+    install({ tier: 'error' });
+    const res = await post(pushToDrive, { documentId: 'doc-1', confirm_leave_seal: true }, { token: CSP_TOKEN });
+    check(res.statusCode === 503 && outside().length === 0 && storageReads().length === 0,
+      'push-to-drive: an unreadable tier refuses, even with a confirmation, and nothing moves', { status: res.statusCode });
+
+    install({ tier: 'A' });
+    const ok = await post(pushToDrive, { documentId: 'doc-1' }, { token: CSP_TOKEN });
+    check(ok.statusCode === 200 && uploads().length === 1 && ok.json?.seal === undefined,
+      'push-to-drive: an unsealed document is pushed exactly as before, with no confirmation asked', { status: ok.statusCode, uploads: uploads().length });
   }
 
   // ── 12. One gate, and the shape a future connector passes through ───────
