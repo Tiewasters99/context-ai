@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Unplug } from 'lucide-react';
 import CardDialog from '@/components/ui/CardDialog';
-import { previewDisconnect, disconnectMatter, type DisconnectCounts } from '@/lib/disconnect-all';
+import { previewDisconnect, disconnectMatter, NOTHING_DISCONNECTED, type DisconnectCounts } from '@/lib/disconnect-all';
 import { matterSentence } from '@/lib/disconnect-all-sentence';
 
 // "Disconnect all assistants from this matter" — beside Pause AI in the
@@ -63,7 +63,7 @@ export default function DisconnectMatterControl({ matterId, matterName, onDone }
       setOpen(false);
       onDone?.(done);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Nothing was disconnected. Try again in a moment.');
+      setError(e instanceof Error ? e.message : NOTHING_DISCONNECTED);
     } finally {
       setBusy(false);
     }

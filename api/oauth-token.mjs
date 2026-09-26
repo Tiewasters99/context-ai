@@ -114,6 +114,11 @@ export default async function handler(req, res) {
         client_name: (client && client.typ === 'client' && client.client_name) || null,
         scope: codePayload.scope || 'mcp',
       });
+      if (recorded.outcome === 'locked') {
+        // 099: the account pressed "Disconnect everything" after this code's
+        // consent; the grant was refused, so the code is worth nothing.
+        return json(res, 400, { error: 'invalid_grant', error_description: 'account disconnected; reconnect' });
+      }
       gid = recorded.gid;
     }
 

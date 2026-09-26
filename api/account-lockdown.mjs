@@ -25,10 +25,19 @@
 //
 // The bearer is checked the way api/account-sessions.mjs checks it: Supabase
 // Auth is asked who it belongs to before anything else happens.
+//
+// A second factor, when there is one (migration 099, review MEDIUM-5). Without
+// it a thief holding an aal1 session could press this, sign the real owner's
+// other devices out, and keep their own. So an account with a verified factor
+// must have stepped this session up to aal2 first: otherwise the answer is
+// 403 `step_up_required`, NOTHING is revoked and nobody is signed out, and the
+// page asks for the factor (StepUpPrompt, from S1) and presses again. The
+// database asks the same question itself (099 §6), so the RPC cannot be
+// called around this endpoint at aal1 either.
 
 import { createClient } from '@supabase/supabase-js';
 import {
-  json, corsPreflight, bearerFrom, authUser, userRpcClient, SUPABASE_URL, SERVICE_KEY,
+  json, corsPreflight, bearerFrom, authUser, jwtClaims, userRpcClient, SUPABASE_URL, SERVICE_KEY,
 } from '../lib/account-security.mjs';
 
 /** PostgREST's "that function is not in the schema" — 095 not pasted yet. */
@@ -44,10 +53,18 @@ export default async function handler(req, res, deps = {}) {
   const user = await authUser(bearer, { fetchImpl });
   if (!user) return json(res, 401, { error: 'invalid_session' });
 
+  const hasFactor = Array.isArray(user.factors) && user.factors.some((f) => f?.status === 'verified');
+  if (hasFactor && jwtClaims(bearer).aal !== 'aal2') {
+    return json(res, 403, { error: 'step_up_required' });
+  }
+
   const { data, error } = await userRpcClient(bearer, { fetchImpl })
     .rpc('disconnect_all', { p_scope: 'account', p_matter: null });
   if (error) {
     if (NOT_DEPLOYED.has(String(error.code))) return json(res, 503, { error: 'not_available' });
+    // The database's own aal2 check (099) — the factor was enrolled between
+    // Supabase Auth's answer above and the press, say.
+    if (/step_up_required/.test(String(error.message ?? ''))) return json(res, 403, { error: 'step_up_required' });
     return json(res, 502, { error: 'disconnect_failed', message: error.message ?? null });
   }
   const counts = data && typeof data === 'object' ? data : {};

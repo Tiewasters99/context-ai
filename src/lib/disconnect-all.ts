@@ -12,6 +12,18 @@
 //
 // NOT DEPLOYED IS NOT AN ERROR. Until 095 is pasted the preview RPC is missing
 // (PGRST202) and both buttons hide themselves, as the AI pause does.
+//
+// Since 099:
+//   * an account with a second factor presses at aal2. /api/account-lockdown
+//     answers `step_up_required` otherwise (nothing done); disconnectAccount
+//     throws StepUpRequiredError, the card asks for the factor and presses
+//     again.
+//   * after the press, THIS tab's sign-in is older than the lock, and the
+//     database refuses to let a sign-in that old reconnect anything (that is
+//     what stops a stolen token doing it). So disconnectAccount waits past the
+//     lock's second and refreshes the session: the presser reconnects from a
+//     new token. The devices the press signed out cannot refresh.
+//   * a failure says, in the same words everywhere, that nothing happened.
 
 import { supabase } from '@/lib/supabase';
 import { normaliseCounts, type DisconnectCounts } from '@/lib/disconnect-all-sentence';
@@ -26,6 +38,23 @@ export function isDisconnectNotDeployed(err: unknown): boolean {
   if (e.code && NOT_DEPLOYED_CODES.has(String(e.code))) return true;
   return /could not find the function|schema cache|function .* does not exist/i.test(String(e.message ?? ''));
 }
+
+/** The press needs this session stepped up to aal2 first. Nothing was done. */
+export class StepUpRequiredError extends Error {
+  constructor() {
+    super('Confirm it’s you to disconnect everything.');
+    this.name = 'StepUpRequiredError';
+  }
+}
+
+/** The one sentence for a press that did not happen. */
+export const NOTHING_DISCONNECTED = 'Nothing was disconnected — try again.';
+
+function nothingDisconnected(detail?: string | null): Error {
+  return new Error(detail ? `${NOTHING_DISCONNECTED} (${detail})` : NOTHING_DISCONNECTED);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type PreviewResult =
   | { ok: true; counts: DisconnectCounts }
@@ -60,13 +89,18 @@ export async function disconnectAccount(): Promise<{ counts: DisconnectCounts; o
     | { counts?: unknown; others_signed_out?: boolean; error?: string; message?: string | null }
     | null;
   if (!res.ok) {
+    if (body?.error === 'step_up_required') throw new StepUpRequiredError();
     if (body?.error === 'not_available') {
       throw new Error('This is not set up on this workspace yet. Nothing was disconnected.');
     }
-    throw new Error(
-      `Nothing was disconnected${body?.message ? `: ${body.message}` : '. Try again in a moment.'}`,
-    );
+    throw nothingDisconnected(body?.message);
   }
+  // The lock is stamped in whole seconds against the sign-in's issue time;
+  // a token refreshed in the same second as the press would still count as
+  // older. A failed refresh is not the press failing — the next reconnection
+  // will say "sign in again", which is true.
+  await sleep(1100);
+  await supabase.auth.refreshSession().catch(() => undefined);
   return { counts: normaliseCounts(body?.counts), othersSignedOut: body?.others_signed_out === true };
 }
 
@@ -79,7 +113,7 @@ export async function disconnectMatter(matterId: string): Promise<DisconnectCoun
     if (isDisconnectNotDeployed(error)) {
       throw new Error('This is not set up on this workspace yet. Nothing was disconnected.');
     }
-    throw new Error(`Nothing was disconnected: ${error.message}`);
+    throw nothingDisconnected(error.message);
   }
   return normaliseCounts(data);
 }

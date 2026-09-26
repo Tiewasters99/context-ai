@@ -10,6 +10,9 @@
 // is gated. As on /api/ext/matters, the seal is therefore MARKED rather than
 // enforced — the extension is the user's own tool — and the marking fails
 // closed: if the tier cannot be read, the matter is reported sealed.
+//
+// The pause, by contrast, is ENFORCED (099): a paused matter is refused here
+// (403 ai_paused), and a pause that cannot be read refuses too (503).
 
 import {
   authenticateConnectorToken,
@@ -17,6 +20,7 @@ import {
   corsHeaders,
   json,
   handleAuthError,
+  pausedMatterRefusal,
 } from '../../lib/connector-token-auth.mjs';
 
 import { fetchMatterTier, isSealedTier } from '../../lib/ai-tier-policy.mjs';
@@ -48,6 +52,10 @@ export default async function handler(req, res) {
     .maybeSingle();
   if (mErr) return json(res, 500, { error: `matter_lookup: ${mErr.message}` });
   if (!matter) return json(res, 404, { error: 'matter_not_found' });
+
+  // A paused matter lists nothing to a connected app (migration 070; 099).
+  const paused = await pausedMatterRefusal(matterId);
+  if (paused) return json(res, paused.status, paused.body);
 
   const { data, error } = await sb
     .from('documents')

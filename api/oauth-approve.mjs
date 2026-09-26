@@ -59,6 +59,11 @@ export default async function handler(req, res) {
     return json(res, 401, { error: 'login_required', detail: userErr?.message || 'invalid supabase session' });
   }
   const user_id = userData.user.id;
+  // Migration 099: the sign-in that is approving, from the token Supabase
+  // Auth has just accepted — its sub, when it was issued, and its session.
+  // The database refuses the grant if this sign-in predates the account's
+  // "Disconnect everything", and names it on the account.unlocked row if not.
+  const session = supabaseSessionClaims(sbToken, user_id);
 
   // 2. Validate the OAuth params.
   const body = typeof req.body === 'string' ? safeJson(req.body) : (req.body || {});
@@ -131,11 +136,21 @@ export default async function handler(req, res) {
     client_name: client.client_name || null,
     scope: scope || 'mcp',
     agent,
+    session,
   });
   const { gid, outcome, agentTokenId } = approval;
   console.log('[oauth-approve] grant %s for sub=%s client=%s as=%s',
     gid ? `${outcome} (${gid})` : `not recorded (${outcome})`, user_id,
     (client.client_name || 'unknown').slice(0, 40), agent ? 'agent' : 'assistant');
+  if (approval.outcome === 'locked') {
+    // Not an outage: the account pressed "Disconnect everything" after this
+    // sign-in was issued. Nothing was granted and no code is minted.
+    return json(res, 403, {
+      error: 'sign_in_again',
+      detail: 'Everything was disconnected from this account after this sign-in began. '
+        + 'Sign in again, then connect. Nothing was granted.',
+    });
+  }
   if (agent && !approval.ok) {
     return json(res, 503, {
       error: 'agent_connect_unavailable',
@@ -174,6 +189,24 @@ export default async function handler(req, res) {
   if (state) url.searchParams.set('state', state);
 
   return json(res, 200, { redirect: url.toString() });
+}
+
+// The claims of a Supabase access token that Supabase Auth has already
+// accepted (getUser above checked the signature and the expiry), reduced to
+// the three 099 needs. Null when they cannot be read or name someone else.
+function supabaseSessionClaims(token, user_id) {
+  try {
+    const part = String(token).split('.')[1];
+    const claims = part ? JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) : null;
+    if (!claims || claims.sub !== user_id) return null;
+    return {
+      sub: claims.sub,
+      iat: Number.isFinite(Number(claims.iat)) ? Number(claims.iat) : null,
+      session_id: typeof claims.session_id === 'string' ? claims.session_id : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function json(res, status, obj) {
