@@ -41,6 +41,10 @@ interface Props {
 }
 
 const PAUSE_AMBER = '#e8b84a';
+// The note migration 095 leaves on a pause set by "Disconnect everything" /
+// "Disconnect all assistants from this matter" (disconnect_internal.
+// pause_note()). A marker, not prose, so it is shown as a sentence.
+const DISCONNECT_NOTE = 'disconnect_all';
 
 export default function AiPauseControl({ matterId, matterName, onChange }: Props) {
   const [state, setState] = useState<AiPauseState>({ ...NOT_PAUSED, notDeployed: true });
@@ -177,7 +181,9 @@ export default function AiPauseControl({ matterId, matterName, onChange }: Props
               </p>
               <div className="rounded-lg border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] px-3 py-2.5 mb-3 text-[12px] leading-relaxed text-white/75">
                 {aiPausedSentence(state)}
-                {state.note ? <><br />Note: “{state.note}”</> : null}
+                {state.note === DISCONNECT_NOTE ? (
+                  <><br />It was paused when every assistant was disconnected.</>
+                ) : state.note ? <><br />Note: “{state.note}”</> : null}
                 {state.inherited ? (
                   <><br />This pause was set on a parent matter, so resuming here resumes it there too.</>
                 ) : null}

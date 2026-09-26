@@ -31,6 +31,8 @@ import {
 } from '@/hooks/useConnections';
 import AgentsSection from '@/components/agents/AgentsSection';
 import { agentNamesById, revokeAgentToken } from '@/lib/agentTokens';
+import DisconnectEverything from '@/components/account/DisconnectEverything';
+import { countsLine } from '@/lib/disconnect-all-sentence';
 
 type ConnState =
   | 'connected'
@@ -473,29 +475,29 @@ export default function Connections() {
   // connector_tokens is the only readable signal. A live row means a token
   // is out there and will authenticate; no row means only that no token was
   // issued — an OAuth connection made from inside Claude is invisible here.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // An agent token (kind 'agent', migration 085) is not a Claude
-      // connection, so it must not light this badge. readUserTokens drops
-      // agent tokens in the browser: a kind filter would fail before 085.
-      const { data, error } = await readUserTokens<{ revoked_at: string | null; expires_at: string | null }>(
-        (cols) => supabase.from('connector_tokens').select(cols),
-        'revoked_at, expires_at',
-      );
-      if (cancelled || error || !data) return;
-      const now = Date.now();
-      const live = data.some(
-        (t) =>
-          !t.revoked_at &&
-          (!t.expires_at || new Date(t.expires_at).getTime() > now),
-      );
-      setClaudeTokenState(live ? 'token_active' : undefined);
-    })();
-    return () => {
-      cancelled = true;
-    };
+  // A callback rather than a one-shot effect: "Disconnect everything" at the
+  // foot of the page re-reads it, so the badge goes the moment the token does.
+  const loadTokenState = useCallback(async () => {
+    // An agent token (kind 'agent', migration 085) is not a Claude
+    // connection, so it must not light this badge. readUserTokens drops
+    // agent tokens in the browser: a kind filter would fail before 085.
+    const { data, error } = await readUserTokens<{ revoked_at: string | null; expires_at: string | null }>(
+      (cols) => supabase.from('connector_tokens').select(cols),
+      'revoked_at, expires_at',
+    );
+    if (error || !data) return;
+    const now = Date.now();
+    const live = data.some(
+      (t) =>
+        !t.revoked_at &&
+        (!t.expires_at || new Date(t.expires_at).getTime() > now),
+    );
+    setClaudeTokenState(live ? 'token_active' : undefined);
   }, []);
+
+  useEffect(() => {
+    void loadTokenState();
+  }, [loadTokenState]);
 
   // oauth_grants (migration 065) — one row per AI client this account has
   // approved over OAuth. This is the connection itself, so a live row is a
@@ -804,6 +806,27 @@ export default function Connections() {
           every case the token is encrypted before it is stored, and you can
           disconnect at any time.
         </p>
+
+        {/* Migration 095. At the foot, quiet, and absent until it is pasted.
+            Afterwards the page re-reads every list above, so each row shows
+            as disconnected from the tables themselves. */}
+        <DisconnectEverything
+          onDone={(done, othersSignedOut) => {
+            void loadGrants();
+            void loadTokenState();
+            setAgentsRefresh((k) => k + 1);
+            setBanner({
+              kind: 'ok',
+              text:
+                `Disconnected: ${countsLine(done)}. ` +
+                (othersSignedOut
+                  ? 'Every other browser has been signed out. '
+                  : 'Other browsers could not be signed out just now — sign them out from Devices in Settings. ') +
+                'Reconnect each one when you choose.',
+            });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+        />
       </div>
     </div>
   );

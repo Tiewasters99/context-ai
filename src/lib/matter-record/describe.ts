@@ -448,6 +448,37 @@ function factorKind(value: unknown): string {
   return '';
 }
 
+// 095's counts, as the confirm card said them: "(3 assistants, 2 agents, 1
+// connected app; AI paused on 41 matters)". Nothing when nothing was counted.
+function disconnectCounts(payload: Record<string, unknown>): string {
+  const part = (k: unknown, one: string, many: string) => {
+    const v = num(k);
+    return v ? `${v} ${v === 1 ? one : many}` : '';
+  };
+  const connected = [
+    part(payload.assistants, 'assistant', 'assistants'),
+    part(payload.agents, 'agent', 'agents'),
+    part(payload.apps, 'connected app', 'connected apps'),
+    part(payload.charters, 'agent built here', 'agents built here'),
+  ].filter(Boolean);
+  const matters = num(payload.matters);
+  const bits = [connected.join(', '), matters && payload.scope !== 'matter'
+    ? `AI paused on ${matters} ${matters === 1 ? 'matter' : 'matters'}` : '']
+    .filter(Boolean);
+  return bits.length ? ` (${bits.join('; ')})` : '';
+}
+
+function unlockedVia(value: unknown): string {
+  switch (value) {
+    case 'ai.resumed': return ' — resumed AI on a matter';
+    case 'assistant': return ' — connected an assistant';
+    case 'agent': return ' — connected an agent';
+    case 'app': return ' — connected an app';
+    case 'in-app agent': return ' — switched an agent back on';
+    default: return '';
+  }
+}
+
 /** One plain-language line for one row. Never throws, never returns empty. */
 export function describeEvent(event: LedgerEvent, people: People = {}): string {
   const who = actorSentence(event, people);
@@ -511,8 +542,15 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
     case 'connector.registered':
       return `${str(payload.client_name) ?? 'A connected assistant'} was connected`;
     case 'connector.revoked':
-      return `${str(payload.client_name) ?? 'A connected assistant'} was disconnected`;
+      // 095: `by: 'kill'` is "Disconnect everything" (or its matter-sized
+      // sibling) — said in those words, never the payload's own marker.
+      return `${str(payload.client_name) ?? 'A connected assistant'} was disconnected${
+        payload.by === 'kill' ? ' when everything was disconnected' : ''
+      }`;
     case 'ai.paused':
+      if (payload.reason === 'kill') {
+        return `${who} paused AI on this matter when disconnecting everything`;
+      }
       return `AI was paused on this matter${
         str(payload.reason) ? ` — ${str(payload.reason)}` : ''
       }`;
@@ -528,6 +566,17 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
       return `${who} removed a second factor${factorKind(payload.factor_type)}`;
     case 'auth.stepup':
       return `${who} confirmed a second factor to open a sealed matter`;
+    // 095 / S2 — "Disconnect everything" and its matter-sized sibling.
+    case 'account.locked':
+      return `${who} disconnected everything${disconnectCounts(payload)}`;
+    case 'account.unlocked':
+      return `${who} reconnected for the first time since disconnecting everything${
+        unlockedVia(payload.via)
+      }`;
+    case 'matter.disconnected':
+      return `${who} disconnected all of their assistants from this matter and paused AI here${
+        disconnectCounts(payload)
+      }`;
     default:
       // A kind this build does not know. Say who and what it was called,
       // and say no more than that.
@@ -576,6 +625,12 @@ export function kindLabel(kind: string): string {
       return 'Factor removed';
     case 'auth.stepup':
       return 'Factor confirmed';
+    case 'account.locked':
+      return 'Everything disconnected';
+    case 'account.unlocked':
+      return 'Reconnected';
+    case 'matter.disconnected':
+      return 'Assistants disconnected';
     default:
       return kind;
   }

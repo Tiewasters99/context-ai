@@ -16,6 +16,7 @@ import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import AiPauseControl from '@/components/matter/AiPauseControl';
+import DisconnectMatterControl from '@/components/matter/DisconnectMatterControl';
 import AskAssistantButton from '@/components/ai/AskAssistantButton';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
 import { matterEntry } from '@/lib/second-factor';
@@ -96,6 +97,9 @@ export default function MatterspaceView() {
     useDraggableResizable('cs.matterspace.card', { boundToViewport: true });
 
   const [matter, setMatter] = useState<MatterRow | null>(null);
+  // Bumped after "Disconnect all assistants from this matter" so the pause
+  // control beside it re-reads (the disconnect paused the matter too).
+  const [pauseKey, setPauseKey] = useState(0);
   const [serverspace, setServerspace] = useState<ServerspaceRow | null>(null);
   // The matters between the serverspace and this one, root first, so the
   // breadcrumb reads Legal / Bushell / Direct Challenges — not Legal / Direct
@@ -359,7 +363,16 @@ export default function MatterspaceView() {
                   where the roadmap's "one toggle beside Seal in the matter
                   menu" actually lands today. It renders nothing at all until
                   migration 070 is applied. */}
-              <AiPauseControl matterId={matter.id} matterName={matter.name} />
+              <AiPauseControl key={pauseKey} matterId={matter.id} matterName={matter.name} />
+              {/* Migration 095: beside Pause, the presser's own connections
+                  that reach this matter, plus the pause. Owners and admins
+                  only; absent until 095 is pasted. Remounting the pause
+                  control afterwards makes it re-read and show "AI paused". */}
+              <DisconnectMatterControl
+                matterId={matter.id}
+                matterName={matter.name}
+                onDone={() => setPauseKey((k) => k + 1)}
+              />
               {/* The assistant's door, beside the matter's other doors. It
                   reads the EFFECTIVE tier, so on a sealed matter — or a
                   sub-matter of one, which opens in this same view — it says
