@@ -691,3 +691,27 @@ unfinished calls, tokens, cost and first/last use. It renders inside **section
 feature blocks from those paired rows rather than from raw entries — counting
 entries would double every feature's use count — and the session index skips
 them, because a feature call belongs to no chat session.
+
+---
+
+# Migration 095 — what "Disconnect everything" writes
+
+The kinds were admitted by 094; 095 is the first writer of three of them. All
+rows go through the existing functions (`_ledger_append_account_checked`,
+`_ledger_append_checked`), inside the same transaction as the revokes, and
+last — so a press whose Record cannot be written revokes nothing.
+
+| kind | chain | written when | payload |
+| --- | --- | --- | --- |
+| `connector.revoked` | the presser's account | per grant, and per connector token not already named by a revoked grant (an OAuth agent is one row) | `{client_id (12-char prefix), client_name, by:'kill', scope, grant_id \| token_id, kind: assistant\|agent\|app, agent_token_id?}` |
+| `account.locked` | the presser's account | "Disconnect everything" | `{scope:'account', assistants, agents, apps, charters, matters, matters_paused_now, outright}` |
+| `ai.paused` | each root matter it paused | "Disconnect everything" | `{reason:'kill', via:'disconnect_all'}` |
+| `matter.disconnected` | that matter | "Disconnect all assistants from this matter" | the same counts, `scope:'matter'` |
+| `account.unlocked` | the account | the first resume / reconnection / charter re-enabled after an `account.locked`, once | `{via: ai.resumed\|assistant\|agent\|app\|in-app agent, ref}` |
+
+`account.unlocked` is written by AFTER triggers (on `matterspaces`,
+`oauth_grants`, `connector_tokens`, `agent_charters`) through 072's
+`_ledger_write_scoped` with chain = actor = the row's owner, because the
+consent screen writes as the service role, where `auth.uid()` is null. The
+Record tab renders `by:'kill'` and `reason:'kill'` in words; the marker never
+reaches a reader.
