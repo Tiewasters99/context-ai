@@ -365,7 +365,7 @@ function DeliveryStep({ production }: { production: Production }) {
   const handleDownload = async () => {
     if (!production.package_storage_path) return;
     try {
-      const url = await getDiscoverySignedUrl(production.package_storage_path, 600);
+      const url = await getDiscoverySignedUrl(production.package_storage_path, 600, 'download');
       window.open(url, '_blank', 'noopener');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to sign download URL');

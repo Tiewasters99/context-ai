@@ -4,7 +4,9 @@
 // object rename, documents row update, denormalized passages update. Each
 // step uses the user's Supabase session so RLS enforces membership in
 // both the source and destination matters — a user can only move a doc
-// to a matter they belong to. Failures stop the chain; the row is left
+// to a matter they belong to. The one exception is the storage rename
+// itself (migration 096; see step 1), which is authorized as the user and
+// performed with the service role. Failures stop the chain; the row is left
 // in whichever consistent state we reached.
 //
 // Request body: { documentId: uuid, newMatterspaceId: uuid }
@@ -15,6 +17,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -69,14 +72,35 @@ export default async function handler(req, res) {
   const oldPath = doc.storage_path;
   let newPath = null;
 
+  // The storage object moves with the service role when it is configured.
+  // Since migration 096 the bucket hides an object in a SEALED matter from
+  // the user's own JWT (a move is an UPDATE … WHERE name = …, which then
+  // matches nothing), so a user-scoped move of a sealed document fails as
+  // "Object not found". The authorization 049's storage policy gave is asked
+  // here instead, as the user and in the same words: can_write_matter on the
+  // source AND the destination.
+  const storage = SERVICE_KEY
+    ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+    : sb;
+  if (oldPath && SERVICE_KEY) {
+    // The object is judged by ITS path, as the policy judged it. A row whose
+    // storage_path points into some other matter is refused outright: the
+    // service role must never move an object on the strength of a row.
+    const pathMatter = oldPath.split('/')[0];
+    if (pathMatter !== doc.matterspace_id) return json(res, 409, { error: 'path_mismatch' });
+    for (const m of [pathMatter, newMatterspaceId]) {
+      const { data: canWrite, error: cwErr } = await sb.rpc('can_write_matter', { p_matter_id: m });
+      if (cwErr) return json(res, 500, { error: `permission check: ${cwErr.message}` });
+      if (canWrite !== true) return json(res, 403, { error: 'not_permitted' });
+    }
+  }
+
   // 1) Move the storage object (if there is one). The convention is
-  //    {matterspace_id}/{document_id}/{filename}. Storage RLS requires
-  //    membership of both the source folder (read) and destination folder
-  //    (write).
+  //    {matterspace_id}/{document_id}/{filename}.
   if (oldPath) {
     const filename = oldPath.split('/').slice(2).join('/') || (doc.source_filename ?? 'file');
     newPath = `${newMatterspaceId}/${doc.id}/${filename}`;
-    const { error: mvErr } = await sb.storage.from('vault-documents').move(oldPath, newPath);
+    const { error: mvErr } = await storage.storage.from('vault-documents').move(oldPath, newPath);
     if (mvErr) return json(res, 500, { error: `storage move: ${mvErr.message}` });
   }
 
@@ -92,7 +116,7 @@ export default async function handler(req, res) {
     .eq('id', documentId);
   if (docUpdErr) {
     if (oldPath && newPath) {
-      await sb.storage.from('vault-documents').move(newPath, oldPath).catch(() => {});
+      await storage.storage.from('vault-documents').move(newPath, oldPath).catch(() => {});
     }
     return json(res, 500, { error: `documents update: ${docUpdErr.message}` });
   }

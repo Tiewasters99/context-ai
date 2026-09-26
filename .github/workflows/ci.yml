@@ -181,6 +181,20 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-stepup-seal.mjs
 
+      # Migration 096 (S4a) — every copy that leaves a sealed matter is in its
+      # Record. The vault-documents and discovery-files SELECT policies refuse
+      # a signed-in user an object whose matter is sealed (own tier or
+      # inherited); a new upload into a sealed matter still works; no UPDATE
+      # policy is added. /api/document-url and get_media driven with `fetch`
+      # answering as Supabase from this database: aal2 member mints and
+      # writes file.opened, aal1 gets step_up_required with nothing minted or
+      # written, an open matter's read writes nothing and its download writes
+      # file.exported {destination:'download'}, a non-member gets not_found.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 096 — the sealed download gate (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-download.mjs
+
       # Migration 080. A connection's stored refresh token is ciphertext, but
       # it is still the credential for someone's mailbox and cloud drive, and
       # RLS plus Supabase's blanket column grant let a signed-in browser ask

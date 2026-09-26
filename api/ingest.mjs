@@ -212,10 +212,18 @@ export default async function handler(req, res) {
     console.error(`inline ingest marker failed for ${doc.id}: ${markErr.message}`);
   }
 
-  // Download the file from storage. RLS on the storage bucket enforces
-  // matter access; if the user can read the document row they can also
-  // download the file.
-  const { data: blob, error: dlErr } = await sb.storage
+  // Download the file from storage. The documents lookup above, as the
+  // user, is the authorization. Since migration 096 the bucket refuses a
+  // user's own JWT an object in a SEALED matter (the browser must not fetch
+  // those bytes without a Record row), so the read is made with the service
+  // role wherever it is configured — the pattern api/cloud-export.mjs already
+  // uses. Indexing a file is not a copy leaving the matter.
+  const storageClient = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    : sb;
+  const { data: blob, error: dlErr } = await storageClient.storage
     .from('vault-documents')
     .download(doc.storage_path);
   if (dlErr || !blob) {

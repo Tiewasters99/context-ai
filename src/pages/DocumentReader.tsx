@@ -33,6 +33,8 @@ import { supabase } from '@/lib/supabase';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
+import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
 import AnimationAttach from '@/components/reader/AnimationAttach';
@@ -264,6 +266,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // What the loader is doing right now, for the card shown while it works.
   const [loadProgress, setLoadProgress] = useState<PdfOpenProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // A sealed matter's file asked for on a session that has not confirmed a
+  // second factor (S4a: /api/document-url refuses it). The prompt is drawn
+  // in the reading pane; confirming re-runs whatever was refused.
+  const [stepUp, setStepUp] = useState<{ mode: 'stepup' | 'enrol'; matterId: string | null; retry: 'load' | 'download' } | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
   const [docHtml, setDocHtml] = useState<string | null>(null);
   // For .fountain — the parser produces a separate title-page block we
@@ -436,6 +443,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setLoadState('loading');
     setLoadProgress(null);
     setErrorMsg(null);
+    setStepUp(null);
     setDocHtml(null);
     pageTextCacheRef.current = [];
     setMatches([]);
@@ -527,15 +535,22 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       let arrayBuffer: ArrayBuffer | null = null;
       if (kind !== 'pdf') {
         setLoadProgress({ stage: 'downloading', loaded: 0, total: data.file_size_bytes ?? null });
-        const { data: dl, error: dlErr } = await supabase.storage
-          .from('vault-documents')
-          .download(data.storage_path);
-        if (cancelled) return;
-        if (dlErr || !dl) {
-          setErrorMsg(dlErr?.message || 'Failed to download the file.');
+        let dl: Blob | null = null;
+        try {
+          // Direct on an unsealed matter; through /api/document-url (and
+          // into the matter's Record) on a sealed one — vault-object.ts.
+          dl = await storageObjectBlob(data.storage_path);
+        } catch (e) {
+          if (cancelled) return;
+          if (isStepUpRequired(e)) {
+            setStepUp({ mode: e.mode, matterId: e.matterId ?? data.matterspace_id ?? null, retry: 'load' });
+          } else {
+            setErrorMsg(e instanceof Error ? e.message : 'Failed to download the file.');
+          }
           setLoadState('error');
           return;
         }
+        if (cancelled) return;
         blob = dl;
         arrayBuffer = await dl.arrayBuffer();
         if (cancelled) return;
@@ -597,13 +612,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         }
         setLoadState('ready');
       } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : 'Failed to open the document.');
+        if (cancelled) return;
+        if (isStepUpRequired(err)) {
+          setStepUp({ mode: err.mode, matterId: err.matterId ?? data.matterspace_id ?? null, retry: 'load' });
+        } else {
+          setErrorMsg(err instanceof Error ? err.message : 'Failed to open the document.');
+        }
         setLoadState('error');
       }
     })();
 
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, reloadKey]);
 
   // ── The continuous page stack ───────────────────────────────────────
   // Every page owns a fixed-height slot in one scrollable column, so the
@@ -1111,11 +1131,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (!doc?.storage_path) return;
     setPrinting(true);
     try {
-      const { data: blob, error } = await supabase.storage
-        .from('vault-documents')
-        .download(doc.storage_path);
-      if (error || !blob) {
-        setErrorMsg(error?.message || 'The file could not be fetched to print.');
+      // Printing reads the file again; on a sealed matter that is one more
+      // `file.opened` (purpose 'read') in the Record.
+      let blob: Blob;
+      try {
+        blob = await storageObjectBlob(doc.storage_path);
+      } catch (e) {
+        setErrorMsg(e instanceof Error ? e.message : 'The file could not be fetched to print.');
         return;
       }
       const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
@@ -1522,11 +1544,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (!doc?.storage_path || downloading) return;
     setDownloading(true);
     try {
-      const { data: blob, error } = await supabase.storage
-        .from('vault-documents')
-        .download(doc.storage_path);
-      if (error || !blob) {
-        setErrorMsg(error?.message || 'Failed to download the file.');
+      // Every matter, sealed or not: a download is a copy leaving, and the
+      // endpoint writes `file.exported {destination:'download'}` to the
+      // matter's Record before it hands over the link (S4a).
+      let blob: Blob;
+      try {
+        ({ blob } = await downloadDocumentFile(doc.id));
+      } catch (e) {
+        if (isStepUpRequired(e)) {
+          setStepUp({ mode: e.mode, matterId: e.matterId ?? doc.matterspace_id ?? null, retry: 'download' });
+        } else {
+          setErrorMsg(e instanceof Error ? e.message : 'Failed to download the file.');
+        }
         return;
       }
       const ext = fileKind === 'pdf' ? '.pdf' : fileKind === 'pptx' ? '.pptx' : '.docx';
@@ -2734,7 +2763,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             {loadState === 'loading' && (
               <LoadingCard title={doc?.title ?? null} progress={loadProgress} pageCount={doc?.page_count ?? null} />
             )}
-            {loadState === 'error' && (
+            {stepUp && (
+              <div className="mt-10">
+                <StepUpPrompt
+                  mode={stepUp.mode}
+                  matterId={stepUp.matterId ?? undefined}
+                  onConfirmed={() => {
+                    const retry = stepUp.retry;
+                    setStepUp(null);
+                    if (retry === 'load') setReloadKey((k) => k + 1);
+                    else void handleDownload();
+                  }}
+                />
+              </div>
+            )}
+            {loadState === 'error' && !stepUp && (
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
             )}
             {loadState === 'ready' && fileKind === 'pdf' && pageDims && (

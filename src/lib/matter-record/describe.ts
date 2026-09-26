@@ -468,7 +468,18 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
     case 'file.exported': {
       const title = str(payload.title) ?? 'a document';
       const dest = str(payload.destination);
+      // S4a: the Reader's Download button, on any matter.
+      if (dest === 'download') return `${who} downloaded ${title}`;
       return `${who} exported ${title}${dest ? ` (${dest})` : ''}`;
+    }
+    // S4a (migration 096): a sealed matter's file handed out to be read or
+    // downloaded — by the Reader through /api/document-url, or by get_media.
+    case 'file.opened': {
+      const title = str(payload.title) ?? 'a document';
+      const how = str(payload.via) === 'connector' ? ' through a connected assistant' : '';
+      return payload.purpose === 'download'
+        ? `${who} opened ${title} to download it${how}`
+        : `${who} opened ${title}${how}`;
     }
     case 'file.sent': {
       const ids = Array.isArray(payload.document_ids) ? payload.document_ids.length : null;
@@ -539,6 +550,8 @@ export function kindLabel(kind: string): string {
       return 'Seal';
     case 'file.exported':
       return 'Export';
+    case 'file.opened':
+      return 'Opened';
     case 'file.sent':
       return 'Send';
     case 'file.delivered':

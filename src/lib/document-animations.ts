@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { FractionalRect } from './document-annotations';
+import { storageObjectUrl } from './vault-object';
 
 // Living illustrations: a clip that plays on a rectangle of one page, so the
 // plate in a scanned book comes alive when it is tapped (migration 062).
@@ -127,29 +128,32 @@ export async function listMatterClips(matterId: string): Promise<AnimationMedia[
   return (data ?? []).filter((d) => CLIP_FILE_RE.test(d.source_filename || d.storage_path || ''));
 }
 
-// A signed URL per stored clip, kept for the session. The vault bucket is
+// A signed URL per stored clip, kept while it is good. The vault bucket is
 // private, and these URLs honour HTTP Range, which is what lets <video> seek
 // and start before the whole file has arrived (same bucket and TTL as the
-// reader's PDF source).
-const BUCKET = 'vault-documents';
+// reader's PDF source). A clip in a SEALED matter comes from
+// /api/document-url instead (vault-object.ts, migration 096): 900 s and a
+// `file.opened` row, so it is kept only until it lapses.
 const URL_TTL_SECONDS = 12 * 60 * 60;
-const urlCache = new Map<string, Promise<string | null>>();
+const urlCache = new Map<string, Promise<{ url: string; expiresAt: number } | null>>();
 
 export function clipUrl(storagePath: string): Promise<string | null> {
   let p = urlCache.get(storagePath);
   if (!p) {
-    p = supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(storagePath, URL_TTL_SECONDS)
-      .then(({ data, error }) => {
-        if (error || !data?.signedUrl) {
-          console.warn('[animations clip url] failed:', error?.message);
-          return null;
-        }
-        return data.signedUrl;
+    p = storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS })
+      .then((m) => ({ url: m.url, expiresAt: m.expiresAt }))
+      .catch((e: unknown) => {
+        console.warn('[animations clip url] failed:', e instanceof Error ? e.message : e);
+        urlCache.delete(storagePath);
+        return null;
       });
     urlCache.set(storagePath, p);
-    p.catch(() => urlCache.delete(storagePath));
   }
-  return p;
+  return p.then((m) => {
+    if (m && Date.now() > m.expiresAt - 30_000) {
+      urlCache.delete(storagePath);
+      return clipUrl(storagePath);
+    }
+    return m?.url ?? null;
+  });
 }
