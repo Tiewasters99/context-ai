@@ -181,6 +181,23 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-stepup-seal.mjs
 
+      # Migration 095 (S2). "Disconnect everything": one press revokes every
+      # OAuth grant, connector token and agent of the presser, switches their
+      # charters off and pauses AI on every root matter of the serverspaces
+      # they run — or, for one matter, their own connections that reach it and
+      # the pause there. Real chain (001→088, 094, 095 twice), real roles and
+      # RLS. The proof is from the outside: every revoked credential is refused
+      # on the next request by the EXISTING checks (api/mcp.mjs authenticate,
+      # lib/connector-token-auth.mjs, lib/oauth-grants.mjs, /api/oauth-token
+      # refresh) while another customer's still work; a failure at the last
+      # step rolls every revoke back; account.unlocked is written once, on the
+      # first reconnection; api/account-lockdown.mjs refuses without a bearer
+      # and never signs other sessions out when the database refused.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 095 — disconnect everything, fails closed (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-disconnect-all.mjs
+
       # Migration 080. A connection's stored refresh token is ciphertext, but
       # it is still the credential for someone's mailbox and cloud drive, and
       # RLS plus Supabase's blanket column grant let a signed-in browser ask
