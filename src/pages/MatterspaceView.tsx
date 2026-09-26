@@ -351,7 +351,9 @@ export default function MatterspaceView() {
                 {loadError || gate ? 'Matterspace' : 'Loading…'}
               </h1>
             )}
-            {matter?.description && <p className="text-sm text-white/80">{matter.description}</p>}
+            {/* The name only. A description is often working notes (what to
+                redact, how a folder was made) — kept in the matter, not
+                printed under its title. */}
             {loadError && <p className="text-sm text-red-300">{loadError}</p>}
           </div>
           {matter && (
