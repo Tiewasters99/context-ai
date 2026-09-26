@@ -32,6 +32,7 @@ import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { estimateIngestCents } from '../lib/usage-prices.mjs';
 import { verifyIngestConfirmation } from '../lib/ingest-estimate.mjs';
+import { pathInMatter } from '../lib/storage-path.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -95,6 +96,10 @@ export default async function handler(req, res) {
   if (!doc.storage_path) {
     return json(res, 400, { error: 'document has no storage_path; upload the file first' });
   }
+  // 097: the stored file must be filed under this document's own matter. A
+  // row pointing at another matter's object is refused before the service
+  // role reads a byte (lib/storage-path.mjs says why).
+  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) return json(res, 409, { error: 'storage_path_mismatch' });
   // 'ready' with a recorded text_status (image_only, media_no_transcript, …)
   // is stored-without-text, and 'ready' with ocr_pending still owes OCR on
   // some pages; a re-run from the Vault is how either gets another chance.
@@ -212,10 +217,18 @@ export default async function handler(req, res) {
     console.error(`inline ingest marker failed for ${doc.id}: ${markErr.message}`);
   }
 
-  // Download the file from storage. RLS on the storage bucket enforces
-  // matter access; if the user can read the document row they can also
-  // download the file.
-  const { data: blob, error: dlErr } = await sb.storage
+  // Download the file from storage. The documents lookup above, as the
+  // user, is the authorization. Since migration 096 the bucket refuses a
+  // user's own JWT an object in a SEALED matter (the browser must not fetch
+  // those bytes without a Record row), so the read is made with the service
+  // role wherever it is configured — the pattern api/cloud-export.mjs already
+  // uses. Indexing a file is not a copy leaving the matter.
+  const storageClient = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    : sb;
+  const { data: blob, error: dlErr } = await storageClient.storage
     .from('vault-documents')
     .download(doc.storage_path);
   if (dlErr || !blob) {

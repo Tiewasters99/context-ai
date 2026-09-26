@@ -13,12 +13,18 @@
 // The transport below asks for ranges itself; the file length comes from
 // the document row or a HEAD (Content-Length is a safelisted header). If
 // anything in that path fails, the whole file is downloaded as before.
+//
+// The URL comes from vault-object.ts (S4a, migration 096): signed here for an
+// unsealed matter, as before; for a SEALED one it comes from
+// /api/document-url, which records `file.opened` and lasts 900 s — so a range
+// asked for after it lapses signs again (one more Record row per fifteen
+// minutes of reading, which is what happened). A step-up refusal is thrown
+// as StepUpRequired for the Reader to draw the prompt.
 
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { supabase } from '@/lib/supabase';
 import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
+import { storageObjectUrl, isStepUpRequired, type MintedUrl } from '@/lib/vault-object';
 
-const BUCKET = 'vault-documents';
 const INITIAL_BYTES = 1 << 20;
 const CHUNK_BYTES = 1 << 20;
 // Long enough for an afternoon's reading; a page asked for after this
@@ -40,9 +46,17 @@ export type PdfOpenProgressFn = (p: PdfOpenProgress) => void;
 
 async function rangeSource(pdfjsLib: PdfjsModule, storagePath: string, sizeBytes: number | null, report: PdfOpenProgressFn) {
   report({ stage: 'signing' });
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, URL_TTL_SECONDS);
-  if (error || !data?.signedUrl) throw new Error(error?.message ?? 'no signed url');
-  const url = data.signedUrl;
+  let minted: MintedUrl = await storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS });
+  const url = minted.url;
+  // A lapsed URL is signed again, once per lapse, shared by every range in flight.
+  let renewing: Promise<MintedUrl> | null = null;
+  const currentUrl = async (): Promise<string> => {
+    if (Date.now() < minted.expiresAt - 30_000) return minted.url;
+    renewing ??= storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS })
+      .then((m) => { minted = m; return m; })
+      .finally(() => { renewing = null; });
+    return (await renewing).url;
+  };
 
   const first = await fetch(url, { headers: { Range: `bytes=0-${INITIAL_BYTES - 1}` } });
   if (first.status !== 206) throw new Error(`range not honoured (${first.status})`);
@@ -61,7 +75,8 @@ async function rangeSource(pdfjsLib: PdfjsModule, storagePath: string, sizeBytes
 
   class RangeTransport extends pdfjsLib.PDFDataRangeTransport {
     requestDataRange(begin: number, end: number): void {
-      fetch(url, { headers: { Range: `bytes=${begin}-${end - 1}` } })
+      currentUrl()
+        .then((u) => fetch(u, { headers: { Range: `bytes=${begin}-${end - 1}` } }))
         .then(async (r) => {
           if (r.status !== 206) throw new Error(`range ${begin}-${end}: ${r.status}`);
           const bytes = new Uint8Array(await r.arrayBuffer());
@@ -93,9 +108,8 @@ async function rangeSource(pdfjsLib: PdfjsModule, storagePath: string, sizeBytes
  *  bytes is what turns "is it broken?" into "it's a third of the way". */
 async function downloadWhole(storagePath: string, sizeBytes: number | null, report: PdfOpenProgressFn): Promise<Uint8Array> {
   report({ stage: 'signing' });
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(storagePath, URL_TTL_SECONDS);
-  if (error || !data?.signedUrl) throw new Error(error?.message ?? 'no signed url');
-  const res = await fetch(data.signedUrl);
+  const { url } = await storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS });
+  const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
   const total = sizeBytes ?? (Number(res.headers.get('content-length')) || null);
   report({ stage: 'downloading', loaded: 0, total });
@@ -133,6 +147,9 @@ export async function openStoredPdf(
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER_URL;
   const byRange = await rangeSource(pdfjsLib, storagePath, sizeBytes, report).catch((e: unknown) => {
+    // The seal's refusal is not a transport problem: a whole download would
+    // be refused the same way. The Reader draws the prompt and asks again.
+    if (isStepUpRequired(e)) throw e;
     console.warn('pdf: range loading unavailable, downloading whole file', e);
     return null;
   });

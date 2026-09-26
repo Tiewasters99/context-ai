@@ -1,0 +1,1125 @@
+// Execute migration 096 against a real Postgres and drive /api/document-url
+// and get_media against it, to prove S4a's sentence: every copy that leaves a
+// sealed matter is in its Record — and the bucket gives a sealed matter's
+// bytes to nobody who has not come through the door that writes it down.
+//
+// docs/specs/SECURITY-BUILD-2026-09-26.md §S4a. Real roles, real RLS, the
+// real 005/016/030/049 storage policies, the real 051 tier, the real 064
+// ledger and the real 094 gate, with request.jwt.claims set the way PostgREST
+// sets them. The endpoint and get_media are the real files, driven with
+// `fetch` replaced by a witness that answers as Supabase — PostgREST, Auth and
+// Storage — by running each request against this database AS the role its
+// bearer names. Storage's sign call is modelled as what storage-api does: a
+// SELECT on storage.objects as the caller, "Object not found" when RLS hides
+// the row. Every mint is counted, every Record row is read back.
+//
+// Parts:
+//   A. the negative control — the chain up to 094, NO 096: an aal2 member
+//      reads a sealed object's row directly. (If they could not, nothing
+//      below would prove 096 is what refuses.)
+//   B. 096, twice. Direct reads: sealed refused (own tier and inherited),
+//      open allowed, discovery-files the same, service role unaffected, a
+//      stranger and anon refused. Writes: a NEW upload into a sealed matter
+//      still works (INSERT … RETURNING — the created_at = now() clause), an
+//      overwrite / rename / created_at rewrite of an existing sealed object
+//      reaches nothing, no UPDATE policy added, a non-uuid path cannot throw.
+//      And 096 refuses to run without 094.
+//   C. /api/document-url. aal2 member, sealed: minted + file.opened (read),
+//      file.opened + file.exported (download), inherited seal too. aal1
+//      member, sealed: step_up_required, nothing minted, nothing written.
+//      Open matter: read writes nothing, download writes file.exported
+//      {destination:'download'}. Non-member: not_found, nothing minted. No
+//      bearer / bad bearer / connector-stamped token refused. A row pointing
+//      at another matter's object refused before the mint. discovery-files
+//      by path, with a traversal refused. A Record that cannot be written on
+//      a sealed matter: nothing handed out.
+//   C2. the adversarial review's probes (#247): R0 an aal1 session with a
+//      factor gets `stepup` from matter_entry; effective_tier_is_sealed is no
+//      longer an oracle (NULL to a non-member, uncallable by anon) while the
+//      gate that now uses the internal walk still holds; R1 move-document
+//      refuses sealed → open at aal1 (step-up) AND at aal2 (the seal), with
+//      no Record row and no rename; R2 afterwards the object is where it was
+//      and still unreadable directly; a connector token and a pointer row are
+//      refused; a sealed → sealed move writes file.exported {destination:
+//      'move'} on the source chain BEFORE the rename, and a Record that cannot
+//      be written moves nothing; R3 ingest and get_media refuse a pointer row.
+//      (The pointer row exists here because 097 — which refuses it in the
+//      database — is not in this chain: it stands for a row that predates 097
+//      or a database where 097 is not pasted. scripts/_verify-storage-path.mjs
+//      proves 097 itself.)
+//   C3. round 3 — /api/sandbox and TEXT-ONLY documents (no stored file, so
+//      096's bucket rule has nothing to refuse): move_document /
+//      copy_document / send_to_sandbox at aal1 → step_up_required; at aal2
+//      sealed → open → sealed_move_refused / sealed_copy_refused; a connector
+//      token refused; sealed → sealed moves and copies, recorded on the
+//      source chain; open → open unchanged; a connector's copy_document of a
+//      sealed text-only document refused by the connector seal.
+//   D. get_media on a sealed matter: file.opened with the connector actor;
+//      without a service-role mint the bucket refuses and nothing is written;
+//      an open matter writes no file.opened.
+//   E. the source: no browser code signs or downloads from the two buckets
+//      except src/lib/vault-object.ts; the endpoint never records a path or a
+//      URL; 096 creates no UPDATE policy.
+//
+//   npm i --no-save @electric-sql/pglite @electric-sql/pglite-pgvector
+//   node scripts/_verify-sealed-download.mjs
+//
+// Touches nothing outside this process. No .env, no network, no production.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+let PGlite, uuid_ossp;
+try {
+  ({ PGlite } = await import('@electric-sql/pglite'));
+  ({ uuid_ossp } = await import('@electric-sql/pglite/contrib/uuid_ossp'));
+} catch {
+  console.error('Run:  npm i --no-save @electric-sql/pglite @electric-sql/pglite-pgvector');
+  process.exit(2);
+}
+
+// ── env, BEFORE the handlers run. Fake strings; a real key in the environment
+// is overwritten rather than used.
+const SUPABASE_URL = 'https://stub.supabase.test';
+const ANON_KEY = 'anon-stub-not-a-key';
+const SERVICE_KEY = 'service-role-stub-not-a-key';
+process.env.VITE_SUPABASE_URL = SUPABASE_URL;
+process.env.SUPABASE_URL = SUPABASE_URL;
+process.env.VITE_SUPABASE_ANON_KEY = ANON_KEY;
+process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_KEY;
+process.env.OPENAI_API_KEY = 'sk-stub-not-a-key';   // api/ingest.mjs checks it is set
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const migrationSql = (name) => fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', name), 'utf8');
+
+process.on('uncaughtException', (e) => { console.error(`\n  ERROR: ${e?.message ?? e}\n`); process.exit(1); });
+process.on('unhandledRejection', (e) => { console.error(`\n  ERROR: ${e?.message ?? e}\n`); process.exit(1); });
+
+let failures = 0;
+const check = (ok, label, detail = '') => {
+  console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? '  — ' + detail : ''}`);
+  if (!ok) failures += 1;
+};
+
+// ---------------------------------------------------------------------------
+// A database with the bits of Supabase the migrations assume.
+// ---------------------------------------------------------------------------
+const PREAMBLE = `
+  do $$ begin create role anon;                     exception when duplicate_object then null; end $$;
+  do $$ begin create role authenticated;            exception when duplicate_object then null; end $$;
+  do $$ begin create role service_role bypassrls;   exception when duplicate_object then null; end $$;
+
+  create schema if not exists auth;
+  create schema if not exists storage;
+
+  create table auth.users (
+    id uuid primary key default gen_random_uuid(),
+    email text not null,
+    raw_user_meta_data jsonb not null default '{}'::jsonb
+  );
+  create or replace function auth.uid() returns uuid
+  language sql stable as $$
+    select nullif(
+      coalesce(
+        nullif(current_setting('request.jwt.claim.sub', true), ''),
+        nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+      ), ''
+    )::uuid
+  $$;
+  create or replace function auth.jwt() returns jsonb
+  language sql stable as $$
+    select coalesce(
+      nullif(current_setting('request.jwt.claim', true), ''),
+      nullif(current_setting('request.jwt.claims', true), '')
+    )::jsonb
+  $$;
+  create table auth.mfa_factors (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    friendly_name text, factor_type text not null, status text not null,
+    created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+  );
+  create table auth.sessions (
+    id uuid primary key default gen_random_uuid(),
+    user_id uuid not null references auth.users(id) on delete cascade,
+    created_at timestamptz default now(), updated_at timestamptz default now(),
+    factor_id uuid, aal text, not_after timestamptz,
+    refreshed_at timestamp without time zone, user_agent text, ip inet, tag text
+  );
+
+  -- Supabase Storage's objects table, with the columns the policies read.
+  create table storage.buckets (id text primary key, name text, public boolean default false);
+  create table storage.objects (
+    id uuid primary key default gen_random_uuid(),
+    bucket_id text references storage.buckets(id),
+    name text,
+    owner uuid,
+    created_at timestamptz default now(),
+    updated_at timestamptz default now(),
+    unique (bucket_id, name)
+  );
+  create or replace function storage.foldername(name text) returns text[]
+    language sql immutable as $$
+      select (string_to_array(name, '/'))[1:greatest(array_length(string_to_array(name, '/'), 1) - 1, 0)]
+    $$;
+  alter table storage.objects enable row level security;
+  insert into storage.buckets (id, name) values ('vault-documents', 'vault-documents');
+
+  create table public.documents (
+    id uuid primary key default gen_random_uuid(),
+    matterspace_id uuid,
+    title text, doc_type text, source_filename text, storage_path text,
+    file_size_bytes bigint, page_count int,
+    processing_status text not null default 'pending',
+    processing_error text, ingested_at timestamptz, created_by uuid,
+    metadata jsonb not null default '{}', created_at timestamptz not null default now()
+  );
+  create table public.passages (
+    id uuid primary key default gen_random_uuid(),
+    document_id uuid references public.documents(id) on delete cascade,
+    matterspace_id uuid, sequence_number int
+  );
+
+  grant usage on schema public, auth, storage to anon, authenticated, service_role;
+  grant execute on function auth.uid(), auth.jwt() to anon, authenticated, service_role;
+  grant select, insert, update, delete on storage.objects to anon, authenticated, service_role;
+  alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+  alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
+`;
+const CHAIN_TO_094 = [
+  '001_initial_schema.sql', '005_fix_rls_recursion.sql', '008_submatters.sql',
+  '016_matterspace_members.sql', '022_matterspaces_rls_invoker_wrappers.sql',
+  '030_discovery_productions.sql', '049_vault_documents_storage_update_policy.sql',
+  '051_securespace.sql', '064_events_ledger.sql',
+  '072_account_chain_and_session_immutability.sql', '073_completion_requested.sql',
+  '094_security_kinds_and_stepup.sql',
+];
+
+const db = new PGlite({ extensions: { uuid_ossp } });
+await db.exec(PREAMBLE);
+for (const m of CHAIN_TO_094) {
+  console.log(`  executing supabase/migrations/${m}`);
+  await db.exec(migrationSql(m));
+}
+await db.exec(`
+  grant select, insert, update, delete on all tables in schema public to anon, authenticated, service_role;
+  alter table public.documents enable row level security;
+  drop policy if exists d_sel on public.documents;
+  create policy d_sel on public.documents for select using (public.can_access_matter(matterspace_id));
+  -- The two bits of 002/012 mcp-core's matter tools read (resolveMatter's
+  -- short_code / description, the seal's matterspace_descendants), as 002/012 define them.
+  alter table public.matterspaces add column if not exists short_code text;
+  alter table public.passages add column if not exists summary_level int not null default 0;
+  alter table public.passages add column if not exists text text;
+  alter table public.matterspaces add column if not exists description text;
+  create or replace function public.matterspace_descendants(p_root uuid)
+  returns table (id uuid) language sql stable as $$
+    with recursive tree as (
+      select m.id from public.matterspaces m where m.id = p_root
+      union all
+      select c.id from public.matterspaces c join tree t on c.parent_matterspace_id = t.id
+    )
+    select id from tree;
+  $$;
+  drop policy if exists d_upd on public.documents;
+  create policy d_upd on public.documents for update
+    using (public.can_write_matter(matterspace_id)) with check (public.can_write_matter(matterspace_id));
+`);
+
+const q = async (sql, params) => (await db.query(sql, params)).rows;
+
+// ---------------------------------------------------------------------------
+// Who is asking — PostgREST's way.
+// ---------------------------------------------------------------------------
+const epoch = (iso) => Math.floor(new Date(iso).getTime() / 1000);
+const SIGNED_IN = '2026-10-01T12:00:00Z';
+const b64url = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+const jwt = (claims) => `${b64url({ alg: 'none', typ: 'JWT' })}.${b64url(claims)}.stub-signature`;
+const VALID = new Set();
+const browserToken = (uid, aal) => {
+  const t = jwt({
+    sub: uid, role: 'authenticated', aal, session_id: '5e551011-0000-4000-8000-000000000001',
+    amr: [{ method: 'password', timestamp: epoch(SIGNED_IN) }],
+  });
+  VALID.add(t);
+  return t;
+};
+const connectorToken = (uid) => {
+  const t = jwt({ sub: uid, role: 'authenticated', aud: 'authenticated', cs_via: 'connector' });
+  VALID.add(t);
+  return t;
+};
+const claimsOf = (token) => {
+  try { return JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')); } catch { return null; }
+};
+
+// One statement at a time: `set role` is per session, and the stub is async.
+let lock = Promise.resolve();
+const serial = (fn) => {
+  const run = lock.then(fn, fn);
+  lock = run.catch(() => {});
+  return run;
+};
+const asRole = (token, fn) => serial(async () => {
+  await db.exec('reset role');
+  if (token === SERVICE_KEY) {
+    await db.query(`select set_config('request.jwt.claims', '', false)`);
+    await db.exec('set role service_role');
+  } else if (token && VALID.has(token)) {
+    await db.query(`select set_config('request.jwt.claims', $1, false)`, [JSON.stringify(claimsOf(token))]);
+    await db.exec('set role authenticated');
+  } else {
+    await db.query(`select set_config('request.jwt.claims', '', false)`);
+    await db.exec('set role anon');
+  }
+  try { return await fn(); } finally { await db.exec('reset role'); }
+});
+const sqlAs = (token, sql, params) => asRole(token, async () => (await db.query(sql, params)).rows);
+const attemptAs = async (token, sql, params) => {
+  try { return { rows: await sqlAs(token, sql, params), err: null }; } catch (err) { return { rows: null, err }; }
+};
+
+// ---------------------------------------------------------------------------
+// The Supabase witness. Answers Auth, PostgREST and Storage from this database.
+// ---------------------------------------------------------------------------
+const storageCalls = [];        // every request to /storage/v1, of any kind
+const mints = [];                // every signed URL storage handed out: { bucket, name, role }
+let failLedgerOnce = false;      // the next ledger_append answers 500
+const IDENT = /^[a-z_][a-z0-9_]*$/;
+
+const reply = (status, body) => new Response(JSON.stringify(body), {
+  status, headers: { 'content-type': 'application/json' },
+});
+const bearerOf = (init) => {
+  const h = new Headers(init?.headers ?? {});
+  const a = h.get('authorization') || '';
+  return a.toLowerCase().startsWith('bearer ') ? a.slice(7).trim() : null;
+};
+
+// PostgREST filters this witness understands: eq. and in.(…), on plain columns.
+function filtersOf(u, params) {
+  const where = [];
+  for (const [k, v] of u.searchParams) {
+    if (['select', 'limit', 'order', 'offset', 'columns'].includes(k)) continue;
+    if (!IDENT.test(k)) return null;
+    if (v.startsWith('eq.')) {
+      params.push(v.slice(3));
+      where.push(`${k} = $${params.length}`);
+    } else if (v.startsWith('neq.')) {
+      params.push(v.slice(4));
+      where.push(`${k} is distinct from $${params.length}`);
+    } else if (v.startsWith('in.(') && v.endsWith(')')) {
+      const items = v.slice(4, -1).split(',').map((x) => x.replace(/^"|"$/g, '')).filter(Boolean);
+      if (!items.length) { where.push('false'); continue; }
+      const marks = items.map((x) => { params.push(x); return `$${params.length}`; });
+      where.push(`${k} in (${marks.join(', ')})`);
+    } else {
+      return null;
+    }
+  }
+  return where;
+}
+// .single() / .maybeSingle() on a write ask for one OBJECT back.
+function rowsReply(init, rows) {
+  const accept = new Headers(init?.headers ?? {}).get('accept') || '';
+  if (accept.includes('vnd.pgrst.object')) {
+    if (rows.length !== 1) return reply(406, { code: 'PGRST116', message: `JSON object requested, ${rows.length} rows returned` });
+    return reply(200, rows[0]);
+  }
+  return reply(200, rows);
+}
+
+async function stubFetch(input, init = {}) {
+  const u = new URL(typeof input === 'string' ? input : input.url);
+  if (u.host !== 'stub.supabase.test') throw new Error(`egress to ${u.host} — the harness allows none`);
+  const bearer = bearerOf(init);
+  const method = (init.method || 'GET').toUpperCase();
+  if (u.pathname.startsWith('/storage/v1/')) storageCalls.push({ method, path: u.pathname });
+
+  // storage-js move(): storage-api renames the row AS THE CALLER.
+  if (u.pathname === '/storage/v1/object/move' && method === 'POST') {
+    const b = JSON.parse(init.body || '{}');
+    let rows;
+    try {
+      rows = await sqlAs(bearer, 'update storage.objects set name = $3 where bucket_id = $1 and name = $2 returning id',
+        [b.bucketId, b.sourceKey, b.destinationKey]);
+    } catch (err) {
+      return reply(400, { statusCode: '403', error: 'Unauthorized', message: err?.message });
+    }
+    if (!rows.length) return reply(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+    return reply(200, { message: 'Successfully moved' });
+  }
+
+  // PostgREST PATCH (supabase-js .update()).
+  if (u.pathname.startsWith('/rest/v1/') && method === 'PATCH') {
+    const table = u.pathname.slice('/rest/v1/'.length);
+    if (!IDENT.test(table)) return reply(400, { message: 'bad table' });
+    const patch = JSON.parse(init.body || '{}');
+    const keys = Object.keys(patch).filter((k) => IDENT.test(k));
+    const params = keys.map((k) => patch[k]);
+    const where = filtersOf(u, params);
+    if (!where) return reply(400, { message: 'unsupported filter' });
+    const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    try {
+      const rows = await sqlAs(bearer,
+        `update public.${table} set ${sets}${where.length ? ` where ${where.join(' and ')}` : ''} returning id`, params);
+      return rowsReply(init, rows);
+    } catch (err) {
+      return reply(400, { code: err?.code, message: err?.message });
+    }
+  }
+
+  if (u.pathname === '/auth/v1/user') {
+    if (!bearer || !VALID.has(bearer)) return reply(401, { message: 'invalid JWT' });
+    return reply(200, { id: claimsOf(bearer).sub, factors: [] });
+  }
+
+  if (u.pathname.startsWith('/rest/v1/rpc/')) {
+    const fn = u.pathname.slice('/rest/v1/rpc/'.length);
+    if (!IDENT.test(fn)) return reply(400, { message: 'bad function' });
+    if (fn === 'ledger_append' && failLedgerOnce) {
+      failLedgerOnce = false;
+      return reply(500, { code: 'XX000', message: 'ledger exploded' });
+    }
+    const args = init.body ? JSON.parse(init.body) : {};
+    const names = Object.keys(args).filter((k) => IDENT.test(k));
+    const call = `public.${fn}(${names.map((k, i) => `${k} => $${i + 1}`).join(', ')})`;
+    // A set-returning function answers as PostgREST does: an array of rows.
+    const setof = (await q(`select bool_or(p.proretset) as s from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                            where n.nspname = 'public' and p.proname = $1`, [fn]))[0]?.s === true;
+    const sql = setof ? `select * from ${call}` : `select to_jsonb(${call}) as r`;
+    const params = names.map((k) => (args[k] !== null && typeof args[k] === 'object' ? JSON.stringify(args[k]) : args[k]));
+    try {
+      const rows = await sqlAs(bearer, sql, params);
+      return reply(200, setof ? rows : (rows[0]?.r ?? null));
+    } catch (err) {
+      const code = err?.code ?? 'XX000';
+      if (code === '42883') return reply(404, { code: 'PGRST202', message: err.message });
+      return reply(400, { code, message: err?.message });
+    }
+  }
+
+  if (u.pathname.startsWith('/rest/v1/') && method === 'GET') {
+    const table = u.pathname.slice('/rest/v1/'.length);
+    if (!IDENT.test(table)) return reply(400, { message: 'bad table' });
+    // Plain columns, and PostgREST's `alias:col->>key` / `alias:col->key`.
+    const cols = [];
+    for (const c of (u.searchParams.get('select') || '*').split(',').map((x) => x.trim())) {
+      const m = /^([a-z_][a-z0-9_]*):([a-z_][a-z0-9_]*)(->>?)([a-z_][a-z0-9_]*)$/.exec(c);
+      if (m) cols.push(`${m[2]}${m[3]}'${m[4]}' as ${m[1]}`);
+      else if (c === '*' || IDENT.test(c)) cols.push(c);
+      else return reply(400, { message: 'bad select' });
+    }
+    const params = [];
+    const where = filtersOf(u, params);
+    if (!where) return reply(400, { message: 'unsupported filter' });
+    const limit = Number(u.searchParams.get('limit')) || 1000;
+    const sql = `select ${cols.join(', ')} from public.${table}${where.length ? ` where ${where.join(' and ')}` : ''} limit ${limit}`;
+    try {
+      return rowsReply(init, await sqlAs(bearer, sql, params));
+    } catch (err) {
+      return reply(400, { code: err?.code, message: err?.message });
+    }
+  }
+
+  // PostgREST POST (supabase-js .insert()).
+  if (u.pathname.startsWith('/rest/v1/') && !u.pathname.startsWith('/rest/v1/rpc/') && method === 'POST') {
+    const table = u.pathname.slice('/rest/v1/'.length);
+    if (!IDENT.test(table)) return reply(400, { message: 'bad table' });
+    const body = JSON.parse(init.body || '[]');
+    const list = Array.isArray(body) ? body : [body];
+    const out = [];
+    try {
+      for (const r of list) {
+        const keys = Object.keys(r).filter((k) => IDENT.test(k));
+        const vals = keys.map((k) => (r[k] !== null && typeof r[k] === 'object' ? JSON.stringify(r[k]) : r[k]));
+        const rows = await sqlAs(bearer,
+          `insert into public.${table} (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning *`, vals);
+        out.push(...rows);
+      }
+    } catch (err) {
+      return reply(400, { code: err?.code, message: err?.message });
+    }
+    return rowsReply(init, out);
+  }
+
+  if (u.pathname.startsWith('/storage/v1/object/sign/') && method === 'POST') {
+    const rest = u.pathname.slice('/storage/v1/object/sign/'.length).split('/').map(decodeURIComponent);
+    const bucket = rest.shift();
+    const name = rest.join('/');
+    // What storage-api does before it signs: find the object AS THE CALLER.
+    let rows;
+    try {
+      rows = await sqlAs(bearer, 'select id from storage.objects where bucket_id = $1 and name = $2', [bucket, name]);
+    } catch (err) {
+      return reply(400, { statusCode: '403', error: 'Unauthorized', message: err?.message });
+    }
+    if (!rows.length) return reply(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+    mints.push({ bucket, name, role: bearer === SERVICE_KEY ? 'service_role' : 'authenticated' });
+    return reply(200, { signedURL: `/object/sign/${bucket}/${name}?token=signed-${mints.length}` });
+  }
+
+  return reply(404, { message: `unrouted ${method} ${u.pathname}` });
+}
+globalThis.fetch = stubFetch;   // the handlers' default, and supabase-js's
+
+// ---------------------------------------------------------------------------
+// The firm. A fictional dispute; no client names.
+// ---------------------------------------------------------------------------
+console.log('\n--- a firm ------------------------------------------------------');
+const signup = async (email) => (await q(`insert into auth.users (email) values ($1) returning id`, [email]))[0].id;
+const ADA = await signup('ada@example.test');    // owns the serverspace
+const CAL = await signup('cal@example.test');    // a member; has a factor
+const BOB = await signup('bob@example.test');    // a stranger
+for (const u of [ADA, CAL]) {
+  await q(`insert into auth.mfa_factors (user_id, factor_type, status) values ($1, 'totp', 'verified')`, [u]);
+}
+const [space] = await q(
+  `insert into public.serverspaces (clientspace_id, name)
+   select id, 'Fixture Law' from public.clientspaces where user_id = $1 returning id`, [ADA]);
+await q(`insert into public.serverspace_members (serverspace_id, user_id, role) values ($1,$2,'owner'), ($1,$3,'member')`,
+  [space.id, ADA, CAL]);
+const matter = async (name, parent = null, tier = 'A') => (await q(
+  `insert into public.matterspaces (serverspace_id, name, parent_matterspace_id, ai_tier)
+   values ($1,$2,$3,$4) returning id`, [space.id, name, parent, tier]))[0].id;
+const OPEN = await matter('Vashti v. Ormsby');
+const SEALED = await matter('Ormsby privileged', null, 'B');
+const SEALED_KID = await matter('Ormsby privileged / memos', SEALED, 'A');   // sealed by inheritance
+
+const doc = async (m, title, file, storagePath = null) => {
+  const [d] = await q(
+    `insert into public.documents (matterspace_id, title, source_filename, created_by)
+     values ($1,$2,$3,$4) returning id`, [m, title, file, ADA]);
+  const p = storagePath ?? `${m}/${d.id}/${file}`;
+  await q(`update public.documents set storage_path = $1 where id = $2`, [p, d.id]);
+  await q(`insert into storage.objects (bucket_id, name, created_at) values ('vault-documents', $1, now() - interval '1 day')
+           on conflict do nothing`, [p]);
+  return { id: d.id, path: p, title };
+};
+const D_OPEN = await doc(OPEN, 'Complaint', 'complaint.pdf');
+const D_SEALED = await doc(SEALED, 'Advice memo', 'advice.pdf');
+const D_KID = await doc(SEALED_KID, 'Draft settlement', 'draft.pdf');
+// A row in the OPEN matter whose storage_path points at the sealed object.
+const D_POINTER = await doc(OPEN, 'Innocent-looking row', 'x.pdf', D_SEALED.path);
+const DISC_SEALED = `${SEALED}/prod-1/natives/ORM-000001.msg`;
+const DISC_OPEN = `${OPEN}/prod-2/package.zip`;
+await q(`insert into storage.objects (bucket_id, name, created_at) values
+  ('discovery-files', $1, now() - interval '1 day'), ('discovery-files', $2, now() - interval '1 day'),
+  ('vault-documents', 'loose-file-not-a-matter/readme.txt', now() - interval '1 day')`, [DISC_SEALED, DISC_OPEN]);
+console.log('  one serverspace; OPEN, SEALED (B) and SEALED_KID (inherits); four documents; two production files');
+
+const T_CAL2 = browserToken(CAL, 'aal2');
+const T_CAL1 = browserToken(CAL, 'aal1');
+const T_BOB2 = browserToken(BOB, 'aal2');
+const T_CONN = connectorToken(CAL);
+const objectRows = (token, bucket, name) =>
+  sqlAs(token, 'select name from storage.objects where bucket_id = $1 and name = $2', [bucket, name]);
+
+// ---------------------------------------------------------------------------
+// A. The negative control — no 096.
+// ---------------------------------------------------------------------------
+console.log('\n--- A. without 096 ------------------------------------------------');
+check((await objectRows(T_CAL2, 'vault-documents', D_SEALED.path)).length === 1,
+  'aal2 member reads a SEALED matter\'s object directly (the gap S4a closes)');
+check((await objectRows(T_CAL2, 'discovery-files', DISC_SEALED)).length === 1,
+  'aal2 member reads a SEALED matter\'s production file directly');
+const updatePoliciesBefore = (await q(
+  `select policyname from pg_policies where schemaname = 'storage' and tablename = 'objects' and cmd = 'UPDATE' order by 1`))
+  .map((r) => r.policyname);
+check(updatePoliciesBefore.some((n) => n.startsWith('Members can move vault-documents files')),
+  '049\'s UPDATE policy exists before 096 (spec §1\'s "no UPDATE policy" is out of date)', updatePoliciesBefore.join(', '));
+
+// ---------------------------------------------------------------------------
+// B. 096 — the bucket.
+// ---------------------------------------------------------------------------
+console.log('\n--- B. 096, the bucket ---------------------------------------------');
+await db.exec(migrationSql('096_sealed_storage_gate.sql'));
+let rerun = null;
+try { await db.exec(migrationSql('096_sealed_storage_gate.sql')); } catch (e) { rerun = e; }
+check(!rerun, '096 executes twice (re-runnable)', rerun?.message);
+
+check((await objectRows(T_CAL2, 'vault-documents', D_SEALED.path)).length === 0,
+  'aal2 member: a SEALED object is refused at the bucket');
+check((await objectRows(T_CAL2, 'vault-documents', D_KID.path)).length === 0,
+  'aal2 member: an object in an open-tier matter under a sealed parent is refused (inherited)');
+check((await objectRows(T_CAL2, 'vault-documents', D_OPEN.path)).length === 1,
+  'aal2 member: an OPEN matter\'s object is still read directly');
+check((await objectRows(T_CAL1, 'vault-documents', D_OPEN.path)).length === 1,
+  'aal1 member: an OPEN matter\'s object is still read directly');
+check((await objectRows(T_CAL2, 'discovery-files', DISC_SEALED)).length === 0,
+  'discovery-files: a SEALED matter\'s production file is refused at the bucket');
+check((await objectRows(T_CAL2, 'discovery-files', DISC_OPEN)).length === 1,
+  'discovery-files: an OPEN matter\'s production file is still read directly');
+check((await objectRows(T_BOB2, 'vault-documents', D_OPEN.path)).length === 0
+  && (await objectRows(T_BOB2, 'discovery-files', DISC_OPEN)).length === 0,
+  'a stranger reads nothing, open or sealed');
+check((await objectRows(null, 'vault-documents', D_OPEN.path)).length === 0,
+  'anon reads nothing (no policy for anon)');
+check((await objectRows(SERVICE_KEY, 'vault-documents', D_SEALED.path)).length === 1
+  && (await objectRows(SERVICE_KEY, 'discovery-files', DISC_SEALED)).length === 1,
+  'the service role (worker, endpoint) still reads sealed objects');
+{
+  const r = await attemptAs(T_CAL2, `select name from storage.objects where bucket_id = 'vault-documents'`);
+  check(!r.err && !r.rows.some((x) => x.name.startsWith('loose-')),
+    'a non-uuid path is simply invisible — the policy cannot throw on it', r.err?.message);
+}
+
+// Writes. Storage writes an upload with INSERT … RETURNING, and Postgres
+// holds the returned row to the SELECT policy.
+const NEW_SEALED = `${SEALED}/${crypto.randomUUID()}/new-upload.pdf`;
+{
+  const r = await attemptAs(T_CAL2,
+    `insert into storage.objects (bucket_id, name) values ('vault-documents', $1) returning id, name`, [NEW_SEALED]);
+  check(!r.err && r.rows?.length === 1, 'a NEW upload into a sealed matter still works (INSERT … RETURNING)', r.err?.message);
+}
+{
+  const r = await attemptAs(T_CAL2,
+    `insert into storage.objects (bucket_id, name) values ('vault-documents', $1)
+     on conflict (bucket_id, name) do update set updated_at = now() returning id`,
+    [`${SEALED}/${crypto.randomUUID()}/new-upsert.pdf`]);
+  check(!r.err && r.rows?.length === 1, 'a NEW upsert into a sealed matter still works (upload with upsert:true)', r.err?.message);
+}
+check((await objectRows(T_CAL2, 'vault-documents', NEW_SEALED)).length === 0,
+  '…and the moment its transaction ends, the new object is as closed as any other');
+{
+  const r = await attemptAs(T_CAL2,
+    `insert into storage.objects (bucket_id, name) values ('vault-documents', $1)
+     on conflict (bucket_id, name) do update set updated_at = now() returning id`, [D_SEALED.path]);
+  check(Boolean(r.err), 'OVERWRITE of an existing sealed object is refused (upsert onto it)', r.err?.message?.slice(0, 80));
+}
+{
+  const r = await attemptAs(T_CAL2,
+    `update storage.objects set name = $2 where bucket_id = 'vault-documents' and name = $1 returning name`,
+    [D_SEALED.path, `${OPEN}/${D_SEALED.id}/advice.pdf`]);
+  check(!r.err && r.rows?.length === 0, 'a user-JWT MOVE of a sealed object out of the matter reaches nothing', r.err?.message);
+}
+{
+  const r = await attemptAs(T_CAL2,
+    `update storage.objects set created_at = now() where bucket_id = 'vault-documents' and name = $1 returning name`,
+    [D_SEALED.path]);
+  const still = await objectRows(T_CAL2, 'vault-documents', D_SEALED.path);
+  check(!r.err && r.rows?.length === 0 && still.length === 0,
+    'rewriting created_at to "now" cannot open an existing sealed object (the UPDATE never reaches it)');
+}
+{
+  // A DELETE reads the rows it removes, so the SELECT policy applies: a
+  // user's remove() of a sealed object matches nothing (and storage reports
+  // success). Named in 096's header: the Vault's delete leaves an orphan.
+  const r = await attemptAs(browserToken(ADA, 'aal2'),
+    `delete from storage.objects where bucket_id = 'vault-documents' and name = $1 returning name`, [D_KID.path]);
+  const still = await objectRows(SERVICE_KEY, 'vault-documents', D_KID.path);
+  check(!r.err && r.rows?.length === 0 && still.length === 1,
+    'a user-JWT DELETE of a sealed object (even by the owner) reaches nothing — the object stays (named in the header)',
+    r.err?.message);
+  const r2 = await attemptAs(browserToken(ADA, 'aal2'),
+    `delete from storage.objects where bucket_id = 'vault-documents' and name = $1 returning name`, [NEW_SEALED]);
+  check(!r2.err && r2.rows?.length === 0, '…the same for an object uploaded a moment ago (its transaction has ended)');
+}
+const updatePoliciesAfter = (await q(
+  `select policyname from pg_policies where schemaname = 'storage' and tablename = 'objects' and cmd = 'UPDATE' order by 1`))
+  .map((r) => r.policyname);
+check(JSON.stringify(updatePoliciesAfter) === JSON.stringify(updatePoliciesBefore),
+  '096 adds no UPDATE policy and leaves 049\'s as it was');
+{
+  const db2 = new PGlite();
+  let err = null;
+  try { await db2.exec(migrationSql('096_sealed_storage_gate.sql')); } catch (e) { err = e; }
+  check(Boolean(err) && /needs migration 094/.test(err.message), '096 refuses to run without 094', err?.message);
+  await db2.close();
+}
+
+// ---------------------------------------------------------------------------
+// C. /api/document-url
+// ---------------------------------------------------------------------------
+console.log('\n--- C. /api/document-url -------------------------------------------');
+const { default: handler } = await import('../api/document-url.mjs');
+
+const call = async (token, body) => {
+  const req = {
+    method: 'POST',
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    body,
+  };
+  const res = {
+    statusCode: 200, headers: {}, body: null,
+    setHeader(k, v) { this.headers[k] = v; },
+    end(s) { this.body = s ? JSON.parse(s) : null; },
+  };
+  await handler(req, res, { fetchImpl: stubFetch });
+  return { status: res.statusCode, body: res.body };
+};
+const events = async () => q(
+  `select kind, matterspace_id, actor_kind, actor_ref, actor_user_id, payload from public.events order by ts, seq`);
+const around = async (fn) => {
+  const e0 = (await events()).length;
+  const m0 = mints.length;
+  const out = await fn();
+  const all = await events();
+  return { ...out, newEvents: all.slice(e0), newMints: mints.slice(m0) };
+};
+
+{
+  const r = await around(() => call(null, { document_id: D_SEALED.id, purpose: 'read' }));
+  check(r.status === 401 && r.body?.error === 'missing_bearer' && r.newMints.length === 0 && r.newEvents.length === 0,
+    'no bearer: 401, nothing minted, nothing written', `${r.status} ${r.body?.error}`);
+}
+{
+  const r = await around(() => call('not.a-real.token', { document_id: D_SEALED.id, purpose: 'read' }));
+  check(r.status === 401 && r.newMints.length === 0 && r.newEvents.length === 0,
+    'a bearer Supabase Auth does not accept: 401, nothing minted', `${r.status}`);
+}
+{
+  const r = await around(() => call(T_CAL2, { document_id: D_SEALED.id, purpose: 'read' }));
+  const e = r.newEvents;
+  check(r.status === 200 && typeof r.body?.url === 'string' && r.body.sealed === true && r.body.expires_in === 900,
+    'aal2 member, sealed, read: a 900 s URL', `${r.status} ${JSON.stringify(r.body)?.slice(0, 120)}`);
+  check(r.newMints.length === 1 && r.newMints[0].role === 'service_role' && r.newMints[0].name === D_SEALED.path,
+    '…minted by the service role, for the row\'s own path');
+  check(e.length === 1 && e[0].kind === 'file.opened' && e[0].matterspace_id === SEALED
+    && e[0].payload.purpose === 'read' && e[0].payload.sealed === true
+    && e[0].payload.document_id === D_SEALED.id && e[0].payload.title === 'Advice memo'
+    && e[0].actor_kind === 'user' && e[0].actor_user_id === CAL,
+  '…and file.opened {document_id, title, purpose:read, sealed:true} is on the SEALED chain, by the person',
+  JSON.stringify(e.map((x) => [x.kind, x.payload])));
+}
+{
+  const r = await around(() => call(T_CAL2, { document_id: D_SEALED.id, purpose: 'download' }));
+  const kinds = r.newEvents.map((x) => x.kind).sort();
+  const exp = r.newEvents.find((x) => x.kind === 'file.exported');
+  const op = r.newEvents.find((x) => x.kind === 'file.opened');
+  check(r.status === 200 && /download=advice\.pdf/.test(r.body?.url ?? ''),
+    'aal2 member, sealed, download: a URL that saves under the filed name', r.body?.url);
+  check(JSON.stringify(kinds) === JSON.stringify(['file.exported', 'file.opened'])
+    && op?.payload.purpose === 'download' && exp?.payload.destination === 'download',
+  '…file.opened {purpose:download} AND file.exported {destination:download}', JSON.stringify(kinds));
+}
+{
+  const r = await around(() => call(T_CAL2, { document_id: D_KID.id, purpose: 'read' }));
+  check(r.status === 200 && r.body?.sealed === true && r.newEvents[0]?.kind === 'file.opened'
+    && r.newEvents[0]?.matterspace_id === SEALED_KID,
+  'inherited seal: the sub-matter\'s document is sealed=true and recorded on the sub-matter\'s chain');
+}
+{
+  const r = await around(() => call(T_CAL1, { document_id: D_SEALED.id, purpose: 'read' }));
+  check(r.status === 403 && r.body?.error === 'step_up_required' && r.body?.mode === 'stepup' && r.body?.matter_id === SEALED,
+    'aal1 member, sealed: 403 step_up_required {mode:stepup} — the StepUpPrompt\'s cue', JSON.stringify(r.body));
+  check(r.newMints.length === 0 && r.newEvents.length === 0, '…nothing minted, nothing written');
+}
+{
+  const r = await around(() => call(T_CAL1, { document_id: D_SEALED.id, purpose: 'download' }));
+  check(r.status === 403 && r.newMints.length === 0 && r.newEvents.length === 0,
+    'aal1 member, sealed, download: refused the same way, nothing minted, nothing written');
+}
+{
+  const r = await around(() => call(T_CAL2, { document_id: D_OPEN.id, purpose: 'read' }));
+  check(r.status === 200 && r.body?.sealed === false && r.newEvents.length === 0,
+    'open matter, read: served, and NOTHING written (open-to-read is not recorded on Tier A)');
+}
+{
+  const r = await around(() => call(T_CAL1, { document_id: D_OPEN.id, purpose: 'download' }));
+  const e = r.newEvents;
+  check(r.status === 200 && e.length === 1 && e[0].kind === 'file.exported'
+    && e[0].payload.destination === 'download' && e[0].payload.sealed === false
+    && e[0].matterspace_id === OPEN && e[0].payload.document_id === D_OPEN.id,
+  'open matter, download (even at aal1): file.exported {destination:download} on the OPEN chain, no file.opened',
+  JSON.stringify(e.map((x) => [x.kind, x.payload])));
+}
+{
+  const r1 = await around(() => call(T_BOB2, { document_id: D_SEALED.id, purpose: 'read' }));
+  const r2 = await around(() => call(T_BOB2, { document_id: D_OPEN.id, purpose: 'download' }));
+  const r3 = await around(() => call(T_BOB2, { bucket: 'discovery-files', path: DISC_OPEN, purpose: 'read' }));
+  check([r1, r2, r3].every((r) => r.status === 404 && r.body?.error === 'not_found' && r.newMints.length === 0 && r.newEvents.length === 0),
+    'a non-member: not_found everywhere (sealed, open, discovery), nothing minted, nothing written',
+    [r1, r2, r3].map((r) => r.status).join(' '));
+}
+{
+  const r = await around(() => call(T_CONN, { document_id: D_SEALED.id, purpose: 'read' }));
+  check(r.status === 403 && r.body?.error === 'browser_sessions_only' && r.newMints.length === 0,
+    'a connector-stamped token (094 lets it past the gate) is refused at this door');
+}
+{
+  const r = await around(() => call(T_CAL2, { document_id: D_POINTER.id, purpose: 'read' }));
+  check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newMints.length === 0 && r.newEvents.length === 0,
+    'a row in an OPEN matter pointing at a SEALED object: refused before any mint', `${r.status} ${r.body?.error}`);
+}
+{
+  const r = await around(() => call(T_CAL2, { path: D_SEALED.path, purpose: 'read' }));
+  check(r.status === 200 && r.newEvents[0]?.payload.document_id === D_SEALED.id,
+    'by path: the document is found as the user and recorded by its id');
+  const r2 = await around(() => call(T_CAL2, { path: `${SEALED}/${D_OPEN.id}/advice.pdf`, purpose: 'read' }));
+  check(r2.status === 404 && r2.newMints.length === 0 && r2.newEvents.length === 0,
+    'by path: a path naming a document that does not own it is not_found, nothing minted');
+}
+{
+  const r = await around(() => call(T_CAL2, { bucket: 'discovery-files', path: DISC_SEALED, purpose: 'download' }));
+  const kinds = r.newEvents.map((x) => x.kind).sort();
+  check(r.status === 200 && r.body?.sealed === true && r.newMints[0]?.bucket === 'discovery-files'
+    && JSON.stringify(kinds) === JSON.stringify(['file.exported', 'file.opened'])
+    && r.newEvents.every((x) => x.payload.bucket === 'discovery-files' && x.payload.title === 'ORM-000001.msg'),
+  'discovery-files, sealed, download: minted + file.opened + file.exported {bucket}', JSON.stringify(kinds));
+}
+{
+  const r = await around(() => call(T_CAL1, { bucket: 'discovery-files', path: DISC_SEALED, purpose: 'read' }));
+  check(r.status === 403 && r.body?.error === 'step_up_required' && r.newMints.length === 0 && r.newEvents.length === 0,
+    'discovery-files, sealed, aal1: step_up_required, nothing minted');
+}
+{
+  const r = await around(() => call(T_CAL2, { bucket: 'discovery-files', path: `${OPEN}/../${SEALED}/prod-1/natives/ORM-000001.msg`, purpose: 'read' }));
+  const r2 = await around(() => call(T_CAL2, { bucket: 'discovery-files', path: `${OPEN}//x`, purpose: 'read' }));
+  check(r.status === 400 && r2.status === 400 && r.newMints.length === 0 && r2.newMints.length === 0,
+    'a caller-named path with .. or an empty segment is refused before anything is asked');
+}
+{
+  failLedgerOnce = true;
+  const r = await around(() => call(T_CAL2, { document_id: D_SEALED.id, purpose: 'read' }));
+  check(r.status === 503 && r.body?.error === 'record_failed' && !r.body?.url && r.newEvents.length === 0,
+    'sealed, and the Record cannot be written: 503, the minted URL is NOT handed out', `${r.status} ${JSON.stringify(r.body)}`);
+}
+{
+  failLedgerOnce = true;
+  const r = await around(() => call(T_CAL2, { document_id: D_OPEN.id, purpose: 'download' }));
+  check(r.status === 200 && r.body?.recorded === false && typeof r.body?.url === 'string',
+    'open matter, Record unavailable: the download still works and says recorded:false (the direct path exists anyway)');
+}
+{
+  const r = await call(T_CAL2, { document_id: D_SEALED.id, purpose: 'print' });
+  check(r.status === 400, 'an unknown purpose is refused');
+}
+
+// ---------------------------------------------------------------------------
+// C2. The review's probes (#247): the gate, the oracle, and move-document
+// ---------------------------------------------------------------------------
+console.log('\n--- C2. the review\'s probes ------------------------------------------');
+{
+  const [r] = await sqlAs(T_CAL1, 'select public.matter_entry($1) as e', [SEALED]);
+  check(r.e === 'stepup', 'R0: an aal1 session of a member WITH a factor gets matter_entry = stepup on the sealed matter', r.e);
+}
+{
+  const cal = (await sqlAs(T_CAL2, 'select public.effective_tier_is_sealed($1) as s', [SEALED]))[0].s;
+  const bob = (await sqlAs(T_BOB2, 'select public.effective_tier_is_sealed($1) as s', [SEALED]))[0].s;
+  const bobOpen = (await sqlAs(T_BOB2, 'select public.effective_tier_is_sealed($1) as s', [OPEN]))[0].s;
+  const svc = (await sqlAs(SERVICE_KEY, 'select public.effective_tier_is_sealed($1) as s', [SEALED_KID]))[0].s;
+  const anon = await attemptAs(null, 'select public.effective_tier_is_sealed($1) as s', [SEALED]);
+  check(cal === true, 'effective_tier_is_sealed: a member is told the truth about their own matter');
+  check(bob === null && bobOpen === null,
+    'effective_tier_is_sealed: a non-member gets NULL for any matter — no longer an oracle for which matters are sealed',
+    JSON.stringify({ bob, bobOpen }));
+  check(svc === true, 'effective_tier_is_sealed: the service role (the endpoint) still gets the plain answer, inherited');
+  check(Boolean(anon.err), 'effective_tier_is_sealed: anon cannot call it at all', anon.err?.message?.slice(0, 60));
+  const vis1 = (await sqlAs(T_CAL1, 'select id from public.matterspaces where id = $1', [SEALED])).length;
+  const vis2 = (await sqlAs(T_CAL2, 'select id from public.matterspaces where id = $1', [SEALED])).length;
+  check(vis1 === 0 && vis2 === 1, 'the matterspaces gate (now on the internal walk) still hides the sealed matter at aal1 and shows it at aal2');
+}
+
+const { default: moveHandler } = await import('../api/move-document.mjs');
+const { default: ingestHandler } = await import('../api/ingest.mjs');
+const drive = async (handler, token, body) => {
+  const req = { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {}, body };
+  const res = {
+    statusCode: 200, headers: {}, chunks: [],
+    setHeader(k, v) { this.headers[k] = v; },
+    write(x) { this.chunks.push(String(x)); return true; },
+    end(x) { if (x !== undefined) this.chunks.push(String(x)); return this; },
+  };
+  await handler(req, res);
+  let parsed = null;
+  try { parsed = JSON.parse(res.chunks.join('')); } catch { /* not json */ }
+  return { status: res.statusCode, body: parsed };
+};
+const aroundStorage = async (fn) => {
+  const e0 = (await events()).length;
+  const s0 = storageCalls.length;
+  const m0 = mints.length;
+  const out = await fn();
+  return { ...out, newEvents: (await events()).slice(e0), newStorage: storageCalls.slice(s0), newMints: mints.slice(m0) };
+};
+const D_MOVE = await doc(SEALED, 'Privileged chronology', 'chronology.pdf');
+const rowOf = async (id) => (await q('select matterspace_id, storage_path from public.documents where id = $1', [id]))[0];
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL1, { documentId: D_MOVE.id, newMatterspaceId: OPEN }));
+  check(r.status === 403 && r.body?.error === 'step_up_required' && r.body?.mode === 'stepup',
+    'R1: move-document, aal1, sealed → open: step_up_required', JSON.stringify(r.body));
+  check(r.newEvents.length === 0 && r.newStorage.length === 0,
+    '…nothing written, nothing asked of storage');
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_MOVE.id, newMatterspaceId: OPEN }));
+  check(r.status === 409 && r.body?.error === 'sealed_move_refused',
+    'R1: move-document, aal2, sealed → open: refused — a sealed document never moves to anything less sealed', JSON.stringify(r.body));
+  check(r.newEvents.length === 0 && r.newStorage.length === 0, '…no Record row, no rename');
+}
+{
+  const row = await rowOf(D_MOVE.id);
+  const direct = await objectRows(T_CAL2, 'vault-documents', D_MOVE.path);
+  const svc = await objectRows(SERVICE_KEY, 'vault-documents', D_MOVE.path);
+  const inOpen = await objectRows(T_CAL2, 'vault-documents', `${OPEN}/${D_MOVE.id}/chronology.pdf`);
+  check(row.matterspace_id === SEALED && row.storage_path === D_MOVE.path && direct.length === 0 && svc.length === 1 && inOpen.length === 0,
+    'R2: after the refused moves the object is where it was, still unreadable directly, with no copy in the open matter');
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CONN, { documentId: D_MOVE.id, newMatterspaceId: SEALED_KID }));
+  check(r.status === 403 && r.body?.error === 'browser_sessions_only' && r.newStorage.length === 0,
+    'move-document: a connector-stamped token is refused, as at /api/document-url');
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_POINTER.id, newMatterspaceId: SEALED_KID }));
+  check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newStorage.length === 0 && r.newEvents.length === 0,
+    'move-document: a POINTER row is refused before anything is asked of storage');
+}
+{
+  failLedgerOnce = true;
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_MOVE.id, newMatterspaceId: SEALED_KID }));
+  const row = await rowOf(D_MOVE.id);
+  check(r.status === 503 && r.body?.error === 'record_failed' && r.newStorage.length === 0 && row.matterspace_id === SEALED,
+    'move-document, sealed → sealed, Record unavailable: nothing moves (the row is written BEFORE the rename)', JSON.stringify(r.body));
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_MOVE.id, newMatterspaceId: SEALED_KID }));
+  const row = await rowOf(D_MOVE.id);
+  const newPath = `${SEALED_KID}/${D_MOVE.id}/chronology.pdf`;
+  const e = r.newEvents.find((x) => x.kind === 'file.exported');
+  check(r.status === 200 && row.matterspace_id === SEALED_KID && row.storage_path === newPath
+    && (await objectRows(SERVICE_KEY, 'vault-documents', newPath)).length === 1,
+  'move-document, aal2, sealed → sealed sub-matter: allowed, object and row moved together', JSON.stringify(r.body));
+  check(e && e.matterspace_id === SEALED && e.payload.destination === 'move' && e.payload.to_matter === SEALED_KID
+    && e.payload.document_id === D_MOVE.id && e.actor_user_id === CAL,
+  '…file.exported {destination:move, to_matter} on the SOURCE matter\'s chain', JSON.stringify(r.newEvents.map((x) => [x.kind, x.payload])));
+  check((await objectRows(T_CAL2, 'vault-documents', newPath)).length === 0, '…and it is as closed in its new room as in its old one');
+}
+{
+  const r = await aroundStorage(() => drive(ingestHandler, T_CAL2, { documentId: D_POINTER.id }));
+  check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newStorage.length === 0,
+    'R3: /api/ingest refuses a POINTER row in an open matter before any download', JSON.stringify(r.body));
+}
+
+// ---------------------------------------------------------------------------
+// C3. Round 3: the Workbench's /api/sandbox and TEXT-ONLY documents
+// ---------------------------------------------------------------------------
+// A document with no stored file (pasted text, conversation-filed notes) is a
+// row and its passages: 096's bucket rule has nothing to refuse. The sandbox
+// ran move_document / copy_document / send_to_sandbox with the browser token
+// and no seal check, so an aal1 member could carry one out of a sealed matter.
+console.log('\n--- C3. /api/sandbox, text-only documents ------------------------------');
+const { default: sandboxHandler } = await import('../api/sandbox.mjs');
+const { callTool } = await import('../lib/mcp-core.mjs');
+const OPEN2 = await matter('Vashti v. Ormsby / correspondence');
+const textDoc = async (m, title) => (await q(
+  `insert into public.documents (matterspace_id, title, source_filename, created_by, storage_path)
+   values ($1, $2, null, $3, null) returning id`, [m, title, ADA]))[0].id;
+const T_SEALED_TXT = await textDoc(SEALED, 'Privileged call notes');
+const T_OPEN_TXT = await textDoc(OPEN, 'Hearing logistics');
+const docCount = async () => Number((await q('select count(*)::int as n from public.documents'))[0].n);
+const matterOfDoc = async (id) => (await q('select matterspace_id from public.documents where id = $1', [id]))[0]?.matterspace_id;
+const sandbox = (token, action, args) => drive(sandboxHandler, token, { action, args });
+const exportsIn = (evs) => evs.filter((e) => e.kind === 'file.exported');
+
+for (const [action, to] of [['move_document', OPEN], ['copy_document', OPEN], ['send_to_sandbox', null]]) {
+  const n0 = await docCount();
+  const r = await aroundStorage(() => sandbox(T_CAL1, action, { document_ids: [T_SEALED_TXT], ...(to ? { to_matter: to } : {}) }));
+  check(r.status === 403 && r.body?.error === 'step_up_required' && r.newEvents.length === 0
+    && (await matterOfDoc(T_SEALED_TXT)) === SEALED && (await docCount()) === n0,
+  `sandbox ${action}, aal1, text-only sealed document: step_up_required — nothing moved, copied or written`, JSON.stringify(r.body));
+}
+for (const [action, to, code] of [
+  ['move_document', OPEN, 'sealed_move_refused'],
+  ['copy_document', OPEN, 'sealed_copy_refused'],
+  ['send_to_sandbox', null, 'sealed_copy_refused'],
+]) {
+  const n0 = await docCount();
+  const r = await aroundStorage(() => sandbox(T_CAL2, action, { document_ids: [T_SEALED_TXT], ...(to ? { to_matter: to } : {}) }));
+  check(r.status === 409 && r.body?.error === code && r.newEvents.length === 0
+    && (await matterOfDoc(T_SEALED_TXT)) === SEALED && (await docCount()) === n0,
+  `sandbox ${action}, aal2, sealed → open: ${code} — no Record row, nothing moved or copied`, JSON.stringify(r.body));
+}
+{
+  const r = await aroundStorage(() => sandbox(T_CONN, 'move_document', { document_ids: [T_SEALED_TXT], to_matter: OPEN }));
+  check(r.status === 403 && r.body?.error === 'browser_sessions_only' && (await matterOfDoc(T_SEALED_TXT)) === SEALED,
+    'sandbox: a connector-stamped token is refused on the crossing actions');
+}
+{
+  const n0 = await docCount();
+  const r = await aroundStorage(() => sandbox(T_CAL2, 'copy_document', { document_ids: [T_SEALED_TXT], to_matter: SEALED_KID }));
+  const e = exportsIn(r.newEvents);
+  const copies = await q(`select id from public.documents where matterspace_id = $1 and title = 'Privileged call notes'`, [SEALED_KID]);
+  check(r.status === 200 && (await docCount()) === n0 + 1 && copies.length === 1,
+    'sandbox copy_document, aal2, sealed → sealed sub-matter: allowed', JSON.stringify(r.body)?.slice(0, 160));
+  check(e.length === 1 && e[0].matterspace_id === SEALED && e[0].payload.destination === 'copy'
+    && e[0].payload.to_matter === SEALED_KID && e[0].payload.sealed === true && e[0].payload.document_id === T_SEALED_TXT,
+  '…file.exported {destination:copy, to_matter, sealed:true} on the SOURCE chain', JSON.stringify(e.map((x) => x.payload)));
+}
+{
+  const r = await aroundStorage(() => sandbox(T_CAL2, 'move_document', { document_ids: [T_SEALED_TXT], to_matter: SEALED_KID }));
+  const e = exportsIn(r.newEvents);
+  check(r.status === 200 && (await matterOfDoc(T_SEALED_TXT)) === SEALED_KID,
+    'sandbox move_document, aal2, sealed → sealed sub-matter: allowed', JSON.stringify(r.body)?.slice(0, 160));
+  check(e.length === 1 && e[0].matterspace_id === SEALED && e[0].payload.destination === 'move' && e[0].payload.to_matter === SEALED_KID,
+    '…file.exported {destination:move, to_matter} on the SOURCE chain');
+}
+{
+  const r = await aroundStorage(() => sandbox(T_CAL1, 'move_document', { document_ids: [T_OPEN_TXT], to_matter: OPEN2 }));
+  check(r.status === 200 && (await matterOfDoc(T_OPEN_TXT)) === OPEN2 && exportsIn(r.newEvents).length === 0,
+    'sandbox move_document, open → open (even at aal1): unchanged — moved, no file.exported', JSON.stringify(r.body)?.slice(0, 160));
+}
+// Round 4: Postgres accepts other spellings of a uuid (no hyphens, {braces},
+// upper case). The guard used to SKIP an id it did not recognise and let the
+// handler act on it. It must refuse — and this witness must compare ids the
+// way PostgREST does (a real uuid cast), or it cannot see the difference.
+{
+  const T_SEALED_TXT2 = await textDoc(SEALED, 'Privileged strategy note');
+  const plain = T_SEALED_TXT2.replace(/-/g, '');
+  const braced = `{${T_SEALED_TXT2}}`;
+  const upper = T_SEALED_TXT2.toUpperCase();
+  const viaStub = await (await stubFetch(`${SUPABASE_URL}/rest/v1/documents?select=id&id=eq.${plain}`,
+    { headers: { authorization: `Bearer ${T_CAL1}` } })).json();
+  check(Array.isArray(viaStub) && viaStub[0]?.id === T_SEALED_TXT2,
+    'the witness now reads an unhyphenated uuid the way PostgREST does (so the cases below are not vacuous)');
+  for (const action of ['copy_document', 'move_document', 'send_to_sandbox']) {
+    for (const [spelling, id] of [['unhyphenated', plain], ['braced', braced], ['upper-case', upper]]) {
+      for (const shape of ['document_ids', 'document_id']) {
+        if (action === 'send_to_sandbox' && shape === 'document_id') continue;
+        const n0 = await docCount();
+        const args = { ...(shape === 'document_ids' ? { document_ids: [id] } : { document_id: id }), ...(action !== 'send_to_sandbox' ? { to_matter: OPEN } : {}) };
+        const r = await aroundStorage(() => sandbox(T_CAL1, action, args));
+        check(r.status === 400 && r.body?.error === 'invalid_document_id' && r.newEvents.length === 0
+          && (await docCount()) === n0 && (await matterOfDoc(T_SEALED_TXT2)) === SEALED,
+        `sandbox ${action}, aal1, ${spelling} id in ${shape}: 400 invalid_document_id — nothing copied, moved or written`,
+        JSON.stringify(r.body));
+      }
+    }
+  }
+  {
+    const n0 = await docCount();
+    const r = await aroundStorage(() => sandbox(T_CAL2, 'copy_document',
+      { document_ids: [T_SEALED_TXT2, 'deadbeef-0000-4000-8000-000000000000'], to_matter: SEALED_KID }));
+    check(r.status === 404 && r.newEvents.length === 0 && (await docCount()) === n0,
+      'sandbox copy_document: an id that is not found (or not yours) refuses the whole call — found ≠ asked');
+  }
+  {
+    const r = await aroundStorage(() => sandbox(T_CAL2, 'copy_document',
+      { document_ids: [T_SEALED_TXT2], to_matter: OPEN.toUpperCase() }));
+    const r2 = await aroundStorage(() => sandbox(T_CAL2, 'assemble_documents',
+      { matter: OPEN.replace(/-/g, ''), document_ids: [T_OPEN_TXT, T_OPEN_TXT] }));
+    check(r.status === 400 && r.body?.error === 'invalid_matter_id' && r2.status === 400 && r2.body?.error === 'invalid_matter_id'
+      && r.newEvents.length === 0,
+    'sandbox: a matter named by a non-canonical uuid spelling (to_matter, matter) is refused on every action');
+  }
+}
+
+{
+  // An external connector: enforceConnectorSeal refuses before any handler.
+  const n0 = await docCount();
+  const connClient3 = (await import('@supabase/supabase-js')).createClient(SUPABASE_URL, ANON_KEY, {
+    global: { fetch: stubFetch, headers: { Authorization: `Bearer ${T_CONN}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  let err = null;
+  try {
+    await callTool(connClient3, 'copy_document', { document_ids: [T_SEALED_TXT], to_matter: OPEN }, { sealConnector: true });
+  } catch (e) { err = e; }
+
+  check(err?.code === 'sealed_matter' && (await docCount()) === n0,
+    'connector copy_document of a sealed text-only document: refused by the connector seal, nothing copied', `${err?.code} ${err?.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// D. get_media
+// ---------------------------------------------------------------------------
+console.log('\n--- D. get_media -----------------------------------------------------');
+const { createClient } = await import('@supabase/supabase-js');
+const { handleGetMedia } = await import('../lib/mcp-core.mjs');
+const clientFor = (token) => createClient(SUPABASE_URL, token === SERVICE_KEY ? SERVICE_KEY : ANON_KEY, {
+  global: { fetch: stubFetch, headers: token === SERVICE_KEY ? {} : { Authorization: `Bearer ${token}` } },
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+// The shape api/mcp.mjs gives an agent connection (callToolOptsFor).
+const CONNECTOR_ACTOR = { kind: 'connector', ref: 'agent:7e57a9e0-0000-4000-8000-000000000001', user_id: CAL, label: 'Research agent (claude)' };
+const connClient = clientFor(T_CONN);
+const serviceClient = clientFor(SERVICE_KEY);
+{
+  const e0 = (await events()).length;
+  let out = null; let err = null;
+  try {
+    out = await handleGetMedia(connClient, { document_id: D_SEALED.id, expires_in: 3600 },
+      { actor: CONNECTOR_ACTOR, storageClient: serviceClient });
+  } catch (e) { err = e; }
+  const e = (await events()).slice(e0);
+  check(!err && typeof out?.stream_url === 'string' && out.expires_in_seconds === 900,
+    'get_media, sealed: a URL, capped at 900 s whatever was asked', err?.message);
+  check(e.length === 1 && e[0].kind === 'file.opened' && e[0].matterspace_id === SEALED
+    && e[0].actor_kind === 'connector' && e[0].actor_ref === CONNECTOR_ACTOR.ref
+    && e[0].payload.via === 'connector' && e[0].payload.purpose === 'read' && e[0].payload.document_id === D_SEALED.id,
+  '…file.opened {purpose:read, via:connector} with the connector as the actor', JSON.stringify(e.map((x) => [x.kind, x.actor_kind, x.payload])));
+}
+{
+  const e0 = (await events()).length;
+  const m0 = mints.length;
+  let err = null;
+  try {
+    await handleGetMedia(connClient, { document_id: D_SEALED.id }, { actor: CONNECTOR_ACTOR });
+  } catch (e) { err = e; }
+  const e = (await events()).slice(e0);
+  check(Boolean(err) && /sign url/.test(err.message) && e.length === 0 && mints.length === m0,
+    'get_media, sealed, no service-role minter: the bucket refuses, nothing is written', err?.message);
+}
+{
+  const e0 = (await events()).length;
+  let out = null; let err = null;
+  try {
+    out = await handleGetMedia(connClient, { document_id: D_OPEN.id }, { actor: CONNECTOR_ACTOR });
+  } catch (e) { err = e; }
+  const e = (await events()).slice(e0);
+  check(!err && typeof out?.stream_url === 'string' && !e.some((x) => x.kind === 'file.opened'),
+    'get_media, open matter: served with the caller\'s own client, no file.opened', err?.message);
+}
+{
+  failLedgerOnce = true;
+  let out = null; let err = null;
+  try {
+    out = await handleGetMedia(connClient, { document_id: D_SEALED.id }, { actor: CONNECTOR_ACTOR, storageClient: serviceClient });
+  } catch (e) { err = e; }
+  check(Boolean(err) && !out && /Record could not be written/.test(err.message),
+    'get_media, sealed, Record unavailable: no link is issued', err?.message);
+}
+
+{
+  const s0 = storageCalls.length;
+  let err = null;
+  try {
+    await handleGetMedia(serviceClient, { document_id: D_POINTER.id }, { actor: CONNECTOR_ACTOR, storageClient: serviceClient });
+  } catch (e) { err = e; }
+  check(Boolean(err) && /different matter/.test(err.message) && storageCalls.length === s0,
+    'R3: get_media refuses a POINTER row before the mint — even with a service-role client that would sign anything', err?.message);
+}
+
+// ---------------------------------------------------------------------------
+// E. The source
+// ---------------------------------------------------------------------------
+console.log('\n--- E. the source ----------------------------------------------------');
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+  d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]);
+const offenders = [];
+for (const f of walk(path.join(ROOT, 'src')).filter((f) => /\.(ts|tsx)$/.test(f))) {
+  const rel = path.relative(ROOT, f).replace(/\\/g, '/');
+  if (rel === 'src/lib/vault-object.ts') continue;
+  const text = fs.readFileSync(f, 'utf8');
+  if (!/vault-documents|discovery-files|DISCOVERY_BUCKET|VAULT_BUCKET/.test(text)) continue;
+  if (/\.(createSignedUrl|createSignedUrls|download)\s*\(/.test(text)) offenders.push(rel);
+}
+check(offenders.length === 0,
+  'no browser file that names either bucket signs or downloads from storage itself — only src/lib/vault-object.ts',
+  offenders.join(', '));
+const endpointSrc = fs.readFileSync(path.join(ROOT, 'api', 'document-url.mjs'), 'utf8');
+const recorded = (await events()).filter((e) => ['file.opened', 'file.exported'].includes(e.kind));
+check(recorded.length > 0 && recorded.every((e) => !JSON.stringify(e.payload).match(/token=|storage_path|\/storage\/v1|signed-/)),
+  'no Record row carries a URL, a token or a storage path');
+check(/record\(ledger/.test(endpointSrc) && !/payload:[^\n]*objectPath/.test(endpointSrc),
+  'the endpoint records through lib/ledger.mjs, never the object path');
+const sql096 = migrationSql('096_sealed_storage_gate.sql').replace(/--.*$/gm, '');
+check(!/for\s+update/i.test(sql096) && !/for\s+all/i.test(sql096),
+  '096 creates no UPDATE (or ALL) policy');
+check(!/\bto\s+anon\b/i.test(sql096), '096 grants anon nothing');
+
+await db.close();
+console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
+process.exit(failures === 0 ? 0 : 1);
