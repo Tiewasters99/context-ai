@@ -259,7 +259,9 @@ function supabaseAnswer(url, init) {
     // 'error' breaks the TIER WALK only (its select is the giveaway), so the
     // case under test is a seal that cannot be read — not a database that is
     // down, which every one of these endpoints already handled its own way.
-    if (world.tier === 'error' && url.includes('parent_matterspace_id') && isServiceRole(init)) {
+    // (Since 099 the extension endpoints also walk the PAUSE up the same
+    // parent chain, without ai_tier in the select; that walk is not the seal.)
+    if (world.tier === 'error' && url.includes('parent_matterspace_id') && url.includes('ai_tier') && isServiceRole(init)) {
       return jsonRes(500, { message: 'tier lookup failed (stub)', code: 'XX000' });
     }
     const all = MATTERS();

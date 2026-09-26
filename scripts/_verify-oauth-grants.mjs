@@ -640,7 +640,11 @@ const legacyRefresh = signJwt(
   { iss: 'https://www.contextspaces.ai', typ: 'refresh', sub: USER_A, client_id: CLIENT_LEGACY, scope: 'mcp' },
   SECRET, 60 * 60 * 24 * 30,
 );
-const BEFORE = Date.parse('2026-10-01T00:00:00Z');
+// 099 moved the cut-off to the day it was written, so "before the cut-off"
+// is a day before it, and the refresh-side checks below call
+// checkRefreshGrant with that `now` (the token endpoint itself uses the real
+// clock, which is now past the cut-off).
+const BEFORE = CUTOFF - 86_400_000;
 
 {
   grants._resetGrantCache();
@@ -649,9 +653,11 @@ const BEFORE = Date.parse('2026-10-01T00:00:00Z');
     'before the cut-off a pre-065 access token still works', never.reason);
 
   // The refresh adopts it — this is how Eden's live connections become revocable.
-  const ref = await callToken({ grant_type: 'refresh_token', refresh_token: legacyRefresh, client_id: CLIENT_LEGACY });
-  check(ref.statusCode === 200, 'a pre-065 refresh token still refreshes', String(ref.statusCode));
-  const newGid = accessPayload(ref.json().access_token).gid;
+  const ref = await grants.checkRefreshGrant({
+    gid: null, user_id: USER_A, client_id: CLIENT_LEGACY, client_name: 'Claude', now: BEFORE,
+  });
+  check(ref.ok && ref.reason === 'adopted', 'a pre-065 refresh token still refreshes (before the cut-off)', ref.reason);
+  const newGid = ref.gid;
   check(!!newGid, 'and the reissued token now carries a grant id');
   await asOwner(db);
   const adoptedRow = (await db.query(`select notes, client_name from public.oauth_grants where id=$1`, [newGid])).rows[0];
@@ -673,10 +679,14 @@ const BEFORE = Date.parse('2026-10-01T00:00:00Z');
     'revoking bites the pre-065 access token too, once the client is adopted', dead.reason);
 
   // THE REPLAY: the same pre-adoption refresh token, presented again.
-  const replay = await callToken({ grant_type: 'refresh_token', refresh_token: legacyRefresh, client_id: CLIENT_LEGACY });
-  check(replay.statusCode === 400 && replay.json()?.error === 'invalid_grant',
-    'a pre-revocation refresh token CANNOT be replayed to mint a fresh grant',
-    `${replay.statusCode} ${replay.json()?.error}`);
+  const replay = await grants.checkRefreshGrant({
+    gid: null, user_id: USER_A, client_id: CLIENT_LEGACY, now: BEFORE,
+  });
+  check(!replay.ok && replay.reason === 'grant_revoked',
+    'a pre-revocation refresh token CANNOT be replayed to mint a fresh grant', replay.reason);
+  const replayHttp = await callToken({ grant_type: 'refresh_token', refresh_token: legacyRefresh, client_id: CLIENT_LEGACY });
+  check(replayHttp.statusCode === 400 && replayHttp.json()?.error === 'invalid_grant',
+    'and at the token endpoint it is invalid_grant', `${replayHttp.statusCode} ${replayHttp.json()?.error}`);
 
   // After the cut-off, a gid-less token is refused outright, adopted or not.
   const AFTER = CUTOFF + 1000;
@@ -728,8 +738,16 @@ for (const m of ['undeployed', 'table-missing', 'server-error']) {
   const withGid = await grants.checkAccessGrant({ sub: USER_A, client_id: CLIENT_LIVE, gid: liveGid }, { now: BEFORE });
   check(withGid.ok && withGid.degraded, `${label}: a gid-carrying token is not cut off either`, withGid.reason);
 
-  const ref = await callToken({ grant_type: 'refresh_token', refresh_token: tok.json().refresh_token, client_id: CLIENT_LIVE });
-  check(ref.statusCode === 200, `${label}: refresh still succeeds`, String(ref.statusCode));
+  // Before the cut-off the gid-less refresh is let through while the grants
+  // table cannot be read; past it (099 moved it to 2026-09-26) it is refused
+  // outright, outage or not — the client goes back through consent.
+  grants._resetGrantCache();
+  const ref = await grants.checkRefreshGrant({
+    gid: null, user_id: USER_A, client_id: CLIENT_LIVE, now: BEFORE,
+  });
+  check(ref.ok && ref.degraded, `${label}: refresh still succeeds before the cut-off`, ref.reason);
+  const late = await callToken({ grant_type: 'refresh_token', refresh_token: tok.json().refresh_token, client_id: CLIENT_LIVE });
+  check(late.statusCode === 400, `${label}: past the cut-off the gid-less refresh is refused (099)`, String(late.statusCode));
 }
 mode = 'deployed';
 
@@ -749,8 +767,8 @@ section('10. source facts');
     'a refused grant becomes a 401 invalid_token, the code clients re-authorize on');
 
   const pathC = mcp.slice(mcp.indexOf('// Path C'), mcp.indexOf('async function oauthIdentity('));
-  check(!/checkAccessGrant/.test(pathC) && /if \(payload\.gid \|\| payload\.agt\) return oauthIdentity\(payload, 'bare'\)/.test(pathC),
-    'Path C: a truly old bare JWT (no gid) is untouched; one that names a grant is an unwrapped cspa_ token and gets the same checks (087)');
+  check(/return oauthIdentity\(payload, 'bare'\)/.test(pathC) && !/kind: 'user' \}/.test(pathC),
+    'Path C: every bare JWT goes through the grant check — one naming a grant as an unwrapped cspa_ token (087), a gid-less one through the legacy branch and its cut-off (099)');
 
   const reg = fs.readFileSync(repoFile('api', 'oauth-register.mjs'), 'utf8');
   check(/consumeIpUsage/.test(reg),

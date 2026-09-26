@@ -15,6 +15,7 @@ import {
   corsHeaders,
   json,
   handleAuthError,
+  pausedMatterRefusal,
 } from '../../lib/connector-token-auth.mjs';
 
 import { decrypt } from '../../lib/connections-crypto.mjs';
@@ -63,6 +64,12 @@ export default async function handler(req, res) {
   if (doc.file_size_bytes && doc.file_size_bytes > MAX_EXPORT_BYTES) {
     return json(res, 413, { error: 'file_too_large', maxBytes: MAX_EXPORT_BYTES });
   }
+
+  // A paused matter's bytes do not leave through a connected app (070; 099).
+  // Before the export gate, the Drive connection and the storage download: a
+  // refusal here reads nothing and sends nothing.
+  const paused = await pausedMatterRefusal(doc.matterspace_id);
+  if (paused) return json(res, paused.status, paused.body);
 
   // ── SecureSpace export gate ─────────────────────────────────── gate:start
   // The extension is the user's own tool, but the bytes still land at Google,

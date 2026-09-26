@@ -170,11 +170,12 @@ export async function authenticate(req) {
     if (payload && payload.typ === 'access' && payload.sub) {
       // A bare JWT that names a grant is simply a cspa_ token with its
       // envelope taken off (anyone holding one can do that), so it gets the
-      // same grant and agent checks. Only a truly old token with neither
-      // gid nor agt keeps the old unchecked path.
-      if (payload.gid || payload.agt) return oauthIdentity(payload, 'bare');
-      console.log('[mcp auth] oauth ok: sub=%s', payload.sub);
-      return { userId: payload.sub, kind: 'user' };
+      // same grant and agent checks. Since 099 so does a truly old one with
+      // neither gid nor agt: it used to be served unchecked, which meant it
+      // honoured neither the legacy cut-off nor "Disconnect everything".
+      // checkAccessGrant's legacy branch now decides it, exactly as it does
+      // a gid-less cspa_ token.
+      return oauthIdentity(payload, 'bare');
     }
     console.warn('[mcp auth] oauth reject:',
       payload ? { typ: payload.typ, hasSub: !!payload.sub, exp: payload.exp } : 'verify failed (sig/exp)');

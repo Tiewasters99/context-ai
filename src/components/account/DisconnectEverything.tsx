@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Unplug } from 'lucide-react';
 import CardDialog from '@/components/ui/CardDialog';
-import { previewDisconnect, disconnectAccount, type DisconnectCounts } from '@/lib/disconnect-all';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
+import {
+  previewDisconnect, disconnectAccount, signOutOthers, NOTHING_DISCONNECTED,
+  type DisconnectCounts,
+} from '@/lib/disconnect-all';
 import { accountSentence, countsLine } from '@/lib/disconnect-all-sentence';
 
 // Settings → Connections, at the foot: "Disconnect everything" (migration 095).
@@ -17,6 +21,11 @@ import { accountSentence, countsLine } from '@/lib/disconnect-all-sentence';
 //
 // Not deployed (095 not pasted): the preview is missing and this renders
 // nothing, exactly as the AI pause control does before 070.
+//
+// The press never waits for a second factor (099). Signing the other browsers
+// out may: if the account has a factor this session has not confirmed, the
+// press has already disconnected everything, and the card stays open with S1's
+// StepUpPrompt to finish the sign-out ("Not now" leaves it for Devices).
 
 interface Props {
   /** Told after a successful press, so the page can re-read what it shows. */
@@ -29,6 +38,8 @@ export default function DisconnectEverything({ onDone }: Props) {
   const [counts, setCounts] = useState<DisconnectCounts | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stepUp, setStepUp] = useState(false);
+  const [pressed, setPressed] = useState<DisconnectCounts | null>(null);
 
   // One probe on mount, so the link is never offered on a database that
   // cannot act on it.
@@ -48,6 +59,8 @@ export default function DisconnectEverything({ onDone }: Props) {
   const start = async () => {
     setError(null);
     setCounts(null);
+    setStepUp(false);
+    setPressed(null);
     setOpen(true);
     const r = await previewDisconnect('account');
     if (r.ok) setCounts(r.counts);
@@ -59,14 +72,34 @@ export default function DisconnectEverything({ onDone }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const { counts: done, othersSignedOut } = await disconnectAccount();
+      const { counts: done, othersSignedOut, signOutNeedsStepUp } = await disconnectAccount();
+      if (signOutNeedsStepUp) {
+        setPressed(done);
+        setStepUp(true);
+        return;
+      }
       setOpen(false);
       onDone?.(done, othersSignedOut);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Nothing was disconnected. Try again in a moment.');
+      setError(e instanceof Error ? e.message : NOTHING_DISCONNECTED);
     } finally {
       setBusy(false);
     }
+  };
+
+  const finishSignOut = async (confirmed: boolean) => {
+    const done = pressed;
+    if (!done) return;
+    let signedOut = false;
+    if (confirmed) {
+      // A refusal (or a failure) leaves signedOut false, and the page says the
+      // other browsers could not be signed out — true, and Devices can do it.
+      signedOut = await signOutOthers().catch(() => false);
+    }
+    setStepUp(false);
+    setPressed(null);
+    setOpen(false);
+    onDone?.(done, signedOut);
   };
 
   return (
@@ -81,8 +114,8 @@ export default function DisconnectEverything({ onDone }: Props) {
         </button>
         <p className="mt-1.5 text-xs text-[var(--color-text-muted)] max-w-xl leading-relaxed">
           Every assistant, agent and connected app loses access at once, AI is paused on
-          the matters you run, and every other browser is signed out. You stay signed in
-          here and reconnect what you want, one at a time.
+          the matters of the workspaces you own, and every other browser is signed out. You
+          stay signed in here and reconnect what you want, one at a time.
         </p>
       </div>
 
@@ -98,30 +131,57 @@ export default function DisconnectEverything({ onDone }: Props) {
           title="Disconnect everything"
           subtitle={counts ? countsLine(counts) : undefined}
         >
-          {counts ? (
-            <p className="text-[13px] text-white/80 mb-3 leading-relaxed">{accountSentence(counts)}</p>
+          {pressed ? (
+            <p className="text-[13px] text-white/80 mb-3 leading-relaxed">
+              Everything is disconnected. To sign your other browsers out as well, confirm it’s you.
+            </p>
+          ) : counts ? (
+            <>
+              <p className="text-[13px] text-white/80 mb-2 leading-relaxed">{accountSentence(counts)}</p>
+              <p className="text-[12px] text-white/60 mb-3 leading-relaxed">
+                If someone may know your password, change it too: a new sign-in with it can reconnect.
+              </p>
+            </>
           ) : !error ? (
             <p className="text-[13px] text-white/50 mb-3">Reading what is connected…</p>
           ) : null}
 
           {error && <p className="text-[12px] text-amber-200/80 mb-3">{error}</p>}
 
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={() => setOpen(false)}
-              disabled={busy}
-              className="px-3 py-1.5 rounded-md text-[13px] text-white/70 hover:bg-[rgba(255,255,255,0.06)] transition-colors disabled:opacity-40"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => void press()}
-              disabled={busy || !counts}
-              className="px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors disabled:opacity-40 bg-[#f87171]/15 text-[#f87171] hover:bg-[#f87171]/25"
-            >
-              {busy ? 'Disconnecting…' : 'Disconnect everything'}
-            </button>
-          </div>
+          {stepUp ? (
+            <div className="mb-1">
+              <StepUpPrompt
+                mode="stepup"
+                heading="Confirm it’s you to sign your other browsers out."
+                onConfirmed={() => void finishSignOut(true)}
+              />
+              <div className="flex justify-end mt-2">
+                <button
+                  onClick={() => void finishSignOut(false)}
+                  className="px-3 py-1.5 rounded-md text-[13px] text-white/70 hover:bg-[rgba(255,255,255,0.06)] transition-colors"
+                >
+                  Not now
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setOpen(false)}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-md text-[13px] text-white/70 hover:bg-[rgba(255,255,255,0.06)] transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void press()}
+                disabled={busy || !counts}
+                className="px-3 py-1.5 rounded-md text-[13px] font-medium transition-colors disabled:opacity-40 bg-[#f87171]/15 text-[#f87171] hover:bg-[#f87171]/25"
+              >
+                {busy ? 'Disconnecting…' : 'Disconnect everything'}
+              </button>
+            </div>
+          )}
         </CardDialog>
       )}
     </>

@@ -25,10 +25,44 @@
 //
 // The bearer is checked the way api/account-sessions.mjs checks it: Supabase
 // Auth is asked who it belongs to before anything else happens.
+//
+// A second factor, when there is one (migration 099; round 2 of its review).
+// The two halves are judged differently, on purpose:
+//
+//   * The REVOKE half is never gated on a second factor. Revoking is the safe
+//     direction, and a gate there is a way to break the switch: on an account
+//     with no factor, a thief can enrol one at aal1 (Supabase Auth allows it
+//     when none exists), and the owner's own press would then answer "step
+//     up" with a factor the owner does not have (NEW-2).
+//   * The SIGN-OUT-OTHERS half is what a thief would want: sign the owner out
+//     and keep their own session. So when the account has a verified factor
+//     and this session is aal1, other sessions are signed out only if EVERY
+//     verified factor was added after this session began — a factor enrolled
+//     after I signed in is not mine to prove. Otherwise the press still
+//     happens and the answer says `sign_out: 'step_up_required'`; the page
+//     asks for the factor and calls again with {sign_out_only: true}, which
+//     signs the others out and revokes nothing further.
+//
+// And who may sign the others out at all (round 3). The database decides who
+// the PRESSER is (099 §6a): only a session that is eligible (the factor rule
+// above) and admissible under any existing lock (the presser's own, or one
+// created after it) takes that slot. The press path signs the others out only
+// when the database says this caller is the presser; {sign_out_only} first
+// lets the pending session claim the slot after a step-up
+// (disconnect_claim_presser) and then requires the caller to be admissible
+// under the current lock AND to pass the factor rule. A thief's session that
+// survived the first press can still press (revoking is always allowed) but
+// never becomes the presser and never signs the owner out.
+//
+// The lock no longer depends on the sign-out at all (099 round 2): a session
+// that survives it — logout failed, or a refresh landed between the commit
+// and the logout — is refused by the database, because it began before the
+// press and is not the presser's.
 
 import { createClient } from '@supabase/supabase-js';
 import {
-  json, corsPreflight, bearerFrom, authUser, userRpcClient, SUPABASE_URL, SERVICE_KEY,
+  json, corsPreflight, bearerFrom, authUser, jwtClaims, readJsonBody, serviceRpc, userRpcClient,
+  SUPABASE_URL, SERVICE_KEY,
 } from '../lib/account-security.mjs';
 
 /** PostgREST's "that function is not in the schema" — 095 not pasted yet. */
@@ -44,13 +78,38 @@ export default async function handler(req, res, deps = {}) {
   const user = await authUser(bearer, { fetchImpl });
   if (!user) return json(res, 401, { error: 'invalid_session' });
 
-  const { data, error } = await userRpcClient(bearer, { fetchImpl })
-    .rpc('disconnect_all', { p_scope: 'account', p_matter: null });
-  if (error) {
-    if (NOT_DEPLOYED.has(String(error.code))) return json(res, 503, { error: 'not_available' });
-    return json(res, 502, { error: 'disconnect_failed', message: error.message ?? null });
+  const body = await readJsonBody(req);
+  const signOutOnly = body?.sign_out_only === true;
+
+  const db = userRpcClient(bearer, { fetchImpl });
+  let counts = null;
+  let mayOut;
+  if (!signOutOnly) {
+    const { data, error } = await db.rpc('disconnect_all', { p_scope: 'account', p_matter: null });
+    if (error) {
+      if (NOT_DEPLOYED.has(String(error.code))) return json(res, 503, { error: 'not_available' });
+      return json(res, 502, { error: 'disconnect_failed', message: error.message ?? null });
+    }
+    counts = data && typeof data === 'object' ? data : {};
+    // 099 answers `presser`; a database with 095 alone does not, and then the
+    // factor rule is all there is.
+    mayOut = typeof counts.presser === 'boolean'
+      ? counts.presser
+      : await maySignOutOthers(user, bearer, { fetchImpl });
+  } else {
+    const { data, error } = await db.rpc('disconnect_claim_presser', {});
+    if (error && !NOT_DEPLOYED.has(String(error.code))) return json(res, 403, { error: 'not_allowed' });
+    if (!error && data?.admissible !== true) {
+      // The session that pressed at aal1 is told to step up; anyone else, no.
+      return json(res, 403, { error: data?.pending === true ? 'step_up_required' : 'not_allowed' });
+    }
+    mayOut = await maySignOutOthers(user, bearer, { fetchImpl });
   }
-  const counts = data && typeof data === 'object' ? data : {};
+
+  if (!mayOut) {
+    if (signOutOnly) return json(res, 403, { error: 'step_up_required' });
+    return json(res, 200, { counts, others_signed_out: false, sign_out: 'step_up_required' });
+  }
 
   let othersSignedOut = false;
   try {
@@ -71,5 +130,24 @@ export default async function handler(req, res, deps = {}) {
     console.warn('[account-lockdown] other sessions not signed out:', err?.message || err);
   }
 
+  if (signOutOnly) return json(res, 200, { others_signed_out: othersSignedOut });
   return json(res, 200, { counts, others_signed_out: othersSignedOut });
+}
+
+/**
+ * May this session sign the account's other sessions out? Yes with no
+ * verified factor, yes at aal2, and yes at aal1 when every verified factor
+ * was added after this session began. Anything it cannot read is a no — the
+ * revoke has already happened; only the sign-out waits for the factor.
+ */
+async function maySignOutOthers(user, bearer, { fetchImpl = null } = {}) {
+  const factors = (Array.isArray(user.factors) ? user.factors : []).filter((f) => f?.status === 'verified');
+  if (factors.length === 0) return true;
+  const claims = jwtClaims(bearer);
+  if (claims.aal === 'aal2') return true;
+  const r = await serviceRpc('account_sessions', { p_user: user.id }, { fetchImpl });
+  const mine = r.ok && Array.isArray(r.data) ? r.data.find((x) => x?.id === claims.session_id) : null;
+  const began = mine?.created_at ? Date.parse(mine.created_at) : NaN;
+  if (!Number.isFinite(began)) return false;
+  return factors.every((f) => Number.isFinite(Date.parse(f.created_at)) && Date.parse(f.created_at) > began);
 }

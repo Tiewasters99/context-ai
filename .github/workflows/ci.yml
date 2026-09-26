@@ -198,6 +198,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-disconnect-all.mjs
 
+      # Migration 099 (S2b). A disconnection is one-way, and the Record says
+      # who reconnected. Real chain (001→088, 094, 095, 099 twice), real roles
+      # and RLS, driven through the real handlers. The review of #246's probes
+      # are the negative controls, now refused: no UPDATE brings a revoked or
+      # expired connector token back (from a stolen sign-in or the owner's
+      # own); a pre-065 client is not adopted after a press and its tokens are
+      # refused on every path; a SESSION from before the press (signed out,
+      # refreshed, or surviving an RPC-only press) other than the presser's
+      # cannot paste a token, approve a grant, enable a charter, widen an
+      # agent or resume AI, and writes no account.unlocked — while the
+      # presser's own session and a sign-in made after the press can, and the
+      # one account.unlocked row names its session_id and iat (through the
+      # consent screen too). Also: the press is never gated on a factor, only
+      # the sign-out of others is (a thief-enrolled factor stops neither), a
+      # serverspace admin's own press pauses nothing of the firm's, the
+      # extension endpoints refuse a paused matter, and the grant cache is not
+      # trusted while the owner is locked.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 099 — a disconnection is one-way (PGlite + real handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-disconnect-one-way.mjs
+
       # Migration 080. A connection's stored refresh token is ciphertext, but
       # it is still the credential for someone's mailbox and cloud drive, and
       # RLS plus Supabase's blanket column grant let a signed-in browser ask

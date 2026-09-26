@@ -715,3 +715,32 @@ last — so a press whose Record cannot be written revokes nothing.
 consent screen writes as the service role, where `auth.uid()` is null. The
 Record tab renders `by:'kill'` and `reason:'kill'` in words; the marker never
 reaches a reader.
+
+---
+
+# Migration 099 — who reconnected, and from which sign-in
+
+095's `account.unlocked` said "the owner reconnected" for anything that
+reconnected: a connection adopted from a token minted before 065, or a token,
+charter or resume from a sign-in the press had not ended (review of #246,
+HIGH-2 / MEDIUM-3). From 099 the row is written only when the account's OWN
+sign-in, issued after the lock, brings something back — and it says which one.
+
+| kind | chain | written when | payload |
+| --- | --- | --- | --- |
+| `account.unlocked` | the account | the first reconnection after an `account.locked`, from the account's own sign-in session — the one that pressed, or one created after the press — still signed in | `{via: ai.resumed\|assistant\|agent\|app\|in-app agent, ref, session_id, iat, through: sign-in\|consent}` |
+
+`through: consent` means the connection was approved on the OAuth consent
+screen: the grant is written by the service role, and `session_id` / `iat` are
+those of the browser sign-in that clicked Allow (carried in by
+`oauth_grant_approve_session`). A session that began before the press (other
+than the presser's) — refreshed or not, signed out or not — a connector's own
+minted token, a colleague, or an operator in the SQL editor never writes this
+row; the first three are refused outright (`connections_locked`), so nothing
+is reconnected either. The limit, stated: with the password and no second
+factor, anyone can make a new sign-in after the press, and it passes.
+
+The lock itself lives in `account_connection_locks` (one row per account that
+has pressed "Disconnect everything"; read-only to its owner). `locked_at` is a
+floor that is never cleared; `presser_session_id` is the session that pressed; `unlocked_at` / `unlocked_session_id` /
+`unlocked_iat` mirror the `account.unlocked` row.

@@ -18,6 +18,14 @@
 // parent matter this user cannot see must still mark the child, and a seal
 // lookup that fails marks everything sealed (`seal_status: 'unknown'`) rather
 // than quietly reporting a clean bill of health.
+//
+// PAUSED matters (migration 070) are left out of the list altogether (099),
+// the way lib/mcp-core.mjs hides them from list_matters: a connected app
+// cannot reach a paused matter, so it is not offered one to pick. If the pause
+// cannot be read, the list is refused (503) rather than served unfiltered.
+// Read with the service role, like the seal below: a pause set on a parent
+// the caller cannot see still pauses the child they can. It asks from the
+// paused side (the few paused roots and their descendants), never scans.
 
 import {
   authenticateConnectorToken,
@@ -26,6 +34,7 @@ import {
   corsHeaders,
   json,
   handleAuthError,
+  pausedMatterSet,
 } from '../../lib/connector-token-auth.mjs';
 
 import { sealedMatterIds } from '../../lib/ai-tier-policy.mjs';
@@ -51,6 +60,10 @@ export default async function handler(req, res) {
     .order('name', { ascending: true });
   if (error) return json(res, 500, { error: `query_failed: ${error.message}` });
 
+  const paused = await pausedMatterSet();
+  if (!paused) return json(res, 503, { error: 'pause_unverifiable' });
+  const open = (data ?? []).filter((m) => !paused.has(m.id));
+
   // Which of them are sealed (B or C, inherited)? Service role, so an ancestor
   // the user cannot see still seals its children; unreadable ⇒ all sealed.
   let sealed = null;
@@ -62,7 +75,7 @@ export default async function handler(req, res) {
 
   return json(res, 200, {
     seal_status: sealed ? 'ok' : 'unknown',
-    matters: (data ?? []).map((m) => ({
+    matters: open.map((m) => ({
       id: m.id,
       name: m.name,
       short_code: m.short_code,
