@@ -34,6 +34,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { assertPathInMatter } from '../lib/storage-path.mjs';
 import { reprocessInPlace } from '../lib/reprocess.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,11 +69,13 @@ log(`\nDone. ${totalPassages} passages re-inserted across ${docIds.length} docum
 async function reingestOne(documentId) {
   const { data: doc, error } = await supabase
     .from('documents')
-    .select('id, title, source_filename, storage_path')
+    .select('id, title, source_filename, storage_path, matterspace_id')
     .eq('id', documentId)
     .single();
   if (error) throw new Error(`lookup: ${error.message}`);
   if (!doc.storage_path) throw new Error('no storage_path on row — nothing to re-ingest from');
+  // Service role: only a path filed under the row's own matter (097).
+  assertPathInMatter(doc.storage_path, doc.matterspace_id);
 
   const label = doc.title || doc.source_filename || doc.id;
   log(`\n[${label}]`);

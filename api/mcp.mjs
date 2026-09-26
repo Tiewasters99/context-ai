@@ -422,10 +422,15 @@ export default async function handler(req, res) {
         name,
         args,
         sb,
-        invoke: () => callTool(sb, name, args, callToolOptsFor(identity, {
-          openaiApiKey: OPENAI_API_KEY,
-          googleApiKey: process.env.GOOGLE_API_KEY,
-        })),
+        invoke: () => callTool(sb, name, args, {
+          ...callToolOptsFor(identity, {
+            openaiApiKey: OPENAI_API_KEY,
+            googleApiKey: process.env.GOOGLE_API_KEY,
+          }),
+          // Used by move_document only, to carry a moved document's queued
+          // ingest job along (097 round 4); nothing else reads it.
+          ...(name === 'move_document' ? { jobClient: adminClient() } : {}),
+        }),
       });
     });
 
