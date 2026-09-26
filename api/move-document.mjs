@@ -85,18 +85,25 @@ export default async function handler(req, res) {
   // 2) Update the documents row. If this fails after the storage move
   //    succeeded, we'd be in an inconsistent state — try to roll storage
   //    back so the row keeps matching its file.
-  const { error: docUpdErr } = await sb
+  //    Exactly one row, or nothing else happens: RLS turns a caller who may
+  //    read the document but not write it into a silent zero-row update, and
+  //    step 4 must never re-point a job on the strength of a move that did not
+  //    happen (097 round 4 review).
+  const { data: updRows, error: docUpdErr } = await sb
     .from('documents')
     .update({
       matterspace_id: newMatterspaceId,
       ...(newPath ? { storage_path: newPath } : {}),
     })
-    .eq('id', documentId);
-  if (docUpdErr) {
+    .eq('id', documentId)
+    .select('id');
+  if (docUpdErr || updRows?.length !== 1) {
     if (oldPath && newPath) {
       await sb.storage.from('vault-documents').move(newPath, oldPath).catch(() => {});
     }
-    return json(res, 500, { error: `documents update: ${docUpdErr.message}` });
+    return docUpdErr
+      ? json(res, 500, { error: `documents update: ${docUpdErr.message}` })
+      : json(res, 403, { error: 'not_permitted' });
   }
 
   // 3) Update the denormalized matterspace_id on every passage tied to
