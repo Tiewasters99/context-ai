@@ -118,6 +118,11 @@ export default async function handler(req, res) {
     const result = await callTool(sb, action, args, {
       openaiApiKey: process.env.OPENAI_API_KEY,
       googleApiKey: process.env.GOOGLE_API_KEY,
+      // move_document carries a moved document's queued ingest job along;
+      // the member's own client cannot update processing_jobs (097 round 4).
+      ...(action === 'move_document' && SERVICE_KEY
+        ? { jobClient: createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) }
+        : {}),
     });
     return json(res, 200, result);
   } catch (err) {

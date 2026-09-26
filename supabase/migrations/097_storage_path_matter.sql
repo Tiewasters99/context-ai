@@ -83,6 +83,12 @@
 -- in the worker, asked first by every handler; both layers, as with the paths.
 -- The lookups are SECURITY DEFINER helpers in jobs_internal (not exposed by
 -- PostgREST): they must see another matter's rows to say they are not yours.
+-- ROUND 4: the trigger calls ONE definer wrapper, jobs_internal.job_refusal;
+-- the helpers are owner-only. And "belongs" is a tree question: a Bucketizer
+-- document may sit anywhere in the run matter's subtree (runs cover folders
+-- and sub-matters), and an ingest job's document anywhere in the job matter's
+-- tree (an upload filed into a folder after it was queued); a move now also
+-- re-points the document's queued jobs with the service role.
 --
 -- Also round 3: no path segment may start or end with whitespace (a URL
 -- parser trims the end of a path, so such a row is one the code refuses and
@@ -147,8 +153,10 @@ end $pi$;
 -- ============================================================================
 create schema if not exists jobs_internal;
 revoke all on schema jobs_internal from public;
-grant usage on schema jobs_internal to authenticated, service_role;
+grant usage on schema jobs_internal to authenticated, anon, service_role;
 
+-- The lookups. Owner-only (round 4): nothing but job_refusal() below calls
+-- them, and job_refusal runs as the owner.
 create or replace function jobs_internal.matter_of_document(p uuid)
 returns uuid language sql stable security definer set search_path = public
 as $$ select d.matterspace_id from public.documents d where d.id = p $$;
@@ -184,14 +192,95 @@ begin
   return coalesce(v, false);
 end $$;
 
-revoke all on function jobs_internal.matter_of_document(uuid) from public;
-revoke all on function jobs_internal.matter_of_production(uuid) from public;
-revoke all on function jobs_internal.matter_of_run(uuid) from public;
-revoke all on function jobs_internal.run_lists_document(uuid, uuid) from public;
-grant execute on function jobs_internal.matter_of_document(uuid) to authenticated, service_role;
-grant execute on function jobs_internal.matter_of_production(uuid) to authenticated, service_role;
-grant execute on function jobs_internal.matter_of_run(uuid) to authenticated, service_role;
-grant execute on function jobs_internal.run_lists_document(uuid, uuid) to authenticated, service_role;
+revoke all on function jobs_internal.matter_of_document(uuid) from public, anon, authenticated;
+revoke all on function jobs_internal.matter_of_production(uuid) from public, anon, authenticated;
+revoke all on function jobs_internal.matter_of_run(uuid) from public, anon, authenticated;
+revoke all on function jobs_internal.run_lists_document(uuid, uuid) from public, anon, authenticated;
+
+-- THE ONE WRAPPER the trigger calls (round 4). Definer, so it can see
+-- another matter's rows to say they are not yours; returns the reason to
+-- refuse, or null. "Belongs" is a tree question (round 4):
+--   a Bucketizer document  → inside the job matter's SUBTREE (a run over a
+--                            matter includes its folders and sub-matters),
+--                            and listed by the run;
+--   any other document     → in the SAME TREE as the job's matter (an upload
+--                            filed into a folder after it was queued);
+--   a production           → exactly the job's matter.
+-- matter_ancestry (016) is the definer walk, self + ancestors.
+create or replace function jobs_internal.job_refusal(
+  p_matter uuid, p_job_type text, p_production uuid, p_payload jsonb
+) returns text
+language plpgsql stable security definer set search_path = public
+as $$
+declare
+  c_uuid  constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  v_doc   text;
+  v_run   text;
+  v_dm    uuid;
+  v_path  jsonb;
+  v_p     text;
+begin
+  if p_job_type = 'intake_folder' or (p_payload ? 'local_path') then
+    return 'a job naming a local folder can only be started from the worker itself';
+  end if;
+
+  if p_production is not null
+     and jobs_internal.matter_of_production(p_production) is distinct from p_matter then
+    return 'that production is not in this job''s matter';
+  end if;
+
+  if p_payload ? 'run_id' then
+    v_run := p_payload ->> 'run_id';
+    if v_run is null or v_run !~ c_uuid
+       or jobs_internal.matter_of_run(v_run::uuid) is distinct from p_matter then
+      return 'that Bucketizer run is not in this job''s matter';
+    end if;
+  end if;
+
+  if p_payload ? 'document_id' then
+    v_doc := p_payload ->> 'document_id';
+    if v_doc is null or v_doc !~ c_uuid then
+      return 'that document is not in this job''s matter';
+    end if;
+    v_dm := jobs_internal.matter_of_document(v_doc::uuid);
+    if v_dm is null then
+      return 'that document is not in this job''s matter';
+    end if;
+    if v_run is not null then
+      if not exists (select 1 from public.matter_ancestry(v_dm) a where a.id = p_matter) then
+        return 'that document is not in this job''s matter';
+      end if;
+      if not jobs_internal.run_lists_document(v_run::uuid, v_doc::uuid) then
+        return 'that document is not in that Bucketizer run';
+      end if;
+    elsif v_dm is distinct from p_matter and not exists (
+      select 1 from public.matter_ancestry(v_dm) x
+        join public.matter_ancestry(p_matter) y on y.id = x.id
+    ) then
+      return 'that document is not in this job''s matter';
+    end if;
+  end if;
+
+  if p_payload ? 'storage_paths' then
+    if jsonb_typeof(p_payload -> 'storage_paths') <> 'array' or p_production is null then
+      return 'storage_paths must be a list of this production''s files';
+    end if;
+    for v_path in select * from jsonb_array_elements(p_payload -> 'storage_paths') loop
+      v_p := case when jsonb_typeof(v_path) = 'string' then v_path #>> '{}' end;
+      if v_p is null
+         or v_p !~ ('^' || p_matter::text || '/' || p_production::text || '/[^/]+(/[^/]+)*$')
+         or v_p ~ '(^|/)\.{1,2}(/|$)' or position('%' in v_p) > 0 or position(chr(92) in v_p) > 0
+         or v_p ~ '(^|/)\s|\s(/|$)' then
+        return 'a storage path outside this production';
+      end if;
+    end loop;
+  end if;
+
+  return null;
+end $$;
+
+revoke all on function jobs_internal.job_refusal(uuid, text, uuid, jsonb) from public;
+grant execute on function jobs_internal.job_refusal(uuid, text, uuid, jsonb) to authenticated, anon, service_role;
 
 -- INVOKER on purpose: current_user is then the CALLER (authenticated for a
 -- browser or a forwarded user token; service_role or the owner otherwise).
@@ -199,58 +288,13 @@ create or replace function public._processing_jobs_scope_check()
 returns trigger language plpgsql security invoker
 as $$
 declare
-  c_uuid  constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
-  v_doc   text;
-  v_run   text;
-  v_path  jsonb;
-  v_p     text;
+  v_why text;
 begin
   if current_user not in ('authenticated', 'anon') then return new; end if;
-
-  if new.job_type = 'intake_folder' or (new.payload ? 'local_path') then
-    raise exception 'a job naming a local folder can only be started from the worker itself'
-      using errcode = '42501';
+  v_why := jobs_internal.job_refusal(new.matterspace_id, new.job_type, new.production_id, new.payload);
+  if v_why is not null then
+    raise exception '%', v_why using errcode = '42501';
   end if;
-
-  if new.production_id is not null
-     and jobs_internal.matter_of_production(new.production_id) is distinct from new.matterspace_id then
-    raise exception 'that production is not in this job''s matter' using errcode = '42501';
-  end if;
-
-  if new.payload ? 'document_id' then
-    v_doc := new.payload ->> 'document_id';
-    if v_doc is null or v_doc !~ c_uuid
-       or jobs_internal.matter_of_document(v_doc::uuid) is distinct from new.matterspace_id then
-      raise exception 'that document is not in this job''s matter' using errcode = '42501';
-    end if;
-  end if;
-
-  if new.payload ? 'run_id' then
-    v_run := new.payload ->> 'run_id';
-    if v_run is null or v_run !~ c_uuid
-       or jobs_internal.matter_of_run(v_run::uuid) is distinct from new.matterspace_id then
-      raise exception 'that Bucketizer run is not in this job''s matter' using errcode = '42501';
-    end if;
-    if v_doc is not null and not jobs_internal.run_lists_document(v_run::uuid, v_doc::uuid) then
-      raise exception 'that document is not in that Bucketizer run' using errcode = '42501';
-    end if;
-  end if;
-
-  if new.payload ? 'storage_paths' then
-    if jsonb_typeof(new.payload -> 'storage_paths') <> 'array' or new.production_id is null then
-      raise exception 'storage_paths must be a list of this production''s files' using errcode = '42501';
-    end if;
-    for v_path in select * from jsonb_array_elements(new.payload -> 'storage_paths') loop
-      v_p := case when jsonb_typeof(v_path) = 'string' then v_path #>> '{}' end;
-      if v_p is null
-         or v_p !~ ('^' || new.matterspace_id::text || '/' || new.production_id::text || '/[^/]+(/[^/]+)*$')
-         or v_p ~ '(^|/)\.{1,2}(/|$)' or position('%' in v_p) > 0 or position(chr(92) in v_p) > 0
-         or v_p ~ '(^|/)\s|\s(/|$)' then
-        raise exception 'a storage path outside this production' using errcode = '42501';
-      end if;
-    end loop;
-  end if;
-
   return new;
 end $$;
 
