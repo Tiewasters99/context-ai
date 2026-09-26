@@ -741,7 +741,13 @@ export async function moveVaultDocument(
   });
   if (!res.ok) {
     let msg = `move failed: ${res.status}`;
-    try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+    try {
+      const j = await res.json();
+      // S4a: the gate's and the seal's refusals, in words.
+      if (j?.error === 'step_up_required') msg = 'This matter is sealed. Open it and confirm it’s you, then move the document.';
+      else if (j?.error === 'sealed_move_refused') msg = j.message ?? 'A sealed document cannot move out of the seal.';
+      else if (j?.error) msg = j.error;
+    } catch { /* not JSON: keep the status */ }
     throw new Error(msg);
   }
 }

@@ -33,6 +33,20 @@
 //      at another matter's object refused before the mint. discovery-files
 //      by path, with a traversal refused. A Record that cannot be written on
 //      a sealed matter: nothing handed out.
+//   C2. the adversarial review's probes (#247): R0 an aal1 session with a
+//      factor gets `stepup` from matter_entry; effective_tier_is_sealed is no
+//      longer an oracle (NULL to a non-member, uncallable by anon) while the
+//      gate that now uses the internal walk still holds; R1 move-document
+//      refuses sealed → open at aal1 (step-up) AND at aal2 (the seal), with
+//      no Record row and no rename; R2 afterwards the object is where it was
+//      and still unreadable directly; a connector token and a pointer row are
+//      refused; a sealed → sealed move writes file.exported {destination:
+//      'move'} on the source chain BEFORE the rename, and a Record that cannot
+//      be written moves nothing; R3 ingest and get_media refuse a pointer row.
+//      (The pointer row exists here because 097 — which refuses it in the
+//      database — is not in this chain: it stands for a row that predates 097
+//      or a database where 097 is not pasted. scripts/_verify-storage-path.mjs
+//      proves 097 itself.)
 //   D. get_media on a sealed matter: file.opened with the connector actor;
 //      without a service-role mint the bucket refuses and nothing is written;
 //      an open matter writes no file.opened.
@@ -67,6 +81,7 @@ process.env.VITE_SUPABASE_URL = SUPABASE_URL;
 process.env.SUPABASE_URL = SUPABASE_URL;
 process.env.VITE_SUPABASE_ANON_KEY = ANON_KEY;
 process.env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_KEY;
+process.env.OPENAI_API_KEY = 'sk-stub-not-a-key';   // api/ingest.mjs checks it is set
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const migrationSql = (name) => fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', name), 'utf8');
@@ -185,6 +200,9 @@ await db.exec(`
   alter table public.documents enable row level security;
   drop policy if exists d_sel on public.documents;
   create policy d_sel on public.documents for select using (public.can_access_matter(matterspace_id));
+  drop policy if exists d_upd on public.documents;
+  create policy d_upd on public.documents for update
+    using (public.can_write_matter(matterspace_id)) with check (public.can_write_matter(matterspace_id));
 `);
 
 const q = async (sql, params) => (await db.query(sql, params)).rows;
@@ -243,6 +261,7 @@ const attemptAs = async (token, sql, params) => {
 // ---------------------------------------------------------------------------
 // The Supabase witness. Answers Auth, PostgREST and Storage from this database.
 // ---------------------------------------------------------------------------
+const storageCalls = [];        // every request to /storage/v1, of any kind
 const mints = [];                // every signed URL storage handed out: { bucket, name, role }
 let failLedgerOnce = false;      // the next ledger_append answers 500
 const IDENT = /^[a-z_][a-z0-9_]*$/;
@@ -261,6 +280,45 @@ async function stubFetch(input, init = {}) {
   if (u.host !== 'stub.supabase.test') throw new Error(`egress to ${u.host} — the harness allows none`);
   const bearer = bearerOf(init);
   const method = (init.method || 'GET').toUpperCase();
+  if (u.pathname.startsWith('/storage/v1/')) storageCalls.push({ method, path: u.pathname });
+
+  // storage-js move(): storage-api renames the row AS THE CALLER.
+  if (u.pathname === '/storage/v1/object/move' && method === 'POST') {
+    const b = JSON.parse(init.body || '{}');
+    let rows;
+    try {
+      rows = await sqlAs(bearer, 'update storage.objects set name = $3 where bucket_id = $1 and name = $2 returning id',
+        [b.bucketId, b.sourceKey, b.destinationKey]);
+    } catch (err) {
+      return reply(400, { statusCode: '403', error: 'Unauthorized', message: err?.message });
+    }
+    if (!rows.length) return reply(400, { statusCode: '404', error: 'not_found', message: 'Object not found' });
+    return reply(200, { message: 'Successfully moved' });
+  }
+
+  // PostgREST PATCH (supabase-js .update()).
+  if (u.pathname.startsWith('/rest/v1/') && method === 'PATCH') {
+    const table = u.pathname.slice('/rest/v1/'.length);
+    if (!IDENT.test(table)) return reply(400, { message: 'bad table' });
+    const patch = JSON.parse(init.body || '{}');
+    const keys = Object.keys(patch).filter((k) => IDENT.test(k));
+    const params = keys.map((k) => patch[k]);
+    const where = [];
+    for (const [k, v] of u.searchParams) {
+      if (k === 'select' || k === 'columns') continue;
+      if (!IDENT.test(k) || !v.startsWith('eq.')) return reply(400, { message: `unsupported filter ${k}` });
+      params.push(v.slice(3));
+      where.push(`${k}::text = $${params.length}`);
+    }
+    const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    try {
+      const rows = await sqlAs(bearer,
+        `update public.${table} set ${sets}${where.length ? ` where ${where.join(' and ')}` : ''} returning id`, params);
+      return reply(200, rows);
+    } catch (err) {
+      return reply(400, { code: err?.code, message: err?.message });
+    }
+  }
 
   if (u.pathname === '/auth/v1/user') {
     if (!bearer || !VALID.has(bearer)) return reply(401, { message: 'invalid JWT' });
@@ -291,8 +349,14 @@ async function stubFetch(input, init = {}) {
   if (u.pathname.startsWith('/rest/v1/') && method === 'GET') {
     const table = u.pathname.slice('/rest/v1/'.length);
     if (!IDENT.test(table)) return reply(400, { message: 'bad table' });
-    const cols = (u.searchParams.get('select') || '*').split(',').map((c) => c.trim());
-    if (!cols.every((c) => c === '*' || IDENT.test(c))) return reply(400, { message: 'bad select' });
+    // Plain columns, and PostgREST's `alias:col->>key` / `alias:col->key`.
+    const cols = [];
+    for (const c of (u.searchParams.get('select') || '*').split(',').map((x) => x.trim())) {
+      const m = /^([a-z_][a-z0-9_]*):([a-z_][a-z0-9_]*)(->>?)([a-z_][a-z0-9_]*)$/.exec(c);
+      if (m) cols.push(`${m[2]}${m[3]}'${m[4]}' as ${m[1]}`);
+      else if (c === '*' || IDENT.test(c)) cols.push(c);
+      else return reply(400, { message: 'bad select' });
+    }
     const where = [];
     const params = [];
     for (const [k, v] of u.searchParams) {
@@ -606,7 +670,7 @@ const around = async (fn) => {
 }
 {
   const r = await around(() => call(T_CAL2, { document_id: D_POINTER.id, purpose: 'read' }));
-  check(r.status === 409 && r.body?.error === 'path_mismatch' && r.newMints.length === 0 && r.newEvents.length === 0,
+  check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newMints.length === 0 && r.newEvents.length === 0,
     'a row in an OPEN matter pointing at a SEALED object: refused before any mint', `${r.status} ${r.body?.error}`);
 }
 {
@@ -651,6 +715,112 @@ const around = async (fn) => {
 {
   const r = await call(T_CAL2, { document_id: D_SEALED.id, purpose: 'print' });
   check(r.status === 400, 'an unknown purpose is refused');
+}
+
+// ---------------------------------------------------------------------------
+// C2. The review's probes (#247): the gate, the oracle, and move-document
+// ---------------------------------------------------------------------------
+console.log('\n--- C2. the review\'s probes ------------------------------------------');
+{
+  const [r] = await sqlAs(T_CAL1, 'select public.matter_entry($1) as e', [SEALED]);
+  check(r.e === 'stepup', 'R0: an aal1 session of a member WITH a factor gets matter_entry = stepup on the sealed matter', r.e);
+}
+{
+  const cal = (await sqlAs(T_CAL2, 'select public.effective_tier_is_sealed($1) as s', [SEALED]))[0].s;
+  const bob = (await sqlAs(T_BOB2, 'select public.effective_tier_is_sealed($1) as s', [SEALED]))[0].s;
+  const bobOpen = (await sqlAs(T_BOB2, 'select public.effective_tier_is_sealed($1) as s', [OPEN]))[0].s;
+  const svc = (await sqlAs(SERVICE_KEY, 'select public.effective_tier_is_sealed($1) as s', [SEALED_KID]))[0].s;
+  const anon = await attemptAs(null, 'select public.effective_tier_is_sealed($1) as s', [SEALED]);
+  check(cal === true, 'effective_tier_is_sealed: a member is told the truth about their own matter');
+  check(bob === null && bobOpen === null,
+    'effective_tier_is_sealed: a non-member gets NULL for any matter — no longer an oracle for which matters are sealed',
+    JSON.stringify({ bob, bobOpen }));
+  check(svc === true, 'effective_tier_is_sealed: the service role (the endpoint) still gets the plain answer, inherited');
+  check(Boolean(anon.err), 'effective_tier_is_sealed: anon cannot call it at all', anon.err?.message?.slice(0, 60));
+  const vis1 = (await sqlAs(T_CAL1, 'select id from public.matterspaces where id = $1', [SEALED])).length;
+  const vis2 = (await sqlAs(T_CAL2, 'select id from public.matterspaces where id = $1', [SEALED])).length;
+  check(vis1 === 0 && vis2 === 1, 'the matterspaces gate (now on the internal walk) still hides the sealed matter at aal1 and shows it at aal2');
+}
+
+const { default: moveHandler } = await import('../api/move-document.mjs');
+const { default: ingestHandler } = await import('../api/ingest.mjs');
+const drive = async (handler, token, body) => {
+  const req = { method: 'POST', headers: token ? { authorization: `Bearer ${token}` } : {}, body };
+  const res = {
+    statusCode: 200, headers: {}, chunks: [],
+    setHeader(k, v) { this.headers[k] = v; },
+    write(x) { this.chunks.push(String(x)); return true; },
+    end(x) { if (x !== undefined) this.chunks.push(String(x)); return this; },
+  };
+  await handler(req, res);
+  let parsed = null;
+  try { parsed = JSON.parse(res.chunks.join('')); } catch { /* not json */ }
+  return { status: res.statusCode, body: parsed };
+};
+const aroundStorage = async (fn) => {
+  const e0 = (await events()).length;
+  const s0 = storageCalls.length;
+  const m0 = mints.length;
+  const out = await fn();
+  return { ...out, newEvents: (await events()).slice(e0), newStorage: storageCalls.slice(s0), newMints: mints.slice(m0) };
+};
+const D_MOVE = await doc(SEALED, 'Privileged chronology', 'chronology.pdf');
+const rowOf = async (id) => (await q('select matterspace_id, storage_path from public.documents where id = $1', [id]))[0];
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL1, { documentId: D_MOVE.id, newMatterspaceId: OPEN }));
+  check(r.status === 403 && r.body?.error === 'step_up_required' && r.body?.mode === 'stepup',
+    'R1: move-document, aal1, sealed → open: step_up_required', JSON.stringify(r.body));
+  check(r.newEvents.length === 0 && r.newStorage.length === 0,
+    '…nothing written, nothing asked of storage');
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_MOVE.id, newMatterspaceId: OPEN }));
+  check(r.status === 409 && r.body?.error === 'sealed_move_refused',
+    'R1: move-document, aal2, sealed → open: refused — a sealed document never moves to anything less sealed', JSON.stringify(r.body));
+  check(r.newEvents.length === 0 && r.newStorage.length === 0, '…no Record row, no rename');
+}
+{
+  const row = await rowOf(D_MOVE.id);
+  const direct = await objectRows(T_CAL2, 'vault-documents', D_MOVE.path);
+  const svc = await objectRows(SERVICE_KEY, 'vault-documents', D_MOVE.path);
+  const inOpen = await objectRows(T_CAL2, 'vault-documents', `${OPEN}/${D_MOVE.id}/chronology.pdf`);
+  check(row.matterspace_id === SEALED && row.storage_path === D_MOVE.path && direct.length === 0 && svc.length === 1 && inOpen.length === 0,
+    'R2: after the refused moves the object is where it was, still unreadable directly, with no copy in the open matter');
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CONN, { documentId: D_MOVE.id, newMatterspaceId: SEALED_KID }));
+  check(r.status === 403 && r.body?.error === 'browser_sessions_only' && r.newStorage.length === 0,
+    'move-document: a connector-stamped token is refused, as at /api/document-url');
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_POINTER.id, newMatterspaceId: SEALED_KID }));
+  check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newStorage.length === 0 && r.newEvents.length === 0,
+    'move-document: a POINTER row is refused before anything is asked of storage');
+}
+{
+  failLedgerOnce = true;
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_MOVE.id, newMatterspaceId: SEALED_KID }));
+  const row = await rowOf(D_MOVE.id);
+  check(r.status === 503 && r.body?.error === 'record_failed' && r.newStorage.length === 0 && row.matterspace_id === SEALED,
+    'move-document, sealed → sealed, Record unavailable: nothing moves (the row is written BEFORE the rename)', JSON.stringify(r.body));
+}
+{
+  const r = await aroundStorage(() => drive(moveHandler, T_CAL2, { documentId: D_MOVE.id, newMatterspaceId: SEALED_KID }));
+  const row = await rowOf(D_MOVE.id);
+  const newPath = `${SEALED_KID}/${D_MOVE.id}/chronology.pdf`;
+  const e = r.newEvents.find((x) => x.kind === 'file.exported');
+  check(r.status === 200 && row.matterspace_id === SEALED_KID && row.storage_path === newPath
+    && (await objectRows(SERVICE_KEY, 'vault-documents', newPath)).length === 1,
+  'move-document, aal2, sealed → sealed sub-matter: allowed, object and row moved together', JSON.stringify(r.body));
+  check(e && e.matterspace_id === SEALED && e.payload.destination === 'move' && e.payload.to_matter === SEALED_KID
+    && e.payload.document_id === D_MOVE.id && e.actor_user_id === CAL,
+  '…file.exported {destination:move, to_matter} on the SOURCE matter\'s chain', JSON.stringify(r.newEvents.map((x) => [x.kind, x.payload])));
+  check((await objectRows(T_CAL2, 'vault-documents', newPath)).length === 0, '…and it is as closed in its new room as in its old one');
+}
+{
+  const r = await aroundStorage(() => drive(ingestHandler, T_CAL2, { documentId: D_POINTER.id }));
+  check(r.status === 409 && r.body?.error === 'storage_path_mismatch' && r.newStorage.length === 0,
+    'R3: /api/ingest refuses a POINTER row in an open matter before any download', JSON.stringify(r.body));
 }
 
 // ---------------------------------------------------------------------------
@@ -711,6 +881,16 @@ const serviceClient = clientFor(SERVICE_KEY);
   } catch (e) { err = e; }
   check(Boolean(err) && !out && /Record could not be written/.test(err.message),
     'get_media, sealed, Record unavailable: no link is issued', err?.message);
+}
+
+{
+  const s0 = storageCalls.length;
+  let err = null;
+  try {
+    await handleGetMedia(serviceClient, { document_id: D_POINTER.id }, { actor: CONNECTOR_ACTOR, storageClient: serviceClient });
+  } catch (e) { err = e; }
+  check(Boolean(err) && /different matter/.test(err.message) && storageCalls.length === s0,
+    'R3: get_media refuses a POINTER row before the mint — even with a service-role client that would sign anything', err?.message);
 }
 
 // ---------------------------------------------------------------------------

@@ -9,15 +9,30 @@
 // performed with the service role. Failures stop the chain; the row is left
 // in whichever consistent state we reached.
 //
+// Before anything moves (S4a, after the adversarial review of #247): the
+// step-up gate is asked for BOTH matters as the user (094's matter_entry —
+// the documents row is not step-up gated, so an aal1 session could otherwise
+// carry a sealed document into a matter it can read directly); a document in
+// a sealed matter moves only to a matter sealed at least as tightly (S7
+// decides anything more); connector-stamped tokens are refused, as at
+// /api/document-url; and `file.exported {destination:'move', to_matter}` is
+// written on the SOURCE matter's Record — on a sealed source, nothing moves
+// unless that row landed.
+//
 // Request body: { documentId: uuid, newMatterspaceId: uuid }
 // Response:     { ok: true, oldStoragePath, newStoragePath }
 //                or { error: string } with status code
 
 import { createClient } from '@supabase/supabase-js';
+import { jwtClaims } from '../lib/account-security.mjs';
+import { record } from '../lib/ledger.mjs';
+import { fetchMatterTier, matterTierWithClient, isSealedTier } from '../lib/ai-tier-policy.mjs';
+import { pathInMatter } from '../lib/storage-path.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const TIER_RANK = { A: 0, B: 1, C: 2 };
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -35,10 +50,20 @@ export default async function handler(req, res) {
     return json(res, 401, { error: 'missing_bearer' });
   }
   const userToken = authHeader.slice(7).trim();
+  // 094 lets a token our own MCP server minted for a connector past the
+  // step-up gate (the seal governs connectors). A move can carry a sealed
+  // document out of its room, so this door, like /api/document-url, is for
+  // people's browser sessions only.
+  if (jwtClaims(userToken).cs_via === 'connector') {
+    return json(res, 403, { error: 'browser_sessions_only' });
+  }
   const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${userToken}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
+  const { data: userData, error: userErr } = await sb.auth.getUser();
+  if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
+  const userId = userData.user.id;
 
   const body = typeof req.body === 'string' ? safeJsonParse(req.body) : req.body;
   const documentId = body?.documentId;
@@ -50,7 +75,7 @@ export default async function handler(req, res) {
   // Look up the doc. RLS confirms read access on the source matter.
   const { data: doc, error: docErr } = await sb
     .from('documents')
-    .select('id, matterspace_id, storage_path, source_filename')
+    .select('id, title, matterspace_id, storage_path, source_filename')
     .eq('id', documentId)
     .maybeSingle();
   if (docErr) return json(res, 500, { error: `lookup: ${docErr.message}` });
@@ -58,16 +83,93 @@ export default async function handler(req, res) {
   if (doc.matterspace_id === newMatterspaceId) {
     return json(res, 200, { ok: true, noop: true });
   }
+  // 097: the object is filed under the row's own matter, or nothing moves —
+  // the service role below must never move an object on the strength of a
+  // row that points somewhere else.
+  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) {
+    return json(res, 409, { error: 'storage_path_mismatch' });
+  }
 
   // Verify destination matter is reachable. RLS rejects if the user is
-  // not a member of the destination serverspace.
+  // not a member of the destination serverspace (and, since 094, if it is
+  // sealed and this session has not stepped up).
   const { data: destMatter, error: destErr } = await sb
     .from('matterspaces')
     .select('id')
     .eq('id', newMatterspaceId)
     .maybeSingle();
   if (destErr) return json(res, 500, { error: `dest lookup: ${destErr.message}` });
+
+  // THE STEP-UP GATE (094), asked out loud for BOTH ends, as the user. The
+  // documents row is not step-up gated (094's header), so reading it proves
+  // membership and nothing more; without this an aal1 session could carry a
+  // sealed document into a matter it can read directly.
+  for (const m of [doc.matterspace_id, newMatterspaceId]) {
+    const { data: entry, error: entryErr } = await sb.rpc('matter_entry', { p_matter: m });
+    if (entryErr) {
+      const code = String(entryErr.code ?? '');
+      // 094 not pasted: there is no gate to ask (and no 096 either).
+      if (code !== 'PGRST202' && code !== '42883') return json(res, 503, { error: 'seal_unresolved' });
+    } else if (entry === 'stepup' || entry === 'enrol') {
+      return json(res, 403, { error: 'step_up_required', mode: entry, matter_id: m });
+    } else if (entry !== 'open') {
+      return json(res, 403, { error: 'destination_not_found_or_no_access' });
+    }
+  }
   if (!destMatter) return json(res, 403, { error: 'destination_not_found_or_no_access' });
+
+  // THE SEAL (S4a; S7 decides what may cross a sealed container's edge). A
+  // document may move deeper into the seal or sideways within it, never out
+  // to anything less sealed. The tiers are read with the service role, so an
+  // inherited seal counts even when the parent is invisible to the caller.
+  let srcTier;
+  let destTier;
+  try {
+    [srcTier, destTier] = SERVICE_KEY
+      ? await Promise.all([doc.matterspace_id, newMatterspaceId].map((m) => fetchMatterTier(SUPABASE_URL, SERVICE_KEY, m)))
+      : await Promise.all([doc.matterspace_id, newMatterspaceId].map((m) => matterTierWithClient(sb, m)));
+  } catch {
+    return json(res, 503, { error: 'seal_unresolved' });
+  }
+  if (!srcTier || !destTier) return json(res, 503, { error: 'seal_unresolved' });
+  const sourceSealed = isSealedTier(srcTier);
+  if (sourceSealed && TIER_RANK[destTier] < TIER_RANK[srcTier]) {
+    return json(res, 409, {
+      error: 'sealed_move_refused',
+      message: 'This document is in a sealed matter. It can move only to a matter sealed at least as tightly; '
+        + 'moving it out would take it past the seal.',
+    });
+  }
+
+  // 049's storage rule, asked as the user in the same words: may this person
+  // write the source AND the destination?
+  for (const m of [doc.matterspace_id, newMatterspaceId]) {
+    const { data: canWrite, error: cwErr } = await sb.rpc('can_write_matter', { p_matter_id: m });
+    if (cwErr) return json(res, 500, { error: `permission check: ${cwErr.message}` });
+    if (canWrite !== true) return json(res, 403, { error: 'not_permitted' });
+  }
+
+  // THE RECORD, BEFORE ANYTHING MOVES. A move is a copy that leaves its
+  // matter, so the source matter's Record says where it went. On a sealed
+  // source nothing moves unless the row landed; on an open one a Record that
+  // cannot be written is logged and the move goes on (the document stays in
+  // the firm, in a matter the person can already open).
+  const recorded = await record(sb, {
+    kind: 'file.exported',
+    matterId: doc.matterspace_id,
+    actor: { kind: 'user', ref: userId, user_id: userId },
+    payload: {
+      document_id: doc.id,
+      title: doc.title ?? doc.source_filename ?? null,
+      destination: 'move',
+      to_matter: newMatterspaceId,
+      sealed: sourceSealed,
+    },
+  });
+  if (!recorded?.ok) {
+    if (sourceSealed) return json(res, 503, { error: 'record_failed' });
+    console.warn(`[move-document] file.exported not recorded: ${recorded?.error?.message ?? 'unknown'}`);
+  }
 
   const oldPath = doc.storage_path;
   let newPath = null;
@@ -76,24 +178,10 @@ export default async function handler(req, res) {
   // Since migration 096 the bucket hides an object in a SEALED matter from
   // the user's own JWT (a move is an UPDATE … WHERE name = …, which then
   // matches nothing), so a user-scoped move of a sealed document fails as
-  // "Object not found". The authorization 049's storage policy gave is asked
-  // here instead, as the user and in the same words: can_write_matter on the
-  // source AND the destination.
+  // "Object not found". Everything above is what authorizes it.
   const storage = SERVICE_KEY
     ? createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
     : sb;
-  if (oldPath && SERVICE_KEY) {
-    // The object is judged by ITS path, as the policy judged it. A row whose
-    // storage_path points into some other matter is refused outright: the
-    // service role must never move an object on the strength of a row.
-    const pathMatter = oldPath.split('/')[0];
-    if (pathMatter !== doc.matterspace_id) return json(res, 409, { error: 'path_mismatch' });
-    for (const m of [pathMatter, newMatterspaceId]) {
-      const { data: canWrite, error: cwErr } = await sb.rpc('can_write_matter', { p_matter_id: m });
-      if (cwErr) return json(res, 500, { error: `permission check: ${cwErr.message}` });
-      if (canWrite !== true) return json(res, 403, { error: 'not_permitted' });
-    }
-  }
 
   // 1) Move the storage object (if there is one). The convention is
   //    {matterspace_id}/{document_id}/{filename}.
@@ -107,18 +195,19 @@ export default async function handler(req, res) {
   // 2) Update the documents row. If this fails after the storage move
   //    succeeded, we'd be in an inconsistent state — try to roll storage
   //    back so the row keeps matching its file.
-  const { error: docUpdErr } = await sb
+  const { data: updRows, error: docUpdErr } = await sb
     .from('documents')
     .update({
       matterspace_id: newMatterspaceId,
       ...(newPath ? { storage_path: newPath } : {}),
     })
-    .eq('id', documentId);
-  if (docUpdErr) {
+    .eq('id', documentId)
+    .select('id');
+  if (docUpdErr || !updRows?.length) {
     if (oldPath && newPath) {
       await storage.storage.from('vault-documents').move(newPath, oldPath).catch(() => {});
     }
-    return json(res, 500, { error: `documents update: ${docUpdErr.message}` });
+    return json(res, 500, { error: `documents update: ${docUpdErr?.message ?? 'no row was updated'}` });
   }
 
   // 3) Update the denormalized matterspace_id on every passage tied to

@@ -42,7 +42,7 @@
 //     membership rule (serverspace members) is asked as the user.
 // Response { url, expires_in, sealed, recorded, filename }
 // Refusals 401 missing_bearer / invalid_session · 403 step_up_required {mode}
-//          · 403 browser_sessions_only · 404 not_found · 409 path_mismatch
+//          · 403 browser_sessions_only · 404 not_found · 409 storage_path_mismatch
 //          · 503 seal_unresolved / record_failed (nothing handed out)
 //
 // Plain fetch with an injectable fetchImpl, like api/account-sessions.mjs, so
@@ -54,6 +54,7 @@ import {
   userRpcClient, SUPABASE_URL, ANON_KEY, SERVICE_KEY,
 } from '../lib/account-security.mjs';
 import { record } from '../lib/ledger.mjs';
+import { pathInMatter } from '../lib/storage-path.mjs';
 import { walkEffectiveTier, isSealedTier } from '../lib/ai-tier-policy.mjs';
 
 export const URL_TTL_SECONDS = 900;
@@ -223,10 +224,11 @@ export default async function handler(req, res, deps = {}) {
     // The bucket judges an object by its path; the Record files it under the
     // row's matter. They must be the same matter, or a writer in one matter
     // could point a row of theirs at another matter's object and have this
-    // endpoint's service role fetch it for them.
+    // endpoint's service role fetch it for them. (Migration 097 refuses such
+    // a row in the database; lib/storage-path.mjs is the same rule here.)
     matterId = matterOfPath(doc.storage_path);
-    if (!matterId || matterId !== String(doc.matterspace_id).toLowerCase()) {
-      return json(res, 409, { error: 'path_mismatch' });
+    if (!matterId || !pathInMatter(doc.storage_path, doc.matterspace_id)) {
+      return json(res, 409, { error: 'storage_path_mismatch' });
     }
     objectPath = doc.storage_path;
     documentId = doc.id;

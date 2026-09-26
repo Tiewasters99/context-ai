@@ -99,8 +99,9 @@
 
 do $guard$
 begin
-  if to_regprocedure('public.effective_tier_is_sealed(uuid)') is null then
-    raise exception '096 needs migration 094 (public.effective_tier_is_sealed). Paste 094 first.';
+  if to_regprocedure('public.effective_tier_is_sealed(uuid)') is null
+     or to_regprocedure('stepup_internal.effective_tier_is_sealed(uuid)') is null then
+    raise exception '096 needs migration 094 (effective_tier_is_sealed). Paste 094 first.';
   end if;
 end $guard$;
 
@@ -128,6 +129,50 @@ grant execute on function public.storage_matter_of(text) to authenticated, servi
 
 
 -- ============================================================================
+-- 1b. "Is this matter sealed?" answers only about matters you can open
+-- ============================================================================
+-- 094 granted public.effective_tier_is_sealed(uuid) to every signed-in user
+-- (and, by Postgres's default, to PUBLIC — so anon too) and it answered for
+-- ANY uuid: an oracle for which matters, anywhere, are sealed. From here the
+-- public function answers NULL ("not yours to ask") for a matter the caller
+-- cannot open; a caller with no JWT (the service role: the endpoint, the
+-- worker) still gets the plain answer, and anon cannot call it at all.
+--
+-- NULL, not false: false would say "not sealed", and anything that trusted
+-- it would fail OPEN. Which is also why no POLICY calls the public function
+-- any more — the matterspaces policy (094) and the two storage policies below
+-- call stepup_internal.effective_tier_is_sealed, the unwrapped definer walk,
+-- which PostgREST does not expose. The search wrappers (094 §4b) keep the
+-- public name: each asks can_access_matter first, so for them the answer is
+-- unchanged.
+create or replace function public.effective_tier_is_sealed(p_matter uuid)
+returns boolean
+language plpgsql
+stable
+security invoker
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if p_matter is null then return false; end if;
+  if v_uid is not null and not public.can_access_matter(p_matter) then return null; end if;
+  return stepup_internal.effective_tier_is_sealed(p_matter);
+end $$;
+
+revoke all on function public.effective_tier_is_sealed(uuid) from public, anon;
+grant execute on function public.effective_tier_is_sealed(uuid) to authenticated, service_role;
+
+-- 094's matterspaces SELECT policy, word for word, but for the walk it calls.
+drop policy if exists "Members can view matterspaces" on public.matterspaces;
+create policy "Members can view matterspaces"
+  on public.matterspaces for select
+  using (
+    public._mtspc_select_check(id, serverspace_id, parent_matterspace_id)
+    and ((select public.sealed_entry_allowed()) or not stepup_internal.effective_tier_is_sealed(id))
+  );
+
+
+-- ============================================================================
 -- 2. vault-documents — 016's SELECT policy, plus the seal
 -- ============================================================================
 -- `to authenticated`: the spec's words, and it keeps anon (which never had a
@@ -144,7 +189,7 @@ create policy "Members can read vault-documents files in their matterspaces"
     and public.storage_matter_of(name) is not null
     and public.can_access_matter(public.storage_matter_of(name))
     and (
-      not public.effective_tier_is_sealed(public.storage_matter_of(name))
+      not stepup_internal.effective_tier_is_sealed(public.storage_matter_of(name))
       -- the row this transaction is writing (an upload's RETURNING); see the header
       or created_at = now()
     )
@@ -174,7 +219,7 @@ create policy "Members read discovery files in their matterspaces"
         and sm.user_id = auth.uid()
     )
     and (
-      not public.effective_tier_is_sealed(public.storage_matter_of(name))
+      not stepup_internal.effective_tier_is_sealed(public.storage_matter_of(name))
       or created_at = now()
     )
   );

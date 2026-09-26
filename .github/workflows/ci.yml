@@ -194,6 +194,7 @@ jobs:
       - name: Migration 096 — the sealed download gate (PGlite + real RLS)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-download.mjs
+
       # Migration 097 — a document's stored file lives under its own matter.
       # The CHECK refuses a row whose storage_path names another matter's
       # object (insert, update, a move that leaves the path behind), and the

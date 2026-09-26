@@ -501,6 +501,8 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
       const dest = str(payload.destination);
       // S4a: the Reader's Download button, on any matter.
       if (dest === 'download') return `${who} downloaded ${title}`;
+      // S4a: /api/move-document — the document left this matter for another.
+      if (dest === 'move') return `${who} moved ${title} to another matter`;
       return `${who} exported ${title}${dest ? ` (${dest})` : ''}`;
     }
     // S4a (migration 096): a sealed matter's file handed out to be read or
