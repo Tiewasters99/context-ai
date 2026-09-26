@@ -24,7 +24,11 @@ export type LedgerEventKind =
   | 'connector.revoked'
   | 'ai.paused'
   | 'ai.resumed'
-  | 'run.aborted';
+  | 'run.aborted'
+  // 100 — the Brief Desk (094's kinds are written only from lib/, untyped here)
+  | 'draft.snapshot'
+  | 'cite.checked'
+  | 'draft.exported';
 
 export interface LedgerActor {
   kind: 'user' | 'charter' | 'connector' | 'system';
@@ -46,6 +50,7 @@ export interface LedgerResult {
 }
 
 export const EVENT_KINDS: readonly LedgerEventKind[];
+export const KINDS_100: readonly LedgerEventKind[];
 export const EVENT_TYPES: readonly LedgerEventKind[];
 export const NIL_CHAIN: string;
 
