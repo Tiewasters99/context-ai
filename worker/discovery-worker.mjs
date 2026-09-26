@@ -48,6 +48,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { pathInMatter } from '../lib/storage-path.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
@@ -755,6 +756,11 @@ async function ingestDocument(job) {
     .eq('id', docId).single();
   if (error) throw new Error(`document ${docId}: ${error.message}`);
   if (!doc.storage_path) throw new Error('document has no storage_path');
+  // 097: the worker reads with the service role, so a row pointing at another
+  // matter's object would be indexed into this one. Refused (lib/storage-path.mjs).
+  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) {
+    throw new Error('document storage_path is filed under a different matter; not read');
+  }
   // A ready document with a recorded text_status is stored-without-text, and
   // one with ocr_pending still owes OCR on some pages; a queued re-run of
   // either is deliberate. Only a fully indexed document is skipped — unless

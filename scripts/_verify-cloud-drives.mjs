@@ -88,7 +88,8 @@ const DOC = Object.freeze({
   id: 'doc-1',
   title: 'Calder v. Atlas — settlement memo',
   source_filename: 'settlement:memo?.pdf',
-  storage_path: 'user-1/doc-1.pdf',
+  // Filed under its own matter, as migration 097 requires (<matter>/<doc>/<file>).
+  storage_path: 'matter-1/doc-1/settlement-memo.pdf',
   file_size_bytes: 21,
 });
 const MATTER_NAME = 'Calder v. Atlas — 7/12 "hearing"';
@@ -673,7 +674,18 @@ try {
     try {
       const onMain = execFileSync('git', ['show', `origin/main:${rel}`], { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
         .replace(/\r\n/g, '\n');
-      check(here === onMain, `${rel} is byte-for-byte origin/main's — Google's export is untouched by this PR`);
+      // Migration 097 (a separate lane) adds one import and one check to every
+      // byte-reading route. Those lines are taken out before comparing, so this
+      // still proves the cloud-drives lane never touched Google's path.
+      const without097 = here
+        .replace(/^import \{ pathInMatter \} from '[^']+';\n/m, '')
+        .replace(/ {2}\/\/ 097: [\s\S]*?storage_path_mismatch' \}\);\n/, '')
+        .replace("file_size_bytes, matterspace_id')", "file_size_bytes')");
+      if (onMain.includes('pathInMatter')) {
+        skip(`${rel} vs origin/main`, 'main carries 097 now');
+      } else {
+        check(without097 === onMain, `${rel} is byte-for-byte origin/main's (097's check aside) — Google's export is untouched by this PR`);
+      }
     } catch {
       skip(`${rel} vs origin/main`, 'the base ref is not fetched here');
     }
