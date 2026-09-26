@@ -335,7 +335,9 @@ begin
     return false;   -- signed out (or never this account's)
   end if;
   -- coalesce: with no presser yet (round 3), the comparison is null, not false.
-  return coalesce(v_sid::uuid = p_lock.presser_session_id, false) or v_created > p_lock.locked_at;
+  -- The outer coalesce: a session row with no created_at is refused, never
+  -- a NULL that `if not …` would wave through.
+  return coalesce(coalesce(v_sid::uuid = p_lock.presser_session_id, false) or v_created > p_lock.locked_at, false);
 end $$;
 
 revoke all on function disconnect_internal.session_ok(public.account_connection_locks, jsonb) from public, anon, authenticated, service_role;
@@ -619,7 +621,7 @@ begin
     return false;
   end if;
   select s.created_at into v_created from auth.sessions s where s.id = p_sid and s.user_id = p_uid;
-  if not found then
+  if not found or v_created is null then
     return false;
   end if;
   if public.auth_is_aal2() then

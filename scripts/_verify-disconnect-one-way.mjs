@@ -820,11 +820,15 @@ section('L. HIGH-2 — a pre-065 client (no grant id) (the reviewer\'s R2 probe,
 section('P. MEDIUM-3 — no session from before the press brings anything back');
 // ===========================================================================
 {
+  const S_NULLCREATED = await signIn(ADA, { iat: nowS() + 40, session: 'sess-null-created' });
+  await asSuperuser();
+  await q(`update auth.sessions set created_at = null where id = $1`, [sid('sess-null-created')]);
   const who = [
     ['the thief\'s signed-out session (an unexpired token)', C(S_THIEF)],
     ['the thief\'s signed-out session, refreshed (later iat)', { ...C(S_THIEF), iat: nowS() + 30 }],
     ['a session created in the lock\'s own instant', C(S_SAME)],
     ['a token with no session_id and no iat', { sub: ADA, role: 'authenticated' }],
+    ['a session row with a NULL created_at', C(S_NULLCREATED)],
     ['a connector\'s minted token (fresh iat)', { sub: ADA, role: 'authenticated', iat: nowS() + 5, cs_via: 'connector' }],
   ];
   for (const [label, claims] of who) {
