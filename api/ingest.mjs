@@ -153,11 +153,14 @@ export default async function handler(req, res) {
   // actually read can be read back per user per month. True per-page metering
   // needs a usage_consume call inside the worker once #153 lands.
   //
-  // So the CENTS charged here are the inline ones only — embedding the text,
-  // plus one OCR call for a scanned page that arrived as a JPEG or PNG. A
-  // scanned PDF leaves for the worker a few lines below without this function
-  // calling any provider, and charging it here for pages nobody has counted
-  // would refuse ordinary uploads to bill for work that happens elsewhere.
+  // So the CENTS charged here are the ones knowable now — embedding the text,
+  // plus one OCR call for a scanned page that arrived as a JPEG or PNG. That
+  // image leaves for the worker a few lines below (since 2026-09-26; before
+  // that its OCR ran here), but it is still exactly one OCR call, known at
+  // request time, so it is still charged here. A scanned PDF leaves without
+  // this function calling any provider, and charging it here for pages
+  // nobody has counted would refuse ordinary uploads to bill for work that
+  // happens elsewhere.
   const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
   const ingestMeter = await consumeUsage({
     supabaseUrl: SUPABASE_URL,
@@ -237,11 +240,13 @@ export default async function handler(req, res) {
     }
   }
 
-  // Scanned-image OCR, for JPEG/PNG (a scanned page saved as a picture — one
-  // page, one OCR call, well inside the serverless budget). The provider
-  // picks the route the matter's tier allows and falls back within the tier
-  // (Phase 4). It stays wired for PDFs as a backstop, but a PDF that needs
-  // it was routed to the worker just above, so it does not run here.
+  // OCR provider, wired as a backstop. A JPEG/PNG is routed to the worker by
+  // needsWorkerIngest (since 2026-09-26 — one OCR call is 20–60 s the
+  // browser used to wait for), and a PDF that needs OCR was routed just
+  // above, so neither runs here; the wiring stays so that a queue insert
+  // that failed and fell through inline still ends in OCR, not in
+  // "image_only". The provider picks the route the matter's tier allows and
+  // falls back within the tier (Phase 4).
   let ocr = null;
   if (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext)) {
     ocr = makeOcrProvider(process.env);
