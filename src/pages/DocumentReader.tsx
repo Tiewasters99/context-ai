@@ -117,7 +117,28 @@ type DocMeta = {
   source_document_id?: string | null;
 };
 
-type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'unsupported';
+type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'image' | 'unsupported';
+
+// Pictures the browser draws natively. A stored image is the document — a
+// concept render for a screenplay, a photographed exhibit, a chart — and
+// until 2026-09-26 the reader answered every one of them with "Unsupported
+// file type" while the Vault row promised it was "stored and viewable".
+// TIFF is left out on purpose: no browser renders it, so a .tif falls to the
+// text edition of its OCR (a Bates production) or the error page.
+const BROWSER_IMAGE_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+};
+function imageTypeFor(filename: string): string | null {
+  const i = filename.lastIndexOf('.');
+  if (i < 0) return null;
+  return BROWSER_IMAGE_TYPES[filename.slice(i)] ?? null;
+}
 
 // Plain text → minimal HTML: escape, split paragraphs on blank lines.
 // Single newlines inside a paragraph survive through the text page's
@@ -269,6 +290,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   // For .fountain — the parser produces a separate title-page block we
   // want to render above the script body.
   const [titlePageHtml, setTitlePageHtml] = useState<string | null>(null);
+  // For an image — the picture itself, as a blob URL over the bytes the
+  // Vault holds, and its pixel size once the browser has decoded it. The URL
+  // is revoked when the next one replaces it and when the reader unmounts.
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -437,6 +464,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setLoadProgress(null);
     setErrorMsg(null);
     setDocHtml(null);
+    setImageUrl(null);
+    setImageDims(null);
     pageTextCacheRef.current = [];
     setMatches([]);
     setMatchIdx(0);
@@ -477,6 +506,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         : fn.endsWith('.fountain') ? 'fountain'
         : fn.endsWith('.pptx') ? 'pptx'
         : fn.endsWith('.txt') || fn.endsWith('.md') ? 'text'
+        : imageTypeFor(fn) ? 'image'
         : 'unsupported';
       setFileKind(kind);
 
@@ -514,7 +544,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           setLoadState('ready');
           return;
         }
-        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), Fountain (.fountain), and plain text (.txt, .md).');
+        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), Fountain (.fountain), plain text (.txt, .md), and images (PNG, JPEG, GIF, WebP, SVG, BMP).');
         setLoadState('error');
         return;
       }
@@ -584,6 +614,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           const text = await (blob as Blob).text();
           if (cancelled) return;
           setDocHtml(plainTextHtml(text));
+          setTotalPages(1);
+          setPage(1);
+        } else if (kind === 'image') {
+          // An image — the bytes as filed, drawn by the browser. Storage
+          // does not always return a typed blob, and an untyped SVG will
+          // not render, so the type comes from the name. The URL is the
+          // reader's to revoke (see the imageUrl effect).
+          const typed = new Blob([blob as Blob], { type: imageTypeFor(fn) ?? 'application/octet-stream' });
+          setImageUrl(URL.createObjectURL(typed));
           setTotalPages(1);
           setPage(1);
         } else {
@@ -1049,6 +1088,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     }
     setCopyState('busy');
     setCopyNote(null);
+    // An image has no words to copy; the picture itself goes to the
+    // clipboard, as PNG, which is the one bitmap type every browser's
+    // clipboard accepts. A JPEG or WebP is redrawn to PNG on a canvas first.
+    if (fileKind === 'image' && imageUrl) {
+      try {
+        if (typeof ClipboardItem === 'undefined') throw new Error('no ClipboardItem');
+        const src = await (await fetch(imageUrl)).blob();
+        let png: Blob = src;
+        if (src.type !== 'image/png') {
+          const bitmap = await createImageBitmap(src);
+          const canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          png = await canvasToBlob(canvas, 'image/png');
+        }
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+        settleCopy('done');
+      } catch {
+        settleCopy('failed', CLIPBOARD_REFUSED);
+      }
+      return;
+    }
     let extracted = false;
     try {
       let cached = docTextRef.current && docTextRef.current.id === id ? docTextRef.current : null;
@@ -1094,7 +1157,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           : CLIPBOARD_REFUSED,
       );
     }
-  }, [copyState, loadState, fileKind, docHtml, titlePageHtml, id, settleCopy, CLIPBOARD_REFUSED]);
+  }, [copyState, loadState, fileKind, imageUrl, docHtml, titlePageHtml, id, settleCopy, CLIPBOARD_REFUSED]);
 
   // ── Print ───────────────────────────────────────────────────────────
   // A PDF prints as itself: the original file into a hidden same-origin
@@ -1529,7 +1592,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         setErrorMsg(error?.message || 'Failed to download the file.');
         return;
       }
-      const ext = fileKind === 'pdf' ? '.pdf' : fileKind === 'pptx' ? '.pptx' : '.docx';
+      // The stored name carries the real extension; the fallback only
+      // matters when it is missing, and then the kind is the best guess.
+      const storedExt = (doc.source_filename || doc.storage_path).match(/\.[a-z0-9]+$/i)?.[0];
+      const ext = storedExt
+        ?? (fileKind === 'pdf' ? '.pdf' : fileKind === 'pptx' ? '.pptx' : fileKind === 'image' ? '.png' : '.docx');
       const fallback = (doc.title || 'document').replace(/[\\/:*?"<>|]+/g, '_') + ext;
       const filename = doc.source_filename || fallback;
       const url = URL.createObjectURL(blob);
@@ -2458,7 +2525,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             <ZoomOut size={15} />
           </button>
           <span className="text-xs text-white/55 tabular-nums w-12 text-center">
-            {fileKind === 'pdf' && fitPage ? 'Fit' : `${Math.round(zoom * 100)}%`}
+            {fileKind === 'pdf' && fitPage
+              ? 'Fit'
+              // An image fills the pane at the default zoom; say 100% for
+              // that, not the 150% the text formats' type size is scaled from.
+              : fileKind === 'image'
+                ? `${Math.round((zoom / 1.5) * 100)}%`
+                : `${Math.round(zoom * 100)}%`}
           </span>
           <button
             onClick={() => {
@@ -2519,7 +2592,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             // still selected when the click copies it.
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void handleCopyText()}
-            disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml)}
+            disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl)}
             className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${copyState === 'failed' ? 'text-red-400' : copyState === 'done' ? 'text-emerald-400' : 'text-white/70'}`}
             title={
               copyState === 'done'
@@ -2528,7 +2601,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                   ? (copyNote ?? 'The copy did not go through — click again')
                   : copyState === 'busy'
                     ? 'Copying…'
-                    : 'Copy the selected text — or the whole document as clean text when nothing is selected'
+                    : fileKind === 'image'
+                      ? 'Copy the picture — paste it into Word, a slide, or a chat'
+                      : 'Copy the selected text — or the whole document as clean text when nothing is selected'
             }
           >
             {copyState === 'done' ? <Check size={15} /> : copyState === 'failed' ? <X size={15} /> : <Copy size={15} />}
@@ -2603,7 +2678,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                     ...(fileKind === 'pdf' && !embedded ? [
                       { icon: <Scissors size={14} />, label: 'Edit pages', run: () => setPageEditorOpen(true), disabled: loadState !== 'ready' || !doc?.storage_path },
                     ] : []),
-                    { icon: <FileText size={14} />, label: 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml) },
+                    { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },
                     { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
                     { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
                     ...(connectedDrives.length
@@ -2795,6 +2870,37 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               >
                 <div dangerouslySetInnerHTML={docHtmlProp} />
               </div>
+            )}
+            {loadState === 'ready' && fileKind === 'image' && imageUrl && (
+              <figure
+                className="image-page print-root w-full mx-auto flex flex-col items-center gap-3"
+                style={{ width: `${Math.round(100 * (zoom / 1.5))}%`, maxWidth: 'none' }}
+              >
+                <img
+                  src={imageUrl}
+                  alt={doc?.title ?? 'Image'}
+                  draggable={false}
+                  onLoad={(e) => {
+                    const el = e.currentTarget;
+                    if (el.naturalWidth && el.naturalHeight) setImageDims({ w: el.naturalWidth, h: el.naturalHeight });
+                  }}
+                  className="w-full h-auto shadow-2xl select-none"
+                  // At 100% the picture is its own size or the pane's width,
+                  // whichever is smaller — a 1024-px render stretched to a wide
+                  // pane goes soft. Zooming past 100% enlarges it deliberately.
+                  style={{
+                    maxWidth: imageDims ? `${Math.round(imageDims.w * (zoom / 1.5))}px` : undefined,
+                    imageRendering: zoom > 3 ? 'pixelated' : 'auto',
+                  }}
+                />
+                {imageDims && (
+                  <figcaption className="text-[11px] text-white/45 tracking-wide print:hidden">
+                    {imageDims.w} × {imageDims.h} px
+                    {doc?.source_filename ? ` · ${doc.source_filename.slice(doc.source_filename.lastIndexOf('.') + 1).toUpperCase()}` : ''}
+                    {doc?.file_size_bytes ? ` · ${doc.file_size_bytes >= 1048576 ? `${(doc.file_size_bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(doc.file_size_bytes / 1024))} KB`}` : ''}
+                  </figcaption>
+                )}
+              </figure>
             )}
             {loadState === 'ready' && fileKind === 'pptx' && docHtml && (
               <div
