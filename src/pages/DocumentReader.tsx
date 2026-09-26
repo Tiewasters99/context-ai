@@ -26,12 +26,14 @@ import {
   MessageCircle,
   Loader2,
   Send,
+  PenLine,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
+import { hasDraftBody } from '@/lib/brief/draft-store';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
@@ -115,6 +117,8 @@ type DocMeta = {
   text_status?: string | null;
   /** For an edited copy: the indexed original it was made from. */
   source_document_id?: string | null;
+  /** 'brief' offers "Edit in the Brief Desk". */
+  doc_type?: string | null;
 };
 
 type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'image' | 'unsupported';
@@ -279,6 +283,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
+
+  // A brief with an editable body lives in the Brief Desk (spec §3.1). The
+  // standalone route only: an embedded Reader (a canvas card, the desk's own
+  // authority pane) must never take over the page. `?reader=1` opens the
+  // filed text here anyway.
+  useEffect(() => {
+    if (embedded || !id || searchParams.get('reader') === '1') return;
+    let live = true;
+    void hasDraftBody(id).then((yes) => {
+      if (live && yes) navigate(`/app/brief/${id}`, { replace: true });
+    });
+    return () => { live = false; };
+  }, [embedded, id, navigate, searchParams]);
 
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -483,7 +500,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, doc_type, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -2582,6 +2599,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               expanded={coverExpanded}
               onToggle={() => setCoverExpanded(!coverExpanded)}
             />
+          )}
+          {!embedded && id && doc?.doc_type === 'brief' && /\.(docx|md|markdown|txt)$/i.test(doc.source_filename ?? '') && (
+            <button
+              onClick={() => navigate(`/app/brief/${id}`)}
+              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white"
+              title="Edit this brief as text, with its footnotes, and export it as Markdown or Word"
+            >
+              <PenLine size={14} /> <span className="hidden md:inline">Edit in the Brief Desk</span>
+            </button>
           )}
           {!embedded && (
             <CanvasPinToggle kind="document" id={id} title={doc?.title || 'Document'} />

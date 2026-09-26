@@ -566,6 +566,30 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
       return `${who} disconnected all of their assistants from this matter and paused AI here${
         disconnectCounts(payload)
       }`;
+    // 100 — the Brief Desk. The payload names ids, never the brief's words.
+    case 'draft.snapshot': {
+      const label = str(payload.label);
+      const sha = str(payload.sha256);
+      return `${who} saved a version of a brief${label ? ` (${label})` : ''}${
+        sha ? ` — fingerprint ${sha.slice(0, 12)}` : ''
+      }`;
+    }
+    case 'cite.checked': {
+      const counts = payload.counts && typeof payload.counts === 'object'
+        ? Object.values(payload.counts as Record<string, unknown>).reduce<number>(
+            (n, v) => n + (typeof v === 'number' ? v : 0), 0)
+        : null;
+      return `${who} checked the citations in a brief${
+        counts ? ` (${counts} citation${counts === 1 ? '' : 's'})` : ''
+      }`;
+    }
+    case 'draft.exported': {
+      const dest = payload.destination === 'md' ? 'as Markdown'
+        : payload.destination === 'docx' ? 'as a Word file'
+        : payload.destination === 'agent' ? 'to an assistant for formatting'
+        : null;
+      return `${who} exported a brief${dest ? ` ${dest}` : ''}`;
+    }
     default:
       // A kind this build does not know. Say who and what it was called,
       // and say no more than that.
@@ -618,6 +642,12 @@ export function kindLabel(kind: string): string {
       return 'Reconnected';
     case 'matter.disconnected':
       return 'Assistants disconnected';
+    case 'draft.snapshot':
+      return 'Brief version';
+    case 'cite.checked':
+      return 'Cite check';
+    case 'draft.exported':
+      return 'Export';
     default:
       return kind;
   }

@@ -812,3 +812,21 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-can-post.mjs
+
+      # Migration 100 + the Brief Desk, slice D1
+      # (docs/specs/BRIEF-DESK-2026-09-26.md). The master.md dialect
+      # (lib/brief-md.mjs) round-trips a Webster-style master byte-identical,
+      # footnotes and flags included, and input the house-style build would
+      # refuse loses nothing; every parsed document loads into the real TipTap
+      # schema; a generated .docx imports with its notes in place and a loss
+      # list naming exactly what did not survive; the Word export carries one
+      # real footnote per note. Then 100 in PGlite with real RLS, after 094 and
+      # on a pre-094 database (the kind-list UNION), twice: member / viewer /
+      # stranger, a frozen snapshot fingerprinted by the database, the
+      # optimistic lock, notes only by their author, the three Record kinds.
+      # Re-installs PGlite: it comes after the jsdom steps.
+      - name: Migration 100 — the Brief Desk (dialect round trip, Word in/out, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node --import ./scripts/_node-src-loader.mjs scripts/_verify-brief-md-roundtrip.mjs

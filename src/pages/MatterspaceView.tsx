@@ -10,6 +10,7 @@ import PinToggle from '@/components/ui/PinToggle';
 import CardDialog from '@/components/ui/CardDialog';
 import ActivityFeed from '@/components/activity/ActivityFeed';
 import RecordTab from '@/components/record/RecordTab';
+import { createBrief } from '@/lib/brief/draft-store';
 import MatterCalendar from '@/components/matter/MatterCalendar';
 import MatterTasks from '@/components/agents/MatterTasks';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
@@ -576,6 +577,21 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
     }
   };
 
+  // A brief is a document, not a Page: it opens in the Brief Desk
+  // (docs/specs/BRIEF-DESK-2026-09-26.md §3.5), where the title is edited.
+  const handleNewBrief = async () => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const id = await createBrief(matterId, 'Untitled brief');
+      navigate(`/app/brief/${id}`);
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'The brief could not be created.');
+      setCreating(false);
+    }
+  };
+
   const handleImport = async (file: File | undefined) => {
     if (!file || importing) return;
     setImporting(true);
@@ -665,6 +681,17 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
                 {importing ? 'Importing…' : 'Import spreadsheet'}
               </button>
             </>
+          )}
+          {tab === 'Pages' && (
+            <button
+              onClick={() => void handleNewBrief()}
+              disabled={creating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+              title="A brief you edit here, with footnotes, and export as Markdown or Word"
+            >
+              <Stamp size={12} strokeWidth={2} />
+              New brief
+            </button>
           )}
           <button
             onClick={handleCreate}
