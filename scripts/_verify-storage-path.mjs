@@ -217,6 +217,7 @@ function supabaseAnswer(url, init) {
     return jsonRes(200, { id: 'user-1', aud: 'authenticated', role: 'authenticated', email: 'stub@example.test', app_metadata: {}, user_metadata: {} });
   }
   if (url.includes('/storage/v1/object/sign/')) return jsonRes(200, { signedURL: '/object/sign/vault-documents/x?token=t' });
+  if (url.includes('/storage/v1/object/move')) return jsonRes(200, { message: 'Successfully moved' });
   if (url.includes('/storage/v1/')) return new Response(Buffer.from('CONFIDENTIAL-PAYLOAD!'), { status: 200, headers: { 'content-type': 'application/pdf' } });
   if (url.includes('/rest/v1/connector_tokens')) {
     if ((init.method || 'GET').toUpperCase() === 'PATCH') return jsonRes(200, []);
@@ -675,6 +676,18 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
         .every((f) => sql.includes(`revoke all on function jobs_internal.${f} from public, anon, authenticated;`))
       && !/grant execute on function jobs_internal\.(matter_of|run_lists)/.test(sql),
     'the trigger calls one definer wrapper (job_refusal); the lookup helpers are revoked from authenticated and anon');
+  }
+
+  // D2c. A VIEWER's move (may read, may not write): RLS makes the row update
+  // a silent zero-row success. It must be refused, and the service role must
+  // not re-point the document's queued job into the caller's chosen matter.
+  {
+    const { default: moveDocument } = await import('../api/move-document.mjs');
+    requests = []; row = FILED;
+    const r = await post(moveDocument, { documentId: DOC_ID, newMatterspaceId: '0c0c0c0c-0000-4000-8000-000000000006' });
+    const jobCalls = requests.filter((x) => x.url.includes('/rest/v1/processing_jobs'));
+    check((r.statusCode === 403 || r.statusCode === 409) && jobCalls.length === 0,
+      'move-document by a viewer (zero rows updated): refused, and no queued job is re-pointed', { status: r.statusCode, body: r.json, jobCalls: jobCalls.length });
   }
 
   // D3. The worker is a long-running script: held to its source.
