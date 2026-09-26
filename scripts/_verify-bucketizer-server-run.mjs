@@ -587,9 +587,16 @@ async function newRun(matterId, documentIds, status = 'running') {
   }
   return r.id;
 }
-const job = (runId, documentId) => ({ id: 'job-1', payload: { run_id: runId, document_id: documentId } });
-const runJob = (runId, documentId) =>
-  runBucketizerDocumentJob({ supabase: sb, job: job(runId, documentId), env: ENV });
+// A real processing_jobs row always carries its matter (NOT NULL), and since
+// 097 round 3 the handler refuses a job whose run or document is not that
+// matter's — so the job here is the one enqueueRunJobs writes: the run's matter.
+const job = async (runId, documentId) => ({
+  id: 'job-1',
+  matterspace_id: (await q('select matterspace_id from public.bucketizer_runs where id = $1', [runId]))[0]?.matterspace_id ?? null,
+  payload: { run_id: runId, document_id: documentId },
+});
+const runJob = async (runId, documentId) =>
+  runBucketizerDocumentJob({ supabase: sb, job: await job(runId, documentId), env: ENV });
 
 // ---------------------------------------------------------------------------
 console.log('\n--- B2. a worker that dies mid-document resumes at the window ---');

@@ -870,7 +870,11 @@ function sanitizeStorageName(name: string): string {
   return name
     .replace(/[\[\]{}]/g, '')
     .replace(/[^\w/!\-.*'() ]/g, '_')
-    .replace(/_+/g, '_');
+    .replace(/_+/g, '_')
+    // 097: no leading/trailing whitespace, and never a bare "." or ".." — the
+    // database refuses a path segment that is either (and a URL would rewrite it).
+    .trim()
+    .replace(/^\.{1,2}$/, '_') || 'file';
 }
 
 function mimeFor(ext: string): string {

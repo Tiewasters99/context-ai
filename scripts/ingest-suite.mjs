@@ -77,6 +77,7 @@ import { checkUpload, VAULT_MAX_BYTES, TEXT_STATUS } from '../lib/ingest-formats
 import { handleFileDocument, handleCheckIngestStatus } from '../lib/mcp-core.mjs';
 import { JOB_PRIORITY } from '../lib/ingest-core.mjs';
 import { uploadResumable, shouldUploadResumable } from '../lib/tus-upload.mjs';
+import { sanitizeStorageName } from '../lib/discovery/util.mjs';
 import * as F from './_fixtures-suite.mjs';
 import { stampedScanPdf, ecfStamp } from './_fixtures-ingest.mjs';
 import { isStampOnlyText } from '../lib/court-stamps.mjs';
@@ -811,7 +812,8 @@ try {
       const { data: row, error } = await supabase.from('documents').insert({ matterspace_id: matter.id, title, doc_type: 'other', source_filename: filename, file_size_bytes: bytes.length, processing_status: 'pending', created_by: CREATED_BY }).select('id').single();
       if (error) throw new Error(`insert ${title}: ${error.message}`);
       made.docs.push(row.id);
-      const storagePath = `${matter.id}/${row.id}/${filename}`;
+      // The same sanitiser the Vault and the worker use (097's path rule).
+      const storagePath = `${matter.id}/${row.id}/${sanitizeStorageName(filename)}`;
       await supabase.storage.from('vault-documents').upload(storagePath, bytes, { contentType, upsert: true });
       await supabase.from('documents').update({ storage_path: storagePath }).eq('id', row.id);
       return row.id;

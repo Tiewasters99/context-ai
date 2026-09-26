@@ -49,6 +49,7 @@ import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
 import { pathInMatter, assertPathInProduction } from '../lib/storage-path.mjs';
+import { assertJobBelongsToMatter, isJobScopeError, JobScopeError } from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
@@ -180,6 +181,16 @@ for (;;) {
       await holdJob(job, err);
       continue;
     }
+    // A job that named something outside its own matter (lib/job-scope.mjs).
+    // The job row takes the sentence and NOTHING else is touched: the document
+    // or production it named is not this job's to mark failed or pending.
+    if (isJobScopeError(err)) {
+      log(`[job ${job.id}] REFUSED (scope): ${err.message}`);
+      await supabase.from('processing_jobs')
+        .update({ status: 'error', error: String(err.message), finished_at: new Date().toISOString() })
+        .eq('id', job.id);
+      continue;
+    }
     log(`[job ${job.id}] ERROR: ${err.message}`);
     await supabase.from('processing_jobs')
       .update({ status: 'error', error: String(err.message ?? err), finished_at: new Date().toISOString() })
@@ -195,7 +206,39 @@ log('Queue drained; exiting.');
 // ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
+// Every reference a queued job makes is checked against the job's own matter
+// FIRST, before any handler reads anything (097 round 3, lib/job-scope.mjs):
+//
+//   intake_zip, intake_files      job.production_id, payload.storage_paths[]
+//   stamp_production,
+//   package_production            job.production_id
+//   ingest_document               payload.document_id
+//   bucketizer classify           payload.run_id, payload.document_id (and the
+//                                 run must list the document)
+//   intake_folder                 refused from the queue outright (below)
+//
+// The payload keys read after this point — ingest, force, ocr_retry,
+// include_privilege_log — are flags, not references.
+async function assertJobScope(job) {
+  const p = job.payload ?? {};
+  switch (job.job_type) {
+    case 'intake_zip':
+    case 'intake_files':
+      return assertJobBelongsToMatter(supabase, job, { productionId: job.production_id, storagePaths: p.storage_paths ?? [] });
+    case 'stamp_production':
+    case 'package_production':
+      return assertJobBelongsToMatter(supabase, job, { productionId: job.production_id });
+    case 'ingest_document':
+      return p.document_id === undefined ? null : assertJobBelongsToMatter(supabase, job, { documentId: p.document_id });
+    case BUCKETIZER_JOB_TYPE:
+      return assertJobBelongsToMatter(supabase, job, { runId: p.run_id, documentId: p.document_id });
+    default:
+      return null;
+  }
+}
+
 async function dispatch(job) {
+  await assertJobScope(job);
   switch (job.job_type) {
     case 'intake_zip': return intakeZip(job);
     case 'intake_files': return intakeFiles(job);
@@ -438,13 +481,13 @@ async function requeueOcrPendingIfDue() {
 // "<matter>/<production>/…" with no traversal (lib/storage-path.mjs; 097).
 function assertJobPaths(job, prod, paths, label) {
   if (!job.matterspace_id || job.matterspace_id !== prod.matterspace_id) {
-    throw new Error(`${label}: the job's matter is not the production's matter; refused`);
+    throw new JobScopeError(`the production (${label})`);
   }
   for (const p of paths) {
     try {
       assertPathInProduction(p, prod.matterspace_id, prod.id);
     } catch {
-      throw new Error(`${label}: a storage path outside this production was refused`);
+      throw new JobScopeError(`a storage path (${label})`);
     }
   }
 }
@@ -782,6 +825,8 @@ async function ingestDocument(job) {
     .eq('id', docId).single();
   if (error) throw new Error(`document ${docId}: ${error.message}`);
   if (!doc.storage_path) throw new Error('document has no storage_path');
+  // 097 round 3: a job re-indexes only a document of its own matter.
+  if (doc.matterspace_id !== job.matterspace_id) throw new JobScopeError('the document');
   // 097: the worker reads with the service role, so a row pointing at another
   // matter's object would be indexed into this one. Refused (lib/storage-path.mjs).
   if (!pathInMatter(doc.storage_path, doc.matterspace_id)) {
@@ -935,6 +980,7 @@ async function transcodeToMp3(buf, ext) {
 // already registered.
 async function stampProduction(job) {
   const prod = await getProduction(job.production_id);
+  assertJobPaths(job, prod, [], 'stamp_production');   // the job's matter is the production's
   if (['packaged', 'delivered'].includes(prod.status)) {
     throw new Error(`Production already ${prod.status}; create a supplemental production instead`);
   }
@@ -1194,6 +1240,7 @@ async function partitionItems(prod) {
 // ---------------------------------------------------------------------------
 async function packageProduction(job) {
   const prod = await getProduction(job.production_id);
+  assertJobPaths(job, prod, [], 'package_production');   // the job's matter is the production's
   if (prod.status !== 'stamped' && prod.status !== 'packaged') {
     throw new Error(`package_production: production must be stamped first (status: ${prod.status})`);
   }
