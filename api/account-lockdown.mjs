@@ -26,18 +26,32 @@
 // The bearer is checked the way api/account-sessions.mjs checks it: Supabase
 // Auth is asked who it belongs to before anything else happens.
 //
-// A second factor, when there is one (migration 099, review MEDIUM-5). Without
-// it a thief holding an aal1 session could press this, sign the real owner's
-// other devices out, and keep their own. So an account with a verified factor
-// must have stepped this session up to aal2 first: otherwise the answer is
-// 403 `step_up_required`, NOTHING is revoked and nobody is signed out, and the
-// page asks for the factor (StepUpPrompt, from S1) and presses again. The
-// database asks the same question itself (099 §6), so the RPC cannot be
-// called around this endpoint at aal1 either.
+// A second factor, when there is one (migration 099; round 2 of its review).
+// The two halves are judged differently, on purpose:
+//
+//   * The REVOKE half is never gated on a second factor. Revoking is the safe
+//     direction, and a gate there is a way to break the switch: on an account
+//     with no factor, a thief can enrol one at aal1 (Supabase Auth allows it
+//     when none exists), and the owner's own press would then answer "step
+//     up" with a factor the owner does not have (NEW-2).
+//   * The SIGN-OUT-OTHERS half is what a thief would want: sign the owner out
+//     and keep their own session. So when the account has a verified factor
+//     and this session is aal1, other sessions are signed out only if EVERY
+//     verified factor was added after this session began — a factor enrolled
+//     after I signed in is not mine to prove. Otherwise the press still
+//     happens and the answer says `sign_out: 'step_up_required'`; the page
+//     asks for the factor and calls again with {sign_out_only: true}, which
+//     signs the others out and revokes nothing further.
+//
+// The lock no longer depends on the sign-out at all (099 round 2): a session
+// that survives it — logout failed, or a refresh landed between the commit
+// and the logout — is refused by the database, because it began before the
+// press and is not the presser's.
 
 import { createClient } from '@supabase/supabase-js';
 import {
-  json, corsPreflight, bearerFrom, authUser, jwtClaims, userRpcClient, SUPABASE_URL, SERVICE_KEY,
+  json, corsPreflight, bearerFrom, authUser, jwtClaims, readJsonBody, serviceRpc, userRpcClient,
+  SUPABASE_URL, SERVICE_KEY,
 } from '../lib/account-security.mjs';
 
 /** PostgREST's "that function is not in the schema" — 095 not pasted yet. */
@@ -53,21 +67,24 @@ export default async function handler(req, res, deps = {}) {
   const user = await authUser(bearer, { fetchImpl });
   if (!user) return json(res, 401, { error: 'invalid_session' });
 
-  const hasFactor = Array.isArray(user.factors) && user.factors.some((f) => f?.status === 'verified');
-  if (hasFactor && jwtClaims(bearer).aal !== 'aal2') {
-    return json(res, 403, { error: 'step_up_required' });
+  const body = await readJsonBody(req);
+  const signOutOnly = body?.sign_out_only === true;
+
+  let counts = null;
+  if (!signOutOnly) {
+    const { data, error } = await userRpcClient(bearer, { fetchImpl })
+      .rpc('disconnect_all', { p_scope: 'account', p_matter: null });
+    if (error) {
+      if (NOT_DEPLOYED.has(String(error.code))) return json(res, 503, { error: 'not_available' });
+      return json(res, 502, { error: 'disconnect_failed', message: error.message ?? null });
+    }
+    counts = data && typeof data === 'object' ? data : {};
   }
 
-  const { data, error } = await userRpcClient(bearer, { fetchImpl })
-    .rpc('disconnect_all', { p_scope: 'account', p_matter: null });
-  if (error) {
-    if (NOT_DEPLOYED.has(String(error.code))) return json(res, 503, { error: 'not_available' });
-    // The database's own aal2 check (099) — the factor was enrolled between
-    // Supabase Auth's answer above and the press, say.
-    if (/step_up_required/.test(String(error.message ?? ''))) return json(res, 403, { error: 'step_up_required' });
-    return json(res, 502, { error: 'disconnect_failed', message: error.message ?? null });
+  if (!(await maySignOutOthers(user, bearer, { fetchImpl }))) {
+    if (signOutOnly) return json(res, 403, { error: 'step_up_required' });
+    return json(res, 200, { counts, others_signed_out: false, sign_out: 'step_up_required' });
   }
-  const counts = data && typeof data === 'object' ? data : {};
 
   let othersSignedOut = false;
   try {
@@ -88,5 +105,24 @@ export default async function handler(req, res, deps = {}) {
     console.warn('[account-lockdown] other sessions not signed out:', err?.message || err);
   }
 
+  if (signOutOnly) return json(res, 200, { others_signed_out: othersSignedOut });
   return json(res, 200, { counts, others_signed_out: othersSignedOut });
+}
+
+/**
+ * May this session sign the account's other sessions out? Yes with no
+ * verified factor, yes at aal2, and yes at aal1 when every verified factor
+ * was added after this session began. Anything it cannot read is a no — the
+ * revoke has already happened; only the sign-out waits for the factor.
+ */
+async function maySignOutOthers(user, bearer, { fetchImpl = null } = {}) {
+  const factors = (Array.isArray(user.factors) ? user.factors : []).filter((f) => f?.status === 'verified');
+  if (factors.length === 0) return true;
+  const claims = jwtClaims(bearer);
+  if (claims.aal === 'aal2') return true;
+  const r = await serviceRpc('account_sessions', { p_user: user.id }, { fetchImpl });
+  const mine = r.ok && Array.isArray(r.data) ? r.data.find((x) => x?.id === claims.session_id) : null;
+  const began = mine?.created_at ? Date.parse(mine.created_at) : NaN;
+  if (!Number.isFinite(began)) return false;
+  return factors.every((f) => Number.isFinite(Date.parse(f.created_at)) && Date.parse(f.created_at) > began);
 }

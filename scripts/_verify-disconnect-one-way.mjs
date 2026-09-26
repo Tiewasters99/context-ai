@@ -17,9 +17,13 @@
 //      already locked are seeded; the lock table cannot be written by a
 //      browser even under Supabase's blanket grant; the new server functions
 //      are service-role only.
-//   S. api/account-lockdown.mjs with a second factor: aal1 → step_up_required
-//      and NOTHING revoked, nobody signed out; the RPC itself refuses at aal1;
-//      aal2 → the press, the lock stamp, the sign-out.
+//   S. (round 2) the press is never gated on a factor: at aal1 it revokes,
+//      stamps the lock with the presser's session, and only the sign-out of
+//      others waits for the factor (sign_out_only finishes it). Before that
+//      sign-out, the thief's surviving session REFRESHED (the reviewer's R3)
+//      is refused and writes nothing. A factor a thief enrolled on a
+//      factor-less account (newer than the owner's session) stops neither
+//      the press nor the sign-out.
 //   O. owner vs admin: a serverspace ADMIN's own press pauses nothing of the
 //      firm's (Eden's decision; see the PR).
 //   R. (HIGH-1) after the press no UPDATE brings a token back — revoked_at,
@@ -29,16 +33,20 @@
 //   L. (HIGH-2) a pre-065 client (no grant id): its refresh is refused, the
 //      database refuses to adopt it, its access token is refused by both
 //      cspa_ and bare-JWT paths; no grant row, no account.unlocked.
-//   P. (MEDIUM-3) a sign-in issued before the lock — the thief's, the
-//      presser's own unrefreshed tab, one from the lock's own second, a
-//      connector's minted token — cannot insert a token, approve a grant,
-//      enable a charter, resume AI or widen an agent, and writes no
+//   P. (MEDIUM-3, NEW-1) no session from before the press but the presser's —
+//      the thief's signed-out session and its unexpired token, the same
+//      refreshed, one created in the lock's own instant, a token with no
+//      session, a connector's minted token — can insert a token, approve a
+//      grant, enable a charter, resume AI or widen an agent, and none writes
 //      account.unlocked. A colleague who is not locked may resume a firm
 //      matter, and unlocks nobody.
-//   U. a sign-in issued after the lock can; the ONE account.unlocked row
-//      carries its session_id and iat and clears the lock; the pre-lock
-//      sign-in is still refused afterwards. After a second press the consent
-//      screen's reconnection carries the approving sign-in the same way.
+//   U. the presser's own session reconnects with its pre-press token (no
+//      refresh); the ONE account.unlocked row carries its session_id and iat
+//      and clears the lock; the thief is still refused afterwards. A second
+//      press over the RPC alone (no sign-out): a surviving pre-press session,
+//      refreshed, is still refused; a sign-in made after it reconnects
+//      through the consent screen and the row names it. After the unlock a
+//      service-role grant with no sign-in behind it is still refused (NEW-3).
 //   E. (MEDIUM-4) the extension endpoints refuse a paused matter:
 //      /api/ext/matters leaves it out, /api/ext/documents and
 //      /api/ext/push-to-drive answer 403 ai_paused (inherited by a
@@ -312,9 +320,21 @@ check(!r099a.err && !r099b.err, '099 applies, and applies again over itself', r0
 // ---------------------------------------------------------------------------
 const SESSIONS = new Map();   // token -> claims
 const FACTORS = new Map();    // uid -> Supabase Auth's factor list (mirrors auth.mfa_factors)
+const SESS = {};              // label -> auth.sessions.id
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-function signIn(uid, { iat = nowS(), session = `sess-${Math.random().toString(36).slice(2, 8)}`, aal = 'aal1' } = {}) {
-  const claims = { sub: uid, role: 'authenticated', aud: 'authenticated', iat, exp: iat + 3600, session_id: session, aal };
+// A sign-in: a row in auth.sessions (created at `created`, default its first
+// iat) and an access token carrying its id. Calling again with the same label
+// is a REFRESH: same session, a new iat — exactly what Supabase Auth does.
+async function signIn(uid, { iat = nowS(), session = null, aal = 'aal1', created = null } = {}) {
+  let id = session ? SESS[session] : null;
+  if (!id) {
+    await asSuperuser();
+    const [row] = await q(`insert into auth.sessions (user_id, created_at, aal) values ($1, $2, $3) returning id`,
+      [uid, created ?? new Date(iat * 1000).toISOString(), aal]);
+    id = row.id;
+    if (session) SESS[session] = id;
+  }
+  const claims = { sub: uid, role: 'authenticated', aud: 'authenticated', iat, exp: iat + 3600, session_id: id, aal };
   const token = `${b64u({ alg: 'HS256', typ: 'JWT' })}.${b64u(claims)}.stub`;
   SESSIONS.set(token, claims);
   return token;
@@ -330,7 +350,7 @@ const logouts = [];
 const PARAM_CASTS = {
   p_user_id: 'uuid', p_client_id: 'text', p_client_name: 'text', p_scopes: 'text[]', p_notes: 'text',
   p_grant_id: 'uuid', p_agent_name: 'text', p_agent_provider: 'text', p_matter_scope: 'uuid[]', p_token_hash: 'text',
-  p_scope_all: 'boolean', p_scope: 'text', p_matter: 'uuid', p_session: 'jsonb', p_root: 'uuid',
+  p_scope_all: 'boolean', p_scope: 'text', p_matter: 'uuid', p_session: 'jsonb', p_root: 'uuid', p_user: 'uuid',
 };
 const jsonResponse = (status, obj) => new Response(obj === undefined ? '' : JSON.stringify(obj), {
   status, headers: { 'content-type': 'application/json' },
@@ -389,6 +409,13 @@ globalThis.fetch = async (input, init = {}) => {
   }
   if (url.pathname === '/auth/v1/logout') {
     logouts.push({ scope: url.searchParams.get('scope'), bearer });
+    // Supabase Auth deletes the account's other sessions (their refresh
+    // tokens go with them); the caller's own session is kept.
+    const c = claimsOf(String(bearer).replace(/^Bearer\s+/i, ''));
+    if (c && url.searchParams.get('scope') === 'others') {
+      await asSuperuser();
+      await q(`delete from auth.sessions where user_id = $1 and id <> $2`, [c.sub, c.session_id]);
+    }
     return new Response(null, { status: 204 });
   }
 
@@ -521,9 +548,9 @@ const mcp = async (bearer) => {
 // checkAccessGrant, then let its fire-and-forget last_used_at stamp land, so
 // it cannot interleave with the next statement's role.
 const cag = async (payload, opts) => { const r = await grants.checkAccessGrant(payload, opts); await settle(); return r; };
-const lockdown = async (session) => {
+const lockdown = async (session, body = undefined) => {
   const res = mockRes();
-  await lockdownHandler({ method: 'POST', headers: { authorization: `Bearer ${session}` } }, res);
+  await lockdownHandler({ method: 'POST', headers: { authorization: `Bearer ${session}` }, body: body ?? {} }, res);
   return res;
 };
 
@@ -547,7 +574,7 @@ const unlocks = async (uid) => {
 };
 const lockRow = async (uid) => {
   await asSuperuser();
-  return (await q(`select locked_at, unlocked_at, unlocked_session_id, unlocked_iat from public.account_connection_locks where user_id = $1`, [uid]))[0] ?? null;
+  return (await q(`select locked_at, unlocked_at, unlocked_session_id, unlocked_iat, presser_session_id from public.account_connection_locks where user_id = $1`, [uid]))[0] ?? null;
 };
 const floorOf = (ts) => Math.floor(new Date(ts).getTime() / 1000);
 // A pasted token's INSERT, as the Connect pages and Connections › Agents do it.
@@ -578,11 +605,14 @@ async function enableCharterAs(claims, id) {
 // Ada's connections, made from her own sign-in before any press
 // ---------------------------------------------------------------------------
 const T0 = nowS();
-const S_THIEF = signIn(ADA, { iat: T0 - 1200, session: 'sess-thief' });      // stolen, never signed out by the thief
-const S_TAB = signIn(ADA, { iat: T0 - 600, session: 'sess-tab' });           // the tab Ada presses in
-const S_TAB_AAL2 = signIn(ADA, { iat: T0 - 500, session: 'sess-tab', aal: 'aal2' });
-const S_BOB = signIn(BOB, { iat: T0 - 100, session: 'sess-bob' });
-const S_EVE = signIn(EVE, { iat: T0 - 100, session: 'sess-eve' });
+const ago = (s) => new Date((T0 - s) * 1000).toISOString();
+const S_THIEF = await signIn(ADA, { iat: T0 - 1200, session: 'sess-thief', created: ago(1200) });   // stolen
+const S_TAB = await signIn(ADA, { iat: T0 - 600, session: 'sess-tab', created: ago(600) });         // the tab Ada presses in
+const S_TAB_AAL2 = await signIn(ADA, { iat: T0 - 500, session: 'sess-tab', aal: 'aal2' });          // the same session, stepped up
+const S_BOB = await signIn(BOB, { iat: T0 - 100, session: 'sess-bob', created: ago(100) });
+const S_EVE = await signIn(EVE, { iat: T0 - 100, session: 'sess-eve', created: ago(100) });
+const sid = (label) => SESS[label];
+const C = (tok) => claimsOf(tok);
 
 const CLAUDE = registerClient('Claude');
 const GROK = registerClient('Grok');
@@ -620,45 +650,76 @@ section('O. owner vs admin — a serverspace admin\'s own press');
 }
 
 // ===========================================================================
-section('S. api/account-lockdown.mjs — a second factor first');
+section('S. the press is never gated on a factor; the sign-out of others is');
 // ===========================================================================
 let LOCK;
 {
+  // Ada's own factor, enrolled long before this session began.
   await asSuperuser();
-  const [f] = await q(`insert into auth.mfa_factors (user_id, factor_type, status) values ($1, 'totp', 'verified') returning id`, [ADA]);
-  FACTORS.set(ADA, [{ id: f.id, factor_type: 'totp', status: 'verified' }]);
+  const [f] = await q(`insert into auth.mfa_factors (user_id, factor_type, status, created_at) values ($1, 'totp', 'verified', $2) returning id`, [ADA, ago(3600)]);
+  FACTORS.set(ADA, [{ id: f.id, factor_type: 'totp', status: 'verified', created_at: ago(3600) }]);
   calls.length = 0; logouts.length = 0;
   const r1 = await lockdown(S_TAB);
-  check(r1.statusCode === 403 && r1.json()?.error === 'step_up_required',
-    'Ada has a factor; an aal1 press → 403 step_up_required', `${r1.statusCode} ${r1.body}`);
-  check(!calls.some((c) => c.includes('/rpc/')) && logouts.length === 0,
-    'and not one database call, and nobody signed out');
-  check((await mcp(TOK['Claude Desktop'].plain)).userId === ADA, 'and nothing revoked: her pasted token still works');
-
-  await asClaims(claimsOf(S_TAB));
-  const direct = await attempt(`select public.disconnect_all('account', null)`);
-  const dry = await attempt(`select public.disconnect_all_preview('account', null) v`);
-  await asSuperuser();
-  check(Boolean(direct.err) && /step_up_required/.test(direct.err.message),
-    'the RPC called around the endpoint at aal1 is refused by the database too', direct.err?.message);
-  check(!dry.err, 'the preview (which changes nothing) still works at aal1');
-
-  calls.length = 0; logouts.length = 0;
-  const r2 = await lockdown(S_TAB_AAL2);
-  check(r2.statusCode === 200 && r2.json()?.counts?.done === true && r2.json()?.others_signed_out === true,
-    'stepped up to aal2: the press, and the other sessions signed out', `${r2.statusCode}`);
-  const rpcIdx = calls.findIndex((c) => c.includes('/rpc/disconnect_all'));
-  const outIdx = calls.findIndex((c) => c.includes('/auth/v1/logout'));
-  check(rpcIdx >= 0 && outIdx > rpcIdx && logouts[0]?.scope === 'others', 'database first, then logout?scope=others');
+  const b1 = r1.json();
+  check(r1.statusCode === 200 && b1?.counts?.done === true,
+    'Ada presses at aal1 with a factor: the press HAPPENS — revoking is never gated', `${r1.statusCode} ${r1.body?.slice(0, 120)}`);
+  check(b1?.others_signed_out === false && b1?.sign_out === 'step_up_required' && logouts.length === 0,
+    'but the other sessions are NOT signed out: sign_out step_up_required (her factor predates this session)');
+  const m = await mcp(TOK['Claude Desktop'].plain);
+  check(m.err?.status === 401, 'her pasted token is already refused', m.err?.code);
   LOCK = await lockRow(ADA);
-  check(LOCK?.locked_at && LOCK.unlocked_at === null, 'the lock is stamped on Ada\'s account, and she is locked');
-  const m = await q(`select name from public.matterspaces where serverspace_id = $1 and ai_paused order by name`, [s1.id]);
-  check(m.map((x) => x.name).join(',') === 'Brannock,Okafor,Vashti', 'every ROOT matter of the serverspace Ada owns is paused', m.map((x) => x.name).join(','));
+  check(LOCK?.locked_at && LOCK.unlocked_at === null && LOCK.presser_session_id === sid('sess-tab'),
+    'the lock is stamped, Ada is locked, and the lock remembers the session that pressed');
+  const ms = await q(`select name from public.matterspaces where serverspace_id = $1 and ai_paused order by name`, [s1.id]);
+  check(ms.map((x) => x.name).join(',') === 'Brannock,Okafor,Vashti', 'every ROOT matter of the serverspace Ada owns is paused', ms.map((x) => x.name).join(','));
+
+  // NEW-1, the reviewer's R3: no sign-out has happened, and the thief's
+  // session still exists. It refreshes — same session, a post-lock iat.
+  const S_THIEF_REFRESHED = await signIn(ADA, { iat: nowS() + 5, session: 'sess-thief' });
+  const t = await insertTokenAs(C(S_THIEF_REFRESHED), 'Thief refreshed');
+  const p = await resumeAs(C(S_THIEF_REFRESHED), M1);
+  const a = await approve(S_THIEF_REFRESHED, registerClient('Thief refreshed client'));
+  check(t.err && /connections_locked/.test(t.err.message) && p.err && a.statusCode === 403,
+    'the thief\'s session REFRESHED after the press (no sign-out yet) cannot paste a token, resume AI or approve a grant',
+    `${t.err ? 'refused' : 'ALLOWED'}/${p.err ? 'refused' : 'ALLOWED'}/${a.statusCode}`);
+  check((await unlocks(ADA)).length === 0 && (await lockRow(ADA)).unlocked_at === null,
+    'and writes no account.unlocked — the block does not depend on the sign-out');
+
+  const r2 = await lockdown(S_TAB, { sign_out_only: true });
+  check(r2.statusCode === 403 && r2.json()?.error === 'step_up_required' && logouts.length === 0,
+    'sign_out_only at aal1 (old factor) → 403 step_up_required, nobody signed out');
+  calls.length = 0;
+  const r3 = await lockdown(S_TAB_AAL2, { sign_out_only: true });
+  check(r3.statusCode === 200 && r3.json()?.others_signed_out === true && logouts[0]?.scope === 'others'
+    && !calls.some((c) => c.includes('/rpc/disconnect_all')),
+    'stepped up: sign_out_only signs the others out and presses nothing again');
+  await asSuperuser();
+  const [gone] = await q(`select count(*)::int n from auth.sessions where id = $1`, [sid('sess-thief')]);
+  const [kept] = await q(`select count(*)::int n from auth.sessions where id = $1`, [sid('sess-tab')]);
+  check(gone.n === 0 && kept.n === 1, 'the thief\'s session is gone; the presser\'s is kept');
+  const [again] = await q(`select count(*)::int n from public.events where chain_key = $1 and kind = 'account.locked'`, [ADA]);
+  check(again.n === 1, 'one account.locked row: the sign-out half wrote no second press');
+
+  // NEW-2: a thief enrols a factor on a factor-less account.
+  const FRANK = await signup('frank@example.test', 'Frank');
+  const S_FRANK = await signIn(FRANK, { iat: T0 - 600, session: 'sess-frank', created: ago(600) });
+  await signIn(FRANK, { iat: T0 - 60, session: 'sess-frank-thief', created: ago(60) });
+  await pasteToken(FRANK, 'Frank desktop');
+  await asSuperuser();
+  await q(`insert into auth.mfa_factors (user_id, factor_type, status, created_at) values ($1, 'totp', 'verified', $2)`, [FRANK, ago(30)]);
+  FACTORS.set(FRANK, [{ id: 'f-frank', factor_type: 'totp', status: 'verified', created_at: ago(30) }]);
+  logouts.length = 0;
+  const rf = await lockdown(S_FRANK);
+  const bf = rf.json();
+  check(rf.statusCode === 200 && bf?.counts?.done === true,
+    'a thief enrolled a factor on Frank\'s factor-less account: Frank\'s aal1 press still happens');
+  check(bf?.others_signed_out === true && !bf?.sign_out && logouts.length === 1,
+    'and signs the others out at aal1: the only factor is newer than Frank\'s session, so not his to prove');
+  await asSuperuser();
+  const [fs] = await q(`select count(*)::int n from auth.sessions where id = $1`, [sid('sess-frank-thief')]);
+  check(fs.n === 0, 'the thief\'s session is gone');
 }
-const FLOOR = floorOf(LOCK.locked_at);
-const S_SAME = signIn(ADA, { iat: FLOOR, session: 'sess-same' });              // issued in the lock's own second
-const S_NEW = signIn(ADA, { iat: FLOOR + 2, session: 'sess-new' });           // Ada's tab, refreshed after the press
-const C = (tok) => claimsOf(tok);
+const S_SAME = await signIn(ADA, { iat: floorOf(LOCK.locked_at), session: 'sess-same-second', created: LOCK.locked_at });
 
 // ===========================================================================
 section('R. HIGH-1 — nothing un-revokes (the reviewer\'s R probe, now refused)');
@@ -674,7 +735,7 @@ section('R. HIGH-1 — nothing un-revokes (the reviewer\'s R probe, now refused)
     ['user_id moved', `update public.connector_tokens set user_id = '${CARL}' where id = $1`, 'Claude Desktop'],
     ['token_hash replaced (a new secret on an old row)', `update public.connector_tokens set token_hash = repeat('a', 64) where id = $1`, 'Claude Desktop'],
   ];
-  for (const [who, tok] of [['a stolen pre-press sign-in', S_THIEF], ['Ada\'s own post-press sign-in', S_NEW]]) {
+  for (const [who, tok] of [['the thief\'s (signed-out) sign-in', S_THIEF], ['Ada\'s own session, the one that pressed', S_TAB]]) {
     const refused = [];
     for (const [label, sql, name] of tries) {
       await asClaims(C(tok));
@@ -691,7 +752,7 @@ section('R. HIGH-1 — nothing un-revokes (the reviewer\'s R probe, now refused)
   const [cd] = await q(`select revoked_at is not null r, kind, user_id::text u, token_hash = $2 h from public.connector_tokens where id = $1`,
     [TOK['Claude Desktop'].id, createHash('sha256').update(TOK['Claude Desktop'].plain).digest('hex')]);
   check(cd.r && cd.kind === 'user' && cd.u === ADA && cd.h, 'the row is exactly as the press left it');
-  await asClaims(C(S_THIEF));
+  await asClaims(C(S_TAB));
   const rn = await attempt(`update public.connector_tokens set name = 'renamed' where id = $1 returning name`, [TOK['Claude Desktop'].id]);
   await asSuperuser();
   check(!rn.err && rn.rows[0]?.name === 'renamed', 'the name can still change (nothing about access)');
@@ -726,16 +787,15 @@ section('L. HIGH-2 — a pre-065 client (no grant id) (the reviewer\'s R2 probe,
 }
 
 // ===========================================================================
-section('P. MEDIUM-3 — a sign-in from before the lock brings nothing back');
-let U_FRESH;   // the connection U makes; C reads its grant
+section('P. MEDIUM-3 — no session from before the press brings anything back');
 // ===========================================================================
 {
   const who = [
-    ['the thief\'s stolen sign-in', C(S_THIEF)],
-    ['Ada\'s own tab, not yet refreshed', C(S_TAB)],
-    ['a sign-in issued in the lock\'s own second', C(S_SAME)],
-    ['a sign-in with no iat at all', { sub: ADA, role: 'authenticated' }],
-    ['a connector\'s minted token (fresh iat)', { sub: ADA, role: 'authenticated', iat: FLOOR + 5, cs_via: 'connector' }],
+    ['the thief\'s signed-out session (an unexpired token)', C(S_THIEF)],
+    ['the thief\'s signed-out session, refreshed (later iat)', { ...C(S_THIEF), iat: nowS() + 30 }],
+    ['a session created in the lock\'s own instant', C(S_SAME)],
+    ['a token with no session_id and no iat', { sub: ADA, role: 'authenticated' }],
+    ['a connector\'s minted token (fresh iat)', { sub: ADA, role: 'authenticated', iat: nowS() + 5, cs_via: 'connector' }],
   ];
   for (const [label, claims] of who) {
     const t = await insertTokenAs(claims, `Thief ${label.length}`);
@@ -745,15 +805,13 @@ let U_FRESH;   // the connection U makes; C reads its grant
       `${label}: cannot paste a token, enable a charter or resume AI`,
       [t, c, p].map((x) => (x.err ? 'refused' : 'ALLOWED')).join('/'));
   }
-  // The consent screen, with the thief's sign-in: no code, no grant.
   await asSuperuser();
   const [before] = await q(`select count(*)::int n from public.oauth_grants where user_id = $1`, [ADA]);
   const a = await approve(S_THIEF, registerClient('Thief client'));
+  const ag = await approve(S_THIEF, registerClient('Thief agent'), { connect_as: 'agent', agent: { name: 'X', provider: 'grok', matter_scope: [M1] } });
   const [after] = await q(`select count(*)::int n from public.oauth_grants where user_id = $1`, [ADA]);
-  check(a.statusCode === 403 && a.json()?.error === 'sign_in_again' && after.n === before.n,
-    'the thief\'s sign-in on the consent screen: 403, no code, no grant row', `${a.statusCode} ${a.json()?.error}`);
-  const ag = await approve(S_TAB, registerClient('Tab agent'), { connect_as: 'agent', agent: { name: 'X', provider: 'grok', matter_scope: [M1] } });
-  check(ag.statusCode === 403, 'nor as an agent, from the unrefreshed tab', String(ag.statusCode));
+  check(a.statusCode === 401 || a.statusCode === 403, 'the thief\'s signed-out sign-in on the consent screen: refused', `${a.statusCode} ${a.json()?.error}`);
+  check((ag.statusCode === 401 || ag.statusCode === 403) && after.n === before.n, 'nor as an agent; no grant row', String(ag.statusCode));
   // 098's connector_token_create will be a DEFINER RPC: the claims, not
   // current_user, decide — a definer insert from the thief is refused too.
   await asSuperuser();
@@ -763,75 +821,89 @@ let U_FRESH;   // the connection U makes; C reads its grant
       insert into public.connector_tokens (user_id, token_hash, token_prefix, name)
       values (auth.uid(), p_hash, 'csp_harness', 'via definer') returning id into v;
       return v; end $$;`);
-  await asClaims(C(S_THIEF));
+  await asClaims({ ...C(S_THIEF), iat: nowS() + 30 });
   const d = await attempt(`select public._harness_definer_token(repeat('b', 64))`);
   await asSuperuser();
-  check(Boolean(d.err) && /connections_locked/.test(d.err.message), 'an INSERT inside a DEFINER RPC is judged by the caller\'s sign-in (098\'s shape)', d.err?.message?.slice(0, 80));
+  check(Boolean(d.err) && /connections_locked/.test(d.err.message), 'an INSERT inside a DEFINER RPC is judged by the caller\'s session (098\'s shape)', d.err?.message?.slice(0, 80));
   check((await unlocks(ADA)).length === 0, 'not one account.unlocked row from any of it');
   check((await lockRow(ADA)).unlocked_at === null, 'and Ada is still locked');
 
-  // A colleague who is not locked may resume a firm matter; it unlocks nobody.
   const e = await resumeAs(C(S_EVE), M2);
   check(!e.err, 'Eve (matter admin, never locked) resumes Brannock', e.err?.message);
   check((await unlocks(ADA)).length === 0 && (await unlocks(EVE)).length === 0, 'and neither Ada\'s Record nor Eve\'s says anyone reconnected');
 }
 
+let U_FRESH;   // the connection U makes; C reads its grant
 // ===========================================================================
-section('U. a sign-in from after the lock — and the one row that says so');
+section('U. the presser\'s own session, and a fresh sign-in — and the one row that says so');
 // ===========================================================================
 {
-  const t = await insertTokenAs(C(S_NEW), 'New desktop');
-  check(!t.err, 'Ada\'s refreshed sign-in pastes a new token', t.err?.message);
+  const t = await insertTokenAs(C(S_TAB), 'New desktop');
+  check(!t.err, 'Ada\'s own tab — the session that pressed, with its PRE-press token, no refresh — pastes a new token', t.err?.message);
   let u = await unlocks(ADA);
-  check(u.length === 1 && u[0].via === 'app' && u[0].session_id === 'sess-new' && u[0].iat === FLOOR + 2 && u[0].through === 'sign-in',
-    'account.unlocked {via:app, session_id, iat, through:sign-in} names the sign-in that did it', JSON.stringify(u[0]));
+  check(u.length === 1 && u[0].via === 'app' && u[0].session_id === sid('sess-tab') && u[0].iat === T0 - 600 && u[0].through === 'sign-in',
+    'account.unlocked {via:app, session_id, iat, through:sign-in} names the session that did it', JSON.stringify(u[0]));
   const lr = await lockRow(ADA);
-  check(lr.unlocked_at && lr.unlocked_session_id === 'sess-new' && Number(lr.unlocked_iat) === FLOOR + 2, 'and clears the lock, recording which sign-in');
-  const p = await resumeAs(C(S_NEW), M3);
-  check(!p.err && (await unlocks(ADA)).length === 1, 'resuming Okafor from the same sign-in: allowed, and no second row');
+  check(lr.unlocked_at && lr.unlocked_session_id === sid('sess-tab'), 'and clears the lock, recording which session');
+  const p = await resumeAs(C(S_TAB), M3);
+  check(!p.err && (await unlocks(ADA)).length === 1, 'resuming Okafor from the same session: allowed, and no second row');
   const nt = await mcp(TOK['New desktop'].plain);
   check(nt.userId === ADA, 'the new token works');
 
-  const t2 = await insertTokenAs(C(S_THIEF), 'Thief after');
-  const p2 = await resumeAs(C(S_THIEF), M1);
-  check(t2.err && p2.err, 'the thief\'s pre-lock sign-in is STILL refused after Ada reconnected — the lock\'s time is a floor, never cleared');
+  const t2 = await insertTokenAs({ ...C(S_THIEF), iat: nowS() + 60 }, 'Thief after');
+  const p2 = await resumeAs({ ...C(S_THIEF), iat: nowS() + 60 }, M1);
+  check(t2.err && p2.err, 'the thief is STILL refused after Ada reconnected — the lock is a floor, never cleared');
 
-  // A live agent: its matters change from a post-lock sign-in, not a pre-lock one.
-  const ag = await insertTokenAs(C(S_NEW), 'New agent', { kind: 'agent', scope: [M3] });
-  check(!ag.err, 'a new agent from the refreshed sign-in');
-  await asClaims(C(S_NEW));
+  const ag = await insertTokenAs(C(S_TAB), 'New agent', { kind: 'agent', scope: [M3] });
+  check(!ag.err, 'a new agent from the presser\'s session');
+  await asClaims(C(S_TAB));
   const ok = await attempt(`update public.connector_tokens set matter_scope = array[$2::uuid] where id = $1 returning 1`, [TOK['New agent'].id, M2]);
-  await asClaims(C(S_THIEF));
+  await asClaims({ ...C(S_THIEF), iat: nowS() + 60 });
   const wide = await attempt(`update public.connector_tokens set scope_all = true, matter_scope = '{}' where id = $1 returning 1`, [TOK['New agent'].id]);
   const rev = await attempt(`update public.connector_tokens set revoked_at = '2000-01-01' where id = $1 returning revoked_at`, [TOK['New desktop'].id]);
   await asSuperuser();
-  check(!ok.err, 'Edit matters on a live agent from the post-lock sign-in still works (Connections › Agents)', ok.err?.message);
-  check(Boolean(wide.err) && /connections_locked/.test(wide.err.message), 'widening it to "all my matters" from the pre-lock sign-in is refused');
+  check(!ok.err, 'Edit matters on a live agent from an admissible session still works (Connections › Agents)', ok.err?.message);
+  check(Boolean(wide.err) && /connections_locked/.test(wide.err.message), 'widening it to "all my matters" from the thief\'s session is refused');
   check(!rev.err && new Date(rev.rows[0].revoked_at).getFullYear() > 2000,
     'revoking is always allowed (one-way), and the server stamps the time, not the browser');
-  await asClaims(C(S_NEW));
+  await asClaims(C(S_TAB));
   const again = await attempt(`update public.connector_tokens set revoked_at = now() + interval '1 day' where id = $1 returning revoked_at`, [TOK['New desktop'].id]);
   await asSuperuser();
   check(!again.err && String(again.rows[0].revoked_at) === String(rev.rows[0].revoked_at),
     'revoking twice (a double click) is not an error, and keeps the first time');
 
-  // A second press; this time the first reconnection is the consent screen.
+  // A second press over the RPC alone — no endpoint, no sign-out at all.
+  // A second thief session began before it and survives.
+  await signIn(ADA, { iat: nowS() - 5, session: 'sess-thief2', created: new Date(Date.now() - 5000).toISOString() });
+  await asClaims(C(S_TAB));
+  const rp = await attempt(`select public.disconnect_all('account', null) v`);
   await asSuperuser();
-  const r = await lockdown(signIn(ADA, { iat: FLOOR + 3, session: 'sess-tab', aal: 'aal2' }));
-  check(r.statusCode === 200, 'Ada presses again (aal2)');
-  const L2 = await lockRow(ADA);
-  const F2 = floorOf(L2.locked_at);
-  const stale = await approve(signIn(ADA, { iat: F2, session: 'sess-old' }), CLAUDE);
-  check(stale.statusCode === 403, 'consent from a sign-in not newer than the second lock: refused');
-  const fresh = await connect(signIn(ADA, { iat: F2 + 2, session: 'sess-consent' }), CLAUDE);
-  check(Boolean(fresh.access), 'consent from a sign-in after it: a code, a token');
+  check(!rp.err && rp.rows[0].v.done === true, 'Ada presses again, over the RPC only (nobody is signed out)', rp.err?.message);
+  const T2 = await signIn(ADA, { iat: nowS() + 90, session: 'sess-thief2' });   // refreshed after the press
+  const tt = await insertTokenAs(C(T2), 'Thief2');
+  const ta = await approve(T2, CLAUDE);
+  check(tt.err && /connections_locked/.test(tt.err.message) && ta.statusCode === 403,
+    'RPC-only press: the surviving pre-press session, refreshed, still cannot paste a token or approve a grant',
+    `${tt.err ? 'refused' : 'ALLOWED'}/${ta.statusCode}`);
+
+  // A sign-in made after the press reconnects through the consent screen.
+  const S_CONSENT = await signIn(ADA, { iat: nowS() + 120, session: 'sess-consent', created: new Date(Date.now() + 2000).toISOString() });
+  const fresh = await connect(S_CONSENT, CLAUDE);
+  check(Boolean(fresh.access), 'consent from a sign-in made after it: a code, a token');
   u = await unlocks(ADA);
   const last = u[u.length - 1];
-  check(u.length === 2 && last.via === 'assistant' && last.through === 'consent' && last.session_id === 'sess-consent' && last.iat === F2 + 2,
-    'account.unlocked {via:assistant, through:consent} carries the APPROVING sign-in, though the grant was written by the service role', JSON.stringify(last));
+  check(u.length === 2 && last.via === 'assistant' && last.through === 'consent' && last.session_id === sid('sess-consent'),
+    'account.unlocked {via:assistant, through:consent} carries the APPROVING session, though the grant was written by the service role', JSON.stringify(last));
   const [row] = await q(`select actor_user_id::text u, chain_key::text ck from public.events where chain_key = $1 and kind = 'account.unlocked' order by seq desc limit 1`, [ADA]);
   check(row.u === ADA && row.ck === ADA, 'on Ada\'s own chain, as Ada');
-  await asClaims(C(S_NEW));
+
+  // NEW-3: after an unlock, a service-role write with no sign-in behind it —
+  // the gid-less code exchange's grant — is still refused for this account.
+  const up = await grants.ensureGrantOnApprove({ user_id: ADA, client_id: registerClient('No sign-in'), client_name: 'No sign-in' });
+  check(up.outcome === 'locked', 'after the unlock, a grant written by the service role with no sign-in is still refused (outcome locked)', up.outcome);
+  await asSuperuser();
+
+  await asClaims(C(S_TAB));
   const [vc] = await q(`select ok from public.verify_chain($1)`, [ADA]);
   await asSuperuser();
   check(vc.ok, 'Ada\'s account chain verifies');
@@ -890,7 +962,7 @@ section('C. LOW-10 — the grant cache under a lock');
   check(first.ok && first.reason === 'ok', 'Ada\'s reconnected Claude, read and cached');
 
   // A third press. The entry cached before it does not know (said in the PR).
-  const r = await lockdown(signIn(ADA, { iat: nowS() + 10, session: 'sess-tab', aal: 'aal2' }));
+  const r = await lockdown(await signIn(ADA, { iat: nowS() + 10, session: 'sess-tab', aal: 'aal2' }));
   check(r.statusCode === 200, 'Ada presses a third time');
   const stale = await cag(pl, { now: t0 + 1000 });
   check(stale.ok, 'within the minute, a warm instance\'s pre-press entry still answers (the residual 095 already documented)');

@@ -14,15 +14,14 @@
 // (PGRST202) and both buttons hide themselves, as the AI pause does.
 //
 // Since 099:
-//   * an account with a second factor presses at aal2. /api/account-lockdown
-//     answers `step_up_required` otherwise (nothing done); disconnectAccount
-//     throws StepUpRequiredError, the card asks for the factor and presses
-//     again.
-//   * after the press, THIS tab's sign-in is older than the lock, and the
-//     database refuses to let a sign-in that old reconnect anything (that is
-//     what stops a stolen token doing it). So disconnectAccount waits past the
-//     lock's second and refreshes the session: the presser reconnects from a
-//     new token. The devices the press signed out cannot refresh.
+//   * the press itself never waits for a second factor (revoking is the safe
+//     direction). Signing the OTHER browsers out may: when the account has a
+//     factor this session has not confirmed, the press answers
+//     signOutNeedsStepUp, the card asks for the factor, and signOutOthers()
+//     finishes the job. Nothing further is revoked by it.
+//   * this tab keeps working after the press: the database lets the session
+//     that pressed reconnect things by identity, and refuses every other
+//     session that began before the press.
 //   * a failure says, in the same words everywhere, that nothing happened.
 
 import { supabase } from '@/lib/supabase';
@@ -42,7 +41,7 @@ export function isDisconnectNotDeployed(err: unknown): boolean {
 /** The press needs this session stepped up to aal2 first. Nothing was done. */
 export class StepUpRequiredError extends Error {
   constructor() {
-    super('Confirm it’s you to disconnect everything.');
+    super('Confirm it’s you to sign your other browsers out.');
     this.name = 'StepUpRequiredError';
   }
 }
@@ -53,8 +52,6 @@ export const NOTHING_DISCONNECTED = 'Nothing was disconnected — try again.';
 function nothingDisconnected(detail?: string | null): Error {
   return new Error(detail ? `${NOTHING_DISCONNECTED} (${detail})` : NOTHING_DISCONNECTED);
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export type PreviewResult =
   | { ok: true; counts: DisconnectCounts }
@@ -75,7 +72,11 @@ export async function previewDisconnect(
   return { ok: true, counts: normaliseCounts(data) };
 }
 
-export async function disconnectAccount(): Promise<{ counts: DisconnectCounts; othersSignedOut: boolean }> {
+type LockdownBody = {
+  counts?: unknown; others_signed_out?: boolean; sign_out?: string; error?: string; message?: string | null;
+} | null;
+
+async function postLockdown(payload: Record<string, unknown>): Promise<{ ok: boolean; body: LockdownBody }> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   const res = await fetch('/api/account-lockdown', {
@@ -84,24 +85,36 @@ export async function disconnectAccount(): Promise<{ counts: DisconnectCounts; o
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
+    body: JSON.stringify(payload),
   });
-  const body = (await res.json().catch(() => null)) as
-    | { counts?: unknown; others_signed_out?: boolean; error?: string; message?: string | null }
-    | null;
-  if (!res.ok) {
-    if (body?.error === 'step_up_required') throw new StepUpRequiredError();
+  return { ok: res.ok, body: (await res.json().catch(() => null)) as LockdownBody };
+}
+
+export async function disconnectAccount(): Promise<{
+  counts: DisconnectCounts; othersSignedOut: boolean; signOutNeedsStepUp: boolean;
+}> {
+  const { ok, body } = await postLockdown({});
+  if (!ok) {
     if (body?.error === 'not_available') {
       throw new Error('This is not set up on this workspace yet. Nothing was disconnected.');
     }
     throw nothingDisconnected(body?.message);
   }
-  // The lock is stamped in whole seconds against the sign-in's issue time;
-  // a token refreshed in the same second as the press would still count as
-  // older. A failed refresh is not the press failing — the next reconnection
-  // will say "sign in again", which is true.
-  await sleep(1100);
-  await supabase.auth.refreshSession().catch(() => undefined);
-  return { counts: normaliseCounts(body?.counts), othersSignedOut: body?.others_signed_out === true };
+  return {
+    counts: normaliseCounts(body?.counts),
+    othersSignedOut: body?.others_signed_out === true,
+    signOutNeedsStepUp: body?.sign_out === 'step_up_required',
+  };
+}
+
+/** The second half on its own, once the factor is confirmed. Revokes nothing. */
+export async function signOutOthers(): Promise<boolean> {
+  const { ok, body } = await postLockdown({ sign_out_only: true });
+  if (!ok) {
+    if (body?.error === 'step_up_required') throw new StepUpRequiredError();
+    return false;
+  }
+  return body?.others_signed_out === true;
 }
 
 export async function disconnectMatter(matterId: string): Promise<DisconnectCounts> {

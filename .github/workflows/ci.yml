@@ -204,13 +204,14 @@ jobs:
       # are the negative controls, now refused: no UPDATE brings a revoked or
       # expired connector token back (from a stolen sign-in or the owner's
       # own); a pre-065 client is not adopted after a press and its tokens are
-      # refused on every path; a sign-in issued before the lock (the thief's,
-      # the unrefreshed tab, the lock's own second, a connector's minted
-      # token) cannot paste a token, approve a grant, enable a charter, widen
-      # an agent or resume AI, and writes no account.unlocked — while one
-      # issued after it can, and the one account.unlocked row names its
-      # session_id and iat (through the consent screen too). Also: the press
-      # needs aal2 when there is a factor (endpoint and database), a
+      # refused on every path; a SESSION from before the press (signed out,
+      # refreshed, or surviving an RPC-only press) other than the presser's
+      # cannot paste a token, approve a grant, enable a charter, widen an
+      # agent or resume AI, and writes no account.unlocked — while the
+      # presser's own session and a sign-in made after the press can, and the
+      # one account.unlocked row names its session_id and iat (through the
+      # consent screen too). Also: the press is never gated on a factor, only
+      # the sign-out of others is (a thief-enrolled factor stops neither), a
       # serverspace admin's own press pauses nothing of the firm's, the
       # extension endpoints refuse a paused matter, and the grant cache is not
       # trusted while the owner is locked.

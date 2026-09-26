@@ -30,23 +30,24 @@
 --      pressed "Disconnect everything": when (locked_at) and, once the owner
 --      has deliberately reconnected something, when and from which sign-in
 --      (unlocked_*). Seeded from the Record for accounts 095 already locked.
---   3. The session: who is asking, and when their sign-in was issued — the
---      JWT's `sub`, `iat` and `session_id` for a browser; for the OAuth
+--   3. The session: who is asking, and from which sign-in session — the
+--      JWT's `sub`, `session_id` (and `iat`, recorded) for a browser; for the OAuth
 --      consent screen (which writes as the service role) a transaction-local
 --      marker set by oauth_grant_approve_session() from the browser's own
 --      verified sign-in.
 --   4. The gate: while an account has a lock row, a NEW credential for it —
 --      a connector token, an OAuth grant, an enabled charter, a widened
---      agent — and AI resumed by it, are refused unless they come from a
---      sign-in issued AFTER the lock, by the account itself. A refusal is an
+--      agent — and AI resumed by it, are refused unless they come from the
+--      account's own sign-in SESSION that still exists and is either the
+--      presser's or was created after the lock (round 2; see below). A refusal is an
 --      error, so nothing is written, and no account.unlocked is written.
 --   5. connector_tokens' UPDATE guard (the 065/087 shape): nothing
 --      un-revokes, nothing un-expires, nothing changes owner, secret or kind.
 --   6. disconnect_internal.run, redefined: stamps the lock; pauses only the
---      serverspaces the presser OWNS (not admins — see §6); needs a second
---      factor (aal2) for the account press when the account has one.
---   7. account.unlocked, redefined: written only for the account's own
---      post-lock sign-in, with its session_id and iat; it clears the lock.
+--      serverspaces the presser OWNS (not admins — see §6); remembers the
+--      presser's session. Never gated on a second factor (§6).
+--   7. account.unlocked, redefined: written only for an admissible session of
+--      the account itself, with its session_id and iat; it clears the lock.
 --   8. oauth_grant_adopt refuses for any account that has ever been locked,
 --      and oauth_grant_approve_session() carries the consent sign-in in.
 --   9. Two service-role reads for the API: the lock of an account, and a
@@ -63,23 +64,46 @@
 -- delete policy for anybody — so even under a blanket grant, RLS refuses
 -- every write from a browser. Only the DEFINER functions below write it.
 --
--- WHAT "LOCKED" MEANS NOW
+-- WHAT "LOCKED" MEANS NOW — the SESSION, not the token (round 2)
 -- ---------------------------------------------------------------------------
--- locked_at is the floor. It is moved forward by every account press and is
--- never cleared: a sign-in issued at or before it (iat ≤ the lock's second)
--- can never again bring back a connection for that account. After an hour
--- every such sign-in has expired anyway, so the floor costs the owner
--- nothing. unlocked_at is null while the account is locked; the first
--- deliberate reconnection from a post-lock sign-in sets it (and writes
--- account.unlocked). While unlocked_at is null the API also refuses every
--- OAuth token without a grant id and re-reads grant state instead of
--- trusting its cache.
+-- The first version keyed the lock on the access token's iat. The re-review
+-- of #250 (NEW-1) showed why that is not enough: Supabase Auth keeps a
+-- session's id and issues a new iat on every refresh, so any session that
+-- survived the press — the sign-out failed, a refresh landed in the seconds
+-- between the commit and logout?scope=others, or disconnect_all was called
+-- over RPC with no sign-out at all — refreshed to a "post-lock" token and
+-- walked back in, writing account.unlocked in its own name.
 --
--- The comparison is in whole seconds, because iat is: a sign-in issued in the
--- same second as the lock is treated as before it. The presser's own tab is
--- such a sign-in; src/lib/disconnect-all.ts refreshes it a second after the
--- press, so the owner reconnects from a new token. The devices the press
--- signed out cannot refresh — that asymmetry is the point.
+-- So the gate asks about the sign-in SESSION (auth.sessions), read by the
+-- DEFINER functions below:
+--   * the caller's session_id must still exist in auth.sessions — a session
+--     that has been signed out is dead at once, including every unexpired
+--     access token it issued (they carry its id);
+--   * and it must be either the PRESSER's own session (stored on the lock at
+--     the press) or a session CREATED after the lock — a fresh sign-in.
+-- Refreshing changes neither answer. The block therefore does not depend on
+-- the sign-out succeeding: the gap between the database commit and
+-- logout?scope=others, a failed logout, and an RPC-only press are all closed
+-- by it. The presser keeps working from the tab they pressed in, by identity,
+-- with no refresh.
+--
+-- locked_at is moved forward by every account press and never cleared, so a
+-- session from before the latest press, other than the presser's, can never
+-- bring a connection back for the account. unlocked_at is null while the
+-- account is locked; the first deliberate reconnection from an admissible
+-- session sets it (and writes account.unlocked). While unlocked_at is null the
+-- API also refuses every OAuth token without a grant id and re-reads grant
+-- state instead of trusting its cache.
+--
+-- THE ACCEPTED LIMIT. Anyone who has the account's PASSWORD, on an account
+-- with NO second factor, can sign in afresh after the press — a new session,
+-- created after the lock — and pass. The lock cannot tell them from the
+-- owner, because nothing can. That is why the confirm card and the screen
+-- after the press both say to change the password. With a factor, a fresh
+-- sign-in needs it too. (A thief who ENROLS a factor on a factor-less account
+-- cannot stop the owner's press: revoking is never gated on aal — see
+-- api/account-lockdown.mjs. The enrolment is already on the Record, 094's
+-- auth.factor_enrolled; S5's Attention strip will surface it.)
 --
 -- WHICH connector_tokens COLUMNS A BROWSER MAY STILL WRITE (§5)
 -- ---------------------------------------------------------------------------
@@ -167,6 +191,8 @@ create table if not exists public.account_connection_locks (
   unlocked_session_id text,
   unlocked_iat        bigint
 );
+-- The presser's own session (round 2): it may reconnect by identity.
+alter table public.account_connection_locks add column if not exists presser_session_id uuid;
 
 comment on table public.account_connection_locks is
   'One row per account that has pressed "Disconnect everything" (migrations 095/099). '
@@ -267,9 +293,8 @@ exception when others then
   return '';
 end $$;
 
--- iat as whole seconds, or null if it is missing or not a number. A real
--- Supabase access token always carries one; a claim set without it is
--- treated as "issued before any lock" — refused, never waved through.
+-- iat as whole seconds, or null if it is missing or not a number. Recorded on
+-- account.unlocked; since round 2 the gate judges the session, not the iat.
 create or replace function disconnect_internal.iat_of(p_session jsonb)
 returns bigint
 language sql
@@ -279,11 +304,35 @@ as $$
               then floor((p_session ->> 'iat')::numeric)::bigint end
 $$;
 
-create or replace function disconnect_internal.lock_floor(p_locked_at timestamptz)
-returns bigint
-language sql
-immutable
-as $$ select floor(extract(epoch from p_locked_at))::bigint $$;
+
+-- Is this session admissible for an account with this lock? It must still
+-- exist (not signed out), belong to the account, and be the presser's own or
+-- one created after the lock. DEFINER: auth.sessions is not the caller's to
+-- read.
+create or replace function disconnect_internal.session_ok(p_lock public.account_connection_locks, p_session jsonb)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_sid     text := p_session ->> 'session_id';
+  v_created timestamptz;
+begin
+  if v_sid is null or v_sid !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+    return false;
+  end if;
+  select s.created_at into v_created
+    from auth.sessions s
+   where s.id = v_sid::uuid and s.user_id = p_lock.user_id;
+  if not found then
+    return false;   -- signed out (or never this account's)
+  end if;
+  return v_sid::uuid = p_lock.presser_session_id or v_created > p_lock.locked_at;
+end $$;
+
+revoke all on function disconnect_internal.session_ok(public.account_connection_locks, jsonb) from public, anon, authenticated, service_role;
 
 
 -- ============================================================================
@@ -321,14 +370,14 @@ begin
     if v_role = '' then
       return;
     end if;
-    -- The service role with no consent marker (065's adopt and upsert, or
-    -- any future server path that has not said whose sign-in it acts for).
-    if v_lock.unlocked_at is null then
-      raise exception 'connections_locked: this account was disconnected; its % can only be reconnected from a new sign-in', p_door
-        using errcode = '42501',
-              hint = 'Server paths that create credentials must carry the person''s sign-in (see oauth_grant_approve_session).';
-    end if;
-    return;
+    -- The service role with no consent marker (065's adopt and upsert — the
+    -- gid-less code exchange — or any future server path that has not said
+    -- whose sign-in it acts for). Refused for any account that has EVER been
+    -- locked, not only while it is (round 2, NEW-3): a write that carries no
+    -- sign-in cannot be judged against the lock, so it does not get through.
+    raise exception 'connections_locked: this account was disconnected; its % can only be reconnected from a sign-in', p_door
+      using errcode = '42501',
+            hint = 'Server paths that create credentials must carry the person''s sign-in (see oauth_grant_approve_session).';
   end if;
 
   if (v_session ->> 'sub') is distinct from p_owner::text then
@@ -342,18 +391,21 @@ begin
   end if;
 
   -- A connected app acting for the account (a connector's minted token)
-  -- cannot bring anything back while the account is locked, however fresh
-  -- its token: only a person signing in can.
-  if (v_session ->> 'through') = 'connector' and v_lock.unlocked_at is null then
-    raise exception 'connections_locked: a connected app cannot reconnect an account after "Disconnect everything"'
-      using errcode = '42501';
+  -- cannot bring anything back while the account is locked: only a person
+  -- signing in can. It carries no sign-in session to judge, so once the owner
+  -- has reconnected it is let through as before.
+  if (v_session ->> 'through') = 'connector' then
+    if v_lock.unlocked_at is null then
+      raise exception 'connections_locked: a connected app cannot reconnect an account after "Disconnect everything"'
+        using errcode = '42501';
+    end if;
+    return;
   end if;
 
-  v_iat := disconnect_internal.iat_of(v_session);
-  if v_iat is null or v_iat <= disconnect_internal.lock_floor(v_lock.locked_at) then
-    raise exception 'connections_locked: this sign-in was issued before "Disconnect everything"; sign in again to reconnect'
+  if not disconnect_internal.session_ok(v_lock, v_session) then
+    raise exception 'connections_locked: this sign-in began before "Disconnect everything", or has been signed out; sign in again to reconnect'
       using errcode = '42501',
-            hint = 'A sign-in from before the press cannot reconnect anything. Refresh the session (or sign in) and try again.';
+            hint = 'Only the session that pressed, or a sign-in made after the press, can reconnect anything.';
   end if;
 end $$;
 
@@ -439,6 +491,10 @@ declare
                                   'matter_scope', 'scope_all'];
   v_old_live boolean;
 begin
+  -- DEFINER functions run as their owner and pass here BY DESIGN: 095's sweep
+  -- and 087's consent are the writers. Any DEFINER RPC that lets a browser
+  -- change a token (098's, or later) bypasses this guard and must call
+  -- disconnect_internal.gate(owner, door) itself before it writes.
   if current_user in ('service_role', 'postgres', 'supabase_admin') then
     return new;
   end if;
@@ -508,10 +564,12 @@ create trigger connector_tokens_guard_update
 --       stop every matter of the firm for everybody. The alternative is one
 --       word — `in ('owner', 'admin')` in the two queries marked [owner] —
 --       and is Eden's decision (see the PR).
---   (c) the account press needs aal2 when the account has a verified second
---       factor: a thief holding an aal1 session could otherwise disconnect
---       the owner (and, through api/account-lockdown.mjs, sign the owner's
---       other devices out). The preview (dry) does not need it.
+--   (c) NOT gated on a second factor (round 2, NEW-2). Revoking is the safe
+--       direction, and a thief who enrols a factor on a factor-less account
+--       must not be able to make the owner's press answer "step up". Only
+--       the sign-out of other sessions is gated, in api/account-lockdown.mjs.
+--   (d) the lock remembers the presser's session, which may reconnect by
+--       identity (see the header).
 create or replace function disconnect_internal.run(
   p_scope  text,
   p_matter uuid,
@@ -556,14 +614,6 @@ begin
     select coalesce(array_agg(a.id), '{}') into v_reach from public.matter_ancestry(p_matter) a;
   elsif v_scope <> 'account' then
     raise exception 'scope must be ''account'' or ''matter''' using errcode = '22023';
-  end if;
-
-  -- (c) 099: the account press is a second-factor act when there is one.
-  if v_scope = 'account' and not coalesce(p_dry, false)
-     and stepup_internal.has_verified_factor(v_uid)
-     and not public.auth_is_aal2() then
-    raise exception 'step_up_required: confirm your second factor to disconnect everything'
-      using errcode = '42501';
   end if;
 
   select coalesce(array_agg(g.id order by g.created_at), '{}') into v_grants_full
@@ -663,10 +713,13 @@ begin
   -- (a) the lock. Inside the same transaction: a press that fails stamps
   -- nothing, and a press that commits cannot leave the account unlocked.
   if v_scope = 'account' then
-    insert into public.account_connection_locks (user_id, locked_at)
-    values (v_uid, v_now)
+    insert into public.account_connection_locks (user_id, locked_at, presser_session_id)
+    values (v_uid, v_now,
+            case when coalesce(auth.jwt() ->> 'session_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                 then (auth.jwt() ->> 'session_id')::uuid end)
     on conflict (user_id) do update
       set locked_at = excluded.locked_at,
+          presser_session_id = excluded.presser_session_id,
           unlocked_at = null, unlocked_session_id = null, unlocked_iat = null;
   end if;
 
@@ -768,10 +821,10 @@ begin
      or (v_session ->> 'through') = 'connector' then
     return;
   end if;
-  v_iat := disconnect_internal.iat_of(v_session);
-  if v_iat is null or v_iat <= disconnect_internal.lock_floor(v_lock.locked_at) then
+  if not disconnect_internal.session_ok(v_lock, v_session) then
     return;
   end if;
+  v_iat := disconnect_internal.iat_of(v_session);
 
   update public.account_connection_locks
      set unlocked_at = now(),
