@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { useServerspacesRefresh } from '@/hooks/useServerspaces';
 import CardDialog from '@/components/ui/CardDialog';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
+import { verifiedFactors } from '@/lib/second-factor';
 import { alreadyProcessed, type AlreadyProcessed } from '@/lib/seal-facts';
 
 // Sealing is the one click in the product with contractual weight, so it gets
@@ -53,7 +54,7 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
   const refreshServerspaces = useServerspacesRefresh();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [stepUp, setStepUp] = useState(false);
+  const [stepUp, setStepUp] = useState<'stepup' | 'enrol' | null>(null);
   const sealing = target.mode === 'seal';
 
   // What has already left, for a seal. Read once when the dialog opens; a
@@ -82,7 +83,11 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
     if (updErr) {
       // 098: unsealing takes everything in the matter out of the seal, so it
       // asks for this session's second factor first.
-      if (/step_up_required/.test(updErr.message ?? '')) { setStepUp(true); return; }
+      if (/step_up_required/.test(updErr.message ?? '')) {
+        // No factor to confirm with → the prompt says how to add one.
+        setStepUp((await verifiedFactors()).length > 0 ? 'stepup' : 'enrol');
+        return;
+      }
       setError(updErr.message);
       return;
     }
@@ -185,9 +190,11 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
       {stepUp && (
         <div className="mb-3">
           <StepUpPrompt
-            mode="stepup"
-            heading="Confirm it’s you to unseal this matter."
-            onConfirmed={() => { setStepUp(false); void apply(); }}
+            mode={stepUp}
+            heading={stepUp === 'enrol'
+              ? 'Unsealing takes everything here out of the seal. Add a second factor first.'
+              : 'Confirm it’s you to unseal this matter.'}
+            onConfirmed={() => { setStepUp(null); void apply(); }}
           />
         </div>
       )}

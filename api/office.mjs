@@ -51,6 +51,21 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
 
+// The manifest's items without any whose document is sealed, or whose seal
+// could not be read (fails closed: omitted, never shown).
+export async function dropSealedItems(supabase, items) {
+  const keep = [];
+  for (const it of items) {
+    if (!it?.document_id) { keep.push(it); continue; }
+    try {
+      if (!(await documentIsSealed(supabase, it.document_id))) keep.push(it);
+    } catch {
+      // omitted
+    }
+  }
+  return keep;
+}
+
 // Is this document in a sealed matter (its own tier or an ancestor's is B or
 // C)? Read with the service role the room already runs on. After 098 it is one
 // column; before 098 is pasted (42703) the ancestry is walked. Any other
@@ -307,11 +322,16 @@ export default async function handler(req, res) {
     return;
   }
 
+  // 098: nothing sealed ever appears on a public page. An item's excerpt is
+  // the document's own opening text, so an item whose document is sealed —
+  // shelved before 098, or sealed after it was published — is dropped whole,
+  // not trimmed. A seal that cannot be read drops the item too.
+  const shelved = await dropSealedItems(supabase, items.data ?? []);
   const images = await officeImages(supabase, [ownerId]);
   const out = selectRoom({
     ownerId,
     sections: sections.data ?? [],
-    items: items.data ?? [],
+    items: shelved,
     jackets: images.jackets,
     pages: images.pages,
   });
