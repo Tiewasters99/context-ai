@@ -160,6 +160,8 @@ function supabaseAnswer(url, init) {
     const id = /id=eq\.([^&]+)/.exec(url)?.[1];
     return jsonRes(200, id ? [{ id: decodeURIComponent(id), name: 'Vashti v. Ormsby', parent_matterspace_id: null, ai_tier: 'A' }] : []);
   }
+  // Nothing in this world is sealed (the attack is a pointer in an OPEN matter).
+  if (url.includes('/rest/v1/rpc/effective_tier_is_sealed')) return jsonRes(200, false);
   if (url.includes('/rest/v1/rpc/')) return jsonRes(200, null);
   return jsonRes(200, []);
 }
