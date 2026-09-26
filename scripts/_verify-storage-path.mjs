@@ -33,6 +33,14 @@
 // source (job paths and production_items paths checked before any download,
 // a queued intake_folder refused) and the operator scripts to the helper.
 //
+// ROUND 3 (the class): D. jobs — a queued job may name only its own matter's
+// things. 097's trigger on processing_jobs, as `authenticated`, refuses a
+// cross-matter Bucketizer / stamp / package / ingest / intake job and accepts
+// the same-matter one of each; lib/job-scope.mjs, as the service role, refuses
+// the same set; runBucketizerDocumentJob refuses before a passage is read or
+// the model is called; the worker is held to its source (dispatch asks first,
+// a refused job touches nothing else). A also refuses whitespace-edged segments.
+//
 //   npm i --no-save @electric-sql/pglite
 //   node scripts/_verify-storage-path.mjs
 //
@@ -93,6 +101,10 @@ console.log('\n--- A. migration 097 --------------------------------------------
 {
   const db = new PGlite();
   await db.exec(`
+    -- 097 grants its job-scope helpers to these (round 3).
+    do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+    do $$ begin create role anon; exception when duplicate_object then null; end $$;
+    do $$ begin create role service_role bypassrls; exception when duplicate_object then null; end $$;
     create table public.documents (
       id uuid primary key,
       matterspace_id uuid not null,
@@ -139,6 +151,8 @@ console.log('\n--- A. migration 097 --------------------------------------------
     [`${OPEN}//advice.pdf`, 'an empty segment (//)'],
     [`${OPEN}/a/b/advice.pdf`, 'four segments'],
     [`${OPEN.toUpperCase()}/x/advice.pdf`, 'an upper-case matter uuid (the CHECK is case-sensitive)'],
+    [`${OPEN}/x/advice.pdf `, 'a trailing space (round 3: a URL parser trims it)'],
+    [`${OPEN}/ x/advice.pdf`, 'a segment starting with a space (round 3)'],
   ];
   for (const [bad, what] of TRAVERSALS) {
     const e = await attempt(`insert into public.documents values ($1, $2, 't', $3)`, [id(), OPEN, bad]);
@@ -373,6 +387,8 @@ check(pathInMatter(`${OPEN}/a/b.pdf`, OPEN) && pathInMatter(`${OPEN}/a/My file (
   'pathInMatter: a canonical path under its matter belongs (real filenames included)');
 check(!pathInMatter(`${OPEN.toUpperCase()}/a/b.pdf`, OPEN) && !pathInMatter(`${OPEN}/a/b.pdf`, OPEN.toUpperCase()),
   'pathInMatter: the matter segment is compared exactly — a case mismatch is refused, as the CHECK refuses it');
+check(!pathInMatter(`${OPEN}/a/x.pdf `, OPEN) && !pathInMatter(`${OPEN}/a /x.pdf`, OPEN) && !pathInMatter(`${OPEN}/a/	x.pdf`, OPEN),
+  'pathInMatter: a segment that starts or ends with whitespace is refused, as the CHECK refuses it (round 3)');
 check(!pathInMatter(`${OPEN}/a/x?y.pdf`, OPEN) && !pathInMatter(`${OPEN}/a/x#y.pdf`, OPEN),
   'pathInMatter: anything a URL parser would rewrite (? #) is refused');
 check(!pathInMatter(`${SEALED}/a/b.pdf`, OPEN) && !pathInMatter('b.pdf', OPEN) && !pathInMatter(`${OPEN}/a`, null),
@@ -428,6 +444,159 @@ check(pathInMatter(null, OPEN), 'pathInMatter: no stored file is nothing to refu
   const sign = mcp.slice(mcp.indexOf('async function signDownloadUrl'), mcp.indexOf('async function signDownloadUrl') + 600);
   check(/assertPathInMatter\(doc\.storage_path, doc\.matterspace_id\)/.test(sign) && sign.indexOf('assertPathInMatter') < sign.indexOf('createSignedUrl'),
     'mcp-core signDownloadUrl checks the path before it signs');
+}
+
+// ---------------------------------------------------------------------------
+// D. Jobs (round 3): a queued job may name only its own matter's things
+// ---------------------------------------------------------------------------
+console.log('\n--- D. jobs: the database trigger and the worker assert ----------------');
+{
+  const { BUCKETIZER_JOB_TYPE } = await import('../lib/bucketizer-run-queue.mjs');
+  const { assertJobBelongsToMatter, isJobScopeError } = await import('../lib/job-scope.mjs');
+  const { runBucketizerDocumentJob } = await import('../lib/bucketizer-run.mjs');
+  const u = () => crypto.randomUUID();
+  const A = u(); const B = u();
+  const docA = u(); const docA2 = u(); const docB = u();
+  const prodA = u(); const prodB = u();
+  const runA = u(); const runB = u();
+
+  // D1. The trigger, against a real Postgres, as the roles PostgREST uses.
+  const db = new PGlite();
+  await db.exec(`
+    do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+    do $$ begin create role anon; exception when duplicate_object then null; end $$;
+    do $$ begin create role service_role bypassrls; exception when duplicate_object then null; end $$;
+    create table public.documents (id uuid primary key, matterspace_id uuid not null, title text, storage_path text);
+    create table public.productions (id uuid primary key, matterspace_id uuid not null);
+    create table public.bucketizer_runs (id uuid primary key, matterspace_id uuid not null);
+    create table public.bucketizer_run_documents (run_id uuid, document_id uuid);
+    create table public.processing_jobs (
+      id uuid primary key default gen_random_uuid(), matterspace_id uuid not null,
+      production_id uuid, job_type text not null, payload jsonb not null default '{}');
+    grant usage on schema public to authenticated, anon, service_role;
+    grant select, insert, update on public.processing_jobs to authenticated, service_role;
+  `);
+  await db.exec(fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '097_storage_path_matter.sql'), 'utf8'));
+  await db.query(`insert into public.documents values ($1,$2,'a',null), ($3,$2,'a2',null), ($4,$5,'sealed b',null)`, [docA, A, docA2, docB, B]);
+  await db.query(`insert into public.productions values ($1,$2), ($3,$4)`, [prodA, A, prodB, B]);
+  await db.query(`insert into public.bucketizer_runs values ($1,$2), ($3,$4)`, [runA, A, runB, B]);
+  await db.query(`insert into public.bucketizer_run_documents values ($1,$2), ($3,$4)`, [runA, docA, runB, docB]);
+
+  const asRole = async (role, sql, params) => {
+    await db.exec(`set role ${role}`);
+    try { await db.query(sql, params); return null; } catch (e) { return e; } finally { await db.exec('reset role'); }
+  };
+  const job = (role, matter, jobType, prod, payload) => asRole(role,
+    `insert into public.processing_jobs (matterspace_id, job_type, production_id, payload) values ($1,$2,$3,$4::jsonb)`,
+    [matter, jobType, prod, JSON.stringify(payload)]);
+
+  const CASES = [
+    // [label, job type, production, payload, ok?]
+    ['Bucketizer: own run, a SEALED document of another matter', BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docB }, false],
+    ['Bucketizer: another matter\'s run', BUCKETIZER_JOB_TYPE, null, { run_id: runB, document_id: docA }, false],
+    ['Bucketizer: own run, own document the run does not list', BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docA2 }, false],
+    ['Bucketizer: own run, its own document', BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docA }, true],
+    ['stamp_production: another matter\'s production', 'stamp_production', prodB, {}, false],
+    ['stamp_production: own production', 'stamp_production', prodA, {}, true],
+    ['package_production: another matter\'s production', 'package_production', prodB, {}, false],
+    ['package_production: own production', 'package_production', prodA, { include_privilege_log: true }, true],
+    ['ingest_document: another matter\'s document', 'ingest_document', null, { document_id: docB }, false],
+    ['ingest_document: a non-canonical spelling of its own document', 'ingest_document', null, { document_id: docA.toUpperCase() }, false],
+    ['ingest_document: own document', 'ingest_document', null, { document_id: docA }, true],
+    ['intake_zip: a path in another production', 'intake_zip', prodA, { storage_paths: [`${A}/${prodB}/intake/x.zip`] }, false],
+    ['intake_zip: a traversal path', 'intake_zip', prodA, { storage_paths: [`${A}/${prodA}/../../${B}/${prodB}/intake/x.zip`] }, false],
+    ['intake_zip: own production\'s intake file', 'intake_zip', prodA, { storage_paths: [`${A}/${prodA}/intake/box 1.zip`] }, true],
+    ['intake_folder from a signed-in caller', 'intake_folder', prodA, { local_path: '/proc/self' }, false],
+  ];
+  for (const [label, type, prod, payload, ok] of CASES) {
+    const e = await job('authenticated', A, type, prod, payload);
+    check(ok ? !e : (Boolean(e) && e.code === '42501'),
+      `trigger, as authenticated — ${label}: ${ok ? 'accepted' : 'refused'}`, e ? e.message : '');
+  }
+  {
+    await db.query(`insert into public.processing_jobs (matterspace_id, job_type, payload) values ($1,'ingest_document',$2::jsonb)`,
+      [A, JSON.stringify({ document_id: docA })]);
+    const e = await asRole('authenticated',
+      `update public.processing_jobs set payload = $1::jsonb where job_type = 'ingest_document' and matterspace_id = $2`,
+      [JSON.stringify({ document_id: docB }), A]);
+    check(Boolean(e) && e.code === '42501', 'trigger, as authenticated — an UPDATE re-pointing a job at another matter\'s document: refused');
+    const svc = await job('service_role', A, BUCKETIZER_JOB_TYPE, null, { run_id: runA, document_id: docB });
+    check(!svc, 'trigger, as the service role — passes (the worker\'s own assert is the layer for it, below)');
+  }
+  await db.close();
+
+  // D2. The worker's assert, as the service role, over an in-memory client.
+  const tables = {
+    documents: [{ id: docA, matterspace_id: A }, { id: docA2, matterspace_id: A }, { id: docB, matterspace_id: B }],
+    productions: [{ id: prodA, matterspace_id: A }, { id: prodB, matterspace_id: B }],
+    bucketizer_runs: [{ id: runA, matterspace_id: A, status: 'running', kind: 'classify', model_id: 'm' }, { id: runB, matterspace_id: B, status: 'running', kind: 'classify', model_id: 'm' }],
+    bucketizer_run_documents: [{ id: u(), run_id: runA, document_id: docA }, { id: u(), run_id: runB, document_id: docB }],
+  };
+  const touched = [];
+  const fake = {
+    from(t) {
+      touched.push(t);
+      const filters = [];
+      const rows = () => (tables[t] ?? []).filter((r) => filters.every(([k, v]) => r[k] === v));
+      const api = {
+        select() { return api; }, order() { return api; }, in() { return api; },
+        eq(k, v) { filters.push([k, v]); return api; },
+        update() { touched.push(`${t}:update`); return api; },
+        async maybeSingle() { return { data: rows()[0] ?? null, error: null }; },
+        then(res, rej) { return Promise.resolve({ data: rows(), error: null }).then(res, rej); },
+      };
+      return api;
+    },
+  };
+  const W = [
+    ['bucketizer, sealed document of another matter', { matterspace_id: A, payload: { run_id: runA, document_id: docB } }, { runId: runA, documentId: docB }, false],
+    ['bucketizer, another matter\'s run', { matterspace_id: A, payload: { run_id: runB, document_id: docA } }, { runId: runB, documentId: docA }, false],
+    ['bucketizer, a document the run does not list', { matterspace_id: A, payload: { run_id: runA, document_id: docA2 } }, { runId: runA, documentId: docA2 }, false],
+    ['bucketizer, own', { matterspace_id: A, payload: { run_id: runA, document_id: docA } }, { runId: runA, documentId: docA }, true],
+    ['stamp/package, another matter\'s production', { matterspace_id: A, production_id: prodB }, { productionId: prodB }, false],
+    ['stamp/package, own', { matterspace_id: A, production_id: prodA }, { productionId: prodA }, true],
+    ['ingest_document, another matter\'s document', { matterspace_id: A }, { documentId: docB }, false],
+    ['ingest_document, own', { matterspace_id: A }, { documentId: docA }, true],
+    ['intake, a path outside the production', { matterspace_id: A }, { productionId: prodA, storagePaths: [`${A}/${prodB}/intake/x.zip`] }, false],
+    ['a job with no matter', { matterspace_id: null }, { documentId: docA }, false],
+  ];
+  for (const [label, j, refs, ok] of W) {
+    let e = null;
+    try { await assertJobBelongsToMatter(fake, j, refs); } catch (x) { e = x; }
+    check(ok ? !e : isJobScopeError(e), `worker assert, service role — ${label}: ${ok ? 'passes' : 'refused'}`, e?.message ?? '');
+  }
+  for (const [label, payload] of [['own run, sealed document of another matter', { run_id: runA, document_id: docB }], ['another matter\'s run', { run_id: runB, document_id: docA }]]) {
+    touched.length = 0;
+    let modelCalls = 0;
+    let e = null;
+    try {
+      await runBucketizerDocumentJob({ supabase: fake, job: { id: 'j', matterspace_id: A, payload }, callModel: async () => { modelCalls += 1; return {}; } });
+    } catch (x) { e = x; }
+    check(isJobScopeError(e) && modelCalls === 0 && !touched.includes('passages') && !touched.some((t) => t.endsWith(':update')),
+      `runBucketizerDocumentJob — ${label}: refused before any passage is read, any row is written or the model is called`,
+      `${e?.message ?? 'no error'} | touched ${[...new Set(touched)].join(',')}`);
+  }
+
+  // D3. The worker is a long-running script: held to its source.
+  const w = fs.readFileSync(path.join(ROOT, 'worker', 'discovery-worker.mjs'), 'utf8');
+  const dispatchSrc = w.slice(w.indexOf('async function dispatch(job)'), w.indexOf('async function claimJob'));
+  check(/^\s*async function dispatch\(job\) \{\s*await assertJobScope\(job\);/m.test(dispatchSrc),
+    'worker: dispatch() asks assertJobScope(job) before any handler runs');
+  const scopeSrc = w.slice(w.indexOf('async function assertJobScope'), w.indexOf('async function dispatch(job)'));
+  check(['intake_zip', 'intake_files', 'stamp_production', 'package_production', 'ingest_document', 'BUCKETIZER_JOB_TYPE'].every((t) => scopeSrc.includes(t)),
+    'worker: assertJobScope covers every job type that names something');
+  const catchSrc = w.slice(w.indexOf('if (isJobScopeError(err))'), w.indexOf('if (isJobScopeError(err))') + 600);
+  check(catchSrc.includes('continue;') && catchSrc.indexOf('continue;') < (catchSrc.indexOf('recordDocumentFailure') === -1 ? Infinity : catchSrc.indexOf('recordDocumentFailure')),
+    'worker: a refused job marks only itself — no document or production status is touched');
+  check(/async function stampProduction\(job\) \{\s*const prod = await getProduction\(job\.production_id\);\s*assertJobPaths\(job, prod, \[\]/.test(w)
+    && /async function packageProduction\(job\) \{\s*const prod = await getProduction\(job\.production_id\);\s*assertJobPaths\(job, prod, \[\]/.test(w),
+    'worker: stamp and package also check the job\'s matter against the production\'s in place');
+  check(/doc\.matterspace_id !== job\.matterspace_id\) throw new JobScopeError/.test(w),
+    'worker: ingest_document also checks the document\'s matter in place');
+  const b = fs.readFileSync(path.join(ROOT, 'lib', 'bucketizer-run.mjs'), 'utf8');
+  const runFn = b.slice(b.indexOf('export async function runBucketizerDocumentJob'));
+  check(runFn.indexOf('assertJobBelongsToMatter(') > -1 && runFn.indexOf('assertJobBelongsToMatter(') < runFn.indexOf(".from('bucketizer_runs')"),
+    'lib/bucketizer-run.mjs: the handler refuses on its own account before its first read');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

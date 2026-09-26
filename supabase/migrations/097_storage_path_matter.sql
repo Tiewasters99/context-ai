@@ -62,7 +62,37 @@
 -- has 0 rows. So the strict rule has no exceptions; if that has changed by
 -- the time this is pasted, the ALTER fails whole and names the constraint.
 --
--- Re-runnable. Needs 002 and 030.
+-- ROUND 3 (the class: a job that names another matter's things)
+-- ---------------------------------------------------------------------------
+-- processing_jobs rows are member-writable (032 checks only that the row's
+-- matterspace_id is reachable), and the payload is free-form jsonb that the
+-- worker acts on with the service role: a Bucketizer job naming a sealed
+-- document of another matter (its text went to the run's unsealed model), a
+-- stamp or package job naming another matter's production, an ingest job
+-- re-indexing another tenant's document. A BEFORE INSERT OR UPDATE trigger
+-- now checks, for a SIGNED-IN caller (current_user authenticated or anon —
+-- the service role, the worker and definer RPCs such as claim_discovery_job
+-- pass), that every reference in the row belongs to new.matterspace_id:
+--   production_id           → productions.matterspace_id
+--   payload.document_id     → documents.matterspace_id
+--   payload.run_id          → bucketizer_runs.matterspace_id, and with a
+--                             document_id, a bucketizer_run_documents row
+--   payload.storage_paths[] → "<matter>/<production>/…", 097's segment rules
+--   payload.local_path, job_type intake_folder → refused outright
+-- Ids must be canonical lower-case uuids. lib/job-scope.mjs is the same rule
+-- in the worker, asked first by every handler; both layers, as with the paths.
+-- The lookups are SECURITY DEFINER helpers in jobs_internal (not exposed by
+-- PostgREST): they must see another matter's rows to say they are not yours.
+--
+-- Also round 3: no path segment may start or end with whitespace (a URL
+-- parser trims the end of a path, so such a row is one the code refuses and
+-- the database used to accept). ⚠ Unlike the round 2 rules this was not in
+-- the production audit; before pasting, run
+--   select count(*) from documents where storage_path ~ '(^|/)\s|\s(/|$)';
+-- and expect 0 (the ALTER fails whole otherwise, and names the constraint).
+--
+-- Re-runnable. Needs 002 and 030; the job trigger's run checks need 079 and
+-- are skipped without it.
 -- ⚠ After pasting, run:  notify pgrst, 'reload schema';  (last statement here.)
 
 alter table public.documents drop constraint if exists documents_storage_path_in_matter;
@@ -73,6 +103,7 @@ alter table public.documents add constraint documents_storage_path_in_matter
       and storage_path !~ '(^|/)\.{1,2}(/|$)'
       and position('%' in storage_path) = 0
       and position(chr(92) in storage_path) = 0
+      and storage_path !~ '(^|/)\s|\s(/|$)'   -- round 3: no segment starts or ends with whitespace
     )
   );
 
@@ -98,15 +129,140 @@ begin
           native_storage_path ~ ('^' || matterspace_id::text || '/' || production_id::text || '/[^/]+(/[^/]+)*$')
           and native_storage_path !~ '(^|/)\.{1,2}(/|$)'
           and position('%' in native_storage_path) = 0
-          and position(chr(92) in native_storage_path) = 0))
+          and position(chr(92) in native_storage_path) = 0
+          and native_storage_path !~ '(^|/)\s|\s(/|$)'))
         and
         (display_storage_path is null or (
           display_storage_path ~ ('^' || matterspace_id::text || '/' || production_id::text || '/[^/]+(/[^/]+)*$')
           and display_storage_path !~ '(^|/)\.{1,2}(/|$)'
           and position('%' in display_storage_path) = 0
-          and position(chr(92) in display_storage_path) = 0))
+          and position(chr(92) in display_storage_path) = 0
+          and display_storage_path !~ '(^|/)\s|\s(/|$)'))
       )
   $sql$;
 end $pi$;
+
+-- ============================================================================
+-- Round 3: processing_jobs may name only its own matter's things
+-- ============================================================================
+create schema if not exists jobs_internal;
+revoke all on schema jobs_internal from public;
+grant usage on schema jobs_internal to authenticated, service_role;
+
+create or replace function jobs_internal.matter_of_document(p uuid)
+returns uuid language sql stable security definer set search_path = public
+as $$ select d.matterspace_id from public.documents d where d.id = p $$;
+
+create or replace function jobs_internal.matter_of_production(p uuid)
+returns uuid language plpgsql stable security definer set search_path = public
+as $$
+declare v uuid;
+begin
+  if to_regclass('public.productions') is null then return null; end if;
+  execute 'select matterspace_id from public.productions where id = $1' into v using p;
+  return v;
+end $$;
+
+create or replace function jobs_internal.matter_of_run(p uuid)
+returns uuid language plpgsql stable security definer set search_path = public
+as $$
+declare v uuid;
+begin
+  if to_regclass('public.bucketizer_runs') is null then return null; end if;
+  execute 'select matterspace_id from public.bucketizer_runs where id = $1' into v using p;
+  return v;
+end $$;
+
+create or replace function jobs_internal.run_lists_document(p_run uuid, p_doc uuid)
+returns boolean language plpgsql stable security definer set search_path = public
+as $$
+declare v boolean;
+begin
+  if to_regclass('public.bucketizer_run_documents') is null then return false; end if;
+  execute 'select exists (select 1 from public.bucketizer_run_documents where run_id = $1 and document_id = $2)'
+    into v using p_run, p_doc;
+  return coalesce(v, false);
+end $$;
+
+revoke all on function jobs_internal.matter_of_document(uuid) from public;
+revoke all on function jobs_internal.matter_of_production(uuid) from public;
+revoke all on function jobs_internal.matter_of_run(uuid) from public;
+revoke all on function jobs_internal.run_lists_document(uuid, uuid) from public;
+grant execute on function jobs_internal.matter_of_document(uuid) to authenticated, service_role;
+grant execute on function jobs_internal.matter_of_production(uuid) to authenticated, service_role;
+grant execute on function jobs_internal.matter_of_run(uuid) to authenticated, service_role;
+grant execute on function jobs_internal.run_lists_document(uuid, uuid) to authenticated, service_role;
+
+-- INVOKER on purpose: current_user is then the CALLER (authenticated for a
+-- browser or a forwarded user token; service_role or the owner otherwise).
+create or replace function public._processing_jobs_scope_check()
+returns trigger language plpgsql security invoker
+as $$
+declare
+  c_uuid  constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+  v_doc   text;
+  v_run   text;
+  v_path  jsonb;
+  v_p     text;
+begin
+  if current_user not in ('authenticated', 'anon') then return new; end if;
+
+  if new.job_type = 'intake_folder' or (new.payload ? 'local_path') then
+    raise exception 'a job naming a local folder can only be started from the worker itself'
+      using errcode = '42501';
+  end if;
+
+  if new.production_id is not null
+     and jobs_internal.matter_of_production(new.production_id) is distinct from new.matterspace_id then
+    raise exception 'that production is not in this job''s matter' using errcode = '42501';
+  end if;
+
+  if new.payload ? 'document_id' then
+    v_doc := new.payload ->> 'document_id';
+    if v_doc is null or v_doc !~ c_uuid
+       or jobs_internal.matter_of_document(v_doc::uuid) is distinct from new.matterspace_id then
+      raise exception 'that document is not in this job''s matter' using errcode = '42501';
+    end if;
+  end if;
+
+  if new.payload ? 'run_id' then
+    v_run := new.payload ->> 'run_id';
+    if v_run is null or v_run !~ c_uuid
+       or jobs_internal.matter_of_run(v_run::uuid) is distinct from new.matterspace_id then
+      raise exception 'that Bucketizer run is not in this job''s matter' using errcode = '42501';
+    end if;
+    if v_doc is not null and not jobs_internal.run_lists_document(v_run::uuid, v_doc::uuid) then
+      raise exception 'that document is not in that Bucketizer run' using errcode = '42501';
+    end if;
+  end if;
+
+  if new.payload ? 'storage_paths' then
+    if jsonb_typeof(new.payload -> 'storage_paths') <> 'array' or new.production_id is null then
+      raise exception 'storage_paths must be a list of this production''s files' using errcode = '42501';
+    end if;
+    for v_path in select * from jsonb_array_elements(new.payload -> 'storage_paths') loop
+      v_p := case when jsonb_typeof(v_path) = 'string' then v_path #>> '{}' end;
+      if v_p is null
+         or v_p !~ ('^' || new.matterspace_id::text || '/' || new.production_id::text || '/[^/]+(/[^/]+)*$')
+         or v_p ~ '(^|/)\.{1,2}(/|$)' or position('%' in v_p) > 0 or position(chr(92) in v_p) > 0
+         or v_p ~ '(^|/)\s|\s(/|$)' then
+        raise exception 'a storage path outside this production' using errcode = '42501';
+      end if;
+    end loop;
+  end if;
+
+  return new;
+end $$;
+
+do $jobs$
+begin
+  if to_regclass('public.processing_jobs') is null then
+    raise notice '097: public.processing_jobs is absent (030 not applied) — the job trigger is skipped.';
+    return;
+  end if;
+  execute 'drop trigger if exists processing_jobs_scope_check on public.processing_jobs';
+  execute 'create trigger processing_jobs_scope_check before insert or update on public.processing_jobs
+             for each row execute function public._processing_jobs_scope_check()';
+end $jobs$;
 
 notify pgrst, 'reload schema';
