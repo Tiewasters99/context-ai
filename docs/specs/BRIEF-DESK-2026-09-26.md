@@ -40,6 +40,8 @@ Three consequences: the two resolvers in §3.4 are new code, not wiring; the Rea
 
 ## 2. Decisions Eden owes (each one line)
 
+**Decided 2026-09-26 (Eden):** B1 "Brief Desk" is fine · B2 accept with the list · B3 right column, collapsible · B4 row only; the wanted list is the Corpus Builder spec · B6 incremental with a Re-check all · B7 read-only desk, tap a cite to open the case full screen · B8 CommonMark `[^n]`; the Webster build script has to learn it. **Open: B5** (Send to your assistant in V1, or downloads only).
+
 | # | Decision | Recommended | Gates |
 | --- | --- | --- | --- |
 | B1 | The name of the surface and the verb | "Brief Desk" / "Confirm this brief" until a better one lands | copy only |
