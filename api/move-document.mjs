@@ -25,14 +25,13 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { jwtClaims } from '../lib/account-security.mjs';
-import { record } from '../lib/ledger.mjs';
-import { fetchMatterTier, matterTierWithClient, isSealedTier } from '../lib/ai-tier-policy.mjs';
+import { isSealedTier } from '../lib/ai-tier-policy.mjs';
+import { effectiveTier, entryRefusal, crossingRefusal, recordCrossing } from '../lib/seal-crossing.mjs';
 import { pathInMatter } from '../lib/storage-path.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const TIER_RANK = { A: 0, B: 1, C: 2 };
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -104,42 +103,22 @@ export default async function handler(req, res) {
   // documents row is not step-up gated (094's header), so reading it proves
   // membership and nothing more; without this an aal1 session could carry a
   // sealed document into a matter it can read directly.
-  for (const m of [doc.matterspace_id, newMatterspaceId]) {
-    const { data: entry, error: entryErr } = await sb.rpc('matter_entry', { p_matter: m });
-    if (entryErr) {
-      const code = String(entryErr.code ?? '');
-      // 094 not pasted: there is no gate to ask (and no 096 either).
-      if (code !== 'PGRST202' && code !== '42883') return json(res, 503, { error: 'seal_unresolved' });
-    } else if (entry === 'stepup' || entry === 'enrol') {
-      return json(res, 403, { error: 'step_up_required', mode: entry, matter_id: m });
-    } else if (entry !== 'open') {
-      return json(res, 403, { error: 'destination_not_found_or_no_access' });
-    }
-  }
+  // (lib/seal-crossing.mjs, shared with the Workbench's /api/sandbox.)
+  const gate = await entryRefusal(sb, [doc.matterspace_id, newMatterspaceId]);
+  if (gate) return json(res, gate.status, gate.body);
   if (!destMatter) return json(res, 403, { error: 'destination_not_found_or_no_access' });
 
   // THE SEAL (S4a; S7 decides what may cross a sealed container's edge). A
   // document may move deeper into the seal or sideways within it, never out
   // to anything less sealed. The tiers are read with the service role, so an
   // inherited seal counts even when the parent is invisible to the caller.
-  let srcTier;
-  let destTier;
-  try {
-    [srcTier, destTier] = SERVICE_KEY
-      ? await Promise.all([doc.matterspace_id, newMatterspaceId].map((m) => fetchMatterTier(SUPABASE_URL, SERVICE_KEY, m)))
-      : await Promise.all([doc.matterspace_id, newMatterspaceId].map((m) => matterTierWithClient(sb, m)));
-  } catch {
-    return json(res, 503, { error: 'seal_unresolved' });
-  }
+  const tierOpts = { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY, userClient: sb };
+  const [srcTier, destTier] = await Promise.all(
+    [doc.matterspace_id, newMatterspaceId].map((m) => effectiveTier(m, tierOpts)));
   if (!srcTier || !destTier) return json(res, 503, { error: 'seal_unresolved' });
   const sourceSealed = isSealedTier(srcTier);
-  if (sourceSealed && TIER_RANK[destTier] < TIER_RANK[srcTier]) {
-    return json(res, 409, {
-      error: 'sealed_move_refused',
-      message: 'This document is in a sealed matter. It can move only to a matter sealed at least as tightly; '
-        + 'moving it out would take it past the seal.',
-    });
-  }
+  const crossing = crossingRefusal(srcTier, destTier, 'move');
+  if (crossing) return json(res, crossing.status, crossing.body);
 
   // 049's storage rule, asked as the user in the same words: may this person
   // write the source AND the destination?
@@ -154,21 +133,12 @@ export default async function handler(req, res) {
   // source nothing moves unless the row landed; on an open one a Record that
   // cannot be written is logged and the move goes on (the document stays in
   // the firm, in a matter the person can already open).
-  const recorded = await record(sb, {
-    kind: 'file.exported',
-    matterId: doc.matterspace_id,
-    actor: { kind: 'user', ref: userId, user_id: userId },
-    payload: {
-      document_id: doc.id,
-      title: doc.title ?? doc.source_filename ?? null,
-      destination: 'move',
-      to_matter: newMatterspaceId,
-      sealed: sourceSealed,
-    },
+  const recorded = await recordCrossing(sb, {
+    userId, doc, verb: 'move', toMatter: newMatterspaceId, sealed: sourceSealed,
   });
-  if (!recorded?.ok) {
+  if (!recorded.ok) {
     if (sourceSealed) return json(res, 503, { error: 'record_failed' });
-    console.warn(`[move-document] file.exported not recorded: ${recorded?.error?.message ?? 'unknown'}`);
+    console.warn(`[move-document] file.exported not recorded: ${recorded.error?.message ?? 'unknown'}`);
   }
 
   const oldPath = doc.storage_path;

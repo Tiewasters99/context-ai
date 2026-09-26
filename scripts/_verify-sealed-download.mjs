@@ -275,6 +275,36 @@ const bearerOf = (init) => {
   return a.toLowerCase().startsWith('bearer ') ? a.slice(7).trim() : null;
 };
 
+// PostgREST filters this witness understands: eq. and in.(…), on plain columns.
+function filtersOf(u, params) {
+  const where = [];
+  for (const [k, v] of u.searchParams) {
+    if (['select', 'limit', 'order', 'offset', 'columns'].includes(k)) continue;
+    if (!IDENT.test(k)) return null;
+    if (v.startsWith('eq.')) {
+      params.push(v.slice(3));
+      where.push(`${k}::text = $${params.length}`);
+    } else if (v.startsWith('in.(') && v.endsWith(')')) {
+      const items = v.slice(4, -1).split(',').map((x) => x.replace(/^"|"$/g, '')).filter(Boolean);
+      if (!items.length) { where.push('false'); continue; }
+      const marks = items.map((x) => { params.push(x); return `$${params.length}`; });
+      where.push(`${k}::text in (${marks.join(', ')})`);
+    } else {
+      return null;
+    }
+  }
+  return where;
+}
+// .single() / .maybeSingle() on a write ask for one OBJECT back.
+function rowsReply(init, rows) {
+  const accept = new Headers(init?.headers ?? {}).get('accept') || '';
+  if (accept.includes('vnd.pgrst.object')) {
+    if (rows.length !== 1) return reply(406, { code: 'PGRST116', message: `JSON object requested, ${rows.length} rows returned` });
+    return reply(200, rows[0]);
+  }
+  return reply(200, rows);
+}
+
 async function stubFetch(input, init = {}) {
   const u = new URL(typeof input === 'string' ? input : input.url);
   if (u.host !== 'stub.supabase.test') throw new Error(`egress to ${u.host} — the harness allows none`);
@@ -303,18 +333,13 @@ async function stubFetch(input, init = {}) {
     const patch = JSON.parse(init.body || '{}');
     const keys = Object.keys(patch).filter((k) => IDENT.test(k));
     const params = keys.map((k) => patch[k]);
-    const where = [];
-    for (const [k, v] of u.searchParams) {
-      if (k === 'select' || k === 'columns') continue;
-      if (!IDENT.test(k) || !v.startsWith('eq.')) return reply(400, { message: `unsupported filter ${k}` });
-      params.push(v.slice(3));
-      where.push(`${k}::text = $${params.length}`);
-    }
+    const where = filtersOf(u, params);
+    if (!where) return reply(400, { message: 'unsupported filter' });
     const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
     try {
       const rows = await sqlAs(bearer,
         `update public.${table} set ${sets}${where.length ? ` where ${where.join(' and ')}` : ''} returning id`, params);
-      return reply(200, rows);
+      return rowsReply(init, rows);
     } catch (err) {
       return reply(400, { code: err?.code, message: err?.message });
     }
@@ -357,21 +382,37 @@ async function stubFetch(input, init = {}) {
       else if (c === '*' || IDENT.test(c)) cols.push(c);
       else return reply(400, { message: 'bad select' });
     }
-    const where = [];
     const params = [];
-    for (const [k, v] of u.searchParams) {
-      if (k === 'select' || k === 'limit' || k === 'order' || k === 'offset') continue;
-      if (!IDENT.test(k) || !v.startsWith('eq.')) return reply(400, { message: `unsupported filter ${k}` });
-      params.push(v.slice(3));
-      where.push(`${k}::text = $${params.length}`);
-    }
+    const where = filtersOf(u, params);
+    if (!where) return reply(400, { message: 'unsupported filter' });
     const limit = Number(u.searchParams.get('limit')) || 1000;
     const sql = `select ${cols.join(', ')} from public.${table}${where.length ? ` where ${where.join(' and ')}` : ''} limit ${limit}`;
     try {
-      return reply(200, await sqlAs(bearer, sql, params));
+      return rowsReply(init, await sqlAs(bearer, sql, params));
     } catch (err) {
       return reply(400, { code: err?.code, message: err?.message });
     }
+  }
+
+  // PostgREST POST (supabase-js .insert()).
+  if (u.pathname.startsWith('/rest/v1/') && !u.pathname.startsWith('/rest/v1/rpc/') && method === 'POST') {
+    const table = u.pathname.slice('/rest/v1/'.length);
+    if (!IDENT.test(table)) return reply(400, { message: 'bad table' });
+    const body = JSON.parse(init.body || '[]');
+    const list = Array.isArray(body) ? body : [body];
+    const out = [];
+    try {
+      for (const r of list) {
+        const keys = Object.keys(r).filter((k) => IDENT.test(k));
+        const vals = keys.map((k) => (r[k] !== null && typeof r[k] === 'object' ? JSON.stringify(r[k]) : r[k]));
+        const rows = await sqlAs(bearer,
+          `insert into public.${table} (${keys.join(', ')}) values (${keys.map((_, i) => `$${i + 1}`).join(', ')}) returning *`, vals);
+        out.push(...rows);
+      }
+    } catch (err) {
+      return reply(400, { code: err?.code, message: err?.message });
+    }
+    return rowsReply(init, out);
   }
 
   if (u.pathname.startsWith('/storage/v1/object/sign/') && method === 'POST') {
