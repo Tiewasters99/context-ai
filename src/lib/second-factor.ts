@@ -55,6 +55,20 @@ export async function matterEntry(matterId: string): Promise<MatterEntry | null>
   return (['open', 'stepup', 'enrol', 'none'] as const).includes(data) ? (data as MatterEntry) : null;
 }
 
+/**
+ * The same question asked of a document id (migration 098): the Reader opens
+ * a document without entering its matter, and a sealed one at aal1 reads as
+ * nothing. Null before 098 is pasted.
+ */
+export async function documentEntry(documentId: string): Promise<MatterEntry | null> {
+  const { data, error } = await supabase.rpc('document_entry', { p_document: documentId });
+  if (error) {
+    if (!notDeployed(error)) console.warn('[second-factor] document_entry failed', error.message);
+    return null;
+  }
+  return (['open', 'stepup', 'enrol', 'none'] as const).includes(data) ? (data as MatterEntry) : null;
+}
+
 export async function factorStatus(): Promise<FactorStatus | null> {
   const { data, error } = await supabase.rpc('second_factor_status');
   if (error) {

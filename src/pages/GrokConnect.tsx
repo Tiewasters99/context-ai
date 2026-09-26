@@ -19,11 +19,12 @@ import { supabase } from '@/lib/supabase';
 import { readUserTokens } from '@/lib/agents-schema';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  generateConnectorToken,
   grokConfigSnippet,
   MCP_ENDPOINT_URL,
 } from '@/lib/connectorTokens';
 import CardDialog from '@/components/ui/CardDialog';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
+import { createUserConnectorToken, isStepUpRequired } from '@/lib/connector-token-create';
 
 interface TokenRow {
   id: string;
@@ -42,6 +43,7 @@ export default function GrokConnect() {
   const [tokens, setTokens] = useState<TokenRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [stepUp, setStepUp] = useState(false);
   const [newTokenName, setNewTokenName] = useState('');
   const [generating, setGenerating] = useState(false);
   const [justIssued, setJustIssued] = useState<NewTokenDisplay | null>(null);
@@ -71,15 +73,13 @@ export default function GrokConnect() {
     setError(null);
     setGenerating(true);
     try {
-      const { token, tokenHash, tokenPrefix } = await generateConnectorToken();
-      const { error: insertErr } = await supabase
-        .from('connector_tokens')
-        .insert({ user_id: user.id, token_hash: tokenHash, token_prefix: tokenPrefix, name: trimmed });
-      if (insertErr) throw insertErr;
+      // 098: through connector_token_create, which may ask for the second factor.
+      const { token } = await createUserConnectorToken(user.id, trimmed);
       setJustIssued({ token, name: trimmed });
       setNewTokenName('');
       await refresh();
     } catch (err) {
+      if (isStepUpRequired(err)) { setStepUp(true); return; }
       setError((err as Error).message || 'Failed to generate token');
     } finally {
       setGenerating(false);
@@ -248,6 +248,16 @@ export default function GrokConnect() {
             immediately.
           </p>
         </section>
+
+        {stepUp && (
+          <div className="mb-6">
+            <StepUpPrompt
+              mode="stepup"
+              heading="Confirm it’s you to create a connection."
+              onConfirmed={() => { setStepUp(false); void handleGenerate(); }}
+            />
+          </div>
+        )}
 
         {error && (
           <div className="mb-6 rounded border border-red-500/40 bg-red-500/10 text-red-300 px-4 py-3 text-sm flex items-start gap-2">

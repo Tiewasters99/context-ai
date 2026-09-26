@@ -120,6 +120,7 @@ async function main() {
   const cutoff = new Date(Date.now() - STALE_MIN * 60_000).toISOString();
 
   const workers = await fetchWorkerLiveness(sb);
+  const seal = await fetchSealDrift(sb);
 
   const [errored, stalled, jobs, readyEmpty, ocrPending] = await Promise.all([
     fetchDocs(sb, matterId, (q) => q.eq('processing_status', 'error')),
@@ -165,15 +166,15 @@ async function main() {
   // documents are ready" and exited 0 with the question unanswered — the same
   // silent-success shape as the scans this monitor was built after.
   const needsAttention = escalate.some((g) => g.severity === 'blocking') || jobs.length > 0 || workers.down
-    || readyEmpty.degraded;
+    || readyEmpty.degraded || seal.red;
 
   if (QUIET && !needsAttention && report.total === 0) process.exit(0);
 
-  const text = render({
+  const text = [...sealDriftLines(seal), render({
     report, escalate, escalatedRows, jobs, matter: args.matter,
     staleMin: STALE_MIN, emptyNote: readyEmpty.note, emptyDegraded: readyEmpty.degraded,
     allowed: parseFilenameOwners(), workers,
-  });
+  })].join('\n');
   if (!QUIET || needsAttention) console.log(text);
 
   if (args.fix) await autoFix(sb, rows, report);
@@ -189,6 +190,47 @@ async function main() {
   }
 
   process.exit(needsAttention ? 1 : 0);
+}
+
+// -----------------------------------------------------------------------------
+// The seal's own column (migration 098). matterspaces.sealed_effective is kept
+// by triggers and read by every access check; sealed_effective_drift() lists
+// any matter where it disagrees with the ancestry walk. One row is a matter
+// whose seal the access checks are not applying (or are applying wrongly), so
+// any row is red, and so is a check that could not run. Not deployed yet
+// (PGRST202) is said once and is not red.
+export async function fetchSealDrift(sb) {
+  try {
+    const { data, error } = await sb.rpc('sealed_effective_drift');
+    if (error) {
+      if (error.code === 'PGRST202' || /could not find the function/i.test(error.message ?? '')) {
+        return { available: false, rows: [], red: false, note: 'not deployed (migration 098 not pasted)' };
+      }
+      return { available: true, rows: [], red: true, note: `could not run: ${error.message}` };
+    }
+    const rows = Array.isArray(data) ? data : [];
+    return { available: true, rows, red: rows.length > 0, note: null };
+  } catch (e) {
+    return { available: true, rows: [], red: true, note: `could not run: ${e?.message ?? e}` };
+  }
+}
+
+export function sealDriftLines(seal) {
+  if (!seal) return [];
+  if (!seal.available) return [`Seal column: ${seal.note}.`, ''];
+  if (seal.note) {
+    return [`SEAL CHECK NOT GREEN — sealed_effective_drift() ${seal.note}.`,
+      '  Whether every sealed matter is being treated as sealed could not be established.', ''];
+  }
+  if (seal.rows.length === 0) return ['Seal column: agrees with the ancestry walk on every matter.', ''];
+  return [
+    `SEAL DRIFT: ${seal.rows.length} matter(s) where sealed_effective disagrees with the tier walk.`,
+    '  The access checks read the column, so these matters are not protected as their tier says.',
+    ...seal.rows.slice(0, 20).map((r) => `  ${r.matterspace_id}  column=${r.column_value}  walk=${r.walk_value}`),
+    '  Fix (service role, SQL editor): update matterspaces set ai_tier = ai_tier where id in (…);',
+    '  — the trigger recomputes each row and its children. Then find out how it drifted.',
+    '',
+  ];
 }
 
 // -----------------------------------------------------------------------------

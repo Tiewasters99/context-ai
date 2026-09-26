@@ -741,6 +741,10 @@ export async function moveVaultDocument(
   if (!res.ok) {
     let msg = `move failed: ${res.status}`;
     try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
+    // 098: leaving a sealed matter needs this session's second factor.
+    if (msg === 'step_up_required') {
+      msg = 'Moving this out of a sealed matter takes it out of the seal. Open the sealed matter, confirm it’s you, then move it again.';
+    }
     throw new Error(msg);
   }
 }

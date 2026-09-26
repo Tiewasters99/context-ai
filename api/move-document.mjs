@@ -66,6 +66,22 @@ export default async function handler(req, res) {
   if (destErr) return json(res, 500, { error: `dest lookup: ${destErr.message}` });
   if (!destMatter) return json(res, 403, { error: 'destination_not_found_or_no_access' });
 
+  // 098: moving a document OUT of a sealed matter takes the seal off it, and
+  // the database refuses that unless this session has confirmed its second
+  // factor. Asked here, before anything moves, so the refusal is a clean one
+  // rather than a renamed file and an unmoved row. Before 098 the question
+  // does not exist (PGRST202) and the move goes on as it did.
+  const { data: leaveOk, error: leaveErr } = await sb.rpc('seal_leave_allowed', {
+    p_from: doc.matterspace_id,
+    p_to: newMatterspaceId,
+  });
+  if (!leaveErr && leaveOk === false) {
+    return json(res, 403, { error: 'step_up_required', mode: 'stepup', matter_id: doc.matterspace_id });
+  }
+  if (leaveErr && leaveErr.code !== 'PGRST202') {
+    return json(res, 500, { error: `seal check: ${leaveErr.message}` });
+  }
+
   const oldPath = doc.storage_path;
   let newPath = null;
 

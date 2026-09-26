@@ -733,7 +733,12 @@ console.log('\n--- G. the two endpoints, offline -------------------------------
 
   // Factor events: a fake ledger client records what would have been written.
   const written = [];
-  const ledgerClient = { async rpc(fn, args) { written.push({ fn, args }); return { data: { id: 'e1' }, error: null }; } };
+  // matter_entry answers as the database would for Ada: 'open' on the sealed
+  // matter she belongs to (she has stepped up), 'none' on anything else.
+  const ledgerClient = { async rpc(fn, args) {
+    if (fn === 'matter_entry') return { data: args.p_matter === SEALED ? 'open' : 'none', error: null };
+    written.push({ fn, args }); return { data: { id: 'e1' }, error: null };
+  } };
   const report = (bearer, body) => run(factorHandler, { method: 'POST', bearer, body, deps: { ledgerClient } });
 
   const enrolled = await report(good, { kind: 'auth.factor_enrolled', factor_id: FACTOR });
@@ -756,6 +761,9 @@ console.log('\n--- G. the two endpoints, offline -------------------------------
     && written.at(-1)?.args?.p_payload?.factor_type === 'totp'
     && written.at(-1)?.args?.p_payload?.matter_id === SEALED,
     'factor: a step-up on an aal2 token is written, with the method from amr', JSON.stringify(written.at(-1)?.args?.p_payload));
+  const foreign = await report(stepped, { kind: 'auth.stepup', matter_id: 'aaaaaaaa-0000-4000-8000-000000000000' });
+  check(foreign.status === 200 && written.at(-1)?.args?.p_payload?.matter_id === null,
+    'factor (098): a matter the person does not belong to is not written into the step-up row', JSON.stringify(written.at(-1)?.args?.p_payload));
   const junk = await report(good, { kind: 'file.opened' });
   check(junk.status === 400, 'factor: any other kind is refused before anything is asked');
 }

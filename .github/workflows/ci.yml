@@ -198,6 +198,23 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-disconnect-all.mjs
 
+      # Migration 098 (S1b). The seal is checked wherever a sealed matter's
+      # rows are read or moved, not only at its front door. Every migration
+      # 001→095 as written, then 098 twice. Opens with the negative control
+      # (without 098: the #245 reviewer's row move succeeds, a sealed document
+      # reads by id at aal1, a csp_ token is minted at aal1). Then: the move is
+      # refused; documents, passages, comments, conversations, pages, meetings,
+      # stored files and the activity feed are refused at aal1 and served at
+      # aal2; sealed_effective follows the tree; the grace's hard end and
+      # latest-sign-in rule; matter_entry / document_entry; connector tokens
+      # through one door that asks for the factor; device sign-out asks too;
+      # /api/ext/* refuses sealed matters (confirmed or not) against the same
+      # database; search answers unchanged for open matters, with timings.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 098 — the seal in every access helper (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-seal-in-access.mjs
+
       # Migration 080. A connection's stored refresh token is ciphertext, but
       # it is still the credential for someone's mailbox and cloud drive, and
       # RLS plus Supabase's blanket column grant let a signed-in browser ask
