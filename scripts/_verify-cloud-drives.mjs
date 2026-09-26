@@ -89,7 +89,7 @@ const DOC = Object.freeze({
   title: 'Calder v. Atlas — settlement memo',
   source_filename: 'settlement:memo?.pdf',
   // Filed under its own matter, as migration 097 requires (<matter>/<doc>/<file>).
-  storage_path: 'matter-1/doc-1/settlement-memo.pdf',
+  storage_path: '3a770000-0000-4000-8000-000000000001/doc-1/settlement-memo.pdf',
   file_size_bytes: 21,
 });
 const MATTER_NAME = 'Calder v. Atlas — 7/12 "hearing"';
@@ -187,9 +187,9 @@ function supabaseAnswer(url, init) {
     const kind = decodeURIComponent(/kind=eq\.([^&]+)/.exec(url)?.[1] ?? '');
     return jsonRes(200, connectionsRows.filter((r) => !kind || r.kind === kind));
   }
-  if (url.includes('/rest/v1/documents')) return jsonRes(200, [{ ...DOC, matterspace_id: 'matter-1' }]);
+  if (url.includes('/rest/v1/documents')) return jsonRes(200, [{ ...DOC, matterspace_id: '3a770000-0000-4000-8000-000000000001' }]);
   if (url.includes('/rest/v1/matterspaces')) {
-    return jsonRes(200, [{ id: 'matter-1', name: MATTER_NAME, parent_matterspace_id: null, ai_tier: 'A' }]);
+    return jsonRes(200, [{ id: '3a770000-0000-4000-8000-000000000001', name: MATTER_NAME, parent_matterspace_id: null, ai_tier: 'A' }]);
   }
   return jsonRes(404, { message: 'no stub route', url });
 }
@@ -678,8 +678,14 @@ try {
       // byte-reading route. Those lines are taken out before comparing, so this
       // still proves the cloud-drives lane never touched Google's path.
       const without097 = here
-        .replace(/^import \{ pathInMatter \} from '[^']+';\n/m, '')
-        .replace(/ {2}\/\/ 097: [\s\S]*?storage_path_mismatch' \}\);\n/, '')
+        // Exactly 097's import and four lines — any other difference still fails.
+        .replace("import { pathInMatter } from '../lib/storage-path.mjs';\n", '')
+        .replace(
+          "  // 097: the stored file must be filed under this document's own matter. A\n"
+          + "  // row pointing at another matter's object is refused before the service\n"
+          + "  // role reads a byte (lib/storage-path.mjs says why).\n"
+          + "  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) return json(res, 409, { error: 'storage_path_mismatch' });\n",
+          '')
         .replace("file_size_bytes, matterspace_id')", "file_size_bytes')");
       if (onMain.includes('pathInMatter')) {
         skip(`${rel} vs origin/main`, 'main carries 097 now');

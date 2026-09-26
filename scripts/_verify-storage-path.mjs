@@ -22,6 +22,17 @@
 //   C. the helper itself, and a scan: every service-role storage read in
 //      api/ that follows a user-scoped documents lookup is preceded by it.
 //
+// ROUND 2 (adversarial review of #249): a first-segment test is bypassable —
+// Storage is reached by URL, and "OPEN/../SEALED/doc/file" starts with OPEN.
+// So A also refuses ../, ..\, %2e%2e, a lone ".", "//", four segments and an
+// upper-case matter uuid, accepts a real filename, and holds production_items
+// paths to "<matter>/<production>/…"; B hands every site those traversal rows
+// too, and drives mcp-core's move_document / copy_document /
+// assemble_documents / edit_pdf with a SERVICE-ROLE client (the stdio
+// server's) — none may reach storage; C holds the discovery worker to its
+// source (job paths and production_items paths checked before any download,
+// a queued intake_folder refused) and the operator scripts to the helper.
+//
 //   npm i --no-save @electric-sql/pglite
 //   node scripts/_verify-storage-path.mjs
 //
@@ -116,6 +127,56 @@ console.log('\n--- A. migration 097 --------------------------------------------
   const move = await attempt(`update public.documents set matterspace_id = $2, storage_path = $3 where id = $1`,
     [rowId, SEALED, `${SEALED}/${rowId}/memo.pdf`]);
   check(!move, 'a MOVE that rewrites matterspace_id and storage_path in ONE update is accepted (move-document, move_document, unpack)', move?.message);
+
+  // ROUND 2 — the shape, not the prefix. Each of these begins with OPEN, and
+  // each would reach another key once a URL resolved it.
+  const TRAVERSALS = [
+    [`${OPEN}/../${SEALED}/x/advice.pdf`, 'a ../ segment (and five segments)'],
+    [`${OPEN}/..\\x/advice.pdf`, 'a ..\\ segment (backslash)'],
+    [`${OPEN}/%2e%2e/advice.pdf`, 'a %2e%2e segment (percent-encoded dots)'],
+    [`${OPEN}/x/..`, 'a trailing .. segment'],
+    [`${OPEN}/./advice.pdf`, 'a . segment'],
+    [`${OPEN}//advice.pdf`, 'an empty segment (//)'],
+    [`${OPEN}/a/b/advice.pdf`, 'four segments'],
+    [`${OPEN.toUpperCase()}/x/advice.pdf`, 'an upper-case matter uuid (the CHECK is case-sensitive)'],
+  ];
+  for (const [bad, what] of TRAVERSALS) {
+    const e = await attempt(`insert into public.documents values ($1, $2, 't', $3)`, [id(), OPEN, bad]);
+    check(Boolean(e) && /documents_storage_path_in_matter/.test(e.message), `INSERT refused: ${what}`, e ? '' : bad);
+  }
+  const spaced = await attempt(`insert into public.documents values ($1, $2, 's', $3)`,
+    [id(), OPEN, `${OPEN}/${id()}/Deposition of A. Smith (vol. 2) – final.pdf`]);
+  check(!spaced, 'a real filename (spaces, parentheses, a dash, dots inside the name) is accepted', spaced?.message);
+
+  // production_items (030's columns that matter here).
+  await db.exec(`
+    create table public.production_items (
+      id uuid primary key default gen_random_uuid(),
+      production_id uuid not null,
+      matterspace_id uuid not null,
+      native_storage_path text,
+      display_storage_path text
+    );`);
+  await db.exec(sql097);
+  const PROD = 'b0b0b0b0-0000-4000-8000-000000000004';
+  const OTHER_PROD = 'b1b1b1b1-0000-4000-8000-000000000005';
+  const pi = (native, display) => attempt(
+    `insert into public.production_items (production_id, matterspace_id, native_storage_path, display_storage_path)
+     values ($1, $2, $3, $4)`, [PROD, OPEN, native, display]);
+  const good = await pi(`${OPEN}/${PROD}/${id()}/native/ORM-000001.msg`, `${OPEN}/${PROD}/${id()}/display.pdf`);
+  check(!good, 'production_items: paths inside the row\'s own production are accepted', good?.message);
+  for (const [bad, what] of [
+    [`${SEALED}/${PROD}/i/native/x.msg`, 'another matter'],
+    [`${OPEN}/${OTHER_PROD}/i/native/x.msg`, 'another production'],
+    [`${OPEN}/${PROD}/../../${SEALED}/p/x.msg`, 'a ../ traversal'],
+    [`${OPEN}/${PROD}/i/%2e%2e/x.msg`, 'a percent-encoded segment'],
+    [`${OPEN}/${PROD}/i\\..\\x.msg`, 'a backslash'],
+  ]) {
+    const e1 = await pi(bad, null);
+    const e2 = await pi(null, bad);
+    check(Boolean(e1) && Boolean(e2) && /production_items_paths_in_production/.test(e1.message),
+      `production_items: native AND display path refused — ${what}`);
+  }
   await db.close();
 }
 
@@ -151,14 +212,19 @@ function supabaseAnswer(url, init) {
     if ((init.method || 'GET').toUpperCase() === 'PATCH') return jsonRes(200, []);
     return jsonRes(200, [{ encrypted_refresh_token: encrypt('refresh-token-stub'), status: 'connected', scopes: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.compose', account_email: 'a@example.test' }]);
   }
+  const wantsObject = /vnd\.pgrst\.object/.test(new Headers(init.headers ?? {}).get('accept') || '');
   if (url.includes('/rest/v1/documents')) {
     if ((init.method || 'GET').toUpperCase() !== 'GET') return jsonRes(200, []);
-    return jsonRes(200, [row]);
+    // `id=in.(a,b)`: the same row once per id asked for.
+    const inIds = /id=in\.\(([^)]*)\)/.exec(decodeURIComponent(url))?.[1];
+    const rows = inIds ? inIds.split(',').map((x) => ({ ...row, id: x.replace(/"/g, '') })) : [row];
+    return jsonRes(200, wantsObject ? rows[0] : rows);
   }
   if (url.includes('/rest/v1/matterspaces')) {
     if (url.includes('ai_tier=in.')) return jsonRes(200, []);
     const id = /id=eq\.([^&]+)/.exec(url)?.[1];
-    return jsonRes(200, id ? [{ id: decodeURIComponent(id), name: 'Vashti v. Ormsby', parent_matterspace_id: null, ai_tier: 'A' }] : []);
+    const m = { id: decodeURIComponent(id ?? ''), name: 'Vashti v. Ormsby', short_code: 'VAS', serverspace_id: 'ss-1', parent_matterspace_id: null, ai_tier: 'A' };
+    return jsonRes(200, wantsObject ? m : (id ? [m] : []));
   }
   // Nothing in this world is sealed (the attack is a pointer in an OPEN matter).
   if (url.includes('/rest/v1/rpc/effective_tier_is_sealed')) return jsonRes(200, false);
@@ -225,6 +291,27 @@ for (const site of SITES) {
     { status: c.statusCode, body: c.json?.error ?? null, storage: storageReads().length });
 }
 
+// ROUND 2: the same six sites, handed rows that START with the row's own
+// matter and traverse out of it.
+const TRAVERSAL_ROWS = [
+  `${OPEN}/../${SEALED}/9e9e9e9e-0000-4000-8000-000000000009/advice.pdf`,
+  `${OPEN}/../../discovery-files/${SEALED}/p/x.pdf`,
+  `${OPEN}/%2e%2e/advice.pdf`,
+  `${OPEN}/..\\advice.pdf`,
+  `${OPEN}//advice.pdf`,
+  `${OPEN}/a/b/advice.pdf`,
+  `${OPEN.toUpperCase()}/${DOC_ID}/advice.pdf`,
+];
+for (const site of SITES) {
+  const leaks = [];
+  for (const p of TRAVERSAL_ROWS) {
+    requests = []; row = { ...POINTER, storage_path: p };
+    const r = await site.run();
+    if (!(r.statusCode === 409 && storageReads().length === 0 && outside().length === 0)) leaks.push(`${p} → ${r.statusCode}/${storageReads().length}`);
+  }
+  check(leaks.length === 0, `${site.name}: every traversal row is refused — zero storage reads`, leaks.join(' | '));
+}
+
 {
   const client = createClient(SUPABASE_URL, 'anon-stub-not-a-key', {
     global: { headers: { Authorization: 'Bearer stub-session-jwt' } },
@@ -240,6 +327,41 @@ for (const site of SITES) {
   try { out = await handleGetMedia(client, { document_id: DOC_ID }); } catch (e) { err = e; }
   check(!err && typeof out?.stream_url === 'string' && storageReads().length === 1,
     'get_media: control — filed correctly, it mints', err?.message);
+
+  const leaks = [];
+  for (const p of TRAVERSAL_ROWS) {
+    requests = []; row = { ...POINTER, storage_path: p };
+    let e = null;
+    try { await handleGetMedia(client, { document_id: DOC_ID }); } catch (x) { e = x; }
+    if (!e || storageReads().length) leaks.push(p);
+  }
+  check(leaks.length === 0, 'get_media: every traversal row is refused before the mint', leaks.join(' | '));
+}
+
+// ROUND 2, item 3: the stdio MCP server runs mcp-core with the SERVICE ROLE,
+// which acts on any key it is handed. Each of these must refuse a pointer or
+// traversal row before it asks storage for anything.
+{
+  const { handleMoveDocument, handleCopyDocument, handleAssembleDocuments, handleEditPdf } = await import('../lib/mcp-core.mjs');
+  const service = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  const OTHER = '0c0c0c0c-0000-4000-8000-000000000006';
+  const TOOLS = [
+    ['move_document', () => handleMoveDocument(service, { document_ids: [DOC_ID], to_matter: OTHER })],
+    ['copy_document', () => handleCopyDocument(service, { document_ids: [DOC_ID], to_matter: OTHER })],
+    ['assemble_documents', () => handleAssembleDocuments(service, { matter: OPEN, document_ids: [DOC_ID, 'd0c0d0c0-0000-4000-8000-000000000033'] })],
+    ['edit_pdf', () => handleEditPdf(service, { document_id: DOC_ID, pages: 'all' })],
+  ];
+  for (const [name, run] of TOOLS) {
+    const leaks = [];
+    for (const p of [POINTER.storage_path, ...TRAVERSAL_ROWS]) {
+      requests = []; row = { ...POINTER, storage_path: p };
+      let e = null;
+      try { await run(); } catch (x) { e = x; }
+      const ours = e && (e.code === 'storage_path_mismatch' || /not filed under its own matter/.test(String(e.message)));
+      if (!ours || storageReads().length) leaks.push(`${p.slice(0, 60)} → ${e?.message?.slice(0, 60) ?? 'no error'} / ${storageReads().length}`);
+    }
+    check(leaks.length === 0, `mcp-core ${name} (service role): pointer and traversal rows refused before any storage call`, leaks.join(' | '));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -247,8 +369,12 @@ for (const site of SITES) {
 // ---------------------------------------------------------------------------
 console.log('\n--- C. the helper and the source ----------------------------------------');
 const { pathInMatter, assertPathInMatter, isStoragePathMismatch } = await import('../lib/storage-path.mjs');
-check(pathInMatter(`${OPEN}/a/b.pdf`, OPEN) && pathInMatter(`${OPEN.toUpperCase()}/a/b.pdf`, OPEN),
-  'pathInMatter: a path under its matter (any case) belongs');
+check(pathInMatter(`${OPEN}/a/b.pdf`, OPEN) && pathInMatter(`${OPEN}/a/My file (2) – é.pdf`, OPEN),
+  'pathInMatter: a canonical path under its matter belongs (real filenames included)');
+check(!pathInMatter(`${OPEN.toUpperCase()}/a/b.pdf`, OPEN) && !pathInMatter(`${OPEN}/a/b.pdf`, OPEN.toUpperCase()),
+  'pathInMatter: the matter segment is compared exactly — a case mismatch is refused, as the CHECK refuses it');
+check(!pathInMatter(`${OPEN}/a/x?y.pdf`, OPEN) && !pathInMatter(`${OPEN}/a/x#y.pdf`, OPEN),
+  'pathInMatter: anything a URL parser would rewrite (? #) is refused');
 check(!pathInMatter(`${SEALED}/a/b.pdf`, OPEN) && !pathInMatter('b.pdf', OPEN) && !pathInMatter(`${OPEN}/a`, null),
   'pathInMatter: another matter, no matter segment, or no matter at all does not');
 check(pathInMatter(null, OPEN), 'pathInMatter: no stored file is nothing to refuse');
@@ -265,6 +391,43 @@ check(pathInMatter(null, OPEN), 'pathInMatter: no stored file is nothing to refu
     if (!/pathInMatter\(|assertPathInMatter\(/.test(src)) bad.push(f);
   }
   check(bad.length === 0, 'the five routes, get_media and the worker\'s ingest all ask the helper', bad.join(', '));
+}
+{
+  const { pathInProduction } = await import('../lib/storage-path.mjs');
+  const P = 'b0b0b0b0-0000-4000-8000-000000000004';
+  check(pathInProduction(`${OPEN}/${P}/intake/box 1.zip`, OPEN, P) && pathInProduction(`${OPEN}/${P}/i/native/a.msg`, OPEN, P),
+    'pathInProduction: an intake file and an item file inside the production belong');
+  check(!pathInProduction(`${OPEN}/b1b1b1b1-0000-4000-8000-000000000005/intake/x.zip`, OPEN, P)
+    && !pathInProduction(`${SEALED}/${P}/intake/x.zip`, OPEN, P)
+    && !pathInProduction(`${OPEN}/${P}/../../${SEALED}/p/x.zip`, OPEN, P)
+    && !pathInProduction(`${OPEN}/${P}/%2e%2e/x.zip`, OPEN, P)
+    && !pathInProduction(`${OPEN}/${P}`, OPEN, P),
+  'pathInProduction: another production, another matter, traversal, encoding, or the production folder itself is refused');
+
+  // The worker is a long-running script, so it is held to its source here;
+  // the helper it calls is exercised above.
+  const w = fs.readFileSync(path.join(ROOT, 'worker', 'discovery-worker.mjs'), 'utf8');
+  const fn = (name) => w.slice(w.indexOf(`async function ${name}(`), w.indexOf('\n}\n', w.indexOf(`async function ${name}(`)));
+  const beforeDownload = (body, needle) => body.indexOf(needle) > -1 && body.indexOf(needle) < body.indexOf('downloadFromStorage(');
+  check(beforeDownload(fn('intakeZip'), 'assertJobPaths(job, prod, paths') && beforeDownload(fn('intakeFiles'), 'assertJobPaths(job, prod, paths'),
+    'worker: intake_zip and intake_files check every job path (and the job\'s matter) BEFORE the first download');
+  check(/job\.matterspace_id !== prod\.matterspace_id/.test(fn('assertJobPaths').concat(w.slice(w.indexOf('function assertJobPaths'), w.indexOf('function assertJobPaths') + 600))),
+    'worker: a job whose matter is not its production\'s matter is refused');
+  const stamp = w.slice(w.indexOf('async function stampProduction'), w.indexOf('async function packageProduction'));
+  const pkg = w.slice(w.indexOf('async function packageProduction'), w.indexOf('async function packageProduction') + 6000);
+  check((stamp.match(/assertPathInProduction\(item\.display_storage_path/g) || []).length >= 2
+    && /assertPathInProduction\(item\.native_storage_path/.test(pkg),
+  'worker: every production_items path is checked before the service role reads it (stamp, preflight, package)');
+  check(/case 'intake_folder': return refuseQueuedFolderIntake\(job\)/.test(w) && /never from the queue/.test(w),
+    'worker: a QUEUED intake_folder job (a member-writable row naming a local path) is refused');
+
+  const scripts = ['scripts/reingest.mjs', 'scripts/ocr-scanned.mjs', 'scripts/reprocess-failed.mjs'];
+  const unguarded = scripts.filter((f) => !/pathInMatter\(|assertPathInMatter\(/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')));
+  check(unguarded.length === 0, 'the service-role operator scripts ask the helper too', unguarded.join(', '));
+  const mcp = fs.readFileSync(path.join(ROOT, 'lib', 'mcp-core.mjs'), 'utf8');
+  const sign = mcp.slice(mcp.indexOf('async function signDownloadUrl'), mcp.indexOf('async function signDownloadUrl') + 600);
+  check(/assertPathInMatter\(doc\.storage_path, doc\.matterspace_id\)/.test(sign) && sign.indexOf('assertPathInMatter') < sign.indexOf('createSignedUrl'),
+    'mcp-core signDownloadUrl checks the path before it signs');
 }
 
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);

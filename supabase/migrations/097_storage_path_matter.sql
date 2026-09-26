@@ -19,7 +19,8 @@
 --
 -- THE FIX
 -- ---------------------------------------------------------------------------
--- A CHECK constraint: a documents row's storage_path, when present, begins
+-- A CHECK constraint: a documents row's storage_path, when present, has the
+-- exact shape <matter>/<doc>/<file> (ROUND 2 below) and begins
 -- with that row's own matterspace_id. A pointer row can no longer be written
 -- by anyone, the service role included. lib/storage-path.mjs asks the same
 -- question in code right before each service-role read, so a route is safe
@@ -37,15 +38,75 @@
 -- violate it. If that has changed by the time this is pasted, the ALTER fails
 -- and names the constraint; nothing is half-applied.
 --
--- Re-runnable. Needs nothing newer than 002.
+-- ROUND 2 (adversarial review of #249) — the shape, not just the prefix
+-- ---------------------------------------------------------------------------
+-- A first-segment test is bypassable: Storage is reached by URL, and a URL
+-- resolves dot segments, so "OPEN/../SEALED/doc/file" starts with OPEN and
+-- names SEALED's object ("OPEN/../../discovery-files/…" even changes
+-- bucket; "%2e%2e" and "..\" do the same). So the CHECK requires the exact
+-- shape "<the row's matter uuid>/<segment>/<segment>" — three segments, none
+-- empty, none "." or "..", no "%", no backslash. Case-sensitive, as uuid::text
+-- is lower case. lib/storage-path.mjs asks the same, and refuses anything a
+-- URL parser would rewrite besides.
+--
+-- The same class of hole in Discovery: production_items.native_storage_path
+-- and display_storage_path are member-writable while a production is a draft
+-- (030), and the worker reads them with the service role when it stamps and
+-- packages. Their CHECK: "<the row's matter>/<the row's production>/…", same
+-- segment rules. (Production objects are deeper than three segments:
+-- <matter>/<production>/<item>/native/<file>.)
+--
+-- Production audit (read-only, 2026-09-26, round 2): ALL 46,496 documents
+-- rows with a path are exactly <matter-uuid>/<doc>/<file> — 0 dot segments,
+-- 0 '%', 0 backslashes, 0 empty segments, max length 282. production_items
+-- has 0 rows. So the strict rule has no exceptions; if that has changed by
+-- the time this is pasted, the ALTER fails whole and names the constraint.
+--
+-- Re-runnable. Needs 002 and 030.
 -- ⚠ After pasting, run:  notify pgrst, 'reload schema';  (last statement here.)
 
 alter table public.documents drop constraint if exists documents_storage_path_in_matter;
 alter table public.documents add constraint documents_storage_path_in_matter
-  check (storage_path is null or split_part(storage_path, '/', 1) = matterspace_id::text);
+  check (
+    storage_path is null or (
+      storage_path ~ ('^' || matterspace_id::text || '/[^/]+/[^/]+$')
+      and storage_path !~ '(^|/)\.{1,2}(/|$)'
+      and position('%' in storage_path) = 0
+      and position(chr(92) in storage_path) = 0
+    )
+  );
 
 comment on constraint documents_storage_path_in_matter on public.documents is
-  'A stored file lives under its document''s own matter (<matter>/<doc>/<file>). '
-  'Refuses a row pointing at another matter''s object. Migration 097; lib/storage-path.mjs.';
+  'A stored file lives under its document''s own matter, exactly <matter>/<doc>/<file>: '
+  'no dot segments, no %, no backslash. Refuses a row pointing at another matter''s '
+  'object, directly or by traversal. Migration 097; lib/storage-path.mjs.';
+
+do $pi$
+begin
+  if to_regclass('public.production_items') is null then
+    raise notice '097: public.production_items is absent (030 not applied) — its constraints skipped.';
+    return;
+  end if;
+
+  execute $sql$
+    alter table public.production_items drop constraint if exists production_items_paths_in_production
+  $sql$;
+  execute $sql$
+    alter table public.production_items add constraint production_items_paths_in_production
+      check (
+        (native_storage_path is null or (
+          native_storage_path ~ ('^' || matterspace_id::text || '/' || production_id::text || '/[^/]+(/[^/]+)*$')
+          and native_storage_path !~ '(^|/)\.{1,2}(/|$)'
+          and position('%' in native_storage_path) = 0
+          and position(chr(92) in native_storage_path) = 0))
+        and
+        (display_storage_path is null or (
+          display_storage_path ~ ('^' || matterspace_id::text || '/' || production_id::text || '/[^/]+(/[^/]+)*$')
+          and display_storage_path !~ '(^|/)\.{1,2}(/|$)'
+          and position('%' in display_storage_path) = 0
+          and position(chr(92) in display_storage_path) = 0))
+      )
+  $sql$;
+end $pi$;
 
 notify pgrst, 'reload schema';
