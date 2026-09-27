@@ -55,3 +55,19 @@ export function nearestCommonAncestor(
   const [first, ...rest] = want.map(chainOf);
   return first.find((a) => rest.every((chain) => chain.includes(a))) ?? null;
 }
+
+/** A matter is sealed by its own tier or by any ancestor's (the seal inherits downward). */
+export function isSealedIn(
+  matters: Pick<ServerspaceMatter, 'id' | 'parent_matterspace_id' | 'ai_tier'>[],
+  id: string | null | undefined,
+): boolean {
+  const byId = new Map(matters.map((m) => [m.id, m]));
+  const seen = new Set<string>();
+  let cur = id ? byId.get(id) : undefined;
+  while (cur && !seen.has(cur.id)) {
+    if (cur.ai_tier !== 'A') return true;
+    seen.add(cur.id);
+    cur = cur.parent_matterspace_id ? byId.get(cur.parent_matterspace_id) : undefined;
+  }
+  return false;
+}

@@ -69,7 +69,7 @@ import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
 import MatterTreePick from '@/components/matters/MatterTreePick';
 import { useServerspaces } from '@/hooks/useServerspaces';
-import { nearestCommonAncestor } from '@/lib/matter-tree';
+import { nearestCommonAncestor, isSealedIn } from '@/lib/matter-tree';
 import { setSurfaceContext, clearSurfaceContext } from '@/lib/orchestrator-context';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
@@ -466,8 +466,14 @@ function DeskEditor(p: DeskProps) {
   const matterName = useCallback((id: string | null | undefined) => allMatters.find((m) => m.id === id)?.name ?? null, [allMatters]);
   const casesMatterId = (meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id ?? null;
   const chosenRootId = (meta.metadata as { record_root_matter_id?: string } | null)?.record_root_matter_id ?? null;
+  // The seal: the brief's highlighted words go to the pen the BOUND matter
+  // chooses. A brief filed under a seal may only be bound to a record that is
+  // sealed too — never to an open case above its sealed appendix, and never
+  // to an open matter the picker offered.
+  const briefSealed = isSealedIn(allMatters, meta.matterspace_id);
+  const keepsTheSeal = useCallback((id: string) => !briefSealed || isSealedIn(allMatters, id), [briefSealed, allMatters]);
   const recordRootId = useMemo(() => {
-    if (chosenRootId) return chosenRootId;
+    if (chosenRootId && keepsTheSeal(chosenRootId)) return chosenRootId;
     const anchors = [recordMatterId, casesMatterId].filter((x): x is string => !!x);
     let derived = nearestCommonAncestor(allMatters, anchors);
     // The anchors are folders INSIDE the case (an appendix set, a cases
@@ -476,11 +482,15 @@ function DeskEditor(p: DeskProps) {
     if (derived && anchors.includes(derived)) {
       derived = allMatters.find((m) => m.id === derived)?.parent_matterspace_id ?? derived;
     }
-    return derived ?? meta.matterspace_id;
-  }, [chosenRootId, allMatters, recordMatterId, casesMatterId, meta.matterspace_id]);
+    return derived && keepsTheSeal(derived) ? derived : meta.matterspace_id;
+  }, [chosenRootId, allMatters, recordMatterId, casesMatterId, meta.matterspace_id, keepsTheSeal]);
   const recordRootName = matterName(recordRootId);
   const [showRecordPick, setShowRecordPick] = useState(false);
   const rememberRecordRoot = async (matterId: string) => {
+    if (!keepsTheSeal(matterId)) {
+      p.setNotice('This brief is in a SecureSpace. Its record must be inside the seal too; choose a sealed matter.');
+      return;
+    }
     const metadata = { ...(meta.metadata ?? {}), record_root_matter_id: matterId };
     const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
     if (!error) p.setMeta({ ...meta, metadata });

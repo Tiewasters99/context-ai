@@ -20,7 +20,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildOrchestratorSystem } from '../lib/orchestrator-system.mjs';
-import { nearestCommonAncestor } from '../src/lib/matter-tree.ts';
+import { nearestCommonAncestor, isSealedIn } from '../src/lib/matter-tree.ts';
 import {
   setOrchestratorContext, clearOrchestratorContext, setSurfaceContext, clearSurfaceContext, getOrchestratorContext,
 } from '../src/lib/orchestrator-context.ts';
@@ -83,6 +83,30 @@ test('B. nearestCommonAncestor', () => {
   assert.equal(nearestCommonAncestor(m, ['ja-final', 'nope']), 'ja-final', 'an unknown id is ignored');
   assert.equal(nearestCommonAncestor(m, ['ja-final', 'other']), null, 'no shared ancestor');
   assert.equal(nearestCommonAncestor(m, []), null);
+});
+
+test('B. isSealedIn: own tier or any ancestor\'s', () => {
+  const m = [
+    { id: 'legal', parent_matterspace_id: null, ai_tier: 'A' },
+    { id: 'dec', parent_matterspace_id: 'legal', ai_tier: 'A' },
+    { id: 'ja', parent_matterspace_id: 'dec', ai_tier: 'B' },
+    { id: 'vol', parent_matterspace_id: 'ja', ai_tier: 'A' },
+    { id: 'silo', parent_matterspace_id: null, ai_tier: 'C' },
+  ];
+  assert.equal(isSealedIn(m, 'dec'), false);
+  assert.equal(isSealedIn(m, 'ja'), true, 'its own tier');
+  assert.equal(isSealedIn(m, 'vol'), true, 'inherited from the parent');
+  assert.equal(isSealedIn(m, 'silo'), true);
+  assert.equal(isSealedIn(m, 'nope'), false);
+  assert.equal(isSealedIn(m, null), false);
+});
+
+test('D. wiring: a sealed brief is never bound to an open record', () => {
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  assert.match(desk, /const briefSealed = isSealedIn\(allMatters, meta\.matterspace_id\)/);
+  assert.match(desk, /if \(chosenRootId && keepsTheSeal\(chosenRootId\)\) return chosenRootId;/, 'a kept choice is re-checked against the seal');
+  assert.match(desk, /return derived && keepsTheSeal\(derived\) \? derived : meta\.matterspace_id;/, 'a derived root that leaves the seal falls back to the brief\'s matter');
+  assert.match(desk, /if \(!keepsTheSeal\(matterId\)\) \{\s*p\.setNotice\('This brief is in a SecureSpace/, 'the picker refuses an open record for a sealed brief');
 });
 
 test('C. the surface layer wins for the matter and keeps the reader document', () => {
