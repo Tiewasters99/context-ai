@@ -37,7 +37,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
-  ShieldCheck, ListChecks, Square, Search,
+  ShieldCheck, ListChecks, Square, Search, Info,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -272,6 +272,7 @@ function DeskEditor(p: DeskProps) {
     try { return localStorage.getItem('cs.brief.table.collapsed') === '1'; } catch { return false; }
   });
   const [overlay, setOverlay] = useState<null | 'authority' | 'table'>(null);
+  const [showReadingNote, setShowReadingNote] = useState(false);
   // Column widths, the lawyer's own (0 = the brief and the pane share evenly).
   const rowRef = useRef<HTMLDivElement>(null);
   const briefColRef = useRef<HTMLDivElement>(null);
@@ -712,6 +713,13 @@ function DeskEditor(p: DeskProps) {
           </button>
         )}
         <button
+          onClick={() => setShowReadingNote(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Why footnotes sit in the text and there are no page numbers"
+        >
+          <Info size={14} /> <span className="hidden md:inline">How this page reads</span>
+        </button>
+        <button
           onClick={() => p.setShowVersions(!p.showVersions)}
           className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
           title="Saved versions"
@@ -877,6 +885,17 @@ function DeskEditor(p: DeskProps) {
           )}
         </div>
       )}
+      {showReadingNote && (
+        <CardDialog
+          storageKey="cs.brief.reading-note"
+          title="How this page reads"
+          subtitle="The desk shows your words, not the printed page."
+          onClose={() => setShowReadingNote(false)}
+          maxWidth={560}
+        >
+          <ReadingNote />
+        </CardDialog>
+      )}
       {chooser && (
         <CardDialog
           storageKey="cs.brief.appendix-chooser"
@@ -908,6 +927,42 @@ function DeskEditor(p: DeskProps) {
         <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />
       )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "How this page reads" — so a reader does not take the desk for a broken
+// Word file (Eden, 09-27: footnote 1 "appears strangely inside the body" and
+// "there are no page numbers … the reader might panic").
+// ---------------------------------------------------------------------------
+function ReadingNote() {
+  const row = (term: string, text: React.ReactNode) => (
+    <div className="grid grid-cols-[8.5rem_1fr] gap-3 py-2 border-b border-white/[0.06] last:border-0">
+      <div className="text-[12px] text-white/85 font-medium">{term}</div>
+      <div className="text-[12px] text-white/65 leading-relaxed">{text}</div>
+    </div>
+  );
+  return (
+    <div className="text-white">
+      <p className="text-[12.5px] text-white/70 leading-relaxed mb-2">
+        The brief is held here as text you edit and check, one continuous page. Nothing about its
+        printed form is lost: it is made when you export.
+      </p>
+      {row('Footnotes', <>Each note sits where its number is in the text, as a small tinted note with its number. On export
+        to Word it becomes a real footnote at the foot of the page.</>)}
+      {row('Page numbers', <>None here: the text is not yet laid out on pages. Pages, page numbers, the tables of contents and
+        authorities and your house style are made by the Word export or by your assistant.</>)}
+      {row('Headings', <>Part headings (centred), point headings and sub-points, as your master file has them.</>)}
+      {row('Cites', <>After <em>Confirm this brief</em>, each cite is underlined in its flag's colour; click one to open the
+        authority beside the brief. A <span className="underline decoration-dashed">dashed</span> underline means the words changed
+        since the check.</>)}
+      {row('Flags', <><span className="text-red-400 font-semibold">[STAR]</span>, <span className="text-red-400 font-semibold">[OPP]</span>,{' '}
+        <span className="text-red-400 font-semibold">[EDEN]</span> and <span className="text-red-400 font-semibold">[verify]</span> are
+        your working flags, printed bold red in the Word export.</>)}
+      {row('Highlight', <>A private working mark. It is not exported.</>)}
+      {row('Export', <>Markdown for your assistant or the house-style build; Word for your words with real footnotes in one
+        plain style.</>)}
+    </div>
   );
 }
 
