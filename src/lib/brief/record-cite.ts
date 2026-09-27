@@ -45,8 +45,13 @@ export function rangeOfTitle(title: string): [number, number] | null {
 
 export interface Volume { id: string; title: string; matterspace_id: string; from: number; to: number }
 
-/** Every appendix volume the caller can open whose named range covers `n`, grouped by the set (matter) it belongs to. */
-export async function appendixSetsFor(client: QueryClient, n: number): Promise<Map<string, Volume[]>> {
+/**
+ * Every appendix volume the caller can open, grouped by the set (matter) it
+ * belongs to. With `n`, only the volumes whose named range covers A-`n`; with
+ * null, every set — for changing the appendix a brief cites when no A-cite is
+ * open to steer the question.
+ */
+export async function appendixSets(client: QueryClient, n: number | null): Promise<Map<string, Volume[]>> {
   const { data, error } = await client
     .from('documents')
     .select('id, title, matterspace_id')
@@ -56,12 +61,15 @@ export async function appendixSetsFor(client: QueryClient, n: number): Promise<M
   const sets = new Map<string, Volume[]>();
   for (const d of (data ?? []) as { id: string; title: string; matterspace_id: string }[]) {
     const r = rangeOfTitle(d.title ?? '');
-    if (!r || n < r[0] || n > r[1]) continue;
+    if (!r || (n !== null && (n < r[0] || n > r[1]))) continue;
     const v: Volume = { ...d, from: r[0], to: r[1] };
     sets.set(d.matterspace_id, [...(sets.get(d.matterspace_id) ?? []), v]);
   }
   return sets;
 }
+
+/** Every appendix volume the caller can open whose named range covers `n`, grouped by the set (matter) it belongs to. */
+export const appendixSetsFor = (client: QueryClient, n: number): Promise<Map<string, Volume[]>> => appendixSets(client, n);
 
 const stampRe = (n: number) => new RegExp(`(^|[^0-9A-Za-z-])A-${n}(?![0-9])`);
 

@@ -23,15 +23,19 @@ export interface PaneState {
   docTitle: string | null;
   goto: ReaderGoto | null;
   caveat: string | null;
+  /** A record cite (A-10) is open: the appendix it was read from, by the matter's name. */
+  appendix?: { name: string } | null;
 }
 
-export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch }: {
+export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix }: {
   state: PaneState | null;
   onClose?: () => void;
   /** Full screen (phone, narrow window): a back arrow instead of a close. */
   back?: boolean;
   onPickCopy: (documentId: string) => void;
   onSearch: (query: string) => void;
+  /** "Appendix: <matter> · change" — re-ask which appendix this brief cites. */
+  onChangeAppendix?: () => void;
 }) {
   if (!state) {
     return (
@@ -59,6 +63,19 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.docTitle && <div className="text-[11px] text-white/45 truncate">{state.docTitle}</div>}
         {state.stale && <div className="text-[11px] text-[#e8b84a] mt-0.5">Changed since the check — Confirm to re-check it.</div>}
         {state.caveat && state.docId && <div className="text-[11px] text-orange-200/80 mt-0.5">{state.caveat}</div>}
+        {state.appendix && state.docId && (
+          <div className="text-[11px] text-white/45 mt-0.5 truncate" data-testid="pane-appendix">
+            Appendix: <span className="text-white/65">{state.appendix.name}</span>
+            {onChangeAppendix && (
+              <>
+                {' · '}
+                <button onClick={onChangeAppendix} className="text-[#e8b84a]/80 hover:text-[#e8b84a] underline-offset-2 hover:underline" title="This brief cites a different appendix: choose it">
+                  change
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
