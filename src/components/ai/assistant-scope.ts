@@ -63,7 +63,7 @@ export function sealedPenSentence(label: string = SEALED_PEN_DEFAULT_LABEL): str
 export const OPEN_PEN_DEFAULT_LABEL = 'Claude Opus 4.8';
 
 export function openPenSentence(label: string = OPEN_PEN_DEFAULT_LABEL): string {
-  return `Answers come from ${label}. This matter is not sealed.`;
+  return `Answers come from ${label}. This matter is not sealed. Counts toward your plan's AI usage.`;
 }
 
 /**
@@ -154,6 +154,7 @@ const PEN_NAMES: Record<string, string> = {
   'claude-opus-5': 'Opus 5',
   'anthropic.claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-8': 'Opus 4.8',
+  'claude-opus-5-5': 'Opus 5.5',
 };
 
 export function penLabel(model: string): string {
