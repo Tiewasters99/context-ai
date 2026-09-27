@@ -413,6 +413,9 @@ console.log('\n--- I. the Orchestrator beside the desk -------------------------
   check(/else if \(cmd\.draft\)/.test(panel) && /PANEL_MIN_W = 400/.test(panel) && /PANEL_MIN_H = 440/.test(panel),
     'the Orchestrator takes a draft without sending, and is never smaller than 400 x 440');
   check(/model: 'claude-opus-5-5'/.test(read('lib/assistant-core.mjs')), 'the first-party pen is Opus 5.5');
+  check(panel.includes("n: 'top-0") && panel.includes("sw: 'bottom-0 left-0") && !panel.includes("resize: pinned ? 'none' : 'both'")
+    && panel.includes('if (isMobile || pinned) return;'),
+    'the Orchestrator card resizes from all four edges and corners, not only the browser corner, and a pinned card does not move');
 }
 
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);

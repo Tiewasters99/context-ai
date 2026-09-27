@@ -262,6 +262,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             onClick={() => setCollapsedState(!collapsedState)}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-white/70 transition-colors"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             <PanelLeft size={16} strokeWidth={1.75} />
           </button>
