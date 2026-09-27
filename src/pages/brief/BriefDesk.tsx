@@ -605,24 +605,14 @@ function DeskEditor(p: DeskProps) {
           </span>
         </Banner>
       )}
-      {(p.arrival || p.losses.length > 0) && (
+      {p.arrival && p.editable && !run && !progress && (
         <Banner tone="info" onClose={p.clearLosses}>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>
-              <strong className="font-medium">{p.arrival ? `Imported ${p.arrival.from}.` : 'Opened from Word.'}</strong>{' '}
-              {p.losses.length ? 'Your words came across. What did not:' : 'Your words, headings, italics and footnotes came across.'}
-            </span>
-            {p.arrival && p.editable && !run && !progress && (
-              <button
-                onClick={() => { p.clearLosses(); void confirm(false); }}
-                className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
-              >
-                <ShieldCheck size={13} /> Confirm this brief — check every cite
-              </button>
-            )}
-            {p.arrival && !p.editable && <span className="text-white/50">Checking the cites is a laptop job; open this brief there.</span>}
-          </div>
-          {p.losses.length > 0 && <ul className="list-disc ml-5 mt-1">{p.losses.map((l) => <li key={l}>{l}</li>)}</ul>}
+          <button
+            onClick={() => { p.clearLosses(); void confirm(false); }}
+            className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
+          >
+            <ShieldCheck size={13} /> Confirm this brief
+          </button>
         </Banner>
       )}
       {!p.editable && (
@@ -679,7 +669,7 @@ function DeskEditor(p: DeskProps) {
         >
           <History size={14} /> <span className="hidden md:inline">Versions</span>
         </button>
-        <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} />
+        <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} losses={importLosses(meta)} />
       </header>
 
       {narrow && topBlock}
@@ -1029,8 +1019,15 @@ function Toolbar({ editor, onSnapshot, busy, confirm }: { editor: Editor; onSnap
   );
 }
 
-function ExportMenu({ onPick, disabled }: { onPick: (d: 'md' | 'docx') => void; disabled: boolean }) {
+/** What the Word original had that the text did not keep (set at import). */
+function importLosses(meta: BriefMeta): string[] {
+  const l = (meta.metadata as { import_losses?: unknown } | null)?.import_losses;
+  return Array.isArray(l) ? l.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function ExportMenu({ onPick, disabled, losses }: { onPick: (d: 'md' | 'docx') => void; disabled: boolean; losses: string[] }) {
   const [open, setOpen] = useState(false);
+  const [why, setWhy] = useState(false);
   return (
     <div className="relative">
       <button
@@ -1041,7 +1038,18 @@ function ExportMenu({ onPick, disabled }: { onPick: (d: 'md' | 'docx') => void; 
         <Download size={13} /> Export <ChevronDown size={12} />
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-72 rounded-md border border-white/10 bg-[#16161f] py-1 shadow-xl" onMouseLeave={() => setOpen(false)}>
+        <div className="absolute right-0 top-9 z-30 w-80 rounded-md border border-white/10 bg-[#16161f] py-1 shadow-xl" onMouseLeave={() => { setOpen(false); setWhy(false); }}>
+          <div className="px-3 pt-2 pb-2 border-b border-white/[0.06] text-[11px] leading-relaxed text-white/55">
+            The desk keeps your words, headings, italics and footnotes as plain text. Your assistant reformats it in Word in your house style.
+            {losses.length > 0 && (
+              <>
+                {' '}<button className="text-[#e8b84a]/80 hover:text-[#e8b84a] underline-offset-2 hover:underline" onClick={() => setWhy((v) => !v)}>
+                  {why ? 'Hide' : 'What the original Word file had'}
+                </button>
+                {why && <ul className="list-disc ml-4 mt-1 space-y-0.5 text-white/50">{losses.map((l) => <li key={l}>{l}</li>)}</ul>}
+              </>
+            )}
+          </div>
           <MenuItem title="Markdown (.md)" note="The master.md the brief-format build reads." onClick={() => { setOpen(false); onPick('md'); }} />
           <MenuItem title="Word (.docx)" note="Your words, real footnotes, one plain style." onClick={() => { setOpen(false); onPick('docx'); }} />
           <MenuItem title="Send to your assistant" note="Coming next: your Claude formats it in your house style." disabled />
