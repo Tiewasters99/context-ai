@@ -6,6 +6,15 @@
 // name carries: the section number of a statute, the caption of a case.
 // Pure; no Supabase.
 
+/** "Morgan v. Allison Crane & Rigging, LLC" → "Morgan v Allison Crane and Rigging LLC". */
+export function captionForSearch(caption: string): string {
+  return caption
+    .replace(/&/g, ' and ')
+    .replace(/[.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /** The search box's starting text for a highlighted cite. */
 export function findQueryFor(selected: string): string {
   const s = selected.replace(/\s+/g, ' ').trim().replace(/^[("'“‘\s]+|[)"'”’.,;:\s]+$/g, '');
@@ -22,6 +31,6 @@ export function findQueryFor(selected: string): string {
   if (stat) return stat[1];
   // A case: the caption, up to the first comma, without italics or "See".
   const cap = /^(?:(?:see|see also|accord|cf\.|but see|e\.g\.,?|compare)\s+)?(.+?\sv\.?\s.+?)(?:,|\s\d|$)/i.exec(s.replace(/[*_]/g, ''));
-  if (cap) return cap[1].replace(/\s+/g, ' ').trim();
+  if (cap) return captionForSearch(cap[1]);
   return s.slice(0, 120);
 }

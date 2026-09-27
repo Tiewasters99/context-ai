@@ -58,6 +58,7 @@ import { passageForPrintedPage } from '@/lib/brief/resolve';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
+import { parseReporterCites } from '../../../lib/bluebook.mjs';
 import { parseRecordCite, appendixSetsFor, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
 import CardDialog from '@/components/ui/CardDialog';
 import CiteTable from './CiteTable';
@@ -392,11 +393,12 @@ function DeskEditor(p: DeskProps) {
 
   // Any document into the pane: from the search, from a highlight, or from an
   // assistant working beside the lawyer (the 'cs:brief-open' event below).
-  const openDocument = (documentId: string, o: { page?: number; heading?: string; caveat?: string | null } = {}) => {
+  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null } = {}) => {
     gotoNonce.current += 1;
     setPane((cur) => ({
       rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
-      docId: documentId, docTitle: null, goto: { page: o.page ?? 1, nonce: gotoNonce.current },
+      docId: documentId, docTitle: o.title ?? null,
+      goto: o.passageId ? { passageId: o.passageId, nonce: gotoNonce.current } : { page: o.page ?? 1, nonce: gotoNonce.current },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
     }));
     if (narrow) openOverlay('authority');
@@ -422,10 +424,48 @@ function DeskEditor(p: DeskProps) {
     const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
     if (!error) p.setMeta({ ...meta, metadata });
   };
+  // "Morgan v. Allison Crane & Rigging, LLC, 114 F.4th 214, 218": the case that
+  // carries 114 F.4th 214 in any matter this person can read (the index ingest
+  // writes, migration 101), at the passage on page 218. The brief's own matter
+  // first when two carry it. No name to spell right.
+  const openByReporter = async (label: string): Promise<boolean> => {
+    let cites: { reporter: string; volume: number; page: number; pin?: number | null }[] = [];
+    try { cites = parseReporterCites(label) as typeof cites; } catch { return false; }
+    for (const c of cites) {
+      const { data } = await supabase
+        .from('document_citations')
+        .select('document_id, star_level, documents!inner(title, matterspace_id)')
+        .eq('reporter', c.reporter).eq('volume', c.volume).eq('page', c.page)
+        .limit(10);
+      type Row = { document_id: string; star_level: number | null; documents: { title: string | null; matterspace_id: string } | { title: string | null; matterspace_id: string }[] };
+      const rows = ((data ?? []) as Row[]).map((r) => ({ ...r, doc: Array.isArray(r.documents) ? r.documents[0] : r.documents }));
+      if (!rows.length) continue;
+      const hit = rows.find((r) => r.doc?.matterspace_id === meta.matterspace_id) ?? rows[0];
+      let passage: Awaited<ReturnType<typeof passageForPrintedPage>> = null;
+      try { passage = await passageForPrintedPage(supabase, hit.document_id, c.pin ?? null, hit.star_level ?? 1); } catch { /* open at the start */ }
+      const copies = new Set(rows.map((r) => r.document_id)).size;
+      openDocument(hit.document_id, {
+        passageId: passage?.passage_id,
+        heading: label,
+        title: hit.doc?.title ?? null,
+        caveat: [
+          passage && passage.basis !== 'printed' ? passage.caveat : null,
+          copies > 1 ? `${copies} copies of this case are filed; this is ${hit.doc?.matterspace_id === meta.matterspace_id ? "the one in this brief's matter" : 'the first found'}.` : null,
+        ].filter(Boolean).join(' ') || null,
+      });
+      return true;
+    }
+    return false;
+  };
+
   const findHighlighted = async () => {
     const label = highlighted.current ?? '';
     const cite = parseRecordCite(label);
-    if (!cite) { setSearch(findQueryFor(label)); return; }
+    if (!cite) {
+      if (await openByReporter(label)) return;
+      setSearch(findQueryFor(label));
+      return;
+    }
     try {
       const sets = await appendixSetsFor(supabase, cite.first);
       const kept = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id;
