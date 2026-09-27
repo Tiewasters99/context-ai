@@ -193,6 +193,20 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   );
   const input = inThisScope ? conv.input : '';
 
+  // A drafted question (assistant-bus `draft`) lands once the panel is in the
+  // command's scope, so the swap to that matter's conversation cannot clear it.
+  const pendingDraftRef = useRef<string | null>(null);
+  useEffect(() => {
+    const draft = pendingDraftRef.current;
+    if (draft === null || !inThisScope) return;
+    pendingDraftRef.current = null;
+    setInputRef.current(draft);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 0);
+  });
+
   // The pen that actually answered, from the server's `session` event. It is
   // stamped with the matter it answered FOR, so walking from a sealed matter
   // to an open one cannot leave the sealed pen's name in the header.
@@ -797,13 +811,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       // A command may carry no prompt: it scopes and opens the panel
       // (SecureChat's door) without spending a model call.
       if (cmd.prompt?.trim()) void sendRef.current(cmd.prompt.trim());
-      else if (cmd.draft) {
-        setInputRef.current(cmd.draft);
-        setTimeout(() => {
-          const el = inputRef.current;
-          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-        }, 0);
-      }
+      else if (cmd.draft) pendingDraftRef.current = cmd.draft;
     };
     window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
     return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
