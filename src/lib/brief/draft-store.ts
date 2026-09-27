@@ -331,6 +331,7 @@ export async function importBriefFile(matterId: string, file: File): Promise<Imp
   const id = await createBrief(matterId, titleFrom(file.name), doc, {
     imported_from: 'file',
     original_filename: file.name,
+    import_losses: losses,
   });
   // The original, as received, beside the editable text. A failure here never
   // loses the brief; the words are already in it.
@@ -379,6 +380,7 @@ export async function importBriefFromDocument(documentId: string): Promise<Impor
   const id = await createBrief(src.matterspace_id, src.title || 'Untitled brief', imported.doc, {
     imported_from: 'contextspaces',
     source_document_id: src.id,
+    import_losses: imported.losses,
     ...(src.source_filename ? { original_filename: src.source_filename } : {}),
   });
   return { id, losses: imported.losses };
