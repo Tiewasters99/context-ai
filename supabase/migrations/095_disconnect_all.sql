@@ -42,7 +42,8 @@
 --     revoked_at = now(). An already-expired token is dead and left alone;
 --   * every enabled in-app agent (agent_charters, 052): enabled = false;
 --   * AI paused on every matter in every serverspace the caller runs
---     (serverspace_members role owner/admin). NOT matters the caller merely
+--     (serverspace_members role owner/admin — since 099, role OWNER only;
+--     see 099 §6). NOT matters the caller merely
 --     belongs to, and not a matter where the caller is only a matter-level
 --     admin: an outside co-counsel pressing this for their own account must
 --     not stop the firm's matter for everybody. The pause is set on each ROOT
@@ -67,7 +68,8 @@
 -- belongs on the credential owner's account chain, which only that person may
 -- write, and revoking a colleague's Claude across all of their matters is not
 -- what "this matter" means. The pause covers them: a paused matter is refused
--- to every connector, agent and chat, whoever connected it.
+-- to every connector, agent and chat, whoever connected it — including the
+-- Chrome extension's /api/ext/* endpoints, which did not check it until 099.
 --
 -- THE RECORD (all through the existing ledger functions, 064/072/094)
 -- ---------------------------------------------------------------------------
@@ -484,6 +486,9 @@ grant execute on function public.disconnect_all_preview(text, uuid) to authentic
 --   agent_charters    enabled false → true, or a new enabled charter
 -- oauth_grant_adopt cannot write a false unlock: after a lock every grant for
 -- the pair is revoked, and adoption refuses where a revoked grant exists.
+-- (Not so for a client that never had a grant — the review of #246, HIGH-2.
+-- 099 refuses adoption for any account that has been locked, and writes
+-- account.unlocked only for the account's own post-lock sign-in.)
 --
 -- The account is the row's owner (new.user_id / new.owner_id), not auth.uid():
 -- the consent screen's write runs as the service role, after

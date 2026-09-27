@@ -87,7 +87,11 @@ globalThis.fetch = async (input, init = {}) => {
   if (rpcM) {
     const body = JSON.parse(init.body || '{}');
     const g = grantRows.get(body.p_grant_id);
-    const rows = rpcM[1] === 'oauth_grant_link_state' && g ? [{ grant_id: body.p_grant_id, ...g }] : [];
+    // 099 reads grant state through oauth_grant_lock_state first (087's
+    // link state plus whether the owner is locked); answered the same way.
+    const rows = (rpcM[1] === 'oauth_grant_link_state' || rpcM[1] === 'oauth_grant_lock_state') && g
+      ? [{ grant_id: body.p_grant_id, ...g, ...(rpcM[1] === 'oauth_grant_lock_state' ? { owner_locked: false } : {}) }]
+      : [];
     return new Response(JSON.stringify(rows), { status: 200, headers: { 'content-type': 'application/json' } });
   }
   if (url.startsWith('http://stub.supabase.local/rest/v1/connector_tokens')) {
