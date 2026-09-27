@@ -468,5 +468,33 @@ console.log('\n--- J. record cites: A-10 is a page of the brief\'s appendix ----
   check(/metadata\?\.pdf_page/.test(read('src/pages/DocumentReader.tsx')), "the Reader's passage goto uses the physical page too");
 }
 
+// ===========================================================================
+console.log('\n--- K. find, back to your place, ask, add a case --------------------');
+// ===========================================================================
+{
+  // Find: the projection finds words across italics and in footnotes, mapped to the editor.
+  const p = A.project(master);
+  const i = p.text.indexOf('Owen v. Jones, 123 F.3d 456, 460');
+  const r = A.plainRangeToPm(p, i, i + 'Owen v. Jones, 123 F.3d 456, 460'.length);
+  check(!!r && master.textBetween(r.from, r.to) === 'Owen v. Jones, 123 F.3d 456, 460', 'find maps a match across an italic case name to the editor', JSON.stringify(r));
+  const n = p.text.indexOf('was decided on a Rule 12(b)(6) motion');
+  const rn = A.plainRangeToPm(p, n, n + 11);
+  check(!!rn && master.resolve(rn.from).parent.type.name === 'footnote', 'and finds words inside a footnote');
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  check(/function FindBar/.test(desk) && /e\.key\.toLowerCase\(\) === 'f'/.test(desk) && /brief-find-current/.test(desk),
+    'a find bar in the brief: Ctrl+F, every match lit, the current one marked, next and previous');
+  const openRow = desk.slice(desk.indexOf('const openRow = useCallback'), desk.indexOf('const pickCopy'));
+  const openDoc = desk.slice(desk.indexOf('const openDocument = '), desk.indexOf('const openSearched'));
+  check(/markPlace\(\)/.test(openRow) && /markPlace\(\)/.test(openDoc) && /Back to your place/.test(desk),
+    'every way an authority opens marks the reading place first; "Back to your place" returns to it');
+  const ask = desk.slice(desk.indexOf('const askAbout = async'), desk.indexOf('const findHighlighted = async'));
+  check(/runInAssistant\(\{/.test(ask) && /draft:/.test(ask) && !/prompt:/.test(ask),
+    '"Ask about this" drafts the proposition and the authority into the Orchestrator; it sends nothing');
+  const add = read('src/pages/brief/AddCaseCard.tsx');
+  check(/persistVaultFile\(matter, file\)/.test(add) && /checkUploadAdmissible\(matter, file\)/.test(add) && /watchDocumentStatus/.test(add),
+    '"Add a case" files through the Vault\'s own path (duplicate and type checks, ingest) and watches it to ready');
+  check(/<AddCaseCard/.test(read('src/pages/MatterspaceView.tsx')), 'and the matter page has the same button');
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 process.exit(failures ? 1 : 0);

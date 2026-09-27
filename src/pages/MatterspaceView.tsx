@@ -12,6 +12,7 @@ import ActivityFeed from '@/components/activity/ActivityFeed';
 import RecordTab from '@/components/record/RecordTab';
 import { createBrief, importBriefFile } from '@/lib/brief/draft-store';
 import { IMPORT_ACCEPT, kindOf, refusalFor } from '@/lib/brief/import';
+import AddCaseCard from '@/pages/brief/AddCaseCard';
 import MatterCalendar from '@/components/matter/MatterCalendar';
 import MatterTasks from '@/components/agents/MatterTasks';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
@@ -544,6 +545,7 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
   const { data: items = [], isLoading, error } = useContentItems(space, contentType);
   const invalidate = useContentInvalidate();
   const [creating, setCreating] = useState(false);
+  const [addingCase, setAddingCase] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   // Tables only: bring in an Excel / OpenDocument / CSV file, one table per
   // sheet. Google Sheets: File → Download → Microsoft Excel, then import.
@@ -731,6 +733,25 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void handleImportBrief(f); }}
               />
+              {/* A case into this matter in one step, not through the Vault's
+                  import (Eden, 09-27: "a simple 'add case to matter' button"). */}
+              <button
+                onClick={() => setAddingCase(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors"
+                title="Add a case to this matter: choose the file, and it becomes searchable"
+              >
+                <FileText size={12} strokeWidth={2} />
+                Add a case
+              </button>
+              {addingCase && (
+                <AddCaseCard
+                  defaultMatterId={matterId}
+                  fixedMatter
+                  openLabel="Open"
+                  onClose={() => setAddingCase(false)}
+                  onOpen={(id) => navigate(`/app/document/${id}`)}
+                />
+              )}
             </>
           )}
           <button

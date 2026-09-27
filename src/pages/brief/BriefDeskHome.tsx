@@ -11,8 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, FolderOpen, FilePlus2, Loader2, Lock, Stamp, AlertTriangle } from 'lucide-react';
-import { useServerspaces } from '@/hooks/useServerspaces';
-import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import { useMatterOptions } from '@/hooks/useMatterOptions';
 import CorpusDocumentPicker from '@/components/matter/CorpusDocumentPicker';
 import {
   createBrief, importBriefFile, importBriefFromDocument, listRecentBriefs, type RecentBrief,
@@ -20,28 +19,6 @@ import {
 import { IMPORT_ACCEPT, kindOf, refusalFor } from '@/lib/brief/import';
 
 const MATTER_KEY = 'cs.brief.matter';
-
-interface MatterOption { id: string; label: string; sealed: boolean }
-
-function useMatterOptions(): { options: MatterOption[]; loading: boolean } {
-  const { data: spaces = [], isLoading } = useServerspaces();
-  const options = useMemo(() => {
-    const out: MatterOption[] = [];
-    for (const s of spaces) {
-      const walk = (nodes: MatterTreeNode[], trail: string[], sealedAbove: boolean) => {
-        for (const n of nodes) {
-          const sealed = sealedAbove || n.matter.ai_tier !== 'A';
-          const path = [...trail, n.matter.name];
-          out.push({ id: n.matter.id, label: path.join(' › '), sealed });
-          walk(n.children, path, sealed);
-        }
-      };
-      walk(buildMatterTree(s.matterspaces), [s.name], false);
-    }
-    return out;
-  }, [spaces]);
-  return { options, loading: isLoading };
-}
 
 export default function BriefDeskHome() {
   const navigate = useNavigate();
