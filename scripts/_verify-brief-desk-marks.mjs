@@ -383,22 +383,26 @@ console.log('\n--- H. find the highlighted authority (src/lib/brief/find-query.t
     ['28 U.S.C. §§ 1331', '1331'],
     ['42 U.S.C. § 12102(1)(A)', '12102'],
     ['29 C.F.R. § 1630.2(j)', '1630.2'],
-    ['Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986)', 'Anderson v. Liberty Lobby'],
-    ['See *Hohider v. United Parcel Serv., Inc.*, 574 F.3d 169', 'Hohider v. United Parcel Serv.'],
-    ['(Celotex Corp. v. Catrett, 477 U.S. 317)', 'Celotex Corp. v. Catrett'],
+    ['Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986)', 'Anderson v Liberty Lobby'],
+    ['See *Hohider v. United Parcel Serv., Inc.*, 574 F.3d 169', 'Hohider v United Parcel Serv'],
+    ['(Celotex Corp. v. Catrett, 477 U.S. 317)', 'Celotex Corp v Catrett'],
+    // A Westlaw filename: bare "v", "And" for "&" (Morgan, 09-27).
+    ['Morgan v. Allison Crane & Rigging, LLC, 114 F.4th 214', 'Morgan v Allison Crane and Rigging'],
     // Rules: the filed name carries "Rule N" ("Rule 4. Appeal as of Right"), not the cite.
     ['Fed. R. App. P. 4(a)(1)(A)', 'Rule 4'],
     ['Fed. R. Civ. P. 56(a)', 'Rule 56'],
     ['FRCP 12(b)(6)', 'Rule 12'],
     ['Fed. R. Evid. 803(6)', 'Rule 803'],
     ['L.A.R. 28.1', 'Rule 28.1'],
-    ['Ruler v. Smith, 1 F.3d 1', 'Ruler v. Smith'],
+    ['Ruler v. Smith, 1 F.3d 1', 'Ruler v Smith'],
   ];
   const bad = cases.filter(([inp, want]) => findQueryFor(inp) !== want).map(([inp, want]) => `${inp} → "${findQueryFor(inp)}" (wanted "${want}")`);
   check(bad.length === 0, 'a highlighted statute searches by its section number; a case by its caption', bad.join(' ; '));
   const desk = read('src/pages/brief/BriefDesk.tsx');
   check(/addEventListener\('cs:brief-open'/.test(desk) && /Find in corpus/.test(desk),
     'the desk opens any document in the pane: "Find in corpus" for the lawyer, cs:brief-open for an assistant beside them');
+  check(/openByReporter\(label\)/.test(desk) && /from\('document_citations'\)/.test(desk),
+    'a highlighted reporter cite opens the case that carries it, before any name search');
 }
 
 // ===========================================================================
