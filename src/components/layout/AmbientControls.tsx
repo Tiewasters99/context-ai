@@ -15,13 +15,39 @@
 //                 localStorage (see src/lib/musicTracks.ts).
 
 import { useState, useRef, useEffect } from 'react';
-import { Music, Image as ImageIcon, LayoutGrid, X, Maximize, EyeOff, Loader2, Repeat } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { Music, Image as ImageIcon, LayoutGrid, X, Maximize, EyeOff, Loader2, Repeat, ChevronsRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import MusicLibrary from '@/components/layout/MusicLibrary';
 import { type MusicTrack, youtubeEmbedUrl } from '@/lib/musicTracks';
 
+const HIDE_KEY = 'cs.ambient.hidden';
+
 export default function AmbientControls() {
+  // The cluster can fold to one faint dot in the corner (Eden, 09-27: in the
+  // Brief Desk it sat on the reading pane's scroll arrow, and "the most
+  // important thing is for the page to scroll easily"). Music plays on while
+  // folded. An open brief folds it on entry, as it folds the sidebar; the
+  // choice elsewhere is remembered.
+  const location = useLocation();
+  const onBrief = /^\/app\/brief\/[^/]+/.test(location.pathname);
+  const [hiddenPref, setHiddenPref] = useState<boolean>(() => {
+    try { return localStorage.getItem(HIDE_KEY) === '1'; } catch { return false; }
+  });
+  const [briefShown, setBriefShown] = useState(false);
+  const [wasOnBrief, setWasOnBrief] = useState(onBrief);
+  if (onBrief !== wasOnBrief) {
+    setWasOnBrief(onBrief);
+    setBriefShown(false);
+  }
+  const hidden = onBrief ? !briefShown : hiddenPref;
+  const setHidden = (v: boolean) => {
+    if (onBrief) { setBriefShown(!v); return; }
+    setHiddenPref(v);
+    try { localStorage.setItem(HIDE_KEY, v ? '1' : '0'); } catch { /* private window */ }
+  };
+
   const [backdropUrl, setBackdropUrl] = useState<string | null>(null);
   const [backdropOn, setBackdropOn] = useState(true);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -171,8 +197,20 @@ export default function AmbientControls() {
 
   return (
     <>
+      {hidden && (
+        <button
+          onClick={() => setHidden(false)}
+          className={`fixed bottom-[4.5rem] right-1 md:bottom-1 md:right-1 z-50 h-5 w-5 rounded-full flex items-center justify-center transition-colors ${
+            musicPlaying ? 'bg-[#e8b84a]/70 hover:bg-[#e8b84a]' : 'bg-white/15 hover:bg-white/35'
+          }`}
+          title={musicPlaying ? 'Music is playing. Show the music and backdrop controls' : 'Show the music and backdrop controls'}
+          aria-label="Show the music and backdrop controls"
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-white/80" />
+        </button>
+      )}
       <div
-        className="fixed bottom-[4.5rem] right-3 md:bottom-5 md:right-5 flex items-center gap-1.5 z-50"
+        className={`fixed bottom-[4.5rem] right-3 md:bottom-5 md:right-5 flex items-center gap-1.5 z-50 ${hidden ? 'hidden' : ''}`}
         style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.55))' }}
       >
         {hasBackdrop && (
@@ -234,6 +272,14 @@ export default function AmbientControls() {
           </button>
         )}
         <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+        <button
+          onClick={() => setHidden(true)}
+          className={`${btn} text-white/50 hover:text-white`}
+          title="Hide these controls (music keeps playing)"
+          aria-label="Hide the music and backdrop controls"
+        >
+          <ChevronsRight size={20} strokeWidth={1.75} />
+        </button>
       </div>
 
       {/* YouTube playback. Rendered as a small visible mini-player above
