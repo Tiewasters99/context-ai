@@ -1035,6 +1035,7 @@ const BRIEF_CSS = `
 .brief-doc { outline: none; font-family: 'Times New Roman', Times, Georgia, serif; font-size: 17px; line-height: 1.9;
   counter-reset: brief-fn; min-height: 60vh; }
 .brief-doc p { text-align: justify; text-indent: 0.5in; margin: 0; }
+.brief-doc h1, .brief-doc h2, .brief-doc h3 { color: #1b1b1b; }
 .brief-doc h1 { text-align: center; font-weight: 700; font-size: 17px; margin: 1.4em 0 0.6em; letter-spacing: 0.02em; }
 .brief-doc h2 { font-weight: 700; font-size: 17px; margin: 1.2em 0 0.4em; }
 .brief-doc h3 { font-weight: 700; font-size: 17px; margin: 1em 0 0.3em 0.5in; }
