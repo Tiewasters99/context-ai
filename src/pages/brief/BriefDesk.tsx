@@ -58,6 +58,8 @@ import { passageForPrintedPage } from '@/lib/brief/resolve';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
+import { parseRecordCite, appendixSetsFor, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import CardDialog from '@/components/ui/CardDialog';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
@@ -400,6 +402,53 @@ function DeskEditor(p: DeskProps) {
   };
   const openSearched = (documentId: string) => openDocument(documentId, { heading: highlighted.current ?? undefined });
 
+  // ── Record cites: "A-10" is a page of the appendix THIS brief cites ─────
+  // Which appendix is the lawyer's call, asked once and kept on the brief
+  // (metadata.record_matter_id); then every A-cite opens at its stamped page.
+  const [chooser, setChooser] = useState<{ cite: RecordCite; label: string; sets: { matterId: string; name: string; volumes: Volume[] }[] } | null>(null);
+  const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string) => {
+    const v = volumes.find((x) => cite.first >= x.from && cite.first <= x.to);
+    if (!v) { p.setNotice(`No volume of that appendix covers A-${cite.first}.`); return; }
+    const at = await pageOfStamp(supabase, v, cite.first);
+    openDocument(v.id, {
+      page: at.page,
+      heading: label,
+      caveat: at.basis === 'estimate' ? `The A-${cite.first} stamp is not in this volume's text; this is where it should fall.` : null,
+    });
+  };
+  const rememberRecord = async (matterId: string) => {
+    const metadata = { ...(meta.metadata ?? {}), record_matter_id: matterId };
+    const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
+    if (!error) p.setMeta({ ...meta, metadata });
+  };
+  const findHighlighted = async () => {
+    const label = highlighted.current ?? '';
+    const cite = parseRecordCite(label);
+    if (!cite) { setSearch(findQueryFor(label)); return; }
+    try {
+      const sets = await appendixSetsFor(supabase, cite.first);
+      const kept = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id;
+      if (kept && sets.has(kept)) { await openRecordIn(sets.get(kept)!, cite, label); return; }
+      if (sets.size === 0) { p.setNotice(`No appendix volume in your matters covers A-${cite.first}.`); return; }
+      if (sets.size === 1) {
+        const [only] = [...sets.entries()];
+        await rememberRecord(only[0]);
+        await openRecordIn(only[1], cite, label);
+        return;
+      }
+      const ids = [...sets.keys()];
+      const { data } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+      const names = new Map(((data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+      setChooser({
+        cite, label,
+        sets: ids.map((id) => ({ matterId: id, name: names.get(id) ?? 'A matter', volumes: sets.get(id)! }))
+          .sort((a, b) => Number(/final/i.test(b.name)) - Number(/final/i.test(a.name)) || a.name.localeCompare(b.name)),
+      });
+    } catch (e) {
+      p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
+    }
+  };
+
   // The words highlighted in the brief, for "Find in corpus". Kept after the
   // selection collapses (a click on the button moves the focus), and published
   // on window.__briefDesk so an assistant driving this tab can read it.
@@ -646,7 +695,7 @@ function DeskEditor(p: DeskProps) {
         {hasHighlight && (
           <button
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setSearch(findQueryFor(highlighted.current ?? ''))}
+            onClick={() => void findHighlighted()}
             className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
             title="Find the highlighted authority in Contextspaces and open it beside the brief"
           >
@@ -827,6 +876,33 @@ function DeskEditor(p: DeskProps) {
             />
           )}
         </div>
+      )}
+      {chooser && (
+        <CardDialog
+          storageKey="cs.brief.appendix-chooser"
+          title="Which appendix does this brief cite?"
+          subtitle={`More than one appendix in your matters has A-${chooser.cite.first}. Your choice is kept with this brief.`}
+          onClose={() => setChooser(null)}
+          maxWidth={520}
+        >
+          <div className="space-y-1.5">
+            {chooser.sets.map((s) => (
+              <button
+                key={s.matterId}
+                onClick={async () => {
+                  const pick = chooser;
+                  setChooser(null);
+                  await rememberRecord(s.matterId);
+                  await openRecordIn(s.volumes, pick.cite, pick.label);
+                }}
+                className="block w-full text-left px-3 py-2 rounded-md border border-white/[0.08] hover:border-[#e8b84a]/50 hover:bg-white/[0.03]"
+              >
+                <div className="text-[13px] text-white/90">{s.name}</div>
+                <div className="text-[11px] text-white/45">{s.volumes.length === 1 ? s.volumes[0].title : `${s.volumes.length} volumes`}</div>
+              </button>
+            ))}
+          </div>
+        </CardDialog>
       )}
       {search !== null && (
         <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />

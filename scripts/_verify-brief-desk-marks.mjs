@@ -418,5 +418,44 @@ console.log('\n--- I. the Orchestrator beside the desk -------------------------
     'the Orchestrator card resizes from all four edges and corners, not only the browser corner, and a pinned card does not move');
 }
 
+// ===========================================================================
+console.log('\n--- J. record cites: A-10 is a page of the brief\'s appendix -----------');
+// ===========================================================================
+{
+  const R = await import('../src/lib/brief/record-cite.ts');
+  const p = (t) => JSON.stringify(R.parseRecordCite(t));
+  check(p('A-10') === '{"first":10,"last":null}' && p('JA 1845') === '{"first":1845,"last":null}' && p('J.A. 59') === '{"first":59,"last":null}'
+    && p('Appx. 7') === '{"first":7,"last":null}' && p('A-1845–46') === '{"first":1845,"last":1846}' && p('A-1845-1846') === '{"first":1845,"last":1846}',
+    'A-10, JA 1845, J.A. 59, Appx. 7 and A-1845–46 are record cites');
+  check(R.parseRecordCite('28 U.S.C. § 1367') === null && R.parseRecordCite('Anderson v. Liberty Lobby') === null && R.parseRecordCite('A plaintiff') === null,
+    'a statute, a case and prose are not');
+  check(JSON.stringify(R.rangeOfTitle('Joint Appendix Vol. I (A-1 to A-77) - FINAL, frozen 2026-09-26')) === '[1,77]'
+    && R.rangeOfTitle('Webster brief A-10 draft') === null, 'a volume is known by its named range, not by an A-number in its name');
+
+  // A fake volume: a cover naming its range, a contents page listing A-numbers,
+  // record pages with one stamp each, and a transcript page filed under its
+  // printed page (93) with the physical page in metadata (26) — the three
+  // shapes that sent the first attempt to page 1 and page 93 (09-27).
+  const rows = [
+    { page_start: 1, text: 'Joint Appendix Volume VII (A-1822 to A-2204)', metadata: null },
+    { page_start: 2, text: 'Contents: ECF 70-1 ... A-1822; A-1845; A-1900; A-2001; A-2100', metadata: null },
+    { page_start: 3, text: 'Case 2:25-cv-02287 Document 70-1 Page 242\nA-1822', metadata: null },
+    { page_start: 93, text: 'Document 70-1 Page 265 of 624\nA-1845 BMCMSJ000261', metadata: { pdf_page: 26 } },
+  ];
+  const fake = { from: () => { const q = { select: () => q, eq: () => q, ilike: (_c, pat) => { q._pat = pat.replace(/%/g, ''); return q; }, limit: () => q,
+    then: (res) => res({ data: rows.filter((r) => r.text.includes(q._pat)), error: null }) }; return q; }, rpc: async () => ({ data: null, error: null }) };
+  const vol = { id: 'v7', title: 'Vol. VII (A-1822 to A-2204)', matterspace_id: 'm', from: 1822, to: 2204 };
+  const first = await R.pageOfStamp(fake, vol, 1822);
+  const dep = await R.pageOfStamp(fake, vol, 1845);
+  const none = await R.pageOfStamp(fake, vol, 1830);
+  check(first.page === 3 && first.basis === 'stamp', 'the first record page, not the cover that names the range', JSON.stringify(first));
+  check(dep.page === 26 && dep.basis === 'stamp', "a transcript page opens at its PHYSICAL page, not the printed one it is filed under", JSON.stringify(dep));
+  check(none.page === 1830 - 1822 + 3 && none.basis === 'estimate', 'an unreadable stamp: where it should fall, said as an estimate', JSON.stringify(none));
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  check(/record_matter_id/.test(desk) && /Which appendix does this brief cite\?/.test(desk) && /parseRecordCite\(label\)/.test(desk),
+    'Find in corpus on an A-cite goes to the appendix the brief cites, asked once and kept on the brief');
+  check(/metadata\?\.pdf_page/.test(read('src/pages/DocumentReader.tsx')), "the Reader's passage goto uses the physical page too");
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 process.exit(failures ? 1 : 0);
