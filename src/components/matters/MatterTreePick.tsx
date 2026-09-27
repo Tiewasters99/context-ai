@@ -14,13 +14,33 @@ import { Check, ChevronRight, Lock, Search } from 'lucide-react';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
-export default function MatterTreePick({ value, onChange, maxHeight = 260 }: {
+export default function MatterTreePick({ value, onChange, maxHeight = 260, collapsible = false }: {
   value: string | null;
   onChange: (matterId: string) => void;
   maxHeight?: number;
+  /** Once a matter is chosen, fold the tree to one line ("Legal › DeCamara › Appeal · change"); open again on "change". */
+  collapsible?: boolean;
 }) {
   const { data: serverspaces = [], isLoading, error } = useServerspaces();
   const [q, setQ] = useState('');
+  // Open while nothing is chosen; a pick folds it (collapsible), "change" unfolds it.
+  const [opened, setOpened] = useState(false);
+  const open = opened || !value;                 // nothing chosen yet → always open
+  const setOpen = setOpened;
+  const pick = (id: string) => { onChange(id); if (collapsible) setOpened(false); };
+  const pathOf = (id: string | null): string | null => {
+    if (!id) return null;
+    for (const s of serverspaces) {
+      const byId = new Map((s.matterspaces ?? []).map((m) => [m.id, m]));
+      if (!byId.has(id)) continue;
+      const names: string[] = [];
+      let cur = byId.get(id);
+      const seen = new Set<string>();
+      while (cur && !seen.has(cur.id)) { names.unshift(cur.name); seen.add(cur.id); cur = cur.parent_matterspace_id ? byId.get(cur.parent_matterspace_id) : undefined; }
+      return [s.name, ...names].join(' › ');
+    }
+    return null;
+  };
   const groups = useMemo(
     () => serverspaces.map((s) => ({ id: s.id, name: s.name, roots: buildMatterTree(s.matterspaces ?? []) })),
     [serverspaces],
@@ -55,6 +75,16 @@ export default function MatterTreePick({ value, onChange, maxHeight = 260 }: {
   if (isLoading) return <p className="text-[12px] text-white/40 italic">Reading your matters…</p>;
   if (error) return <p className="text-[12px] text-red-300">Could not read your matters.</p>;
   if (groups.every((g) => g.roots.length === 0)) return <p className="text-[12px] text-white/50">You have no matters yet.</p>;
+  if (collapsible && value && !open) {
+    return (
+      <div className="flex items-center justify-between gap-2 px-3 h-9 rounded-lg bg-white/[0.04] border border-white/[0.08]" data-testid="matter-pick-closed">
+        <span className="truncate text-[13px] text-white/85">{pathOf(value) ?? 'This matter'}</span>
+        <button type="button" onClick={() => setOpen(true)} className="shrink-0 text-[12px] text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2">
+          change
+        </button>
+      </div>
+    );
+  }
 
   const renderNode = (node: MatterTreeNode, depth: number, parentSealed: boolean): ReactElement => {
     const m = node.matter;
@@ -64,7 +94,7 @@ export default function MatterTreePick({ value, onChange, maxHeight = 260 }: {
       <div key={m.id}>
         <button
           type="button"
-          onClick={() => onChange(m.id)}
+          onClick={() => pick(m.id)}
           aria-pressed={chosen}
           data-matter-id={m.id}
           className={`w-full flex items-center gap-1.5 py-1 pr-2 rounded text-left ${chosen ? 'bg-[#e8b84a]/[0.12]' : 'hover:bg-white/[0.04]'}`}

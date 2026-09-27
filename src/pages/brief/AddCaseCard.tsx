@@ -82,7 +82,7 @@ export default function AddCaseCard({ defaultMatterId, fixedMatter, onClose, onO
               <span className="text-[11px] uppercase tracking-[0.14em] text-white/40">File it in</span>
               <span className="text-[12px] text-white/70 truncate" data-testid="add-case-matter">{chosen?.label ?? "This brief's matter"}</span>
             </div>
-            <MatterTreePick value={matterId} onChange={setMatterId} maxHeight={220} />
+            <MatterTreePick value={matterId} onChange={setMatterId} maxHeight={220} collapsible />
           </div>
         ) : null}
         <button

@@ -117,7 +117,7 @@ export default function BriefDeskHome() {
           </span>
         </div>
         <div className="mb-2">
-          <MatterTreePick value={chosen?.id ?? null} onChange={(id) => { setMatterId(id); setErr(null); }} maxHeight={220} />
+          <MatterTreePick value={chosen?.id ?? null} onChange={(id) => { setMatterId(id); setErr(null); }} maxHeight={220} collapsible />
         </div>
         <p className="text-[11px] text-white/40 mb-5">Choose the case itself, not a folder inside it: the brief's cites are looked up in this matter and everything beneath it. You can change it later under Versions.</p>
 
