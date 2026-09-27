@@ -433,8 +433,12 @@ section('C. moving rows out of a seal');
   check(!graceSealedToSealed.err && graceSealedToSealed.rows.length === 1, 'grace session: sealed → sealed is not leaving the seal, and is allowed');
   await q(`update public.documents set matterspace_id=$1 where id=$2`, [SEALED, BULK_S]);
 
-  const allowed = await qa(g, `select public.seal_leave_allowed($1,$2) a, public.seal_leave_allowed($3,$4) b`, [SEALED, OPEN, OPEN, SEALED]);
-  check(allowed[0].a === false && allowed[0].b === true, 'seal_leave_allowed (move-document.mjs\'s precheck) agrees with the trigger');
+  // No oracle: the leave question is not callable by a signed-in session,
+  // publicly or in the internal schema (only the DEFINER trigger asks it).
+  const gone = (await q(`select to_regprocedure('public.seal_leave_allowed(uuid,uuid)') is null g`))[0].g;
+  check(gone, 'public.seal_leave_allowed does not exist (it told anyone whether a uuid is sealed)');
+  const internal = await tryAs(aal2(MEM), `select stepup_internal.leave_allowed($1,$2) a`, [SEALED, OPEN]);
+  check(internal.err?.code === '42501', 'stepup_internal.leave_allowed is not executable by authenticated', internal.err?.message ?? internal.rows);
 
   // aal2 may move it out — a deliberate, confirmed act — and it is then open.
   const a2 = await qa(aal2(MEM), `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, BULK_S]);

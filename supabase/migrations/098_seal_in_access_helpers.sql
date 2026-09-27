@@ -99,10 +99,9 @@
 --     meetings, …) are covered by the helpers on BOTH rows — USING on the old
 --     row, and USING-as-CHECK or WITH CHECK on the new one — so an aal1
 --     session cannot move them; a grace session could.
---   * storage.objects cannot carry a trigger of ours. Its UPDATE policy (049)
---     already asks can_write_matter of the old and the new path, so it obeys
---     the helpers; api/move-document.mjs asks seal_leave_allowed() before it
---     renames anything.
+--   * storage.objects cannot carry a trigger of ours. 096 refuses a sealed
+--     object to every signed-in session; api/move-document.mjs (#247) refuses
+--     any move to a less-sealed matter before it renames anything.
 --   * meetings / can_access_meeting keep `or created_by = auth.uid()`: the
 --     person who started a meeting in a sealed matter still sees that meeting
 --     row at aal1.
@@ -116,10 +115,9 @@
 --
 -- DEPLOY ORDER: deploy the code first, then paste this file.
 --   Code before paste: every new RPC the app calls (connector_token_create,
---   document_entry, seal_leave_allowed, the 3-argument
---   account_session_revoke) answers PGRST202, and the code falls back to what
---   it did before (a direct token insert; the old error page; no precheck;
---   the 2-argument revoke). Nothing opens that is closed today.
+--   document_entry, the 3-argument account_session_revoke) answers PGRST202,
+--   and the code falls back to what it did before (a direct token insert; the
+--   old error page; the 2-argument revoke). Nothing opens that is closed today.
 --   Paste before code: the browser's direct token insert is refused (the
 --   policy is gone) — "Generate token" and "New agent" fail until the deploy
 --   lands — and "Sign out that device" answers 503 (the 2-argument function
@@ -149,7 +147,6 @@
 --   -- to authenticated`. The column may stay: nothing reads it after that.
 --   drop function if exists public.connector_token_create(text, text, text, text, text, uuid[], boolean);
 --   drop function if exists public.document_entry(uuid);
---   drop function if exists public.seal_leave_allowed(uuid, uuid);
 --   drop function if exists public.sealed_effective_drift();
 --   -- and re-run 064 §2's _ledger_visible and 050's office_items policies.
 --
@@ -742,24 +739,15 @@ begin
   return public.auth_is_aal2();
 end $$;
 revoke all on function stepup_internal.leave_allowed(uuid, uuid) from public;
-grant execute on function stepup_internal.leave_allowed(uuid, uuid) to authenticated, service_role;
+-- Only the trigger below (DEFINER, as the owner) calls it; no role is granted it.
+revoke all on function stepup_internal.leave_allowed(uuid, uuid) from anon, authenticated, service_role;
 
--- The question api/move-document.mjs asks before it renames the stored file,
--- so a refusal comes before any step rather than halfway through.
-create or replace function public.seal_leave_allowed(p_from uuid, p_to uuid)
-returns boolean
-language plpgsql
-stable
-security invoker
-as $$
-declare
-  v_uid uuid := auth.uid();
-begin
-  if v_uid is null then return false; end if;
-  return stepup_internal.leave_allowed(p_from, p_to);
-end $$;
-revoke all on function public.seal_leave_allowed(uuid, uuid) from public, anon;
-grant execute on function public.seal_leave_allowed(uuid, uuid) to authenticated, service_role;
+-- No public RPC asks this question. An earlier draft exposed it as
+-- public.seal_leave_allowed(from, to); it answered for any two uuids, so any
+-- signed-in session could learn whether a matter it does not belong to is
+-- sealed, and after #247 no app code called it. Dropped here (for a database
+-- that ran the draft) and never re-created.
+drop function if exists public.seal_leave_allowed(uuid, uuid);
 
 create or replace function stepup_internal.refuse_leaving_seal()
 returns trigger
