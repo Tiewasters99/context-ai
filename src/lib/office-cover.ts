@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
+import { storageObjectBlob } from '@/lib/vault-object';
 
 // The images a published book shows in the office's Reader.
 //
@@ -17,7 +18,6 @@ const COVER_LONG_EDGE = 1400;
 const COVER_QUALITY = 0.86;
 const PAGE_LONG_EDGE = 1600;
 const PAGE_QUALITY = 0.82;
-const VAULT_BUCKET = 'vault-documents';
 export const OFFICE_COVER_BUCKET = 'cover-images';
 
 export interface OfficeImages {
@@ -86,8 +86,14 @@ export async function captureOfficeImages(
   onProgress?: (done: number, total: number) => void,
 ): Promise<OfficeImages> {
   if (!canCaptureCover(filename)) return { cover: null, pages: 0 };
-  const { data: file, error } = await supabase.storage.from(VAULT_BUCKET).download(storagePath);
-  if (error || !file) throw new Error(error?.message ?? 'The document could not be read.');
+  // Direct on an unsealed matter; on a sealed one through /api/document-url,
+  // which writes `file.opened` to the matter's Record (S4a).
+  let file: Blob;
+  try {
+    file = await storageObjectBlob(storagePath);
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : 'The document could not be read.');
+  }
   const { data: auth } = await supabase.auth.getUser();
   const uid = auth.user?.id;
   if (!uid) throw new Error('Not signed in.');

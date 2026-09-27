@@ -282,12 +282,67 @@ export const EXTRACT_CONTRACT_FAILURE =
 export interface ExtractionOutcome extends ExtractContract {
   /** True when the first answer was off-contract and the repair turn fixed it. */
   repaired: boolean;
+  /** How many sections the draft was read in (1 for anything short). */
+  sections: number;
 }
 
-export async function extractCitations(
-  draftText: string,
-  opts: { modelId: string; signal?: AbortSignal; matterId?: string } = { modelId: 'claude-opus-4-8' },
-): Promise<ExtractionOutcome> {
+/**
+ * THE ANSWER HAS A CEILING, SO A LONG BRIEF IS READ IN SECTIONS.
+ *
+ * Every citation comes back in one tool call, with a proposition and a
+ * location snippet each, and one call's answer stops at `maxTokens`. A
+ * 48,000-character brief (09-27, the first real Brief Desk run) needed more
+ * than 16,000 tokens to list its citations: the answer was cut off mid-list,
+ * arrived as a broken tool call, failed the contract twice, and the lawyer
+ * was told the model's answer "could not be read". Nothing was wrong with the
+ * brief or the model.
+ *
+ * So the draft is split at paragraph breaks into sections of at most
+ * SECTION_CHARS, each read by its own call (with its own contract check and
+ * repair turn, against its own text), a few at a time, and the lists joined in
+ * document order. A section is sized so its answer sits far below the
+ * ceiling. A short draft is one section: exactly the call it always was.
+ *
+ * If ANY section cannot be read, the whole extraction fails and says which:
+ * a citation list with a hole in it would print as a complete report.
+ */
+export const SECTION_CHARS = 10_000;
+const SECTION_CONCURRENCY = 3;
+
+/**
+ * The draft in sections of at most `max` characters, split at blank lines; a
+ * paragraph longer than `max` is split at a sentence end (else at a space).
+ * Joined back with the separators they were cut at, the sections are the draft.
+ */
+export function splitForExtraction(text: string, max = SECTION_CHARS): string[] {
+  if (text.length <= max) return [text];
+  const sections: string[] = [];
+  let cur = '';
+  const push = () => { if (cur) { sections.push(cur); cur = ''; } };
+  // Paragraphs with their trailing separator attached, so nothing is dropped.
+  const paras = text.match(/[\s\S]*?(?:\n{2,}|$)/g)?.filter((p) => p.length) ?? [text];
+  for (const para of paras) {
+    if (cur.length + para.length <= max) { cur += para; continue; }
+    push();
+    let rest = para;
+    while (rest.length > max) {
+      const window = rest.slice(0, max);
+      const sentence = Math.max(window.lastIndexOf('. '), window.lastIndexOf('.\n'));
+      const space = window.lastIndexOf(' ');
+      const cut = sentence > max * 0.5 ? sentence + 2 : space > max * 0.5 ? space + 1 : max;
+      sections.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    cur = rest;
+  }
+  push();
+  return sections;
+}
+
+async function extractSection(
+  sectionText: string,
+  opts: { modelId: string; signal?: AbortSignal; matterId?: string },
+): Promise<{ ok: true; value: ExtractContract; repaired: boolean } | { ok: false; reason: string }> {
   // The repair turn is the same call with the same 'citecheck.extract' label,
   // so it is metered and recorded like the first. A 402, a 429 or a sealed
   // refusal is thrown straight through — it is a fact about the server, not
@@ -295,8 +350,8 @@ export async function extractCitations(
   const call = async ({ userContent }: ContractAttempt) => generateStructured<unknown>({
     modelId: opts.modelId,
     signal: opts.signal,
-    // The whole brief is the prompt here, so this is the single largest piece
-    // of matter content the cite-check run sends anywhere. It binds.
+    // The brief is the prompt here, so this is the single largest piece of
+    // matter content the cite-check run sends anywhere. It binds.
     matterId: opts.matterId,
     feature: 'citecheck.extract',
     system: EXTRACT_SYSTEM,
@@ -306,16 +361,54 @@ export async function extractCitations(
     inputSchema: CITE_SCHEMA as unknown as Record<string, unknown>,
     maxTokens: 16000,
   });
-
   const outcome = await runWithContract<ExtractContract>({
-    userContent: draftText,
+    userContent: sectionText,
     call,
-    validate: (raw) => checkExtractContract(raw, draftText),
+    validate: (raw) => checkExtractContract(raw, sectionText),
     repair: buildExtractRepairContent,
   });
+  return outcome.ok ? { ok: true, value: outcome.value, repaired: outcome.repaired } : { ok: false, reason: outcome.reason };
+}
 
-  if (!outcome.ok) throw new Error(`${EXTRACT_CONTRACT_FAILURE} (Twice: ${outcome.reason}.)`);
-  return { ...outcome.value, repaired: outcome.repaired };
+export async function extractCitations(
+  draftText: string,
+  opts: {
+    modelId: string;
+    signal?: AbortSignal;
+    matterId?: string;
+    /** Called as each section finishes: (done, total). */
+    onSection?: (done: number, total: number) => void;
+  } = { modelId: 'claude-opus-4-8' },
+): Promise<ExtractionOutcome> {
+  const sections = splitForExtraction(draftText);
+  const results: Awaited<ReturnType<typeof extractSection>>[] = new Array(sections.length);
+  let next = 0;
+  let done = 0;
+  const worker = async () => {
+    while (next < sections.length) {
+      const i = next++;
+      results[i] = await extractSection(sections[i], opts);
+      opts.onSection?.(++done, sections.length);
+      // One unreadable section fails the whole run; stop spending on the rest.
+      if (!results[i].ok) next = sections.length;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(SECTION_CONCURRENCY, sections.length) }, worker));
+
+  const failed = results.findIndex((r) => r && !r.ok);
+  if (failed >= 0) {
+    const r = results[failed] as { ok: false; reason: string };
+    const where = sections.length > 1 ? ` in section ${failed + 1} of ${sections.length}` : '';
+    throw new Error(`${EXTRACT_CONTRACT_FAILURE} (Twice${where}: ${r.reason}.)`);
+  }
+  const ok = results as { ok: true; value: ExtractContract; repaired: boolean }[];
+  return {
+    cites: ok.flatMap((r) => r.value.cites),
+    setAside: ok.reduce((n, r) => n + r.value.setAside, 0),
+    duplicates: ok.reduce((n, r) => n + r.value.duplicates, 0),
+    repaired: ok.some((r) => r.repaired),
+    sections: sections.length,
+  };
 }
 
 function normaliseCite(c: RawCite): Cite {

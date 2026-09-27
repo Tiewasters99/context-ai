@@ -10,6 +10,8 @@ import PinToggle from '@/components/ui/PinToggle';
 import CardDialog from '@/components/ui/CardDialog';
 import ActivityFeed from '@/components/activity/ActivityFeed';
 import RecordTab from '@/components/record/RecordTab';
+import { createBrief, importBriefFile } from '@/lib/brief/draft-store';
+import { IMPORT_ACCEPT, kindOf, refusalFor } from '@/lib/brief/import';
 import MatterCalendar from '@/components/matter/MatterCalendar';
 import MatterTasks from '@/components/agents/MatterTasks';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
@@ -350,7 +352,9 @@ export default function MatterspaceView() {
                 {loadError || gate ? 'Matterspace' : 'Loading…'}
               </h1>
             )}
-            {matter?.description && <p className="text-sm text-white/80">{matter.description}</p>}
+            {/* The name only. A description is often working notes (what to
+                redact, how a folder was made) — kept in the matter, not
+                printed under its title. */}
             {loadError && <p className="text-sm text-red-300">{loadError}</p>}
           </div>
           {matter && (
@@ -544,6 +548,7 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
   // Tables only: bring in an Excel / OpenDocument / CSV file, one table per
   // sheet. Google Sheets: File → Download → Microsoft Excel, then import.
   const importInput = useRef<HTMLInputElement>(null);
+  const briefInput = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [importNote, setImportNote] = useState<string | null>(null);
 
@@ -572,6 +577,37 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
       navigate(`/app/${route}/${row.id}`);
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'Failed to create');
+      setCreating(false);
+    }
+  };
+
+  // A brief is a document, not a Page: it opens in the Brief Desk
+  // (docs/specs/BRIEF-DESK-2026-09-26.md §3.5), where the title is edited.
+  const handleNewBrief = async () => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const id = await createBrief(matterId, 'Untitled brief');
+      navigate(`/app/brief/${id}`);
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'The brief could not be created.');
+      setCreating(false);
+    }
+  };
+
+  // A brief from this computer straight into the desk, filed in this matter.
+  const handleImportBrief = async (file: File | undefined) => {
+    if (!file || creating) return;
+    const refusal = refusalFor(kindOf(file.name));
+    if (refusal) { setCreateError(refusal); return; }
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const r = await importBriefFile(matterId, file);
+      navigate(`/app/brief/${r.id}`, { state: { imported: { from: file.name, losses: r.losses } } });
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : 'The brief could not be imported.');
       setCreating(false);
     }
   };
@@ -664,6 +700,37 @@ function ContentSurface({ tab, matterId }: { tab: ContentTab; matterId: string }
                 <FileSpreadsheet size={12} strokeWidth={2} />
                 {importing ? 'Importing…' : 'Import spreadsheet'}
               </button>
+            </>
+          )}
+          {tab === 'Pages' && (
+            <button
+              onClick={() => void handleNewBrief()}
+              disabled={creating}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+              title="A brief you edit here, with footnotes, and export as Markdown or Word"
+            >
+              <Stamp size={12} strokeWidth={2} />
+              New brief
+            </button>
+          )}
+          {tab === 'Pages' && (
+            <>
+              <button
+                onClick={() => briefInput.current?.click()}
+                disabled={creating}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[rgba(255,255,255,0.08)] text-[12px] text-white/80 hover:bg-[#1c1c26] hover:text-white transition-colors disabled:opacity-40"
+                title="A Word, Markdown or text brief from this computer, into the Brief Desk"
+              >
+                <Stamp size={12} strokeWidth={2} />
+                Import brief
+              </button>
+              <input
+                ref={briefInput}
+                type="file"
+                accept={IMPORT_ACCEPT}
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; void handleImportBrief(f); }}
+              />
             </>
           )}
           <button

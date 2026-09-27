@@ -788,20 +788,24 @@ export default function Vault() {
       case 'import':
       case 'files':
         return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
-          // Routing rule: any matter-persisted PDF or DOCX opens in the
-          // full-screen DocumentReader (pages, search, annotations), laid
-          // over this list so closing it lands back here. The inline
-          // DocumentEditor modal handles text-editable formats
-          // (md/txt/code/csv/…) where in-place editing is the point, and
-          // ephemeral session uploads, which don't have a documents-table
-          // row yet for the reader to look up.
+          // Routing rule: any matter-persisted PDF, DOCX, deck or image
+          // opens in the full-screen DocumentReader (pages, search,
+          // annotations; a picture is drawn as itself), laid over this list
+          // so closing it lands back here. The inline DocumentEditor modal
+          // handles text-editable formats (md/txt/code/csv/…) where
+          // in-place editing is the point, and ephemeral session uploads,
+          // which don't have a documents-table row yet for the reader to
+          // look up. Until 2026-09-26 images fell through to the editor,
+          // which showed a PNG as its raw bytes.
           const name = file.name.toLowerCase();
           const isReadable =
             file.type === 'application/pdf' ||
             name.endsWith('.pdf') ||
             file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
             name.endsWith('.docx') ||
-            name.endsWith('.fountain');
+            name.endsWith('.pptx') ||
+            name.endsWith('.fountain') ||
+            /\.(png|jpe?g|gif|webp|svg|bmp)$/.test(name);
           if (file.matterspace_id && isReadable) setReaderDocId(file.id);
           else setOpenFile(file);
         }} />;

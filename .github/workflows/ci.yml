@@ -181,6 +181,32 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-stepup-seal.mjs
 
+      # Migration 096 (S4a) — every copy that leaves a sealed matter is in its
+      # Record. The vault-documents and discovery-files SELECT policies refuse
+      # a signed-in user an object whose matter is sealed (own tier or
+      # inherited); a new upload into a sealed matter still works; no UPDATE
+      # policy is added. /api/document-url and get_media driven with `fetch`
+      # answering as Supabase from this database: aal2 member mints and
+      # writes file.opened, aal1 gets step_up_required with nothing minted or
+      # written, an open matter's read writes nothing and its download writes
+      # file.exported {destination:'download'}, a non-member gets not_found.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 096 — the sealed download gate (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-download.mjs
+
+      # Migration 097 — a document's stored file lives under its own matter.
+      # The CHECK refuses a row whose storage_path names another matter's
+      # object (insert, update, a move that leaves the path behind), and the
+      # five routes that read bytes with the service role after a user-scoped
+      # lookup — cloud-export, drive-export, ext/push-to-drive, gmail-send,
+      # ingest — plus get_media refuse such a POINTER row with zero storage
+      # reads; each has a control that the correctly filed row gets through.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 097 — storage_path belongs to its matter (PGlite + the six call sites)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-storage-path.mjs
+
       # Migration 095 (S2). "Disconnect everything": one press revokes every
       # OAuth grant, connector token and agent of the presser, switches their
       # charters off and pauses AI on every root matter of the serverspaces
@@ -200,7 +226,7 @@ jobs:
 
       # Migration 098 (S1b). The seal is checked wherever a sealed matter's
       # rows are read or moved, not only at its front door. Every migration
-      # 001→095 as written, then 098 twice. Opens with the negative control
+      # 001→101 as written (098 excepted), then 098 twice. Opens with the negative control
       # (without 098: the #245 reviewer's row move succeeds, a sealed document
       # reads by id at aal1, a csp_ token is minted at aal1). Then: the move is
       # refused; documents, passages, comments, conversations, pages, meetings,
@@ -214,6 +240,28 @@ jobs:
       - name: Migration 098 — the seal in every access helper (PGlite + real RLS)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-seal-in-access.mjs
+
+      # Migration 099 (S2b). A disconnection is one-way, and the Record says
+      # who reconnected. Real chain (001→088, 094, 095, 099 twice), real roles
+      # and RLS, driven through the real handlers. The review of #246's probes
+      # are the negative controls, now refused: no UPDATE brings a revoked or
+      # expired connector token back (from a stolen sign-in or the owner's
+      # own); a pre-065 client is not adopted after a press and its tokens are
+      # refused on every path; a SESSION from before the press (signed out,
+      # refreshed, or surviving an RPC-only press) other than the presser's
+      # cannot paste a token, approve a grant, enable a charter, widen an
+      # agent or resume AI, and writes no account.unlocked — while the
+      # presser's own session and a sign-in made after the press can, and the
+      # one account.unlocked row names its session_id and iat (through the
+      # consent screen too). Also: the press is never gated on a factor, only
+      # the sign-out of others is (a thief-enrolled factor stops neither), a
+      # serverspace admin's own press pauses nothing of the firm's, the
+      # extension endpoints refuse a paused matter, and the grant cache is not
+      # trusted while the owner is locked.
+      # Here, with the PGlite steps: the jsdom installs below prune PGlite.
+      - name: Migration 099 — a disconnection is one-way (PGlite + real handlers)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-disconnect-one-way.mjs
 
       # Migration 080. A connection's stored refresh token is ciphertext, but
       # it is still the credential for someone's mailbox and cloud drive, and
@@ -829,3 +877,54 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-can-post.mjs
+
+      # Migration 100 + the Brief Desk, slice D1
+      # (docs/specs/BRIEF-DESK-2026-09-26.md). The master.md dialect
+      # (lib/brief-md.mjs) round-trips a Webster-style master byte-identical,
+      # footnotes and flags included, and input the house-style build would
+      # refuse loses nothing; every parsed document loads into the real TipTap
+      # schema; a generated .docx imports with its notes in place and a loss
+      # list naming exactly what did not survive; the Word export carries one
+      # real footnote per note. Then 100 in PGlite with real RLS, after 094 and
+      # on a pre-094 database (the kind-list UNION), twice: member / viewer /
+      # stranger, a frozen snapshot fingerprinted by the database, the
+      # optimistic lock, notes only by their author, the three Record kinds.
+      # Re-installs PGlite: it comes after the jsdom steps.
+      - name: Migration 100 — the Brief Desk (dialect round trip, Word in/out, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node --import ./scripts/_node-src-loader.mjs scripts/_verify-brief-md-roundtrip.mjs
+
+      # Migration 101 + the Brief Desk, slice D2 (docs/specs/
+      # BRIEF-DESK-2026-09-26.md §3.4): the two resolvers. One reporter
+      # spelling both ways (a Westlaw header parsed at ingest and the same cite
+      # as a brief writes it; F. App'x included); pins, parallel cites, star
+      # levels. Then 101 in PGlite with real roles and RLS, twice, the rows
+      # written by the real upsertDocumentCitations: reporter hit, parallel
+      # reporter via star_pages, two copies, the name fallback (never after a
+      # reporter miss), another firm's matter never returned, a sealed
+      # sub-matter only at aal2, no uid → nothing, service_role passes; the
+      # page resolver's printed / parallel / pin_not_found / pdf_index_declined
+      # (the caveat word for word) / unknown; the backfill idempotent; and two
+      # weakened copies of 101 must fail by name.
+      - name: Migration 101 — Brief Desk resolvers (resolve_citation, passage_for_printed_page)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node --import ./scripts/_node-src-loader.mjs scripts/_verify-citation-resolvers.mjs
+
+      # The Brief Desk, slice D3 (docs/specs/BRIEF-DESK-2026-09-26.md §3.3):
+      # the cite marks. The projection the marks anchor to is byte-identical
+      # to toPlainText (what the cite-check reads), position for position;
+      # every fixture entry anchors (an italic case name + a roman reporter
+      # cite as one range, curly and straight quotes both ways, the same raw
+      # twice by its location, never one occurrence twice, a missing cite
+      # "not located"); in a real ProseMirror state an edit inside a mark sets
+      # stale on that mark only and undo takes both back; the incremental diff
+      # checks exactly the new and stale cites and carries the rest with their
+      # flags; the table is in document order; Confirm reads toPlainText and
+      # never body_md; the embedded Reader skips ?page=. No database.
+      - name: Brief Desk D3 — cite marks, the stale rule, the incremental diff
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-brief-desk-marks.mjs

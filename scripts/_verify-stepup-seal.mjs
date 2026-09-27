@@ -60,7 +60,7 @@ try {
 }
 
 const {
-  EVENT_KINDS, ACCOUNT_EVENT_KINDS, KINDS_094, isAccountKindNotAdmitted, isKindNotAdmitted,
+  EVENT_KINDS, ACCOUNT_EVENT_KINDS, KINDS_094, KINDS_100, isAccountKindNotAdmitted, isKindNotAdmitted,
 } = await import('../lib/ledger.mjs');
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -569,8 +569,11 @@ console.log('\n--- E. the Record -----------------------------------------------
     specKinds.filter((k) => !dbKinds.includes(k)).join(' ') || '15/15');
   check(KINDS_094.length === 15 && specKinds.every((k) => KINDS_094.includes(k)),
     'KINDS_094 in lib/ledger.mjs is the same fifteen');
-  check(dbKinds.length === EVENT_KINDS.length && EVENT_KINDS.every((k) => dbKinds.includes(k)),
-    'EVENT_KINDS and the constraint are the same list — never a subset either way', `${dbKinds.length} kinds`);
+  // Through 094: this database never sees 100, whose three kinds (the Brief
+  // Desk) scripts/_verify-brief-md-roundtrip.mjs holds to the constraint.
+  const through094 = EVENT_KINDS.filter((k) => !KINDS_100.includes(k));
+  check(dbKinds.length === through094.length && through094.every((k) => dbKinds.includes(k)),
+    'EVENT_KINDS (through 094) and the constraint are the same list — never a subset either way', `${dbKinds.length} kinds`);
 
   // Every new kind lands, through the real append path, on a matter.
   await asBrowser(ADA, 'aal2');

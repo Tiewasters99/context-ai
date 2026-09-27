@@ -131,7 +131,7 @@ const tryAs = async (claims, sql, params) => {
 // The database: Supabase's auth/storage stand-ins, then every migration up to
 // 095 exactly as written.
 // ---------------------------------------------------------------------------
-section('the chain: every migration 001…095, as written');
+section('the chain: every migration but 098, as written');
 await db.exec(`
   create extension if not exists vector;
   create extension if not exists pg_trgm;
@@ -181,14 +181,17 @@ await db.exec(`
   alter default privileges in schema public grant execute on functions to anon, authenticated, service_role;
   create publication supabase_realtime;
 `);
-const chain = fs.readdirSync(MIG_DIR).filter((f) => f.endsWith('.sql') && f < '098').sort();
+// Every migration in the folder except 098, in order — production applied
+// 096/097/099/100/101 before 098 was pasted, so 098 must hold on top of them.
+const chain = fs.readdirSync(MIG_DIR).filter((f) => f.endsWith('.sql') && !f.startsWith('098')).sort();
 for (const f of chain) {
   try { await db.exec(migration(f)); } catch (err) {
     console.error(`  ${f} failed: ${err.message}`);
     process.exit(1);
   }
 }
-check(chain.length > 80 && chain.at(-1).startsWith('095'), `${chain.length} migrations applied, last ${chain.at(-1)}`);
+check(chain.length > 80 && chain.some((f) => f.startsWith('099')) && !chain.some((f) => f.startsWith('098')),
+  `${chain.length} migrations applied (098 held back), last ${chain.at(-1)}`);
 
 // ---------------------------------------------------------------------------
 // People, matters, rows.
@@ -305,7 +308,7 @@ async function measure(label) {
 }
 
 // ===========================================================================
-section('A. negative control — the chain through 095, no 098');
+section('A. negative control — the whole chain, no 098');
 // ===========================================================================
 await qa(aal2(EDEN), `select public.ledger_append('tool.invoked', $1, null, null, 'user', $2, null,
   '{"tool":"get_passage","document_ids":["x"]}'::jsonb)`, [SEALED, EDEN]);
@@ -333,7 +336,13 @@ const PEN_READS = {
 
   // The reviewer's case, verbatim, at aal1 with a factor.
   const s = aal1(MEM);
-  const moved = await qa(s, `update public.documents set matterspace_id=$1 where matterspace_id=$2 returning id`, [OPEN, SEALED]);
+  // Since 097 a document whose stored file is filed under the old matter
+  // cannot change matter at all (documents_storage_path_in_matter), so the
+  // statement the reviewer ran now errors on the rows WITH a file; the rows
+  // without one (and every passage) still moved. The control shows those.
+  const whole = await tryAs(s, `update public.documents set matterspace_id=$1 where matterspace_id=$2 returning id`, [OPEN, SEALED]);
+  check(/storage_path_in_matter/.test(whole.err?.message ?? ''), 'pre-098: 097 already stops a document WITH a stored file from changing matter', whole.err?.message);
+  const moved = await qa(s, `update public.documents set matterspace_id=$1 where matterspace_id=$2 and storage_path is null returning id`, [OPEN, SEALED]);
   const movedP = await qa(s, `update public.passages  set matterspace_id=$1 where matterspace_id=$2 returning id`, [OPEN, SEALED]);
   check(moved.length > 0 && movedP.length > 0,
     `pre-098: aal1 MOVES sealed rows out (CRITICAL-2 reproduced: ${moved.length} documents, ${movedP.length} passages)`);
@@ -402,7 +411,7 @@ section('C. moving rows out of a seal');
   check(moved.length === 0 && movedP.length === 0, 'aal1 must NOT move sealed rows out', { moved: moved.length, movedP: movedP.length });
 
   // By id, too; and INTO a sealed matter at aal1 (the new row fails WITH CHECK).
-  const byId = await qa(s, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, DOC_S]);
+  const byId = await qa(s, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, BULK_S]);
   check(byId.length === 0, 'aal1: not by id either');
   const inward = await tryAs(s, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [SEALED, DOC_O]);
   check(inward.err?.code === '42501' || inward.rows?.length === 0, 'aal1: an open document cannot be moved INTO a sealed matter either', inward.err?.message ?? inward.rows);
@@ -415,22 +424,22 @@ section('C. moving rows out of a seal');
   const g = aal1(GRACE, Date.now() - 864e5);
   const graceRead = await qa(g, `select id from public.documents where id = $1`, [DOC_S]);
   check(graceRead.length === 1, 'grace session reads the sealed document (the grace, as 094 intends)');
-  const graceMove = await tryAs(g, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, DOC_S]);
+  const graceMove = await tryAs(g, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, BULK_S]);
   check(graceMove.err?.code === '42501' && /step_up_required/.test(graceMove.err?.message ?? ''),
     'grace session: moving it OUT of the seal is refused (step_up_required)', graceMove.err?.message ?? graceMove.rows);
   const graceP = await tryAs(g, `update public.passages set matterspace_id=$1 where id=$2 returning id`, [OPEN, P_S]);
   check(graceP.err?.code === '42501', 'grace session: a passage cannot leave either', graceP.err?.message ?? graceP.rows);
-  const graceSealedToSealed = await tryAs(g, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [SEALED_KID, DOC_S]);
+  const graceSealedToSealed = await tryAs(g, `update public.documents set matterspace_id=$1 where id=$2 returning id`, [SEALED_KID, BULK_S]);
   check(!graceSealedToSealed.err && graceSealedToSealed.rows.length === 1, 'grace session: sealed → sealed is not leaving the seal, and is allowed');
-  await q(`update public.documents set matterspace_id=$1 where id=$2`, [SEALED, DOC_S]);
+  await q(`update public.documents set matterspace_id=$1 where id=$2`, [SEALED, BULK_S]);
 
   const allowed = await qa(g, `select public.seal_leave_allowed($1,$2) a, public.seal_leave_allowed($3,$4) b`, [SEALED, OPEN, OPEN, SEALED]);
   check(allowed[0].a === false && allowed[0].b === true, 'seal_leave_allowed (move-document.mjs\'s precheck) agrees with the trigger');
 
   // aal2 may move it out — a deliberate, confirmed act — and it is then open.
-  const a2 = await qa(aal2(MEM), `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, DOC_S]);
+  const a2 = await qa(aal2(MEM), `update public.documents set matterspace_id=$1 where id=$2 returning id`, [OPEN, BULK_S]);
   check(a2.length === 1, 'aal2 may move a document out of the seal (S7 may later ask for more)');
-  await q(`update public.documents set matterspace_id=$1 where id=$2`, [SEALED, DOC_S]);
+  await q(`update public.documents set matterspace_id=$1 where id=$2`, [SEALED, BULK_S]);
 
   // The worker (service role: no auth.uid()) is not a browser session.
   await db.exec('set role service_role');
@@ -451,7 +460,6 @@ const READS = {
   'conversations (list_matter_conversations)': [`select id from public.list_matter_conversations($1)`, () => [SEALED]],
   'page (content_items) by id': [`select id from public.content_items where id = $1`, () => [PAGE_S]],
   'meeting in the matter': [`select id from public.meetings where matterspace_id = $1 and created_by <> auth.uid()`, () => [SEALED]],
-  'stored file (storage.objects)': [`select id from storage.objects where name like $1 || '/%'`, () => [SEALED]],
   'co-members of the matter': [`select id from public.matterspace_members where matterspace_id = $1`, () => [SEALED]],
 };
 // A matter-level membership row so the co-members read has something to hide.
@@ -468,6 +476,17 @@ for (const [label, [sql, args]] of Object.entries(READS)) {
   check(!rc.err && rc.rows.length > 0, `${label}: the connector stamp is still exempt (the seal governs it in code)`);
 }
 await q(`delete from public.matterspace_members where matterspace_id = $1 and user_id = $2`, [SEALED, OUT]);
+{
+  // 096 (S4a): a sealed matter's stored bytes are refused to EVERY signed-in
+  // session — aal2 included — and reached only through api/document-url.mjs,
+  // which records the opening. 098 leaves that stricter rule as it is.
+  const sql = `select id from storage.objects where name like $1 || '/%'`;
+  const r1 = await qa(aal1(MEM), sql, [SEALED]);
+  const r2 = await qa(aal2(MEM), sql, [SEALED]);
+  const ro = await qa(aal1(MEM), sql, [OPEN]);
+  check(r1.length === 0 && r2.length === 0 && ro.length > 0,
+    'stored file (storage.objects): a sealed object is refused at aal1 and aal2 (only 096 door); an open one is read', { aal1: r1.length, aal2: r2.length, open: ro.length });
+}
 {
   const r = await tryAs(aal1(MEM), `select public.ensure_general_conversation($1) g`, [SEALED]);
   check(!r.err && r.rows[0].g === null, 'ensure_general_conversation(sealed) at aal1 answers null, not a thread id');

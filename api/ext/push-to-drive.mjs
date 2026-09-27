@@ -26,12 +26,14 @@ import {
   corsHeaders,
   json,
   handleAuthError,
+  pausedMatterRefusal,
 } from '../../lib/connector-token-auth.mjs';
 
 import { decrypt } from '../../lib/connections-crypto.mjs';
 import { fetchMatterTier, isSealedTier } from '../../lib/ai-tier-policy.mjs';
 import { recordExtRefusal, sealedRefusal } from '../../lib/ext-seal.mjs';
 import { checkExport, sealResult } from '../../lib/export-gate.mjs'; // gate:import
+import { pathInMatter } from '../../lib/storage-path.mjs';
 
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
@@ -81,6 +83,10 @@ export default async function handler(req, res, deps = {}) {
   if (docErr) return json(res, 500, { error: `document_lookup: ${docErr.message}` });
   if (!doc) return json(res, 404, { error: 'document_not_found' });
   if (!doc.storage_path) return json(res, 400, { error: 'document_has_no_file' });
+  // 097: the stored file must be filed under this document's own matter. A
+  // row pointing at another matter's object is refused before the service
+  // role reads a byte (lib/storage-path.mjs says why).
+  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) return json(res, 409, { error: 'storage_path_mismatch' });
   if (doc.file_size_bytes && doc.file_size_bytes > MAX_EXPORT_BYTES) {
     return json(res, 413, { error: 'file_too_large', maxBytes: MAX_EXPORT_BYTES });
   }
@@ -100,6 +106,12 @@ export default async function handler(req, res, deps = {}) {
       return json(res, 403, sealedRefusal());
     }
   }
+
+  // A paused matter's bytes do not leave through a connected app (070; 099).
+  // Before the export gate, the Drive connection and the storage download: a
+  // refusal here reads nothing and sends nothing.
+  const paused = await pausedMatterRefusal(doc.matterspace_id, { client: deps.adminClient ? deps.adminClient() : null });
+  if (paused) return json(res, paused.status, paused.body);
 
   // ── SecureSpace export gate ─────────────────────────────────── gate:start
   // The extension is the user's own tool, but the bytes still land at Google,

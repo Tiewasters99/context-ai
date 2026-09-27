@@ -11,6 +11,14 @@
 // reversed). The seal is resolved with the SERVICE ROLE, so an inherited seal
 // from a parent this user cannot see still hides the child, and it fails
 // CLOSED: when the seal cannot be read, nothing is listed (503).
+//
+// PAUSED matters (migration 070) are left out of the list altogether (099),
+// the way lib/mcp-core.mjs hides them from list_matters: a connected app
+// cannot reach a paused matter, so it is not offered one to pick. If the pause
+// cannot be read, the list is refused (503) rather than served unfiltered.
+// Read with the service role, like the seal: a pause set on a parent the
+// caller cannot see still pauses the child they can. It asks from the paused
+// side (the few paused roots and their descendants), never scans.
 
 import {
   authenticateConnectorToken,
@@ -19,6 +27,7 @@ import {
   corsHeaders,
   json,
   handleAuthError,
+  pausedMatterSet,
 } from '../../lib/connector-token-auth.mjs';
 
 import { sealedMatterIds } from '../../lib/ai-tier-policy.mjs';
@@ -49,6 +58,10 @@ export default async function handler(req, res, deps = {}) {
     .order('name', { ascending: true });
   if (error) return json(res, 500, { error: `query_failed: ${error.message}` });
 
+  const paused = await pausedMatterSet({ client: serviceClient() });
+  if (!paused) return json(res, 503, { error: 'pause_unverifiable' });
+  const open = (data ?? []).filter((m) => !paused.has(m.id));
+
   // Which of them are sealed (B or C, inherited)? Service role, so an ancestor
   // the user cannot see still seals its children. Unreadable ⇒ list nothing.
   let sealed;
@@ -60,7 +73,7 @@ export default async function handler(req, res, deps = {}) {
 
   return json(res, 200, {
     seal_status: 'ok',
-    matters: (data ?? [])
+    matters: open
       .filter((m) => !sealed.has(m.id))
       .map((m) => ({
         id: m.id,

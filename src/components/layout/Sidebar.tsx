@@ -17,6 +17,7 @@ import {
   LayoutGrid,
   ListChecks,
   Lock,
+  Stamp,
 } from 'lucide-react';
 import {
   DndContext,
@@ -325,6 +326,23 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         >
           <ListChecks size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Agents</span>}
+        </Link>
+
+        {/* The Brief Desk (2026-09-27): Eden asked for it as a door of its
+            own — "Open Brief Desk, import brief, open brief, cite-check".
+            /app/brief is claimed by no surface in lib/surfaces.mjs, so it is
+            open on every plan, like the dashboard. */}
+        <Link
+          to="/app/brief"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            location.pathname.startsWith('/app/brief')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+          title="Import a brief, edit it, and check every cite"
+        >
+          <Stamp size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Brief Desk</span>}
         </Link>
 
         {/* The top level is deliberately short (2026-09-08): home, the

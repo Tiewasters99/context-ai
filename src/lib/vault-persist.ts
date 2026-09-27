@@ -41,6 +41,7 @@ import { uploadResumable, shouldUploadResumable, storageResumeStore, type Upload
 // A 402/429 from /api/ingest has no UI of its own — the upload simply never
 // finishes. reportServerRefusal puts one sentence in front of the person.
 import { reportServerRefusal } from './refusal-bus';
+import { storageObjectBlob } from './vault-object';
 
 export interface MatterRef {
   id: string;
@@ -219,6 +220,8 @@ function documentToVaultFile(doc: {
   matterspace_id?: string;
   storage_path?: string | null;
   text_status?: string | null;
+  /** metadata->image_description->>label: a described picture's tile label. */
+  image_label?: string | null;
   /** metadata->ocr_pending arrives typed as Json; narrowed below. */
   ocr_pending?: unknown;
   /** Migration 081; present only on an A-Z or Category read. */
@@ -246,6 +249,7 @@ function documentToVaultFile(doc: {
     matterspace_name,
     storagePath: doc.storage_path ?? undefined,
     textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
+    imageLabel: doc.processing_status === 'ready' ? (doc.image_label ?? undefined) : undefined,
     ocrPending: doc.processing_status === 'ready' && doc.ocr_pending && typeof doc.ocr_pending === 'object'
       ? (doc.ocr_pending as OcrPending) : undefined,
     sortKey: doc.sort_key ?? undefined,
@@ -491,6 +495,8 @@ export interface DocumentStatusUpdate {
   stage?: string;
   /** Recorded reason for a ready document with no text (VaultFile.textStatus). */
   textStatus?: string;
+  /** A described picture's tile label, once the worker has written it (VaultFile.imageLabel). */
+  imageLabel?: string;
   /** Pages a ready PDF still owes OCR (VaultFile.ocrPending). */
   ocrPending?: OcrPending;
   /** True when the SecureSpace held the document (VaultFile.held). */
@@ -554,7 +560,7 @@ export function watchDocumentStatus(
     if (stopped) return;
     const { data, error } = await supabase
       .from('documents')
-      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
       .eq('id', documentId)
       .maybeSingle();
     if (stopped) return;
@@ -568,6 +574,7 @@ export function watchDocumentStatus(
       errorMessage: data.processing_error || undefined,
       stage: stageOf(data.processing_status),
       textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
+      imageLabel: data.processing_status === 'ready' ? ((data as { image_label?: string | null }).image_label ?? undefined) : undefined,
       ocrPending: data.processing_status === 'ready' && typeof (data as { ocr_pending?: unknown }).ocr_pending === 'object'
         ? ((data as { ocr_pending?: OcrPending | null }).ocr_pending ?? undefined) : undefined,
       held: data.processing_status === 'held' || undefined,
@@ -646,7 +653,7 @@ export function watchDocumentStatuses(
       const chunk = ids.slice(i, i + STATUS_CHUNK);
       const { data, error } = await supabase
         .from('documents')
-        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
         .in('id', chunk);
       if (stopped) return;
       // A transient failure is not an answer about any document: keep them
@@ -660,6 +667,7 @@ export function watchDocumentStatuses(
         processing_status: string;
         processing_error: string | null;
         text_status?: string | null;
+        image_label?: string | null;
         ocr_pending?: unknown;
       }[];
       const seen = new Set(rows.map((r) => r.id));
@@ -674,6 +682,7 @@ export function watchDocumentStatuses(
             errorMessage: row.processing_error || undefined,
             stage: stageOf(row.processing_status),
             textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
+            imageLabel: row.processing_status === 'ready' ? (row.image_label ?? undefined) : undefined,
             ocrPending: row.processing_status === 'ready' && row.ocr_pending && typeof row.ocr_pending === 'object'
               ? (row.ocr_pending as OcrPending) : undefined,
             held: row.processing_status === 'held' || undefined,
@@ -740,11 +749,13 @@ export async function moveVaultDocument(
   });
   if (!res.ok) {
     let msg = `move failed: ${res.status}`;
-    try { const j = await res.json(); if (j?.error) msg = j.error; } catch {}
-    // 098: leaving a sealed matter needs this session's second factor.
-    if (msg === 'step_up_required') {
-      msg = 'Moving this out of a sealed matter takes it out of the seal. Open the sealed matter, confirm it’s you, then move it again.';
-    }
+    try {
+      const j = await res.json();
+      // S4a: the gate's and the seal's refusals, in words.
+      if (j?.error === 'step_up_required') msg = 'This matter is sealed. Open it and confirm it’s you, then move the document.';
+      else if (j?.error === 'sealed_move_refused') msg = j.message ?? 'A sealed document cannot move out of the seal.';
+      else if (j?.error) msg = j.error;
+    } catch { /* not JSON: keep the status */ }
     throw new Error(msg);
   }
 }
@@ -774,17 +785,22 @@ export async function deleteVaultDocument(documentId: string): Promise<void> {
 // Open / edit a document's original bytes (persistent mode).
 // -----------------------------------------------------------------------------
 
-// Download the original file the user uploaded for this document.
+// Download the original file the user uploaded for this document — to open
+// it in the editor, so a READ: direct on an unsealed matter, through
+// /api/document-url (and the matter's Record) on a sealed one (S4a).
 export async function downloadVaultDocument(storagePath: string): Promise<Blob> {
-  const { data, error } = await supabase.storage
-    .from('vault-documents')
-    .download(storagePath);
-  if (error || !data) throw new Error(`download: ${error?.message ?? 'no data returned'}`);
-  return data;
+  try {
+    return await storageObjectBlob(storagePath);
+  } catch (e) {
+    throw new Error(`download: ${e instanceof Error ? e.message : 'no data returned'}`);
+  }
 }
 
 // Overwrite a text document's bytes in storage, then re-run ingestion so the
-// search index (passages + embeddings) reflects the edit. Old passages are
+// search index (passages + embeddings) reflects the edit. On a SEALED matter
+// the bucket refuses this from the browser since migration 096 (an upsert
+// onto an existing object is checked against the read policy), and the
+// error says so. Old passages are
 // cleared first because the ingest pipeline only inserts. The caller should
 // re-subscribe via watchDocumentStatus(documentId) to follow re-indexing.
 export async function saveVaultDocumentText(
@@ -862,7 +878,11 @@ function sanitizeStorageName(name: string): string {
   return name
     .replace(/[\[\]{}]/g, '')
     .replace(/[^\w/!\-.*'() ]/g, '_')
-    .replace(/_+/g, '_');
+    .replace(/_+/g, '_')
+    // 097: no leading/trailing whitespace, and never a bare "." or ".." — the
+    // database refuses a path segment that is either (and a URL would rewrite it).
+    .trim()
+    .replace(/^\.{1,2}$/, '_') || 'file';
 }
 
 function mimeFor(ext: string): string {

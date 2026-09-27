@@ -26,13 +26,17 @@ import {
   MessageCircle,
   Loader2,
   Send,
+  PenLine,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
+import { hasDraftBody } from '@/lib/brief/draft-store';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
+import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
 import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
 import AnimationAttach from '@/components/reader/AnimationAttach';
@@ -41,7 +45,6 @@ import {
 } from '@/lib/document-animations';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
-import StepUpPrompt from '@/components/account/StepUpPrompt';
 import { documentEntry } from '@/lib/second-factor';
 import DriveExportControl from '@/components/reader/DriveExportControl';
 import DelegateCard from '@/components/agents/DelegateCard';
@@ -115,11 +118,38 @@ type DocMeta = {
   file_size_bytes?: number | null;
   /** 'generated' for a deliverable filed without passages (an edited PDF). */
   text_status?: string | null;
+  /** What a vision model wrote about a picture (metadata.image_description):
+   *  the tile label, the search line, the words printed in it. Absent on
+   *  anything that is not a described picture. */
+  image_description?: { kind?: string; label?: string; line?: string; text?: string; model?: string | null } | null;
   /** For an edited copy: the indexed original it was made from. */
   source_document_id?: string | null;
+  /** 'brief' offers "Edit in the Brief Desk". */
+  doc_type?: string | null;
 };
 
-type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'unsupported';
+type FileKind = 'pdf' | 'docx' | 'fountain' | 'pptx' | 'text' | 'image' | 'unsupported';
+
+// Pictures the browser draws natively. A stored image is the document — a
+// concept render for a screenplay, a photographed exhibit, a chart — and
+// until 2026-09-26 the reader answered every one of them with "Unsupported
+// file type" while the Vault row promised it was "stored and viewable".
+// TIFF is left out on purpose: no browser renders it, so a .tif falls to the
+// text edition of its OCR (a Bates production) or the error page.
+const BROWSER_IMAGE_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+};
+function imageTypeFor(filename: string): string | null {
+  const i = filename.lastIndexOf('.');
+  if (i < 0) return null;
+  return BROWSER_IMAGE_TYPES[filename.slice(i)] ?? null;
+}
 
 // Plain text → minimal HTML: escape, split paragraphs on blank lines.
 // Single newlines inside a paragraph survive through the text page's
@@ -254,27 +284,82 @@ async function sourceDocumentOf(documentId: string): Promise<string | null> {
   return meta?.source_document_id ?? null;
 }
 
-export default function DocumentReader({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+/**
+ * Imperative navigation for a host that shows the Reader beside something
+ * else (the Brief Desk's authority pane). Applied when `nonce` changes and on
+ * first load; a prop, not a URL parameter, because two Readers on one route
+ * would fight over `?page=`.
+ *   page       → that page (PDF)
+ *   passageId  → the passage's page, its first twelve words lit through the
+ *                find highlight (PDF: the .search-hits boxes; other formats:
+ *                the rendered text)
+ *   anchor     → a text anchor in a rendered (non-PDF) document
+ */
+export interface ReaderGoto {
+  page?: number;
+  passageId?: string;
+  anchor?: TextAnchor;
+  nonce: number;
+}
+
+/**
+ * 'full' — the Reader as it is on its route. 'pane' — inside another
+ * surface's column: no cover, no sidebar toggle (the sidebar stays shut), no
+ * page editor. `embedded` (a canvas card) hides the cover and the page editor
+ * as before; 'pane' names the whole set.
+ */
+export type ReaderChrome = 'full' | 'pane';
+
+type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChrome };
+
+export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full' }: ReaderProps = {}) {
+  const pane = chrome === 'pane';
+  const hideCover = embedded || pane;
+  const hidePageEditor = embedded || pane;
+  const hideSidebarToggle = pane;
   const params = useParams<{ id: string }>();
   const id = propId ?? params.id;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const isMobile = useIsMobile();
 
+  // A brief with an editable body lives in the Brief Desk (spec §3.1). The
+  // standalone route only: an embedded Reader (a canvas card, the desk's own
+  // authority pane, the Vault's overlay) must never take over the page, so only
+  // the Reader mounted by the route itself redirects. `?reader=1` opens the
+  // filed text here anyway.
+  useEffect(() => {
+    if (propId !== undefined || embedded || !id || searchParams.get('reader') === '1') return;
+    let live = true;
+    void hasDraftBody(id).then((yes) => {
+      if (live && yes) navigate(`/app/brief/${id}`, { replace: true });
+    });
+    return () => { live = false; };
+  }, [propId, embedded, id, navigate, searchParams]);
+
   const [doc, setDoc] = useState<DocMeta | null>(null);
   const [loadState, setLoadState] = useState<LoadState>('loading');
   // What the loader is doing right now, for the card shown while it works.
   const [loadProgress, setLoadProgress] = useState<PdfOpenProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  // 098: the document is in a sealed matter this session has not confirmed
-  // its second factor for. The prompt replaces the error; confirming reloads.
-  const [sealGate, setSealGate] = useState<'stepup' | 'enrol' | null>(null);
+  // A sealed matter's file asked for on a session that has not confirmed a
+  // second factor (S4a: /api/document-url refuses it), or a sealed document's
+  // row that reads as nothing at aal1 (098: document_entry says why). The
+  // prompt is drawn in the reading pane; confirming re-runs whatever was
+  // refused.
+  const [stepUp, setStepUp] = useState<{ mode: 'stepup' | 'enrol'; matterId: string | null; retry: 'load' | 'download' } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
   const [docHtml, setDocHtml] = useState<string | null>(null);
   // For .fountain — the parser produces a separate title-page block we
   // want to render above the script body.
   const [titlePageHtml, setTitlePageHtml] = useState<string | null>(null);
+  // For an image — the picture itself, as a blob URL over the bytes the
+  // Vault holds, and its pixel size once the browser has decoded it. The URL
+  // is revoked when the next one replaces it and when the reader unmounts.
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -394,13 +479,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   useEffect(() => {
     // On a phone the thumbnail rail would swallow the page, so start closed
     // regardless of the saved desktop preference.
-    if (isMobile) { setSidebarOpen(false); return; }
+    // A pane has no room for it either, and no toggle to open it.
+    if (isMobile || pane) { setSidebarOpen(false); return; }
     const s = localStorage.getItem('ctx_reader_sidebar_open');
     if (s === '0') setSidebarOpen(false);
-  }, [isMobile]);
+  }, [isMobile, pane]);
   useEffect(() => {
+    if (pane) return; // the pane's shut sidebar is not the reader's preference
     localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
-  }, [sidebarOpen]);
+  }, [sidebarOpen, pane]);
 
   // Deep links (?page=N) are honored by the restore + follow effects in the
   // continuous-stack block below, once the stack can be measured.
@@ -442,8 +529,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     setLoadState('loading');
     setLoadProgress(null);
     setErrorMsg(null);
-    setSealGate(null);
+    setStepUp(null);
     setDocHtml(null);
+    setImageUrl(null);
+    setImageDims(null);
     pageTextCacheRef.current = [];
     setMatches([]);
     setMatchIdx(0);
@@ -461,7 +550,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, doc_type, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id, image_description:metadata->image_description')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -472,7 +561,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         const entry = await documentEntry(id);
         if (cancelled) return;
         if (entry === 'stepup' || entry === 'enrol') {
-          setSealGate(entry);
+          // The same prompt, and the same retry, as /api/document-url's refusal.
+          setStepUp({ mode: entry, matterId: null, retry: 'load' });
           setLoadState('error');
           return;
         }
@@ -496,6 +586,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         : fn.endsWith('.fountain') ? 'fountain'
         : fn.endsWith('.pptx') ? 'pptx'
         : fn.endsWith('.txt') || fn.endsWith('.md') ? 'text'
+        : imageTypeFor(fn) ? 'image'
         : 'unsupported';
       setFileKind(kind);
 
@@ -533,7 +624,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           setLoadState('ready');
           return;
         }
-        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), Fountain (.fountain), and plain text (.txt, .md).');
+        setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), Fountain (.fountain), plain text (.txt, .md), and images (PNG, JPEG, GIF, WebP, SVG, BMP).');
         setLoadState('error');
         return;
       }
@@ -546,15 +637,22 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
       let arrayBuffer: ArrayBuffer | null = null;
       if (kind !== 'pdf') {
         setLoadProgress({ stage: 'downloading', loaded: 0, total: data.file_size_bytes ?? null });
-        const { data: dl, error: dlErr } = await supabase.storage
-          .from('vault-documents')
-          .download(data.storage_path);
-        if (cancelled) return;
-        if (dlErr || !dl) {
-          setErrorMsg(dlErr?.message || 'Failed to download the file.');
+        let dl: Blob | null = null;
+        try {
+          // Direct on an unsealed matter; through /api/document-url (and
+          // into the matter's Record) on a sealed one — vault-object.ts.
+          dl = await storageObjectBlob(data.storage_path);
+        } catch (e) {
+          if (cancelled) return;
+          if (isStepUpRequired(e)) {
+            setStepUp({ mode: e.mode, matterId: e.matterId ?? data.matterspace_id ?? null, retry: 'load' });
+          } else {
+            setErrorMsg(e instanceof Error ? e.message : 'Failed to download the file.');
+          }
           setLoadState('error');
           return;
         }
+        if (cancelled) return;
         blob = dl;
         arrayBuffer = await dl.arrayBuffer();
         if (cancelled) return;
@@ -605,6 +703,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           setDocHtml(plainTextHtml(text));
           setTotalPages(1);
           setPage(1);
+        } else if (kind === 'image') {
+          // An image — the bytes as filed, drawn by the browser. Storage
+          // does not always return a typed blob, and an untyped SVG will
+          // not render, so the type comes from the name. The URL is the
+          // reader's to revoke (see the imageUrl effect).
+          const typed = new Blob([blob as Blob], { type: imageTypeFor(fn) ?? 'application/octet-stream' });
+          setImageUrl(URL.createObjectURL(typed));
+          setTotalPages(1);
+          setPage(1);
         } else {
           // DOCX — convert to HTML once. Word has no page concept, so we
           // treat it as a single scrollable document.
@@ -616,7 +723,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
         }
         setLoadState('ready');
       } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : 'Failed to open the document.');
+        if (cancelled) return;
+        if (isStepUpRequired(err)) {
+          setStepUp({ mode: err.mode, matterId: err.matterId ?? data.matterspace_id ?? null, retry: 'load' });
+        } else {
+          setErrorMsg(err instanceof Error ? err.message : 'Failed to open the document.');
+        }
         setLoadState('error');
       }
     })();
@@ -779,21 +891,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   useEffect(() => {
     if (restoredRef.current || !slotTops || loadState !== 'ready' || fileKind !== 'pdf') return;
     restoredRef.current = true;
-    const linked = parseInt(searchParams.get('page') ?? '', 10);
+    // ?page= belongs to the route's own Reader. An embedded one (a canvas
+    // card, the desk's pane) shares the URL with its host and is steered by
+    // the `goto` prop instead.
+    const linked = embedded ? NaN : parseInt(searchParams.get('page') ?? '', 10);
     const saved = parseInt(localStorage.getItem(`ctx_reader_page_${id}`) ?? '', 10);
     const target = Number.isFinite(linked) && linked >= 1 ? linked
       : Number.isFinite(saved) && saved >= 1 ? saved
       : 1;
     if (target > 1) gotoPage(target);
-  }, [slotTops, loadState, fileKind, id, searchParams, gotoPage]);
+  }, [slotTops, loadState, fileKind, id, searchParams, gotoPage, embedded]);
 
   // Follow later deep links on the SAME mounted document (query-only
-  // change, no remount).
+  // change, no remount). The route's Reader only, as above.
   useEffect(() => {
+    if (embedded) return;
     if (!restoredRef.current) return; // the restore effect takes the first
     const p = parseInt(searchParams.get('page') ?? '', 10);
     if (Number.isFinite(p) && p >= 1 && totalPages > 0) gotoPage(p);
-  }, [searchParams, totalPages, gotoPage]);
+  }, [searchParams, totalPages, gotoPage, embedded]);
 
   // When the geometry changes under the reader — zoom, fit toggle, pane
   // resize, or the dims sweep correcting slot heights — re-anchor to the
@@ -1068,6 +1184,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     }
     setCopyState('busy');
     setCopyNote(null);
+    // An image has no words to copy; the picture itself goes to the
+    // clipboard, as PNG, which is the one bitmap type every browser's
+    // clipboard accepts. A JPEG or WebP is redrawn to PNG on a canvas first.
+    if (fileKind === 'image' && imageUrl) {
+      try {
+        if (typeof ClipboardItem === 'undefined') throw new Error('no ClipboardItem');
+        const src = await (await fetch(imageUrl)).blob();
+        let png: Blob = src;
+        if (src.type !== 'image/png') {
+          const bitmap = await createImageBitmap(src);
+          const canvas = document.createElement('canvas');
+          canvas.width = bitmap.width;
+          canvas.height = bitmap.height;
+          canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
+          bitmap.close();
+          png = await canvasToBlob(canvas, 'image/png');
+        }
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+        settleCopy('done');
+      } catch {
+        settleCopy('failed', CLIPBOARD_REFUSED);
+      }
+      return;
+    }
     let extracted = false;
     try {
       let cached = docTextRef.current && docTextRef.current.id === id ? docTextRef.current : null;
@@ -1113,7 +1253,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           : CLIPBOARD_REFUSED,
       );
     }
-  }, [copyState, loadState, fileKind, docHtml, titlePageHtml, id, settleCopy, CLIPBOARD_REFUSED]);
+  }, [copyState, loadState, fileKind, imageUrl, docHtml, titlePageHtml, id, settleCopy, CLIPBOARD_REFUSED]);
 
   // ── Print ───────────────────────────────────────────────────────────
   // A PDF prints as itself: the original file into a hidden same-origin
@@ -1130,11 +1270,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (!doc?.storage_path) return;
     setPrinting(true);
     try {
-      const { data: blob, error } = await supabase.storage
-        .from('vault-documents')
-        .download(doc.storage_path);
-      if (error || !blob) {
-        setErrorMsg(error?.message || 'The file could not be fetched to print.');
+      // Printing reads the file again; on a sealed matter that is one more
+      // `file.opened` (purpose 'read') in the Record.
+      let blob: Blob;
+      try {
+        blob = await storageObjectBlob(doc.storage_path);
+      } catch (e) {
+        setErrorMsg(e instanceof Error ? e.message : 'The file could not be fetched to print.');
         return;
       }
       const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
@@ -1541,14 +1683,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     if (!doc?.storage_path || downloading) return;
     setDownloading(true);
     try {
-      const { data: blob, error } = await supabase.storage
-        .from('vault-documents')
-        .download(doc.storage_path);
-      if (error || !blob) {
-        setErrorMsg(error?.message || 'Failed to download the file.');
+      // Every matter, sealed or not: a download is a copy leaving, and the
+      // endpoint writes `file.exported {destination:'download'}` to the
+      // matter's Record before it hands over the link (S4a).
+      let blob: Blob;
+      try {
+        ({ blob } = await downloadDocumentFile(doc.id));
+      } catch (e) {
+        if (isStepUpRequired(e)) {
+          setStepUp({ mode: e.mode, matterId: e.matterId ?? doc.matterspace_id ?? null, retry: 'download' });
+        } else {
+          setErrorMsg(e instanceof Error ? e.message : 'Failed to download the file.');
+        }
         return;
       }
-      const ext = fileKind === 'pdf' ? '.pdf' : fileKind === 'pptx' ? '.pptx' : '.docx';
+      // The stored name carries the real extension; the fallback only
+      // matters when it is missing, and then the kind is the best guess.
+      const storedExt = (doc.source_filename || doc.storage_path).match(/\.[a-z0-9]+$/i)?.[0];
+      const ext = storedExt
+        ?? (fileKind === 'pdf' ? '.pdf' : fileKind === 'pptx' ? '.pptx' : fileKind === 'image' ? '.png' : '.docx');
       const fallback = (doc.title || 'document').replace(/[\\/:*?"<>|]+/g, '_') + ext;
       const filename = doc.source_filename || fallback;
       const url = URL.createObjectURL(blob);
@@ -2300,6 +2453,70 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     clearTextMatches();
   }, [clearTextMatches]);
 
+  // The host's `goto` (see ReaderGoto). Declared after the restore effect,
+  // so on first load the goto wins over the remembered page. Applied once per
+  // nonce, as soon as the document can be navigated: a PDF once its page
+  // stack is measured, anything else once it is rendered.
+  const appliedGotoRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!goto || appliedGotoRef.current === goto.nonce || loadState !== 'ready') return;
+    const pdf = fileKind === 'pdf';
+    if (pdf ? !slotTops || totalPages === 0 : !docHtml) return;
+    appliedGotoRef.current = goto.nonce;
+    const nonce = goto.nonce;
+    const firstWords = (t: string, n: number) => t.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
+    void (async () => {
+      let target = goto.page ?? null;
+      let phrase: string | null = null;
+      if (goto.passageId) {
+        const { data } = await supabase
+          .from('passages')
+          .select('page_start, text')
+          .eq('id', goto.passageId)
+          .maybeSingle();
+        const row = data as { page_start: number | null; text: string | null } | null;
+        if (row) {
+          target = target ?? row.page_start;
+          phrase = row.text ? firstWords(row.text, 12) : null;
+        }
+      }
+      if (appliedGotoRef.current !== nonce) return; // a newer goto arrived meanwhile
+      if (pdf) {
+        if (target) gotoPage(target);
+        // The passage's opening words, lit through the find path. The page is
+        // the promise; the boxes are a bonus — a PDF's text layer is split by
+        // line, and the paint finds a phrase only within one line.
+        if (phrase && target) {
+          setSearchOpen(true);
+          setSearchQuery(phrase);
+          setMatches([{ page: target, index: 0 }]);
+          setMatchIdx(0);
+        }
+        return;
+      }
+      const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
+      if (!root) return;
+      let ranges: Range[] = [];
+      if (goto.anchor) {
+        const flat = flattenText(root);
+        const at = offsetsFromAnchor(flat.text, goto.anchor);
+        const r = at ? rangeFromOffsets(flat, at.start, at.end) : null;
+        if (r) ranges = [r];
+      }
+      // A passage's text and the rendered document differ at the edges
+      // (headers, joined lines); a shorter opening finds more often.
+      for (const n of [12, 6, 3]) {
+        if (ranges.length || !phrase) break;
+        ranges = findInRendered(root, firstWords(phrase, n));
+      }
+      if (!ranges.length) return;
+      textRangesRef.current = ranges;
+      setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
+      setMatchIdx(0);
+      showTextMatch(ranges, 0);
+    })();
+  }, [goto, loadState, fileKind, slotTops, totalPages, docHtml, gotoPage, showTextMatch]);
+
   // ────────────────────────────────────────────────────────────────────
   // Render
   // ────────────────────────────────────────────────────────────────────
@@ -2318,7 +2535,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           is set, this is a discoverable "Add cover" bar (subtle until hover);
           when set, a 180px banner; when expanded, becomes the page background
           via CSS variable so the reader chrome stays in front. */}
-      {loadState === 'ready' && !embedded && (
+      {loadState === 'ready' && !hideCover && (
         <CoverImage
           coverUrl={doc?.cover_url ?? null}
           onCoverChange={handleCoverChange}
@@ -2353,7 +2570,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             <X size={15} />
           </button>
-          {fileKind === 'pdf' && (
+          {fileKind === 'pdf' && !hideSidebarToggle && (
             <button
               onClick={() => setSidebarOpen((v) => !v)}
               className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
@@ -2477,7 +2694,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             <ZoomOut size={15} />
           </button>
           <span className="text-xs text-white/55 tabular-nums w-12 text-center">
-            {fileKind === 'pdf' && fitPage ? 'Fit' : `${Math.round(zoom * 100)}%`}
+            {fileKind === 'pdf' && fitPage
+              ? 'Fit'
+              // An image fills the pane at the default zoom; say 100% for
+              // that, not the 150% the text formats' type size is scaled from.
+              : fileKind === 'image'
+                ? `${Math.round((zoom / 1.5) * 100)}%`
+                : `${Math.round(zoom * 100)}%`}
           </span>
           <button
             onClick={() => {
@@ -2512,7 +2735,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
-          {fileKind === 'pdf' && !embedded && (
+          {fileKind === 'pdf' && !hidePageEditor && (
             <button
               onClick={() => setPageEditorOpen(true)}
               disabled={loadState !== 'ready' || !doc?.storage_path}
@@ -2522,12 +2745,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               <Scissors size={15} />
             </button>
           )}
-          {!embedded && (
+          {!hideCover && (
             <CoverModeToggle
               hasCover={!!doc?.cover_url}
               expanded={coverExpanded}
               onToggle={() => setCoverExpanded(!coverExpanded)}
             />
+          )}
+          {!embedded && id && (doc?.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(doc?.source_filename ?? '')) && (
+            <button
+              onClick={() => navigate(`/app/brief/${id}`)}
+              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white"
+              title="Open it in the Brief Desk: edit it as text and check its cites. A filed document is copied in; the original stays as filed."
+            >
+              <PenLine size={14} /> <span className="hidden md:inline">Open in the Brief Desk</span>
+            </button>
           )}
           {!embedded && (
             <CanvasPinToggle kind="document" id={id} title={doc?.title || 'Document'} />
@@ -2538,7 +2770,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             // still selected when the click copies it.
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void handleCopyText()}
-            disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml)}
+            disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl)}
             className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${copyState === 'failed' ? 'text-red-400' : copyState === 'done' ? 'text-emerald-400' : 'text-white/70'}`}
             title={
               copyState === 'done'
@@ -2547,7 +2779,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                   ? (copyNote ?? 'The copy did not go through — click again')
                   : copyState === 'busy'
                     ? 'Copying…'
-                    : 'Copy the selected text — or the whole document as clean text when nothing is selected'
+                    : fileKind === 'image'
+                      ? 'Copy the picture — paste it into Word, a slide, or a chat'
+                      : 'Copy the selected text — or the whole document as clean text when nothing is selected'
             }
           >
             {copyState === 'done' ? <Check size={15} /> : copyState === 'failed' ? <X size={15} /> : <Copy size={15} />}
@@ -2619,10 +2853,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                       { icon: <Scan size={14} />, label: fitPage ? '✓ Fit the whole page' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
                     ] : []),
                     { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
-                    ...(fileKind === 'pdf' && !embedded ? [
+                    ...(fileKind === 'pdf' && !hidePageEditor ? [
                       { icon: <Scissors size={14} />, label: 'Edit pages', run: () => setPageEditorOpen(true), disabled: loadState !== 'ready' || !doc?.storage_path },
                     ] : []),
-                    { icon: <FileText size={14} />, label: 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml) },
+                    { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },
                     { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
                     { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
                     ...(connectedDrives.length
@@ -2753,18 +2987,21 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
             {loadState === 'loading' && (
               <LoadingCard title={doc?.title ?? null} progress={loadProgress} pageCount={doc?.page_count ?? null} />
             )}
-            {loadState === 'error' && sealGate && (
-              <div className="mt-10 w-full">
+            {stepUp && (
+              <div className="mt-10">
                 <StepUpPrompt
-                  mode={sealGate}
-                  heading={sealGate === 'enrol'
-                    ? 'This document is in a sealed matter. Add a second factor to open it.'
-                    : 'This document is in a sealed matter. Confirm it’s you.'}
-                  onConfirmed={() => { setSealGate(null); setReloadKey((k) => k + 1); }}
+                  mode={stepUp.mode}
+                  matterId={stepUp.matterId ?? undefined}
+                  onConfirmed={() => {
+                    const retry = stepUp.retry;
+                    setStepUp(null);
+                    if (retry === 'load') setReloadKey((k) => k + 1);
+                    else void handleDownload();
+                  }}
                 />
               </div>
             )}
-            {loadState === 'error' && !sealGate && (
+            {loadState === 'error' && !stepUp && (
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
             )}
             {loadState === 'ready' && fileKind === 'pdf' && pageDims && (
@@ -2825,6 +3062,54 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               >
                 <div dangerouslySetInnerHTML={docHtmlProp} />
               </div>
+            )}
+            {loadState === 'ready' && fileKind === 'image' && imageUrl && (
+              // The figure is the pane's width and scrolls sideways when the
+              // picture is zoomed past it; the picture is a block with auto
+              // margins, so it is centred while it fits and left-anchored
+              // (every pixel reachable by scrolling) once it does not. A
+              // flex column with items-center would clip both edges instead.
+              <figure className="image-page print-root w-full mx-auto overflow-x-auto">
+                <img
+                  src={imageUrl}
+                  alt={doc?.title ?? 'Image'}
+                  draggable={false}
+                  onLoad={(e) => {
+                    const el = e.currentTarget;
+                    if (el.naturalWidth && el.naturalHeight) setImageDims({ w: el.naturalWidth, h: el.naturalHeight });
+                  }}
+                  className="block mx-auto h-auto shadow-2xl select-none"
+                  // At 100% the picture is its own size or the pane's width,
+                  // whichever is smaller — a 1024-px render stretched to a wide
+                  // pane goes soft. Past 100% it is natural × zoom, deliberately
+                  // wider than the pane if need be.
+                  style={{
+                    width: imageDims ? `${Math.round(imageDims.w * (zoom / 1.5))}px` : 'auto',
+                    maxWidth: zoom <= 1.5 ? '100%' : 'none',
+                    imageRendering: zoom > 3 ? 'pixelated' : 'auto',
+                  }}
+                />
+                {imageDims && (
+                  <figcaption className="mt-3 text-center text-[11px] text-white/45 tracking-wide print:hidden">
+                    {imageDims.w} × {imageDims.h} px
+                    {doc?.source_filename ? ` · ${doc.source_filename.slice(doc.source_filename.lastIndexOf('.') + 1).toUpperCase()}` : ''}
+                    {doc?.file_size_bytes ? ` · ${doc.file_size_bytes >= 1048576 ? `${(doc.file_size_bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(doc.file_size_bytes / 1024))} KB`}` : ''}
+                    {/* What a model wrote about it, said as such: a description
+                        is never a quotation, and the words it saw in the
+                        picture are given verbatim under their own heading. */}
+                    {doc?.image_description?.line && (
+                      <span className="block mt-1.5 text-white/60 normal-case tracking-normal">
+                        <span className="text-white/35">AI description · </span>{doc.image_description.line}
+                      </span>
+                    )}
+                    {doc?.image_description?.text && (
+                      <span className="block mt-1 text-white/60 normal-case tracking-normal">
+                        <span className="text-white/35">Words in the picture · </span>“{doc.image_description.text.slice(0, 300)}”
+                      </span>
+                    )}
+                  </figcaption>
+                )}
+              </figure>
             )}
             {loadState === 'ready' && fileKind === 'pptx' && docHtml && (
               <div

@@ -12,6 +12,9 @@
 // is read with the service role and fails closed. Membership is asked first,
 // as the user, so a matter the person cannot reach is "not found" whether or
 // not it is sealed.
+//
+// The pause is enforced too (099): a paused matter is refused here
+// (403 ai_paused), and a pause that cannot be read refuses (503).
 
 import {
   authenticateConnectorToken,
@@ -19,6 +22,7 @@ import {
   corsHeaders,
   json,
   handleAuthError,
+  pausedMatterRefusal,
 } from '../../lib/connector-token-auth.mjs';
 
 import { fetchMatterTier, isSealedTier } from '../../lib/ai-tier-policy.mjs';
@@ -73,6 +77,10 @@ export default async function handler(req, res, deps = {}) {
     await recordExtRefusal(sb, { route: 'ext.documents', matterId, userId });
     return json(res, 403, sealedRefusal());
   }
+
+  // A paused matter lists nothing to a connected app (migration 070; 099).
+  const paused = await pausedMatterRefusal(matterId, { client: deps.adminClient ? deps.adminClient() : null });
+  if (paused) return json(res, paused.status, paused.body);
 
   const { data, error } = await sb
     .from('documents')

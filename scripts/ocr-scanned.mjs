@@ -22,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { pathInMatter } from '../lib/storage-path.mjs';
 import { ocrPdf } from '../lib/ocr-gemini.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +58,8 @@ log(`Scanned PDF candidates: ${candidates.length}${ONLY ? `  (filtered by --only
 // Group by file content hash (download once to hash).
 const groups = new Map(); // hash -> { rows:[], buf }
 for (const d of candidates) {
+  // Service role: only a path filed under this matter, in its exact shape (097).
+  if (!pathInMatter(d.storage_path, matter.id)) { log(`  ! refused, path not under its matter: ${d.source_filename}`); continue; }
   const { data: blob, error } = await supabase.storage.from('vault-documents').download(d.storage_path);
   if (error || !blob) { log(`  ! download failed: ${d.source_filename}`); continue; }
   const buf = Buffer.from(await blob.arrayBuffer());

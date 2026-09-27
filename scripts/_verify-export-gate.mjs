@@ -116,7 +116,9 @@ const DOC = Object.freeze({
   id: 'doc-1',
   title: 'Calder v. Atlas — settlement memo',
   source_filename: 'settlement-memo.pdf',
-  storage_path: 'user-1/doc-1.pdf',
+  // The tail of the stored path; the row served below puts it under its own
+  // matter, as migration 097 requires ("<matter>/<doc>/<file>").
+  storage_path: 'doc-1/settlement-memo.pdf',
   file_size_bytes: 21,
 });
 const FILE_BYTES = Buffer.from('CONFIDENTIAL-PAYLOAD!', 'utf8'); // 21 bytes
@@ -130,7 +132,7 @@ let world = {};
 function install(w = {}) {
   world = {
     tier: 'B',            // the PARENT matter's tier: 'A' | 'B' | 'C' | 'error'
-    docMatter: 'matter-child',
+    docMatter: 'c41d0000-0000-4000-8000-00000000c41d',
     hideParent: true,     // RLS hides the parent from the user-scoped client
     sealRoots: 'ok',      // for /api/ext/matters
     ledger: 'ok',         // ledger_append: 'ok' | 'fail' | 'absent'
@@ -205,9 +207,9 @@ const isServiceRole = (init) =>
   headerOf(init, 'apikey') === SERVICE_KEY || headerOf(init, 'authorization') === `Bearer ${SERVICE_KEY}`;
 
 const MATTERS = () => ({
-  'matter-child': { id: 'matter-child', name: 'Calder v. Atlas', short_code: 'CAL', parent_matterspace_id: 'matter-parent', ai_tier: 'A', hidden: false },
-  'matter-parent': { id: 'matter-parent', name: 'Atlas portfolio', short_code: 'ATL', parent_matterspace_id: null, ai_tier: world.tier, hidden: world.hideParent },
-  'matter-open': { id: 'matter-open', name: 'Firm admin', short_code: 'ADM', parent_matterspace_id: null, ai_tier: 'A', hidden: false },
+  'c41d0000-0000-4000-8000-00000000c41d': { id: 'c41d0000-0000-4000-8000-00000000c41d', name: 'Calder v. Atlas', short_code: 'CAL', parent_matterspace_id: 'a7a50000-0000-4000-8000-00000000a7a5', ai_tier: 'A', hidden: false },
+  'a7a50000-0000-4000-8000-00000000a7a5': { id: 'a7a50000-0000-4000-8000-00000000a7a5', name: 'Atlas portfolio', short_code: 'ATL', parent_matterspace_id: null, ai_tier: world.tier, hidden: world.hideParent },
+  '0be50000-0000-4000-8000-000000000be5': { id: '0be50000-0000-4000-8000-000000000be5', name: 'Firm admin', short_code: 'ADM', parent_matterspace_id: null, ai_tier: 'A', hidden: false },
 });
 
 function supabaseAnswer(url, init) {
@@ -233,10 +235,10 @@ function supabaseAnswer(url, init) {
     }]);
   }
   if (url.includes('/rest/v1/documents')) {
-    return jsonRes(200, [{ ...DOC, matterspace_id: world.docMatter }]);
+    return jsonRes(200, [{ ...DOC, matterspace_id: world.docMatter, storage_path: `${world.docMatter}/${DOC.storage_path}` }]);
   }
   if (url.includes('/rest/v1/rpc/matterspace_descendants')) {
-    return jsonRes(200, [{ id: 'matter-child' }]);
+    return jsonRes(200, [{ id: 'c41d0000-0000-4000-8000-00000000c41d' }]);
   }
   // The matter's Record (migration 064). Reachable here because the gate now
   // calls the REAL lib/ledger.mjs, which goes through the real supabase-js
@@ -244,7 +246,7 @@ function supabaseAnswer(url, init) {
   // database, not an assertion about a fake.
   if (url.includes('/rest/v1/rpc/ledger_append')) {
     if (world.ledger === 'fail') {
-      return jsonRes(403, { code: '42501', message: 'matter matter-child is not accessible', details: null, hint: null });
+      return jsonRes(403, { code: '42501', message: 'matter c41d0000-0000-4000-8000-00000000c41d is not accessible', details: null, hint: null });
     }
     if (world.ledger === 'absent') {
       return jsonRes(404, {
@@ -253,13 +255,15 @@ function supabaseAnswer(url, init) {
         details: null, hint: null,
       });
     }
-    return jsonRes(200, { id: 'event-1', seq: 1, hash: 'f'.repeat(64), chain_key: 'matter-child' });
+    return jsonRes(200, { id: 'event-1', seq: 1, hash: 'f'.repeat(64), chain_key: 'c41d0000-0000-4000-8000-00000000c41d' });
   }
   if (url.includes('/rest/v1/matterspaces')) {
     // 'error' breaks the TIER WALK only (its select is the giveaway), so the
     // case under test is a seal that cannot be read — not a database that is
     // down, which every one of these endpoints already handled its own way.
-    if (world.tier === 'error' && url.includes('parent_matterspace_id') && isServiceRole(init)) {
+    // (Since 099 the extension endpoints also walk the PAUSE up the same
+    // parent chain, without ai_tier in the select; that walk is not the seal.)
+    if (world.tier === 'error' && url.includes('parent_matterspace_id') && url.includes('ai_tier') && isServiceRole(init)) {
       return jsonRes(500, { message: 'tier lookup failed (stub)', code: 'XX000' });
     }
     const all = MATTERS();
@@ -536,7 +540,7 @@ try {
       `${p.name}: the record says what left`, ev.p_payload);
     check(ev.p_actor_kind === 'user' && ev.p_actor_ref === 'user-1',
       `${p.name}: and from whom — the WHEN is 064's own server clock, not a client timestamp`, { kind: ev.p_actor_kind, ref: ev.p_actor_ref });
-    check(ev.p_matter === 'matter-child' && ev.p_payload?.tier === 'B',
+    check(ev.p_matter === 'c41d0000-0000-4000-8000-00000000c41d' && ev.p_payload?.tier === 'B',
       `${p.name}: and which matter it left, on that matter's chain`, { matter: ev.p_matter, tier: ev.p_payload?.tier });
     check(ev.p_payload?.destination?.service === p.service
       && ev.p_payload?.destination?.party === p.party,
@@ -588,7 +592,7 @@ try {
   {
     install({ tier: 'B' });
     const out = await recordExport({
-      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'matter-child',
+      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'c41d0000-0000-4000-8000-00000000c41d',
       documentId: 'doc-1', title: DOC.title, destination: { service: 'google_drive' },
     });
     check(out.recorded === false && out.reason === 'ledger_absent' && ledgerCalls().length === 0,
@@ -607,13 +611,13 @@ try {
   {
     install({ tier: 'B' });
     const out = await recordExport({
-      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'matter-child',
+      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'c41d0000-0000-4000-8000-00000000c41d',
       documentId: 'doc-1', title: DOC.title, destination: { service: 'google_drive' },
     });
     check(out.recorded === true && ledgerCalls().length === 1,
       'PRESENT: record() is called exactly once, and reports the write', { out: out.recorded, calls: ledgerCalls().length });
     const ev = ledgerBody() ?? {};
-    check(ev.p_kind === 'file.exported' && ev.p_matter === 'matter-child' && ev.p_payload?.title === DOC.title,
+    check(ev.p_kind === 'file.exported' && ev.p_matter === 'c41d0000-0000-4000-8000-00000000c41d' && ev.p_payload?.title === DOC.title,
       'PRESENT: with the metadata, on the right chain', ev);
     check(!JSON.stringify(ev).includes('CONFIDENTIAL-PAYLOAD') && !JSON.stringify(ev).includes(DOC.storage_path),
       'PRESENT: and metadata ONLY');
@@ -625,7 +629,7 @@ try {
   {
     install({ tier: 'B' });
     const out = await recordExport({
-      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'matter-child',
+      supabase: userClient(), userId: 'user-1', tier: 'B', matterId: 'c41d0000-0000-4000-8000-00000000c41d',
       documentId: 'doc-1', title: DOC.title, destination: { service: 'google_drive' },
     });
     check(out.recorded === false && out.reason === 'ledger_error',
@@ -665,7 +669,7 @@ try {
   {
     install({ tier: 'B', hideParent: true });
     const userClient = createClient(SUPABASE_URL, 'anon-stub-not-a-key', { auth: { persistSession: false, autoRefreshToken: false } });
-    const userWalk = await matterTierWithClient(userClient, 'matter-child');
+    const userWalk = await matterTierWithClient(userClient, 'c41d0000-0000-4000-8000-00000000c41d');
     check(userWalk === 'A', 'a USER-scoped walk stops at the hidden parent and reports Tier A — the fail-open this avoids', userWalk);
 
     install({ tier: 'B', hideParent: true });
@@ -703,10 +707,15 @@ try {
     check(gated.json?.seal === undefined, `${p.name}: no 'seal' key on an unsealed export`, gated.json);
   }
   {
+    // Until 097 this row exported, as /api/llm treats an unbound draft. A
+    // stored file in NO matter cannot exist in the database
+    // (documents.matterspace_id is NOT NULL since 002), and since 097 every
+    // route refuses a file not filed under its row's own matter before the
+    // service role reads a byte (lib/storage-path.mjs) — fail closed.
     install({ tier: 'B', docMatter: null });
     const res = await post(driveExport, { documentId: 'doc-1' });
-    check(res.statusCode === 200 && res.json?.seal === undefined,
-      'a document in no matter has no seal to leave — exported, as /api/llm treats an unbound draft', { status: res.statusCode });
+    check(res.statusCode === 409 && res.json?.error === 'storage_path_mismatch' && storageReads().length === 0,
+      'a stored file in no matter is refused before any read (097), not exported', { status: res.statusCode, body: res.json });
   }
 
   // ── 10. NEGATIVE CONTROL ────────────────────────────────────────────────
@@ -727,8 +736,8 @@ try {
     install({ tier: 'B' });
     const res = await get(extMatters, {});
     const body = res.json;
-    const child = body?.matters?.find((m) => m.id === 'matter-child');
-    const open = body?.matters?.find((m) => m.id === 'matter-open');
+    const child = body?.matters?.find((m) => m.id === 'c41d0000-0000-4000-8000-00000000c41d');
+    const open = body?.matters?.find((m) => m.id === '0be50000-0000-4000-8000-000000000be5');
     check(res.statusCode === 200 && body?.seal_status === 'ok', '/api/ext/matters answers', body);
     check(child === undefined, 'a matter sealed by an ancestor the user cannot see is NOT listed', body?.matters);
     check(open?.sealed === false, 'an open matter is listed, unsealed', open);
@@ -742,22 +751,22 @@ try {
   }
   {
     install({ tier: 'B' });
-    const res = await get(extDocuments, { matter: 'matter-child' });
+    const res = await get(extDocuments, { matter: 'c41d0000-0000-4000-8000-00000000c41d' });
     check(res.statusCode === 403 && res.json?.error === 'sealed_matter' && /sealed/i.test(res.json?.message ?? ''),
       '/api/ext/documents REFUSES a sealed matter (service-role tier, so an unseen parent still counts)', res.json);
     check(!res.text.includes(DOC.title) && !/storage_path|signed|CONFIDENTIAL|passage/i.test(res.text),
       'not even the titles are listed', res.text.slice(0, 300));
     const ev = ledgerBody() ?? {};
-    check(ev.p_kind === 'tool.invoked' && ev.p_matter === 'matter-child' && ev.p_payload?.refused === 'sealed'
+    check(ev.p_kind === 'tool.invoked' && ev.p_matter === 'c41d0000-0000-4000-8000-00000000c41d' && ev.p_payload?.refused === 'sealed'
       && ev.p_payload?.connector === true,
       'and the refusal is in the sealed matter’s Record, as an MCP connector’s would be', ev);
 
     install({ tier: 'error' });
-    const failed = await get(extDocuments, { matter: 'matter-child' });
+    const failed = await get(extDocuments, { matter: 'c41d0000-0000-4000-8000-00000000c41d' });
     check(failed.statusCode === 503 && !failed.json?.documents, 'an unreadable tier is refused, not listed', failed.json);
 
     install({ tier: 'A' });
-    const open = await get(extDocuments, { matter: 'matter-child' });
+    const open = await get(extDocuments, { matter: 'c41d0000-0000-4000-8000-00000000c41d' });
     check(open.statusCode === 200 && open.json?.sealed === false && open.json?.documents?.[0]?.title === DOC.title,
       'an unsealed matter lists its documents as before', open.json);
   }

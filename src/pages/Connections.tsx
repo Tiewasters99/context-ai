@@ -818,6 +818,7 @@ export default function Connections() {
             setBanner({
               kind: 'ok',
               text:
+                'Change your password now if anyone else may know it. ' +
                 `Disconnected: ${countsLine(done)}. ` +
                 (othersSignedOut
                   ? 'Every other browser has been signed out. '

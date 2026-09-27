@@ -560,7 +560,7 @@ await db.exec('reset role');
 console.log('\n--- lib/ledger.mjs: redaction ------------------------------------');
 const {
   redact, redactToolArgs, scrubArgValues, record, recordStrict, LedgerWriteError,
-  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, _resetWarnings,
+  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, KINDS_100, _resetWarnings,
 } = await import('../lib/ledger.mjs');
 
 {
@@ -902,10 +902,11 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   // the security build's fifteen (scripts/_verify-stepup-seal.mjs holds
   // those to the constraint). This database has only 064, so the JS list
   // legitimately runs ahead of the constraint by exactly those and by
-  // nothing else.
-  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094];
+  // nothing else. 100 adds the Brief Desk's three
+  // (scripts/_verify-brief-md-roundtrip.mjs holds those).
+  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094, ...KINDS_100];
   check(ahead.every((k) => LATER_MIGRATION_KINDS.includes(k)),
-    'and runs ahead of it only by what a later migration adds (072, 073, 094)',
+    'and runs ahead of it only by what a later migration adds (072, 073, 094, 100)',
     ahead.join(' ') || 'none');
 
   // ── 073: a kind the CHECK constraint does not admit yet ──────────────────
@@ -944,8 +945,8 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   const [after073] = await q(
     `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'events_kind_check'`);
   const kinds073 = [...String(after073.def).matchAll(/'([a-z]+\.[a-z]+)'/g)].map((m) => m[1]);
-  // Everything the JS knows except 094's fifteen, which 073 predates.
-  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k));
+  // Everything the JS knows except 094's fifteen and 100's three, which 073 predates.
+  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k) && !KINDS_100.includes(k));
   check(through073.every((k) => kinds073.includes(k)) && kinds073.length === through073.length,
     "073's list is the UNION — 064's fourteen plus 072's kind plus its own, never a subset",
     `${kinds073.length} kinds`);
