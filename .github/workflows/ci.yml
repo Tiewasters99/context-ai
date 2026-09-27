@@ -911,3 +911,11 @@ jobs:
       - name: Brief Desk D3 — cite marks, the stale rule, the incremental diff
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-brief-desk-marks.mjs
+
+      # The desk binds the Orchestrator to the RECORD the brief draws on, not
+      # to the case's folder open beside it, and tells it about the brief; the
+      # surface layer wins over the pane Reader's matter; Confirm looks cases
+      # up in the same record. No database.
+      - name: Brief Desk — the Orchestrator knows the brief and its record
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-orchestrator-scope.mjs

@@ -59,7 +59,7 @@ import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
 import { parseReporterCites } from '../../../lib/bluebook.mjs';
-import { parseRecordCite, appendixSetsFor, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
 import CardDialog from '@/components/ui/CardDialog';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
@@ -67,6 +67,10 @@ import { project, plainRangeToPm } from '@/lib/brief/anchor';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
+import MatterTreePick from '@/components/matters/MatterTreePick';
+import { useServerspaces } from '@/hooks/useServerspaces';
+import { nearestCommonAncestor, isSealedIn } from '@/lib/matter-tree';
+import { setSurfaceContext, clearSurfaceContext } from '@/lib/orchestrator-context';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
 /** How a brief arrived: set by an import, read once. */
@@ -419,7 +423,7 @@ function DeskEditor(p: DeskProps) {
 
   // Any document into the pane: from the search, from a highlight, or from an
   // assistant working beside the lawyer (the 'cs:brief-open' event below).
-  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null } = {}) => {
+  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null } = {}) => {
     markPlace();
     gotoNonce.current += 1;
     setPane((cur) => ({
@@ -427,6 +431,7 @@ function DeskEditor(p: DeskProps) {
       docId: documentId, docTitle: o.title ?? null,
       goto: o.passageId ? { passageId: o.passageId, nonce: gotoNonce.current } : { page: o.page ?? 1, nonce: gotoNonce.current },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
+      appendix: o.appendix ?? null,
     }));
     if (narrow) openOverlay('authority');
   };
@@ -435,21 +440,143 @@ function DeskEditor(p: DeskProps) {
   // ── Record cites: "A-10" is a page of the appendix THIS brief cites ─────
   // Which appendix is the lawyer's call, asked once and kept on the brief
   // (metadata.record_matter_id); then every A-cite opens at its stamped page.
-  const [chooser, setChooser] = useState<{ cite: RecordCite; label: string; sets: { matterId: string; name: string; volumes: Volume[] }[] } | null>(null);
-  const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string) => {
+  // The chooser lists the sets; with a cite, the pick also opens it. Without
+  // one (from "change" in Versions, no A-cite open), the pick is only kept.
+  const [chooser, setChooser] = useState<{ cite: RecordCite | null; label: string; current: string | null; sets: { matterId: string; name: string; volumes: Volume[] }[] } | null>(null);
+  const recordMatterId = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id ?? null;
+  // The kept appendix by its matter's name, for "Appendix: … · change".
+  const [appendixName, setAppendixName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!recordMatterId) { setAppendixName(null); return; }
+    let live = true;
+    supabase.from('matterspaces').select('name').eq('id', recordMatterId).maybeSingle()
+      .then(({ data }) => { if (live) setAppendixName((data as { name: string } | null)?.name ?? null); });
+    return () => { live = false; };
+  }, [recordMatterId]);
+  // ── The matter the brief draws on ────────────────────────────────────────
+  // The Orchestrator is bound to ONE matter and told to search nowhere else.
+  // The brief's own folder holds only the brief, and the case open in the
+  // pane sits in a leaf folder (09-27: bound to "Disability", it could not
+  // find the district court's opinion and offered to move documents). So the
+  // desk binds it to the record: the matter the lawyer chose, else the nearest
+  // matter that holds both the appendix and the cases folder, else the
+  // brief's own. Kept on the brief (metadata.record_root_matter_id).
+  const { data: spaces = [] } = useServerspaces();
+  const allMatters = useMemo(() => spaces.flatMap((s) => s.matterspaces ?? []), [spaces]);
+  const matterName = useCallback((id: string | null | undefined) => allMatters.find((m) => m.id === id)?.name ?? null, [allMatters]);
+  const casesMatterId = (meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id ?? null;
+  const chosenRootId = (meta.metadata as { record_root_matter_id?: string } | null)?.record_root_matter_id ?? null;
+  // The seal: the brief's highlighted words go to the pen the BOUND matter
+  // chooses. A brief filed under a seal may only be bound to a record that is
+  // sealed too — never to an open case above its sealed appendix, and never
+  // to an open matter the picker offered.
+  const briefSealed = isSealedIn(allMatters, meta.matterspace_id);
+  const keepsTheSeal = useCallback((id: string) => !briefSealed || isSealedIn(allMatters, id), [briefSealed, allMatters]);
+  const recordRootId = useMemo(() => {
+    if (chosenRootId && keepsTheSeal(chosenRootId)) return chosenRootId;
+    const anchors = [recordMatterId, casesMatterId].filter((x): x is string => !!x);
+    let derived = nearestCommonAncestor(allMatters, anchors);
+    // The anchors are folders INSIDE the case (an appendix set, a cases
+    // folder). When they meet only at one of themselves, the case is that
+    // folder's parent — the record is the whole case, not the appendix alone.
+    if (derived && anchors.includes(derived)) {
+      derived = allMatters.find((m) => m.id === derived)?.parent_matterspace_id ?? derived;
+    }
+    return derived && keepsTheSeal(derived) ? derived : meta.matterspace_id;
+  }, [chosenRootId, allMatters, recordMatterId, casesMatterId, meta.matterspace_id, keepsTheSeal]);
+  const recordRootName = matterName(recordRootId);
+  const [showRecordPick, setShowRecordPick] = useState(false);
+  const rememberRecordRoot = async (matterId: string) => {
+    if (!keepsTheSeal(matterId)) {
+      p.setNotice('This brief is in a SecureSpace. Its record must be inside the seal too; choose a sealed matter.');
+      return;
+    }
+    const metadata = { ...(meta.metadata ?? {}), record_root_matter_id: matterId };
+    const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
+    if (!error) p.setMeta({ ...meta, metadata });
+  };
+  // What the Orchestrator is told while the desk is open — over whatever the
+  // pane's Reader publishes (its matter is the case's folder). The caption is
+  // the brief's first lines as they read: court, docket, parties.
+  useEffect(() => {
+    if (!editor) return;
+    const caption = project(editor.state.doc).text.replace(/\s+/g, ' ').trim().slice(0, 600);
+    setSurfaceContext({
+      matterId: recordRootId,
+      matterName: recordRootName ?? undefined,
+      brief: {
+        title: meta.title ?? 'Untitled brief',
+        caption: caption || undefined,
+        recordMatterName: recordRootName ?? undefined,
+        appendixMatterName: matterName(recordMatterId) ?? undefined,
+        casesMatterName: matterName(casesMatterId) ?? undefined,
+        citesChecked: rows.length || undefined,
+      },
+    });
+  }, [editor, recordRootId, recordRootName, recordMatterId, casesMatterId, meta.title, rows.length, matterName]);
+  useEffect(() => () => clearSurfaceContext(), []);
+
+  // The last A-cite opened, so "change" can re-open it in the new appendix.
+  const lastRecord = useRef<{ cite: RecordCite; label: string } | null>(null);
+  const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string, name: string | null) => {
     const v = volumes.find((x) => cite.first >= x.from && cite.first <= x.to);
     if (!v) { p.setNotice(`No volume of that appendix covers A-${cite.first}.`); return; }
+    lastRecord.current = { cite, label };
     const at = await pageOfStamp(supabase, v, cite.first);
     openDocument(v.id, {
       page: at.page,
       heading: label,
       caveat: at.basis === 'estimate' ? `The A-${cite.first} stamp is not in this volume's text; this is where it should fall.` : null,
+      appendix: { name: name ?? appendixName ?? 'the chosen appendix' },
     });
   };
   const rememberRecord = async (matterId: string) => {
     const metadata = { ...(meta.metadata ?? {}), record_matter_id: matterId };
     const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
     if (!error) p.setMeta({ ...meta, metadata });
+  };
+  const namesOf = async (ids: string[]) => {
+    const { data } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+    return new Map(((data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+  };
+  // An A-cite to its page. `rechoose` ignores the kept appendix and asks
+  // again — the lawyer's "change" — and with no cite lists every appendix.
+  const openRecordCite = async (cite: RecordCite | null, label: string, rechoose = false) => {
+    p.setBusy('Finding the appendices…');
+    try {
+      const sets = await appendixSets(supabase, cite?.first ?? null);
+      p.setBusy(null);
+      const kept = recordMatterId;
+      if (cite && !rechoose && kept && sets.has(kept)) { await openRecordIn(sets.get(kept)!, cite, label, appendixName); return; }
+      if (sets.size === 0) {
+        p.setNotice(cite ? `No appendix volume in your matters covers A-${cite.first}.` : 'No appendix volumes are filed in your matters. A volume is one named for its range, "(A-1 to A-77)".');
+        return;
+      }
+      const ids = [...sets.keys()];
+      const names = await namesOf(ids);
+      if (sets.size === 1 && (!rechoose || ids[0] === kept)) {
+        // Nothing to choose between. Kept as the answer; on "change", said so.
+        const [only] = ids;
+        if (only !== kept) await rememberRecord(only);
+        if (rechoose) { p.setNotice(`Only one appendix in your matters${cite ? ` covers A-${cite.first}` : ''}: ${names.get(only) ?? 'this one'}.`); return; }
+        if (cite) await openRecordIn(sets.get(only)!, cite, label, names.get(only) ?? null);
+        return;
+      }
+      setChooser({
+        cite, label, current: kept,
+        sets: ids.map((id) => ({ matterId: id, name: names.get(id) ?? 'A matter', volumes: sets.get(id)! }))
+          .sort((a, b) => Number(/final/i.test(b.name)) - Number(/final/i.test(a.name)) || a.name.localeCompare(b.name)),
+      });
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
+    }
+  };
+  // "change": with an A-cite open, re-ask for that number and re-open it
+  // there; otherwise list every appendix and only keep the choice.
+  const changeAppendix = () => {
+    const last = lastRecord.current;
+    void openRecordCite(last?.cite ?? null, last?.label ?? '', true);
   };
   // "Morgan v. Allison Crane & Rigging, LLC, 114 F.4th 214, 218": the case that
   // carries 114 F.4th 214 in any matter this person can read (the index ingest
@@ -491,14 +618,14 @@ function DeskEditor(p: DeskProps) {
     const sel = (highlighted.current ?? '').trim();
     if (!sel) return;
     let title: string | null = pane?.docTitle ?? null;
-    let matterId = meta.matterspace_id;
-    if (pane?.docId) {
-      const { data } = await supabase.from('documents').select('title, matterspace_id').eq('id', pane.docId).maybeSingle();
-      const d = data as { title: string | null; matterspace_id: string } | null;
-      if (d) { title = title ?? d.title; matterId = d.matterspace_id; }
+    if (pane?.docId && !title) {
+      const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+      title = (data as { title: string | null } | null)?.title ?? null;
     }
+    // Bound to the record the brief draws on — never the case's own folder.
     runInAssistant({
-      matterId,
+      matterId: recordRootId,
+      matterName: recordRootName ?? undefined,
       draft: title
         ? `Does ${title} support this proposition from the brief? “${sel}” `
         : `Which authority in this matter supports this proposition from the brief? “${sel}” `,
@@ -513,28 +640,7 @@ function DeskEditor(p: DeskProps) {
       setSearch(findQueryFor(label));
       return;
     }
-    try {
-      const sets = await appendixSetsFor(supabase, cite.first);
-      const kept = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id;
-      if (kept && sets.has(kept)) { await openRecordIn(sets.get(kept)!, cite, label); return; }
-      if (sets.size === 0) { p.setNotice(`No appendix volume in your matters covers A-${cite.first}.`); return; }
-      if (sets.size === 1) {
-        const [only] = [...sets.entries()];
-        await rememberRecord(only[0]);
-        await openRecordIn(only[1], cite, label);
-        return;
-      }
-      const ids = [...sets.keys()];
-      const { data } = await supabase.from('matterspaces').select('id, name').in('id', ids);
-      const names = new Map(((data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
-      setChooser({
-        cite, label,
-        sets: ids.map((id) => ({ matterId: id, name: names.get(id) ?? 'A matter', volumes: sets.get(id)! }))
-          .sort((a, b) => Number(/final/i.test(b.name)) - Number(/final/i.test(a.name)) || a.name.localeCompare(b.name)),
-      });
-    } catch (e) {
-      p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
-    }
+    await openRecordCite(cite, label);
   };
 
   // The words highlighted in the brief, for "Find in corpus". Kept after the
@@ -619,6 +725,7 @@ function DeskEditor(p: DeskProps) {
         all,
         onProgress: setProgress,
         signal: ac.signal,
+        recordMatterId: recordRootId,
       });
       runRef.current = out.run;
       setRun(out.run);
@@ -762,6 +869,13 @@ function DeskEditor(p: DeskProps) {
           >
             <ShieldCheck size={13} /> Confirm this brief
           </button>
+          {/* Where the check looks: the matter the brief draws on, changeable
+              before the first Confirm (a brief filed in a narrow folder). */}
+          <span className="ml-3 text-[12px] text-white/55" data-testid="arrival-record">
+            Its cites are looked up in <span className="text-white/80">{recordRootName ?? 'this matter'}</span>
+            {' · '}
+            <button onClick={() => setShowRecordPick(true)} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2">change</button>
+          </span>
         </Banner>
       )}
       {!p.editable && (
@@ -885,6 +999,7 @@ function DeskEditor(p: DeskProps) {
                   onClose={pane ? () => setPane(null) : undefined}
                   onPickCopy={(d) => void pickCopy(d)}
                   onSearch={setSearch}
+                  onChangeAppendix={changeAppendix}
                 />
               </div>
             </VEdges>
@@ -923,6 +1038,10 @@ function DeskEditor(p: DeskProps) {
         {p.showVersions && (
           <Versions
             meta={meta}
+            appendix={recordMatterId ? (appendixName ?? '…') : null}
+            onChangeAppendix={changeAppendix}
+            record={recordRootName}
+            onChangeRecord={() => setShowRecordPick(true)}
             onClose={() => p.setShowVersions(false)}
             onRestore={async (snapId) => {
               if (!editor || !updatedAt.current) return;
@@ -981,6 +1100,7 @@ function DeskEditor(p: DeskProps) {
               onClose={closeOverlay}
               onPickCopy={(d) => void pickCopy(d)}
               onSearch={setSearch}
+              onChangeAppendix={changeAppendix}
             />
           ) : (
             <CiteTable
@@ -1025,11 +1145,29 @@ function DeskEditor(p: DeskProps) {
           <ReadingNote />
         </CardDialog>
       )}
+      {showRecordPick && (
+        <CardDialog
+          storageKey="cs.brief.record-pick"
+          title="Which matter does this brief draw on?"
+          subtitle="The Orchestrator searches this matter and everything beneath it: the record, the appendix, the cases. Your choice is kept with this brief."
+          onClose={() => setShowRecordPick(false)}
+          maxWidth={520}
+        >
+          <div className="mb-2 text-[12px] text-white/60">Now: <span className="text-white/85">{recordRootName ?? 'not chosen'}</span></div>
+          <MatterTreePick
+            value={recordRootId}
+            onChange={(id) => { setShowRecordPick(false); void rememberRecordRoot(id); }}
+            maxHeight={300}
+          />
+        </CardDialog>
+      )}
       {chooser && (
         <CardDialog
           storageKey="cs.brief.appendix-chooser"
           title="Which appendix does this brief cite?"
-          subtitle={`More than one appendix in your matters has A-${chooser.cite.first}. Your choice is kept with this brief.`}
+          subtitle={chooser.cite
+            ? `More than one appendix in your matters has A-${chooser.cite.first}. Your choice is kept with this brief.`
+            : 'Every appendix in your matters. Your choice is kept with this brief; A-cites open in it.'}
           onClose={() => setChooser(null)}
           maxWidth={520}
         >
@@ -1041,11 +1179,14 @@ function DeskEditor(p: DeskProps) {
                   const pick = chooser;
                   setChooser(null);
                   await rememberRecord(s.matterId);
-                  await openRecordIn(s.volumes, pick.cite, pick.label);
+                  if (pick.cite) await openRecordIn(s.volumes, pick.cite, pick.label, s.name);
                 }}
-                className="block w-full text-left px-3 py-2 rounded-md border border-white/[0.08] hover:border-[#e8b84a]/50 hover:bg-white/[0.03]"
+                className={`block w-full text-left px-3 py-2 rounded-md border hover:bg-white/[0.03] ${s.matterId === chooser.current ? 'border-[#e8b84a]/40' : 'border-white/[0.08] hover:border-[#e8b84a]/50'}`}
               >
-                <div className="text-[13px] text-white/90">{s.name}</div>
+                <div className="text-[13px] text-white/90">
+                  {s.name}
+                  {s.matterId === chooser.current && <span className="ml-2 text-[11px] text-[#e8b84a]/80">now</span>}
+                </div>
                 <div className="text-[11px] text-white/45">{s.volumes.length === 1 ? s.volumes[0].title : `${s.volumes.length} volumes`}</div>
               </button>
             ))}
@@ -1507,8 +1648,14 @@ function MenuItem({ title, note, onClick, disabled }: { title: string; note: str
   );
 }
 
-function Versions({ meta, onClose, onRestore, canRestore }: {
+function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, onClose, onRestore, canRestore }: {
   meta: BriefMeta; onClose: () => void; onRestore: (id: string) => Promise<void>; canRestore: boolean;
+  /** The appendix this brief's A-cites open in, by its matter's name; null when none is kept yet. */
+  appendix: string | null;
+  onChangeAppendix: () => void;
+  /** The matter the brief draws on — what the Orchestrator searches. */
+  record: string | null;
+  onChangeRecord: () => void;
 }) {
   const [rows, setRows] = useState<SnapshotRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1554,6 +1701,25 @@ function Versions({ meta, onClose, onRestore, canRestore }: {
             )}
           </div>
         ))}
+      </div>
+      {/* What this brief remembers: the record it draws on, and the appendix its A-cites open in. */}
+      <div className="px-3 py-2 border-t border-white/[0.06] text-[11px] text-white/45" data-testid="versions-record">
+        Record: <span className="text-white/65">{record ?? '…'}</span>
+        {' · '}
+        <button onClick={onChangeRecord} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2" title="The matter the Orchestrator searches for this brief: its record, appendix and cases">
+          change
+        </button>
+      </div>
+      <div className="px-3 py-2 border-t border-white/[0.06] text-[11px] text-white/45" data-testid="versions-appendix">
+        {appendix ? (
+          <>Appendix: <span className="text-white/65">{appendix}</span></>
+        ) : (
+          <>Appendix: <span className="text-white/40">not chosen yet — the first A-cite asks</span></>
+        )}
+        {' · '}
+        <button onClick={onChangeAppendix} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2" title="Choose the appendix this brief's A-cites open in">
+          {appendix ? 'change' : 'choose'}
+        </button>
       </div>
     </aside>
   );
