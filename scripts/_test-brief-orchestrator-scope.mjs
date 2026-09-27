@@ -40,6 +40,10 @@ test('A. the system prompt names the record and explains the desk', () => {
     },
   });
   assert.match(sys, /ON THE BRIEF DESK/);
+  assert.match(sys, /You are on the Brief Desk\. A brief has been filed here/, 'it is told where it is and that a brief is filed');
+  assert.match(sys, /Your first job in this room is that brief: help research it, edit it and revise it\./, 'its primary job');
+  assert.match(sys, /Ordinary questions about the workspace or the law are welcome too/, 'general questions still welcome');
+  assert.match(sys, /You do not edit the brief yourself/, 'proposals, not edits');
   assert.match(sys, /The user is on the Brief Desk \(\/app\/brief\/5ad0\)/);
   assert.match(sys, /On the desk: the brief “DeCamara-Appellants-Opening-Brief”\. Its last check covered 145 cites\./);
   assert.match(sys, /THIRD CIRCUIT/, 'the caption is quoted');
