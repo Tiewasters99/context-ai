@@ -2457,12 +2457,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       if (goto.passageId) {
         const { data } = await supabase
           .from('passages')
-          .select('page_start, text')
+          .select('page_start, text, metadata')
           .eq('id', goto.passageId)
           .maybeSingle();
-        const row = data as { page_start: number | null; text: string | null } | null;
+        const row = data as { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null } | null;
         if (row) {
-          target = target ?? row.page_start;
+          // A transcript's passages are filed under its printed page; the
+          // physical page, the one to go to, is metadata.pdf_page.
+          const physical = Number(row.metadata?.pdf_page);
+          target = target ?? (Number.isFinite(physical) && physical > 0 ? physical : row.page_start);
           phrase = row.text ? firstWords(row.text, 12) : null;
         }
       }
