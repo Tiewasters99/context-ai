@@ -11,6 +11,7 @@
 
 import { supabase } from './supabase';
 import { fetchPaged, type PagedRows } from './paged';
+import { storageObjectUrl, isStepUpRequired, type ObjectPurpose } from './vault-object';
 // Resumable (TUS) uploads for large intake files (Phase 4) — a production
 // zip is the biggest thing anyone uploads to this site.
 import { uploadResumable, shouldUploadResumable, storageResumeStore, type UploadProgress } from '../../lib/tus-upload.mjs';
@@ -643,19 +644,27 @@ export async function createDelivery(args: {
 // Storage — discovery-files bucket
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DISCOVERY_BUCKET = 'discovery-files';
+const DISCOVERY_BUCKET = 'discovery-files' as const;
 
+// On a SEALED matter (migration 096) the bucket refuses the browser, and the
+// URL comes from /api/document-url, which records `file.opened` — and, for
+// `purpose: 'download'` (a native, a package), `file.exported` — in the
+// matter's Record and lasts 900 s. Unsealed matters sign here, as before.
+// A step-up refusal is thrown as StepUpRequired (vault-object.ts).
 export async function getDiscoverySignedUrl(
   storagePath: string,
   expiresInSeconds = 3600,
+  purpose: ObjectPurpose = 'read',
 ): Promise<string> {
-  const { data, error } = await supabase.storage
-    .from(DISCOVERY_BUCKET)
-    .createSignedUrl(storagePath, expiresInSeconds);
-  if (error || !data?.signedUrl) {
-    throw new Error(`signed url: ${error?.message ?? 'no url returned'}`);
+  try {
+    const { url } = await storageObjectUrl(storagePath, {
+      bucket: DISCOVERY_BUCKET, ttlSeconds: expiresInSeconds, purpose,
+    });
+    return url;
+  } catch (e) {
+    if (isStepUpRequired(e)) throw e;
+    throw new Error(`signed url: ${e instanceof Error ? e.message : 'no url returned'}`);
   }
-  return data.signedUrl;
 }
 
 export function sanitizeDiscoveryFilename(name: string): string {

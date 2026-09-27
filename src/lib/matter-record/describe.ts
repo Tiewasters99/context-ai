@@ -499,7 +499,20 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
     case 'file.exported': {
       const title = str(payload.title) ?? 'a document';
       const dest = str(payload.destination);
+      // S4a: the Reader's Download button, on any matter.
+      if (dest === 'download') return `${who} downloaded ${title}`;
+      // S4a: /api/move-document — the document left this matter for another.
+      if (dest === 'move') return `${who} moved ${title} to another matter`;
       return `${who} exported ${title}${dest ? ` (${dest})` : ''}`;
+    }
+    // S4a (migration 096): a sealed matter's file handed out to be read or
+    // downloaded — by the Reader through /api/document-url, or by get_media.
+    case 'file.opened': {
+      const title = str(payload.title) ?? 'a document';
+      const how = str(payload.via) === 'connector' ? ' through a connected assistant' : '';
+      return payload.purpose === 'download'
+        ? `${who} opened ${title} to download it${how}`
+        : `${who} opened ${title}${how}`;
     }
     case 'file.sent': {
       const ids = Array.isArray(payload.document_ids) ? payload.document_ids.length : null;
@@ -566,6 +579,30 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
       return `${who} disconnected all of their assistants from this matter and paused AI here${
         disconnectCounts(payload)
       }`;
+    // 100 — the Brief Desk. The payload names ids, never the brief's words.
+    case 'draft.snapshot': {
+      const label = str(payload.label);
+      const sha = str(payload.sha256);
+      return `${who} saved a version of a brief${label ? ` (${label})` : ''}${
+        sha ? ` — fingerprint ${sha.slice(0, 12)}` : ''
+      }`;
+    }
+    case 'cite.checked': {
+      const counts = payload.counts && typeof payload.counts === 'object'
+        ? Object.values(payload.counts as Record<string, unknown>).reduce<number>(
+            (n, v) => n + (typeof v === 'number' ? v : 0), 0)
+        : null;
+      return `${who} checked the citations in a brief${
+        counts ? ` (${counts} citation${counts === 1 ? '' : 's'})` : ''
+      }`;
+    }
+    case 'draft.exported': {
+      const dest = payload.destination === 'md' ? 'as Markdown'
+        : payload.destination === 'docx' ? 'as a Word file'
+        : payload.destination === 'agent' ? 'to an assistant for formatting'
+        : null;
+      return `${who} exported a brief${dest ? ` ${dest}` : ''}`;
+    }
     default:
       // A kind this build does not know. Say who and what it was called,
       // and say no more than that.
@@ -588,6 +625,8 @@ export function kindLabel(kind: string): string {
       return 'Seal';
     case 'file.exported':
       return 'Export';
+    case 'file.opened':
+      return 'Opened';
     case 'file.sent':
       return 'Send';
     case 'file.delivered':
@@ -618,6 +657,12 @@ export function kindLabel(kind: string): string {
       return 'Reconnected';
     case 'matter.disconnected':
       return 'Assistants disconnected';
+    case 'draft.snapshot':
+      return 'Brief version';
+    case 'cite.checked':
+      return 'Brief cite check';
+    case 'draft.exported':
+      return 'Export';
     default:
       return kind;
   }

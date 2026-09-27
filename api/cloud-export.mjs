@@ -36,6 +36,7 @@ import { createClient } from '@supabase/supabase-js';
 import { decrypt, encrypt } from '../lib/connections-crypto.mjs';
 import { applyCors, getDrive, json, notConfigured } from '../lib/cloud-drives/index.mjs';
 import { checkExport, sealResult } from '../lib/export-gate.mjs'; // gate:import
+import { pathInMatter } from '../lib/storage-path.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -93,6 +94,10 @@ export default async function handler(req, res) {
   if (docErr) return json(res, 500, { error: `document_lookup: ${docErr.message}` });
   if (!doc) return json(res, 404, { error: 'document_not_found' });
   if (!doc.storage_path) return json(res, 400, { error: 'document_has_no_file' });
+  // 097: the stored file must be filed under this document's own matter. A
+  // row pointing at another matter's object is refused before the service
+  // role reads a byte (lib/storage-path.mjs says why).
+  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) return json(res, 409, { error: 'storage_path_mismatch' });
   if (doc.file_size_bytes && doc.file_size_bytes > MAX_EXPORT_BYTES) {
     return json(res, 413, {
       error: 'file_too_large',

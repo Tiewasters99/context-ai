@@ -713,7 +713,7 @@ function buildConnectors(events: LedgerEvent[]): {
 // ---------------------------------------------------------------------------
 
 const ACCESS_KINDS = new Set(['acl.changed', 'seal.changed']);
-const EXPORT_KINDS = new Set(['file.exported', 'file.sent', 'file.delivered', 'file.gate']);
+const EXPORT_KINDS = new Set(['file.exported', 'file.sent', 'file.delivered', 'file.gate', 'draft.exported']);
 
 function toLine(event: LedgerEvent, people: People): LineRow {
   return {

@@ -32,6 +32,7 @@ import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { estimateIngestCents } from '../lib/usage-prices.mjs';
 import { verifyIngestConfirmation } from '../lib/ingest-estimate.mjs';
+import { pathInMatter } from '../lib/storage-path.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -95,6 +96,10 @@ export default async function handler(req, res) {
   if (!doc.storage_path) {
     return json(res, 400, { error: 'document has no storage_path; upload the file first' });
   }
+  // 097: the stored file must be filed under this document's own matter. A
+  // row pointing at another matter's object is refused before the service
+  // role reads a byte (lib/storage-path.mjs says why).
+  if (!pathInMatter(doc.storage_path, doc.matterspace_id)) return json(res, 409, { error: 'storage_path_mismatch' });
   // 'ready' with a recorded text_status (image_only, media_no_transcript, …)
   // is stored-without-text, and 'ready' with ocr_pending still owes OCR on
   // some pages; a re-run from the Vault is how either gets another chance.
@@ -153,11 +158,14 @@ export default async function handler(req, res) {
   // actually read can be read back per user per month. True per-page metering
   // needs a usage_consume call inside the worker once #153 lands.
   //
-  // So the CENTS charged here are the inline ones only — embedding the text,
-  // plus one OCR call for a scanned page that arrived as a JPEG or PNG. A
-  // scanned PDF leaves for the worker a few lines below without this function
-  // calling any provider, and charging it here for pages nobody has counted
-  // would refuse ordinary uploads to bill for work that happens elsewhere.
+  // So the CENTS charged here are the ones knowable now — embedding the text,
+  // plus one OCR call for a scanned page that arrived as a JPEG or PNG. That
+  // image leaves for the worker a few lines below (since 2026-09-26; before
+  // that its OCR ran here), but it is still exactly one OCR call, known at
+  // request time, so it is still charged here. A scanned PDF leaves without
+  // this function calling any provider, and charging it here for pages
+  // nobody has counted would refuse ordinary uploads to bill for work that
+  // happens elsewhere.
   const ext0 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
   const ingestMeter = await consumeUsage({
     supabaseUrl: SUPABASE_URL,
@@ -212,10 +220,18 @@ export default async function handler(req, res) {
     console.error(`inline ingest marker failed for ${doc.id}: ${markErr.message}`);
   }
 
-  // Download the file from storage. RLS on the storage bucket enforces
-  // matter access; if the user can read the document row they can also
-  // download the file.
-  const { data: blob, error: dlErr } = await sb.storage
+  // Download the file from storage. The documents lookup above, as the
+  // user, is the authorization. Since migration 096 the bucket refuses a
+  // user's own JWT an object in a SEALED matter (the browser must not fetch
+  // those bytes without a Record row), so the read is made with the service
+  // role wherever it is configured — the pattern api/cloud-export.mjs already
+  // uses. Indexing a file is not a copy leaving the matter.
+  const storageClient = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createClient(SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    : sb;
+  const { data: blob, error: dlErr } = await storageClient.storage
     .from('vault-documents')
     .download(doc.storage_path);
   if (dlErr || !blob) {
@@ -237,11 +253,13 @@ export default async function handler(req, res) {
     }
   }
 
-  // Scanned-image OCR, for JPEG/PNG (a scanned page saved as a picture — one
-  // page, one OCR call, well inside the serverless budget). The provider
-  // picks the route the matter's tier allows and falls back within the tier
-  // (Phase 4). It stays wired for PDFs as a backstop, but a PDF that needs
-  // it was routed to the worker just above, so it does not run here.
+  // OCR provider, wired as a backstop. A JPEG/PNG is routed to the worker by
+  // needsWorkerIngest (since 2026-09-26 — one OCR call is 20–60 s the
+  // browser used to wait for), and a PDF that needs OCR was routed just
+  // above, so neither runs here; the wiring stays so that a queue insert
+  // that failed and fell through inline still ends in OCR, not in
+  // "image_only". The provider picks the route the matter's tier allows and
+  // falls back within the tier (Phase 4).
   let ocr = null;
   if (ext === '.pdf' || OCRABLE_IMAGE_EXTENSIONS.includes(ext)) {
     ocr = makeOcrProvider(process.env);

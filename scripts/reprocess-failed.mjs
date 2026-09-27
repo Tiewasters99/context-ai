@@ -21,6 +21,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { assertPathInMatter } from '../lib/storage-path.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -96,6 +97,8 @@ if (results.stillError.length) {
 }
 
 async function reprocessOne(doc) {
+  // Service role: only a path filed under this matter, in its exact shape (097).
+  assertPathInMatter(doc.storage_path, matter.id);
   const { data: blob, error: dlErr } = await supabase.storage
     .from('vault-documents')
     .download(doc.storage_path);
