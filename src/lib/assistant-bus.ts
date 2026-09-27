@@ -12,6 +12,12 @@ export interface AssistantCommand {
    * sealed room" button — without spending a model call.
    */
   prompt?: string;
+  /**
+   * Text to put in the Orchestrator's box WITHOUT sending it — the passage a
+   * reader highlighted, ready for the question they type after it. Nothing is
+   * spent until they press Enter (Eden, 09-27: "it should wait to be prompted").
+   */
+  draft?: string;
   matterId?: string;
   matterName?: string;
   /**

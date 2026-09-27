@@ -394,5 +394,26 @@ console.log('\n--- H. find the highlighted authority (src/lib/brief/find-query.t
     'the desk opens any document in the pane: "Find in corpus" for the lawyer, cs:brief-open for an assistant beside them');
 }
 
+// ===========================================================================
+console.log('\n--- I. the Orchestrator beside the desk -----------------------------');
+// ===========================================================================
+{
+  const { blocksOf, runsOf } = await import('../src/lib/prose.ts');
+  const b = blocksOf('## Holding\n\nThe court held **that** a claim *may* proceed.\n\n- first\n- second\n\n1. one\n2. two\n\n> quoted');
+  check(b.map((x) => x.kind).join(' ') === 'h p ul ol quote', 'an answer\'s Markdown becomes heading, paragraph, lists and a quote', b.map((x) => x.kind).join(' '));
+  const r = runsOf('a **bold** and *italic* and `code` and snake_case_name');
+  check(r.some((x) => x.bold && x.text === 'bold') && r.some((x) => x.italic && x.text === 'italic') && r.some((x) => x.code)
+    && r.map((x) => x.text).join('').includes('snake_case_name'), 'bold, italic and code runs; an identifier with underscores stays as typed');
+  check(runsOf('<img src=x onerror=alert(1)>').every((x) => !x.bold && !x.italic) && !/dangerouslySetInnerHTML/.test(read('src/components/ai/Prose.tsx')),
+    'no HTML is produced from an answer: text only, rendered as React elements');
+  const reader = read('src/pages/DocumentReader.tsx');
+  const ask = reader.slice(reader.indexOf('const askAbout = useCallback'), reader.indexOf('const handleDownload'));
+  check(/draft: q \?/.test(ask) && !/prompt:/.test(ask), '"Ask about this passage" puts the passage in the box; it sends nothing');
+  const panel = read('src/components/ai/Assistant.tsx');
+  check(/else if \(cmd\.draft\)/.test(panel) && /PANEL_MIN_W = 400/.test(panel) && /PANEL_MIN_H = 440/.test(panel),
+    'the Orchestrator takes a draft without sending, and is never smaller than 400 x 440');
+  check(/model: 'claude-opus-5-5'/.test(read('lib/assistant-core.mjs')), 'the first-party pen is Opus 5.5');
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 process.exit(failures ? 1 : 0);

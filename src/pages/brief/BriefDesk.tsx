@@ -681,12 +681,14 @@ function DeskEditor(p: DeskProps) {
           className="min-w-0 flex flex-col"
           style={narrow || !briefW ? { flex: '1 1 0' } : { flex: '0 0 auto', width: briefW }}
         >
-          {!narrow && topBlock}
-          <div className="brief-col flex-1 min-h-0 overflow-y-auto">
-            <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
-              <EditorContent editor={editor} />
+          <VEdges id="brief" off={narrow}>
+            {!narrow && topBlock}
+            <div className="brief-col flex-1 min-h-0 overflow-y-auto">
+              <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
+                <EditorContent editor={editor} />
+              </div>
             </div>
-          </div>
+          </VEdges>
         </div>
         {!narrow && (
           <ColumnDivider
@@ -701,13 +703,17 @@ function DeskEditor(p: DeskProps) {
           />
         )}
         {!narrow && (
-          <div className="min-w-0" style={{ flex: '1 1 0' }}>
-            <AuthorityPane
-              state={pane}
-              onClose={pane ? () => setPane(null) : undefined}
-              onPickCopy={(d) => void pickCopy(d)}
-              onSearch={setSearch}
-            />
+          <div className="min-w-0 flex flex-col" style={{ flex: '1 1 0' }}>
+            <VEdges id="pane">
+              <div className="flex-1 min-h-0">
+                <AuthorityPane
+                  state={pane}
+                  onClose={pane ? () => setPane(null) : undefined}
+                  onPickCopy={(d) => void pickCopy(d)}
+                  onSearch={setSearch}
+                />
+              </div>
+            </VEdges>
           </div>
         )}
         {wide && !tableCollapsed && rows.length > 0 && (
@@ -719,6 +725,9 @@ function DeskEditor(p: DeskProps) {
           />
         )}
         {wide && (
+          <div className="shrink-0 flex flex-col">
+          <VEdges id="table">
+          <div className="flex-1 min-h-0 flex">
           <CiteTable
             width={tableW}
             variant="column"
@@ -733,6 +742,9 @@ function DeskEditor(p: DeskProps) {
             collapsed={tableCollapsed || rows.length === 0}
             onToggleCollapsed={() => setTableCollapsed((v) => !v)}
           />
+          </div>
+          </VEdges>
+          </div>
         )}
         {p.showVersions && (
           <Versions
@@ -820,6 +832,64 @@ function DeskEditor(p: DeskProps) {
         <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />
       )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A column's top and bottom edges: drag either to pull the card in, double-
+// click to reset (Eden, 09-27: cards resize on every edge, "for consistency of
+// feel through the site"). The side edges are the column dividers. Remembered
+// per browser, like the widths.
+// ---------------------------------------------------------------------------
+function VEdges({ id, off, children }: { id: string; off?: boolean; children: React.ReactNode }) {
+  const key = `cs.brief.v.${id}`;
+  const [inset, setInset] = useState<{ top: number; bottom: number }>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(key) ?? 'null') as { top?: number; bottom?: number } | null;
+      return { top: Math.max(0, Number(v?.top) || 0), bottom: Math.max(0, Number(v?.bottom) || 0) };
+    } catch { return { top: 0, bottom: 0 }; }
+  });
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(inset)); } catch { /* private window */ } }, [key, inset]);
+  const box = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ y: number; start: typeof inset; side: 'top' | 'bottom'; h: number } | null>(null);
+  if (off) return <>{children}</>;
+  const lifted = inset.top > 0 || inset.bottom > 0;
+  const handle = (side: 'top' | 'bottom') => (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      title={`Drag the ${side} edge. Double-click to reset.`}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        drag.current = { y: e.clientY, start: inset, side, h: box.current?.getBoundingClientRect().height ?? 800 };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        const dy = e.clientY - d.y;
+        const room = d.h - 220; // the card never gets shorter than this
+        setInset(d.side === 'top'
+          ? { ...d.start, top: Math.round(Math.max(0, Math.min(d.start.top + dy, room - d.start.bottom))) }
+          : { ...d.start, bottom: Math.round(Math.max(0, Math.min(d.start.bottom - dy, room - d.start.top))) });
+      }}
+      onPointerUp={() => { drag.current = null; }}
+      onPointerCancel={() => { drag.current = null; }}
+      onDoubleClick={() => setInset((v) => ({ ...v, [side]: 0 }))}
+      className="group absolute left-0 right-0 h-2 cursor-row-resize z-10 select-none touch-none"
+      style={side === 'top' ? { top: Math.max(0, inset.top - 4) } : { bottom: Math.max(0, inset.bottom - 4) }}
+    >
+      <div className="absolute inset-x-6 top-1/2 -translate-y-1/2 h-px bg-transparent group-hover:h-[3px] group-hover:bg-[#e8b84a]/60 transition-all" />
+    </div>
+  );
+  return (
+    <div ref={box} className="relative flex-1 min-h-0 flex flex-col" style={{ paddingTop: inset.top, paddingBottom: inset.bottom }}>
+      {handle('top')}
+      <div className={`flex-1 min-h-0 flex flex-col ${lifted ? 'rounded-lg overflow-hidden border border-white/[0.08] shadow-xl' : ''}`}>
+        {children}
+      </div>
+      {handle('bottom')}
+    </div>
   );
 }
 

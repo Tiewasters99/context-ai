@@ -1660,9 +1660,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     runInAssistant({
       matterId: doc.matterspace_id ?? undefined,
       matterName: matterName ?? undefined,
-      prompt: q
-        ? `On ${where}: “${q.slice(0, 1200)}” — What is this passage saying, and what does it connect to?`
-        : undefined,
+      // The passage goes into the box, cursor after it; the reader asks the
+      // question. Nothing is sent until they do.
+      draft: q ? `On ${where}: “${q.slice(0, 1200)}” — ` : undefined,
     });
   }, [doc, fileKind, page, matterName, visiblePages]);
   const handleDownload = useCallback(async () => {
