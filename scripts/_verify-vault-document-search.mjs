@@ -44,6 +44,7 @@ const migration = (name) => {
   return fs.readFileSync(migrationPath(name), 'utf8');
 };
 const M081 = '081_vault_document_search_and_category.sql';
+const M102 = '102_category_section_sign.sql';
 
 // PGlite attaches its whole bundled module source to a thrown error, which
 // turns one bad statement into a megabyte of unreadable CI log.
@@ -488,6 +489,39 @@ check(
 // F. Categories: deterministic, and a person's choice is untouchable.
 // ---------------------------------------------------------------------------
 console.log('\n--- F. categories --------------------------------------------');
+
+// 102: under 081 alone, a "§" anywhere in a name was a statute — seven notes
+// titled "Inventory §3 — …" sat on the statute shelf in production (09-27).
+// Rows shaped exactly like those, then 102 pasted over 081 as production gets it.
+{
+  const shelf = async (id) => one(`select category, category_source from public.documents where id = $1`, [id]);
+  const note = await mkDoc(mShared, 'Inventory §3 — Missing / PACER Pull List (2026-09-18)');
+  const kept = await mkDoc(mShared, 'Inventory §9 — shelved as a statute by hand');
+  await db.query(`update public.documents set category = 'statute', category_source = 'user' where id = $1`, [kept]);
+  const real = await mkDoc(mShared, '42 USC 12102 Definition of disability.pdf');
+  const leading = await mkDoc(mShared, '§ 1983 claims outline.pdf');
+  const before102 = await shelf(note);
+  check(before102.category === 'statute' && before102.category_source === 'rule',
+    'negative control: under 081 alone, a note with a "§" in its name lands on the statute shelf', JSON.stringify(before102));
+  const leadingBefore = await shelf(leading);
+  check(leadingBefore.category === 'other' && leadingBefore.category_source === 'rule',
+    'negative control: under 081 alone, a leading "§" is lost to the sort key and the statute sits under Other', JSON.stringify(leadingBefore));
+  await db.exec(migration(M102));
+  const after = await shelf(note);
+  check(after.category !== 'statute' && after.category_source === 'rule',
+    '102 takes the note off the statute shelf, still as the rule\'s decision', JSON.stringify(after));
+  const leadingAfter = await shelf(leading);
+  check(leadingAfter.category === 'statute' && leadingAfter.category_source === 'rule',
+    '102 moves the leading-"§" statute from Other onto the statute shelf', JSON.stringify(leadingAfter));
+  const keptAfter = await shelf(kept);
+  check(keptAfter.category === 'statute' && keptAfter.category_source === 'user',
+    "a person's own choice of the statute shelf is untouched by 102", JSON.stringify(keptAfter));
+  check((await shelf(real)).category === 'statute', 'a real statute stays on the statute shelf');
+  const again = await q(`select category, category_source, count(*)::int n from public.documents group by 1,2 order by 1,2`);
+  await db.exec(migration(M102));
+  const again2 = await q(`select category, category_source, count(*)::int n from public.documents group by 1,2 order by 1,2`);
+  check(JSON.stringify(again) === JSON.stringify(again2), 'a second paste of 102 changes no data');
+}
 // Real-shaped names: Westlaw exports, PACER filenames, scanned exhibits.
 const FIXTURE = [
   ['Glasstech Inc v Freund.pdf', 'case'],
@@ -509,6 +543,16 @@ const FIXTURE = [
   ['Wright & Miller, Federal Practice § 1391.pdf', 'secondary'],
   ['Harvard Law Review - Spoliation.pdf', 'secondary'],
   ['Restatement (Second) of Torts § 402A.pdf', 'secondary'],
+  // 102: the section sign counts only where a statute puts it.
+  ['§ 1983 claims outline.pdf', 'statute'],
+  ['2026-09-18 04 - § 1983 claims outline.pdf', 'statute'],
+  ['(§ 1983) elements chart.pdf', 'statute'],
+  ['Tex. Bus. & Com. Code § 17.46.pdf', 'statute'],
+  ['N.Y. Gen. Bus. Law § 349.pdf', 'statute'],
+  ['28 U.S.C. § 1331.pdf', 'statute'],
+  ['Inventory §4 — Defects (2026-09-18).md', 'other'],
+  ['Inventory §1 — District Docket (2026-09-18).md', 'pleading'],
+  ['Memo §2 working notes.docx', 'supporting'],
   ['76 Yale L. Rev. 101.pdf', 'secondary'],
   ['Complaint.pdf', 'pleading'],
   ['Amended Answer and Counterclaims.pdf', 'pleading'],
@@ -690,11 +734,12 @@ const before = await q(
   `select category, category_source, count(*)::int n from public.documents
     group by 1,2 order by 1,2`);
 await db.exec(migration(M081));
+await db.exec(migration(M102));
 const after = await q(
   `select category, category_source, count(*)::int n from public.documents
     group by 1,2 order by 1,2`);
 check(JSON.stringify(before) === JSON.stringify(after),
-  'a second paste of 081 changes no data');
+  'a second paste of 081 (then 102, as production has them) changes no data');
 const idx2 = (await q(
   `select indexname from pg_indexes where tablename = 'documents' order by indexname`))
   .map((r) => r.indexname);
