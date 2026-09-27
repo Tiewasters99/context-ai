@@ -305,7 +305,7 @@ console.log('\n--- F. the wiring, read from source -----------------------------
     'Confirm extracts from toPlainText(body)');
   check(!/body_md/.test(code), 'Confirm never reads body_md');
   check(/snapshot_id: snap\.id,/.test(code), 'the run row carries the snapshot id');
-  check(/matterId \}\)/.test(code) && (code.match(/\{ modelId, signal, matterId \}/g) ?? []).length >= 2,
+  check(/extractCitations\(draftText, \{\s*modelId, signal, matterId,/.test(code) && /checkOne\(t\.cite, \{ modelId, signal, matterId \}\)/.test(code),
     'every model call carries the matter (the sealed pen routing)');
   check(/recordEvent\('cite\.checked'/.test(code), 'Confirm records cite.checked');
   const reader = read('src/pages/DocumentReader.tsx');

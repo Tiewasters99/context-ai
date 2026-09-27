@@ -329,6 +329,41 @@ const reset = (replies) => { seen.length = 0; writes = []; llmReplies = replies;
     !JSON.stringify({ feature: env.feature, matterId: env.matterId }).includes('Graham'));
 }
 
+// -- a long draft is read in sections (09-27: a 48,695-character brief) ------
+{
+  const { splitForExtraction, SECTION_CHARS } = await import('../src/lib/cite-check/extract-cites.ts');
+  const para = (i) => `Paragraph ${i}. ` + 'The court held that the standard was met. '.repeat(40).trim();
+  const LONG = Array.from({ length: 40 }, (_, i) => para(i)).join('\n\n');
+  const parts = splitForExtraction(LONG);
+  check('sections: a long draft is split', parts.length > 1, parts.length);
+  check('sections: joined back, the sections ARE the draft (nothing dropped, nothing added)', parts.join('') === LONG);
+  check('sections: none is longer than the limit', parts.every((p) => p.length <= SECTION_CHARS), Math.max(...parts.map((p) => p.length)));
+  check('sections: each ends at a paragraph break, never mid-sentence', parts.slice(0, -1).every((p) => /\n\n$/.test(p)));
+  const giant = 'A sentence that goes on. '.repeat(2000);
+  const gp = splitForExtraction(giant);
+  check('sections: one paragraph longer than the limit is cut at sentence ends', gp.length > 1 && gp.join('') === giant && gp.slice(0, -1).every((p) => /\. $/.test(p)));
+  check('sections: a short draft is one section, unchanged', splitForExtraction(DRAFT).length === 1 && splitForExtraction(DRAFT)[0] === DRAFT);
+
+  // Every section gets its own call; the lists join in order.
+  const withCite = parts.map((p, i) => (i === 1 ? p.replace('Paragraph 5.', 'Paragraph 5. ' + GRAHAM + '.') : p));
+  const LONG2 = withCite.join('');
+  const sections2 = splitForExtraction(LONG2);
+  reset(sections2.map((s) => ({ input: { citations: s.includes(GRAHAM) ? [citeEntry()] : [] } })));
+  const seenSections = [];
+  const out = await extractCitations(LONG2, { modelId: 'claude-opus-4-8', matterId: MATTER, onSection: (d, t) => seenSections.push(`${d}/${t}`) });
+  check('sections: one call per section, each bound to the matter', llmCalls().length === sections2.length && llmCalls().every((c) => c.env.matterId === MATTER), llmCalls().length);
+  check('sections: every call is the extract feature, metered like one', llmCalls().every((c) => c.env.feature === 'citecheck.extract'));
+  check('sections: the cite found in its section is returned; the outcome counts the sections', out.cites.length === 1 && out.sections === sections2.length);
+  check('sections: progress reports each section', seenSections.length === sections2.length && seenSections.at(-1) === `${sections2.length}/${sections2.length}`);
+
+  // One unreadable section fails the whole extraction, and says which.
+  reset(sections2.flatMap(() => [{ input: { text: 'nope' } }, { input: { text: 'still nope' } }]));
+  let msg = '';
+  try { await extractCitations(LONG2, { modelId: 'claude-opus-4-8', matterId: MATTER }); } catch (e) { msg = e.message; }
+  check('sections: a section that cannot be read fails the WHOLE list — a list with a hole would print as complete',
+    msg.startsWith(EXTRACT_CONTRACT_FAILURE) && /in section \d+ of \d+/.test(msg), msg.slice(-80));
+}
+
 // -- invalid → repair → valid ---------------------------------------------
 {
   reset([

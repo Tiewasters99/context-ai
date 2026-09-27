@@ -759,7 +759,7 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
 }) {
   if (progress) {
     const words = progress.phase === 'snapshot' ? 'Saving a version…'
-      : progress.phase === 'extracting' ? 'Reading every citation…'
+      : progress.phase === 'extracting' ? (progress.total ? `Reading every citation — section ${progress.done} of ${progress.total}…` : 'Reading every citation…')
       : progress.phase === 'checking' ? `Checking ${progress.index} of ${progress.total}${progress.carried ? ` (${progress.carried} unchanged)` : ''}…`
       : progress.phase === 'resolving' ? `Finding the cases in the matter ${progress.index}/${progress.total}…`
       : 'Saving the check…';

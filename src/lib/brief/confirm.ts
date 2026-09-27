@@ -45,7 +45,7 @@ export interface DeskRun {
 
 export type ConfirmProgress =
   | { phase: 'snapshot' }
-  | { phase: 'extracting' }
+  | { phase: 'extracting'; done?: number; total?: number }
   | { phase: 'checking'; index: number; total: number; current: string; carried: number }
   | { phase: 'resolving'; index: number; total: number }
   | { phase: 'saving' };
@@ -224,7 +224,10 @@ export async function confirmBrief(opts: {
   try {
     aborted();
     onProgress?.({ phase: 'extracting' });
-    const extraction = await extractCitations(draftText, { modelId, signal, matterId });
+    const extraction = await extractCitations(draftText, {
+      modelId, signal, matterId,
+      onSection: (done, total) => { if (total > 1) onProgress?.({ phase: 'extracting', done, total }); },
+    });
     const fresh = extraction.cites;
     const diff = diffForConfirm<Cite>(prior?.entries ?? null, fresh, stalePairs, all);
 
