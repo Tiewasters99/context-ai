@@ -499,13 +499,20 @@ console.log('\n--- F. categories --------------------------------------------');
   const kept = await mkDoc(mShared, 'Inventory §9 — shelved as a statute by hand');
   await db.query(`update public.documents set category = 'statute', category_source = 'user' where id = $1`, [kept]);
   const real = await mkDoc(mShared, '42 USC 12102 Definition of disability.pdf');
+  const leading = await mkDoc(mShared, '§ 1983 claims outline.pdf');
   const before102 = await shelf(note);
   check(before102.category === 'statute' && before102.category_source === 'rule',
     'negative control: under 081 alone, a note with a "§" in its name lands on the statute shelf', JSON.stringify(before102));
+  const leadingBefore = await shelf(leading);
+  check(leadingBefore.category === 'other' && leadingBefore.category_source === 'rule',
+    'negative control: under 081 alone, a leading "§" is lost to the sort key and the statute sits under Other', JSON.stringify(leadingBefore));
   await db.exec(migration(M102));
   const after = await shelf(note);
   check(after.category !== 'statute' && after.category_source === 'rule',
     '102 takes the note off the statute shelf, still as the rule\'s decision', JSON.stringify(after));
+  const leadingAfter = await shelf(leading);
+  check(leadingAfter.category === 'statute' && leadingAfter.category_source === 'rule',
+    '102 moves the leading-"§" statute from Other onto the statute shelf', JSON.stringify(leadingAfter));
   const keptAfter = await shelf(kept);
   check(keptAfter.category === 'statute' && keptAfter.category_source === 'user',
     "a person's own choice of the statute shelf is untouched by 102", JSON.stringify(keptAfter));
@@ -538,6 +545,8 @@ const FIXTURE = [
   ['Restatement (Second) of Torts § 402A.pdf', 'secondary'],
   // 102: the section sign counts only where a statute puts it.
   ['§ 1983 claims outline.pdf', 'statute'],
+  ['2026-09-18 04 - § 1983 claims outline.pdf', 'statute'],
+  ['(§ 1983) elements chart.pdf', 'statute'],
   ['Tex. Bus. & Com. Code § 17.46.pdf', 'statute'],
   ['N.Y. Gen. Bus. Law § 349.pdf', 'statute'],
   ['28 U.S.C. § 1331.pdf', 'statute'],

@@ -66,7 +66,13 @@ begin
   --    at the very front ("§ 1983 claims"), or after a code or a law
   --    ("Tex. Bus. & Com. Code § 17.46", "Gen. Bus. Law § 349"), or after a
   --    title number and its code ("28 U.S.C. §", matched by the U.S.C. test).
-  if v_low ~ '(^\s*§|\y(code|law|laws|act|stat|stats|reg|regs|ordinance)\.?\s*§|u\.?\s?s\.?\s?c\.?\y|c\.?\s?f\.?\s?r\.?\y|\ycplr\y|\ystat\.|public law|pub\.?\s?l\.?\s*no|\yusc\y|\ynyc admin|admin\.? code)' then
+  --    The front is tested on the RAW strings, as "In re" is below: the sort
+  --    key strips every leading non-letter, § included, so v_low never begins
+  --    with one. "Any non-letters, then §" lets 081's own leading date or
+  --    index through ("2026-09-18 04 - § 1983 outline") and still refuses
+  --    "Inventory §3", whose first character is a letter.
+  if v_raw ~* '^[^a-z]*§' or v_other ~* '^[^a-z]*§'
+     or v_low ~ '(\y(code|law|laws|act|stat|stats|reg|regs|ordinance)\.?\s*§|u\.?\s?s\.?\s?c\.?\y|c\.?\s?f\.?\s?r\.?\y|\ycplr\y|\ystat\.|public law|pub\.?\s?l\.?\s*no|\yusc\y|\ynyc admin|admin\.? code)' then
     return 'statute';
   end if;
 
@@ -108,9 +114,13 @@ comment on function public.document_category_rule(text, text) is
   'or after a code or a law (102). IMMUTABLE; see document_sort_key''s comment.';
 
 -- The rows the old rule put on the statute shelf, re-decided by the new one.
+-- 'other' is re-decided too: 081 lost a leading § to the sort key, so a name
+-- like "§ 1983 claims outline" sat under Other by the rule; the new test on the
+-- raw name puts it on Statutes. Only the § test changed, so an 'other' row can
+-- move to 'statute' and nowhere else. (Production had no such row on 09-27.)
 update public.documents
    set category    = public.document_category_rule(title, source_filename),
        category_at = now()
- where category = 'statute'
+ where category in ('statute', 'other')
    and category_source = 'rule'
-   and public.document_category_rule(title, source_filename) is distinct from 'statute';
+   and public.document_category_rule(title, source_filename) is distinct from category;
