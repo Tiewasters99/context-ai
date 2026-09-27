@@ -319,5 +319,59 @@ console.log('\n--- F. the wiring, read from source -----------------------------
   check(true, 'src/lib/cite-check/ does not import the desk');
 }
 
+// ===========================================================================
+console.log('\n--- G. importing a brief (src/lib/brief/import.ts) ------------------');
+// ===========================================================================
+{
+  const I = await import('../src/lib/brief/import.ts');
+  const kinds = ['a.docx', 'B.DOCX', 'c.md', 'd.Markdown', 'e.txt', 'f.pdf', 'g.doc', 'h.rtf', 'noext'].map(I.kindOf);
+  check(JSON.stringify(kinds) === JSON.stringify(['docx', 'docx', 'md', 'md', 'txt', 'pdf', 'doc', 'unsupported', 'unsupported']),
+    'kindOf: by extension, case ignored', kinds.join(' '));
+  check(I.titleFrom('C:\\Users\\x\\Downloads\\Reply_Brief  v3.docx') === 'Reply Brief v3' && I.titleFrom('.docx') === 'Untitled brief',
+    'titleFrom: no path, no extension, underscores read as spaces');
+  check(I.refusalFor('docx') === null && I.refusalFor('md') === null && I.refusalFor('txt') === null, 'Word, Markdown and text are read');
+  check(/Contextspaces/.test(I.refusalFor('pdf')) && /\.docx/.test(I.refusalFor('doc')) && !!I.refusalFor('unsupported'),
+    'a PDF, an old .doc and anything else get a sentence that says what to do instead');
+  let threw = null;
+  try { await I.importBytes('x.pdf', new Uint8Array([37, 80, 68, 70])); } catch (e) { threw = e.message; }
+  check(threw === I.refusalFor('pdf'), 'importBytes refuses a PDF with that sentence rather than guessing at its words');
+  const enc = new TextEncoder();
+  const md = await I.importBytes('m.md', enc.encode('\uFEFF## ARGUMENT\n\nSee *Owen v. Jones*, 123 F.3d 456.[^1]\n\n[^1]: A note.\n'));
+  check(md.losses.length === 0 && md.doc.content[0].type === 'heading' && toPlainText(md.doc).includes('Owen v. Jones, 123 F.3d 456'),
+    'a Markdown file (with a byte-order mark) parses through the dialect: heading, italics, footnote');
+  const txt = await I.importBytes('t.txt', enc.encode('First paragraph.\n\nSecond paragraph.'));
+  check(txt.doc.content.length === 2, 'a text file: one paragraph per blank-line block');
+  const { makeFixtureDocx } = await import('./fixtures/brief-desk/make-fixture-docx.mjs');
+  const word = await I.importBytes('Brief.DOCX', await makeFixtureDocx());
+  const node = schema.nodeFromJSON(word.doc);
+  check(A.project(node).text.length > 0 && word.losses.length > 0 && JSON.stringify(word.doc).includes('"footnote"'),
+    'a Word file comes in through the D1 importer: footnotes kept, the loss list returned');
+  const pdfText = I.importIndexedText('# 1 not a heading\n\nThe court held that X.\n\n## Nor this');
+  check(pdfText.losses.length === 1 && pdfText.losses[0] === I.INDEXED_TEXT_LOSS
+    && pdfText.doc.content.every((b) => b.type === 'paragraph') && toPlainText(pdfText.doc).startsWith('# 1 not a heading'),
+    'indexed text (a PDF in Contextspaces): every block a paragraph, "#" kept as text, the loss said once');
+  const importSrc = read('src/lib/brief/import.ts');
+  check(!/@\/lib\/supabase|storage/.test(importSrc.replace(/^\s*\/\/.*$/gm, '')), 'import.ts is pure: no Supabase, no storage');
+
+  // The filing, from source: a filed document is copied, never converted.
+  const store = read('src/lib/brief/draft-store.ts');
+  const fromDoc = store.slice(store.indexOf('export async function importBriefFromDocument'), store.indexOf('// Export (D1'));
+  check(/createBrief\(src\.matterspace_id,/.test(fromDoc) && /source_document_id: src\.id/.test(fromDoc),
+    "a document from Contextspaces becomes a NEW brief in its own matter, pointing back at the original");
+  check(!/\.update\(|\.delete\(|createBody\(src|draft_bodies/.test(fromDoc.replace(/hasDraftBody/g, '')),
+    'and the original document is never updated, deleted or given a body');
+  check(!/\.download\(/.test(store) && !/openInDesk/.test(store) && !/openInDesk/.test(read('src/pages/brief/BriefDesk.tsx')),
+    'no direct storage download in the desk (reads go through vault-object.ts), and no in-place "open in desk" left');
+  const fromFile = store.slice(store.indexOf('export async function importBriefFile'), store.indexOf('export async function importBriefFromDocument'));
+  check(/original_storage_path/.test(fromFile) && /\$\{matterId\}\/\$\{id\}\/original-/.test(fromFile),
+    "a file from disk keeps its original bytes under the brief's own matter path (097)");
+  check(/category: 'pleading'/.test(store), 'a brief is shelved with the pleadings');
+  const home = read('src/pages/brief/BriefDeskHome.tsx');
+  check(/onDrop/.test(home) && /importBriefFile\(chosen\.id, file\)/.test(home) && /state: \{ imported:/.test(home),
+    'the desk home takes a drop or a pick and lands in the desk with the import banner');
+  check(/path="brief" element=\{<BriefDeskHome \/>\}/.test(read('src/App.tsx')) && /to="\/app\/brief"/.test(read('src/components/layout/Sidebar.tsx')),
+    'the Brief Desk has its own route and its own door in the sidebar');
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 process.exit(failures ? 1 : 0);

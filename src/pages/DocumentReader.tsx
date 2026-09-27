@@ -2736,13 +2736,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               onToggle={() => setCoverExpanded(!coverExpanded)}
             />
           )}
-          {!embedded && id && doc?.doc_type === 'brief' && /\.(docx|md|markdown|txt)$/i.test(doc.source_filename ?? '') && (
+          {!embedded && id && (doc?.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(doc?.source_filename ?? '')) && (
             <button
               onClick={() => navigate(`/app/brief/${id}`)}
               className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white"
-              title="Edit this brief as text, with its footnotes, and export it as Markdown or Word"
+              title="Open it in the Brief Desk: edit it as text and check its cites. A filed document is copied in; the original stays as filed."
             >
-              <PenLine size={14} /> <span className="hidden md:inline">Edit in the Brief Desk</span>
+              <PenLine size={14} /> <span className="hidden md:inline">Open in the Brief Desk</span>
             </button>
           )}
           {!embedded && (

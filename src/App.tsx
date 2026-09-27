@@ -52,6 +52,7 @@ import AuthConfirm from '@/pages/AuthConfirm';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
 import BriefDesk from '@/pages/brief/BriefDesk';
+import BriefDeskHome from '@/pages/brief/BriefDeskHome';
 import { canOpenPath } from '@/lib/plan';
 import { useFactorStatus } from '@/hooks/useFactorStatus';
 import { signedInSince } from '@/lib/second-factor';
@@ -205,6 +206,7 @@ export default function App() {
               <Route path="connections/chatgpt" element={<ChatGPTConnect />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
+              <Route path="brief" element={<BriefDeskHome />} />
               <Route path="brief/:id" element={<BriefDesk />} />
             </Route>
             <Route

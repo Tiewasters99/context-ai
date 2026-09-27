@@ -31,7 +31,7 @@
 // Phone (B7): read-only. Editing a brief is a laptop job.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import Placeholder from '@tiptap/extension-placeholder';
 import {
@@ -45,7 +45,7 @@ import { briefExtensions, type FlagKind } from '@/lib/brief/schema';
 import { serialize, type BriefDoc } from '@/lib/brief/md';
 import {
   loadBrief, saveBody, takeSnapshot, listSnapshots, loadSnapshot, restoreSnapshot,
-  openInDesk, exportBrief, type BriefMeta, type SnapshotRow,
+  importBriefFromDocument, exportBrief, type BriefMeta, type SnapshotRow, type ImportResult,
 } from '@/lib/brief/draft-store';
 import {
   applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow,
@@ -62,6 +62,8 @@ import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
+/** How a brief arrived: set by an import, read once. */
+interface Arrival { from: string; losses: string[] }
 type Save = 'saved' | 'dirty' | 'saving' | 'conflict' | 'error';
 
 const QUIET_MS = 2000;
@@ -70,7 +72,13 @@ const FLAG_KINDS: FlagKind[] = ['STAR', 'OPP', 'EDEN', 'verify'];
 export default function BriefDesk() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const isMobile = useIsMobile();
+  // An import lands here with its source and its loss list (B2); the banner
+  // it gets offers Confirm at once.
+  const arrived = (location.state as { imported?: Arrival } | null)?.imported ?? null;
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const arrival = arrived && dismissed !== location.key ? arrived : null;
 
   const [load, setLoad] = useState<Load>('loading');
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -128,7 +136,10 @@ export default function BriefDesk() {
       <Shell>
         <NoBody
           meta={meta}
-          onOpened={(doc, l, at) => { updatedAt.current = at; setInitial(doc); setLosses(l); setMount((n) => n + 1); setLoad('ready'); }}
+          onImported={(r) => navigate(`/app/brief/${r.id}`, {
+            replace: true,
+            state: { imported: { from: meta.source_filename || meta.title, losses: r.losses } },
+          })}
           onBack={() => navigate(`/app/matterspace/${meta.matterspace_id}`)}
         />
       </Shell>
@@ -145,8 +156,9 @@ export default function BriefDesk() {
       setSave={setSave}
       saveError={saveError}
       setSaveError={setSaveError}
-      losses={losses}
-      clearLosses={() => setLosses([])}
+      losses={arrival?.losses ?? losses}
+      clearLosses={() => { setLosses([]); setDismissed(location.key); }}
+      arrival={arrival}
       notice={notice}
       setNotice={setNotice}
       busy={busy}
@@ -177,6 +189,7 @@ interface DeskProps {
   setSaveError: (s: string | null) => void;
   losses: string[];
   clearLosses: () => void;
+  arrival: Arrival | null;
   notice: string | null;
   setNotice: (s: string | null) => void;
   busy: string | null;
@@ -581,10 +594,24 @@ function DeskEditor(p: DeskProps) {
           </span>
         </Banner>
       )}
-      {p.losses.length > 0 && (
+      {(p.arrival || p.losses.length > 0) && (
         <Banner tone="info" onClose={p.clearLosses}>
-          <strong className="font-medium">Opened from Word.</strong> Your words, headings, italics and footnotes came across. What did not:
-          <ul className="list-disc ml-5 mt-1">{p.losses.map((l) => <li key={l}>{l}</li>)}</ul>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>
+              <strong className="font-medium">{p.arrival ? `Imported ${p.arrival.from}.` : 'Opened from Word.'}</strong>{' '}
+              {p.losses.length ? 'Your words came across. What did not:' : 'Your words, headings, italics and footnotes came across.'}
+            </span>
+            {p.arrival && p.editable && !run && !progress && (
+              <button
+                onClick={() => { p.clearLosses(); void confirm(false); }}
+                className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
+              >
+                <ShieldCheck size={13} /> Confirm this brief — check every cite
+              </button>
+            )}
+            {p.arrival && !p.editable && <span className="text-white/50">Checking the cites is a laptop job; open this brief there.</span>}
+          </div>
+          {p.losses.length > 0 && <ul className="list-disc ml-5 mt-1">{p.losses.map((l) => <li key={l}>{l}</li>)}</ul>}
         </Banner>
       )}
       {!p.editable && (
@@ -968,46 +995,29 @@ function Versions({ meta, onClose, onRestore, canRestore }: {
   );
 }
 
-function NoBody({ meta, onOpened, onBack }: {
+function NoBody({ meta, onImported, onBack }: {
   meta: BriefMeta;
-  onOpened: (doc: BriefDoc, losses: string[], updatedAt: string) => void;
+  onImported: (r: ImportResult) => void;
   onBack: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  // A filed document opened here (from the Reader, a link, the search) is
+  // brought into the desk at once, as a copy in its own matter; the filed
+  // original is never changed. No button, no question.
   const [err, setErr] = useState<string | null>(null);
-  const name = meta.source_filename ?? '';
-  const openable = /\.(docx|md|markdown|txt)$/i.test(name);
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    importBriefFromDocument(meta.id).then(onImported, (e) => setErr((e as Error).message));
+  }, [meta.id, onImported]);
   return (
     <div className="max-w-lg mx-auto mt-16 p-6 rounded-xl border border-white/[0.08] bg-white/[0.02]">
       <h1 className="text-[15px] text-white/90 mb-2">{meta.title}</h1>
-      {openable ? (
-        <>
-          <p className="text-[13px] text-white/65 mb-4">
-            This brief is filed as <span className="text-white/85">{name}</span> but is not editable yet. Open it in the desk and it becomes text you
-            edit here, footnotes included.{/\.docx$/i.test(name) ? ' Word formatting does not come across; you will see a list of what did not.' : ''}
-          </p>
-          <button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true); setErr(null);
-              try {
-                const { body, losses } = await openInDesk(meta);
-                onOpened(body.body, losses, body.updated_at);
-              } catch (e) {
-                setErr((e as Error).message); setBusy(false);
-              }
-            }}
-            className="px-3 py-1.5 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
-          >
-            {busy ? 'Opening…' : 'Open it in the desk'}
-          </button>
-        </>
+      {err ? (
+        <p className="text-[13px] text-red-300">{err}</p>
       ) : (
-        <p className="text-[13px] text-white/65">
-          Only Word (.docx), Markdown and text briefs open in the desk. This one is {name || 'a file without a name'}.
-        </p>
+        <p className="text-[13px] text-white/60 inline-flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Bringing it into the desk…</p>
       )}
-      {err && <p className="text-[12px] text-red-300 mt-3">{err}</p>}
       <button onClick={onBack} className="block mt-6 text-[12px] text-white/45 hover:text-white">Back to the matter</button>
     </div>
   );
