@@ -153,10 +153,11 @@ export default function ChatGPTConnect() {
                 Desktop browser only — for now.
               </strong>{' '}
               OpenAI runs custom plugins like this one only on chatgpt.com in a
-              desktop browser. The ChatGPT iPhone and Android apps can show the
-              plugin in your settings but will not use it in a chat, and the
-              app says so with a "desktop only" notice. That limit is
-              OpenAI's, not ours; nothing on the Contextspaces side changes it.
+              desktop browser. You can create the plugin from any browser, but
+              ChatGPT then tells you it is usable on desktop only, and the
+              ChatGPT iPhone and Android apps have no plugin settings at all.
+              That limit is OpenAI's, not ours; nothing on the Contextspaces
+              side changes it.
               For Contextspaces on your phone today, connect the{' '}
               <Link to="/app/connections/claude" className="text-[var(--color-primary)] underline">
                 Claude app
