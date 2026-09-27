@@ -24,7 +24,7 @@ import { supabase } from '@/lib/supabase';
 import { triggerIngest } from '@/lib/vault-persist';
 import { storageObjectBlob } from '@/lib/vault-object';
 import { effectiveTier } from '@/lib/agent-charters';
-import { parse, serialize, emptyBrief, type BriefDoc } from './md';
+import { serialize, emptyBrief, type BriefDoc } from './md';
 
 export interface BriefMeta {
   id: string;
@@ -245,9 +245,22 @@ export async function restoreSnapshot(
 }
 
 // ---------------------------------------------------------------------------
-// New brief; open an existing document in the desk
+// New brief; import one
+//
+// Every way in ends the same: a NEW brief document in a matter, with its own
+// editable body and a first version. A filed document is never turned into a
+// draft in place — an opposing brief, a filed copy, a client's original stays
+// exactly as it was filed; the brief that opens in the desk is a copy of its
+// words, in the SAME matter (so nothing crosses a seal), and says where it came
+// from in `metadata.source_document_id`. A file from disk keeps its original
+// bytes beside the editable text (`metadata.original_storage_path`).
 // ---------------------------------------------------------------------------
-export async function createBrief(matterId: string, title: string, body: BriefDoc = emptyBrief()): Promise<string> {
+export async function createBrief(
+  matterId: string,
+  title: string,
+  body: BriefDoc = emptyBrief(),
+  metadata: Record<string, unknown> | null = null,
+): Promise<string> {
   const me = await uid();
   const cleanTitle = title.trim() || 'Untitled brief';
   const { data, error } = await supabase
@@ -256,10 +269,13 @@ export async function createBrief(matterId: string, title: string, body: BriefDo
       matterspace_id: matterId,
       title: cleanTitle,
       doc_type: 'brief',
+      // Shelved with the pleadings (spec §3.1).
+      category: 'pleading',
       source_filename: `${safeFileTitle(cleanTitle)}.md`,
       file_size_bytes: 0,
       processing_status: 'pending',
       created_by: me,
+      ...(metadata ? { metadata } : {}),
     })
     .select(DOC_COLUMNS)
     .single();
@@ -271,35 +287,101 @@ export async function createBrief(matterId: string, title: string, body: BriefDo
   return meta.id;
 }
 
-/**
- * A filed brief with no editable body yet: read its file and create one.
- * Word files come in with the loss list (B2); Markdown and plain text through
- * the dialect.
- */
-export async function openInDesk(meta: BriefMeta): Promise<{ body: BriefBody; losses: string[] }> {
-  if (!meta.storage_path) throw new Error('This document has no file to open yet.');
-  // Through vault-object.ts like every other read (S4a): direct on an
-  // unsealed matter; on a sealed one via /api/document-url, which records
-  // `file.opened` and asks for the second factor first.
-  let blob: Blob;
+export interface RecentBrief {
+  id: string;
+  title: string;
+  matterspace_id: string;
+  updated_at: string;
+}
+
+/** The briefs you can open, most recently edited first (RLS decides "can"). */
+export async function listRecentBriefs(limit = 40): Promise<RecentBrief[]> {
+  const { data, error } = await supabase
+    .from('draft_bodies')
+    .select('document_id, updated_at, documents!inner(title, matterspace_id)')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  type Row = { document_id: string; updated_at: string; documents: { title: string | null; matterspace_id: string } | { title: string | null; matterspace_id: string }[] };
+  return ((data ?? []) as Row[]).map((r) => {
+    const d = Array.isArray(r.documents) ? r.documents[0] : r.documents;
+    return { id: r.document_id, title: d?.title || 'Untitled brief', matterspace_id: d?.matterspace_id ?? '', updated_at: r.updated_at };
+  });
+}
+
+export interface ImportResult {
+  id: string;
+  /** What did not come across (B2), shown once on arrival. */
+  losses: string[];
+  /** The document already had a body: it was opened, not imported again. */
+  existing?: boolean;
+}
+
+/** A file from this computer (Downloads, a synced OneDrive folder, a drag onto the desk) → a brief in the matter. */
+export async function importBriefFile(matterId: string, file: File): Promise<ImportResult> {
+  const { importBytes, titleFrom } = await import('./import');
+  let bytes: ArrayBuffer;
   try {
-    blob = await storageObjectBlob(meta.storage_path);
-  } catch (e) {
-    throw new Error(`The file could not be read: ${e instanceof Error ? e.message : 'no data'}`);
+    bytes = await file.arrayBuffer();
+  } catch {
+    // Windows will not hand over an online-only OneDrive file until it syncs.
+    throw new Error(`“${file.name}” could not be read. If it lives in OneDrive, right-click it and choose “Always keep on this device”, then try again.`);
   }
-  const name = (meta.source_filename ?? meta.storage_path).toLowerCase();
-  let doc: BriefDoc;
-  let losses: string[] = [];
-  if (name.endsWith('.docx')) {
-    const { importDocx } = await import('./import-docx');
-    ({ doc, losses } = await importDocx(await blob.arrayBuffer()));
-  } else if (name.endsWith('.md') || name.endsWith('.markdown') || name.endsWith('.txt')) {
-    doc = parse(await blob.text());
+  const { doc, losses } = await importBytes(file.name, bytes);
+  const id = await createBrief(matterId, titleFrom(file.name), doc, {
+    imported_from: 'file',
+    original_filename: file.name,
+  });
+  // The original, as received, beside the editable text. A failure here never
+  // loses the brief; the words are already in it.
+  const path = `${matterId}/${id}/original-${safeFileTitle(titleFrom(file.name))}${/\.[a-z0-9]+$/i.exec(file.name)?.[0] ?? ''}`;
+  const up = await supabase.storage.from('vault-documents').upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (!up.error) {
+    const { data: row } = await supabase.from('documents').select('metadata').eq('id', id).maybeSingle();
+    const metadata = { ...((row as { metadata?: Record<string, unknown> } | null)?.metadata ?? {}), original_storage_path: path };
+    await supabase.from('documents').update({ metadata }).eq('id', id);
+  }
+  return { id, losses };
+}
+
+/**
+ * A document already in Contextspaces → a brief. A document that already has
+ * a body just opens. Otherwise a copy of its words becomes a new brief in the
+ * document's own matter: a Word, Markdown or text file is read from its file
+ * (footnotes and headings survive); anything else (a PDF) from its indexed
+ * text, and the brief says so.
+ */
+export async function importBriefFromDocument(documentId: string): Promise<ImportResult> {
+  if (await hasDraftBody(documentId)) return { id: documentId, losses: [], existing: true };
+  const { data, error } = await supabase.from('documents').select(DOC_COLUMNS).eq('id', documentId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('This document is not in a matter you can open.');
+  const src = data as BriefMeta;
+  const { kindOf, importBytes, importIndexedText } = await import('./import');
+  const kind = kindOf(src.source_filename ?? src.storage_path ?? '');
+  let imported: { doc: BriefDoc; losses: string[] };
+  if ((kind === 'docx' || kind === 'md' || kind === 'txt') && src.storage_path) {
+    // Through vault-object.ts like every other read (S4a): direct on an
+    // unsealed matter; on a sealed one via /api/document-url, which records
+    // `file.opened` and asks for the second factor first.
+    let blob: Blob;
+    try {
+      blob = await storageObjectBlob(src.storage_path);
+    } catch (e) {
+      throw new Error(`The file could not be read: ${e instanceof Error ? e.message : 'no data'}`);
+    }
+    imported = await importBytes(src.source_filename ?? src.storage_path, await blob.arrayBuffer());
   } else {
-    throw new Error('Only Word (.docx), Markdown and text briefs open in the desk. A PDF is a picture of a brief, not its words.');
+    const { loadCorpusDocumentText } = await import('@/lib/cite-check/corpus');
+    const { text } = await loadCorpusDocumentText(documentId);
+    imported = importIndexedText(text);
   }
-  const body = await createBody(meta.id, doc);
-  return { body, losses };
+  const id = await createBrief(src.matterspace_id, src.title || 'Untitled brief', imported.doc, {
+    imported_from: 'contextspaces',
+    source_document_id: src.id,
+    ...(src.source_filename ? { original_filename: src.source_filename } : {}),
+  });
+  return { id, losses: imported.losses };
 }
 
 // ---------------------------------------------------------------------------
