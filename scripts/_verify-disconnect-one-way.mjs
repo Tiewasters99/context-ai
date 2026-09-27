@@ -271,8 +271,12 @@ const M3 = await mk(s1.id, 'Okafor');
 await q(`insert into public.matterspace_members (matterspace_id, user_id, role) values ($1,$2,'member'), ($3,$2,'member'), ($3,$4,'admin')`,
   [M1, CARL, M2, EVE]);
 const doc = async (matter, title) => (await q(
-  `insert into public.documents (matterspace_id, title, source_filename, storage_path, file_size_bytes, doc_type, processing_status)
-   values ($1::uuid, $2::text, $2::text || '.pdf', 'm/' || $1::text || '/' || $2::text || '.pdf', 1000, 'pdf', 'ready') returning id`, [matter, title]))[0].id;
+  // The canonical storage path, <matter>/<document>/<file> (lib/storage-path.mjs,
+  // #249): push-to-drive refuses any other shape before it reads the pause.
+  `with n as (select gen_random_uuid() as id)
+   insert into public.documents (id, matterspace_id, title, source_filename, storage_path, file_size_bytes, doc_type, processing_status)
+   select n.id, $1::uuid, $2::text, $2::text || '.pdf', lower($1::text) || '/' || lower(n.id::text) || '/' || $2::text || '.pdf', 1000, 'pdf', 'ready'
+     from n returning id`, [matter, title]))[0].id;
 const DOC1 = await doc(M1, 'Complaint');
 const DOC_CHILD = await doc(M1_CHILD, 'Brief');
 const DOC2 = await doc(M2, 'Contract');
