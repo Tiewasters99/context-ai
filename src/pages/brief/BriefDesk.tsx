@@ -296,7 +296,8 @@ function DeskEditor(p: DeskProps) {
     const max = ed.state.doc.content.size;
     ed.commands.setTextSelection({ from: Math.min(rp.from, max), to: Math.min(rp.to, max) });
     ed.commands.focus();
-    if (briefScrollRef.current) briefScrollRef.current.scrollTo({ top: rp.scroll, behavior: 'smooth' });
+    // At once: "go back to my place quickly" (Eden, 09-27).
+    if (briefScrollRef.current) briefScrollRef.current.scrollTop = rp.scroll;
   };
   // Column widths, the lawyer's own (0 = the brief and the pane share evenly).
   const rowRef = useRef<HTMLDivElement>(null);
