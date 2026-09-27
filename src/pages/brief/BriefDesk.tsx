@@ -37,7 +37,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
-  ShieldCheck, ListChecks, Square,
+  ShieldCheck, ListChecks, Square, Search,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -57,6 +57,7 @@ import {
 import { passageForPrintedPage } from '@/lib/brief/resolve';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
+import { findQueryFor } from '@/lib/brief/find-query';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
@@ -380,15 +381,53 @@ function DeskEditor(p: DeskProps) {
     });
   };
 
-  const openSearched = (documentId: string) => {
+  // Any document into the pane: from the search, from a highlight, or from an
+  // assistant working beside the lawyer (the 'cs:brief-open' event below).
+  const openDocument = (documentId: string, o: { page?: number; heading?: string; caveat?: string | null } = {}) => {
     gotoNonce.current += 1;
     setPane((cur) => ({
-      rowKey: cur?.rowKey ?? null, entry: cur?.entry ?? null, heading: cur?.heading ?? '', stale: false,
-      docId: documentId, docTitle: null, goto: { page: 1, nonce: gotoNonce.current },
-      caveat: 'Opened from a search, not matched to the cite — check it is the right case.',
+      rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
+      docId: documentId, docTitle: null, goto: { page: o.page ?? 1, nonce: gotoNonce.current },
+      caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
     }));
     if (narrow) openOverlay('authority');
   };
+  const openSearched = (documentId: string) => openDocument(documentId, { heading: highlighted.current ?? undefined });
+
+  // The words highlighted in the brief, for "Find in corpus". Kept after the
+  // selection collapses (a click on the button moves the focus), and published
+  // on window.__briefDesk so an assistant driving this tab can read it.
+  const highlighted = useRef<string | null>(null);
+  const [hasHighlight, setHasHighlight] = useState(false);
+  useEffect(() => {
+    if (!editor) return;
+    const onSel = () => {
+      const { from, to } = editor.state.selection;
+      const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
+      if (text.length >= 2 && text.length <= 400) { highlighted.current = text; setHasHighlight(true); }
+      else if (!text) setHasHighlight(false);
+      (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
+        ...((window as unknown as { __briefDesk?: object }).__briefDesk ?? {}),
+        selection: highlighted.current,
+      };
+    };
+    editor.on('selectionUpdate', onSel);
+    return () => { editor.off('selectionUpdate', onSel); };
+  }, [editor]);
+
+  // An assistant beside the lawyer opens a document in the pane:
+  //   window.dispatchEvent(new CustomEvent('cs:brief-open', { detail: { documentId, page, label } }))
+  const openRef = useRef(openDocument);
+  useEffect(() => { openRef.current = openDocument; });
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ documentId?: string; page?: number; label?: string }>).detail ?? {};
+      if (!d.documentId) return;
+      openRef.current(d.documentId, { page: d.page, heading: d.label ?? highlighted.current ?? undefined, caveat: null });
+    };
+    window.addEventListener('cs:brief-open', onOpen);
+    return () => window.removeEventListener('cs:brief-open', onOpen);
+  }, []);
 
   // A click on a marked cite in the brief.
   const onPaperClick = (ev: React.MouseEvent) => {
@@ -546,6 +585,16 @@ function DeskEditor(p: DeskProps) {
           aria-label="Brief title"
         />
         <SaveBadge save={save} error={p.saveError} />
+        {hasHighlight && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setSearch(findQueryFor(highlighted.current ?? ''))}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
+            title="Find the highlighted authority in Contextspaces and open it beside the brief"
+          >
+            <Search size={13} /> Find in corpus
+          </button>
+        )}
         {narrow && (
           <button
             onClick={() => openOverlay('table')}
