@@ -1,10 +1,26 @@
-// The Brief Desk — slice D1: the brief as an editable document.
+// The Brief Desk — slices D1 and D3.
 //
-// docs/specs/BRIEF-DESK-2026-09-26.md §3.5, D1: the editor column only. The
-// authority pane, the cite table and "Confirm this brief" are D3; "Send to
-// your assistant" is D4. What a lawyer can say after this slice: "My brief
-// lives in the matter as text I can edit, with footnotes, and I can download
-// it as Markdown or Word at any time."
+// docs/specs/BRIEF-DESK-2026-09-26.md §3.5. D1: the brief as an editable
+// document. D3: side by side — "I click a cite and the case opens next to my
+// brief at the pinned page; the table shows every cite's status and my
+// one-line note; I edit in place and the table tells me what I changed."
+// "Send to your assistant" is D4.
+//
+// Layout (B3, B7):
+//   ≥ 1400 px   [ brief | authority | cite table 360 px ] — the table
+//               collapses to a strip with the flag counts
+//   1100–1400   [ brief | authority ] over a collapsible bottom row (the table)
+//   < 1100      the brief alone; a cite opens the authority full screen, and
+//               "Cites" opens the table full screen, each with back (the
+//               phone's back gesture too). Editable on a laptop window this
+//               narrow; read-only on a phone (useIsMobile), where notes are
+//               readable, not editable.
+//
+// Confirm this brief (B6; src/lib/brief/confirm.ts): a snapshot, one
+// extraction over toPlainText(body), a model check for only the cites that are
+// new or changed since the last run, the rest carried forward with their
+// flags, one run row with the snapshot's id, the corpus resolvers, and the
+// marks laid back on the words. "Re-check all" checks every cite again.
 //
 // Saving: every change autosaves after two seconds of quiet and on blur,
 // under the optimistic lock in src/lib/brief/draft-store.ts — a brief changed
@@ -20,7 +36,8 @@ import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
-  Camera, History, Download, ChevronDown, X, Loader2, AlertTriangle, FileText,
+  Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
+  ShieldCheck, ListChecks, Square,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -30,6 +47,19 @@ import {
   loadBrief, saveBody, takeSnapshot, listSnapshots, loadSnapshot, restoreSnapshot,
   openInDesk, exportBrief, type BriefMeta, type SnapshotRow,
 } from '@/lib/brief/draft-store';
+import {
+  applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow,
+} from '@/lib/brief/anchor';
+import {
+  confirmBrief, loadLatestRun, loadNotes, saveNote,
+  type CiteNote, type ConfirmProgress, type DeskRun,
+} from '@/lib/brief/confirm';
+import { passageForPrintedPage } from '@/lib/brief/resolve';
+import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
+import SiteSearch from '@/components/search/SiteSearch';
+import CiteTable from './CiteTable';
+import { rowKey } from '@/lib/brief/cite-words';
+import AuthorityPane, { type PaneState } from './AuthorityPane';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
 type Save = 'saved' | 'dirty' | 'saving' | 'conflict' | 'error';
@@ -210,6 +240,216 @@ function DeskEditor(p: DeskProps) {
   });
   useEffect(() => { editorRef.current = editor; }, [editor]);
 
+  // ── D3: the run, the marks, the table, the authority ─────────────────────
+  const wide = !useIsMobile(1400);
+  const narrow = useIsMobile(1100);
+  const [me, setMe] = useState<string | null>(null);
+  const [run, setRun] = useState<DeskRun | null>(null);
+  const [notes, setNotes] = useState<CiteNote[]>([]);
+  const [rows, setRows] = useState<TableRow[]>([]);
+  const rowsRef = useRef<TableRow[]>([]);
+  const [pane, setPane] = useState<PaneState | null>(null);
+  const gotoNonce = useRef(0);
+  const [progress, setProgress] = useState<ConfirmProgress | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const [tableCollapsed, setTableCollapsed] = useState(() => {
+    try { return localStorage.getItem('cs.brief.table.collapsed') === '1'; } catch { return false; }
+  });
+  const [overlay, setOverlay] = useState<null | 'authority' | 'table'>(null);
+  const [search, setSearch] = useState<string | null>(null);
+
+  useEffect(() => {
+    try { localStorage.setItem('cs.brief.table.collapsed', tableCollapsed ? '1' : '0'); } catch { /* private window */ }
+  }, [tableCollapsed]);
+
+  // The rows follow the marks: recomputed after the document settles.
+  const runRef = useRef<DeskRun | null>(null);
+  useEffect(() => { runRef.current = run; }, [run]);
+  const recompute = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const r = runRef.current;
+    const next = tableRows(ed.state.doc, r?.entries ?? [], r?.id ?? null);
+    rowsRef.current = next;
+    setRows(next);
+  }, []);
+  useEffect(() => {
+    if (!editor) return;
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onTr = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (!transaction.docChanged) return;
+      if (t) clearTimeout(t);
+      t = setTimeout(recompute, 250);
+    };
+    editor.on('transaction', onTr);
+    recompute();
+    return () => { editor.off('transaction', onTr); if (t) clearTimeout(t); };
+  }, [editor, recompute]);
+  useEffect(() => { recompute(); }, [run, recompute]);
+
+  // On open: who I am, the last desk run, the notes. A run whose marks are
+  // not in the body (it finished in another tab, or the save after it did not
+  // land) is laid on the words now — on a laptop; a phone does not write.
+  useEffect(() => {
+    if (!editor) return;
+    let live = true;
+    void supabase.auth.getUser().then(({ data }) => { if (live) setMe(data.user?.id ?? null); });
+    void loadNotes(meta.id).then((n) => { if (live) setNotes(n); }).catch(() => {});
+    void loadLatestRun(meta.id).then((r) => {
+      if (!live || !r) return;
+      setRun(r);
+      runRef.current = r;
+      if (p.editable && !citeSpans(editor.state.doc).some((s) => s.attrs.run_id === r.id)) {
+        editor.view.dispatch(applyRunMarks(editor.state, r.entries, r.id).tr);
+      }
+      recompute();
+    }).catch((e) => p.setNotice(`The last check could not be read: ${(e as Error).message}`));
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per brief and editor
+  }, [editor, meta.id]);
+
+  // Full-screen panels on a narrow screen take a history entry, so the back
+  // gesture closes them rather than leaving the brief.
+  useEffect(() => {
+    const onPop = () => setOverlay(null);
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  const openOverlay = (o: 'authority' | 'table') => {
+    if (!overlay) window.history.pushState({ briefOverlay: o }, '');
+    setOverlay(o);
+  };
+  const closeOverlay = () => { if (overlay) window.history.back(); };
+
+  const openRow = useCallback((row: TableRow) => {
+    const e = row.entry;
+    const res = e?.resolution ?? null;
+    const resolved = res?.status === 'resolved' && !!res.hits[0];
+    const docId = resolved ? row.attrs?.authority_document_id ?? res!.hits[0].document_id : null;
+    const passageId = resolved ? row.attrs?.passage_id ?? res!.passage?.passage_id ?? null : null;
+    const basis = res?.passage?.basis ?? null;
+    const caveat = !resolved ? null
+      : res!.hits[0].how === 'reporter' && res!.hits[0].star_level === null
+        ? (res!.passage?.caveat ?? 'This copy does not mark this reporter’s pages — showing where the case opens.')
+        : basis && basis !== 'printed'
+          ? (res!.passage?.caveat ?? 'No star pages in this copy — showing page 1.')
+          : null;
+    gotoNonce.current += 1;
+    setPane({
+      rowKey: rowKey(row),
+      entry: e,
+      heading: e?.raw ?? row.attrs?.raw ?? '',
+      stale: row.stale && row.from !== null,
+      docId,
+      docTitle: resolved ? res!.hits[0].title : null,
+      goto: docId ? (passageId ? { passageId, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current }) : null,
+      caveat,
+    });
+    if (narrow) openOverlay('authority');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- openOverlay reads the latest overlay
+  }, [narrow, overlay]);
+
+  const pickCopy = async (documentId: string) => {
+    if (!pane) return;
+    const res = pane.entry?.resolution;
+    const hit = res?.hits.find((h) => h.document_id === documentId) ?? null;
+    let passage = null;
+    try {
+      passage = await passageForPrintedPage(supabase, documentId, hit?.how === 'reporter' ? res?.pin ?? null : null, hit?.how === 'reporter' ? hit.star_level : 1);
+    } catch { /* open at the start */ }
+    gotoNonce.current += 1;
+    setPane({
+      ...pane,
+      docId: documentId,
+      docTitle: hit?.title ?? null,
+      goto: passage ? { passageId: passage.passage_id, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current },
+      caveat: passage && passage.basis !== 'printed' ? passage.caveat ?? 'No star pages in this copy — showing page 1.' : null,
+    });
+  };
+
+  const openSearched = (documentId: string) => {
+    gotoNonce.current += 1;
+    setPane((cur) => ({
+      rowKey: cur?.rowKey ?? null, entry: cur?.entry ?? null, heading: cur?.heading ?? '', stale: false,
+      docId: documentId, docTitle: null, goto: { page: 1, nonce: gotoNonce.current },
+      caveat: 'Opened from a search, not matched to the cite — check it is the right case.',
+    }));
+    if (narrow) openOverlay('authority');
+  };
+
+  // A click on a marked cite in the brief.
+  const onPaperClick = (ev: React.MouseEvent) => {
+    const el = (ev.target as HTMLElement).closest('span[data-cite]');
+    if (!el || !editor) return;
+    let pos: number;
+    try { pos = editor.view.posAtDOM(el, 0); } catch { return; }
+    const row = rowsRef.current.find((r) => r.from !== null && r.to !== null && pos >= r.from && pos < r.to);
+    if (row) openRow(row);
+  };
+
+  // A row's location: the brief scrolls to the words and selects them.
+  const locate = (row: TableRow) => {
+    if (!editor || row.from === null || row.to === null) return;
+    editor.commands.setTextSelection({ from: row.from, to: row.to });
+    try {
+      const { node } = editor.view.domAtPos(row.from);
+      const el = node instanceof HTMLElement ? node : node.parentElement;
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } catch { /* position moved under us; the selection still says where */ }
+    if (overlay === 'table') closeOverlay();
+    openRow(row);
+  };
+
+  const onSaveNote = async (key: string, text: string) => {
+    const saved = await saveNote(meta.id, key, text);
+    setNotes((cur) => {
+      const rest = cur.filter((n) => !(n.cite_key === key && n.user_id === me));
+      return saved ? [...rest, saved] : rest;
+    });
+  };
+
+  const confirm = async (all: boolean) => {
+    if (!editor || progress) return;
+    await flush();
+    if (saveRef.current === 'conflict') return;
+    const ac = new AbortController();
+    abortRef.current = ac;
+    setProgress({ phase: 'snapshot' });
+    try {
+      const out = await confirmBrief({
+        meta,
+        body: editor.getJSON() as BriefDoc,
+        prior: run,
+        stalePairs: stalePairsOf(editor.state.doc),
+        all,
+        onProgress: setProgress,
+        signal: ac.signal,
+      });
+      runRef.current = out.run;
+      setRun(out.run);
+      const { tr, result } = applyRunMarks(editor.state, out.run.entries, out.run.id);
+      editor.view.dispatch(tr);
+      recompute();
+      const parts = [
+        `${out.run.entries.length} cite${out.run.entries.length === 1 ? '' : 's'}`,
+        all ? `every one checked` : `${out.checked} checked, ${out.carried} unchanged and carried forward`,
+      ];
+      if (out.dropped) parts.push(`${out.dropped} no longer in the brief`);
+      if (result.notLocated.length) parts.push(`${result.notLocated.length} not located in the text (listed at the end of the table)`);
+      if (out.setAside) parts.push(`${out.setAside} the model named that are not in the text, set aside`);
+      p.setNotice(`Confirmed: ${parts.join('; ')}.${out.snapshotPublished ? '' : ' The version was saved, but search could not be updated.'}`);
+    } catch (e) {
+      p.setNotice(e instanceof DOMException && e.name === 'AbortError'
+        ? 'Stopped. The check was left unfinished and nothing on the page changed.'
+        : (e as Error).message);
+    } finally {
+      abortRef.current = null;
+      setProgress(null);
+    }
+  };
+
+  const changedSince = rows.filter((r) => r.stale && r.from !== null).length;
+
   // Leaving with unsaved words: the browser asks.
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -293,6 +533,15 @@ function DeskEditor(p: DeskProps) {
           aria-label="Brief title"
         />
         <SaveBadge save={save} error={p.saveError} />
+        {narrow && (
+          <button
+            onClick={() => openOverlay('table')}
+            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+            title="Every cite, its flag and your note"
+          >
+            <ListChecks size={14} /> Cites{rows.length ? ` ${rows.length}` : ''}
+          </button>
+        )}
         <button
           onClick={() => p.setShowVersions(!p.showVersions)}
           className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
@@ -304,7 +553,23 @@ function DeskEditor(p: DeskProps) {
       </header>
 
       {p.editable && editor && (
-        <Toolbar editor={editor} onSnapshot={() => void snapshot(null)} busy={!!p.busy} />
+        <Toolbar
+          editor={editor}
+          onSnapshot={() => void snapshot(null)}
+          busy={!!p.busy || !!progress}
+          confirm={
+            <ConfirmControl
+              counts={run?.counts ?? null}
+              changedSince={changedSince}
+              progress={progress}
+              disabled={!!p.busy || save === 'conflict'}
+              onConfirm={() => void confirm(false)}
+              onRecheckAll={() => void confirm(true)}
+              onStop={() => abortRef.current?.abort()}
+              hasRun={!!run}
+            />
+          }
+        />
       )}
 
       {save === 'conflict' && (
@@ -331,12 +596,38 @@ function DeskEditor(p: DeskProps) {
         </Banner>
       )}
 
+      <div className="flex-1 min-h-0 flex flex-col">
       <div className="flex-1 min-h-0 flex">
-        <div className="flex-1 min-w-0 overflow-y-auto">
-          <div className="brief-paper mx-auto my-6 md:my-10">
+        <div className="brief-col flex-1 min-w-0 overflow-y-auto">
+          <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
             <EditorContent editor={editor} />
           </div>
         </div>
+        {!narrow && (
+          <div className="flex-1 min-w-0 border-l border-white/[0.06]">
+            <AuthorityPane
+              state={pane}
+              onClose={pane ? () => setPane(null) : undefined}
+              onPickCopy={(d) => void pickCopy(d)}
+              onSearch={setSearch}
+            />
+          </div>
+        )}
+        {wide && (
+          <CiteTable
+            variant="column"
+            rows={rows}
+            notes={notes}
+            me={me}
+            canEditNotes={p.editable}
+            selectedKey={pane?.rowKey ?? null}
+            onOpen={openRow}
+            onLocate={locate}
+            onSaveNote={onSaveNote}
+            collapsed={tableCollapsed}
+            onToggleCollapsed={() => setTableCollapsed((v) => !v)}
+          />
+        )}
         {p.showVersions && (
           <Versions
             meta={meta}
@@ -367,7 +658,126 @@ function DeskEditor(p: DeskProps) {
           />
         )}
       </div>
+      {!wide && !narrow && (
+        <div className={`shrink-0 border-t border-white/[0.06] ${tableCollapsed ? 'h-10' : 'h-[38vh]'}`}>
+          <CiteTable
+            variant="row"
+            rows={rows}
+            notes={notes}
+            me={me}
+            canEditNotes={p.editable}
+            selectedKey={pane?.rowKey ?? null}
+            onOpen={openRow}
+            onLocate={locate}
+            onSaveNote={onSaveNote}
+            header={
+              <button onClick={() => setTableCollapsed((v) => !v)} className="text-white/40 hover:text-white mr-1" title={tableCollapsed ? 'Show the cite table' : 'Collapse the cite table'}>
+                {tableCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              </button>
+            }
+          />
+        </div>
+      )}
+      </div>
+
+      {narrow && overlay && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-[#0e0e14]">
+          {overlay === 'authority' ? (
+            <AuthorityPane
+              state={pane}
+              back
+              onClose={closeOverlay}
+              onPickCopy={(d) => void pickCopy(d)}
+              onSearch={setSearch}
+            />
+          ) : (
+            <CiteTable
+              variant="sheet"
+              rows={rows}
+              notes={notes}
+              me={me}
+              canEditNotes={p.editable}
+              selectedKey={pane?.rowKey ?? null}
+              onOpen={openRow}
+              onLocate={locate}
+              onSaveNote={onSaveNote}
+              header={
+                <button onClick={closeOverlay} className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the brief">
+                  <ArrowLeft size={15} />
+                </button>
+              }
+            />
+          )}
+        </div>
+      )}
+      {search !== null && (
+        <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />
+      )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Confirm this brief — the button, the last run's counts, "N changed since"
+// ---------------------------------------------------------------------------
+function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, onRecheckAll, onStop, hasRun }: {
+  counts: FlagCounts | null;
+  changedSince: number;
+  progress: ConfirmProgress | null;
+  disabled: boolean;
+  onConfirm: () => void;
+  onRecheckAll: () => void;
+  onStop: () => void;
+  hasRun: boolean;
+}) {
+  if (progress) {
+    const words = progress.phase === 'snapshot' ? 'Saving a version…'
+      : progress.phase === 'extracting' ? 'Reading every citation…'
+      : progress.phase === 'checking' ? `Checking ${progress.index} of ${progress.total}${progress.carried ? ` (${progress.carried} unchanged)` : ''}…`
+      : progress.phase === 'resolving' ? `Finding the cases in the matter ${progress.index}/${progress.total}…`
+      : 'Saving the check…';
+    return (
+      <span className="inline-flex items-center gap-2 text-[12px] text-[#e8b84a]">
+        <Loader2 size={12} className="animate-spin" />
+        <span className="max-w-[260px] truncate">{words}</span>
+        <button onClick={onStop} className="inline-flex items-center gap-1 text-white/50 hover:text-white" title="Stop the check">
+          <Square size={11} /> Stop
+        </button>
+      </span>
+    );
+  }
+  const total = counts ? citesChecked(counts) + (counts.not_checked ?? 0) : 0;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onConfirm}
+        className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
+        title={hasRun
+          ? 'Check the cites that are new or changed since the last check; the rest keep their flags'
+          : 'Read every citation, check it, and mark it in the text'}
+      >
+        <ShieldCheck size={13} /> Confirm this brief
+      </button>
+      {counts && (
+        <span className="text-[11px] text-white/45 whitespace-nowrap" title="The last check">
+          {total} cite{total === 1 ? '' : 's'}{counts.red ? ` · ${counts.red} ✗` : ''}{counts.lean_red ? ` · ${counts.lean_red} ⊖` : ''}
+          {changedSince ? <span className="text-[#e8b84a]"> · {changedSince} changed since</span> : null}
+        </span>
+      )}
+      {hasRun && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onRecheckAll}
+          className="h-7 px-2 rounded text-[11px] text-white/50 hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
+          title="Check every cite again, changed or not — one model call per cite"
+        >
+          Re-check all
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -395,7 +805,7 @@ function Banner({ tone, children, onClose }: { tone: 'info' | 'warn'; children: 
   );
 }
 
-function Toolbar({ editor, onSnapshot, busy }: { editor: Editor; onSnapshot: () => void; busy: boolean }) {
+function Toolbar({ editor, onSnapshot, busy, confirm }: { editor: Editor; onSnapshot: () => void; busy: boolean; confirm?: React.ReactNode }) {
   const [flagOpen, setFlagOpen] = useState(false);
   // Re-render on selection so the active states are right.
   const [, force] = useState(0);
@@ -470,6 +880,7 @@ function Toolbar({ editor, onSnapshot, busy }: { editor: Editor; onSnapshot: () 
       >
         <Camera size={13} /> Save version
       </button>
+      {confirm && <>{sep('s4')}{confirm}</>}
     </div>
   );
 }
@@ -608,6 +1019,9 @@ const BRIEF_CSS = `
 .brief-paper { max-width: 816px; background: #f8f5ee; color: #1b1b1b; border-radius: 4px;
   box-shadow: 0 1px 0 rgba(255,255,255,0.04), 0 18px 60px rgba(0,0,0,0.45); padding: 72px 84px; }
 @media (max-width: 768px) { .brief-paper { padding: 28px 20px; margin-left: 8px; margin-right: 8px; } }
+.brief-col { container-type: inline-size; }
+@container (max-width: 760px) { .brief-paper { padding: 40px 36px; margin-left: 12px; margin-right: 12px; } }
+@container (max-width: 520px) { .brief-paper { padding: 24px 18px; margin-left: 6px; margin-right: 6px; } .brief-col .brief-doc p { text-indent: 0.3in; } .brief-col .brief-doc h3 { margin-left: 0.3in; } .brief-col .brief-doc blockquote { margin: 0.6em 0.4in; } }
 .brief-doc { outline: none; font-family: 'Times New Roman', Times, Georgia, serif; font-size: 17px; line-height: 1.9;
   counter-reset: brief-fn; min-height: 60vh; }
 .brief-doc p { text-align: justify; text-indent: 0.5in; margin: 0; }
@@ -623,6 +1037,15 @@ const BRIEF_CSS = `
   background: rgba(0,0,0,0.04); border-left: 2px solid rgba(0,0,0,0.15); padding: 2px 8px; margin: 4px 0; white-space: pre-wrap; }
 .brief-doc .brief-flag { color: #b00000; font-weight: 700; }
 .brief-doc mark.brief-hl { background: #fff0a8; color: inherit; padding: 0 1px; }
+.brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
+  text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }
+.brief-doc .brief-cite:hover { background: rgba(232,184,74,0.14); }
+.brief-doc .brief-cite[data-cite-flag="green"] { text-decoration-color: #2f9e6b; }
+.brief-doc .brief-cite[data-cite-flag="lean-green"] { text-decoration-color: #c4913d; }
+.brief-doc .brief-cite[data-cite-flag="lean-red"] { text-decoration-color: #e07a2e; }
+.brief-doc .brief-cite[data-cite-flag="red"] { text-decoration-color: #c62828; }
+.brief-doc .brief-cite[data-cite-flag="blue"] { text-decoration-color: #4a90c2; }
+.brief-doc .brief-cite[data-cite-stale] { text-decoration-style: dashed; text-decoration-color: rgba(120,120,120,0.7); }
 .brief-doc .brief-fn { counter-increment: brief-fn; font-size: 13px; line-height: 1.4; color: #3b3b3b;
   background: rgba(232,184,74,0.16); border-radius: 3px; padding: 1px 4px; margin: 0 2px; text-indent: 0; }
 .brief-doc .brief-fn::before { content: counter(brief-fn); vertical-align: super; font-size: 10px; font-weight: 700;

@@ -40,7 +40,13 @@ function filedOn(h: DocumentHit): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString();
 }
 
-export default function SiteSearch({ onClose }: { onClose: () => void }) {
+export default function SiteSearch({ onClose, initialQuery, onPick }: {
+  onClose: () => void;
+  /** Prefill the box (the Brief Desk's "Search the matter" on a cite not in the corpus). */
+  initialQuery?: string;
+  /** Open a hit in place instead of on its own route (the desk's authority pane). */
+  onPick?: (documentId: string) => void;
+}) {
   const navigate = useNavigate();
   const { cardRef, pinned, togglePin } = useDraggableResizable(CARD_KEY);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -64,12 +70,20 @@ export default function SiteSearch({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
+  // Once, on open: a prefilled box searches at once.
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current || !initialQuery) return;
+    prefilled.current = true;
+    setQuery(initialQuery);
+  }, [initialQuery, setQuery]);
   // A new set of results puts the cursor back at the top rather than leaving
   // it pointing at whatever row happens to be in that position now.
   useEffect(() => { cursor.current = -1; paint(); }, [hits, paint]);
 
   const open = (h: DocumentHit) => {
     onClose();
+    if (onPick) { onPick(h.document_id); return; }
     navigate(`/app/document/${h.document_id}`);
   };
 

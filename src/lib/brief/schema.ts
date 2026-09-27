@@ -22,6 +22,7 @@
 import { Mark, Node, mergeAttributes } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import type { Extensions } from '@tiptap/core';
+import { citeStalePlugin } from './anchor';
 
 export { SCHEMA_NAME, SCHEMA_VERSION, FLAG_KINDS } from '../../../lib/brief-md.mjs';
 
@@ -107,7 +108,23 @@ export const Flag = Mark.create({
   },
 });
 
-/** A cite, derived from a cite-check run (D3). Serialises to nothing. */
+/**
+ * A cite, derived from a cite-check run (D3). Serialises to nothing in the .md.
+ * Every attribute rides in a data-* attribute, so cutting a paragraph and
+ * pasting it elsewhere in the brief keeps its cites; a span without a key
+ * (pasted from another page) is not a cite and is dropped. The stale rule
+ * (src/lib/brief/anchor.ts) runs as this mark's plugin.
+ */
+const CITE_DATA: Record<string, string> = {
+  cite_key: 'data-cite',
+  run_id: 'data-cite-run',
+  flag: 'data-cite-flag',
+  raw: 'data-cite-raw',
+  authority_document_id: 'data-cite-doc',
+  passage_id: 'data-cite-passage',
+  pin: 'data-cite-pin',
+};
+
 export const Cite = Mark.create({
   name: 'cite',
   inclusive: false,
@@ -124,10 +141,30 @@ export const Cite = Mark.create({
     };
   },
   parseHTML() {
-    return [{ tag: 'span[data-cite]' }];
+    return [{
+      tag: 'span[data-cite]',
+      getAttrs: (el) => {
+        const d = el as HTMLElement;
+        const key = d.getAttribute('data-cite');
+        if (!key) return false;
+        const attrs: Record<string, unknown> = {};
+        for (const [name, data] of Object.entries(CITE_DATA)) attrs[name] = d.getAttribute(data) || null;
+        attrs.stale = d.getAttribute('data-cite-stale') === 'true';
+        return attrs;
+      },
+    }];
   },
-  renderHTML({ HTMLAttributes }) {
-    return ['span', mergeAttributes({ 'data-cite': HTMLAttributes.cite_key ?? '', class: 'brief-cite' }), 0];
+  renderHTML({ mark }) {
+    const out: Record<string, string> = { class: 'brief-cite' };
+    for (const [name, data] of Object.entries(CITE_DATA)) {
+      const v = mark.attrs[name];
+      if (v !== null && v !== undefined && v !== '') out[data] = String(v);
+    }
+    if (mark.attrs.stale) out['data-cite-stale'] = 'true';
+    return ['span', out, 0];
+  },
+  addProseMirrorPlugins() {
+    return [citeStalePlugin()];
   },
 });
 
