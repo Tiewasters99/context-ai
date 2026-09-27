@@ -200,7 +200,7 @@ export default function AmbientControls() {
       {hidden && (
         <button
           onClick={() => setHidden(false)}
-          className={`fixed bottom-[4.5rem] right-1 md:bottom-1 md:right-1 z-50 h-5 w-5 rounded-full flex items-center justify-center transition-colors ${
+          className={`fixed bottom-[4.5rem] right-1 md:bottom-1 md:right-6 z-50 h-5 w-5 rounded-full flex items-center justify-center transition-colors ${
             musicPlaying ? 'bg-[#e8b84a]/70 hover:bg-[#e8b84a]' : 'bg-white/15 hover:bg-white/35'
           }`}
           title={musicPlaying ? 'Music is playing. Show the music and backdrop controls' : 'Show the music and backdrop controls'}
