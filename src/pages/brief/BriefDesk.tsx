@@ -270,6 +270,12 @@ function DeskEditor(p: DeskProps) {
     try { return localStorage.getItem('cs.brief.table.collapsed') === '1'; } catch { return false; }
   });
   const [overlay, setOverlay] = useState<null | 'authority' | 'table'>(null);
+  // Column widths, the lawyer's own (0 = the brief and the pane share evenly).
+  const rowRef = useRef<HTMLDivElement>(null);
+  const briefColRef = useRef<HTMLDivElement>(null);
+  const [briefW, setBriefW] = useState<number>(() => { try { return Number(localStorage.getItem('cs.brief.w.brief')) || 0; } catch { return 0; } });
+  const [tableW, setTableW] = useState<number>(() => { try { return Number(localStorage.getItem('cs.brief.w.table')) || 360; } catch { return 360; } });
+  useEffect(() => { try { localStorage.setItem('cs.brief.w.brief', String(briefW)); localStorage.setItem('cs.brief.w.table', String(tableW)); } catch { /* private window */ } }, [briefW, tableW]);
   const [search, setSearch] = useState<string | null>(null);
 
   useEffect(() => {
@@ -568,52 +574,8 @@ function DeskEditor(p: DeskProps) {
     p.setNotice('Your version is on the clipboard as Markdown.');
   };
 
-  return (
-    <Shell>
-      <style>{BRIEF_CSS}</style>
-      <header className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] bg-[rgba(14,14,20,0.9)] backdrop-blur shrink-0">
-        <button onClick={p.onBack} className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the matter">
-          <ArrowLeft size={15} />
-        </button>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => void saveTitle()}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          disabled={!p.editable}
-          className="min-w-0 flex-1 bg-transparent text-[14px] text-white/90 font-medium outline-none focus:bg-white/[0.04] rounded px-2 py-1"
-          aria-label="Brief title"
-        />
-        <SaveBadge save={save} error={p.saveError} />
-        {hasHighlight && (
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setSearch(findQueryFor(highlighted.current ?? ''))}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
-            title="Find the highlighted authority in Contextspaces and open it beside the brief"
-          >
-            <Search size={13} /> Find in corpus
-          </button>
-        )}
-        {narrow && (
-          <button
-            onClick={() => openOverlay('table')}
-            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
-            title="Every cite, its flag and your note"
-          >
-            <ListChecks size={14} /> Cites{rows.length ? ` ${rows.length}` : ''}
-          </button>
-        )}
-        <button
-          onClick={() => p.setShowVersions(!p.showVersions)}
-          className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
-          title="Saved versions"
-        >
-          <History size={14} /> <span className="hidden md:inline">Versions</span>
-        </button>
-        <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} />
-      </header>
-
+  const topBlock = (
+    <>
       {p.editable && editor && (
         <Toolbar
           editor={editor}
@@ -671,16 +633,85 @@ function DeskEditor(p: DeskProps) {
           {p.busy ? <span className="inline-flex items-center gap-2"><Loader2 size={12} className="animate-spin" />{p.busy}</span> : p.notice}
         </Banner>
       )}
+    </>
+  );
+
+  return (
+    <Shell>
+      <style>{BRIEF_CSS}</style>
+      <header className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] bg-[rgba(14,14,20,0.9)] backdrop-blur shrink-0">
+        <button onClick={p.onBack} className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the matter">
+          <ArrowLeft size={15} />
+        </button>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => void saveTitle()}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          disabled={!p.editable}
+          className="min-w-0 flex-1 bg-transparent text-[14px] text-white/90 font-medium outline-none focus:bg-white/[0.04] rounded px-2 py-1"
+          aria-label="Brief title"
+        />
+        <SaveBadge save={save} error={p.saveError} />
+        {hasHighlight && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setSearch(findQueryFor(highlighted.current ?? ''))}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
+            title="Find the highlighted authority in Contextspaces and open it beside the brief"
+          >
+            <Search size={13} /> Find in corpus
+          </button>
+        )}
+        {narrow && (
+          <button
+            onClick={() => openOverlay('table')}
+            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+            title="Every cite, its flag and your note"
+          >
+            <ListChecks size={14} /> Cites{rows.length ? ` ${rows.length}` : ''}
+          </button>
+        )}
+        <button
+          onClick={() => p.setShowVersions(!p.showVersions)}
+          className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
+          title="Saved versions"
+        >
+          <History size={14} /> <span className="hidden md:inline">Versions</span>
+        </button>
+        <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} />
+      </header>
+
+      {narrow && topBlock}
 
       <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 flex">
-        <div className="brief-col flex-1 min-w-0 overflow-y-auto">
-          <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
-            <EditorContent editor={editor} />
+      <div ref={rowRef} className="flex-1 min-h-0 flex">
+        <div
+          ref={briefColRef}
+          className="min-w-0 flex flex-col"
+          style={narrow || !briefW ? { flex: '1 1 0' } : { flex: '0 0 auto', width: briefW }}
+        >
+          {!narrow && topBlock}
+          <div className="brief-col flex-1 min-h-0 overflow-y-auto">
+            <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
+              <EditorContent editor={editor} />
+            </div>
           </div>
         </div>
         {!narrow && (
-          <div className="flex-1 min-w-0 border-l border-white/[0.06]">
+          <ColumnDivider
+            title="Drag to widen the brief or the authority. Double-click to even them."
+            onStart={() => briefColRef.current?.getBoundingClientRect().width ?? 600}
+            onDrag={(start, dx) => {
+              const total = rowRef.current?.getBoundingClientRect().width ?? 1200;
+              const table = wide && !tableCollapsed ? tableW : 40;
+              setBriefW(Math.round(Math.max(340, Math.min(start + dx, total - table - 340))));
+            }}
+            onReset={() => setBriefW(0)}
+          />
+        )}
+        {!narrow && (
+          <div className="min-w-0" style={{ flex: '1 1 0' }}>
             <AuthorityPane
               state={pane}
               onClose={pane ? () => setPane(null) : undefined}
@@ -689,8 +720,17 @@ function DeskEditor(p: DeskProps) {
             />
           </div>
         )}
+        {wide && !tableCollapsed && (
+          <ColumnDivider
+            title="Drag to widen or narrow the cite table. Double-click for the default."
+            onStart={() => tableW}
+            onDrag={(start, dx) => setTableW(Math.round(Math.max(220, Math.min(start - dx, 560))))}
+            onReset={() => setTableW(360)}
+          />
+        )}
         {wide && (
           <CiteTable
+            width={tableW}
             variant="column"
             rows={rows}
             notes={notes}
@@ -790,6 +830,34 @@ function DeskEditor(p: DeskProps) {
         <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />
       )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A column divider: drag to resize, double-click to reset. The strip is wider
+// than the line so it is easy to catch.
+// ---------------------------------------------------------------------------
+function ColumnDivider({ onStart, onDrag, onReset, title }: {
+  onStart: () => number;
+  onDrag: (start: number, dx: number) => void;
+  onReset: () => void;
+  title: string;
+}) {
+  const drag = useRef<{ x: number; start: number } | null>(null);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      title={title}
+      onPointerDown={(e) => { e.preventDefault(); (e.target as HTMLElement).setPointerCapture(e.pointerId); drag.current = { x: e.clientX, start: onStart() }; }}
+      onPointerMove={(e) => { if (drag.current) onDrag(drag.current.start, e.clientX - drag.current.x); }}
+      onPointerUp={() => { drag.current = null; }}
+      onPointerCancel={() => { drag.current = null; }}
+      onDoubleClick={onReset}
+      className="group relative w-2 -mx-[3px] shrink-0 cursor-col-resize z-10 select-none touch-none"
+    >
+      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-white/[0.08] group-hover:w-[3px] group-hover:bg-[#e8b84a]/60 transition-all" />
+    </div>
   );
 }
 

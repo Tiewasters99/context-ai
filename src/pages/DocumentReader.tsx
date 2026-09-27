@@ -313,6 +313,7 @@ type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChr
 
 export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full' }: ReaderProps = {}) {
   const pane = chrome === 'pane';
+  const paneChrome = pane;
   const hideCover = embedded || pane;
   const hidePageEditor = embedded || pane;
   const hideSidebarToggle = pane;
@@ -460,6 +461,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
 
   // Restore persisted prefs.
   useEffect(() => {
+    // A pane beside another surface fits to its own width (below) and leaves
+    // the full Reader's saved zoom and fit alone, in both directions.
+    if (pane) return;
     const z = localStorage.getItem('ctx_reader_zoom');
     if (z) {
       const parsed = parseFloat(z);
@@ -469,10 +473,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (t === 'parchment' || t === 'dark') setTheme(t);
     const f = localStorage.getItem('ctx_reader_fit');
     if (f === '0') setFitPage(false);
-  }, []);
-  useEffect(() => { localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom]);
+  }, [pane]);
+  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom, pane]);
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
-  useEffect(() => { localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage]);
+  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage, pane]);
   useEffect(() => {
     // On a phone the thumbnail rail would swallow the page, so start closed
     // regardless of the saved desktop preference.
@@ -745,15 +749,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     // The margin rails flank each page in-flow; subtract them so the page
     // never overflows horizontally.
     const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
-    const fit = Math.min(
-      (pane.clientWidth - PAD * 2 - rails) / d.w,
-      (pane.clientHeight - PAD * 2) / d.h,
-    );
+    const byWidth = (pane.clientWidth - PAD * 2 - rails) / d.w;
+    const fit = paneChrome ? byWidth : Math.min(byWidth, (pane.clientHeight - PAD * 2) / d.h);
     return Math.max(0.1, Math.min(fit, 6));
     // containerTick re-measures the pane on resize / sidebar / fullscreen;
     // loadState re-measures once the pane exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState]);
+  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState, paneChrome]);
 
   // Top offset of every slot inside the scroll content — the map between
   // scrollTop and page numbers, used by jumps and by scroll derivation.
