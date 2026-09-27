@@ -59,11 +59,14 @@ export function sealedPenSentence(label: string = SEALED_PEN_DEFAULT_LABEL): str
   return `Answers come from the sealed model — ${label} in the firm's own AWS account. Zero data retention. Nothing reaches an outside provider.`;
 }
 
-/** Tier A, the unsealed default (PENS.anthropic). */
-export const OPEN_PEN_DEFAULT_LABEL = 'Claude Opus 4.8';
+/** Tier A, the unsealed default (PENS.anthropic, lib/assistant-core.mjs). One
+ *  place: the strip's sentence and the header chip were once two hard-coded
+ *  "Opus 4.8"s that outlived the pen they named. */
+export const OPEN_PEN_DEFAULT_LABEL = 'Claude Opus 5.5';
+export const OPEN_PEN_DEFAULT_CHIP = 'Opus 5.5';
 
 export function openPenSentence(label: string = OPEN_PEN_DEFAULT_LABEL): string {
-  return `Answers come from ${label}. This matter is not sealed.`;
+  return `Answers come from ${label}. This matter is not sealed. Counts toward your plan's AI usage.`;
 }
 
 /**
@@ -154,6 +157,7 @@ const PEN_NAMES: Record<string, string> = {
   'claude-opus-5': 'Opus 5',
   'anthropic.claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-8': 'Opus 4.8',
+  'claude-opus-5-5': 'Opus 5.5',
 };
 
 export function penLabel(model: string): string {
@@ -234,7 +238,7 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
     penChip = '';
   } else if (facts.tier === 'A') {
     penNote = openPenSentence();
-    penChip = 'Opus 4.8';
+    penChip = OPEN_PEN_DEFAULT_CHIP;
   }
 
   // Did the first reply contradict what the strip promised? Both the seal and
@@ -247,7 +251,7 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
   const predicted = facts.tier === 'A' || facts.tier === 'B' || facts.tier === 'C';
   const predictedChip = facts.tier === 'B'
     ? SEALED_PEN_DEFAULT_LABEL
-    : facts.tier === 'A' ? 'Opus 4.8' : '';
+    : facts.tier === 'A' ? OPEN_PEN_DEFAULT_CHIP : '';
   const corrected = Boolean(
     live && predicted && (liveSealed !== predictedSealed || predictedChip !== penChip),
   );

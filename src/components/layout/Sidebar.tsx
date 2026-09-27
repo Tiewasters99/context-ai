@@ -71,7 +71,19 @@ interface SidebarProps {
 export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMobile = false }: SidebarProps) {
   const { user, signOut } = useAuth();
   const location = useLocation();
-  const [collapsedState, setCollapsedState] = useState(false);
+  // An open brief in the Brief Desk needs the width for the brief, the
+  // authority beside it and the cite table (Eden, 09-27: "that side bar is just
+  // in the way here"). So the rail folds to its icons on entering a brief and
+  // unfolds on leaving the desk; the toggle still opens it while there.
+  // Adjusted during render on a route change, React's pattern for state that
+  // follows a prop, rather than in an effect.
+  const onBrief = /^\/app\/brief\/[^/]+/.test(location.pathname);
+  const [collapsedState, setCollapsedState] = useState(onBrief);
+  const [wasOnBrief, setWasOnBrief] = useState(onBrief);
+  if (onBrief !== wasOnBrief) {
+    setWasOnBrief(onBrief);
+    setCollapsedState(onBrief);
+  }
   // On mobile the rail is always full-width inside the drawer.
   const collapsed = isMobile ? false : collapsedState;
   const [expandedSpaces, setExpandedSpaces] = useState<Set<string>>(new Set());
@@ -250,6 +262,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             onClick={() => setCollapsedState(!collapsedState)}
             className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.04)] text-white/70 transition-colors"
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
             <PanelLeft size={16} strokeWidth={1.75} />
           </button>

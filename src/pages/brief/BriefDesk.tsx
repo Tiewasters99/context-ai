@@ -37,7 +37,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
-  ShieldCheck, ListChecks, Square,
+  ShieldCheck, ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -57,6 +57,13 @@ import {
 import { passageForPrintedPage } from '@/lib/brief/resolve';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
+import { findQueryFor } from '@/lib/brief/find-query';
+import { parseReporterCites } from '../../../lib/bluebook.mjs';
+import { parseRecordCite, appendixSetsFor, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import CardDialog from '@/components/ui/CardDialog';
+import AddCaseCard from './AddCaseCard';
+import { runInAssistant } from '@/lib/assistant-bus';
+import { project, plainRangeToPm } from '@/lib/brief/anchor';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
@@ -269,6 +276,35 @@ function DeskEditor(p: DeskProps) {
     try { return localStorage.getItem('cs.brief.table.collapsed') === '1'; } catch { return false; }
   });
   const [overlay, setOverlay] = useState<null | 'authority' | 'table'>(null);
+  const [showReadingNote, setShowReadingNote] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [showAddCase, setShowAddCase] = useState(false);
+  // Where the lawyer was reading when an authority opened (Eden, 09-27: "I was
+  // looking at a cite and then lost my place").
+  const briefScrollRef = useRef<HTMLDivElement>(null);
+  const [returnPoint, setReturnPoint] = useState<{ scroll: number; from: number; to: number } | null>(null);
+  const markPlace = () => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const { from, to } = ed.state.selection;
+    setReturnPoint({ scroll: briefScrollRef.current?.scrollTop ?? 0, from, to });
+  };
+  const backToPlace = () => {
+    const ed = editorRef.current;
+    const rp = returnPoint;
+    if (!ed || !rp) return;
+    const max = ed.state.doc.content.size;
+    ed.commands.setTextSelection({ from: Math.min(rp.from, max), to: Math.min(rp.to, max) });
+    ed.commands.focus();
+    // At once: "go back to my place quickly" (Eden, 09-27).
+    if (briefScrollRef.current) briefScrollRef.current.scrollTop = rp.scroll;
+  };
+  // Column widths, the lawyer's own (0 = the brief and the pane share evenly).
+  const rowRef = useRef<HTMLDivElement>(null);
+  const briefColRef = useRef<HTMLDivElement>(null);
+  const [briefW, setBriefW] = useState<number>(() => { try { return Number(localStorage.getItem('cs.brief.w.brief')) || 0; } catch { return 0; } });
+  const [tableW, setTableW] = useState<number>(() => { try { return Number(localStorage.getItem('cs.brief.w.table')) || 360; } catch { return 360; } });
+  useEffect(() => { try { localStorage.setItem('cs.brief.w.brief', String(briefW)); localStorage.setItem('cs.brief.w.table', String(tableW)); } catch { /* private window */ } }, [briefW, tableW]);
   const [search, setSearch] = useState<string | null>(null);
 
   useEffect(() => {
@@ -335,6 +371,7 @@ function DeskEditor(p: DeskProps) {
   const closeOverlay = () => { if (overlay) window.history.back(); };
 
   const openRow = useCallback((row: TableRow) => {
+    markPlace();
     const e = row.entry;
     const res = e?.resolution ?? null;
     const resolved = res?.status === 'resolved' && !!res.hits[0];
@@ -380,15 +417,160 @@ function DeskEditor(p: DeskProps) {
     });
   };
 
-  const openSearched = (documentId: string) => {
+  // Any document into the pane: from the search, from a highlight, or from an
+  // assistant working beside the lawyer (the 'cs:brief-open' event below).
+  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null } = {}) => {
+    markPlace();
     gotoNonce.current += 1;
     setPane((cur) => ({
-      rowKey: cur?.rowKey ?? null, entry: cur?.entry ?? null, heading: cur?.heading ?? '', stale: false,
-      docId: documentId, docTitle: null, goto: { page: 1, nonce: gotoNonce.current },
-      caveat: 'Opened from a search, not matched to the cite — check it is the right case.',
+      rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
+      docId: documentId, docTitle: o.title ?? null,
+      goto: o.passageId ? { passageId: o.passageId, nonce: gotoNonce.current } : { page: o.page ?? 1, nonce: gotoNonce.current },
+      caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
     }));
     if (narrow) openOverlay('authority');
   };
+  const openSearched = (documentId: string) => openDocument(documentId, { heading: highlighted.current ?? undefined });
+
+  // ── Record cites: "A-10" is a page of the appendix THIS brief cites ─────
+  // Which appendix is the lawyer's call, asked once and kept on the brief
+  // (metadata.record_matter_id); then every A-cite opens at its stamped page.
+  const [chooser, setChooser] = useState<{ cite: RecordCite; label: string; sets: { matterId: string; name: string; volumes: Volume[] }[] } | null>(null);
+  const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string) => {
+    const v = volumes.find((x) => cite.first >= x.from && cite.first <= x.to);
+    if (!v) { p.setNotice(`No volume of that appendix covers A-${cite.first}.`); return; }
+    const at = await pageOfStamp(supabase, v, cite.first);
+    openDocument(v.id, {
+      page: at.page,
+      heading: label,
+      caveat: at.basis === 'estimate' ? `The A-${cite.first} stamp is not in this volume's text; this is where it should fall.` : null,
+    });
+  };
+  const rememberRecord = async (matterId: string) => {
+    const metadata = { ...(meta.metadata ?? {}), record_matter_id: matterId };
+    const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
+    if (!error) p.setMeta({ ...meta, metadata });
+  };
+  // "Morgan v. Allison Crane & Rigging, LLC, 114 F.4th 214, 218": the case that
+  // carries 114 F.4th 214 in any matter this person can read (the index ingest
+  // writes, migration 101), at the passage on page 218. The brief's own matter
+  // first when two carry it. No name to spell right.
+  const openByReporter = async (label: string): Promise<boolean> => {
+    let cites: { reporter: string; volume: number; page: number; pin?: number | null }[] = [];
+    try { cites = parseReporterCites(label) as typeof cites; } catch { return false; }
+    for (const c of cites) {
+      const { data } = await supabase
+        .from('document_citations')
+        .select('document_id, star_level, documents!inner(title, matterspace_id)')
+        .eq('reporter', c.reporter).eq('volume', c.volume).eq('page', c.page)
+        .limit(10);
+      type Row = { document_id: string; star_level: number | null; documents: { title: string | null; matterspace_id: string } | { title: string | null; matterspace_id: string }[] };
+      const rows = ((data ?? []) as Row[]).map((r) => ({ ...r, doc: Array.isArray(r.documents) ? r.documents[0] : r.documents }));
+      if (!rows.length) continue;
+      const hit = rows.find((r) => r.doc?.matterspace_id === meta.matterspace_id) ?? rows[0];
+      let passage: Awaited<ReturnType<typeof passageForPrintedPage>> = null;
+      try { passage = await passageForPrintedPage(supabase, hit.document_id, c.pin ?? null, hit.star_level ?? 1); } catch { /* open at the start */ }
+      const copies = new Set(rows.map((r) => r.document_id)).size;
+      openDocument(hit.document_id, {
+        passageId: passage?.passage_id,
+        heading: label,
+        title: hit.doc?.title ?? null,
+        caveat: [
+          passage && passage.basis !== 'printed' ? passage.caveat : null,
+          copies > 1 ? `${copies} copies of this case are filed; this is ${hit.doc?.matterspace_id === meta.matterspace_id ? "the one in this brief's matter" : 'the first found'}.` : null,
+        ].filter(Boolean).join(' ') || null,
+      });
+      return true;
+    }
+    return false;
+  };
+
+  // "Does the case support this?" — the proposition and the authority, into
+  // the Orchestrator's box. Nothing is sent until the lawyer presses Enter.
+  const askAbout = async () => {
+    const sel = (highlighted.current ?? '').trim();
+    if (!sel) return;
+    let title: string | null = pane?.docTitle ?? null;
+    let matterId = meta.matterspace_id;
+    if (pane?.docId) {
+      const { data } = await supabase.from('documents').select('title, matterspace_id').eq('id', pane.docId).maybeSingle();
+      const d = data as { title: string | null; matterspace_id: string } | null;
+      if (d) { title = title ?? d.title; matterId = d.matterspace_id; }
+    }
+    runInAssistant({
+      matterId,
+      draft: title
+        ? `Does ${title} support this proposition from the brief? “${sel}” `
+        : `Which authority in this matter supports this proposition from the brief? “${sel}” `,
+    });
+  };
+
+  const findHighlighted = async () => {
+    const label = highlighted.current ?? '';
+    const cite = parseRecordCite(label);
+    if (!cite) {
+      if (await openByReporter(label)) return;
+      setSearch(findQueryFor(label));
+      return;
+    }
+    try {
+      const sets = await appendixSetsFor(supabase, cite.first);
+      const kept = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id;
+      if (kept && sets.has(kept)) { await openRecordIn(sets.get(kept)!, cite, label); return; }
+      if (sets.size === 0) { p.setNotice(`No appendix volume in your matters covers A-${cite.first}.`); return; }
+      if (sets.size === 1) {
+        const [only] = [...sets.entries()];
+        await rememberRecord(only[0]);
+        await openRecordIn(only[1], cite, label);
+        return;
+      }
+      const ids = [...sets.keys()];
+      const { data } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+      const names = new Map(((data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+      setChooser({
+        cite, label,
+        sets: ids.map((id) => ({ matterId: id, name: names.get(id) ?? 'A matter', volumes: sets.get(id)! }))
+          .sort((a, b) => Number(/final/i.test(b.name)) - Number(/final/i.test(a.name)) || a.name.localeCompare(b.name)),
+      });
+    } catch (e) {
+      p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
+    }
+  };
+
+  // The words highlighted in the brief, for "Find in corpus". Kept after the
+  // selection collapses (a click on the button moves the focus), and published
+  // on window.__briefDesk so an assistant driving this tab can read it.
+  const highlighted = useRef<string | null>(null);
+  const [hasHighlight, setHasHighlight] = useState(false);
+  useEffect(() => {
+    if (!editor) return;
+    const onSel = () => {
+      const { from, to } = editor.state.selection;
+      const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
+      if (text.length >= 2 && text.length <= 400) { highlighted.current = text; setHasHighlight(true); }
+      else if (!text) setHasHighlight(false);
+      (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
+        ...((window as unknown as { __briefDesk?: object }).__briefDesk ?? {}),
+        selection: highlighted.current,
+      };
+    };
+    editor.on('selectionUpdate', onSel);
+    return () => { editor.off('selectionUpdate', onSel); };
+  }, [editor]);
+
+  // An assistant beside the lawyer opens a document in the pane:
+  //   window.dispatchEvent(new CustomEvent('cs:brief-open', { detail: { documentId, page, label } }))
+  const openRef = useRef(openDocument);
+  useEffect(() => { openRef.current = openDocument; });
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const d = (e as CustomEvent<{ documentId?: string; page?: number; label?: string }>).detail ?? {};
+      if (!d.documentId) return;
+      openRef.current(d.documentId, { page: d.page, heading: d.label ?? highlighted.current ?? undefined, caveat: null });
+    };
+    window.addEventListener('cs:brief-open', onOpen);
+    return () => window.removeEventListener('cs:brief-open', onOpen);
+  }, []);
 
   // A click on a marked cite in the brief.
   const onPaperClick = (ev: React.MouseEvent) => {
@@ -472,6 +654,16 @@ function DeskEditor(p: DeskProps) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [save]);
 
+  // Ctrl/Cmd+F finds in the brief (the browser's own find does not reach
+  // text an editor has laid out this way reliably, and it cannot jump).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); setFindOpen(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Ctrl/Cmd+S saves now.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -529,45 +721,13 @@ function DeskEditor(p: DeskProps) {
     p.setNotice('Your version is on the clipboard as Markdown.');
   };
 
-  return (
-    <Shell>
-      <style>{BRIEF_CSS}</style>
-      <header className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] bg-[rgba(14,14,20,0.9)] backdrop-blur shrink-0">
-        <button onClick={p.onBack} className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the matter">
-          <ArrowLeft size={15} />
-        </button>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => void saveTitle()}
-          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-          disabled={!p.editable}
-          className="min-w-0 flex-1 bg-transparent text-[14px] text-white/90 font-medium outline-none focus:bg-white/[0.04] rounded px-2 py-1"
-          aria-label="Brief title"
-        />
-        <SaveBadge save={save} error={p.saveError} />
-        {narrow && (
-          <button
-            onClick={() => openOverlay('table')}
-            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
-            title="Every cite, its flag and your note"
-          >
-            <ListChecks size={14} /> Cites{rows.length ? ` ${rows.length}` : ''}
-          </button>
-        )}
-        <button
-          onClick={() => p.setShowVersions(!p.showVersions)}
-          className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
-          title="Saved versions"
-        >
-          <History size={14} /> <span className="hidden md:inline">Versions</span>
-        </button>
-        <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} />
-      </header>
-
+  const topBlock = (
+    <>
       {p.editable && editor && (
         <Toolbar
           editor={editor}
+          onFind={() => setFindOpen((v) => !v)}
+          onBack={returnPoint ? backToPlace : undefined}
           onSnapshot={() => void snapshot(null)}
           busy={!!p.busy || !!progress}
           confirm={
@@ -594,24 +754,14 @@ function DeskEditor(p: DeskProps) {
           </span>
         </Banner>
       )}
-      {(p.arrival || p.losses.length > 0) && (
+      {p.arrival && p.editable && !run && !progress && (
         <Banner tone="info" onClose={p.clearLosses}>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span>
-              <strong className="font-medium">{p.arrival ? `Imported ${p.arrival.from}.` : 'Opened from Word.'}</strong>{' '}
-              {p.losses.length ? 'Your words came across. What did not:' : 'Your words, headings, italics and footnotes came across.'}
-            </span>
-            {p.arrival && p.editable && !run && !progress && (
-              <button
-                onClick={() => { p.clearLosses(); void confirm(false); }}
-                className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
-              >
-                <ShieldCheck size={13} /> Confirm this brief — check every cite
-              </button>
-            )}
-            {p.arrival && !p.editable && <span className="text-white/50">Checking the cites is a laptop job; open this brief there.</span>}
-          </div>
-          {p.losses.length > 0 && <ul className="list-disc ml-5 mt-1">{p.losses.map((l) => <li key={l}>{l}</li>)}</ul>}
+          <button
+            onClick={() => { p.clearLosses(); void confirm(false); }}
+            className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
+          >
+            <ShieldCheck size={13} /> Confirm this brief
+          </button>
         </Banner>
       )}
       {!p.editable && (
@@ -622,26 +772,138 @@ function DeskEditor(p: DeskProps) {
           {p.busy ? <span className="inline-flex items-center gap-2"><Loader2 size={12} className="animate-spin" />{p.busy}</span> : p.notice}
         </Banner>
       )}
+    </>
+  );
+
+  return (
+    <Shell>
+      <style>{BRIEF_CSS}</style>
+      <header className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] bg-[rgba(14,14,20,0.9)] backdrop-blur shrink-0">
+        <button onClick={p.onBack} className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the matter">
+          <ArrowLeft size={15} />
+        </button>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => void saveTitle()}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+          disabled={!p.editable}
+          className="min-w-0 flex-1 bg-transparent text-[14px] text-white/90 font-medium outline-none focus:bg-white/[0.04] rounded px-2 py-1"
+          aria-label="Brief title"
+        />
+        <SaveBadge save={save} error={p.saveError} />
+        {hasHighlight && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void findHighlighted()}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
+            title="Find the highlighted authority in Contextspaces and open it beside the brief"
+          >
+            <Search size={13} /> Find in corpus
+          </button>
+        )}
+        {hasHighlight && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void askAbout()}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06]"
+            title="Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter"
+          >
+            <MessageSquareQuote size={13} /> Ask about this
+          </button>
+        )}
+        <button
+          onClick={() => setShowAddCase(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Add a case to the matter: choose the file, and it becomes searchable"
+        >
+          <FilePlus2 size={14} /> <span className="hidden md:inline">Add a case</span>
+        </button>
+        {narrow && (
+          <button
+            onClick={() => openOverlay('table')}
+            className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+            title="Every cite, its flag and your note"
+          >
+            <ListChecks size={14} /> Cites{rows.length ? ` ${rows.length}` : ''}
+          </button>
+        )}
+        <button
+          onClick={() => setShowReadingNote(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Why footnotes sit in the text and there are no page numbers"
+        >
+          <Info size={14} /> <span className="hidden md:inline">How this page reads</span>
+        </button>
+        <button
+          onClick={() => p.setShowVersions(!p.showVersions)}
+          className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
+          title="Saved versions"
+        >
+          <History size={14} /> <span className="hidden md:inline">Versions</span>
+        </button>
+        <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} losses={importLosses(meta)} />
+      </header>
+
+      {narrow && topBlock}
 
       <div className="flex-1 min-h-0 flex flex-col">
-      <div className="flex-1 min-h-0 flex">
-        <div className="brief-col flex-1 min-w-0 overflow-y-auto">
-          <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
-            <EditorContent editor={editor} />
-          </div>
+      <div ref={rowRef} className="flex-1 min-h-0 flex">
+        <div
+          ref={briefColRef}
+          className="min-w-0 flex flex-col"
+          style={narrow || !briefW ? { flex: '1 1 0' } : { flex: '0 0 auto', width: briefW }}
+        >
+          <VEdges id="brief" off={narrow}>
+            {!narrow && topBlock}
+            {findOpen && editor && <FindBar editor={editor} onClose={() => setFindOpen(false)} />}
+            <div ref={briefScrollRef} className="brief-col flex-1 min-h-0 overflow-y-auto">
+              <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
+                <EditorContent editor={editor} />
+              </div>
+            </div>
+          </VEdges>
         </div>
         {!narrow && (
-          <div className="flex-1 min-w-0 border-l border-white/[0.06]">
-            <AuthorityPane
-              state={pane}
-              onClose={pane ? () => setPane(null) : undefined}
-              onPickCopy={(d) => void pickCopy(d)}
-              onSearch={setSearch}
-            />
+          <ColumnDivider
+            title="Drag to widen the brief or the authority. Double-click to even them."
+            onStart={() => briefColRef.current?.getBoundingClientRect().width ?? 600}
+            onDrag={(start, dx) => {
+              const total = rowRef.current?.getBoundingClientRect().width ?? 1200;
+              const table = wide && !tableCollapsed && rows.length > 0 ? tableW : 40;
+              setBriefW(Math.round(Math.max(340, Math.min(start + dx, total - table - 340))));
+            }}
+            onReset={() => setBriefW(0)}
+          />
+        )}
+        {!narrow && (
+          <div className="min-w-0 flex flex-col" style={{ flex: '1 1 0' }}>
+            <VEdges id="pane">
+              <div className="flex-1 min-h-0">
+                <AuthorityPane
+                  state={pane}
+                  onClose={pane ? () => setPane(null) : undefined}
+                  onPickCopy={(d) => void pickCopy(d)}
+                  onSearch={setSearch}
+                />
+              </div>
+            </VEdges>
           </div>
         )}
+        {wide && !tableCollapsed && rows.length > 0 && (
+          <ColumnDivider
+            title="Drag to widen or narrow the cite table. Double-click for the default."
+            onStart={() => tableW}
+            onDrag={(start, dx) => setTableW(Math.round(Math.max(220, Math.min(start - dx, 560))))}
+            onReset={() => setTableW(360)}
+          />
+        )}
         {wide && (
+          <div className="shrink-0 flex flex-col">
+          <VEdges id="table">
+          <div className="flex-1 min-h-0 flex">
           <CiteTable
+            width={tableW}
             variant="column"
             rows={rows}
             notes={notes}
@@ -651,9 +913,12 @@ function DeskEditor(p: DeskProps) {
             onOpen={openRow}
             onLocate={locate}
             onSaveNote={onSaveNote}
-            collapsed={tableCollapsed}
+            collapsed={tableCollapsed || rows.length === 0}
             onToggleCollapsed={() => setTableCollapsed((v) => !v)}
           />
+          </div>
+          </VEdges>
+          </div>
         )}
         {p.showVersions && (
           <Versions
@@ -737,10 +1002,273 @@ function DeskEditor(p: DeskProps) {
           )}
         </div>
       )}
+      {showAddCase && (
+        <AddCaseCard
+          defaultMatterId={(meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id ?? meta.matterspace_id}
+          onClose={() => setShowAddCase(false)}
+          onOpen={(id) => openDocument(id, { caveat: null })}
+          onMatterChosen={(m) => {
+            if ((meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id === m) return;
+            const metadata = { ...(meta.metadata ?? {}), cases_matter_id: m };
+            void supabase.from('documents').update({ metadata }).eq('id', meta.id).then(({ error }) => { if (!error) p.setMeta({ ...meta, metadata }); });
+          }}
+        />
+      )}
+      {showReadingNote && (
+        <CardDialog
+          storageKey="cs.brief.reading-note"
+          title="How this page reads"
+          subtitle="The desk shows your words, not the printed page."
+          onClose={() => setShowReadingNote(false)}
+          maxWidth={560}
+        >
+          <ReadingNote />
+        </CardDialog>
+      )}
+      {chooser && (
+        <CardDialog
+          storageKey="cs.brief.appendix-chooser"
+          title="Which appendix does this brief cite?"
+          subtitle={`More than one appendix in your matters has A-${chooser.cite.first}. Your choice is kept with this brief.`}
+          onClose={() => setChooser(null)}
+          maxWidth={520}
+        >
+          <div className="space-y-1.5">
+            {chooser.sets.map((s) => (
+              <button
+                key={s.matterId}
+                onClick={async () => {
+                  const pick = chooser;
+                  setChooser(null);
+                  await rememberRecord(s.matterId);
+                  await openRecordIn(s.volumes, pick.cite, pick.label);
+                }}
+                className="block w-full text-left px-3 py-2 rounded-md border border-white/[0.08] hover:border-[#e8b84a]/50 hover:bg-white/[0.03]"
+              >
+                <div className="text-[13px] text-white/90">{s.name}</div>
+                <div className="text-[11px] text-white/45">{s.volumes.length === 1 ? s.volumes[0].title : `${s.volumes.length} volumes`}</div>
+              </button>
+            ))}
+          </div>
+        </CardDialog>
+      )}
       {search !== null && (
         <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />
       )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Find in the brief: every match lit (the CSS Custom Highlight API, so the
+// text is untouched), the current one selected and scrolled to, and the
+// count. Searches the brief's words as they read — across italics, and in the
+// footnotes — through the same projection the cite marks use.
+// ---------------------------------------------------------------------------
+function FindBar({ editor, onClose }: { editor: Editor; onClose: () => void }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<{ from: number; to: number }[]>([]);
+  const [at, setAt] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+
+  const paint = useCallback((list: { from: number; to: number }[], current: number) => {
+    const g = globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown };
+    const reg = g.CSS?.highlights;
+    if (!reg || !g.Highlight) return;
+    const toRange = (h: { from: number; to: number }) => {
+      try {
+        const a = editor.view.domAtPos(h.from);
+        const b = editor.view.domAtPos(h.to);
+        const r = document.createRange();
+        r.setStart(a.node, a.offset);
+        r.setEnd(b.node, b.offset);
+        return r;
+      } catch { return null; }
+    };
+    const ranges = list.map(toRange).filter((r): r is Range => !!r);
+    if (ranges.length) reg.set('brief-find', new g.Highlight(...ranges)); else reg.delete('brief-find');
+    const cur = list[current] ? toRange(list[current]) : null;
+    if (cur) reg.set('brief-find-current', new g.Highlight(cur)); else reg.delete('brief-find-current');
+  }, [editor]);
+
+  const go = useCallback((list: { from: number; to: number }[], i: number) => {
+    if (!list.length) return;
+    const h = list[(i + list.length) % list.length];
+    setAt((i + list.length) % list.length);
+    try {
+      const { node } = editor.view.domAtPos(h.from);
+      const el = node instanceof HTMLElement ? node : node.parentElement;
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } catch { /* moved */ }
+    paint(list, (i + list.length) % list.length);
+  }, [editor, paint]);
+
+  const search = useCallback((query: string) => {
+    const needle = query.trim().toLowerCase();
+    if (needle.length < 2) { setHits([]); paint([], 0); return; }
+    const proj = project(editor.state.doc);
+    const hay = proj.text.toLowerCase();
+    const list: { from: number; to: number }[] = [];
+    for (let i = hay.indexOf(needle); i !== -1 && list.length < 2000; i = hay.indexOf(needle, i + needle.length)) {
+      const r = plainRangeToPm(proj, i, i + needle.length);
+      if (r) list.push(r);
+    }
+    list.sort((a, b) => a.from - b.from);
+    setHits(list);
+    go(list, 0);
+    if (!list.length) paint([], 0);
+  }, [editor, go, paint]);
+
+  useEffect(() => () => {
+    const reg = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    reg?.delete('brief-find'); reg?.delete('brief-find-current');
+  }, []);
+
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-white/[0.06] bg-[rgba(20,20,28,0.95)] shrink-0">
+      <Search size={13} className="text-white/40" />
+      <input
+        ref={inputRef}
+        value={q}
+        onChange={(e) => { setQ(e.target.value); search(e.target.value); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); go(hits, e.shiftKey ? at - 1 : at + 1); }
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        placeholder="Find in the brief"
+        className="flex-1 min-w-0 bg-white/[0.05] rounded px-2 py-1 text-[12.5px] text-white/90 placeholder:text-white/30 outline-none focus:bg-white/[0.08]"
+        aria-label="Find in the brief"
+      />
+      <span className="text-[11px] text-white/45 tabular-nums w-16 text-center">
+        {q.trim().length < 2 ? '' : hits.length ? `${at + 1} of ${hits.length}` : 'none'}
+      </span>
+      <button onClick={() => go(hits, at - 1)} disabled={!hits.length} className="p-1 rounded text-white/60 hover:bg-white/[0.06] disabled:opacity-30" title="Previous (Shift+Enter)"><ChevronLeft size={14} /></button>
+      <button onClick={() => go(hits, at + 1)} disabled={!hits.length} className="p-1 rounded text-white/60 hover:bg-white/[0.06] disabled:opacity-30" title="Next (Enter)"><ChevronRight size={14} /></button>
+      <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white" title="Close (Esc)"><X size={13} /></button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "How this page reads" — so a reader does not take the desk for a broken
+// Word file (Eden, 09-27: footnote 1 "appears strangely inside the body" and
+// "there are no page numbers … the reader might panic").
+// ---------------------------------------------------------------------------
+function ReadingNote() {
+  const row = (term: string, text: React.ReactNode) => (
+    <div className="grid grid-cols-[8.5rem_1fr] gap-3 py-2 border-b border-white/[0.06] last:border-0">
+      <div className="text-[12px] text-white/85 font-medium">{term}</div>
+      <div className="text-[12px] text-white/65 leading-relaxed">{text}</div>
+    </div>
+  );
+  return (
+    <div className="text-white">
+      <p className="text-[12.5px] text-white/70 leading-relaxed mb-2">
+        The brief is held here as text you edit and check, one continuous page. Nothing about its
+        printed form is lost: it is made when you export.
+      </p>
+      {row('Footnotes', <>Each note sits where its number is in the text, as a small tinted note with its number. On export
+        to Word it becomes a real footnote at the foot of the page.</>)}
+      {row('Page numbers', <>None here: the text is not yet laid out on pages. Pages, page numbers, the tables of contents and
+        authorities and your house style are made by the Word export or by your assistant.</>)}
+      {row('Headings', <>Part headings (centred), point headings and sub-points, as your master file has them.</>)}
+      {row('Cites', <>After <em>Confirm this brief</em>, each cite is underlined in its flag's colour; click one to open the
+        authority beside the brief. A <span className="underline decoration-dashed">dashed</span> underline means the words changed
+        since the check.</>)}
+      {row('Flags', <><span className="text-red-400 font-semibold">[STAR]</span>, <span className="text-red-400 font-semibold">[OPP]</span>,{' '}
+        <span className="text-red-400 font-semibold">[EDEN]</span> and <span className="text-red-400 font-semibold">[verify]</span> are
+        your working flags, printed bold red in the Word export.</>)}
+      {row('Highlight', <>A private working mark. It is not exported.</>)}
+      {row('Export', <>Markdown for your assistant or the house-style build; Word for your words with real footnotes in one
+        plain style.</>)}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A column's top and bottom edges: drag either to pull the card in, double-
+// click to reset (Eden, 09-27: cards resize on every edge, "for consistency of
+// feel through the site"). The side edges are the column dividers. Remembered
+// per browser, like the widths.
+// ---------------------------------------------------------------------------
+function VEdges({ id, off, children }: { id: string; off?: boolean; children: React.ReactNode }) {
+  const key = `cs.brief.v.${id}`;
+  const [inset, setInset] = useState<{ top: number; bottom: number }>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(key) ?? 'null') as { top?: number; bottom?: number } | null;
+      return { top: Math.max(0, Number(v?.top) || 0), bottom: Math.max(0, Number(v?.bottom) || 0) };
+    } catch { return { top: 0, bottom: 0 }; }
+  });
+  useEffect(() => { try { localStorage.setItem(key, JSON.stringify(inset)); } catch { /* private window */ } }, [key, inset]);
+  const box = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ y: number; start: typeof inset; side: 'top' | 'bottom'; h: number } | null>(null);
+  if (off) return <>{children}</>;
+  const lifted = inset.top > 0 || inset.bottom > 0;
+  const handle = (side: 'top' | 'bottom') => (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      title={`Drag the ${side} edge. Double-click to reset.`}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        drag.current = { y: e.clientY, start: inset, side, h: box.current?.getBoundingClientRect().height ?? 800 };
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d) return;
+        const dy = e.clientY - d.y;
+        const room = d.h - 220; // the card never gets shorter than this
+        setInset(d.side === 'top'
+          ? { ...d.start, top: Math.round(Math.max(0, Math.min(d.start.top + dy, room - d.start.bottom))) }
+          : { ...d.start, bottom: Math.round(Math.max(0, Math.min(d.start.bottom - dy, room - d.start.top))) });
+      }}
+      onPointerUp={() => { drag.current = null; }}
+      onPointerCancel={() => { drag.current = null; }}
+      onDoubleClick={() => setInset((v) => ({ ...v, [side]: 0 }))}
+      className="group absolute left-0 right-0 h-2 cursor-row-resize z-10 select-none touch-none"
+      style={side === 'top' ? { top: Math.max(0, inset.top - 4) } : { bottom: Math.max(0, inset.bottom - 4) }}
+    >
+      <div className="absolute inset-x-6 top-1/2 -translate-y-1/2 h-px bg-transparent group-hover:h-[3px] group-hover:bg-[#e8b84a]/60 transition-all" />
+    </div>
+  );
+  return (
+    <div ref={box} className="relative flex-1 min-h-0 flex flex-col" style={{ paddingTop: inset.top, paddingBottom: inset.bottom }}>
+      {handle('top')}
+      <div className={`flex-1 min-h-0 flex flex-col ${lifted ? 'rounded-lg overflow-hidden border border-white/[0.08] shadow-xl' : ''}`}>
+        {children}
+      </div>
+      {handle('bottom')}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A column divider: drag to resize, double-click to reset. The strip is wider
+// than the line so it is easy to catch.
+// ---------------------------------------------------------------------------
+function ColumnDivider({ onStart, onDrag, onReset, title }: {
+  onStart: () => number;
+  onDrag: (start: number, dx: number) => void;
+  onReset: () => void;
+  title: string;
+}) {
+  const drag = useRef<{ x: number; start: number } | null>(null);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      title={title}
+      onPointerDown={(e) => { e.preventDefault(); (e.target as HTMLElement).setPointerCapture(e.pointerId); drag.current = { x: e.clientX, start: onStart() }; }}
+      onPointerMove={(e) => { if (drag.current) onDrag(drag.current.start, e.clientX - drag.current.x); }}
+      onPointerUp={() => { drag.current = null; }}
+      onPointerCancel={() => { drag.current = null; }}
+      onDoubleClick={onReset}
+      className="group relative w-2 -mx-[3px] shrink-0 cursor-col-resize z-10 select-none touch-none"
+    >
+      <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-white/[0.08] group-hover:w-[3px] group-hover:bg-[#e8b84a]/60 transition-all" />
+    </div>
   );
 }
 
@@ -832,7 +1360,12 @@ function Banner({ tone, children, onClose }: { tone: 'info' | 'warn'; children: 
   );
 }
 
-function Toolbar({ editor, onSnapshot, busy, confirm }: { editor: Editor; onSnapshot: () => void; busy: boolean; confirm?: React.ReactNode }) {
+function Toolbar({ editor, onSnapshot, busy, confirm, onFind, onBack }: {
+  editor: Editor; onSnapshot: () => void; busy: boolean; confirm?: React.ReactNode;
+  onFind?: () => void;
+  /** Present once an authority has opened: back to where you were reading. */
+  onBack?: () => void;
+}) {
   const [flagOpen, setFlagOpen] = useState(false);
   // Re-render on selection so the active states are right.
   const [, force] = useState(0);
@@ -907,13 +1440,33 @@ function Toolbar({ editor, onSnapshot, busy, confirm }: { editor: Editor; onSnap
       >
         <Camera size={13} /> Save version
       </button>
+      {sep('s5')}
+      {onFind && btn('find', Search, 'Find in the brief (Ctrl+F)', false, onFind, true)}
+      {onBack && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onBack}
+          className="h-7 px-2 inline-flex items-center gap-1.5 rounded text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/10"
+          title="Back to where you were reading when you opened the authority"
+        >
+          <CornerUpLeft size={13} /> Back to your place
+        </button>
+      )}
       {confirm && <>{sep('s4')}{confirm}</>}
     </div>
   );
 }
 
-function ExportMenu({ onPick, disabled }: { onPick: (d: 'md' | 'docx') => void; disabled: boolean }) {
+/** What the Word original had that the text did not keep (set at import). */
+function importLosses(meta: BriefMeta): string[] {
+  const l = (meta.metadata as { import_losses?: unknown } | null)?.import_losses;
+  return Array.isArray(l) ? l.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function ExportMenu({ onPick, disabled, losses }: { onPick: (d: 'md' | 'docx') => void; disabled: boolean; losses: string[] }) {
   const [open, setOpen] = useState(false);
+  const [why, setWhy] = useState(false);
   return (
     <div className="relative">
       <button
@@ -924,7 +1477,18 @@ function ExportMenu({ onPick, disabled }: { onPick: (d: 'md' | 'docx') => void; 
         <Download size={13} /> Export <ChevronDown size={12} />
       </button>
       {open && (
-        <div className="absolute right-0 top-9 z-30 w-72 rounded-md border border-white/10 bg-[#16161f] py-1 shadow-xl" onMouseLeave={() => setOpen(false)}>
+        <div className="absolute right-0 top-9 z-30 w-80 rounded-md border border-white/10 bg-[#16161f] py-1 shadow-xl" onMouseLeave={() => { setOpen(false); setWhy(false); }}>
+          <div className="px-3 pt-2 pb-2 border-b border-white/[0.06] text-[11px] leading-relaxed text-white/55">
+            The desk keeps your words, headings, italics and footnotes as plain text. Your assistant reformats it in Word in your house style.
+            {losses.length > 0 && (
+              <>
+                {' '}<button className="text-[#e8b84a]/80 hover:text-[#e8b84a] underline-offset-2 hover:underline" onClick={() => setWhy((v) => !v)}>
+                  {why ? 'Hide' : 'What the original Word file had'}
+                </button>
+                {why && <ul className="list-disc ml-4 mt-1 space-y-0.5 text-white/50">{losses.map((l) => <li key={l}>{l}</li>)}</ul>}
+              </>
+            )}
+          </div>
           <MenuItem title="Markdown (.md)" note="The master.md the brief-format build reads." onClick={() => { setOpen(false); onPick('md'); }} />
           <MenuItem title="Word (.docx)" note="Your words, real footnotes, one plain style." onClick={() => { setOpen(false); onPick('docx'); }} />
           <MenuItem title="Send to your assistant" note="Coming next: your Claude formats it in your house style." disabled />
@@ -1048,6 +1612,8 @@ const BRIEF_CSS = `
   background: rgba(0,0,0,0.04); border-left: 2px solid rgba(0,0,0,0.15); padding: 2px 8px; margin: 4px 0; white-space: pre-wrap; }
 .brief-doc .brief-flag { color: #b00000; font-weight: 700; }
 .brief-doc mark.brief-hl { background: #fff0a8; color: inherit; padding: 0 1px; }
+::highlight(brief-find) { background-color: rgba(232,184,74,0.35); }
+::highlight(brief-find-current) { background-color: rgba(232,150,40,0.85); color: #111; }
 .brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
   text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }
 .brief-doc .brief-cite:hover { background: rgba(232,184,74,0.14); }

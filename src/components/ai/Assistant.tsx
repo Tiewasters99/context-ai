@@ -14,6 +14,14 @@ import {
 import { supabase } from '@/lib/supabase';
 import { getOrchestratorContext } from '@/lib/orchestrator-context';
 import { ASSISTANT_COMMAND_EVENT, type AssistantCommand } from '@/lib/assistant-bus';
+import Prose from '@/components/ai/Prose';
+
+// The Orchestrator card is never smaller than readable, and docks at a width
+// a paragraph can live in (Eden, 09-27: "a small little box at the top; not
+// really very usable").
+const PANEL_MIN_W = 400;
+const PANEL_MIN_H = 440;
+const PANEL_DOCKED_W = 416;
 import { parseServerRefusal } from '@/lib/llm/refusals';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { moveVaultDocument } from '@/lib/vault-persist';
@@ -185,6 +193,20 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   );
   const input = inThisScope ? conv.input : '';
 
+  // A drafted question (assistant-bus `draft`) lands once the panel is in the
+  // command's scope, so the swap to that matter's conversation cannot clear it.
+  const pendingDraftRef = useRef<string | null>(null);
+  useEffect(() => {
+    const draft = pendingDraftRef.current;
+    if (draft === null || !inThisScope) return;
+    pendingDraftRef.current = null;
+    setInputRef.current(draft);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 0);
+  });
+
   // The pen that actually answered, from the server's `session` event. It is
   // stamped with the matter it answered FOR, so walking from a sealed matter
   // to an open one cannot leave the sealed pen's name in the header.
@@ -309,7 +331,19 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // record, written whole, so unpinning can never lose the rect.
   // On a phone the panel fills the screen and none of this applies.
   const isMobile = useIsMobile();
-  const [box, setBox] = useState<PanelBox | null>(() => readPanelState(browserStore()).box);
+  // A saved card smaller than readable (a 260 × 240 box, 09-27) opens at the
+  // readable minimum instead, kept on screen.
+  const [box, setBox] = useState<PanelBox | null>(() => {
+    const b = readPanelState(browserStore()).box;
+    if (!b || typeof window === 'undefined') return b;
+    const width = Math.min(Math.max(b.width, PANEL_MIN_W), window.innerWidth - 8);
+    const height = Math.min(Math.max(b.height, PANEL_MIN_H), window.innerHeight - 8);
+    return {
+      width, height,
+      left: Math.max(0, Math.min(b.left, window.innerWidth - width)),
+      top: Math.max(0, Math.min(b.top, window.innerHeight - height)),
+    };
+  });
   const [pinned, setPinned] = useState<boolean>(() => readPanelState(browserStore()).pinned);
   useEffect(() => {
     writePanelState(browserStore(), { box, pinned });
@@ -348,6 +382,57 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     setBox((b) => (b ? { ...b, left, top } : b));
   };
   const onHeaderUp = () => { dragRef.current = null; };
+
+  // Resize from any edge or corner (Eden's standing rule: every card is
+  // draggable, resizable along all four edges, and pinnable). A docked panel
+  // is lifted where it stands on the first pull. Never below the readable
+  // minimum; never off the window.
+  type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+  const edgeRef = useRef<{ edge: Edge; px: number; py: number; b: PanelBox } | null>(null);
+  const onEdgeDown = (edge: Edge) => (e: React.PointerEvent) => {
+    if (isMobile || pinned) return;
+    const r = panelRef.current?.getBoundingClientRect();
+    if (!r) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const b = box ?? { left: r.left, top: r.top, width: r.width, height: r.height };
+    if (!box) setBox(b);
+    edgeRef.current = { edge, px: e.clientX, py: e.clientY, b };
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+  const onEdgeMove = (e: React.PointerEvent) => {
+    const d = edgeRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.px;
+    const dy = e.clientY - d.py;
+    let { left, top, width, height } = d.b;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    if (d.edge.includes('e')) width = clamp(d.b.width + dx, PANEL_MIN_W, W - left);
+    if (d.edge.includes('s')) height = clamp(d.b.height + dy, PANEL_MIN_H, H - top);
+    if (d.edge.includes('w')) {
+      const right = d.b.left + d.b.width;
+      left = clamp(d.b.left + dx, 0, right - PANEL_MIN_W);
+      width = right - left;
+    }
+    if (d.edge.includes('n')) {
+      const bottom = d.b.top + d.b.height;
+      top = clamp(d.b.top + dy, 0, bottom - PANEL_MIN_H);
+      height = bottom - top;
+    }
+    setBox({ left, top, width, height });
+  };
+  const onEdgeUp = () => { edgeRef.current = null; };
+  const EDGE_CLASS: Record<Edge, string> = {
+    n: 'top-0 left-3 right-3 h-1.5 cursor-ns-resize',
+    s: 'bottom-0 left-3 right-3 h-1.5 cursor-ns-resize',
+    e: 'right-0 top-3 bottom-3 w-1.5 cursor-ew-resize',
+    w: 'left-0 top-3 bottom-3 w-1.5 cursor-ew-resize',
+    ne: 'top-0 right-0 w-3 h-3 cursor-nesw-resize',
+    sw: 'bottom-0 left-0 w-3 h-3 cursor-nesw-resize',
+    nw: 'top-0 left-0 w-3 h-3 cursor-nwse-resize',
+    se: 'bottom-0 right-0 w-3 h-3 cursor-nwse-resize',
+  };
   // The corner resize is the browser's own; what it produces is remembered.
   useEffect(() => {
     const el = panelRef.current;
@@ -364,7 +449,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   const toggleWide = () => {
     setWide((v) => !v);
     if (box) {
-      const width = wide ? 320 : Math.min(860, window.innerWidth - box.left - 8);
+      const width = wide ? PANEL_DOCKED_W : Math.min(860, window.innerWidth - box.left - 8);
       setBox({ ...box, width });
     }
   };
@@ -710,6 +795,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // the latest send() without re-subscribing every render.
   const sendRef = useRef(send);
   useEffect(() => { sendRef.current = send; });
+  const setInputRef = useRef(setInput);
+  useEffect(() => { setInputRef.current = setInput; });
   useEffect(() => {
     const onCommand = (e: Event) => {
       const cmd = (e as CustomEvent<AssistantCommand>).detail;
@@ -724,6 +811,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       // A command may carry no prompt: it scopes and opens the panel
       // (SecureChat's door) without spending a model call.
       if (cmd.prompt?.trim()) void sendRef.current(cmd.prompt.trim());
+      else if (cmd.draft) pendingDraftRef.current = cmd.draft;
     };
     window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
     return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
@@ -744,7 +832,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           floating
             ? `fixed z-50 flex flex-col shadow-2xl backdrop-blur-[30px] border border-[rgba(255,255,255,0.1)] rounded-xl overflow-hidden ${isOpen ? '' : 'hidden'}`
             : `fixed top-0 right-0 h-full ${
-              wide ? 'w-[94vw] sm:w-[min(860px,82vw)] max-w-none' : 'w-[88vw] sm:w-80 max-w-[22rem]'
+              wide ? 'w-[94vw] sm:w-[min(860px,82vw)] max-w-none' : 'w-[88vw] sm:w-[26rem] max-w-[28rem]'
             } border-l border-[rgba(255,255,255,0.08)] z-50 flex flex-col shadow-2xl transition-[transform,width] duration-300 ease-in-out backdrop-blur-[30px] ${
               isOpen ? 'translate-x-0' : 'translate-x-full'
             }`
@@ -752,11 +840,22 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         style={floating && box ? {
           left: box.left, top: box.top, width: box.width, height: box.height,
           // Pinned: no resize handle, and the cursor stops inviting a drag.
-          resize: pinned ? 'none' : 'both',
+          // The four edges and corners below do the resizing.
           cursor: pinned ? 'default' : undefined,
-          minWidth: 300, minHeight: 280, maxWidth: '96vw', maxHeight: '96vh',
+          minWidth: PANEL_MIN_W, minHeight: PANEL_MIN_H, maxWidth: '96vw', maxHeight: '96vh',
         } : undefined}
       >
+        {!isMobile && !pinned && (Object.keys(EDGE_CLASS) as Edge[]).map((edge) => (
+          <div
+            key={edge}
+            aria-hidden="true"
+            onPointerDown={onEdgeDown(edge)}
+            onPointerMove={onEdgeMove}
+            onPointerUp={onEdgeUp}
+            onPointerCancel={onEdgeUp}
+            className={`absolute z-20 touch-none select-none ${EDGE_CLASS[edge]}`}
+          />
+        ))}
         {/* Header — the ribbon, and the handle. */}
         <div
           className={`flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)] select-none ${isMobile || pinned ? '' : 'cursor-grab active:cursor-grabbing'}`}
@@ -936,13 +1035,13 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`${wide ? 'max-w-[80%] px-4 py-2.5 text-[15px]' : 'max-w-[85%] px-3 py-2 text-sm'} rounded-xl leading-relaxed ${
+                className={`${wide ? 'max-w-[80%] px-4 py-3 text-[15px]' : 'max-w-[90%] px-3.5 py-2.5 text-[14.5px]'} rounded-xl leading-[1.6] ${
                   msg.role === 'user'
                     ? 'bg-indigo-600 text-white rounded-br-sm'
                     : 'bg-[rgba(20,20,30,0.8)] text-[#e8e4de] rounded-bl-sm'
                 }`}
               >
-                {msg.content}
+                {msg.role === 'assistant' && typeof msg.content === 'string' ? <Prose text={msg.content} /> : msg.content}
               </div>
             </div>
           ))}

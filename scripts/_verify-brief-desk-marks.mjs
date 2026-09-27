@@ -373,5 +373,128 @@ console.log('\n--- G. importing a brief (src/lib/brief/import.ts) --------------
     'the Brief Desk has its own route and its own door in the sidebar');
 }
 
+// ===========================================================================
+console.log('\n--- H. find the highlighted authority (src/lib/brief/find-query.ts) --');
+// ===========================================================================
+{
+  const { findQueryFor } = await import('../src/lib/brief/find-query.ts');
+  const cases = [
+    ['28 U.S.C. § 1367', '1367'],
+    ['28 U.S.C. §§ 1331', '1331'],
+    ['42 U.S.C. § 12102(1)(A)', '12102'],
+    ['29 C.F.R. § 1630.2(j)', '1630.2'],
+    ['Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986)', 'Anderson v Liberty Lobby'],
+    ['See *Hohider v. United Parcel Serv., Inc.*, 574 F.3d 169', 'Hohider v United Parcel Serv'],
+    ['(Celotex Corp. v. Catrett, 477 U.S. 317)', 'Celotex Corp v Catrett'],
+    // A Westlaw filename: bare "v", "And" for "&" (Morgan, 09-27).
+    ['Morgan v. Allison Crane & Rigging, LLC, 114 F.4th 214', 'Morgan v Allison Crane and Rigging'],
+    // Rules: the filed name carries "Rule N" ("Rule 4. Appeal as of Right"), not the cite.
+    ['Fed. R. App. P. 4(a)(1)(A)', 'Rule 4'],
+    ['Fed. R. Civ. P. 56(a)', 'Rule 56'],
+    ['FRCP 12(b)(6)', 'Rule 12'],
+    ['Fed. R. Evid. 803(6)', 'Rule 803'],
+    ['L.A.R. 28.1', 'Rule 28.1'],
+    ['Ruler v. Smith, 1 F.3d 1', 'Ruler v Smith'],
+  ];
+  const bad = cases.filter(([inp, want]) => findQueryFor(inp) !== want).map(([inp, want]) => `${inp} → "${findQueryFor(inp)}" (wanted "${want}")`);
+  check(bad.length === 0, 'a highlighted statute searches by its section number; a case by its caption', bad.join(' ; '));
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  check(/addEventListener\('cs:brief-open'/.test(desk) && /Find in corpus/.test(desk),
+    'the desk opens any document in the pane: "Find in corpus" for the lawyer, cs:brief-open for an assistant beside them');
+  check(/openByReporter\(label\)/.test(desk) && /from\('document_citations'\)/.test(desk),
+    'a highlighted reporter cite opens the case that carries it, before any name search');
+}
+
+// ===========================================================================
+console.log('\n--- I. the Orchestrator beside the desk -----------------------------');
+// ===========================================================================
+{
+  const { blocksOf, runsOf } = await import('../src/lib/prose.ts');
+  const b = blocksOf('## Holding\n\nThe court held **that** a claim *may* proceed.\n\n- first\n- second\n\n1. one\n2. two\n\n> quoted');
+  check(b.map((x) => x.kind).join(' ') === 'h p ul ol quote', 'an answer\'s Markdown becomes heading, paragraph, lists and a quote', b.map((x) => x.kind).join(' '));
+  const r = runsOf('a **bold** and *italic* and `code` and snake_case_name');
+  check(r.some((x) => x.bold && x.text === 'bold') && r.some((x) => x.italic && x.text === 'italic') && r.some((x) => x.code)
+    && r.map((x) => x.text).join('').includes('snake_case_name'), 'bold, italic and code runs; an identifier with underscores stays as typed');
+  check(runsOf('<img src=x onerror=alert(1)>').every((x) => !x.bold && !x.italic) && !/dangerouslySetInnerHTML/.test(read('src/components/ai/Prose.tsx')),
+    'no HTML is produced from an answer: text only, rendered as React elements');
+  const reader = read('src/pages/DocumentReader.tsx');
+  const ask = reader.slice(reader.indexOf('const askAbout = useCallback'), reader.indexOf('const handleDownload'));
+  check(/draft: q \?/.test(ask) && !/prompt:/.test(ask), '"Ask about this passage" puts the passage in the box; it sends nothing');
+  const panel = read('src/components/ai/Assistant.tsx');
+  check(/else if \(cmd\.draft\)/.test(panel) && /PANEL_MIN_W = 400/.test(panel) && /PANEL_MIN_H = 440/.test(panel),
+    'the Orchestrator takes a draft without sending, and is never smaller than 400 x 440');
+  check(/model: 'claude-opus-5-5'/.test(read('lib/assistant-core.mjs')), 'the first-party pen is Opus 5.5');
+  check(panel.includes("n: 'top-0") && panel.includes("sw: 'bottom-0 left-0") && !panel.includes("resize: pinned ? 'none' : 'both'")
+    && panel.includes('if (isMobile || pinned) return;'),
+    'the Orchestrator card resizes from all four edges and corners, not only the browser corner, and a pinned card does not move');
+}
+
+// ===========================================================================
+console.log('\n--- J. record cites: A-10 is a page of the brief\'s appendix -----------');
+// ===========================================================================
+{
+  const R = await import('../src/lib/brief/record-cite.ts');
+  const p = (t) => JSON.stringify(R.parseRecordCite(t));
+  check(p('A-10') === '{"first":10,"last":null}' && p('JA 1845') === '{"first":1845,"last":null}' && p('J.A. 59') === '{"first":59,"last":null}'
+    && p('Appx. 7') === '{"first":7,"last":null}' && p('A-1845–46') === '{"first":1845,"last":1846}' && p('A-1845-1846') === '{"first":1845,"last":1846}',
+    'A-10, JA 1845, J.A. 59, Appx. 7 and A-1845–46 are record cites');
+  check(R.parseRecordCite('28 U.S.C. § 1367') === null && R.parseRecordCite('Anderson v. Liberty Lobby') === null && R.parseRecordCite('A plaintiff') === null,
+    'a statute, a case and prose are not');
+  check(JSON.stringify(R.rangeOfTitle('Joint Appendix Vol. I (A-1 to A-77) - FINAL, frozen 2026-09-26')) === '[1,77]'
+    && R.rangeOfTitle('Webster brief A-10 draft') === null, 'a volume is known by its named range, not by an A-number in its name');
+
+  // A fake volume: a cover naming its range, a contents page listing A-numbers,
+  // record pages with one stamp each, and a transcript page filed under its
+  // printed page (93) with the physical page in metadata (26) — the three
+  // shapes that sent the first attempt to page 1 and page 93 (09-27).
+  const rows = [
+    { page_start: 1, text: 'Joint Appendix Volume VII (A-1822 to A-2204)', metadata: null },
+    { page_start: 2, text: 'Contents: ECF 70-1 ... A-1822; A-1845; A-1900; A-2001; A-2100', metadata: null },
+    { page_start: 3, text: 'Case 2:25-cv-02287 Document 70-1 Page 242\nA-1822', metadata: null },
+    { page_start: 93, text: 'Document 70-1 Page 265 of 624\nA-1845 BMCMSJ000261', metadata: { pdf_page: 26 } },
+  ];
+  const fake = { from: () => { const q = { select: () => q, eq: () => q, ilike: (_c, pat) => { q._pat = pat.replace(/%/g, ''); return q; }, limit: () => q,
+    then: (res) => res({ data: rows.filter((r) => r.text.includes(q._pat)), error: null }) }; return q; }, rpc: async () => ({ data: null, error: null }) };
+  const vol = { id: 'v7', title: 'Vol. VII (A-1822 to A-2204)', matterspace_id: 'm', from: 1822, to: 2204 };
+  const first = await R.pageOfStamp(fake, vol, 1822);
+  const dep = await R.pageOfStamp(fake, vol, 1845);
+  const none = await R.pageOfStamp(fake, vol, 1830);
+  check(first.page === 3 && first.basis === 'stamp', 'the first record page, not the cover that names the range', JSON.stringify(first));
+  check(dep.page === 26 && dep.basis === 'stamp', "a transcript page opens at its PHYSICAL page, not the printed one it is filed under", JSON.stringify(dep));
+  check(none.page === 1830 - 1822 + 3 && none.basis === 'estimate', 'an unreadable stamp: where it should fall, said as an estimate', JSON.stringify(none));
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  check(/record_matter_id/.test(desk) && /Which appendix does this brief cite\?/.test(desk) && /parseRecordCite\(label\)/.test(desk),
+    'Find in corpus on an A-cite goes to the appendix the brief cites, asked once and kept on the brief');
+  check(/metadata\?\.pdf_page/.test(read('src/pages/DocumentReader.tsx')), "the Reader's passage goto uses the physical page too");
+}
+
+// ===========================================================================
+console.log('\n--- K. find, back to your place, ask, add a case --------------------');
+// ===========================================================================
+{
+  // Find: the projection finds words across italics and in footnotes, mapped to the editor.
+  const p = A.project(master);
+  const i = p.text.indexOf('Owen v. Jones, 123 F.3d 456, 460');
+  const r = A.plainRangeToPm(p, i, i + 'Owen v. Jones, 123 F.3d 456, 460'.length);
+  check(!!r && master.textBetween(r.from, r.to) === 'Owen v. Jones, 123 F.3d 456, 460', 'find maps a match across an italic case name to the editor', JSON.stringify(r));
+  const n = p.text.indexOf('was decided on a Rule 12(b)(6) motion');
+  const rn = A.plainRangeToPm(p, n, n + 11);
+  check(!!rn && master.resolve(rn.from).parent.type.name === 'footnote', 'and finds words inside a footnote');
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  check(/function FindBar/.test(desk) && /e\.key\.toLowerCase\(\) === 'f'/.test(desk) && /brief-find-current/.test(desk),
+    'a find bar in the brief: Ctrl+F, every match lit, the current one marked, next and previous');
+  const openRow = desk.slice(desk.indexOf('const openRow = useCallback'), desk.indexOf('const pickCopy'));
+  const openDoc = desk.slice(desk.indexOf('const openDocument = '), desk.indexOf('const openSearched'));
+  check(/markPlace\(\)/.test(openRow) && /markPlace\(\)/.test(openDoc) && /Back to your place/.test(desk),
+    'every way an authority opens marks the reading place first; "Back to your place" returns to it');
+  const ask = desk.slice(desk.indexOf('const askAbout = async'), desk.indexOf('const findHighlighted = async'));
+  check(/runInAssistant\(\{/.test(ask) && /draft:/.test(ask) && !/prompt:/.test(ask),
+    '"Ask about this" drafts the proposition and the authority into the Orchestrator; it sends nothing');
+  const add = read('src/pages/brief/AddCaseCard.tsx');
+  check(/persistVaultFile\(matter, file\)/.test(add) && /checkUploadAdmissible\(matter, file\)/.test(add) && /watchDocumentStatus/.test(add),
+    '"Add a case" files through the Vault\'s own path (duplicate and type checks, ingest) and watches it to ready');
+  check(/<AddCaseCard/.test(read('src/pages/MatterspaceView.tsx')), 'and the matter page has the same button');
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 process.exit(failures ? 1 : 0);

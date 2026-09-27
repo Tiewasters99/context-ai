@@ -313,6 +313,7 @@ type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChr
 
 export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full' }: ReaderProps = {}) {
   const pane = chrome === 'pane';
+  const paneChrome = pane;
   const hideCover = embedded || pane;
   const hidePageEditor = embedded || pane;
   const hideSidebarToggle = pane;
@@ -460,6 +461,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
 
   // Restore persisted prefs.
   useEffect(() => {
+    // A pane beside another surface fits to its own width (below) and leaves
+    // the full Reader's saved zoom and fit alone, in both directions.
+    if (pane) return;
     const z = localStorage.getItem('ctx_reader_zoom');
     if (z) {
       const parsed = parseFloat(z);
@@ -469,10 +473,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (t === 'parchment' || t === 'dark') setTheme(t);
     const f = localStorage.getItem('ctx_reader_fit');
     if (f === '0') setFitPage(false);
-  }, []);
-  useEffect(() => { localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom]);
+  }, [pane]);
+  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom, pane]);
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
-  useEffect(() => { localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage]);
+  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage, pane]);
   useEffect(() => {
     // On a phone the thumbnail rail would swallow the page, so start closed
     // regardless of the saved desktop preference.
@@ -741,19 +745,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     const pane = contentRef.current;
     const d = pageDims?.[0];
     if (!pane || !d || pane.clientWidth <= 0 || pane.clientHeight <= 0) return zoom;
-    const PAD = 24; // breathing room around the page
+    const PAD = paneChrome ? 6 : 24; // breathing room around the page
     // The margin rails flank each page in-flow; subtract them so the page
-    // never overflows horizontally.
-    const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
-    const fit = Math.min(
-      (pane.clientWidth - PAD * 2 - rails) / d.w,
-      (pane.clientHeight - PAD * 2) / d.h,
-    );
+    // never overflows horizontally. A pane draws none.
+    const rails = paneChrome ? 0 : 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
+    const byWidth = (pane.clientWidth - PAD * 2 - rails) / d.w;
+    const fit = paneChrome ? byWidth : Math.min(byWidth, (pane.clientHeight - PAD * 2) / d.h);
     return Math.max(0.1, Math.min(fit, 6));
     // containerTick re-measures the pane on resize / sidebar / fullscreen;
     // loadState re-measures once the pane exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState]);
+  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState, paneChrome]);
 
   // Top offset of every slot inside the scroll content — the map between
   // scrollTop and page numbers, used by jumps and by scroll derivation.
@@ -1658,9 +1660,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     runInAssistant({
       matterId: doc.matterspace_id ?? undefined,
       matterName: matterName ?? undefined,
-      prompt: q
-        ? `On ${where}: “${q.slice(0, 1200)}” — What is this passage saying, and what does it connect to?`
-        : undefined,
+      // The passage goes into the box, cursor after it; the reader asks the
+      // question. Nothing is sent until they do.
+      draft: q ? `On ${where}: “${q.slice(0, 1200)}” — ` : undefined,
     });
   }, [doc, fileKind, page, matterName, visiblePages]);
   const handleDownload = useCallback(async () => {
@@ -2455,12 +2457,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       if (goto.passageId) {
         const { data } = await supabase
           .from('passages')
-          .select('page_start, text')
+          .select('page_start, text, metadata')
           .eq('id', goto.passageId)
           .maybeSingle();
-        const row = data as { page_start: number | null; text: string | null } | null;
+        const row = data as { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null } | null;
         if (row) {
-          target = target ?? row.page_start;
+          // A transcript's passages are filed under its printed page; the
+          // physical page, the one to go to, is metadata.pdf_page.
+          const physical = Number(row.metadata?.pdf_page);
+          target = target ?? (Number.isFinite(physical) && physical > 0 ? physical : row.page_start);
           phrase = row.text ? firstWords(row.text, 12) : null;
         }
       }
@@ -2959,7 +2964,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
-            className="reader-scroll flex-1 overflow-auto flex justify-center items-start py-6 px-4"
+            className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
             style={{ backgroundColor: rootBg }}
             // A selection copied off the PDF text layer would otherwise carry
             // the layer's own paint — transformed spans, transparent ink,
@@ -3013,6 +3018,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     onRemove={removeAnnotationCb}
                     onOpenNote={openNoteAt}
                     onOpenRef={openRefAt}
+                    bare={paneChrome}
                   />
                 ))}
               </div>
@@ -3499,6 +3505,7 @@ const PageSlot = memo(function PageSlot({
   onRemove,
   onOpenNote,
   onOpenRef,
+  bare,
 }: {
   p: number;
   w: number;
@@ -3519,14 +3526,16 @@ const PageSlot = memo(function PageSlot({
   onRemove: (id: string) => void;
   onOpenNote: (n: Annotation, a: { x: number; y: number }) => void;
   onOpenRef: (link: IncomingLink, a: { x: number; y: number }) => void;
+  /** A pane: the page alone, without the margin rails. */
+  bare?: boolean;
 }) {
   return (
     <div className="flex flex-row items-stretch" style={{ marginBottom: PAGE_GAP }}>
-      <CrossRefRail
+      {!bare && <CrossRefRail
         refs={incomingLinks.filter((r) => r.target_page === p)}
         isMobile={isMobile}
         onOpen={onOpenRef}
-      />
+      />}
       <div
         className="relative shadow-2xl"
         style={{ width: w, height: h, backgroundColor: '#ffffff' }}
@@ -3562,12 +3571,12 @@ const PageSlot = memo(function PageSlot({
           onAreaChosen={onAreaChosen}
         />
       </div>
-      <NotesRail
+      {!bare && <NotesRail
         notes={annotations.filter((a) => a.page === p && annotationIsNote(a))}
         currentUserId={currentUserId}
         isMobile={isMobile}
         onOpen={onOpenNote}
-      />
+      />}
     </div>
   );
 });

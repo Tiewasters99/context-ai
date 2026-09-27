@@ -42,6 +42,8 @@ export interface CiteTableProps {
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   header?: React.ReactNode;
+  /** The column's width in px (the column variant; the lawyer drags it). */
+  width?: number;
 }
 
 
@@ -94,13 +96,13 @@ export default function CiteTable(p: CiteTableProps) {
   );
 
   const frame = p.variant === 'column'
-    ? 'w-[360px] shrink-0 border-l border-white/[0.06] bg-[#12121a] flex flex-col min-h-0'
+    ? 'shrink-0 border-l border-white/[0.06] bg-[#12121a] flex flex-col min-h-0'
     : p.variant === 'row'
       ? 'h-full flex flex-col min-h-0 bg-[#12121a]'
       : 'flex-1 flex flex-col min-h-0 bg-[#12121a]';
 
   return (
-    <aside className={frame} aria-label="Cites in this brief">
+    <aside className={frame} style={p.variant === 'column' ? { width: p.width ?? 360 } : undefined} aria-label="Cites in this brief">
       <div className="flex items-center gap-1 px-2 min-h-10 py-1 border-b border-white/[0.06] flex-wrap">
         {p.header}
         <span className="text-[12px] text-white/70 mr-1">Cites</span>
