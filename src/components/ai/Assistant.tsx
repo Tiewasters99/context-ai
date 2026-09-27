@@ -368,6 +368,57 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     setBox((b) => (b ? { ...b, left, top } : b));
   };
   const onHeaderUp = () => { dragRef.current = null; };
+
+  // Resize from any edge or corner (Eden's standing rule: every card is
+  // draggable, resizable along all four edges, and pinnable). A docked panel
+  // is lifted where it stands on the first pull. Never below the readable
+  // minimum; never off the window.
+  type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+  const edgeRef = useRef<{ edge: Edge; px: number; py: number; b: PanelBox } | null>(null);
+  const onEdgeDown = (edge: Edge) => (e: React.PointerEvent) => {
+    if (isMobile || pinned) return;
+    const r = panelRef.current?.getBoundingClientRect();
+    if (!r) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const b = box ?? { left: r.left, top: r.top, width: r.width, height: r.height };
+    if (!box) setBox(b);
+    edgeRef.current = { edge, px: e.clientX, py: e.clientY, b };
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+  const onEdgeMove = (e: React.PointerEvent) => {
+    const d = edgeRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.px;
+    const dy = e.clientY - d.py;
+    let { left, top, width, height } = d.b;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    if (d.edge.includes('e')) width = clamp(d.b.width + dx, PANEL_MIN_W, W - left);
+    if (d.edge.includes('s')) height = clamp(d.b.height + dy, PANEL_MIN_H, H - top);
+    if (d.edge.includes('w')) {
+      const right = d.b.left + d.b.width;
+      left = clamp(d.b.left + dx, 0, right - PANEL_MIN_W);
+      width = right - left;
+    }
+    if (d.edge.includes('n')) {
+      const bottom = d.b.top + d.b.height;
+      top = clamp(d.b.top + dy, 0, bottom - PANEL_MIN_H);
+      height = bottom - top;
+    }
+    setBox({ left, top, width, height });
+  };
+  const onEdgeUp = () => { edgeRef.current = null; };
+  const EDGE_CLASS: Record<Edge, string> = {
+    n: 'top-0 left-3 right-3 h-1.5 cursor-ns-resize',
+    s: 'bottom-0 left-3 right-3 h-1.5 cursor-ns-resize',
+    e: 'right-0 top-3 bottom-3 w-1.5 cursor-ew-resize',
+    w: 'left-0 top-3 bottom-3 w-1.5 cursor-ew-resize',
+    ne: 'top-0 right-0 w-3 h-3 cursor-nesw-resize',
+    sw: 'bottom-0 left-0 w-3 h-3 cursor-nesw-resize',
+    nw: 'top-0 left-0 w-3 h-3 cursor-nwse-resize',
+    se: 'bottom-0 right-0 w-3 h-3 cursor-nwse-resize',
+  };
   // The corner resize is the browser's own; what it produces is remembered.
   useEffect(() => {
     const el = panelRef.current;
@@ -781,11 +832,22 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         style={floating && box ? {
           left: box.left, top: box.top, width: box.width, height: box.height,
           // Pinned: no resize handle, and the cursor stops inviting a drag.
-          resize: pinned ? 'none' : 'both',
+          // The four edges and corners below do the resizing.
           cursor: pinned ? 'default' : undefined,
           minWidth: PANEL_MIN_W, minHeight: PANEL_MIN_H, maxWidth: '96vw', maxHeight: '96vh',
         } : undefined}
       >
+        {!isMobile && !pinned && (Object.keys(EDGE_CLASS) as Edge[]).map((edge) => (
+          <div
+            key={edge}
+            aria-hidden="true"
+            onPointerDown={onEdgeDown(edge)}
+            onPointerMove={onEdgeMove}
+            onPointerUp={onEdgeUp}
+            onPointerCancel={onEdgeUp}
+            className={`absolute z-20 touch-none select-none ${EDGE_CLASS[edge]}`}
+          />
+        ))}
         {/* Header — the ribbon, and the handle. */}
         <div
           className={`flex items-center justify-between px-4 py-3 border-b border-[rgba(255,255,255,0.08)] select-none ${isMobile || pinned ? '' : 'cursor-grab active:cursor-grabbing'}`}
