@@ -30,6 +30,10 @@ export interface VaultFile {
    *  (documents.metadata.text_status — image_only, portfolio, …). Absent on
    *  documents that are actually indexed. */
   textStatus?: string;
+  /** Persistent mode: the five-word label a vision model wrote for a picture
+   *  (documents.metadata.image_description.label), for the thumbnail tile.
+   *  Absent on everything that is not a described picture. */
+  imageLabel?: string;
   /** Persistent mode: pages a ready PDF still owes OCR, with the reason and
    *  the retry state (documents.metadata.ocr_pending). Present beside real
    *  passages — "Ready — 3 pages awaiting OCR" — or beside textStatus

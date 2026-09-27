@@ -1,6 +1,7 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
-import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2 } from 'lucide-react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2, List, LayoutGrid, Image as ImageIcon } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
+import { thumbUrl, isThumbable } from '@/lib/vault-thumbs';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
 import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import ContentSearch from './ContentSearch';
@@ -142,6 +143,63 @@ function friendlyIngestError(msg: string): string {
   return msg;
 }
 
+// One tile of the picture grid (step 2 of the image plan, 2026-09-26): the
+// thumbnail Storage renders on request, under the five-word label a vision
+// model wrote for it — "Luthiers workshop dusk snow falling" — so sixty
+// renders of the same scene can be told apart at a glance. A picture not yet
+// described (uploaded before the feature, or still in the worker's queue)
+// shows its file name instead, and a picture the pipeline is still working
+// on says so. A click opens it exactly as the row does.
+function PictureTile({ file, onOpen }: { file: VaultFile; onOpen?: () => void }) {
+  // The signed thumbnail URL, remembered with the path it was signed for, so a
+  // tile reused for another picture never shows the previous one's image.
+  const [thumb, setThumb] = useState<{ path: string | undefined; url: string | null }>({ path: undefined, url: null });
+  useEffect(() => {
+    let cancelled = false;
+    void thumbUrl(file.storagePath).then((url) => { if (!cancelled) setThumb({ path: file.storagePath, url }); });
+    return () => { cancelled = true; };
+  }, [file.storagePath]);
+  const [broken, setBroken] = useState<string | null>(null);
+  const resolved = thumb.path === file.storagePath;
+  const src = resolved && broken !== thumb.url ? thumb.url : null;
+  const failed = resolved && (thumb.url === null || broken === thumb.url);
+  const busy = file.status !== 'indexed' && file.status !== 'error';
+  const label = file.imageLabel || file.name.replace(/\.[a-z0-9]+$/i, '');
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={!onOpen}
+      title={file.imageLabel ? `${file.imageLabel}\n${file.name}` : file.name}
+      className="group/tile flex flex-col text-left rounded-lg overflow-hidden border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] hover:border-[#e8b84a]/50 hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:cursor-default"
+    >
+      <div className="relative w-full aspect-square bg-[rgba(0,0,0,0.35)] flex items-center justify-center overflow-hidden">
+        {src && !failed ? (
+          <img
+            src={src}
+            alt={label}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            onError={() => setBroken(thumb.url)}
+            className="w-full h-full object-contain select-none"
+          />
+        ) : (
+          <ImageIcon size={22} className={failed ? 'text-white/20' : 'text-white/15 animate-pulse'} strokeWidth={1.5} />
+        )}
+        {busy && (
+          <span className="absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/60 text-[9px] text-white/80">
+            <Loader2 size={9} className="animate-spin" /> working
+          </span>
+        )}
+      </div>
+      <p className={`px-2 py-1.5 text-[11px] leading-snug line-clamp-2 ${file.imageLabel ? 'text-[#f5f1e8]' : 'text-white/55'} group-hover/tile:text-[#e8b84a] transition-colors`}>
+        {label}
+      </p>
+    </button>
+  );
+}
+
 export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(RENDER_WINDOW);
@@ -237,9 +295,26 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     e.target.value = '';
   };
 
+  // The filter box matches a picture's label too ("dusk" finds the render
+  // labelled "Luthiers workshop dusk snow falling"), not just its file name.
   const filtered = search
-    ? files.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()))
+    ? files.filter((f) => f.name.toLowerCase().includes(search.toLowerCase()) || (f.imageLabel ?? '').toLowerCase().includes(search.toLowerCase()))
     : files;
+
+  // List or pictures. The picture grid is offered only when the listing holds
+  // browser-drawn images filed in a matter (an ephemeral upload has no stored
+  // bytes for Storage to resize), and the choice is remembered per browser —
+  // a screenplay's art folder is opened as pictures every time, a brief's
+  // exhibits as a list.
+  const pictures = useMemo(() => filtered.filter((f) => !!f.matterspace_id && !!f.storagePath && isThumbable(f.name)), [filtered]);
+  const [view, setView] = useState<'list' | 'pictures'>(() => {
+    try { return localStorage.getItem('ctx_vault_view') === 'pictures' ? 'pictures' : 'list'; } catch { return 'list'; }
+  });
+  const chooseView = (v: 'list' | 'pictures') => {
+    setView(v);
+    try { localStorage.setItem('ctx_vault_view', v); } catch { /* private window: the choice lasts the session */ }
+  };
+  const showPictures = view === 'pictures' && pictures.length > 0;
 
   // One pass over rows the server already ordered — by matter (date mode,
   // which is what this panel has always done), by A–Z letter, or by shelf.
@@ -563,6 +638,28 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                 )}
               </div>
             )}
+            {pictures.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="text-[10px] uppercase tracking-wider text-white/40">View</span>
+                <div className="flex rounded-lg border border-[rgba(255,255,255,0.1)] overflow-hidden" role="group" aria-label="List or pictures">
+                  <button
+                    onClick={() => chooseView('list')}
+                    aria-pressed={view === 'list'}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] transition-colors ${view === 'list' ? 'bg-[rgba(232,184,74,0.15)] text-[#e8b84a]' : 'text-white/60 hover:text-white hover:bg-[rgba(255,255,255,0.05)]'}`}
+                  >
+                    <List size={11} strokeWidth={2} /> List
+                  </button>
+                  <button
+                    onClick={() => chooseView('pictures')}
+                    aria-pressed={view === 'pictures'}
+                    title="Every picture in this listing as a thumbnail, under the short label written for it"
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] transition-colors ${view === 'pictures' ? 'bg-[rgba(232,184,74,0.15)] text-[#e8b84a]' : 'text-white/60 hover:text-white hover:bg-[rgba(255,255,255,0.05)]'}`}
+                  >
+                    <LayoutGrid size={11} strokeWidth={2} /> Pictures ({pictures.length.toLocaleString()})
+                  </button>
+                </div>
+              </div>
+            )}
             {organizeNote && (
               <p className="mb-3 text-[11px] text-white/60">{organizeNote}</p>
             )}
@@ -584,7 +681,17 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               </div>
             )}
 
-            {groups ? (
+            {showPictures ? (
+              <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
+                {pictures.slice(0, shown).map((file) => (
+                  <PictureTile
+                    key={file.id}
+                    file={file}
+                    onOpen={openable(file) ? () => onOpenFile!(file) : undefined}
+                  />
+                ))}
+              </div>
+            ) : groups ? (
               <div className="space-y-3">
                 {groups.map((g) => {
                   const collapsed = collapsedGroups.has(g.id);

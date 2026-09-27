@@ -54,6 +54,7 @@ import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
+import { makeDescribeHook } from '../lib/describe-image-anthropic.mjs';
 import {
   sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv,
 } from '../lib/discovery/util.mjs';
@@ -913,6 +914,10 @@ async function ingestDocument(job) {
     openaiApiKey: OPENAI_API_KEY,
     ocr: ocrProvider,
     transcribe,
+    // A picture with no words is described so it can be found (step 2 of
+    // the image plan, 2026-09-26). Null without ANTHROPIC_API_KEY; the
+    // pipeline never runs it for a sealed matter. Read per job, like OCR.
+    describe: makeDescribeHook(process.env),
     onProgress: ({ stage, message }) => {
       progress(job, stagePct[stage] ?? 40, message).catch(() => {});
     },
