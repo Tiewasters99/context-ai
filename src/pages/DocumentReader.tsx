@@ -745,10 +745,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     const pane = contentRef.current;
     const d = pageDims?.[0];
     if (!pane || !d || pane.clientWidth <= 0 || pane.clientHeight <= 0) return zoom;
-    const PAD = 24; // breathing room around the page
+    const PAD = paneChrome ? 6 : 24; // breathing room around the page
     // The margin rails flank each page in-flow; subtract them so the page
-    // never overflows horizontally.
-    const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
+    // never overflows horizontally. A pane draws none.
+    const rails = paneChrome ? 0 : 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
     const byWidth = (pane.clientWidth - PAD * 2 - rails) / d.w;
     const fit = paneChrome ? byWidth : Math.min(byWidth, (pane.clientHeight - PAD * 2) / d.h);
     return Math.max(0.1, Math.min(fit, 6));
@@ -2961,7 +2961,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
-            className="reader-scroll flex-1 overflow-auto flex justify-center items-start py-6 px-4"
+            className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
             style={{ backgroundColor: rootBg }}
             // A selection copied off the PDF text layer would otherwise carry
             // the layer's own paint — transformed spans, transparent ink,
@@ -3015,6 +3015,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     onRemove={removeAnnotationCb}
                     onOpenNote={openNoteAt}
                     onOpenRef={openRefAt}
+                    bare={paneChrome}
                   />
                 ))}
               </div>
@@ -3501,6 +3502,7 @@ const PageSlot = memo(function PageSlot({
   onRemove,
   onOpenNote,
   onOpenRef,
+  bare,
 }: {
   p: number;
   w: number;
@@ -3521,14 +3523,16 @@ const PageSlot = memo(function PageSlot({
   onRemove: (id: string) => void;
   onOpenNote: (n: Annotation, a: { x: number; y: number }) => void;
   onOpenRef: (link: IncomingLink, a: { x: number; y: number }) => void;
+  /** A pane: the page alone, without the margin rails. */
+  bare?: boolean;
 }) {
   return (
     <div className="flex flex-row items-stretch" style={{ marginBottom: PAGE_GAP }}>
-      <CrossRefRail
+      {!bare && <CrossRefRail
         refs={incomingLinks.filter((r) => r.target_page === p)}
         isMobile={isMobile}
         onOpen={onOpenRef}
-      />
+      />}
       <div
         className="relative shadow-2xl"
         style={{ width: w, height: h, backgroundColor: '#ffffff' }}
@@ -3564,12 +3568,12 @@ const PageSlot = memo(function PageSlot({
           onAreaChosen={onAreaChosen}
         />
       </div>
-      <NotesRail
+      {!bare && <NotesRail
         notes={annotations.filter((a) => a.page === p && annotationIsNote(a))}
         currentUserId={currentUserId}
         isMobile={isMobile}
         onOpen={onOpenNote}
-      />
+      />}
     </div>
   );
 });

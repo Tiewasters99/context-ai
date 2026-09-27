@@ -704,7 +704,7 @@ function DeskEditor(p: DeskProps) {
             onStart={() => briefColRef.current?.getBoundingClientRect().width ?? 600}
             onDrag={(start, dx) => {
               const total = rowRef.current?.getBoundingClientRect().width ?? 1200;
-              const table = wide && !tableCollapsed ? tableW : 40;
+              const table = wide && !tableCollapsed && rows.length > 0 ? tableW : 40;
               setBriefW(Math.round(Math.max(340, Math.min(start + dx, total - table - 340))));
             }}
             onReset={() => setBriefW(0)}
@@ -720,7 +720,7 @@ function DeskEditor(p: DeskProps) {
             />
           </div>
         )}
-        {wide && !tableCollapsed && (
+        {wide && !tableCollapsed && rows.length > 0 && (
           <ColumnDivider
             title="Drag to widen or narrow the cite table. Double-click for the default."
             onStart={() => tableW}
@@ -740,7 +740,7 @@ function DeskEditor(p: DeskProps) {
             onOpen={openRow}
             onLocate={locate}
             onSaveNote={onSaveNote}
-            collapsed={tableCollapsed}
+            collapsed={tableCollapsed || rows.length === 0}
             onToggleCollapsed={() => setTableCollapsed((v) => !v)}
           />
         )}
