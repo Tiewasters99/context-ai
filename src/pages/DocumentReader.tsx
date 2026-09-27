@@ -283,7 +283,39 @@ async function sourceDocumentOf(documentId: string): Promise<string | null> {
   return meta?.source_document_id ?? null;
 }
 
-export default function DocumentReader({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
+/**
+ * Imperative navigation for a host that shows the Reader beside something
+ * else (the Brief Desk's authority pane). Applied when `nonce` changes and on
+ * first load; a prop, not a URL parameter, because two Readers on one route
+ * would fight over `?page=`.
+ *   page       → that page (PDF)
+ *   passageId  → the passage's page, its first twelve words lit through the
+ *                find highlight (PDF: the .search-hits boxes; other formats:
+ *                the rendered text)
+ *   anchor     → a text anchor in a rendered (non-PDF) document
+ */
+export interface ReaderGoto {
+  page?: number;
+  passageId?: string;
+  anchor?: TextAnchor;
+  nonce: number;
+}
+
+/**
+ * 'full' — the Reader as it is on its route. 'pane' — inside another
+ * surface's column: no cover, no sidebar toggle (the sidebar stays shut), no
+ * page editor. `embedded` (a canvas card) hides the cover and the page editor
+ * as before; 'pane' names the whole set.
+ */
+export type ReaderChrome = 'full' | 'pane';
+
+type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChrome };
+
+export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full' }: ReaderProps = {}) {
+  const pane = chrome === 'pane';
+  const hideCover = embedded || pane;
+  const hidePageEditor = embedded || pane;
+  const hideSidebarToggle = pane;
   const params = useParams<{ id: string }>();
   const id = propId ?? params.id;
   const navigate = useNavigate();
@@ -444,13 +476,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   useEffect(() => {
     // On a phone the thumbnail rail would swallow the page, so start closed
     // regardless of the saved desktop preference.
-    if (isMobile) { setSidebarOpen(false); return; }
+    // A pane has no room for it either, and no toggle to open it.
+    if (isMobile || pane) { setSidebarOpen(false); return; }
     const s = localStorage.getItem('ctx_reader_sidebar_open');
     if (s === '0') setSidebarOpen(false);
-  }, [isMobile]);
+  }, [isMobile, pane]);
   useEffect(() => {
+    if (pane) return; // the pane's shut sidebar is not the reader's preference
     localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
-  }, [sidebarOpen]);
+  }, [sidebarOpen, pane]);
 
   // Deep links (?page=N) are honored by the restore + follow effects in the
   // continuous-stack block below, once the stack can be measured.
@@ -841,21 +875,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
   useEffect(() => {
     if (restoredRef.current || !slotTops || loadState !== 'ready' || fileKind !== 'pdf') return;
     restoredRef.current = true;
-    const linked = parseInt(searchParams.get('page') ?? '', 10);
+    // ?page= belongs to the route's own Reader. An embedded one (a canvas
+    // card, the desk's pane) shares the URL with its host and is steered by
+    // the `goto` prop instead.
+    const linked = embedded ? NaN : parseInt(searchParams.get('page') ?? '', 10);
     const saved = parseInt(localStorage.getItem(`ctx_reader_page_${id}`) ?? '', 10);
     const target = Number.isFinite(linked) && linked >= 1 ? linked
       : Number.isFinite(saved) && saved >= 1 ? saved
       : 1;
     if (target > 1) gotoPage(target);
-  }, [slotTops, loadState, fileKind, id, searchParams, gotoPage]);
+  }, [slotTops, loadState, fileKind, id, searchParams, gotoPage, embedded]);
 
   // Follow later deep links on the SAME mounted document (query-only
-  // change, no remount).
+  // change, no remount). The route's Reader only, as above.
   useEffect(() => {
+    if (embedded) return;
     if (!restoredRef.current) return; // the restore effect takes the first
     const p = parseInt(searchParams.get('page') ?? '', 10);
     if (Number.isFinite(p) && p >= 1 && totalPages > 0) gotoPage(p);
-  }, [searchParams, totalPages, gotoPage]);
+  }, [searchParams, totalPages, gotoPage, embedded]);
 
   // When the geometry changes under the reader — zoom, fit toggle, pane
   // resize, or the dims sweep correcting slot heights — re-anchor to the
@@ -2399,6 +2437,70 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
     clearTextMatches();
   }, [clearTextMatches]);
 
+  // The host's `goto` (see ReaderGoto). Declared after the restore effect,
+  // so on first load the goto wins over the remembered page. Applied once per
+  // nonce, as soon as the document can be navigated: a PDF once its page
+  // stack is measured, anything else once it is rendered.
+  const appliedGotoRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!goto || appliedGotoRef.current === goto.nonce || loadState !== 'ready') return;
+    const pdf = fileKind === 'pdf';
+    if (pdf ? !slotTops || totalPages === 0 : !docHtml) return;
+    appliedGotoRef.current = goto.nonce;
+    const nonce = goto.nonce;
+    const firstWords = (t: string, n: number) => t.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
+    void (async () => {
+      let target = goto.page ?? null;
+      let phrase: string | null = null;
+      if (goto.passageId) {
+        const { data } = await supabase
+          .from('passages')
+          .select('page_start, text')
+          .eq('id', goto.passageId)
+          .maybeSingle();
+        const row = data as { page_start: number | null; text: string | null } | null;
+        if (row) {
+          target = target ?? row.page_start;
+          phrase = row.text ? firstWords(row.text, 12) : null;
+        }
+      }
+      if (appliedGotoRef.current !== nonce) return; // a newer goto arrived meanwhile
+      if (pdf) {
+        if (target) gotoPage(target);
+        // The passage's opening words, lit through the find path. The page is
+        // the promise; the boxes are a bonus — a PDF's text layer is split by
+        // line, and the paint finds a phrase only within one line.
+        if (phrase && target) {
+          setSearchOpen(true);
+          setSearchQuery(phrase);
+          setMatches([{ page: target, index: 0 }]);
+          setMatchIdx(0);
+        }
+        return;
+      }
+      const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
+      if (!root) return;
+      let ranges: Range[] = [];
+      if (goto.anchor) {
+        const flat = flattenText(root);
+        const at = offsetsFromAnchor(flat.text, goto.anchor);
+        const r = at ? rangeFromOffsets(flat, at.start, at.end) : null;
+        if (r) ranges = [r];
+      }
+      // A passage's text and the rendered document differ at the edges
+      // (headers, joined lines); a shorter opening finds more often.
+      for (const n of [12, 6, 3]) {
+        if (ranges.length || !phrase) break;
+        ranges = findInRendered(root, firstWords(phrase, n));
+      }
+      if (!ranges.length) return;
+      textRangesRef.current = ranges;
+      setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
+      setMatchIdx(0);
+      showTextMatch(ranges, 0);
+    })();
+  }, [goto, loadState, fileKind, slotTops, totalPages, docHtml, gotoPage, showTextMatch]);
+
   // ────────────────────────────────────────────────────────────────────
   // Render
   // ────────────────────────────────────────────────────────────────────
@@ -2417,7 +2519,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           is set, this is a discoverable "Add cover" bar (subtle until hover);
           when set, a 180px banner; when expanded, becomes the page background
           via CSS variable so the reader chrome stays in front. */}
-      {loadState === 'ready' && !embedded && (
+      {loadState === 'ready' && !hideCover && (
         <CoverImage
           coverUrl={doc?.cover_url ?? null}
           onCoverChange={handleCoverChange}
@@ -2452,7 +2554,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             <X size={15} />
           </button>
-          {fileKind === 'pdf' && (
+          {fileKind === 'pdf' && !hideSidebarToggle && (
             <button
               onClick={() => setSidebarOpen((v) => !v)}
               className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
@@ -2617,7 +2719,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
           >
             {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
           </button>
-          {fileKind === 'pdf' && !embedded && (
+          {fileKind === 'pdf' && !hidePageEditor && (
             <button
               onClick={() => setPageEditorOpen(true)}
               disabled={loadState !== 'ready' || !doc?.storage_path}
@@ -2627,7 +2729,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
               <Scissors size={15} />
             </button>
           )}
-          {!embedded && (
+          {!hideCover && (
             <CoverModeToggle
               hasCover={!!doc?.cover_url}
               expanded={coverExpanded}
@@ -2735,7 +2837,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose }
                       { icon: <Scan size={14} />, label: fitPage ? '✓ Fit the whole page' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
                     ] : []),
                     { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
-                    ...(fileKind === 'pdf' && !embedded ? [
+                    ...(fileKind === 'pdf' && !hidePageEditor ? [
                       { icon: <Scissors size={14} />, label: 'Edit pages', run: () => setPageEditorOpen(true), disabled: loadState !== 'ready' || !doc?.storage_path },
                     ] : []),
                     { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },

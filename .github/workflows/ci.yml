@@ -874,3 +874,18 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node --import ./scripts/_node-src-loader.mjs scripts/_verify-citation-resolvers.mjs
+
+      # The Brief Desk, slice D3 (docs/specs/BRIEF-DESK-2026-09-26.md §3.3):
+      # the cite marks. The projection the marks anchor to is byte-identical
+      # to toPlainText (what the cite-check reads), position for position;
+      # every fixture entry anchors (an italic case name + a roman reporter
+      # cite as one range, curly and straight quotes both ways, the same raw
+      # twice by its location, never one occurrence twice, a missing cite
+      # "not located"); in a real ProseMirror state an edit inside a mark sets
+      # stale on that mark only and undo takes both back; the incremental diff
+      # checks exactly the new and stale cites and carries the rest with their
+      # flags; the table is in document order; Confirm reads toPlainText and
+      # never body_md; the embedded Reader skips ?page=. No database.
+      - name: Brief Desk D3 — cite marks, the stale rule, the incremental diff
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-brief-desk-marks.mjs

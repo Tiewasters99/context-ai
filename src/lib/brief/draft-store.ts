@@ -64,7 +64,7 @@ async function uid(): Promise<string> {
   return id;
 }
 
-async function recordEvent(kind: 'draft.snapshot' | 'draft.exported', matterId: string, payload: Record<string, unknown>) {
+export async function recordEvent(kind: 'draft.snapshot' | 'draft.exported' | 'cite.checked', matterId: string, payload: Record<string, unknown>) {
   try {
     const { record } = await import('../../../lib/ledger.mjs');
     const user = (await supabase.auth.getUser()).data.user;

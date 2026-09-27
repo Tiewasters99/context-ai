@@ -501,7 +501,7 @@ function ResultsView({ runId, onNewRun }: { runId: string; onNewRun: () => void 
   );
 }
 
-function CiteDetail({ e }: { e: ReportEntry }) {
+export function CiteDetail({ e }: { e: ReportEntry }) {
   return (
     <div className="px-4 pb-3 pt-1 pl-11 text-[14px] space-y-1 bg-[rgba(255,255,255,0.015)]">
       <p><span className="text-white/40">Status:</span> <span className="text-white/80">{FLAG_LABEL[e.flag]}</span> <span className="text-white/30">({e.verification_status} · {e.rating ? `${e.rating} confidence` : 'no rating given'})</span></p>
