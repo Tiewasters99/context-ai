@@ -373,5 +373,26 @@ console.log('\n--- G. importing a brief (src/lib/brief/import.ts) --------------
     'the Brief Desk has its own route and its own door in the sidebar');
 }
 
+// ===========================================================================
+console.log('\n--- H. find the highlighted authority (src/lib/brief/find-query.ts) --');
+// ===========================================================================
+{
+  const { findQueryFor } = await import('../src/lib/brief/find-query.ts');
+  const cases = [
+    ['28 U.S.C. § 1367', '1367'],
+    ['28 U.S.C. §§ 1331', '1331'],
+    ['42 U.S.C. § 12102(1)(A)', '12102'],
+    ['29 C.F.R. § 1630.2(j)', '1630.2'],
+    ['Anderson v. Liberty Lobby, Inc., 477 U.S. 242, 248 (1986)', 'Anderson v. Liberty Lobby'],
+    ['See *Hohider v. United Parcel Serv., Inc.*, 574 F.3d 169', 'Hohider v. United Parcel Serv.'],
+    ['(Celotex Corp. v. Catrett, 477 U.S. 317)', 'Celotex Corp. v. Catrett'],
+  ];
+  const bad = cases.filter(([inp, want]) => findQueryFor(inp) !== want).map(([inp, want]) => `${inp} → "${findQueryFor(inp)}" (wanted "${want}")`);
+  check(bad.length === 0, 'a highlighted statute searches by its section number; a case by its caption', bad.join(' ; '));
+  const desk = read('src/pages/brief/BriefDesk.tsx');
+  check(/addEventListener\('cs:brief-open'/.test(desk) && /Find in corpus/.test(desk),
+    'the desk opens any document in the pane: "Find in corpus" for the lawyer, cs:brief-open for an assistant beside them');
+}
+
 console.log(`\n${failures ? `${failures} FAILED` : 'all passed'}`);
 process.exit(failures ? 1 : 0);
