@@ -37,7 +37,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
-  ShieldCheck, ListChecks, Square, Search, Info,
+  ShieldCheck, ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -61,6 +61,9 @@ import { findQueryFor } from '@/lib/brief/find-query';
 import { parseReporterCites } from '../../../lib/bluebook.mjs';
 import { parseRecordCite, appendixSetsFor, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
 import CardDialog from '@/components/ui/CardDialog';
+import AddCaseCard from './AddCaseCard';
+import { runInAssistant } from '@/lib/assistant-bus';
+import { project, plainRangeToPm } from '@/lib/brief/anchor';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
@@ -274,6 +277,27 @@ function DeskEditor(p: DeskProps) {
   });
   const [overlay, setOverlay] = useState<null | 'authority' | 'table'>(null);
   const [showReadingNote, setShowReadingNote] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [showAddCase, setShowAddCase] = useState(false);
+  // Where the lawyer was reading when an authority opened (Eden, 09-27: "I was
+  // looking at a cite and then lost my place").
+  const briefScrollRef = useRef<HTMLDivElement>(null);
+  const [returnPoint, setReturnPoint] = useState<{ scroll: number; from: number; to: number } | null>(null);
+  const markPlace = () => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    const { from, to } = ed.state.selection;
+    setReturnPoint({ scroll: briefScrollRef.current?.scrollTop ?? 0, from, to });
+  };
+  const backToPlace = () => {
+    const ed = editorRef.current;
+    const rp = returnPoint;
+    if (!ed || !rp) return;
+    const max = ed.state.doc.content.size;
+    ed.commands.setTextSelection({ from: Math.min(rp.from, max), to: Math.min(rp.to, max) });
+    ed.commands.focus();
+    if (briefScrollRef.current) briefScrollRef.current.scrollTo({ top: rp.scroll, behavior: 'smooth' });
+  };
   // Column widths, the lawyer's own (0 = the brief and the pane share evenly).
   const rowRef = useRef<HTMLDivElement>(null);
   const briefColRef = useRef<HTMLDivElement>(null);
@@ -346,6 +370,7 @@ function DeskEditor(p: DeskProps) {
   const closeOverlay = () => { if (overlay) window.history.back(); };
 
   const openRow = useCallback((row: TableRow) => {
+    markPlace();
     const e = row.entry;
     const res = e?.resolution ?? null;
     const resolved = res?.status === 'resolved' && !!res.hits[0];
@@ -394,6 +419,7 @@ function DeskEditor(p: DeskProps) {
   // Any document into the pane: from the search, from a highlight, or from an
   // assistant working beside the lawyer (the 'cs:brief-open' event below).
   const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null } = {}) => {
+    markPlace();
     gotoNonce.current += 1;
     setPane((cur) => ({
       rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
@@ -456,6 +482,26 @@ function DeskEditor(p: DeskProps) {
       return true;
     }
     return false;
+  };
+
+  // "Does the case support this?" — the proposition and the authority, into
+  // the Orchestrator's box. Nothing is sent until the lawyer presses Enter.
+  const askAbout = async () => {
+    const sel = (highlighted.current ?? '').trim();
+    if (!sel) return;
+    let title: string | null = pane?.docTitle ?? null;
+    let matterId = meta.matterspace_id;
+    if (pane?.docId) {
+      const { data } = await supabase.from('documents').select('title, matterspace_id').eq('id', pane.docId).maybeSingle();
+      const d = data as { title: string | null; matterspace_id: string } | null;
+      if (d) { title = title ?? d.title; matterId = d.matterspace_id; }
+    }
+    runInAssistant({
+      matterId,
+      draft: title
+        ? `Does ${title} support this proposition from the brief? “${sel}” `
+        : `Which authority in this matter supports this proposition from the brief? “${sel}” `,
+    });
   };
 
   const findHighlighted = async () => {
@@ -607,6 +653,16 @@ function DeskEditor(p: DeskProps) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [save]);
 
+  // Ctrl/Cmd+F finds in the brief (the browser's own find does not reach
+  // text an editor has laid out this way reliably, and it cannot jump).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); setFindOpen(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Ctrl/Cmd+S saves now.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -669,6 +725,8 @@ function DeskEditor(p: DeskProps) {
       {p.editable && editor && (
         <Toolbar
           editor={editor}
+          onFind={() => setFindOpen((v) => !v)}
+          onBack={returnPoint ? backToPlace : undefined}
           onSnapshot={() => void snapshot(null)}
           busy={!!p.busy || !!progress}
           confirm={
@@ -743,6 +801,23 @@ function DeskEditor(p: DeskProps) {
             <Search size={13} /> Find in corpus
           </button>
         )}
+        {hasHighlight && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void askAbout()}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06]"
+            title="Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter"
+          >
+            <MessageSquareQuote size={13} /> Ask about this
+          </button>
+        )}
+        <button
+          onClick={() => setShowAddCase(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Add a case to the matter: choose the file, and it becomes searchable"
+        >
+          <FilePlus2 size={14} /> <span className="hidden md:inline">Add a case</span>
+        </button>
         {narrow && (
           <button
             onClick={() => openOverlay('table')}
@@ -780,7 +855,8 @@ function DeskEditor(p: DeskProps) {
         >
           <VEdges id="brief" off={narrow}>
             {!narrow && topBlock}
-            <div className="brief-col flex-1 min-h-0 overflow-y-auto">
+            {findOpen && editor && <FindBar editor={editor} onClose={() => setFindOpen(false)} />}
+            <div ref={briefScrollRef} className="brief-col flex-1 min-h-0 overflow-y-auto">
               <div className="brief-paper mx-auto my-6 md:my-10" onClick={onPaperClick}>
                 <EditorContent editor={editor} />
               </div>
@@ -925,6 +1001,18 @@ function DeskEditor(p: DeskProps) {
           )}
         </div>
       )}
+      {showAddCase && (
+        <AddCaseCard
+          defaultMatterId={(meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id ?? meta.matterspace_id}
+          onClose={() => setShowAddCase(false)}
+          onOpen={(id) => openDocument(id, { caveat: null })}
+          onMatterChosen={(m) => {
+            if ((meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id === m) return;
+            const metadata = { ...(meta.metadata ?? {}), cases_matter_id: m };
+            void supabase.from('documents').update({ metadata }).eq('id', meta.id).then(({ error }) => { if (!error) p.setMeta({ ...meta, metadata }); });
+          }}
+        />
+      )}
       {showReadingNote && (
         <CardDialog
           storageKey="cs.brief.reading-note"
@@ -967,6 +1055,97 @@ function DeskEditor(p: DeskProps) {
         <SiteSearch initialQuery={search} onClose={() => setSearch(null)} onPick={openSearched} />
       )}
     </Shell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Find in the brief: every match lit (the CSS Custom Highlight API, so the
+// text is untouched), the current one selected and scrolled to, and the
+// count. Searches the brief's words as they read — across italics, and in the
+// footnotes — through the same projection the cite marks use.
+// ---------------------------------------------------------------------------
+function FindBar({ editor, onClose }: { editor: Editor; onClose: () => void }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState<{ from: number; to: number }[]>([]);
+  const [at, setAt] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
+
+  const paint = useCallback((list: { from: number; to: number }[], current: number) => {
+    const g = globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown };
+    const reg = g.CSS?.highlights;
+    if (!reg || !g.Highlight) return;
+    const toRange = (h: { from: number; to: number }) => {
+      try {
+        const a = editor.view.domAtPos(h.from);
+        const b = editor.view.domAtPos(h.to);
+        const r = document.createRange();
+        r.setStart(a.node, a.offset);
+        r.setEnd(b.node, b.offset);
+        return r;
+      } catch { return null; }
+    };
+    const ranges = list.map(toRange).filter((r): r is Range => !!r);
+    if (ranges.length) reg.set('brief-find', new g.Highlight(...ranges)); else reg.delete('brief-find');
+    const cur = list[current] ? toRange(list[current]) : null;
+    if (cur) reg.set('brief-find-current', new g.Highlight(cur)); else reg.delete('brief-find-current');
+  }, [editor]);
+
+  const go = useCallback((list: { from: number; to: number }[], i: number) => {
+    if (!list.length) return;
+    const h = list[(i + list.length) % list.length];
+    setAt((i + list.length) % list.length);
+    try {
+      const { node } = editor.view.domAtPos(h.from);
+      const el = node instanceof HTMLElement ? node : node.parentElement;
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } catch { /* moved */ }
+    paint(list, (i + list.length) % list.length);
+  }, [editor, paint]);
+
+  const search = useCallback((query: string) => {
+    const needle = query.trim().toLowerCase();
+    if (needle.length < 2) { setHits([]); paint([], 0); return; }
+    const proj = project(editor.state.doc);
+    const hay = proj.text.toLowerCase();
+    const list: { from: number; to: number }[] = [];
+    for (let i = hay.indexOf(needle); i !== -1 && list.length < 2000; i = hay.indexOf(needle, i + needle.length)) {
+      const r = plainRangeToPm(proj, i, i + needle.length);
+      if (r) list.push(r);
+    }
+    list.sort((a, b) => a.from - b.from);
+    setHits(list);
+    go(list, 0);
+    if (!list.length) paint([], 0);
+  }, [editor, go, paint]);
+
+  useEffect(() => () => {
+    const reg = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights;
+    reg?.delete('brief-find'); reg?.delete('brief-find-current');
+  }, []);
+
+  return (
+    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-white/[0.06] bg-[rgba(20,20,28,0.95)] shrink-0">
+      <Search size={13} className="text-white/40" />
+      <input
+        ref={inputRef}
+        value={q}
+        onChange={(e) => { setQ(e.target.value); search(e.target.value); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); go(hits, e.shiftKey ? at - 1 : at + 1); }
+          if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+        }}
+        placeholder="Find in the brief"
+        className="flex-1 min-w-0 bg-white/[0.05] rounded px-2 py-1 text-[12.5px] text-white/90 placeholder:text-white/30 outline-none focus:bg-white/[0.08]"
+        aria-label="Find in the brief"
+      />
+      <span className="text-[11px] text-white/45 tabular-nums w-16 text-center">
+        {q.trim().length < 2 ? '' : hits.length ? `${at + 1} of ${hits.length}` : 'none'}
+      </span>
+      <button onClick={() => go(hits, at - 1)} disabled={!hits.length} className="p-1 rounded text-white/60 hover:bg-white/[0.06] disabled:opacity-30" title="Previous (Shift+Enter)"><ChevronLeft size={14} /></button>
+      <button onClick={() => go(hits, at + 1)} disabled={!hits.length} className="p-1 rounded text-white/60 hover:bg-white/[0.06] disabled:opacity-30" title="Next (Enter)"><ChevronRight size={14} /></button>
+      <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white" title="Close (Esc)"><X size={13} /></button>
+    </div>
   );
 }
 
@@ -1180,7 +1359,12 @@ function Banner({ tone, children, onClose }: { tone: 'info' | 'warn'; children: 
   );
 }
 
-function Toolbar({ editor, onSnapshot, busy, confirm }: { editor: Editor; onSnapshot: () => void; busy: boolean; confirm?: React.ReactNode }) {
+function Toolbar({ editor, onSnapshot, busy, confirm, onFind, onBack }: {
+  editor: Editor; onSnapshot: () => void; busy: boolean; confirm?: React.ReactNode;
+  onFind?: () => void;
+  /** Present once an authority has opened: back to where you were reading. */
+  onBack?: () => void;
+}) {
   const [flagOpen, setFlagOpen] = useState(false);
   // Re-render on selection so the active states are right.
   const [, force] = useState(0);
@@ -1255,6 +1439,19 @@ function Toolbar({ editor, onSnapshot, busy, confirm }: { editor: Editor; onSnap
       >
         <Camera size={13} /> Save version
       </button>
+      {sep('s5')}
+      {onFind && btn('find', Search, 'Find in the brief (Ctrl+F)', false, onFind, true)}
+      {onBack && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onBack}
+          className="h-7 px-2 inline-flex items-center gap-1.5 rounded text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/10"
+          title="Back to where you were reading when you opened the authority"
+        >
+          <CornerUpLeft size={13} /> Back to your place
+        </button>
+      )}
       {confirm && <>{sep('s4')}{confirm}</>}
     </div>
   );
@@ -1414,6 +1611,8 @@ const BRIEF_CSS = `
   background: rgba(0,0,0,0.04); border-left: 2px solid rgba(0,0,0,0.15); padding: 2px 8px; margin: 4px 0; white-space: pre-wrap; }
 .brief-doc .brief-flag { color: #b00000; font-weight: 700; }
 .brief-doc mark.brief-hl { background: #fff0a8; color: inherit; padding: 0 1px; }
+::highlight(brief-find) { background-color: rgba(232,184,74,0.35); }
+::highlight(brief-find-current) { background-color: rgba(232,150,40,0.85); color: #111; }
 .brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
   text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }
 .brief-doc .brief-cite:hover { background: rgba(232,184,74,0.14); }
