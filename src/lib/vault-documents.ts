@@ -34,7 +34,11 @@ import type { VaultGrouping } from './vault-grouping';
  */
 export const VAULT_DOCUMENT_COLUMNS =
   'id, title, source_filename, file_size_bytes, processing_status, processing_error, ' +
-  'matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending';
+  'matterspace_id, storage_path, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, ' +
+  // The tile label a vision model wrote for a picture (step 2 of the image
+  // plan, 2026-09-26): "Luthiers workshop dusk snow falling". Null on
+  // everything else, and on pictures described before the feature.
+  'image_label:metadata->image_description->>label';
 
 /**
  * The same columns plus the two migration 081 adds. Asked for ONLY when the
