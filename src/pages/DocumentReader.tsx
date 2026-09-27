@@ -117,6 +117,10 @@ type DocMeta = {
   file_size_bytes?: number | null;
   /** 'generated' for a deliverable filed without passages (an edited PDF). */
   text_status?: string | null;
+  /** What a vision model wrote about a picture (metadata.image_description):
+   *  the tile label, the search line, the words printed in it. Absent on
+   *  anything that is not a described picture. */
+  image_description?: { kind?: string; label?: string; line?: string; text?: string; model?: string | null } | null;
   /** For an edited copy: the indexed original it was made from. */
   source_document_id?: string | null;
   /** 'brief' offers "Edit in the Brief Desk". */
@@ -543,7 +547,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     void (async () => {
       const { data, error } = await supabase
         .from('documents')
-        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, doc_type, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id')
+        .select('id, title, storage_path, source_filename, page_count, cover_url, matterspace_id, file_size_bytes, doc_type, text_status:metadata->>text_status, source_document_id:metadata->>source_document_id, image_description:metadata->image_description')
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
@@ -3074,6 +3078,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     {imageDims.w} × {imageDims.h} px
                     {doc?.source_filename ? ` · ${doc.source_filename.slice(doc.source_filename.lastIndexOf('.') + 1).toUpperCase()}` : ''}
                     {doc?.file_size_bytes ? ` · ${doc.file_size_bytes >= 1048576 ? `${(doc.file_size_bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(doc.file_size_bytes / 1024))} KB`}` : ''}
+                    {/* What a model wrote about it, said as such: a description
+                        is never a quotation, and the words it saw in the
+                        picture are given verbatim under their own heading. */}
+                    {doc?.image_description?.line && (
+                      <span className="block mt-1.5 text-white/60 normal-case tracking-normal">
+                        <span className="text-white/35">AI description · </span>{doc.image_description.line}
+                      </span>
+                    )}
+                    {doc?.image_description?.text && (
+                      <span className="block mt-1 text-white/60 normal-case tracking-normal">
+                        <span className="text-white/35">Words in the picture · </span>“{doc.image_description.text.slice(0, 300)}”
+                      </span>
+                    )}
                   </figcaption>
                 )}
               </figure>

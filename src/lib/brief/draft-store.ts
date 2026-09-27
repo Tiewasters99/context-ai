@@ -22,6 +22,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { triggerIngest } from '@/lib/vault-persist';
+import { storageObjectBlob } from '@/lib/vault-object';
 import { effectiveTier } from '@/lib/agent-charters';
 import { parse, serialize, emptyBrief, type BriefDoc } from './md';
 
@@ -193,6 +194,9 @@ function safeFileTitle(title: string): string {
 /** The latest words, where search, grep, get_passage and the Reader look. */
 async function publishSnapshot(meta: BriefMeta, snapshotId: string, bodyMd: string): Promise<void> {
   const blob = new Blob([bodyMd], { type: 'text/markdown' });
+  // A NEW object (upsert: false): 096's read policy admits the row this upload
+  // writes, so the upload stays direct on sealed matters too. Uploads are not
+  // reads; vault-object.ts covers reads.
   const storagePath = `${meta.matterspace_id}/${meta.id}/brief-${snapshotId}.md`;
   const { error: upErr } = await supabase.storage
     .from('vault-documents')
@@ -274,8 +278,15 @@ export async function createBrief(matterId: string, title: string, body: BriefDo
  */
 export async function openInDesk(meta: BriefMeta): Promise<{ body: BriefBody; losses: string[] }> {
   if (!meta.storage_path) throw new Error('This document has no file to open yet.');
-  const { data: blob, error } = await supabase.storage.from('vault-documents').download(meta.storage_path);
-  if (error || !blob) throw new Error(`The file could not be read: ${error?.message ?? 'no data'}`);
+  // Through vault-object.ts like every other read (S4a): direct on an
+  // unsealed matter; on a sealed one via /api/document-url, which records
+  // `file.opened` and asks for the second factor first.
+  let blob: Blob;
+  try {
+    blob = await storageObjectBlob(meta.storage_path);
+  } catch (e) {
+    throw new Error(`The file could not be read: ${e instanceof Error ? e.message : 'no data'}`);
+  }
   const name = (meta.source_filename ?? meta.storage_path).toLowerCase();
   let doc: BriefDoc;
   let losses: string[] = [];

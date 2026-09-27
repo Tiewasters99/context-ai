@@ -220,6 +220,8 @@ function documentToVaultFile(doc: {
   matterspace_id?: string;
   storage_path?: string | null;
   text_status?: string | null;
+  /** metadata->image_description->>label: a described picture's tile label. */
+  image_label?: string | null;
   /** metadata->ocr_pending arrives typed as Json; narrowed below. */
   ocr_pending?: unknown;
   /** Migration 081; present only on an A-Z or Category read. */
@@ -247,6 +249,7 @@ function documentToVaultFile(doc: {
     matterspace_name,
     storagePath: doc.storage_path ?? undefined,
     textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
+    imageLabel: doc.processing_status === 'ready' ? (doc.image_label ?? undefined) : undefined,
     ocrPending: doc.processing_status === 'ready' && doc.ocr_pending && typeof doc.ocr_pending === 'object'
       ? (doc.ocr_pending as OcrPending) : undefined,
     sortKey: doc.sort_key ?? undefined,
@@ -492,6 +495,8 @@ export interface DocumentStatusUpdate {
   stage?: string;
   /** Recorded reason for a ready document with no text (VaultFile.textStatus). */
   textStatus?: string;
+  /** A described picture's tile label, once the worker has written it (VaultFile.imageLabel). */
+  imageLabel?: string;
   /** Pages a ready PDF still owes OCR (VaultFile.ocrPending). */
   ocrPending?: OcrPending;
   /** True when the SecureSpace held the document (VaultFile.held). */
@@ -555,7 +560,7 @@ export function watchDocumentStatus(
     if (stopped) return;
     const { data, error } = await supabase
       .from('documents')
-      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
       .eq('id', documentId)
       .maybeSingle();
     if (stopped) return;
@@ -569,6 +574,7 @@ export function watchDocumentStatus(
       errorMessage: data.processing_error || undefined,
       stage: stageOf(data.processing_status),
       textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
+      imageLabel: data.processing_status === 'ready' ? ((data as { image_label?: string | null }).image_label ?? undefined) : undefined,
       ocrPending: data.processing_status === 'ready' && typeof (data as { ocr_pending?: unknown }).ocr_pending === 'object'
         ? ((data as { ocr_pending?: OcrPending | null }).ocr_pending ?? undefined) : undefined,
       held: data.processing_status === 'held' || undefined,
@@ -647,7 +653,7 @@ export function watchDocumentStatuses(
       const chunk = ids.slice(i, i + STATUS_CHUNK);
       const { data, error } = await supabase
         .from('documents')
-        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending')
+        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
         .in('id', chunk);
       if (stopped) return;
       // A transient failure is not an answer about any document: keep them
@@ -661,6 +667,7 @@ export function watchDocumentStatuses(
         processing_status: string;
         processing_error: string | null;
         text_status?: string | null;
+        image_label?: string | null;
         ocr_pending?: unknown;
       }[];
       const seen = new Set(rows.map((r) => r.id));
@@ -675,6 +682,7 @@ export function watchDocumentStatuses(
             errorMessage: row.processing_error || undefined,
             stage: stageOf(row.processing_status),
             textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
+            imageLabel: row.processing_status === 'ready' ? (row.image_label ?? undefined) : undefined,
             ocrPending: row.processing_status === 'ready' && row.ocr_pending && typeof row.ocr_pending === 'object'
               ? (row.ocr_pending as OcrPending) : undefined,
             held: row.processing_status === 'held' || undefined,

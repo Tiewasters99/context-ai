@@ -105,6 +105,12 @@ async function reingestOne(documentId) {
     };
   }
 
+  // A picture with no words is described so it can be found (step 2 of the
+  // image plan, 2026-09-26): null without ANTHROPIC_API_KEY, never run for
+  // a sealed matter. This is how the pictures uploaded before the feature
+  // get their labels: `--matter <code> --ext .png,.jpg`.
+  const { makeDescribeHook } = await import('../lib/describe-image-anthropic.mjs');
+  const describe = makeDescribeHook(process.env);
   const result = await reprocessInPlace(supabase, documentId, () => processDocument(supabase, {
     documentId,
     fileBuf,
@@ -112,6 +118,7 @@ async function reingestOne(documentId) {
     openaiApiKey: OPENAI_API_KEY,
     ocr,
     transcribe,
+    describe,
     onProgress: ({ stage, message }) => log(`  ${stage}: ${message}`),
   }));
   log(`  ✓ ${result.passageCount} passages (${result.replacedPassages} old passage(s) replaced)`);

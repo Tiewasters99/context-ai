@@ -16,6 +16,7 @@ export const VAULT_MAX_BYTES: number;
 
 export type TextStatus =
   | 'image_only'
+  | 'image_described'
   | 'no_text'
   | 'portfolio'
   | 'media_no_transcript'
@@ -27,6 +28,7 @@ export type TextStatus =
 
 export const TEXT_STATUS: Readonly<{
   IMAGE_ONLY: 'image_only';
+  IMAGE_DESCRIBED: 'image_described';
   NO_TEXT: 'no_text';
   PORTFOLIO: 'portfolio';
   MEDIA_NO_TRANSCRIPT: 'media_no_transcript';
