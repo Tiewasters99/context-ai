@@ -8,10 +8,13 @@
 //
 // Browser-drawn formats only. A TIFF has no browser renderer, and Storage will
 // not transform it either; its tile shows the label alone.
+//
+// The signing itself lives in vault-object.ts, the one place the browser asks
+// Storage for bytes (S4a). On a SEALED matter it answers null — no thumbnail,
+// the tile shows its label — rather than a recorded copy per tile per view.
 
-import { supabase } from '@/lib/supabase';
+import { thumbnailUrl } from '@/lib/vault-object';
 
-const BUCKET = 'vault-documents';
 const TTL_SECONDS = 3600;
 /** The tile is drawn at up to 240 CSS px; 480 covers a 2× display. */
 export const THUMB_EDGE = 480;
@@ -36,12 +39,9 @@ export async function thumbUrl(storagePath: string | undefined): Promise<string 
   const hit = cache.get(storagePath);
   if (hit && hit.expires > Date.now()) return hit.url;
   try {
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(storagePath, TTL_SECONDS, {
-        transform: { width: THUMB_EDGE, height: THUMB_EDGE, resize: 'contain', quality: 80 },
-      });
-    if (error || !data?.signedUrl) return null;
+    const signed = await thumbnailUrl(storagePath, { edge: THUMB_EDGE, ttlSeconds: TTL_SECONDS, quality: 80 });
+    if (!signed) return null;
+    const data = { signedUrl: signed.url };
     // WebP, asked for on the URL: the render endpoint honours `format=webp`
     // outside the signed transform (measured 2026-09-26 on a 1.5 MB PNG:
     // 471 KB as PNG at 480 px, 57 KB as WebP), and the client's typed

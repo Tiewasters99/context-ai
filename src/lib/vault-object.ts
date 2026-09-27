@@ -177,6 +177,31 @@ export async function storageObjectBlob(
 }
 
 /**
+ * A resized picture of a stored image, for the Vault's grid (vault-thumbs.ts).
+ * Unsealed matter: a signed Storage render URL, as before. SEALED matter: no
+ * thumbnail at all — null, and the tile shows its label. That is the smaller
+ * of the two honest choices: a thumbnail is a copy of the picture, so serving
+ * one would mean a `file.opened` row per tile per grid view, and the Record
+ * would drown in rows that say nothing a person did. Opening the picture in
+ * the Reader still goes through /api/document-url and is recorded.
+ * When the seal cannot be read (null) the direct path is tried; on a sealed
+ * matter the bucket refuses it (096), so that too ends in the placeholder.
+ */
+export async function thumbnailUrl(
+  path: string,
+  opts: { edge: number; ttlSeconds: number; quality?: number },
+): Promise<{ url: string; expiresAt: number } | null> {
+  if ((await isSealedMatter(matterOfPath(path))) === true) return null;
+  const { data, error } = await supabase.storage
+    .from('vault-documents')
+    .createSignedUrl(path, opts.ttlSeconds, {
+      transform: { width: opts.edge, height: opts.edge, resize: 'contain', quality: opts.quality ?? 80 },
+    });
+  if (error || !data?.signedUrl) return null;
+  return { url: data.signedUrl, expiresAt: Date.now() + opts.ttlSeconds * 1000 };
+}
+
+/**
  * The Reader's Download button: always through the endpoint, on every
  * matter, so the Record holds `file.exported {destination:'download'}`.
  */
