@@ -229,6 +229,18 @@ function sanitizeContext(c) {
     indexed: typeof c.indexed === 'boolean' ? c.indexed : undefined,
     sourceDocumentId: pick(c.sourceDocumentId, 64),
     unindexedReason: c.unindexedReason === 'generated' || c.unindexedReason === 'not-ingested' ? c.unindexedReason : undefined,
+    // The Brief Desk: the brief and the matters it draws on. Names and the
+    // caption only — bounded, since it is prompt, not record.
+    brief: c.brief && typeof c.brief === 'object' && pick(c.brief.title)
+      ? {
+        title: pick(c.brief.title),
+        caption: pick(c.brief.caption, 600),
+        recordMatterName: pick(c.brief.recordMatterName),
+        appendixMatterName: pick(c.brief.appendixMatterName),
+        casesMatterName: pick(c.brief.casesMatterName),
+        citesChecked: num(c.brief.citesChecked),
+      }
+      : undefined,
   };
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
 }

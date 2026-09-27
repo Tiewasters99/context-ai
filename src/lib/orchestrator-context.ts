@@ -30,9 +30,29 @@ export interface OrchestratorPageContext {
   /** Why an unindexed document has no passages: a generated copy, or an
    *  import that never ran or produced nothing. */
   unindexedReason?: 'generated' | 'not-ingested';
+  /** The Brief Desk: the brief on the desk and the matters it draws on. */
+  brief?: BriefContext;
+}
+
+export interface BriefContext {
+  title: string;
+  /** The first lines of the brief as it reads — the caption, court and parties. */
+  caption?: string;
+  /** The matter the brief draws on: the record, the appendix, the cases (the bound matter). */
+  recordMatterName?: string;
+  /** Where its A-cites open: the Joint Appendix set. */
+  appendixMatterName?: string;
+  /** Where "Add a case" files. */
+  casesMatterName?: string;
+  citesChecked?: number;
 }
 
 let current: OrchestratorPageContext = {};
+// A surface that owns the page (the Brief Desk) publishes here, OVER whatever
+// a component inside it publishes: the authority pane's embedded Reader
+// publishes the case's own folder as the matter, which is exactly the folder
+// the desk must not bind the Orchestrator to.
+let surface: Partial<OrchestratorPageContext> = {};
 
 export function setOrchestratorContext(ctx: OrchestratorPageContext) {
   current = ctx;
@@ -42,6 +62,14 @@ export function clearOrchestratorContext() {
   current = {};
 }
 
+export function setSurfaceContext(ctx: Partial<OrchestratorPageContext>) {
+  surface = ctx;
+}
+
+export function clearSurfaceContext() {
+  surface = {};
+}
+
 export function getOrchestratorContext(): OrchestratorPageContext {
-  return current;
+  return { ...current, ...surface };
 }

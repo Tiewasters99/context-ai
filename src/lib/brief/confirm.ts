@@ -195,10 +195,18 @@ export async function confirmBrief(opts: {
   modelId?: string;
   onProgress?: (p: ConfirmProgress) => void;
   signal?: AbortSignal;
+  /**
+   * The matter the brief DRAWS ON — where its cases and record are looked up
+   * (resolve_citation walks its sub-matters). A brief filed in a Sandbox folder
+   * cites a record that lives elsewhere; without this, every cite came back
+   * "not in corpus". The run row and the ledger stay on the brief's own matter.
+   */
+  recordMatterId?: string;
 }): Promise<ConfirmOutcome> {
   const { meta, body, prior, stalePairs, all, onProgress, signal } = opts;
   const modelId = opts.modelId ?? DEFAULT_MODEL_ID;
   const matterId = meta.matterspace_id;
+  const lookupMatterId = opts.recordMatterId ?? matterId;
   const aborted = () => { if (signal?.aborted) throw new DOMException('Aborted', 'AbortError'); };
 
   onProgress?.({ phase: 'snapshot' });
@@ -250,13 +258,16 @@ export async function confirmBrief(opts: {
         phase: 'checking', index: ++i, total: diff.toCheck.length,
         current: t.cite.citation_bluebook ?? t.cite.raw ?? '', carried: diff.carried.length,
       });
+      // The model call keeps the BRIEF's matter: that is what routes the
+      // sealed pen and gates the legal-source egress. Only the corpus lookup
+      // below goes to the record.
       const r = await checkOne(t.cite, { modelId, signal, matterId });
       results[t.index] = r;
       entries[t.index] = entryFromResult(r);
     }
 
     aborted();
-    await resolveAll(matterId, entries, onProgress, signal);
+    await resolveAll(lookupMatterId, entries, onProgress, signal);
 
     onProgress?.({ phase: 'saving' });
     const counts = tallyFlags(results);

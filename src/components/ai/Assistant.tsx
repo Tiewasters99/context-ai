@@ -987,6 +987,14 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             {describe.searchNote && conversationEmpty && (
               <p className="mt-1 text-[11px] leading-snug text-white/45">{describe.searchNote}</p>
             )}
+            {/* The Brief Desk: what the panel knows before a word is typed —
+                the brief, and that the record is the matter above. */}
+            {conversationEmpty && getOrchestratorContext().brief?.title && (
+              <p className="mt-1 text-[11px] leading-snug text-white/45" data-testid="brief-strip">
+                Reading the brief <span className="text-white/65">“{getOrchestratorContext().brief!.title}”</span>
+                {' '}· its record cites and the court below are in this matter.
+              </p>
+            )}
           </div>
         )}
 

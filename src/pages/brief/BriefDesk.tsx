@@ -67,6 +67,10 @@ import { project, plainRangeToPm } from '@/lib/brief/anchor';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
+import MatterTreePick from '@/components/matters/MatterTreePick';
+import { useServerspaces } from '@/hooks/useServerspaces';
+import { nearestCommonAncestor } from '@/lib/matter-tree';
+import { setSurfaceContext, clearSurfaceContext } from '@/lib/orchestrator-context';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
 /** How a brief arrived: set by an import, read once. */
@@ -449,6 +453,59 @@ function DeskEditor(p: DeskProps) {
       .then(({ data }) => { if (live) setAppendixName((data as { name: string } | null)?.name ?? null); });
     return () => { live = false; };
   }, [recordMatterId]);
+  // ── The matter the brief draws on ────────────────────────────────────────
+  // The Orchestrator is bound to ONE matter and told to search nowhere else.
+  // The brief's own folder holds only the brief, and the case open in the
+  // pane sits in a leaf folder (09-27: bound to "Disability", it could not
+  // find the district court's opinion and offered to move documents). So the
+  // desk binds it to the record: the matter the lawyer chose, else the nearest
+  // matter that holds both the appendix and the cases folder, else the
+  // brief's own. Kept on the brief (metadata.record_root_matter_id).
+  const { data: spaces = [] } = useServerspaces();
+  const allMatters = useMemo(() => spaces.flatMap((s) => s.matterspaces ?? []), [spaces]);
+  const matterName = useCallback((id: string | null | undefined) => allMatters.find((m) => m.id === id)?.name ?? null, [allMatters]);
+  const casesMatterId = (meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id ?? null;
+  const chosenRootId = (meta.metadata as { record_root_matter_id?: string } | null)?.record_root_matter_id ?? null;
+  const recordRootId = useMemo(() => {
+    if (chosenRootId) return chosenRootId;
+    const anchors = [recordMatterId, casesMatterId].filter((x): x is string => !!x);
+    let derived = nearestCommonAncestor(allMatters, anchors);
+    // The anchors are folders INSIDE the case (an appendix set, a cases
+    // folder). When they meet only at one of themselves, the case is that
+    // folder's parent — the record is the whole case, not the appendix alone.
+    if (derived && anchors.includes(derived)) {
+      derived = allMatters.find((m) => m.id === derived)?.parent_matterspace_id ?? derived;
+    }
+    return derived ?? meta.matterspace_id;
+  }, [chosenRootId, allMatters, recordMatterId, casesMatterId, meta.matterspace_id]);
+  const recordRootName = matterName(recordRootId);
+  const [showRecordPick, setShowRecordPick] = useState(false);
+  const rememberRecordRoot = async (matterId: string) => {
+    const metadata = { ...(meta.metadata ?? {}), record_root_matter_id: matterId };
+    const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
+    if (!error) p.setMeta({ ...meta, metadata });
+  };
+  // What the Orchestrator is told while the desk is open — over whatever the
+  // pane's Reader publishes (its matter is the case's folder). The caption is
+  // the brief's first lines as they read: court, docket, parties.
+  useEffect(() => {
+    if (!editor) return;
+    const caption = project(editor.state.doc).text.replace(/\s+/g, ' ').trim().slice(0, 600);
+    setSurfaceContext({
+      matterId: recordRootId,
+      matterName: recordRootName ?? undefined,
+      brief: {
+        title: meta.title ?? 'Untitled brief',
+        caption: caption || undefined,
+        recordMatterName: recordRootName ?? undefined,
+        appendixMatterName: matterName(recordMatterId) ?? undefined,
+        casesMatterName: matterName(casesMatterId) ?? undefined,
+        citesChecked: rows.length || undefined,
+      },
+    });
+  }, [editor, recordRootId, recordRootName, recordMatterId, casesMatterId, meta.title, rows.length, matterName]);
+  useEffect(() => () => clearSurfaceContext(), []);
+
   // The last A-cite opened, so "change" can re-open it in the new appendix.
   const lastRecord = useRef<{ cite: RecordCite; label: string } | null>(null);
   const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string, name: string | null) => {
@@ -551,14 +608,14 @@ function DeskEditor(p: DeskProps) {
     const sel = (highlighted.current ?? '').trim();
     if (!sel) return;
     let title: string | null = pane?.docTitle ?? null;
-    let matterId = meta.matterspace_id;
-    if (pane?.docId) {
-      const { data } = await supabase.from('documents').select('title, matterspace_id').eq('id', pane.docId).maybeSingle();
-      const d = data as { title: string | null; matterspace_id: string } | null;
-      if (d) { title = title ?? d.title; matterId = d.matterspace_id; }
+    if (pane?.docId && !title) {
+      const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+      title = (data as { title: string | null } | null)?.title ?? null;
     }
+    // Bound to the record the brief draws on — never the case's own folder.
     runInAssistant({
-      matterId,
+      matterId: recordRootId,
+      matterName: recordRootName ?? undefined,
       draft: title
         ? `Does ${title} support this proposition from the brief? “${sel}” `
         : `Which authority in this matter supports this proposition from the brief? “${sel}” `,
@@ -658,6 +715,7 @@ function DeskEditor(p: DeskProps) {
         all,
         onProgress: setProgress,
         signal: ac.signal,
+        recordMatterId: recordRootId,
       });
       runRef.current = out.run;
       setRun(out.run);
@@ -801,6 +859,13 @@ function DeskEditor(p: DeskProps) {
           >
             <ShieldCheck size={13} /> Confirm this brief
           </button>
+          {/* Where the check looks: the matter the brief draws on, changeable
+              before the first Confirm (a brief filed in a narrow folder). */}
+          <span className="ml-3 text-[12px] text-white/55" data-testid="arrival-record">
+            Its cites are looked up in <span className="text-white/80">{recordRootName ?? 'this matter'}</span>
+            {' · '}
+            <button onClick={() => setShowRecordPick(true)} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2">change</button>
+          </span>
         </Banner>
       )}
       {!p.editable && (
@@ -965,6 +1030,8 @@ function DeskEditor(p: DeskProps) {
             meta={meta}
             appendix={recordMatterId ? (appendixName ?? '…') : null}
             onChangeAppendix={changeAppendix}
+            record={recordRootName}
+            onChangeRecord={() => setShowRecordPick(true)}
             onClose={() => p.setShowVersions(false)}
             onRestore={async (snapId) => {
               if (!editor || !updatedAt.current) return;
@@ -1066,6 +1133,22 @@ function DeskEditor(p: DeskProps) {
           maxWidth={560}
         >
           <ReadingNote />
+        </CardDialog>
+      )}
+      {showRecordPick && (
+        <CardDialog
+          storageKey="cs.brief.record-pick"
+          title="Which matter does this brief draw on?"
+          subtitle="The Orchestrator searches this matter and everything beneath it: the record, the appendix, the cases. Your choice is kept with this brief."
+          onClose={() => setShowRecordPick(false)}
+          maxWidth={520}
+        >
+          <div className="mb-2 text-[12px] text-white/60">Now: <span className="text-white/85">{recordRootName ?? 'not chosen'}</span></div>
+          <MatterTreePick
+            value={recordRootId}
+            onChange={(id) => { setShowRecordPick(false); void rememberRecordRoot(id); }}
+            maxHeight={300}
+          />
         </CardDialog>
       )}
       {chooser && (
@@ -1555,11 +1638,14 @@ function MenuItem({ title, note, onClick, disabled }: { title: string; note: str
   );
 }
 
-function Versions({ meta, appendix, onChangeAppendix, onClose, onRestore, canRestore }: {
+function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, onClose, onRestore, canRestore }: {
   meta: BriefMeta; onClose: () => void; onRestore: (id: string) => Promise<void>; canRestore: boolean;
   /** The appendix this brief's A-cites open in, by its matter's name; null when none is kept yet. */
   appendix: string | null;
   onChangeAppendix: () => void;
+  /** The matter the brief draws on — what the Orchestrator searches. */
+  record: string | null;
+  onChangeRecord: () => void;
 }) {
   const [rows, setRows] = useState<SnapshotRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1606,7 +1692,14 @@ function Versions({ meta, appendix, onChangeAppendix, onClose, onRestore, canRes
           </div>
         ))}
       </div>
-      {/* What this brief remembers: the appendix its A-cites open in. */}
+      {/* What this brief remembers: the record it draws on, and the appendix its A-cites open in. */}
+      <div className="px-3 py-2 border-t border-white/[0.06] text-[11px] text-white/45" data-testid="versions-record">
+        Record: <span className="text-white/65">{record ?? '…'}</span>
+        {' · '}
+        <button onClick={onChangeRecord} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2" title="The matter the Orchestrator searches for this brief: its record, appendix and cases">
+          change
+        </button>
+      </div>
       <div className="px-3 py-2 border-t border-white/[0.06] text-[11px] text-white/45" data-testid="versions-appendix">
         {appendix ? (
           <>Appendix: <span className="text-white/65">{appendix}</span></>

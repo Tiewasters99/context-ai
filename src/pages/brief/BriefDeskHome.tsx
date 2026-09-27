@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, FolderOpen, FilePlus2, Loader2, Lock, Stamp, AlertTriangle } from 'lucide-react';
 import { useMatterOptions } from '@/hooks/useMatterOptions';
+import MatterTreePick from '@/components/matters/MatterTreePick';
 import CorpusDocumentPicker from '@/components/matter/CorpusDocumentPicker';
 import {
   createBrief, importBriefFile, importBriefFromDocument, listRecentBriefs, type RecentBrief,
@@ -103,19 +104,22 @@ export default function BriefDeskHome() {
         </div>
         <p className="text-[13px] text-white/50 mb-6">Bring a brief in, edit it as text, and check every cite against the cases in your matter.</p>
 
-        <label className="block text-[11px] uppercase tracking-[0.14em] text-white/40 mb-1.5">Matter</label>
-        <div className="flex items-center gap-2 mb-5">
-          <select
-            value={chosen?.id ?? ''}
-            onChange={(e) => { setMatterId(e.target.value); setErr(null); }}
-            className="flex-1 min-w-0 bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-2 text-[13px] text-white/90 outline-none focus:border-[#e8b84a]/50"
-            aria-label="The matter the brief belongs to"
-          >
-            <option value="">{loading ? 'Loading your matters…' : 'Choose the matter…'}</option>
-            {options.map((o) => <option key={o.id} value={o.id}>{o.label}{o.sealed ? '  (sealed)' : ''}</option>)}
-          </select>
-          {chosen?.sealed && <span className="inline-flex items-center gap-1 text-[11px] text-white/50"><Lock size={11} /> sealed</span>}
+        {/* The matter the brief is filed in is also the one it draws on: its
+            cases, its record and its appendix are looked up there and in
+            everything beneath it. Choose the CASE, not a folder inside it
+            (Eden, 09-27: "broad matter permissions" — a brief filed in a
+            narrow folder cannot see its own record). */}
+        <div className="flex items-baseline justify-between gap-2 mb-1.5">
+          <label className="text-[11px] uppercase tracking-[0.14em] text-white/40">Matter</label>
+          <span className="text-[12px] text-white/70 truncate" data-testid="home-matter">
+            {chosen ? chosen.label : loading ? 'Loading your matters…' : 'Choose the case this brief belongs to'}
+            {chosen?.sealed && <span className="inline-flex items-center gap-1 text-[11px] text-white/50 ml-2"><Lock size={11} /> sealed</span>}
+          </span>
         </div>
+        <div className="mb-2">
+          <MatterTreePick value={chosen?.id ?? null} onChange={(id) => { setMatterId(id); setErr(null); }} maxHeight={220} />
+        </div>
+        <p className="text-[11px] text-white/40 mb-5">Choose the case itself, not a folder inside it: the brief's cites are looked up in this matter and everything beneath it. You can change it later under Versions.</p>
 
         <button
           type="button"
