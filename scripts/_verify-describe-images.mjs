@@ -98,6 +98,23 @@ console.log('\n[3] words printed in a picture ride along verbatim, under their o
   ok('a sign in the picture is kept verbatim after "Words in the picture:", never blended into the description');
 }
 
+// --- a picture with a paragraph on it --------------------------------------------------
+console.log('\n[3b] a "picture" with real words on it still goes to OCR — the protocol owns words');
+{
+  const png = await scannedPagePng(['']);
+  const db = seed();
+  let ocrCalls = 0;
+  const ocr = async () => { ocrCalls++; return [{ pageNumber: 1, text: 'This memorandum of law is submitted in support of the motion; the Court has jurisdiction under 28 U.S.C. § 1331.' }]; };
+  const slide = { ...PICTURE, label: 'Slide with paragraph', text: 'This memorandum of law is submitted in support of the motion; the Court has jurisdiction.' };
+  await run(db, png, { ocr, describe: async () => slide });
+  const d = docOf(db);
+  assert.strictEqual(ocrCalls, 1, 'forty-plus characters of text → OCR, whatever KIND said');
+  assert(passagesOf(db).every((p) => !p.text.startsWith('[AI description]')), 'the words are OCR passages');
+  assert(!d.metadata.text_status);
+  assert.strictEqual(d.metadata.image_description.label, 'Slide with paragraph');
+  ok('picture + ≥40 chars of printed text → OCR route reads it; label kept');
+}
+
 // --- a page ---------------------------------------------------------------------------
 console.log('\n[4] a photographed page: OCR still reads the words; the label is kept');
 {
