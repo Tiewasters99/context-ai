@@ -203,7 +203,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
-  return <div className="h-full min-h-0 flex flex-col bg-[#0e0e14]">{children}</div>;
+  return <div className="authority-pane h-full min-h-0 flex flex-col bg-[#0e0e14]">{children}</div>;
 }
 
 function Note({ children }: { children: React.ReactNode }) {
