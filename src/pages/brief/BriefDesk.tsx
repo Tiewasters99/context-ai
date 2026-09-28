@@ -79,6 +79,7 @@ import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
 import { provisionQuery } from '@/lib/brief/provision-core';
 import { parseIndexCite, indexCiteFromBrief } from '@/lib/brief/index-cite';
+import { parseDocumentCite } from '@/lib/brief/doc-abbrev';
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
@@ -365,8 +366,10 @@ function DeskEditor(p: DeskProps) {
   // Confirm the highlighted cite without opening it on the desk (a hard copy,
   // another window): the row records no authority, and the log says so.
   const [confirmBusy, setConfirmBusy] = useState(false);
-  // The toolbar's Problem: the cite it is about and the note being typed.
-  const [problemFor, setProblemFor] = useState<string | null>(null);
+  // The toolbar's note card: a Problem ("what is wrong"), or the note that
+  // goes with confirming a cite that was red ("resolved how? what was found?"
+  // — Eden, 09-28: a place to record why a flag went from red to green).
+  const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' } | null>(null);
   const [problemNote, setProblemNote] = useState('');
   const [highlightTick, setHighlightTick] = useState(0);        // re-read the highlight's own status after a press
   const highlightedConfirmation = useMemo(() => {
@@ -951,6 +954,52 @@ function DeskEditor(p: DeskProps) {
     }
   };
 
+  // A record document cited by shorthand — "OATH Pet. at 4", "Bushell Aff.
+  // ¶ 12" — found by NAME in the record: the court-filing abbreviations
+  // expanded (Pet. → Petition; Aff. → Affidavit or Affirmation), every word
+  // of the cite in the document's name in some form. One opens at the pinned
+  // page; several (two petitions) are offered. (Eden, 09-28: "'Pet.' is a
+  // common shorthand … the system should resolve common abbreviations".)
+  const openByDocumentName = async (label: string): Promise<boolean> => {
+    const c = parseDocumentCite(label);
+    if (!c || !c.isDocument) return false;
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    const scope = ids.length ? ids : [root];
+    const escLike = (s: string) => s.replace(/[%_\\]/g, (x) => '\\' + x).replace(/[,()]/g, ' ');
+    p.setBusy(`Looking for ${c.words.map((w) => w[0]).join(' ')} in ${recordRootName ?? 'the record'}…`);
+    try {
+      let q = supabase.from('documents').select('id, title, source_filename').in('matterspace_id', scope).neq('id', meta.id);
+      for (const forms of c.words) {
+        q = q.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
+      }
+      const { data, error } = await q.limit(20);
+      if (error) throw new Error(error.message);
+      type Doc = { id: string; title: string | null; source_filename: string | null };
+      const docs = (data ?? []) as Doc[];
+      p.setBusy(null);
+      if (!docs.length) {
+        p.setNotice(`No document in ${recordRootName ?? 'this matter'} is named with ${c.words.map((w) => w.length > 1 ? `“${w[0]}”${w.length > 2 ? ` (or ${w.slice(1, -1).join(', ')})` : ''}` : `“${w[0]}”`).join(' and ')}. Rename it in the Reader to the words the brief uses, or Add a case.`);
+        return true;
+      }
+      const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
+      const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
+      if (docs.length === 1) {
+        openDocument(docs[0].id, { page: c.page ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched by name: ${c.words.map((w) => w[0]).join(', ')}${pin}.` });
+        return true;
+      }
+      setContentHits({
+        label, number: c.words.map((w) => w[0]).join(' '), from: 'cite',
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: `Named with ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
+      });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The record could not be searched: ${(e as Error).message}`);
+      return true;
+    }
+  };
+
   // A statute, rule or regulation — by number, or by a NAME the brief itself
   // pairs with a number ("the Holder Rule, 16 C.F.R. § 433.2") — found inside
   // the record's documents, not only by their names (Eden, 09-28: Admin Code
@@ -1107,6 +1156,7 @@ function DeskEditor(p: DeskProps) {
       if (await openByReporter(label)) return;
       if (await openByResolver(label)) return;
       if (await openByIndexNumber(label)) return;
+      if (await openByDocumentName(label)) return;
       if (await openByContent(label)) return;
       setSearch(findQueryFor(label));
       return;
@@ -1452,7 +1502,11 @@ function DeskEditor(p: DeskProps) {
         {(
           <button
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void confirmHighlighted('confirmed')}
+            onClick={() => {
+              // a red cite going green: ask what was found and how it was resolved
+              if (highlightedConfirmation?.status === 'problem') { setProblemNote(''); setProblemFor({ raw: highlightedCtx.current?.raw ?? highlighted.current ?? '', kind: 'resolved' }); return; }
+              void confirmHighlighted('confirmed');
+            }}
             disabled={!hasHighlight || !initials.trim() || confirmBusy}
             className={`h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-[12px] disabled:opacity-40 ${highlightedConfirmation?.status === 'confirmed' ? 'border-emerald-400/60 bg-emerald-400/25 text-emerald-100' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
             title={!hasHighlight ? 'Highlight a cite in the brief first; then Confirm logs it with your initials'
@@ -1469,7 +1523,7 @@ function DeskEditor(p: DeskProps) {
             // A card of the desk's own, not window.prompt: Chrome suppresses
             // the browser prompt silently in some sessions, and the button
             // then did nothing (Eden, 09-28, in the Bushell petition).
-            onClick={() => { setProblemNote(''); setProblemFor(highlightedCtx.current?.raw ?? highlighted.current ?? ''); }}
+            onClick={() => { setProblemNote(''); setProblemFor({ raw: highlightedCtx.current?.raw ?? highlighted.current ?? '', kind: 'problem' }); }}
             disabled={!hasHighlight || !initials.trim()}
             className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
             title={hasHighlight ? 'Something is wrong with this cite: say what, and it goes in the log' : 'Highlight a cite in the brief first; then Problem logs what is wrong'}
@@ -1772,10 +1826,12 @@ function DeskEditor(p: DeskProps) {
       {problemFor !== null && (
         <CardDialog
           storageKey="cs.brief.problem-note"
-          title="What is wrong with this cite?"
-          subtitle={`${problemFor || 'The highlighted cite'} — one line goes in the log with your initials (${initials || '…'}) and the time. The cite turns red in the brief.`}
+          title={problemFor.kind === 'problem' ? 'What is wrong with this cite?' : 'Resolved — what was found, and how?'}
+          subtitle={problemFor.kind === 'problem'
+            ? `${problemFor.raw || 'The highlighted cite'} — one line goes in the log with your initials (${initials || '…'}) and the time. The cite turns red in the brief.`
+            : `${problemFor.raw || 'The highlighted cite'} was marked as a problem${highlightedConfirmation?.note ? ` (“${highlightedConfirmation.note}”)` : ''}. Say what was found and how it was fixed; it goes in the log beside the problem, with your initials (${initials || '…'}), and the cite turns green.`}
           onClose={() => setProblemFor(null)}
-          maxWidth={520}
+          maxWidth={560}
         >
           <div className="flex items-center gap-2">
             <input
@@ -1783,20 +1839,22 @@ function DeskEditor(p: DeskProps) {
               value={problemNote}
               onChange={(e) => setProblemNote(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && problemNote.trim()) { const n = problemNote.trim(); setProblemFor(null); void confirmHighlighted('problem', n); }
+                if (e.key === 'Enter' && problemNote.trim()) { const n = problemNote.trim(); const k = problemFor.kind; setProblemFor(null); void confirmHighlighted(k === 'problem' ? 'problem' : 'confirmed', n); }
                 if (e.key === 'Escape') setProblemFor(null);
               }}
-              placeholder="Wrong pin · misquoted · does not support the proposition · overruled…"
-              className="flex-1 min-w-0 h-8 bg-white/[0.04] border border-white/[0.12] rounded px-2 text-[13px] text-white/90 outline-none focus:border-red-300/60"
-              aria-label="What is wrong with this cite"
+              placeholder={problemFor.kind === 'problem'
+                ? 'Wrong pin · misquoted · does not support the proposition · overruled…'
+                : 'Pin corrected to 507 · quotation conformed · sentence tightened to what the case holds…'}
+              className={`flex-1 min-w-0 h-8 bg-white/[0.04] border border-white/[0.12] rounded px-2 text-[13px] text-white/90 outline-none ${problemFor.kind === 'problem' ? 'focus:border-red-300/60' : 'focus:border-emerald-300/60'}`}
+              aria-label={problemFor.kind === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
               data-testid="problem-note"
             />
             <button
-              onClick={() => { const n = problemNote.trim(); if (!n) return; setProblemFor(null); void confirmHighlighted('problem', n); }}
+              onClick={() => { const n = problemNote.trim(); if (!n) return; const k = problemFor.kind; setProblemFor(null); void confirmHighlighted(k === 'problem' ? 'problem' : 'confirmed', n); }}
               disabled={!problemNote.trim() || confirmBusy}
-              className="h-8 px-3 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
+              className={`h-8 px-3 rounded border text-[12px] disabled:opacity-40 ${problemFor.kind === 'problem' ? 'border-red-400/40 bg-red-400/10 text-red-200 hover:bg-red-400/20' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
             >
-              Log it
+              {problemFor.kind === 'problem' ? 'Log it' : 'Confirm, resolved'}
             </button>
           </div>
         </CardDialog>
@@ -2491,7 +2549,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
                 <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
               </div>
               <div className="text-white/45 truncate">{whereRead(r)}</div>
-              {r.note && <div className="text-red-200/80">{r.note}</div>}
+              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{r.status === 'confirmed' ? 'Resolved: ' : ''}{r.note}</div>}
               {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
             </div>
           ))}
