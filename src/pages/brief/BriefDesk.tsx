@@ -1892,8 +1892,8 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials }: {
     <div className="space-y-3" data-testid="confirm-log">
       <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/70">
         <span><span className="text-emerald-300">{counts.confirmed}</span> confirmed · <span className="text-amber-300">{counts.problems}</span> with a problem · {rows.length} {rows.length === 1 ? 'entry' : 'entries'} in all</span>
-        <label className="inline-flex items-center gap-1 text-white/45">signing as
-          <input value={initials} onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))} className="w-12 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-1.5 text-[12px] text-white/85 text-center outline-none focus:border-[#e8b84a]/50" aria-label="Your initials" placeholder="EQ" />
+        <label className="inline-flex items-center gap-1.5 text-white/55">Your initials
+          <input value={initials} onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))} className="w-14 h-7 bg-white/[0.06] border border-[#e8b84a]/40 rounded px-1.5 text-[12px] text-white/90 text-center outline-none focus:border-[#e8b84a] font-medium" aria-label="Your initials" placeholder="type" title="Click and type your initials; they are kept on this computer" />
         </label>
         <button onClick={download} disabled={!rows.length} className="ml-auto inline-flex items-center gap-1 text-[12px] text-[#e8b84a]/80 hover:text-[#e8b84a] disabled:opacity-40">
           <Download size={12} /> CSV
