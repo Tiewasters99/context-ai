@@ -55,7 +55,7 @@ import {
   confirmBrief, loadLatestRun, loadNotes, saveNote,
   type CiteNote, type ConfirmProgress, type DeskRun,
 } from '@/lib/brief/confirm';
-import { passageForPrintedPage } from '@/lib/brief/resolve';
+import { passageForPrintedPage, resolveEntry } from '@/lib/brief/resolve';
 import {
   loadConfirmations, addConfirmation, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
   confirmationsCsv, whereRead, type CiteConfirmation, type ConfirmationStatus,
@@ -472,6 +472,7 @@ function DeskEditor(p: DeskProps) {
   };
   const closeOverlay = () => { if (overlay) window.history.back(); };
 
+  const recordRootRef = useRef<string | null>(null);   // the record the brief draws on (set below, read here)
   const openRow = useCallback((row: TableRow) => {
     markPlace();
     const e = row.entry;
@@ -498,6 +499,25 @@ function DeskEditor(p: DeskProps) {
       caveat,
     });
     if (narrow) openOverlay('authority');
+    // A cite the last machine pass did not find may be in the record NOW (added
+    // since — Frilando, 09-28): look again, live, and open it if it is there.
+    if (e && res && res.status === 'not_in_corpus' && recordRootRef.current) {
+      const root = recordRootRef.current;
+      void (async () => {
+        try {
+          const fresh = await resolveEntry(supabase, root, e);
+          if (fresh.status === 'resolved' && fresh.hits[0]) {
+            citeRef.current = { raw: e.raw, context: '', from: row.from };
+            openDocument(fresh.hits[0].document_id, {
+              passageId: fresh.passage?.passage_id,
+              heading: e.raw,
+              title: fresh.hits[0].title,
+              caveat: 'Found in the record now — it was added after the last Locate pass. Locate every cite again to update the table.',
+            });
+          }
+        } catch { /* the pane already says not in corpus */ }
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- openOverlay reads the latest overlay
   }, [narrow, overlay]);
 
@@ -584,6 +604,7 @@ function DeskEditor(p: DeskProps) {
     }
     return derived && keepsTheSeal(derived) ? derived : meta.matterspace_id;
   }, [chosenRootId, allMatters, recordMatterId, casesMatterId, meta.matterspace_id, keepsTheSeal]);
+  useEffect(() => { recordRootRef.current = recordRootId; }, [recordRootId]);
   const recordRootName = matterName(recordRootId);
   const [showRecordPick, setShowRecordPick] = useState(false);
   const rememberRecordRoot = async (matterId: string) => {
