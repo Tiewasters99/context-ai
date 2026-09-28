@@ -308,7 +308,7 @@ function DeskEditor(p: DeskProps) {
   // ── The human check (migration 103) ─────────────────────────────────────
   // Highlight a cite, Find in corpus, read the page, press Confirm with your
   // initials: one append-only row. The latest row per cite colours the cite
-  // in the brief (green confirmed, amber problem) and fills the Log.
+  // in the brief (green confirmed, red problem) and fills the Log.
   const [confs, setConfs] = useState<CiteConfirmation[]>([]);
   const [showLog, setShowLog] = useState(false);
   // Earlier briefs a reading can be carried from (the Log's "Carry the check
@@ -365,6 +365,9 @@ function DeskEditor(p: DeskProps) {
   // Confirm the highlighted cite without opening it on the desk (a hard copy,
   // another window): the row records no authority, and the log says so.
   const [confirmBusy, setConfirmBusy] = useState(false);
+  // The toolbar's Problem: the cite it is about and the note being typed.
+  const [problemFor, setProblemFor] = useState<string | null>(null);
+  const [problemNote, setProblemNote] = useState('');
   const [highlightTick, setHighlightTick] = useState(0);        // re-read the highlight's own status after a press
   const highlightedConfirmation = useMemo(() => {
     const h = highlightedCtx.current;
@@ -387,7 +390,7 @@ function DeskEditor(p: DeskProps) {
       const when = new Date(row.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
       p.setNotice(status === 'confirmed'
         ? `Logged: ${h.raw} confirmed · ${row.initials} · ${when}. It is green in the brief and in the Log.`
-        : `Logged: a problem with ${h.raw} · ${row.initials} · ${when}. It is amber in the brief and in the Log.`);
+        : `Logged: a problem with ${h.raw} · ${row.initials} · ${when}. It is red in the brief and in the Log.`);
     } catch (e) {
       p.setNotice((e as Error).message);
     } finally {
@@ -1463,12 +1466,12 @@ function DeskEditor(p: DeskProps) {
         {(
           <button
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              const note = window.prompt('What is wrong with this cite? (pin, quotation, proposition…)');
-              if (note && note.trim()) void confirmHighlighted('problem', note.trim());
-            }}
+            // A card of the desk's own, not window.prompt: Chrome suppresses
+            // the browser prompt silently in some sessions, and the button
+            // then did nothing (Eden, 09-28, in the Bushell petition).
+            onClick={() => { setProblemNote(''); setProblemFor(highlightedCtx.current?.raw ?? highlighted.current ?? ''); }}
             disabled={!hasHighlight || !initials.trim()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 text-[12px] text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
             title={hasHighlight ? 'Something is wrong with this cite: say what, and it goes in the log' : 'Highlight a cite in the brief first; then Problem logs what is wrong'}
             data-testid="problem-highlighted"
           >
@@ -1509,7 +1512,7 @@ function DeskEditor(p: DeskProps) {
           {(confirmCounts.confirmed > 0 || confirmCounts.problems > 0) && (
             <span className="text-[11px]">
               <span className="text-emerald-300/90">{confirmCounts.confirmed}</span>
-              {confirmCounts.problems > 0 && <span className="text-amber-300/90"> · {confirmCounts.problems}</span>}
+              {confirmCounts.problems > 0 && <span className="text-red-300/90"> · {confirmCounts.problems}</span>}
             </span>
           )}
         </button>
@@ -1766,6 +1769,38 @@ function DeskEditor(p: DeskProps) {
           />
         </CardDialog>
       )}
+      {problemFor !== null && (
+        <CardDialog
+          storageKey="cs.brief.problem-note"
+          title="What is wrong with this cite?"
+          subtitle={`${problemFor || 'The highlighted cite'} — one line goes in the log with your initials (${initials || '…'}) and the time. The cite turns red in the brief.`}
+          onClose={() => setProblemFor(null)}
+          maxWidth={520}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              value={problemNote}
+              onChange={(e) => setProblemNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && problemNote.trim()) { const n = problemNote.trim(); setProblemFor(null); void confirmHighlighted('problem', n); }
+                if (e.key === 'Escape') setProblemFor(null);
+              }}
+              placeholder="Wrong pin · misquoted · does not support the proposition · overruled…"
+              className="flex-1 min-w-0 h-8 bg-white/[0.04] border border-white/[0.12] rounded px-2 text-[13px] text-white/90 outline-none focus:border-red-300/60"
+              aria-label="What is wrong with this cite"
+              data-testid="problem-note"
+            />
+            <button
+              onClick={() => { const n = problemNote.trim(); if (!n) return; setProblemFor(null); void confirmHighlighted('problem', n); }}
+              disabled={!problemNote.trim() || confirmBusy}
+              className="h-8 px-3 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
+            >
+              Log it
+            </button>
+          </div>
+        </CardDialog>
+      )}
       {contentHits && (
         <CardDialog
           storageKey="cs.brief.content-hits"
@@ -1954,8 +1989,8 @@ function ReadingNote() {
         Orchestrator with the authority open: whether the case supports the proposition, which record page a fact sits on, or a
         proposed rewrite. Nothing is sent until you press Enter.</>)}
       {row('3. Confirm it', <>In the pane header press <span className="text-emerald-300">Confirm</span> if the cite is right, or{' '}
-        <span className="text-amber-300">Problem</span> with a word on what is wrong. Your initials are typed once and remembered.
-        Confirmed cites turn <span className="text-emerald-300">green</span> in the brief, problems <span className="text-amber-300">amber</span>.</>)}
+        <span className="text-red-300">Problem</span> with a word on what is wrong. Your initials are typed once and remembered.
+        Confirmed cites turn <span className="text-emerald-300">green</span> in the brief, problems <span className="text-red-300">red</span>.</>)}
       {row('The Log', <>Every press, newest first: who, when, which authority and page, and a CSV for the file. Nothing in it is
         edited or deleted; a second reading is a second line.</>)}
       {row('Locate every cite', <>The machine's pass over every cite at once: it finds each one in the record and marks what it
@@ -2413,7 +2448,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
   return (
     <div className="space-y-3" data-testid="confirm-log">
       <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/70">
-        <span><span className="text-emerald-300">{counts.confirmed}</span> confirmed · <span className="text-amber-300">{counts.problems}</span> with a problem · {rows.length} {rows.length === 1 ? 'entry' : 'entries'} in all</span>
+        <span><span className="text-emerald-300">{counts.confirmed}</span> confirmed · <span className="text-red-300">{counts.problems}</span> with a problem · {rows.length} {rows.length === 1 ? 'entry' : 'entries'} in all</span>
         <label className="inline-flex items-center gap-1.5 text-white/55">Your initials
           <input value={initials} onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))} className="w-14 h-7 bg-white/[0.06] border border-[#e8b84a]/40 rounded px-1.5 text-[12px] text-white/90 text-center outline-none focus:border-[#e8b84a] font-medium" aria-label="Your initials" placeholder="type" title="Click and type your initials; they are kept on this computer" />
         </label>
@@ -2422,7 +2457,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
         </button>
       </div>
       <p className="text-[11px] text-white/40 leading-snug">
-        How to add to it: highlight a cite in the brief, press <span className="text-[#e8b84a]">Find in corpus</span>, read the page that opens, then press <span className="text-emerald-300">Confirm</span> in the pane header, or <span className="text-amber-300">Problem</span> with a word on what is wrong. Confirmed cites turn green in the brief; problems amber.
+        How to add to it: highlight a cite in the brief, press <span className="text-[#e8b84a]">Find in corpus</span>, read the page that opens, then press <span className="text-emerald-300">Confirm</span> in the pane header, or <span className="text-red-300">Problem</span> with a word on what is wrong. Confirmed cites turn green in the brief; problems red.
       </p>
       {carry && carry.candidates.length > 0 && (
         <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px]" data-testid="carry-confirmations">
@@ -2451,12 +2486,12 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
           {sorted.map((r) => (
             <div key={r.id} className="px-3 py-2 text-[12px]">
               <div className="flex items-baseline gap-2">
-                <span className={r.status === 'confirmed' ? 'text-emerald-300' : 'text-amber-300'}>{r.status === 'confirmed' ? 'Confirmed' : 'Problem'}</span>
+                <span className={r.status === 'confirmed' ? 'text-emerald-300' : 'text-red-300'}>{r.status === 'confirmed' ? 'Confirmed' : 'Problem'}</span>
                 <span className="text-white/85 font-medium truncate">{r.cite_raw}</span>
                 <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
               </div>
               <div className="text-white/45 truncate">{whereRead(r)}</div>
-              {r.note && <div className="text-amber-200/80">{r.note}</div>}
+              {r.note && <div className="text-red-200/80">{r.note}</div>}
               {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
             </div>
           ))}
@@ -2536,7 +2571,7 @@ const BRIEF_CSS = `
 .brief-col::-webkit-scrollbar-button:single-button:horizontal:decrement, .authority-pane ::-webkit-scrollbar-button:single-button:horizontal:decrement, .authority-pane::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M7 1 L3 5 L7 9' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
 .brief-col::-webkit-scrollbar-button:single-button:horizontal:increment, .authority-pane ::-webkit-scrollbar-button:single-button:horizontal:increment, .authority-pane::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M3 1 L7 5 L3 9' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
 ::highlight(brief-confirmed) { background-color: rgba(52,211,153,0.22); text-decoration: underline; text-decoration-color: rgba(52,211,153,0.9); }
-::highlight(brief-problem) { background-color: rgba(251,191,36,0.28); text-decoration: underline wavy; text-decoration-color: rgba(251,191,36,0.9); }
+::highlight(brief-problem) { background-color: rgba(248,113,113,0.30); text-decoration: underline wavy; text-decoration-color: rgba(248,113,113,0.95); }
 .brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
   text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }
 .brief-doc .brief-cite:hover { background: rgba(232,184,74,0.14); }
