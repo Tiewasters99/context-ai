@@ -1899,8 +1899,16 @@ function Shell({ children }: { children: React.ReactNode }) {
 function SaveBadge({ save, error }: { save: Save; error: string | null }) {
   const text = save === 'saved' ? 'Saved' : save === 'saving' ? 'Saving…' : save === 'dirty' ? 'Unsaved'
     : save === 'conflict' ? 'Not saved — changed elsewhere' : 'Not saved';
-  const tone = save === 'saved' ? 'text-white/40' : save === 'conflict' || save === 'error' ? 'text-red-300' : 'text-[#e8b84a]';
-  return <span className={`text-[11px] whitespace-nowrap ${tone}`} title={error ?? undefined}>{text}</span>;
+  // Legible at a glance (Eden, 09-28: could not find the word at all): a mark
+  // and the word, grey when saved, gold while the save is owed, red when it
+  // did not land.
+  const tone = save === 'saved' ? 'text-white/65 border-white/[0.12]' : save === 'conflict' || save === 'error' ? 'text-red-200 border-red-400/40 bg-red-400/10' : 'text-[#e8b84a] border-[#e8b84a]/40 bg-[#e8b84a]/10';
+  const Icon = save === 'saved' ? Check : save === 'saving' ? Loader2 : AlertTriangle;
+  return (
+    <span className={`inline-flex items-center gap-1 h-6 px-2 rounded border text-[12px] whitespace-nowrap ${tone}`} title={error ?? (save === 'saved' ? 'Every change is on the server' : save === 'dirty' ? 'Saves two seconds after you stop typing' : undefined)} data-testid="save-badge">
+      <Icon size={12} className={save === 'saving' ? 'animate-spin' : undefined} /> {text}
+    </span>
+  );
 }
 
 function Banner({ tone, children, onClose }: { tone: 'info' | 'warn'; children: React.ReactNode; onClose?: () => void }) {
