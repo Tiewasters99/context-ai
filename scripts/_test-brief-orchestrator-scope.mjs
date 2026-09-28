@@ -105,6 +105,25 @@ test('B. parseDocketCite: appellate and district docket entries', async () => {
   assert.equal(parseDocketCite('Id., Doc. 23'), null, 'with no docket to carry over there is nothing to open');
 });
 
+test('B. confirmations: the same cite twice in one paragraph is two items', async () => {
+  const { latestFor, latestByCite } = await import('../src/lib/brief/confirmations-core.ts');
+  const ctx = 'When De Camara arrived… A-1315 (SMF ¶ 10). In the spring of 2022… A-1315 (SMF ¶ 11).';
+  const row = (id, pm_from, created_at, status = 'confirmed') => ({ id, document_id: 'b', cite_raw: 'A-1315', context: ctx, pm_from, authority_document_id: null, authority_title: null, authority_page: null, status, note: '', initials: 'EQ', user_id: 'u', created_at });
+  const first = row('1', 100, '2026-09-28T01:00:00Z');
+  assert.equal(latestFor([first], 'A-1315', ctx, 100)?.id, '1', 'the first occurrence is confirmed');
+  assert.equal(latestFor([first], 'A-1315', ctx, 180), null, 'the second occurrence, 80 characters on, is not');
+  const second = row('2', 181, '2026-09-28T01:05:00Z');
+  assert.equal(latestFor([first, second], 'A-1315', ctx, 100)?.id, '1');
+  assert.equal(latestFor([first, second], 'A-1315', ctx, 182)?.id, '2');
+  assert.equal(latestByCite([first, second]).length, 2, 'both count and both paint');
+  const again = row('3', 104, '2026-09-28T01:10:00Z', 'problem');
+  const latest = latestByCite([first, second, again]);
+  assert.equal(latest.length, 2, 'a re-press a few characters off is the same occurrence');
+  assert.equal(latest.find((r) => r.pm_from === 104)?.status, 'problem', 'and the latest press wins');
+  const legacy = row('4', null, '2026-09-28T00:50:00Z');
+  assert.equal(latestFor([legacy], 'A-1315', ctx, 500)?.id, '4', 'a row logged before places were kept counts for any occurrence');
+});
+
 test('B. isSealedIn: own tier or any ancestor\'s', () => {
   const m = [
     { id: 'legal', parent_matterspace_id: null, ai_tier: 'A' },

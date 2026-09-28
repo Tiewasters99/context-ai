@@ -36,7 +36,7 @@ import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
-  Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
+  Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText, Check,
   ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
   ClipboardCheck,
 } from 'lucide-react';
@@ -58,7 +58,7 @@ import {
 import { passageForPrintedPage } from '@/lib/brief/resolve';
 import {
   loadConfirmations, addConfirmation, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
-  confirmationsCsv, type CiteConfirmation, type ConfirmationStatus,
+  confirmationsCsv, whereRead, type CiteConfirmation, type ConfirmationStatus,
 } from '@/lib/brief/confirmations';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
@@ -321,9 +321,27 @@ function DeskEditor(p: DeskProps) {
     problems: latest.filter((r) => r.status === 'problem').length,
   }), [latest]);
   const paneConfirmation = useMemo(
-    () => (pane?.cite ? latestFor(confs, pane.cite.raw, pane.cite.context) : null),
+    () => (pane?.cite ? latestFor(confs, pane.cite.raw, pane.cite.context, pane.cite.from) : null),
     [pane?.cite, confs],
   );
+  // Confirm the highlighted cite without opening it on the desk (a hard copy,
+  // another window): the row records no authority, and the log says so.
+  const confirmHighlighted = async (status: ConfirmationStatus, note = '') => {
+    const h = highlightedCtx.current;
+    if (!h) return;
+    try {
+      const row = await addConfirmation({
+        document_id: meta.id,
+        cite_raw: h.raw, context: h.context, pm_from: h.from,
+        authority_document_id: null, authority_title: null, authority_page: null,
+        status, note, initials,
+      });
+      setConfs((cur) => [...cur, row]);
+      p.setNotice(null);
+    } catch (e) {
+      p.setNotice((e as Error).message);
+    }
+  };
   const confirmCite = async (status: ConfirmationStatus, note: string) => {
     if (!pane?.cite || !pane.docId) return;
     try {
@@ -716,14 +734,27 @@ function DeskEditor(p: DeskProps) {
     for (const row of latest) {
       const raw = row.cite_raw.trim();
       if (!raw) continue;
-      let at = -1;
+      // every occurrence of the words inside the sentence; the one nearest the
+      // recorded place is this row's (the same cite twice in a paragraph)
+      const cands: number[] = [];
       if (row.context) {
         const c = text.indexOf(row.context.trim());
-        if (c >= 0) { const k = text.indexOf(raw, c); if (k >= 0 && k < c + row.context.length + 8) at = k; }
+        if (c >= 0) {
+          const end = c + row.context.trim().length + 8;
+          for (let k = text.indexOf(raw, c); k >= 0 && k < end; k = text.indexOf(raw, k + 1)) cands.push(k);
+        }
+      } else {
+        const k = text.indexOf(raw); if (k >= 0) cands.push(k);
       }
-      if (at < 0 && !row.context) at = text.indexOf(raw);
-      if (at < 0) continue;
-      const pm = plainRangeToPm(proj, at, at + raw.length);
+      if (!cands.length) continue;
+      let pm: { from: number; to: number } | null = null;
+      let bestD = Infinity;
+      for (const at of cands) {
+        const cand = plainRangeToPm(proj, at, at + raw.length);
+        if (!cand) continue;
+        const d = row.pm_from === null ? cands.indexOf(at) : Math.abs(cand.from - row.pm_from);
+        if (d < bestD) { bestD = d; pm = cand; }
+      }
       if (!pm) continue;
       try {
         const a = editor.view.domAtPos(pm.from); const b = editor.view.domAtPos(pm.to);
@@ -1067,24 +1098,55 @@ function DeskEditor(p: DeskProps) {
           aria-label="Brief title"
         />
         <SaveBadge save={save} error={p.saveError} />
-        {hasHighlight && (
+        {(
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void findHighlighted()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
-            title="Find the highlighted authority in Contextspaces and open it beside the brief"
+            disabled={!hasHighlight}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
+            title={hasHighlight ? 'Find the highlighted authority in Contextspaces and open it beside the brief' : 'Highlight a cite in the brief first, then press this to open it beside the brief'}
           >
             <Search size={13} /> Find in corpus
           </button>
         )}
-        {hasHighlight && (
+        {(
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void askAbout()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06]"
-            title="Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter"
+            disabled={!hasHighlight}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06] disabled:opacity-40"
+            title={hasHighlight ? "Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter" : 'Highlight a sentence in the brief first, then ask the Orchestrator about it'}
           >
             <MessageSquareQuote size={13} /> Ask about this
+          </button>
+        )}
+        {/* The check done elsewhere — a hard copy on the desk, Westlaw in another window:
+            the highlighted cite is confirmed (or a problem logged) without opening it here. */}
+        {(
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void confirmHighlighted('confirmed')}
+            disabled={!hasHighlight || !initials.trim()}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40"
+            title={hasHighlight ? 'I checked this cite (here or elsewhere, a hard copy or another source): log it as confirmed with my initials' : 'Highlight a cite in the brief first; then Confirm logs it with your initials'}
+            data-testid="confirm-highlighted"
+          >
+            <Check size={13} /> Confirm
+          </button>
+        )}
+        {(
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const note = window.prompt('What is wrong with this cite? (pin, quotation, proposition…)');
+              if (note && note.trim()) void confirmHighlighted('problem', note.trim());
+            }}
+            disabled={!hasHighlight || !initials.trim()}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 text-[12px] text-amber-200 hover:bg-amber-400/20 disabled:opacity-40"
+            title={hasHighlight ? 'Something is wrong with this cite: say what, and it goes in the log' : 'Highlight a cite in the brief first; then Problem logs what is wrong'}
+            data-testid="problem-highlighted"
+          >
+            <AlertTriangle size={13} /> Problem
           </button>
         )}
         <button
@@ -1962,9 +2024,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials }: {
                 <span className="text-white/85 font-medium truncate">{r.cite_raw}</span>
                 <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
               </div>
-              {(r.authority_title || r.authority_page) && (
-                <div className="text-white/45 truncate">{r.authority_title ?? 'document'}{r.authority_page ? `, p. ${r.authority_page}` : ''}</div>
-              )}
+              <div className="text-white/45 truncate">{whereRead(r)}</div>
               {r.note && <div className="text-amber-200/80">{r.note}</div>}
               {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
             </div>
