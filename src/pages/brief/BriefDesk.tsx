@@ -67,7 +67,7 @@ const storedOf = (r: Resolution): StoredResolution => ({
     : null,
 });
 import {
-  loadConfirmations, addConfirmation, carryConfirmations, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
+  loadConfirmations, addConfirmation, carryConfirmations, latestFor, latestByCite, openProblemForWords, rememberedInitials, rememberInitials, guessInitials,
   confirmationsCsv, whereRead, type CiteConfirmation, type ConfirmationStatus,
 } from '@/lib/brief/confirmations';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
@@ -363,14 +363,25 @@ function DeskEditor(p: DeskProps) {
     () => (pane?.cite ? latestFor(confs, pane.cite.raw, pane.cite.context, pane.cite.from) : null),
     [pane?.cite, confs],
   );
+  // The unanswered flag on this cite's WORDS, in whatever sentence they sat (a
+  // rewritten paragraph is a new occurrence; the flag is still the flag).
+  const paneOpenProblem = useMemo(() => (pane?.cite ? openProblemForWords(confs, pane.cite.raw) : null), [pane?.cite, confs]);
   // Confirm the highlighted cite without opening it on the desk (a hard copy,
   // another window): the row records no authority, and the log says so.
   const [confirmBusy, setConfirmBusy] = useState(false);
   // The toolbar's note card: a Problem ("what is wrong"), or the note that
   // goes with confirming a cite that was red ("resolved how? what was found?"
   // — Eden, 09-28: a place to record why a flag went from red to green).
-  const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' } | null>(null);
+  const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' | 'note'; was?: CiteConfirmation | null } | null>(null);
   const [problemNote, setProblemNote] = useState('');
+  /** The toolbar's Confirm: resolve an open flag on these words, add a note to a green cite, or just confirm. */
+  const confirmFromToolbar = () => {
+    const raw = highlightedCtx.current?.raw ?? highlighted.current ?? '';
+    const open = openProblemForWords(confs, raw);
+    if (open) { setProblemNote(''); setProblemFor({ raw, kind: 'resolved', was: open }); return; }
+    if (highlightedConfirmation?.status === 'confirmed') { setProblemNote(''); setProblemFor({ raw, kind: 'note', was: highlightedConfirmation }); return; }
+    void confirmHighlighted('confirmed');
+  };
   const [highlightTick, setHighlightTick] = useState(0);        // re-read the highlight's own status after a press
   const highlightedConfirmation = useMemo(() => {
     const h = highlightedCtx.current;
@@ -1502,11 +1513,7 @@ function DeskEditor(p: DeskProps) {
         {(
           <button
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => {
-              // a red cite going green: ask what was found and how it was resolved
-              if (highlightedConfirmation?.status === 'problem') { setProblemNote(''); setProblemFor({ raw: highlightedCtx.current?.raw ?? highlighted.current ?? '', kind: 'resolved' }); return; }
-              void confirmHighlighted('confirmed');
-            }}
+            onClick={confirmFromToolbar}
             disabled={!hasHighlight || !initials.trim() || confirmBusy}
             className={`h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-[12px] disabled:opacity-40 ${highlightedConfirmation?.status === 'confirmed' ? 'border-emerald-400/60 bg-emerald-400/25 text-emerald-100' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
             title={!hasHighlight ? 'Highlight a cite in the brief first; then Confirm logs it with your initials'
@@ -1622,6 +1629,7 @@ function DeskEditor(p: DeskProps) {
                   onSearch={setSearch}
                   onChangeAppendix={changeAppendix}
                   confirmation={paneConfirmation}
+              openProblem={paneOpenProblem}
                   initials={initials}
                   onInitials={setInitials}
                   onConfirm={confirmCite}
@@ -1731,6 +1739,7 @@ function DeskEditor(p: DeskProps) {
               onSearch={setSearch}
               onChangeAppendix={changeAppendix}
               confirmation={paneConfirmation}
+              openProblem={paneOpenProblem}
               initials={initials}
               onInitials={setInitials}
               onConfirm={confirmCite}
@@ -1826,10 +1835,12 @@ function DeskEditor(p: DeskProps) {
       {problemFor !== null && (
         <CardDialog
           storageKey="cs.brief.problem-note"
-          title={problemFor.kind === 'problem' ? 'What is wrong with this cite?' : 'Resolved — what was found, and how?'}
+          title={problemFor.kind === 'problem' ? 'What is wrong with this cite?' : problemFor.kind === 'resolved' ? 'Resolved — what was found, and how?' : 'A note on this confirmed cite'}
           subtitle={problemFor.kind === 'problem'
             ? `${problemFor.raw || 'The highlighted cite'} — one line goes in the log with your initials (${initials || '…'}) and the time. The cite turns red in the brief.`
-            : `${problemFor.raw || 'The highlighted cite'} was marked as a problem${highlightedConfirmation?.note ? ` (“${highlightedConfirmation.note}”)` : ''}. Say what was found and how it was fixed; it goes in the log beside the problem, with your initials (${initials || '…'}), and the cite turns green.`}
+            : problemFor.kind === 'resolved'
+              ? `${problemFor.raw || 'The highlighted cite'} was marked as a problem${problemFor.was?.note ? ` (“${problemFor.was.note}”, ${problemFor.was.initials})` : ''}. Say what was found and how it was fixed; it goes in the log beside the problem, with your initials (${initials || '…'}), and the cite turns green.`
+              : `${problemFor.raw || 'The highlighted cite'} is already confirmed${problemFor.was ? ` (${problemFor.was.initials}, ${new Date(problemFor.was.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : ''}. Add what was checked or fixed; it goes in the log as a further confirmed line with your initials (${initials || '…'}).`}
           onClose={() => setProblemFor(null)}
           maxWidth={560}
         >
@@ -1844,7 +1855,9 @@ function DeskEditor(p: DeskProps) {
               }}
               placeholder={problemFor.kind === 'problem'
                 ? 'Wrong pin · misquoted · does not support the proposition · overruled…'
-                : 'Pin corrected to 507 · quotation conformed · sentence tightened to what the case holds…'}
+                : problemFor.kind === 'resolved'
+                  ? 'Pin corrected to 507 · quotation conformed · sentence tightened to what the case holds…'
+                  : 'What was checked or fixed: pin corrected · paragraph redrafted · quotation verified…'}
               className={`flex-1 min-w-0 h-8 bg-white/[0.04] border border-white/[0.12] rounded px-2 text-[13px] text-white/90 outline-none ${problemFor.kind === 'problem' ? 'focus:border-red-300/60' : 'focus:border-emerald-300/60'}`}
               aria-label={problemFor.kind === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
               data-testid="problem-note"
@@ -1854,7 +1867,7 @@ function DeskEditor(p: DeskProps) {
               disabled={!problemNote.trim() || confirmBusy}
               className={`h-8 px-3 rounded border text-[12px] disabled:opacity-40 ${problemFor.kind === 'problem' ? 'border-red-400/40 bg-red-400/10 text-red-200 hover:bg-red-400/20' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
             >
-              {problemFor.kind === 'problem' ? 'Log it' : 'Confirm, resolved'}
+              {problemFor.kind === 'problem' ? 'Log it' : problemFor.kind === 'resolved' ? 'Confirm, resolved' : 'Log the note'}
             </button>
           </div>
         </CardDialog>
