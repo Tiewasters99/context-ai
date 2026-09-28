@@ -66,6 +66,8 @@ import { findQueryFor } from '@/lib/brief/find-query';
 import { parseReporterCites } from '../../../lib/bluebook.mjs';
 import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
+import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
+import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
@@ -717,6 +719,64 @@ function DeskEditor(p: DeskProps) {
       p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
     }
   };
+  // "De Camara Dep. Vol. I 63:21–64:2": a transcript page, no record page. The
+  // appendix's text knows a sheet's transcript pages but not whose deposition
+  // it is; the builder's PAGE MAP (a CSV filed in the appendix's matter) does.
+  // Read once per appendix; the sheet opens with the A-page named, so the
+  // lawyer can add it to the brief.
+  const pageMapRef = useRef<{ matterId: string; rows: PageMapRow[]; title: string } | null>(null);
+  const loadPageMap = async (matterId: string) => {
+    if (pageMapRef.current?.matterId === matterId) return pageMapRef.current;
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id, title, source_filename, storage_path, created_at')
+      .eq('matterspace_id', matterId)
+      .not('storage_path', 'is', null)
+      .or('title.ilike.%page map%,title.ilike.%pagemap%,source_filename.ilike.%page map%,source_filename.ilike.%pagemap%')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) throw new Error(error.message);
+    type Row = { id: string; title: string | null; source_filename: string | null; storage_path: string };
+    const doc = ((data ?? []) as Row[]).find((d) => /\.csv$/i.test(d.source_filename ?? d.storage_path));
+    let rows: PageMapRow[] = [];
+    if (doc) rows = parsePageMap(await (await storageObjectBlob(doc.storage_path)).text());
+    pageMapRef.current = { matterId, rows, title: doc?.title ?? '' };
+    return pageMapRef.current;
+  };
+  const openDepoCite = async (dp: DepoCite, label: string): Promise<void> => {
+    const matterId = recordMatterId;
+    const where = appendixName ?? 'the appendix this brief cites';
+    if (!matterId) {
+      p.setNotice(`“${label}” names a transcript page, not a record page. Open one A-cite first, so the desk knows which appendix this brief cites; then it can look the transcript page up in that appendix's page map.`);
+      return;
+    }
+    p.setBusy('Reading the appendix page map…');
+    let map: { rows: PageMapRow[]; title: string };
+    try { map = await loadPageMap(matterId); } catch (e) { p.setBusy(null); p.setNotice(`The appendix page map could not be read: ${(e as Error).message}`); return; }
+    p.setBusy(null);
+    if (!map.rows.length) {
+      p.setNotice(`“${label}” names a transcript page, not a record page, and ${where} has no page map filed. File the appendix builder's page map (a CSV named “page map”, columns a_page, volume, pdf_page_in_volume, deponent, version, tr_pages) in that matter, and deposition cites will open at their A-page.`);
+      return;
+    }
+    const hits = findDepoPage(map.rows, dp);
+    if (!hits.length) {
+      p.setNotice(`No sheet of ${where} carries ${dp.deponent}${dp.volume !== null ? ` Vol. ${dp.volume}` : ''} p. ${dp.page}, by its page map (“${map.title}”). Check the deponent's name and the page number.`);
+      return;
+    }
+    const h = hits[0];
+    const others = hits.slice(1).filter((o) => o.a_page !== h.a_page).map((o) => `A-${o.a_page} (${o.deponent}${o.version ? `, ${o.version}` : ''})`);
+    const caveat = [
+      `${label.replace(/^\s*\(?\s*(?:citing|see|quoting)\s+/i, '').replace(/[).;,\s]+$/, '')} is A-${h.a_page}${h.tr_pages ? ` (the sheet holds tr. ${h.tr_pages})` : ''}${h.version ? `, ${h.version} transcript` : ''}. The brief cites the transcript without its record page — add A-${h.a_page}.`,
+      others.length ? `Also at ${others.join('; ')}${dp.volume === null ? '; the cite names no volume' : ''}.` : null,
+    ].filter(Boolean).join(' ');
+    const rc: RecordCite = { first: h.a_page, last: null };
+    const sets = await appendixSets(supabase, h.a_page);
+    const v = (sets.get(matterId) ?? []).find((x) => h.a_page >= x.from && h.a_page <= x.to);
+    if (!v) { await openRecordCite(rc, label); p.setNotice(caveat); return; }
+    lastRecord.current = { cite: rc, label };
+    const page = h.pdf_page ?? (await pageOfStamp(supabase, v, h.a_page)).page;
+    openDocument(v.id, { page, heading: label, caveat, appendix: { name: appendixName ?? map.title } });
+  };
   // "change": with an A-cite open, re-ask for that number and re-open it
   // there; otherwise list every appendix and only keep the choice.
   const changeAppendix = () => {
@@ -853,6 +913,9 @@ function DeskEditor(p: DeskProps) {
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     const cite = parseRecordCite(label);
     if (!cite) {
+      // "De Camara Dep. Vol. I 63:21–64:2": the appendix sheet, through its page map.
+      const dp = parseDepoCite(label);
+      if (dp) { await openDepoCite(dp, label); return; }
       // "Id., Doc. 23": the docket number comes from the sentence ("No. 26-2098, Doc. 18. … Id., Doc. 23")
       // or, failing that, from the last docket cite opened on this desk.
       const ctx = highlightedCtx.current?.raw === label ? highlightedCtx.current.context : '';
