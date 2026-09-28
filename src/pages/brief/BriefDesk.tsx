@@ -748,8 +748,17 @@ function DeskEditor(p: DeskProps) {
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     const cite = parseRecordCite(label);
     if (!cite) {
-      const dk = parseDocketCite(label);
-      if (dk && await openDocketCite(dk, label)) return;
+      // "Id., Doc. 23": the docket number comes from the sentence ("No. 26-2098, Doc. 18. … Id., Doc. 23")
+      // or, failing that, from the last docket cite opened on this desk.
+      const ctx = highlightedCtx.current?.raw === label ? highlightedCtx.current.context : '';
+      const before = ctx ? ctx.slice(0, Math.max(0, ctx.indexOf(label))) : '';
+      const inSentence = [...before.matchAll(/No\.\s*(\d{2}-\d{4,5})/g)].pop()?.[1] ?? null;
+      const dk = parseDocketCite(label, inSentence ?? lastDocket.current);
+      if (dk) { lastDocket.current = dk.docket ?? lastDocket.current; if (await openDocketCite(dk, label)) return; }
+      else if (/^(?:Id\.,?\s*)?(?:Doc\.|Dkt\.)\s*\d/i.test(label.trim())) {
+        p.setNotice('Which docket is “Id.” here? Highlight the cite together with the docket number it follows (No. 26-2098, Doc. 18), or open one full docket cite first.');
+        return;
+      }
       if (await openByReporter(label)) return;
       setSearch(findQueryFor(label));
       return;
@@ -759,6 +768,7 @@ function DeskEditor(p: DeskProps) {
 
   // "No. 26-2098, Doc. 5" / "ECF 80": the docket sheet in the record at the
   // page listing the entry; the filed paper, when the pull holds it, is named.
+  const lastDocket = useRef<string | null>(null);
   const openDocketCite = async (dk: ReturnType<typeof parseDocketCite>, label: string): Promise<boolean> => {
     if (!dk) return false;
     try {
@@ -775,7 +785,9 @@ function DeskEditor(p: DeskProps) {
         heading: label,
         title: hit.title,
         caveat: [
-          hit.basis === 'entry' ? `Docket entry ${dk.entry} is listed on this page.` : `Entry ${dk.entry} was not found in the sheet's text; showing its first page.`,
+          hit.basis === 'entry' ? `Docket entry ${dk.entry} is listed on this page.`
+            : hit.basis === 'estimate' ? `Entry ${dk.entry}'s line is not in the sheet's text layer; this is the page where its neighbours are listed.`
+              : `Entry ${dk.entry} was not found in the sheet's text; showing its first page.`,
           hit.papers ? `The filed papers are in “${hit.papers.title}”.` : null,
           `(${where})`,
         ].filter(Boolean).join(' '),

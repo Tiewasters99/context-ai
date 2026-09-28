@@ -20,17 +20,23 @@ export interface DocketCite {
   kind: 'appellate' | 'district';
 }
 
-/** "No. 26-2098, Doc. 5" / "No. 26-2098, Dkt. 5" / "Doc. 18" (docket stated earlier) → appellate; "ECF 80" / "ECF No. 80" / "Dkt. 80" → district. */
-export function parseDocketCite(text: string): DocketCite | null {
+/**
+ * "No. 26-2098, Doc. 5" / "No. 26-2098, Dkt. 5" → appellate; "Id., Doc. 23" / "Doc. 23" → appellate, the docket
+ * carried over from the cite before it (`fallbackDocket`, read from the sentence or the last docket opened);
+ * "ECF 80" / "ECF No. 80" → district.
+ */
+export function parseDocketCite(text: string, fallbackDocket: string | null = null): DocketCite | null {
   const s = text.replace(/\s+/g, ' ').trim();
   let m = /^(?:No\.|Nos\.)?\s*(\d{2}-\d{4,5}),?\s*(?:Doc\.|Docket|Dkt\.|D\.E\.|ECF)\s*(?:No\.)?\s*(\d{1,4})\s*[.,;)]?$/i.exec(s);
   if (m) return { docket: m[1], entry: Number(m[2]), kind: 'appellate' };
+  m = /^(?:Id\.,?\s*)?(?:Doc\.|Dkt\.)\s*(?:No\.)?\s*(\d{1,4})\s*[.,;)]?$/i.exec(s);
+  if (m) return fallbackDocket ? { docket: fallbackDocket, entry: Number(m[1]), kind: 'appellate' } : null;
   m = /^(?:ECF|D\.E\.|Dkt\.|Docket)\s*(?:No\.)?\s*(\d{1,4})(?:\s*(?:at|,)\s*\d{1,4}(?:[–-]\d{1,4})?)?\s*[.,;)]?$/i.exec(s);
   if (m) return { docket: null, entry: Number(m[1]), kind: 'district' };
   return null;
 }
 
-export interface DocketHit { documentId: string; title: string; page: number; basis: 'entry' | 'start'; papers?: { documentId: string; title: string } | null }
+export interface DocketHit { documentId: string; title: string; page: number; basis: 'entry' | 'estimate' | 'start'; papers?: { documentId: string; title: string } | null }
 
 /**
  * The docket sheet and the page listing the entry. Appellate: a document titled
@@ -64,13 +70,29 @@ export async function findDocketEntry(client: QueryClient, cite: DocketCite): Pr
   // A PACER line: the filed date, then the entry number. The text layer of a
   // district report can run them together ("04/09/202680 MEMORANDUM"), so the
   // year is pinned to four digits and the space after it is optional.
-  const re = new RegExp(`(?:^|\\n|\\s)\\d{1,2}/\\d{1,2}/\\d{4}\\s*${cite.entry}\\s`);
-  const hit = ((pages ?? []) as { page_start: number | null; text: string | null }[]).find((p) => p.text && re.test(p.text));
+  // Every "<date> <entry>" pair on the sheet → the page it is on. An entry whose
+  // line the text layer lost (the 26-2098 sheet lacks 6–20) is placed between
+  // its neighbours: the page of the nearest listed entry below it.
+  const lineRe = /(?:^|\n|\s)\d{1,2}\/\d{1,2}\/\d{4}\s*(\d{1,4})\s/g;
+  const where = new Map<number, number>();
+  for (const p of (pages ?? []) as { page_start: number | null; text: string | null }[]) {
+    if (!p.text || p.page_start == null) continue;
+    for (const m of p.text.matchAll(lineRe)) {
+      const n = Number(m[1]);
+      if (n > 0 && n < 10000 && !where.has(n)) where.set(n, p.page_start);
+    }
+  }
+  let hit: { page_start: number } | null = where.has(cite.entry) ? { page_start: where.get(cite.entry)! } : null;
+  let estimated = false;
+  if (!hit && where.size) {
+    const below = [...where.keys()].filter((n) => n < cite.entry).sort((a, b) => b - a)[0];
+    if (below !== undefined) { hit = { page_start: where.get(below)! }; estimated = true; }
+  }
   let papers: DocketHit['papers'] = null;
   if (cite.kind === 'appellate') {
     const { data: docs } = await client.from('documents').select('id, title').ilike('title', `${cite.docket}_Documents%`).limit(1);
     const d = ((docs ?? []) as { id: string; title: string }[])[0];
     if (d) papers = { documentId: d.id, title: d.title };
   }
-  return { documentId: sheet.id, title: sheet.title, page: hit?.page_start ?? 1, basis: hit ? 'entry' : 'start', papers };
+  return { documentId: sheet.id, title: sheet.title, page: hit?.page_start ?? 1, basis: hit ? (estimated ? 'estimate' : 'entry') : 'start', papers };
 }
