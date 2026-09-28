@@ -1,7 +1,15 @@
 // node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-index-cite.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseIndexCite } from '../src/lib/brief/index-cite.ts';
+import { parseIndexCite, indexCiteFromBrief } from '../src/lib/brief/index-cite.ts';
+
+test('a caption highlighted without its number takes the number the brief gives after it', () => {
+  const brief = "In *Matter of DiSanto v. New York City Dep’t of Health & Mental Hygiene*, Index No. 508835/2024 (Sup. Ct., Kings County), the court signed an order to show cause.";
+  const c = indexCiteFromBrief("Matter of DiSanto v. New York City Dep’t of Health & Mental Hygiene", brief);
+  assert.equal(c?.number, '508835');
+  assert.equal(c?.year, '2024');
+  assert.equal(indexCiteFromBrief('Matter of Trump v. Engoron', brief), null);
+});
 
 test('a New York index number: the NYSCEF filename forms, the caption forms, the first party', () => {
   const c = parseIndexCite("Matter of DiSanto v. New York City Dep’t of Health & Mental Hygiene, Index No. 508835/2024 (Sup. Ct., Kings County)");
