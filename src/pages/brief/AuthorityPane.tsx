@@ -87,7 +87,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.cite && state.docId && onConfirm && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5" data-testid="pane-confirm">
             {confirmation && (
-              <span className={`text-[11px] ${confirmation.status === 'confirmed' ? 'text-emerald-300/90' : 'text-amber-300/90'}`}>
+              <span className={`text-[11px] ${confirmation.status === 'confirmed' ? 'text-emerald-300/90' : 'text-red-300/90'}`}>
                 {confirmation.status === 'confirmed' ? 'Confirmed' : 'Problem noted'} · {confirmation.initials} · {new Date(confirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                 {confirmation.status === 'problem' && confirmation.note ? ` — ${confirmation.note}` : ''}
               </span>
@@ -103,7 +103,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
             <button
               onClick={() => setProblemOpen((v) => !v)}
               disabled={busy}
-              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-400/10 text-[12px] text-amber-200 hover:bg-amber-400/20"
+              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20"
               title="Something is wrong with this cite: say what, and it goes in the log"
             >
               <AlertTriangle size={13} /> Problem
@@ -126,10 +126,10 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
                   onChange={(e) => setProblemNote(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press('problem', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
                   placeholder="What is wrong (pin, quotation, proposition…)?"
-                  className="flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none focus:border-amber-300/50"
+                  className="flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none focus:border-red-300/50"
                   aria-label="What is wrong with this cite"
                 />
-                <button onClick={() => void press('problem', problemNote)} disabled={busy || !problemNote.trim()} className="h-7 px-2 rounded border border-amber-400/40 text-[12px] text-amber-200 disabled:opacity-50">Log it</button>
+                <button onClick={() => void press('problem', problemNote)} disabled={busy || !problemNote.trim()} className="h-7 px-2 rounded border border-red-400/40 text-[12px] text-red-200 disabled:opacity-50">Log it</button>
               </div>
             )}
           </div>
