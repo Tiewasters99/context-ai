@@ -326,17 +326,24 @@ function DeskEditor(p: DeskProps) {
   const confirmCite = async (status: ConfirmationStatus, note: string) => {
     if (!pane?.cite || !pane.docId) return;
     try {
+      // a record volume is opened by id with no title in hand: name it for the log
+      let title = pane.docTitle;
+      if (!title) {
+        const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+        title = (data as { title: string | null } | null)?.title ?? null;
+      }
       const row = await addConfirmation({
         document_id: meta.id,
         cite_raw: pane.cite.raw,
         context: pane.cite.context,
         pm_from: pane.cite.from,
         authority_document_id: pane.docId,
-        authority_title: pane.docTitle,
+        authority_title: title,
         authority_page: pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
         status, note, initials,
       });
       setConfs((cur) => [...cur, row]);
+      p.setNotice(null);
     } catch (e) {
       p.setNotice((e as Error).message);
     }
