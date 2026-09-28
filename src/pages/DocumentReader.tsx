@@ -2253,8 +2253,22 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       sel?.removeAllRanges();
       sel?.addRange(cur);
     }
-    const pane = contentRef.current;
-    if (!cur || !pane) return;
+    if (!cur) return;
+    // Scroll whatever actually scrolls around the match. In 'pane' chrome (the
+    // Brief Desk) the scroller is .reader-scroll, not the content element, and
+    // scrolling the wrong one left every match painted but out of view
+    // (Eden, 09-28: "Find in text in cases is not working").
+    let node: Node | null = cur.startContainer;
+    let scroller: HTMLElement | null = null;
+    while (node && node !== document.body) {
+      if (node instanceof HTMLElement) {
+        const cs = getComputedStyle(node);
+        if (/(auto|scroll)/.test(cs.overflowY) && node.scrollHeight > node.clientHeight + 1) { scroller = node; break; }
+      }
+      node = node.parentNode;
+    }
+    const pane = scroller ?? contentRef.current;
+    if (!pane) return;
     const rect = cur.getBoundingClientRect();
     const pr = pane.getBoundingClientRect();
     pane.scrollBy({ top: rect.top - pr.top - pr.height / 2 + rect.height / 2, behavior: 'smooth' });
