@@ -767,8 +767,13 @@ function DeskEditor(p: DeskProps) {
           const end = c + row.context.trim().length + 8;
           for (let k = text.indexOf(raw, c); k >= 0 && k < end; k = text.indexOf(raw, k + 1)) cands.push(k);
         }
-      } else {
-        const k = text.indexOf(raw); if (k >= 0) cands.push(k);
+      }
+      if (!cands.length) {
+        // the sentence is not found as stored (edited since, or a footnote's words were
+        // captured with it): fall back to every occurrence of the cite in the brief, and
+        // let the recorded place pick
+        for (let k = text.indexOf(raw); k >= 0; k = text.indexOf(raw, k + 1)) cands.push(k);
+        if (row.pm_from === null && cands.length > 1) cands.length = 1;
       }
       if (!cands.length) continue;
       let pm: { from: number; to: number } | null = null;
@@ -868,7 +873,15 @@ function DeskEditor(p: DeskProps) {
         if (highlighted.current !== text) setHighlightTick((t) => t + 1);
         highlighted.current = text; setHasHighlight(true);
         // the sentence the cite sits in = its paragraph, for the log and for finding it again after edits
-        try { highlightedCtx.current = { raw: text, context: editor.state.doc.resolve(from).parent.textContent.replace(/\s+/g, ' ').trim(), from }; } catch { highlightedCtx.current = { raw: text, context: '', from }; }
+        // the sentence's paragraph WITHOUT its footnotes' words (a footnote is an inline
+        // node; textContent would splice its text into the sentence — 09-28, the pronoun
+        // note made a paragraph's cites impossible to find again)
+        try {
+          const para = editor.state.doc.resolve(from).parent;
+          let ctx = '';
+          para.forEach((child) => { if (child.type.name !== 'footnote') ctx += child.textContent; });
+          highlightedCtx.current = { raw: text, context: ctx.replace(/\s+/g, ' ').trim(), from };
+        } catch { highlightedCtx.current = { raw: text, context: '', from }; }
       }
       else if (!text) setHasHighlight(false);
       (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
