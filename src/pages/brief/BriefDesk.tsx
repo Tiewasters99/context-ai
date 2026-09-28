@@ -1057,6 +1057,21 @@ function DeskEditor(p: DeskProps) {
     p.setNotice('Your version is on the clipboard as Markdown.');
   };
 
+  // The machine pass lives with the cite table, not in the writing toolbar
+  // (Eden, 09-28: "it should be a bit hidden so it's not the first thing you
+  // are drawn to"). Still one click, still shows its counts and progress.
+  const locateControl = (
+    <ConfirmControl
+      counts={run?.counts ?? null}
+      changedSince={changedSince}
+      progress={progress}
+      disabled={!!p.busy || save === 'conflict'}
+      onConfirm={() => void confirm(false)}
+      onRecheckAll={() => void confirm(true)}
+      onStop={() => abortRef.current?.abort()}
+      hasRun={!!run}
+    />
+  );
   const topBlock = (
     <>
       {p.editable && editor && (
@@ -1066,18 +1081,6 @@ function DeskEditor(p: DeskProps) {
           onBack={returnPoint ? backToPlace : undefined}
           onSnapshot={() => void snapshot(null)}
           busy={!!p.busy || !!progress}
-          confirm={
-            <ConfirmControl
-              counts={run?.counts ?? null}
-              changedSince={changedSince}
-              progress={progress}
-              disabled={!!p.busy || save === 'conflict'}
-              onConfirm={() => void confirm(false)}
-              onRecheckAll={() => void confirm(true)}
-              onStop={() => abortRef.current?.abort()}
-              hasRun={!!run}
-            />
-          }
         />
       )}
 
@@ -1302,6 +1305,7 @@ function DeskEditor(p: DeskProps) {
           <CiteTable
             width={tableW}
             variant="column"
+            header={locateControl}
             rows={rows}
             notes={notes}
             me={me}
@@ -1364,9 +1368,12 @@ function DeskEditor(p: DeskProps) {
             onLocate={locate}
             onSaveNote={onSaveNote}
             header={
-              <button onClick={() => setTableCollapsed((v) => !v)} className="text-white/40 hover:text-white mr-1" title={tableCollapsed ? 'Show the cite table' : 'Collapse the cite table'}>
-                {tableCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
+              <>
+                <button onClick={() => setTableCollapsed((v) => !v)} className="text-white/40 hover:text-white mr-1" title={tableCollapsed ? 'Show the cite table' : 'Collapse the cite table'}>
+                  {tableCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                {locateControl}
+              </>
             }
           />
         </div>
@@ -1400,9 +1407,12 @@ function DeskEditor(p: DeskProps) {
               onLocate={locate}
               onSaveNote={onSaveNote}
               header={
-                <button onClick={closeOverlay} className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the brief">
-                  <ArrowLeft size={15} />
-                </button>
+                <>
+                  <button onClick={closeOverlay} className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the brief">
+                    <ArrowLeft size={15} />
+                  </button>
+                  {locateControl}
+                </>
               }
             />
           )}
