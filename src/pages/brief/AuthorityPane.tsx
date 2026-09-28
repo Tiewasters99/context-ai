@@ -49,13 +49,20 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   /** Confirm / Problem: one append-only row. */
   onConfirm?: (status: ConfirmationStatus, note: string) => Promise<void>;
 }) {
-  const [problemOpen, setProblemOpen] = useState(false);
+  // The note box: 'problem' asks what is wrong; 'resolved' asks what was found
+  // and how it was fixed, when a red cite is being confirmed (the note sits in
+  // the log beside the problem — Eden, 09-28).
+  const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved'>(false);
   const [problemNote, setProblemNote] = useState('');
   const [busy, setBusy] = useState(false);
   const press = async (status: ConfirmationStatus, note = '') => {
     if (!onConfirm || busy) return;
     setBusy(true);
     try { await onConfirm(status, note); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
+  };
+  const confirmPress = () => {
+    if (confirmation?.status === 'problem') { setProblemNote(''); setProblemOpen('resolved'); return; }
+    void press('confirmed');
   };
   if (!state) {
     return (
@@ -93,7 +100,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
               </span>
             )}
             <button
-              onClick={() => void press('confirmed')}
+              onClick={confirmPress}
               disabled={busy || !(initials ?? '').trim()}
               className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-50"
               title="I read this page: the cite is right. One row in the log, with my initials and the time."
@@ -101,7 +108,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
               <Check size={13} /> {confirmation ? 'Confirm again' : 'Confirm'}
             </button>
             <button
-              onClick={() => setProblemOpen((v) => !v)}
+              onClick={() => { setProblemNote(''); setProblemOpen((v) => (v === 'problem' ? false : 'problem')); }}
               disabled={busy}
               className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20"
               title="Something is wrong with this cite: say what, and it goes in the log"
@@ -124,12 +131,14 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
                   autoFocus
                   value={problemNote}
                   onChange={(e) => setProblemNote(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press('problem', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
-                  placeholder="What is wrong (pin, quotation, proposition…)?"
-                  className="flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none focus:border-red-300/50"
-                  aria-label="What is wrong with this cite"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
+                  placeholder={problemOpen === 'problem' ? 'What is wrong (pin, quotation, proposition…)?' : 'Resolved how? What was found (pin corrected, sentence tightened…)?'}
+                  className={`flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none ${problemOpen === 'problem' ? 'focus:border-red-300/50' : 'focus:border-emerald-300/50'}`}
+                  aria-label={problemOpen === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
                 />
-                <button onClick={() => void press('problem', problemNote)} disabled={busy || !problemNote.trim()} className="h-7 px-2 rounded border border-red-400/40 text-[12px] text-red-200 disabled:opacity-50">Log it</button>
+                <button onClick={() => void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote)} disabled={busy || !problemNote.trim()} className={`h-7 px-2 rounded border text-[12px] disabled:opacity-50 ${problemOpen === 'problem' ? 'border-red-400/40 text-red-200' : 'border-emerald-400/40 text-emerald-200'}`}>
+                  {problemOpen === 'problem' ? 'Log it' : 'Confirm, resolved'}
+                </button>
               </div>
             )}
           </div>
