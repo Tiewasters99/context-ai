@@ -49,13 +49,23 @@ import {
   importBriefFromDocument, exportBrief, type BriefMeta, type SnapshotRow, type ImportResult,
 } from '@/lib/brief/draft-store';
 import {
-  applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow,
+  applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow, type DeskEntry, type StoredResolution,
 } from '@/lib/brief/anchor';
 import {
   confirmBrief, loadLatestRun, loadNotes, saveNote,
   type CiteNote, type ConfirmProgress, type DeskRun,
 } from '@/lib/brief/confirm';
-import { passageForPrintedPage, resolveEntry } from '@/lib/brief/resolve';
+import { passageForPrintedPage, resolveEntry, type Resolution } from '@/lib/brief/resolve';
+
+/** A live resolveEntry() answer, cut down to what the pane and the table read. */
+const storedOf = (r: Resolution): StoredResolution => ({
+  status: r.status,
+  pin: r.pin,
+  hits: r.hits.map((h) => ({ document_id: h.document_id, title: h.title, how: h.how, star_level: h.star_level })),
+  passage: r.passage
+    ? { passage_id: r.passage.passage_id, page_start: r.passage.page_start, basis: r.passage.basis, caveat: r.passage.caveat, printed_page: r.passage.printed_page }
+    : null,
+});
 import {
   loadConfirmations, addConfirmation, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
   confirmationsCsv, whereRead, type CiteConfirmation, type ConfirmationStatus,
@@ -540,6 +550,11 @@ function DeskEditor(p: DeskProps) {
               title: fresh.hits[0].title,
               caveat: 'Found in the record now — it was added after the last Locate pass. Locate every cite again to update the table.',
             });
+          } else if (fresh.status === 'two_copies') {
+            // More than one copy (Pioneer ×3, 09-28): the pane offers them,
+            // instead of keeping the pass's stale "not in corpus".
+            const key = rowKey(row);
+            setPane((cur) => (cur && cur.rowKey === key ? { ...cur, entry: { ...e, resolution: storedOf(fresh) } } : cur));
           }
         } catch { /* the pane already says not in corpus */ }
       })();
@@ -817,6 +832,40 @@ function DeskEditor(p: DeskProps) {
     return false;
   };
 
+  // The reporter index missed: the same resolver the Locate pass uses, bound
+  // to the record (same case name AND year counts — Pioneer's file opens
+  // with its S. Ct. cite only). One copy opens; several are offered.
+  const openByResolver = async (label: string): Promise<boolean> => {
+    const root = recordRootRef.current;
+    if (!root) return false;
+    let fresh: Resolution;
+    try {
+      fresh = await resolveEntry(supabase, root, { citation: label, case_name: null, pin: null });
+    } catch { return false; }
+    if (fresh.status === 'resolved' && fresh.hits[0]) {
+      openDocument(fresh.hits[0].document_id, {
+        passageId: fresh.passage?.passage_id,
+        heading: label,
+        title: fresh.hits[0].title,
+        caveat: [
+          fresh.hits[0].how === 'name' ? 'Matched by the case name and the year: this file opens with another of the case\'s reporter cites.' : null,
+          fresh.passage && fresh.passage.basis !== 'printed' ? fresh.passage.caveat : null,
+        ].filter(Boolean).join(' ') || null,
+      });
+      return true;
+    }
+    if (fresh.status === 'two_copies') {
+      markPlace();
+      const cite = citeRef.current; citeRef.current = null;
+      // The pane's chooser reads only the entry's resolution, citation and name.
+      const entry = { raw: label, citation: label, case_name: null, pin: null, resolution: storedOf(fresh) } as unknown as DeskEntry;
+      setPane({ rowKey: null, entry, heading: label, stale: false, docId: null, docTitle: null, goto: null, caveat: null, cite: cite ?? null });
+      if (narrow) openOverlay('authority');
+      return true;
+    }
+    return false;
+  };
+
   // "Does the case support this?" — the proposition and the authority, into
   // the Orchestrator's box. Nothing is sent until the lawyer presses Enter.
   const askAbout = async () => {
@@ -928,6 +977,7 @@ function DeskEditor(p: DeskProps) {
         return;
       }
       if (await openByReporter(label)) return;
+      if (await openByResolver(label)) return;
       setSearch(findQueryFor(label));
       return;
     }
