@@ -189,6 +189,21 @@ type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
 
+// A find query as a regex: each word literal, any whitespace between words
+// (a transcript's text is broken by line; the brief quotes it in one line).
+export function phraseRegex(q: string): RegExp {
+  const words = q.trim().split(/\s+/).filter(Boolean);
+  const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(words.map(esc).join('\\s+'), 'gi');
+}
+// The same query for Postgres LIKE: wildcards escaped ("100%" finds "100%"),
+// any run of whitespace a wildcard. Wider than the regex; the regex decides.
+export function likePattern(q: string): string {
+  const words = q.trim().split(/\s+/).filter(Boolean);
+  const esc = (w: string) => w.replace(/[%_\\]/g, (c) => '\\' + c);
+  return '%' + words.map(esc).join('%') + '%';
+}
+
 // Find every occurrence of `needle` in the text of a rendered document,
 // as DOM Ranges. The text nodes are joined into one string first, so a
 // hit may run across inline boundaries — a brief sets the case name in
@@ -196,20 +211,18 @@ type Match = { page: number; index: number };
 // has to be found as one thing.
 function findInRendered(root: HTMLElement, needle: string): Range[] {
   // The same text walk the margin marks anchor to (src/lib/text-anchor.ts).
-  const { text: flat, pieces } = flattenText(root);
-  // A few letters change length when lower-cased (İ, ß…), which would put
-  // every offset after them off; match case-sensitively then, rather than
-  // light the wrong words.
-  const hay = flat.toLowerCase();
-  const exact = hay.length !== flat.length;
-  const text = exact ? flat : hay;
-  const q = exact ? needle : needle.toLowerCase();
+  const { text, pieces } = flattenText(root);
   const ranges: Range[] = [];
-  if (!q) return ranges;
+  if (!needle.trim()) return ranges;
+  // Case-insensitive in the regex engine (no lower-casing, which changes
+  // some letters' length and would put every later offset off), and any
+  // whitespace between the words: a transcript's lines break mid-phrase.
+  const re = phraseRegex(needle);
   let i = 0; // piece cursor — hits arrive in document order
-  let at = text.indexOf(q);
-  while (at !== -1) {
-    const end = at + q.length;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (!m[0].length) { re.lastIndex += 1; continue; }
+    const at = m.index;
+    const end = at + m[0].length;
     while (i < pieces.length - 1 && pieces[i + 1].start <= at) i++;
     let j = i;
     while (j < pieces.length - 1 && pieces[j + 1].start < end) j++;
@@ -217,7 +230,6 @@ function findInRendered(root: HTMLElement, needle: string): Range[] {
     r.setStart(pieces[i].node, at - pieces[i].start);
     r.setEnd(pieces[j].node, end - pieces[j].start);
     ranges.push(r);
-    at = text.indexOf(q, end);
   }
   return ranges;
 }
@@ -383,6 +395,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const [matches, setMatches] = useState<Match[]>([]);
   const [matchIdx, setMatchIdx] = useState(0);
   const [searching, setSearching] = useState(false);
+  /** A find has run for the current query (so "Not found" means it looked). */
+  const [searched, setSearched] = useState(false);
   const pageTextCacheRef = useRef<string[]>([]);
   const textRangesRef = useRef<Range[]>([]);
   // React 19 resets innerHTML whenever this object is a new one, which a
@@ -964,6 +978,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     hits.replaceChildren();
     const q = searchQueryRef.current.trim().toLowerCase();
     if (!q) return null;
+    const re = phraseRegex(q);
     const onPage = matchesRef.current.map((m, i) => ({ ...m, i })).filter((m) => m.page === p);
     if (!onPage.length) return null;
     const currentOrdinal = onPage.findIndex((m) => m.i === matchIdxRef.current);
@@ -973,12 +988,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     let currentEl: HTMLElement | null = null;
     const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const hay = (node.textContent ?? '').toLowerCase();
-      let at = hay.indexOf(q);
-      while (at !== -1) {
+      const hay = node.textContent ?? '';
+      re.lastIndex = 0;
+      for (let m = re.exec(hay); m; m = re.exec(hay)) {
+        const at = m.index;
+        if (!m[0].length) { re.lastIndex += 1; continue; }
         const range = document.createRange();
         range.setStart(node, at);
-        range.setEnd(node, at + q.length);
+        range.setEnd(node, at + m[0].length);
         const isCurrent = ordinal === currentOrdinal;
         for (const r of Array.from(range.getClientRects())) {
           if (!r.width || !r.height) continue;
@@ -992,7 +1009,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           if (isCurrent && !currentEl) currentEl = el;
         }
         ordinal += 1;
-        at = hay.indexOf(q, at + q.length);
       }
     }
     return currentEl;
@@ -2347,6 +2363,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (!q) {
       setMatches([]);
       setMatchIdx(0);
+      setSearched(false);
       clearTextMatches();
       return;
     }
@@ -2358,6 +2375,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       textRangesRef.current = ranges;
       setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
       setMatchIdx(0);
+      setSearched(true);
       showTextMatch(ranges, 0);
       return;
     }
@@ -2367,67 +2385,73 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (!pdf) return;
 
     setSearching(true);
-    const needle = q.toLowerCase();
+    // A phrase matches across any whitespace: a transcript's text is broken
+    // by line ("individual\nstudents"), and the brief quotes it in one line.
+    const re = phraseRegex(q);
     const found: Match[] = [];
+    const countIn = (text: string, page: number) => {
+      re.lastIndex = 0;
+      for (let m = re.exec(text); m; m = re.exec(text)) {
+        found.push({ page, index: m.index });
+        if (!m[0].length) re.lastIndex += 1;
+      }
+    };
 
-    // The indexed text first. It is what search reads everywhere else in
-    // the app, it is one query, and for most OCR'd books it is the only
-    // place the words exist: the scan's PDF carries no text layer at all
-    // (Brandeis's Other People's Money found nothing for "money"). Hits
-    // name the page; the boxes over the words come from the text layer
-    // when the page has one.
-    if (id) {
-      // Escape LIKE's own wildcards so "100%" finds "100%". The backslash is
-      // spelled out: it is the pattern's escape character as well.
-      const bs = String.fromCharCode(92);
-      const pattern = '%' + q.replace(new RegExp('[%_' + bs + ']', 'g'), (c) => bs + c) + '%';
-      const { data } = await supabase
-        .from('passages')
-        .select('page_start, text')
-        .eq('document_id', id)
-        .eq('summary_level', 0)
-        .ilike('text', pattern)
-        .order('page_start', { ascending: true })
-        .limit(2000);
-      for (const row of (data ?? []) as { page_start: number | null; text: string | null }[]) {
-        if (!row.page_start || !row.text) continue;
-        const hay = row.text.toLowerCase();
-        let at = hay.indexOf(needle);
-        while (at !== -1) {
-          found.push({ page: row.page_start, index: at });
-          at = hay.indexOf(needle, at + needle.length);
+    try {
+      // The indexed text first. It is what search reads everywhere else in
+      // the app, it is one query, and for most OCR'd books it is the only
+      // place the words exist: the scan's PDF carries no text layer at all
+      // (Brandeis's Other People's Money found nothing for "money"). Hits
+      // name the page; the boxes over the words come from the text layer
+      // when the page has one.
+      if (id) {
+        const { data } = await supabase
+          .from('passages')
+          .select('page_start, text, metadata')
+          .eq('document_id', id)
+          .eq('summary_level', 0)
+          .ilike('text', likePattern(q))
+          .order('page_start', { ascending: true })
+          .limit(2000);
+        type Row = { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null };
+        for (const row of (data ?? []) as Row[]) {
+          if (!row.text) continue;
+          // A transcript's passages are filed under the printed page; the
+          // page to go to is the physical one, metadata.pdf_page (four
+          // printed pages sit on one sheet of a condensed transcript).
+          const physical = Number(row.metadata?.pdf_page);
+          const page = Number.isFinite(physical) && physical > 0 ? physical : row.page_start;
+          if (!page) continue;
+          countIn(row.text, page);
         }
       }
-    }
 
-    // Nothing indexed — an edited copy, say — so read the PDF's own text
-    // layer, page by page.
-    if (!found.length) {
-      for (let p = 1; p <= pdf.numPages; p++) {
-        let pageText = pageTextCacheRef.current[p - 1];
-        if (!pageText) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const pdfPage = (await pdf.getPage(p)) as any;
-          const content = await pdfPage.getTextContent();
-          pageText = (content.items as Array<{ str?: string }>)
-            .map((i) => i.str || '')
-            .join(' ');
-          pageTextCacheRef.current[p - 1] = pageText;
-        }
-        const hay = pageText.toLowerCase();
-        let i = 0;
-        let at: number;
-        while ((at = hay.indexOf(needle, i)) !== -1) {
-          found.push({ page: p, index: at });
-          i = at + needle.length;
+      // Nothing indexed — an edited copy, say — so read the PDF's own text
+      // layer, page by page.
+      if (!found.length) {
+        for (let p = 1; p <= pdf.numPages; p++) {
+          let pageText = pageTextCacheRef.current[p - 1];
+          if (!pageText) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const pdfPage = (await pdf.getPage(p)) as any;
+            const content = await pdfPage.getTextContent();
+            pageText = (content.items as Array<{ str?: string }>)
+              .map((i) => i.str || '')
+              .join(' ');
+            pageTextCacheRef.current[p - 1] = pageText;
+          }
+          countIn(pageText, p);
         }
       }
+    } catch (e) {
+      console.warn('[reader] find failed', e);
     }
     found.sort((a, b) => a.page - b.page || a.index - b.index);
 
     setMatches(found);
     setMatchIdx(0);
     setSearching(false);
+    setSearched(true);
     if (found.length > 0) gotoPage(found[0].page);
   }, [fileKind, gotoPage, id, clearTextMatches, showTextMatch]);
 
@@ -2450,6 +2474,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setSearchQuery('');
     setMatches([]);
     setMatchIdx(0);
+    setSearched(false);
     clearTextMatches();
   }, [clearTextMatches]);
 
@@ -2630,12 +2655,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     // 16px on a phone, so iOS Safari doesn't zoom the page on focus.
                     style={isMobile ? { fontSize: 16 } : undefined}
                   />
-                  {matches.length > 0 ? (
-                    <span className="text-[10px] text-white/55 tabular-nums px-1">
+                  {searching ? (
+                    <span className="text-[11px] text-white/55 px-1 whitespace-nowrap">Searching…</span>
+                  ) : matches.length > 0 ? (
+                    <span className="text-[11px] text-white/70 tabular-nums px-1 whitespace-nowrap">
                       {matchIdx + 1}/{matches.length}
                     </span>
-                  ) : searchQuery && !searching ? (
-                    <span className="text-[10px] text-white/35 px-1">0</span>
+                  ) : searchQuery && searched ? (
+                    <span className="text-[11px] text-amber-300/80 px-1 whitespace-nowrap">Not found</span>
                   ) : null}
                   <button
                     onClick={goPrevMatch}
