@@ -80,6 +80,11 @@ import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapR
 import { provisionQuery } from '@/lib/brief/provision-core';
 import { parseIndexCite, indexCiteFromBrief } from '@/lib/brief/index-cite';
 import { parseDocumentCite } from '@/lib/brief/doc-abbrev';
+import { assistantMatch } from '@/lib/brief/assistant-match';
+import { fetchMatterDocumentRows, type DocumentsSource } from '@/lib/vault-documents';
+
+/** The model for the judgment step (the same the machine pass uses). */
+const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
@@ -374,6 +379,8 @@ function DeskEditor(p: DeskProps) {
   // — Eden, 09-28: a place to record why a flag went from red to green).
   const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' | 'note'; was?: CiteConfirmation | null } | null>(null);
   const [problemNote, setProblemNote] = useState('');
+  /** What the last rule-based path would have said on a miss; shown only if the assistant has no answer either. */
+  const missNote = useRef<string | null>(null);
   /** The toolbar's Confirm: resolve an open flag on these words, add a note to a green cite, or just confirm. */
   const confirmFromToolbar = () => {
     const raw = highlightedCtx.current?.raw ?? highlighted.current ?? '';
@@ -945,8 +952,8 @@ function DeskEditor(p: DeskProps) {
       }
       p.setBusy(null);
       if (!docs.length) {
-        p.setNotice(`No document in ${recordRootName ?? 'this matter'} carries No. ${c.number}${c.year ? `/${c.year}` : ''} in its name or on a page${c.surname ? `, and none is named "${c.surname}"${c.year ? ` with ${c.year}` : ''}` : ''}. If it is filed under another name, rename it to the case name in the Reader; if not, Add a case.`);
-        return true;
+        missNote.current = `No document in ${recordRootName ?? 'this matter'} carries No. ${c.number}${c.year ? `/${c.year}` : ''} in its name or on a page${c.surname ? `, and none is named "${c.surname}"${c.year ? ` with ${c.year}` : ''}` : ''}. If it is filed under another name, rename it to the case name in the Reader; if not, Add a case.`;
+        return false;
       }
       const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
       if (docs.length === 1) {
@@ -962,6 +969,41 @@ function DeskEditor(p: DeskProps) {
       p.setBusy(null);
       p.setNotice(`The record could not be searched: ${(e as Error).message}`);
       return true;
+    }
+  };
+
+  // After every rule has run and missed: the judgment step. The assistant is
+  // shown the cite, its sentence and the NAMES of the record's documents, and
+  // asked which one the cite means. It chooses only from that list; what
+  // opens says it was the assistant's pick; nothing is confirmed by it.
+  // (Eden, 09-28: "give the Desk some intelligence … application of some
+  // intelligence solves the issue quite quickly.")
+  const openByAssistant = async (label: string): Promise<boolean> => {
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    const scope = ids.length ? ids : [root];
+    p.setBusy(`Asking the assistant which document in ${recordRootName ?? 'the record'} this is…`);
+    try {
+      const page = await fetchMatterDocumentRows(supabase as unknown as DocumentsSource, scope, { order: 'name', ceiling: 400 });
+      const candidates = page.rows
+        .filter((r) => r.id !== meta.id && r.processing_status !== 'error')
+        .map((r) => ({ id: r.id, title: r.title || r.source_filename || 'Untitled document', filename: r.source_filename }));
+      const sentence = highlightedCtx.current?.raw === label ? highlightedCtx.current.context : '';
+      const m = await assistantMatch({ cite: label, sentence, candidates, modelId: ASSISTANT_MATCH_MODEL, matterId: root });
+      p.setBusy(null);
+      if (!m) return false;
+      const doc = candidates.find((c) => c.id === m.document_id)!;
+      openDocument(doc.id, {
+        page: 1,
+        heading: label,
+        title: doc.title,
+        caveat: `The assistant's pick from the file's names (${m.confidence} confidence): ${m.why} Read the caption before you confirm.`,
+      });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      missNote.current = `${missNote.current ? missNote.current + ' ' : ''}(The assistant could not be asked: ${(e as Error).message})`;
+      return false;
     }
   };
 
@@ -990,8 +1032,8 @@ function DeskEditor(p: DeskProps) {
       const docs = (data ?? []) as Doc[];
       p.setBusy(null);
       if (!docs.length) {
-        p.setNotice(`No document in ${recordRootName ?? 'this matter'} is named with ${c.words.map((w) => w.length > 1 ? `“${w[0]}”${w.length > 2 ? ` (or ${w.slice(1, -1).join(', ')})` : ''}` : `“${w[0]}”`).join(' and ')}. Rename it in the Reader to the words the brief uses, or Add a case.`);
-        return true;
+        missNote.current = `No document in ${recordRootName ?? 'this matter'} is named with ${c.words.map((w) => w.length > 1 ? `“${w[0]}”${w.length > 2 ? ` (or ${w.slice(1, -1).join(', ')})` : ''}` : `“${w[0]}”`).join(' and ')}. Rename it in the Reader to the words the brief uses, or Add a case.`;
+        return false;
       }
       const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
       const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
@@ -1033,8 +1075,8 @@ function DeskEditor(p: DeskProps) {
     } catch (e) { p.setBusy(null); p.setNotice(`The record could not be searched: ${(e as Error).message}`); return true; }
     p.setBusy(null);
     if (!hits.length) {
-      p.setNotice(`Nothing in ${recordRootName ?? 'this matter'} names or quotes ${q.number ? `§ ${q.number}` : `“${q.name}”`}${q.from === 'brief' ? ` (the number the brief pairs with “${label.trim()}”)` : ''}. File its text with Add a case — a name that starts with the section number is found at once.`);
-      return true;
+      missNote.current = `Nothing in ${recordRootName ?? 'this matter'} names or quotes ${q.number ? `§ ${q.number}` : `“${q.name}”`}${q.from === 'brief' ? ` (the number the brief pairs with “${label.trim()}”)` : ''}. File its text with Add a case — a name that starts with the section number is found at once.`;
+      return false;
     }
     const open = (h: ProvisionHit) => {
       const first = h.passages[0];
@@ -1148,6 +1190,7 @@ function DeskEditor(p: DeskProps) {
     const label = highlighted.current ?? '';
     // whatever opens next beside the brief was opened FOR this cite
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
+    missNote.current = null;
     const cite = parseRecordCite(label);
     if (!cite) {
       // "De Camara Dep. Vol. I 63:21–64:2": the appendix sheet, through its page map.
@@ -1169,6 +1212,8 @@ function DeskEditor(p: DeskProps) {
       if (await openByIndexNumber(label)) return;
       if (await openByDocumentName(label)) return;
       if (await openByContent(label)) return;
+      if (await openByAssistant(label)) return;
+      if (missNote.current) p.setNotice(missNote.current);
       setSearch(findQueryFor(label));
       return;
     }
