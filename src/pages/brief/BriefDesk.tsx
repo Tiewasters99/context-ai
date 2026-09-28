@@ -1220,6 +1220,12 @@ function DeskEditor(p: DeskProps) {
       onRecheckAll={() => void confirm(true)}
       onStop={() => abortRef.current?.abort()}
       hasRun={!!run}
+      // Where every lookup goes (Find in corpus, the pass, the Orchestrator):
+      // always in view, always changeable. Until 09-28 it showed only on the
+      // arrival banner, and a brief imported into the wrong matter searched
+      // the wrong case with nothing on screen to say so.
+      record={recordRootName ?? matterName(meta.matterspace_id) ?? 'this matter'}
+      onChangeRecord={() => setShowRecordPick(true)}
     />
   );
   const topBlock = (
@@ -1877,7 +1883,7 @@ function ColumnDivider({ onStart, onDrag, onReset, title }: {
 // 09-27, when a lawyer read that name as the verification it is not) — the
 // button, the last run's counts, "N changed since"
 // ---------------------------------------------------------------------------
-function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, onRecheckAll, onStop, hasRun }: {
+function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, onRecheckAll, onStop, hasRun, record, onChangeRecord }: {
   counts: FlagCounts | null;
   changedSince: number;
   progress: ConfirmProgress | null;
@@ -1886,6 +1892,9 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
   onRecheckAll: () => void;
   onStop: () => void;
   hasRun: boolean;
+  /** The matter tree every lookup searches, by name, with "change". */
+  record?: string;
+  onChangeRecord?: () => void;
 }) {
   if (progress) {
     const words = progress.phase === 'snapshot' ? 'Saving a version…'
@@ -1934,6 +1943,12 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
         >
           Locate again
         </button>
+      )}
+      {record && onChangeRecord && (
+        <span className="text-[11px] text-white/45 whitespace-nowrap" data-testid="record-scope" title="Find in corpus, the machine pass and the Orchestrator all search this matter and the matters inside it. A brief filed in the wrong matter searches the wrong case: change it here.">
+          · in <span className="text-white/70">{record}</span>{' '}
+          <button type="button" onClick={onChangeRecord} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2">change</button>
+        </span>
       )}
     </span>
   );

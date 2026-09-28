@@ -13,7 +13,26 @@ import { useNavigate } from 'react-router-dom';
 import { Upload, FolderOpen, FilePlus2, Loader2, Lock, Stamp, AlertTriangle } from 'lucide-react';
 import { useMatterOptions } from '@/hooks/useMatterOptions';
 import MatterTreePick from '@/components/matters/MatterTreePick';
-import CorpusDocumentPicker from '@/components/matter/CorpusDocumentPicker';
+import CorpusDocumentPicker, { pickerRowFor, type PickerDocument } from '@/components/matter/CorpusDocumentPicker';
+import { supabase } from '@/lib/supabase';
+
+/** Documents by title or filename, anywhere the person can read; ready or not (the row says which). */
+async function searchDocumentsByName(query: string): Promise<PickerDocument[]> {
+  // LIKE wildcards escaped; commas and parentheses dropped, since they are
+  // PostgREST's own separators inside an `or=(…)` filter.
+  const q = query.replace(/[,()]/g, ' ').replace(/[%_\\]/g, (c) => '\\' + c).trim();
+  if (!q) return [];
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, title, source_filename, processing_status, storage_path')
+    .or(`title.ilike.%${q}%,source_filename.ilike.%${q}%`)
+    .order('title', { ascending: true })
+    .limit(200);
+  if (error) throw new Error(error.message);
+  type Row = { id: string; title: string | null; source_filename: string | null; processing_status: string | null; storage_path: string | null };
+  return ((data ?? []) as Row[]).map((d) =>
+    pickerRowFor(d, (x) => ['docx', 'md', 'txt'].includes(kindOf(x.source_filename ?? x.storage_path ?? ''))));
+}
 import {
   createBrief, importBriefFile, importBriefFromDocument, listRecentBriefs, type RecentBrief,
 } from '@/lib/brief/draft-store';
@@ -196,6 +215,14 @@ export default function BriefDeskHome() {
         <CorpusDocumentPicker
           title="Bring a brief in from Contextspaces"
           rootMatterId={chosen?.id}
+          // The desk reads the FILE (Word, Markdown, text) — a document just
+          // filed can come in before the worker has read it for search. A PDF
+          // has no words of its own here; it waits for its indexed text.
+          needsText={false}
+          usableNow={(d) => ['docx', 'md', 'txt'].includes(kindOf(d.source_filename ?? d.storage_path ?? ''))}
+          // Every document the person can read, by name, wherever it is filed
+          // (09-28: a brief three folders away was unfindable by drilling).
+          searchAllAsync={searchDocumentsByName}
           onCancel={() => setPicking(false)}
           onPicked={(picked) => {
             setPicking(false);
