@@ -7,10 +7,12 @@
 // both; a cite not in the corpus says so and offers the matter's search, and
 // nothing else (B4).
 
-import { ArrowLeft, BookOpen, Search, X } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowLeft, BookOpen, Search, X, Check, AlertTriangle } from 'lucide-react';
 import DocumentReader, { type ReaderGoto } from '@/pages/DocumentReader';
 import type { DeskEntry } from '@/lib/brief/anchor';
 import { caseNameOf } from '@/lib/brief/resolve';
+import type { CiteConfirmation, ConfirmationStatus } from '@/lib/brief/confirmations';
 
 export interface PaneState {
   /** Which table row opened it (rowKey), for the highlight in the table. */
@@ -25,9 +27,11 @@ export interface PaneState {
   caveat: string | null;
   /** A record cite (A-10) is open: the appendix it was read from, by the matter's name. */
   appendix?: { name: string } | null;
+  /** The cite this pane was opened for (Find in corpus): its words, the sentence they sit in, where in the brief. */
+  cite?: { raw: string; context: string; from: number | null } | null;
 }
 
-export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix }: {
+export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, initials, onInitials, onConfirm }: {
   state: PaneState | null;
   onClose?: () => void;
   /** Full screen (phone, narrow window): a back arrow instead of a close. */
@@ -36,7 +40,22 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   onSearch: (query: string) => void;
   /** "Appendix: <matter> · change" — re-ask which appendix this brief cites. */
   onChangeAppendix?: () => void;
+  /** The latest human reading of this cite (migration 103), if any. */
+  confirmation?: CiteConfirmation | null;
+  /** The initials the log signs with, editable here. */
+  initials?: string;
+  onInitials?: (v: string) => void;
+  /** Confirm / Problem: one append-only row. */
+  onConfirm?: (status: ConfirmationStatus, note: string) => Promise<void>;
 }) {
+  const [problemOpen, setProblemOpen] = useState(false);
+  const [problemNote, setProblemNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const press = async (status: ConfirmationStatus, note = '') => {
+    if (!onConfirm || busy) return;
+    setBusy(true);
+    try { await onConfirm(status, note); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
+  };
   if (!state) {
     return (
       <Frame>
@@ -63,6 +82,57 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.docTitle && <div className="text-[11px] text-white/45 truncate">{state.docTitle}</div>}
         {state.stale && <div className="text-[11px] text-[#e8b84a] mt-0.5">Changed since the check — Confirm to re-check it.</div>}
         {state.caveat && state.docId && <div className="text-[11px] text-orange-200/80 mt-0.5">{state.caveat}</div>}
+        {/* The human check (103): with a cite open at its page, one press logs it with initials. */}
+        {state.cite && state.docId && onConfirm && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5" data-testid="pane-confirm">
+            {confirmation && (
+              <span className={`text-[11px] ${confirmation.status === 'confirmed' ? 'text-emerald-300/90' : 'text-amber-300/90'}`}>
+                {confirmation.status === 'confirmed' ? 'Confirmed' : 'Problem noted'} · {confirmation.initials} · {new Date(confirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                {confirmation.status === 'problem' && confirmation.note ? ` — ${confirmation.note}` : ''}
+              </span>
+            )}
+            <button
+              onClick={() => void press('confirmed')}
+              disabled={busy || !(initials ?? '').trim()}
+              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-50"
+              title="I read this page: the cite is right. One row in the log, with my initials and the time."
+            >
+              <Check size={13} /> {confirmation ? 'Confirm again' : 'Confirm'}
+            </button>
+            <button
+              onClick={() => setProblemOpen((v) => !v)}
+              disabled={busy}
+              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-amber-400/40 bg-amber-400/10 text-[12px] text-amber-200 hover:bg-amber-400/20"
+              title="Something is wrong with this cite: say what, and it goes in the log"
+            >
+              <AlertTriangle size={13} /> Problem
+            </button>
+            <label className="inline-flex items-center gap-1 text-[11px] text-white/45" title="The initials the log signs with">
+              as
+              <input
+                value={initials ?? ''}
+                onChange={(e) => onInitials?.(e.target.value.toUpperCase().slice(0, 6))}
+                className="w-11 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-1.5 text-[12px] text-white/85 outline-none focus:border-[#e8b84a]/50 text-center"
+                aria-label="Your initials"
+                placeholder="EQ"
+              />
+            </label>
+            {problemOpen && (
+              <div className="w-full flex items-center gap-1.5 mt-1">
+                <input
+                  autoFocus
+                  value={problemNote}
+                  onChange={(e) => setProblemNote(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press('problem', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
+                  placeholder="What is wrong (pin, quotation, proposition…)?"
+                  className="flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none focus:border-amber-300/50"
+                  aria-label="What is wrong with this cite"
+                />
+                <button onClick={() => void press('problem', problemNote)} disabled={busy || !problemNote.trim()} className="h-7 px-2 rounded border border-amber-400/40 text-[12px] text-amber-200 disabled:opacity-50">Log it</button>
+              </div>
+            )}
+          </div>
+        )}
         {state.appendix && state.docId && (
           <div className="text-[11px] text-white/45 mt-0.5 truncate" data-testid="pane-appendix">
             Appendix: <span className="text-white/65">{state.appendix.name}</span>
