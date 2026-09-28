@@ -1060,9 +1060,9 @@ function DeskEditor(p: DeskProps) {
         <button
           onClick={() => setShowReadingNote(true)}
           className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
-          title="Why footnotes sit in the text and there are no page numbers"
+          title="Find a cite, read it, confirm it: how the desk is used"
         >
-          <Info size={14} /> <span className="hidden md:inline">How this page reads</span>
+          <Info size={14} /> <span className="hidden md:inline">How this page works</span>
         </button>
         <button
           onClick={() => setShowLog(true)}
@@ -1286,8 +1286,8 @@ function DeskEditor(p: DeskProps) {
       {showReadingNote && (
         <CardDialog
           storageKey="cs.brief.reading-note"
-          title="How this page reads"
-          subtitle="The desk shows your words, not the printed page."
+          title="How this page works"
+          subtitle="Find a cite, read it, confirm it. The desk keeps the record."
           onClose={() => setShowReadingNote(false)}
           maxWidth={560}
         >
@@ -1455,23 +1455,25 @@ function ReadingNote() {
   return (
     <div className="text-white">
       <p className="text-[12.5px] text-white/70 leading-relaxed mb-2">
-        The brief is held here as text you edit and check, one continuous page. Nothing about its
-        printed form is lost: it is made when you export.
+        The brief is on the left as text. Everything it cites opens on the right. The check of each cite is yours,
+        and the desk keeps the record of it.
       </p>
-      {row('Footnotes', <>Each note sits where its number is in the text, as a small tinted note with its number. On export
-        to Word it becomes a real footnote at the foot of the page.</>)}
-      {row('Page numbers', <>None here: the text is not yet laid out on pages. Pages, page numbers, the tables of contents and
-        authorities and your house style are made by the Word export or by your assistant.</>)}
-      {row('Headings', <>Part headings (centred), point headings and sub-points, as your master file has them.</>)}
-      {row('Cites', <>After <em>Confirm this brief</em>, each cite is underlined in its flag's colour; click one to open the
-        authority beside the brief. A <span className="underline decoration-dashed">dashed</span> underline means the words changed
-        since the check.</>)}
-      {row('Flags', <><span className="text-red-400 font-semibold">[STAR]</span>, <span className="text-red-400 font-semibold">[OPP]</span>,{' '}
-        <span className="text-red-400 font-semibold">[EDEN]</span> and <span className="text-red-400 font-semibold">[verify]</span> are
-        your working flags, printed bold red in the Word export.</>)}
-      {row('Highlight', <>A private working mark. It is not exported.</>)}
-      {row('Export', <>Markdown for your assistant or the house-style build; Word for your words with real footnotes in one
-        plain style.</>)}
+      {row('1. Find it', <>Highlight a cite in the brief and press <span className="text-[#e8b84a]">Find in corpus</span>. The case,
+        statute or appendix page opens beside the brief at the pinned page. A record cite (A-10) opens the Joint Appendix at
+        its stamp.</>)}
+      {row('2. Read it', <>Read the page. <span className="text-white/85">Ask about this</span> puts the highlighted sentence to the
+        Orchestrator with the authority open: whether the case supports the proposition, which record page a fact sits on, or a
+        proposed rewrite. Nothing is sent until you press Enter.</>)}
+      {row('3. Confirm it', <>In the pane header press <span className="text-emerald-300">Confirm</span> if the cite is right, or{' '}
+        <span className="text-amber-300">Problem</span> with a word on what is wrong. Your initials are typed once and remembered.
+        Confirmed cites turn <span className="text-emerald-300">green</span> in the brief, problems <span className="text-amber-300">amber</span>.</>)}
+      {row('The Log', <>Every press, newest first: who, when, which authority and page, and a CSV for the file. Nothing in it is
+        edited or deleted; a second reading is a second line.</>)}
+      {row('Confirm this brief', <>The machine's pass over every cite at once: it finds each one in the record and flags what it
+        cannot find. Useful first, but it is not the check. Your reading and your Confirm are.</>)}
+      {row('Add a case', <>A case missing from the record: choose the file and it is filed in the matter and searchable in a
+        minute or two.</>)}
+      {row('Pages', <>None here. Page numbers, the tables and the house style are made when the brief is exported to Word.</>)}
     </div>
   );
 }
