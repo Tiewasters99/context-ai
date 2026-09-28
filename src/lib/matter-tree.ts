@@ -39,6 +39,29 @@ export function buildMatterTree(matters: ServerspaceMatter[]): MatterTreeNode[] 
  * them): the matter a brief "draws on" when its appendix and its cases sit in
  * sibling folders. Null when the ids share no ancestor in the list.
  */
+/** `rootId` and every matter beneath it, in the caller's list. */
+export function subtreeIds(
+  matters: Pick<ServerspaceMatter, 'id' | 'parent_matterspace_id'>[],
+  rootId: string,
+): string[] {
+  const children = new Map<string | null, string[]>();
+  for (const m of matters) {
+    const list = children.get(m.parent_matterspace_id) ?? [];
+    list.push(m.id);
+    children.set(m.parent_matterspace_id, list);
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const stack = [rootId];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id); out.push(id);
+    for (const c of children.get(id) ?? []) stack.push(c);
+  }
+  return out;
+}
+
 export function nearestCommonAncestor(
   matters: Pick<ServerspaceMatter, 'id' | 'parent_matterspace_id'>[],
   ids: string[],

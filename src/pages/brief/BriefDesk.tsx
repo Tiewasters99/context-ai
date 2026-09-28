@@ -77,6 +77,8 @@ import { parseReporterCites } from '../../../lib/bluebook.mjs';
 import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
+import { provisionQuery } from '@/lib/brief/provision-core';
+import { findProvisionInRecord, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
 import AddCaseCard from './AddCaseCard';
@@ -87,7 +89,7 @@ import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
 import MatterTreePick from '@/components/matters/MatterTreePick';
 import { useServerspaces } from '@/hooks/useServerspaces';
-import { nearestCommonAncestor, isSealedIn } from '@/lib/matter-tree';
+import { nearestCommonAncestor, isSealedIn, subtreeIds } from '@/lib/matter-tree';
 import { setSurfaceContext, clearSurfaceContext } from '@/lib/orchestrator-context';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
@@ -866,6 +868,44 @@ function DeskEditor(p: DeskProps) {
     return false;
   };
 
+  // A statute, rule or regulation — by number, or by a NAME the brief itself
+  // pairs with a number ("the Holder Rule, 16 C.F.R. § 433.2") — found inside
+  // the record's documents, not only by their names (Eden, 09-28: Admin Code
+  // § 20-393, Charter § 2203, 6 RCNY § 6-02, CPLR 3001/7803/7805 and the
+  // Holder Rule all "not found" while GBL § 771, quoted in a filed document,
+  // was). One document opens at the page; several are offered.
+  const [contentHits, setContentHits] = useState<{ label: string; number: string; from: 'cite' | 'brief'; hits: ProvisionHit[] } | null>(null);
+  const openByContent = async (label: string): Promise<boolean> => {
+    const briefText = editorRef.current?.state.doc.textContent ?? '';
+    const q = provisionQuery(label, briefText);
+    if (!q) return false;
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    p.setBusy(`Searching ${recordRootName ?? 'the record'} for ${q.number ? `§ ${q.number}` : `“${q.name}”`}…`);
+    let hits: ProvisionHit[];
+    try { hits = await findProvisionInRecord(q, ids.length ? ids : [root], meta.id); }
+    catch (e) { p.setBusy(null); p.setNotice(`The record could not be searched: ${(e as Error).message}`); return true; }
+    p.setBusy(null);
+    if (!hits.length) {
+      p.setNotice(`Nothing in ${recordRootName ?? 'this matter'} names or quotes ${q.number ? `§ ${q.number}` : `“${q.name}”`}${q.from === 'brief' ? ` (the number the brief pairs with “${label.trim()}”)` : ''}. File its text with Add a case — a name that starts with the section number is found at once.`);
+      return true;
+    }
+    const open = (h: ProvisionHit) => {
+      const first = h.passages[0];
+      openDocument(h.document_id, {
+        passageId: first.passage_id,
+        heading: label,
+        title: h.title,
+        caveat: h.namedForIt
+          ? null
+          : `Found inside this document's text${first.page ? ` (page ${first.page})` : ''}, not by its name${q.from === 'brief' ? ` — § ${q.number}, the number the brief pairs with “${label.trim()}”` : ''}.`,
+      });
+    };
+    if (hits.length === 1 || hits[0].namedForIt) { open(hits[0]); return true; }
+    setContentHits({ label, number: q.number, from: q.from, hits });
+    return true;
+  };
+
   // "Does the case support this?" — the proposition and the authority, into
   // the Orchestrator's box. Nothing is sent until the lawyer presses Enter.
   const askAbout = async () => {
@@ -978,6 +1018,7 @@ function DeskEditor(p: DeskProps) {
       }
       if (await openByReporter(label)) return;
       if (await openByResolver(label)) return;
+      if (await openByContent(label)) return;
       setSearch(findQueryFor(label));
       return;
     }
@@ -1622,6 +1663,39 @@ function DeskEditor(p: DeskProps) {
             onChange={(id) => { setShowRecordPick(false); void rememberRecordRoot(id); }}
             maxHeight={300}
           />
+        </CardDialog>
+      )}
+      {contentHits && (
+        <CardDialog
+          storageKey="cs.brief.content-hits"
+          title={contentHits.number ? `§ ${contentHits.number} inside the record` : `“${contentHits.number || contentHits.label}” inside the record`}
+          subtitle={`${contentHits.hits.length} documents in ${recordRootName ?? 'this matter'} carry it${contentHits.from === 'brief' ? ` — the number the brief pairs with “${contentHits.label.trim()}”` : ''}. Pick one; it opens at the first page that has it.`}
+          onClose={() => setContentHits(null)}
+          maxWidth={560}
+        >
+          <div className="space-y-1.5">
+            {contentHits.hits.map((h) => (
+              <button
+                key={h.document_id}
+                onClick={() => {
+                  const first = h.passages[0];
+                  setContentHits(null);
+                  openDocument(h.document_id, {
+                    passageId: first.passage_id, heading: contentHits.label, title: h.title,
+                    caveat: h.namedForIt ? null : `Found inside this document's text${first.page ? ` (page ${first.page})` : ''}, not by its name.`,
+                  });
+                }}
+                className={`block w-full text-left px-3 py-2 rounded-md border hover:bg-white/[0.03] ${h.namedForIt ? 'border-[#e8b84a]/40' : 'border-white/[0.08] hover:border-[#e8b84a]/50'}`}
+              >
+                <div className="text-[13px] text-white/90">
+                  {h.title}
+                  {h.namedForIt && <span className="ml-2 text-[11px] text-[#e8b84a]/80">named for it</span>}
+                  <span className="ml-2 text-[11px] text-white/40">{h.passages.length} page{h.passages.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="text-[11px] text-white/45 line-clamp-2">{h.passages[0].snippet}</div>
+              </button>
+            ))}
+          </div>
         </CardDialog>
       )}
       {chooser && (
