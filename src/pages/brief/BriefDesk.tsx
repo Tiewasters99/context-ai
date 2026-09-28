@@ -78,6 +78,7 @@ import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volum
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
 import { provisionQuery } from '@/lib/brief/provision-core';
+import { parseIndexCite } from '@/lib/brief/index-cite';
 import { findProvisionInRecord, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
@@ -868,6 +869,73 @@ function DeskEditor(p: DeskProps) {
     return false;
   };
 
+  // A case cited by index or docket number — "Index No. 508835/2024" — found
+  // by that number in the record: on a document's title or filename (a court
+  // download keeps the court's name for it), else on a first page. A second
+  // look by the first party's surname plus the year, when the number is not
+  // in the name. One document opens; several are offered. (Eden, 09-28:
+  // DiSanto, filed as "508835_2024_PETRINA_DISANTO_…pdf", was "not found".)
+  const openByIndexNumber = async (label: string): Promise<boolean> => {
+    const c = parseIndexCite(label);
+    if (!c) return false;
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    const scope = ids.length ? ids : [root];
+    const escLike = (s: string) => s.replace(/[%_\\]/g, (x) => '\\' + x).replace(/[,()]/g, ' ');
+    p.setBusy(`Looking for No. ${c.number}${c.year ? `/${c.year}` : ''} in ${recordRootName ?? 'the record'}…`);
+    try {
+      type Doc = { id: string; title: string | null; source_filename: string | null };
+      const byName = async (needles: string[]) => {
+        const ors = needles.flatMap((n) => [`title.ilike.%${escLike(n)}%`, `source_filename.ilike.%${escLike(n)}%`]).join(',');
+        const { data, error } = await supabase.from('documents').select('id, title, source_filename').in('matterspace_id', scope).neq('id', meta.id).or(ors).limit(20);
+        if (error) throw new Error(error.message);
+        return (data ?? []) as Doc[];
+      };
+      let docs = await byName(c.titleNeedles);
+      let how = 'its index number is in the document\'s name';
+      if (!docs.length && c.surname && c.year) {
+        const all = await byName([c.surname]);
+        docs = all.filter((d) => `${d.title ?? ''} ${d.source_filename ?? ''}`.includes(c.year as string));
+        how = `"${c.surname}" and ${c.year} are in the document's name`;
+      }
+      let passageId: string | undefined;
+      if (!docs.length) {
+        const ors = c.textNeedles.map((n) => `text.ilike.%${escLike(n)}%`).join(',');
+        const { data, error } = await supabase.from('passages').select('id, document_id, page_start').in('matterspace_id', scope).eq('summary_level', 0).neq('document_id', meta.id).or(ors).order('page_start', { ascending: true }).limit(20);
+        if (error) throw new Error(error.message);
+        type P = { id: string; document_id: string; page_start: number | null };
+        const rows = (data ?? []) as P[];
+        const firstByDoc = new Map<string, P>();
+        for (const r of rows) if (!firstByDoc.has(r.document_id)) firstByDoc.set(r.document_id, r);
+        if (firstByDoc.size) {
+          const { data: dd } = await supabase.from('documents').select('id, title, source_filename').in('id', [...firstByDoc.keys()]);
+          docs = ((dd ?? []) as Doc[]);
+          if (docs.length === 1) passageId = firstByDoc.get(docs[0].id)?.id;
+          how = 'its index number is on a page of the document';
+        }
+      }
+      p.setBusy(null);
+      if (!docs.length) {
+        p.setNotice(`No document in ${recordRootName ?? 'this matter'} carries No. ${c.number}${c.year ? `/${c.year}` : ''} in its name or on a page${c.surname ? `, and none is named "${c.surname}"${c.year ? ` with ${c.year}` : ''}` : ''}. If it is filed under another name, rename it to the case name in the Reader; if not, Add a case.`);
+        return true;
+      }
+      const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
+      if (docs.length === 1) {
+        openDocument(docs[0].id, { passageId, page: passageId ? undefined : 1, heading: label, title: titleOf(docs[0]), caveat: `Matched because ${how}. Check the caption on the first page.` });
+        return true;
+      }
+      setContentHits({
+        label, number: `No. ${c.number}${c.year ? `/${c.year}` : ''}`, from: 'cite',
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: 1, snippet: `Matched because ${how}.` }], namedForIt: true })),
+      });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The record could not be searched: ${(e as Error).message}`);
+      return true;
+    }
+  };
+
   // A statute, rule or regulation — by number, or by a NAME the brief itself
   // pairs with a number ("the Holder Rule, 16 C.F.R. § 433.2") — found inside
   // the record's documents, not only by their names (Eden, 09-28: Admin Code
@@ -1018,6 +1086,7 @@ function DeskEditor(p: DeskProps) {
       }
       if (await openByReporter(label)) return;
       if (await openByResolver(label)) return;
+      if (await openByIndexNumber(label)) return;
       if (await openByContent(label)) return;
       setSearch(findQueryFor(label));
       return;
@@ -1681,7 +1750,7 @@ function DeskEditor(p: DeskProps) {
                   const first = h.passages[0];
                   setContentHits(null);
                   openDocument(h.document_id, {
-                    passageId: first.passage_id, heading: contentHits.label, title: h.title,
+                    passageId: first.passage_id || undefined, page: first.passage_id ? undefined : (first.page ?? 1), heading: contentHits.label, title: h.title,
                     caveat: h.namedForIt ? null : `Found inside this document's text${first.page ? ` (page ${first.page})` : ''}, not by its name.`,
                   });
                 }}
