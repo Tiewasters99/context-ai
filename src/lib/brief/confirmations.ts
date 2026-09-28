@@ -4,7 +4,7 @@
 // The pure rules live in confirmations-core.ts (harness-loadable).
 
 import { supabase } from '@/lib/supabase';
-import type { CiteConfirmation, ConfirmationStatus } from './confirmations-core';
+import { carryPlan, carryNote, type CarryPlan, type CiteConfirmation, type ConfirmationStatus } from './confirmations-core';
 
 export * from './confirmations-core';
 
@@ -65,6 +65,39 @@ export async function addConfirmation(row: {
     throw new Error(error.message);
   }
   return data as CiteConfirmation;
+}
+
+/**
+ * Carry an earlier brief's readings onto this one: one new row per reading
+ * whose words and sentence are unchanged in `newText`, each saying where it
+ * came from and who read it. Returns the plan (carried, changed, gone).
+ */
+export async function carryConfirmations(fromDocumentId: string, fromTitle: string, toDocumentId: string, newText: string): Promise<CarryPlan & { inserted: number }> {
+  const { data: u } = await supabase.auth.getUser();
+  const me = u.user?.id;
+  if (!me) throw new Error('You are signed out.');
+  const old = await loadConfirmations(fromDocumentId);
+  const plan = carryPlan(old, newText);
+  let inserted = 0;
+  for (let i = 0; i < plan.carry.length; i += 50) {
+    const batch = plan.carry.slice(i, i + 50).map((row) => ({
+      document_id: toDocumentId,
+      cite_raw: row.cite_raw,
+      context: row.context,
+      pm_from: null,
+      authority_document_id: row.authority_document_id,
+      authority_title: row.authority_title,
+      authority_page: row.authority_page,
+      status: row.status,
+      note: carryNote(row, fromTitle).slice(0, 400),
+      initials: row.initials,
+      user_id: me,
+    }));
+    const { error } = await supabase.from('cite_confirmations').insert(batch);
+    if (error) throw new Error(error.message);
+    inserted += batch.length;
+  }
+  return { ...plan, inserted };
 }
 
 const INITIALS_KEY = 'cs.brief.initials';

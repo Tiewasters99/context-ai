@@ -44,6 +44,52 @@ export function latestFor(rows: CiteConfirmation[], raw: string, context: string
   return best;
 }
 
+const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+export interface CarryPlan {
+  /** Same words, same sentence in the new text: carried, as a new row that says so. */
+  carry: CiteConfirmation[];
+  /** The cite's words are in the new text but its sentence changed: read again. */
+  changed: CiteConfirmation[];
+  /** The cite is no longer in the new text. */
+  gone: CiteConfirmation[];
+}
+
+/**
+ * Which of an earlier brief's latest readings hold for a new text (v8 → v9,
+ * Eden 09-28: "a cite green in v.8 should stay green in v.9"). A reading is
+ * of WORDS IN A SENTENCE, so it carries only when both appear unchanged; a
+ * changed sentence can change the proposition, so that cite is read again.
+ * Deterministic: text matching on collapsed whitespace, nothing else.
+ */
+export function carryPlan(oldRows: CiteConfirmation[], newText: string): CarryPlan {
+  const text = flat(newText);
+  const plan: CarryPlan = { carry: [], changed: [], gone: [] };
+  // one reading per occurrence, on collapsed whitespace, the newest
+  const newest = new Map<string, CiteConfirmation>();
+  for (const row of latestByCite(oldRows)) {
+    const k = `${flat(row.cite_raw)}\u0000${flat(row.context)}`;
+    const prev = newest.get(k);
+    if (!prev || row.created_at > prev.created_at) newest.set(k, row);
+  }
+  for (const row of newest.values()) {
+    const raw = flat(row.cite_raw);
+    if (!raw || !text.includes(raw)) { plan.gone.push(row); continue; }
+    const ctx = flat(row.context);
+    if (ctx && text.includes(ctx)) plan.carry.push(row);
+    else if (!ctx) plan.carry.push(row);           // logged without a sentence (an older row): the words are enough
+    else plan.changed.push(row);
+  }
+  return plan;
+}
+
+/** The note a carried row carries: where it came from, who read it, when. */
+export function carryNote(row: CiteConfirmation, fromTitle: string): string {
+  const when = new Date(row.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const base = `carried from “${fromTitle}” — ${row.status === 'confirmed' ? 'confirmed' : 'problem noted'} by ${row.initials} ${when}; same words, same sentence`;
+  return row.note ? `${base}. ${row.note}` : base;
+}
+
 /** Latest status per occurrence (cite, sentence, place): what the brief's highlights and the count show. */
 export function latestByCite(rows: CiteConfirmation[]): CiteConfirmation[] {
   const groups = new Map<string, CiteConfirmation[]>();

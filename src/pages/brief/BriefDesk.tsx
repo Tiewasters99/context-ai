@@ -46,7 +46,7 @@ import { briefExtensions, type FlagKind } from '@/lib/brief/schema';
 import { serialize, type BriefDoc } from '@/lib/brief/md';
 import {
   loadBrief, saveBody, takeSnapshot, listSnapshots, loadSnapshot, restoreSnapshot,
-  importBriefFromDocument, exportBrief, type BriefMeta, type SnapshotRow, type ImportResult,
+  importBriefFromDocument, exportBrief, listRecentBriefs, type BriefMeta, type SnapshotRow, type ImportResult, type RecentBrief,
 } from '@/lib/brief/draft-store';
 import {
   applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow, type DeskEntry, type StoredResolution,
@@ -67,7 +67,7 @@ const storedOf = (r: Resolution): StoredResolution => ({
     : null,
 });
 import {
-  loadConfirmations, addConfirmation, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
+  loadConfirmations, addConfirmation, carryConfirmations, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
   confirmationsCsv, whereRead, type CiteConfirmation, type ConfirmationStatus,
 } from '@/lib/brief/confirmations';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
@@ -311,6 +311,15 @@ function DeskEditor(p: DeskProps) {
   // in the brief (green confirmed, amber problem) and fills the Log.
   const [confs, setConfs] = useState<CiteConfirmation[]>([]);
   const [showLog, setShowLog] = useState(false);
+  // Earlier briefs a reading can be carried from (the Log's "Carry the check
+  // from an earlier version"): every other brief the person has, newest first.
+  const [carryCandidates, setCarryCandidates] = useState<RecentBrief[]>([]);
+  useEffect(() => {
+    if (!showLog) return;
+    let live = true;
+    listRecentBriefs(40).then((bs) => { if (live) setCarryCandidates(bs.filter((b) => b.id !== meta.id)); }).catch(() => {});
+    return () => { live = false; };
+  }, [showLog, meta.id]);
   const [initials, setInitialsState] = useState<string>(() => rememberedInitials() ?? '');
   const setInitials = (v: string) => { setInitialsState(v); rememberInitials(v); };
   useEffect(() => {
@@ -1704,7 +1713,22 @@ function DeskEditor(p: DeskProps) {
           onClose={() => setShowLog(false)}
           maxWidth={720}
         >
-          <ConfirmLog rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials} />
+          <ConfirmLog
+            rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials}
+            carry={{
+              candidates: carryCandidates,
+              matterName,
+              run: async (fromId, fromTitle) => {
+                const text = editorRef.current?.state.doc.textContent ?? '';
+                const r = await carryConfirmations(fromId, fromTitle, meta.id, text);
+                setConfs(await loadConfirmations(meta.id));
+                const changed = r.changed.slice(0, 12).map((x) => `  • ${x.cite_raw}`).join('\n');
+                return `Carried ${r.inserted} of ${r.carry.length + r.changed.length + r.gone.length}: same words, same sentence.`
+                  + (r.changed.length ? `\n${r.changed.length} to read again (the sentence changed):\n${changed}${r.changed.length > 12 ? '\n  …' : ''}` : '')
+                  + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '');
+              },
+            }}
+          />
         </CardDialog>
       )}
       {showReadingNote && (
@@ -2354,11 +2378,24 @@ function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, on
 }
 
 // The log: every Confirm / Problem press, newest first, with a CSV for the file.
-function ConfirmLog({ rows, briefTitle, counts, initials, onInitials }: {
+function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
   rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
   initials: string; onInitials: (v: string) => void;
+  /** Carry an earlier brief's readings onto this one (v8 → v9): the candidates and the run. */
+  carry?: { candidates: RecentBrief[]; matterName: (id: string) => string | null; run: (fromId: string, fromTitle: string) => Promise<string> };
 }) {
   const sorted = [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const [carryFrom, setCarryFrom] = useState('');
+  const [carrying, setCarrying] = useState(false);
+  const [carryResult, setCarryResult] = useState<string | null>(null);
+  const runCarry = async () => {
+    const c = carry?.candidates.find((b) => b.id === carryFrom);
+    if (!carry || !c || carrying) return;
+    setCarrying(true); setCarryResult(null);
+    try { setCarryResult(await carry.run(c.id, c.title)); }
+    catch (e) { setCarryResult(`Not carried: ${(e as Error).message}`); }
+    finally { setCarrying(false); }
+  };
   const download = () => {
     const blob = new Blob([confirmationsCsv(rows, briefTitle)], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -2379,6 +2416,26 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials }: {
       <p className="text-[11px] text-white/40 leading-snug">
         How to add to it: highlight a cite in the brief, press <span className="text-[#e8b84a]">Find in corpus</span>, read the page that opens, then press <span className="text-emerald-300">Confirm</span> in the pane header, or <span className="text-amber-300">Problem</span> with a word on what is wrong. Confirmed cites turn green in the brief; problems amber.
       </p>
+      {carry && carry.candidates.length > 0 && (
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px]" data-testid="carry-confirmations">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-white/70">Carry the check from an earlier version:</span>
+            <select value={carryFrom} onChange={(e) => setCarryFrom(e.target.value)} className="h-7 max-w-[320px] bg-white/[0.06] border border-white/[0.12] rounded px-1.5 text-[12px] text-white/85 outline-none" aria-label="Earlier brief to carry from">
+              <option value="">Choose a brief…</option>
+              {carry.candidates.map((b) => (
+                <option key={b.id} value={b.id}>{b.title}{carry.matterName(b.matterspace_id) ? ` — ${carry.matterName(b.matterspace_id)}` : ''} · {new Date(b.updated_at).toLocaleDateString()}</option>
+              ))}
+            </select>
+            <button onClick={() => void runCarry()} disabled={!carryFrom || carrying} className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40">
+              {carrying ? 'Carrying…' : 'Carry'}
+            </button>
+          </div>
+          <p className="mt-1 text-[11px] text-white/40 leading-snug">
+            A reading carries only when the cite's words AND its sentence are unchanged here; each carried line says where it came from and who read it. A cite whose sentence changed is listed for a fresh look.
+          </p>
+          {carryResult && <p className="mt-1 text-[12px] text-white/80 whitespace-pre-line">{carryResult}</p>}
+        </div>
+      )}
       {sorted.length === 0 ? (
         <p className="text-[12px] text-white/45">Nothing read yet.</p>
       ) : (
