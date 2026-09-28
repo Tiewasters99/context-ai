@@ -78,7 +78,7 @@ import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volum
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
 import { provisionQuery } from '@/lib/brief/provision-core';
-import { parseIndexCite } from '@/lib/brief/index-cite';
+import { parseIndexCite, indexCiteFromBrief } from '@/lib/brief/index-cite';
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
@@ -885,7 +885,10 @@ function DeskEditor(p: DeskProps) {
   // in the name. One document opens; several are offered. (Eden, 09-28:
   // DiSanto, filed as "508835_2024_PETRINA_DISANTO_…pdf", was "not found".)
   const openByIndexNumber = async (label: string): Promise<boolean> => {
-    const c = parseIndexCite(label);
+    // the number in the highlight; else, for a caption highlighted on its own,
+    // the number the brief gives after that caption
+    const c = parseIndexCite(label)
+      ?? (/\sv\.?\s|^\s*(?:Matter of|In re)\b/i.test(label) ? indexCiteFromBrief(label, editorRef.current?.state.doc.textContent ?? '') : null);
     if (!c) return false;
     const root = recordRootRef.current ?? meta.matterspace_id;
     const ids = subtreeIds(allMatters, root);

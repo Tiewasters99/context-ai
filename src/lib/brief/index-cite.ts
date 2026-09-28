@@ -20,6 +20,33 @@ export interface IndexCite {
   surname: string | null;
 }
 
+/**
+ * A caption highlighted WITHOUT its number ("Matter of DiSanto v. N.Y.C.
+ * Dep't of Health & Mental Hygiene"): the index or docket number the brief
+ * itself gives right after that caption, anywhere it appears. The brief is
+ * the source; nothing is guessed.
+ */
+export function indexCiteFromBrief(caption: string, briefText: string): IndexCite | null {
+  const flat = (s: string) => s.replace(/[*_]/g, '').replace(/\s+/g, ' ').trim();
+  const cap = flat(caption).replace(/[,.;:]+$/, '');
+  if (cap.length < 6) return null;
+  const text = flat(briefText);
+  for (let at = text.indexOf(cap); at >= 0; at = text.indexOf(cap, at + 1)) {
+    const c = parseIndexCite(text.slice(at, at + cap.length + 200));
+    if (c) return c;
+  }
+  // the caption's first party alone ("DiSanto v." … when the brief abbreviates differently later)
+  const first = /^(?:(?:In\s+re|Matter\s+of|In\s+the\s+Matter\s+of)\s+)?([A-Z][\w'’.-]+)/.exec(cap)?.[1];
+  if (first && first.length >= 4) {
+    const re = new RegExp(`(?:Matter of |In re )?${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^.]{0,200}`, 'g');
+    for (const m of text.matchAll(re)) {
+      const c = parseIndexCite(m[0]);
+      if (c) return c;
+    }
+  }
+  return null;
+}
+
 export function parseIndexCite(text: string): IndexCite | null {
   const s = text.replace(/\s+/g, ' ').trim();
   const idx = /\b(?:Index|Ind\.|Idx\.)\s*(?:No\.?|Number|#)\s*:?\s*(\d{3,7})\s*[/-]\s*(\d{2,4})\b/i.exec(s);
