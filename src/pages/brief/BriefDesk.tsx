@@ -38,6 +38,7 @@ import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
   ShieldCheck, ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
+  ClipboardCheck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -55,6 +56,10 @@ import {
   type CiteNote, type ConfirmProgress, type DeskRun,
 } from '@/lib/brief/confirm';
 import { passageForPrintedPage } from '@/lib/brief/resolve';
+import {
+  loadConfirmations, addConfirmation, latestFor, latestByCite, rememberedInitials, rememberInitials, guessInitials,
+  confirmationsCsv, type CiteConfirmation, type ConfirmationStatus,
+} from '@/lib/brief/confirmations';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
@@ -283,6 +288,59 @@ function DeskEditor(p: DeskProps) {
   const [showReadingNote, setShowReadingNote] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [showAddCase, setShowAddCase] = useState(false);
+
+  // ── The human check (migration 103) ─────────────────────────────────────
+  // Highlight a cite, Find in corpus, read the page, press Confirm with your
+  // initials: one append-only row. The latest row per cite colours the cite
+  // in the brief (green confirmed, amber problem) and fills the Log.
+  const [confs, setConfs] = useState<CiteConfirmation[]>([]);
+  const [showLog, setShowLog] = useState(false);
+  const [initials, setInitialsState] = useState<string>(() => rememberedInitials() ?? '');
+  const setInitials = (v: string) => { setInitialsState(v); rememberInitials(v); };
+  useEffect(() => {
+    let live = true;
+    loadConfirmations(meta.id).then((rows) => { if (live) setConfs(rows); }).catch((e) => p.setNotice(`The confirmation log could not be read: ${(e as Error).message}`));
+    if (!rememberedInitials()) {
+      supabase.auth.getUser().then(async ({ data }) => {
+        const u = data.user; if (!u || !live) return;
+        const { data: prof } = await supabase.from('profiles').select('display_name, email').eq('id', u.id).maybeSingle();
+        const g = guessInitials((prof as { display_name?: string | null } | null)?.display_name ?? (u.user_metadata?.full_name as string | undefined), u.email);
+        if (live && g && !rememberedInitials()) setInitialsState(g);
+      });
+    }
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per brief
+  }, [meta.id]);
+  // The words + sentence + place of the last highlight, carried into the pane by Find in corpus.
+  const highlightedCtx = useRef<{ raw: string; context: string; from: number } | null>(null);
+  const citeRef = useRef<{ raw: string; context: string; from: number | null } | null>(null);
+  const latest = useMemo(() => latestByCite(confs), [confs]);
+  const confirmCounts = useMemo(() => ({
+    confirmed: latest.filter((r) => r.status === 'confirmed').length,
+    problems: latest.filter((r) => r.status === 'problem').length,
+  }), [latest]);
+  const paneConfirmation = useMemo(
+    () => (pane?.cite ? latestFor(confs, pane.cite.raw, pane.cite.context) : null),
+    [pane?.cite, confs],
+  );
+  const confirmCite = async (status: ConfirmationStatus, note: string) => {
+    if (!pane?.cite || !pane.docId) return;
+    try {
+      const row = await addConfirmation({
+        document_id: meta.id,
+        cite_raw: pane.cite.raw,
+        context: pane.cite.context,
+        pm_from: pane.cite.from,
+        authority_document_id: pane.docId,
+        authority_title: pane.docTitle,
+        authority_page: pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
+        status, note, initials,
+      });
+      setConfs((cur) => [...cur, row]);
+    } catch (e) {
+      p.setNotice((e as Error).message);
+    }
+  };
   // Where the lawyer was reading when an authority opened (Eden, 09-27: "I was
   // looking at a cite and then lost my place").
   const briefScrollRef = useRef<HTMLDivElement>(null);
@@ -426,12 +484,14 @@ function DeskEditor(p: DeskProps) {
   const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null } = {}) => {
     markPlace();
     gotoNonce.current += 1;
+    const cite = citeRef.current; citeRef.current = null;      // consumed by the first document opened for it
     setPane((cur) => ({
       rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
       docId: documentId, docTitle: o.title ?? null,
       goto: o.passageId ? { passageId: o.passageId, nonce: gotoNonce.current } : { page: o.page ?? 1, nonce: gotoNonce.current },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
       appendix: o.appendix ?? null,
+      cite: cite ?? null,
     }));
     if (narrow) openOverlay('authority');
   };
@@ -632,8 +692,52 @@ function DeskEditor(p: DeskProps) {
     });
   };
 
+  // The brief shows what has been read: the latest row per cite colours its
+  // words (CSS Custom Highlights, the text untouched). Each cite is found by
+  // its sentence first, then its words inside it, so it survives reflow and
+  // small edits elsewhere; a sentence that was itself edited simply loses its
+  // colour until it is read again.
+  const paintConfirmed = useCallback(() => {
+    if (!editor) return;
+    const g = globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown };
+    const reg = g.CSS?.highlights;
+    if (!reg || !g.Highlight) return;
+    const proj = project(editor.state.doc);
+    const text = proj.text;
+    const ranges: Record<'confirmed' | 'problem', Range[]> = { confirmed: [], problem: [] };
+    for (const row of latest) {
+      const raw = row.cite_raw.trim();
+      if (!raw) continue;
+      let at = -1;
+      if (row.context) {
+        const c = text.indexOf(row.context.trim());
+        if (c >= 0) { const k = text.indexOf(raw, c); if (k >= 0 && k < c + row.context.length + 8) at = k; }
+      }
+      if (at < 0 && !row.context) at = text.indexOf(raw);
+      if (at < 0) continue;
+      const pm = plainRangeToPm(proj, at, at + raw.length);
+      if (!pm) continue;
+      try {
+        const a = editor.view.domAtPos(pm.from); const b = editor.view.domAtPos(pm.to);
+        const r = document.createRange(); r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset);
+        ranges[row.status].push(r);
+      } catch { /* a position outside the rendered view */ }
+    }
+    if (ranges.confirmed.length) reg.set('brief-confirmed', new g.Highlight(...ranges.confirmed)); else reg.delete('brief-confirmed');
+    if (ranges.problem.length) reg.set('brief-problem', new g.Highlight(...ranges.problem)); else reg.delete('brief-problem');
+  }, [editor, latest]);
+  useEffect(() => {
+    paintConfirmed();
+    if (!editor) return;
+    const onUpdate = () => paintConfirmed();
+    editor.on('update', onUpdate);
+    return () => { editor.off('update', onUpdate); };
+  }, [editor, paintConfirmed]);
+
   const findHighlighted = async () => {
     const label = highlighted.current ?? '';
+    // whatever opens next beside the brief was opened FOR this cite
+    citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     const cite = parseRecordCite(label);
     if (!cite) {
       if (await openByReporter(label)) return;
@@ -653,7 +757,11 @@ function DeskEditor(p: DeskProps) {
     const onSel = () => {
       const { from, to } = editor.state.selection;
       const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
-      if (text.length >= 2 && text.length <= 400) { highlighted.current = text; setHasHighlight(true); }
+      if (text.length >= 2 && text.length <= 400) {
+        highlighted.current = text; setHasHighlight(true);
+        // the sentence the cite sits in = its paragraph, for the log and for finding it again after edits
+        try { highlightedCtx.current = { raw: text, context: editor.state.doc.resolve(from).parent.textContent.replace(/\s+/g, ' ').trim(), from }; } catch { highlightedCtx.current = { raw: text, context: '', from }; }
+      }
       else if (!text) setHasHighlight(false);
       (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
         ...((window as unknown as { __briefDesk?: object }).__briefDesk ?? {}),
@@ -950,6 +1058,21 @@ function DeskEditor(p: DeskProps) {
           <Info size={14} /> <span className="hidden md:inline">How this page reads</span>
         </button>
         <button
+          onClick={() => setShowLog(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="The log of cites read and confirmed by a person: who, when, which page"
+          data-testid="log-button"
+        >
+          <ClipboardCheck size={14} />
+          <span className="hidden md:inline">Log</span>
+          {(confirmCounts.confirmed > 0 || confirmCounts.problems > 0) && (
+            <span className="text-[11px]">
+              <span className="text-emerald-300/90">{confirmCounts.confirmed}</span>
+              {confirmCounts.problems > 0 && <span className="text-amber-300/90"> · {confirmCounts.problems}</span>}
+            </span>
+          )}
+        </button>
+        <button
           onClick={() => p.setShowVersions(!p.showVersions)}
           className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${p.showVersions ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
           title="Saved versions"
@@ -1000,6 +1123,10 @@ function DeskEditor(p: DeskProps) {
                   onPickCopy={(d) => void pickCopy(d)}
                   onSearch={setSearch}
                   onChangeAppendix={changeAppendix}
+                  confirmation={paneConfirmation}
+                  initials={initials}
+                  onInitials={setInitials}
+                  onConfirm={confirmCite}
                 />
               </div>
             </VEdges>
@@ -1101,6 +1228,10 @@ function DeskEditor(p: DeskProps) {
               onPickCopy={(d) => void pickCopy(d)}
               onSearch={setSearch}
               onChangeAppendix={changeAppendix}
+              confirmation={paneConfirmation}
+              initials={initials}
+              onInitials={setInitials}
+              onConfirm={confirmCite}
             />
           ) : (
             <CiteTable
@@ -1133,6 +1264,17 @@ function DeskEditor(p: DeskProps) {
             void supabase.from('documents').update({ metadata }).eq('id', meta.id).then(({ error }) => { if (!error) p.setMeta({ ...meta, metadata }); });
           }}
         />
+      )}
+      {showLog && (
+        <CardDialog
+          storageKey="cs.brief.confirm-log"
+          title="Cites read and confirmed"
+          subtitle="Every press of Confirm or Problem, newest first. Nothing here is edited or deleted; a second reading is a second line."
+          onClose={() => setShowLog(false)}
+          maxWidth={720}
+        >
+          <ConfirmLog rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials} />
+        </CardDialog>
       )}
       {showReadingNote && (
         <CardDialog
@@ -1725,6 +1867,56 @@ function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, on
   );
 }
 
+// The log: every Confirm / Problem press, newest first, with a CSV for the file.
+function ConfirmLog({ rows, briefTitle, counts, initials, onInitials }: {
+  rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
+  initials: string; onInitials: (v: string) => void;
+}) {
+  const sorted = [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const download = () => {
+    const blob = new Blob([confirmationsCsv(rows, briefTitle)], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${briefTitle.replace(/[^\w.-]+/g, '_')} - cite confirmations.csv`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <div className="space-y-3" data-testid="confirm-log">
+      <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/70">
+        <span><span className="text-emerald-300">{counts.confirmed}</span> confirmed · <span className="text-amber-300">{counts.problems}</span> with a problem · {rows.length} {rows.length === 1 ? 'entry' : 'entries'} in all</span>
+        <label className="inline-flex items-center gap-1 text-white/45">signing as
+          <input value={initials} onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))} className="w-12 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-1.5 text-[12px] text-white/85 text-center outline-none focus:border-[#e8b84a]/50" aria-label="Your initials" placeholder="EQ" />
+        </label>
+        <button onClick={download} disabled={!rows.length} className="ml-auto inline-flex items-center gap-1 text-[12px] text-[#e8b84a]/80 hover:text-[#e8b84a] disabled:opacity-40">
+          <Download size={12} /> CSV
+        </button>
+      </div>
+      <p className="text-[11px] text-white/40 leading-snug">
+        How to add to it: highlight a cite in the brief, press <span className="text-[#e8b84a]">Find in corpus</span>, read the page that opens, then press <span className="text-emerald-300">Confirm</span> in the pane header, or <span className="text-amber-300">Problem</span> with a word on what is wrong. Confirmed cites turn green in the brief; problems amber.
+      </p>
+      {sorted.length === 0 ? (
+        <p className="text-[12px] text-white/45">Nothing read yet.</p>
+      ) : (
+        <div className="rounded-lg border border-white/[0.08] divide-y divide-white/[0.06] max-h-[60vh] overflow-y-auto">
+          {sorted.map((r) => (
+            <div key={r.id} className="px-3 py-2 text-[12px]">
+              <div className="flex items-baseline gap-2">
+                <span className={r.status === 'confirmed' ? 'text-emerald-300' : 'text-amber-300'}>{r.status === 'confirmed' ? 'Confirmed' : 'Problem'}</span>
+                <span className="text-white/85 font-medium truncate">{r.cite_raw}</span>
+                <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+              </div>
+              {(r.authority_title || r.authority_page) && (
+                <div className="text-white/45 truncate">{r.authority_title ?? 'document'}{r.authority_page ? `, p. ${r.authority_page}` : ''}</div>
+              )}
+              {r.note && <div className="text-amber-200/80">{r.note}</div>}
+              {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NoBody({ meta, onImported, onBack }: {
   meta: BriefMeta;
   onImported: (r: ImportResult) => void;
@@ -1780,6 +1972,8 @@ const BRIEF_CSS = `
 .brief-doc mark.brief-hl { background: #fff0a8; color: inherit; padding: 0 1px; }
 ::highlight(brief-find) { background-color: rgba(232,184,74,0.35); }
 ::highlight(brief-find-current) { background-color: rgba(232,150,40,0.85); color: #111; }
+::highlight(brief-confirmed) { background-color: rgba(52,211,153,0.22); text-decoration: underline; text-decoration-color: rgba(52,211,153,0.9); }
+::highlight(brief-problem) { background-color: rgba(251,191,36,0.28); text-decoration: underline wavy; text-decoration-color: rgba(251,191,36,0.9); }
 .brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
   text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }
 .brief-doc .brief-cite:hover { background: rgba(232,184,74,0.14); }
