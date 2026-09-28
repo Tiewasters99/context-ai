@@ -37,7 +37,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
-  ShieldCheck, ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
+  ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
   ClipboardCheck,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -854,7 +854,7 @@ function DeskEditor(p: DeskProps) {
       if (out.dropped) parts.push(`${out.dropped} no longer in the brief`);
       if (result.notLocated.length) parts.push(`${result.notLocated.length} not located in the text (listed at the end of the table)`);
       if (out.setAside) parts.push(`${out.setAside} the model named that are not in the text, set aside`);
-      p.setNotice(`Confirmed: ${parts.join('; ')}.${out.snapshotPublished ? '' : ' The version was saved, but search could not be updated.'}`);
+      p.setNotice(`Located: ${parts.join('; ')}. Nothing is verified yet: read each page and press Confirm.${out.snapshotPublished ? '' : ' The version was saved, but search could not be updated.'}`);
     } catch (e) {
       p.setNotice(e instanceof DOMException && e.name === 'AbortError'
         ? 'Stopped. The check was left unfinished and nothing on the page changed.'
@@ -980,9 +980,10 @@ function DeskEditor(p: DeskProps) {
         <Banner tone="info" onClose={p.clearLosses}>
           <button
             onClick={() => { p.clearLosses(); void confirm(false); }}
-            className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
+            className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-white/[0.14] text-[12px] text-white/70 hover:bg-white/[0.06] hover:text-white"
+            title="A machine pass that finds each cite in the record and marks it. It verifies nothing; your Confirm on each cite does."
           >
-            <ShieldCheck size={13} /> Confirm this brief
+            <Search size={13} /> Locate every cite
           </button>
           {/* Where the check looks: the matter the brief draws on, changeable
               before the first Confirm (a brief filed in a narrow folder). */}
@@ -1469,8 +1470,8 @@ function ReadingNote() {
         Confirmed cites turn <span className="text-emerald-300">green</span> in the brief, problems <span className="text-amber-300">amber</span>.</>)}
       {row('The Log', <>Every press, newest first: who, when, which authority and page, and a CSV for the file. Nothing in it is
         edited or deleted; a second reading is a second line.</>)}
-      {row('Confirm this brief', <>The machine's pass over every cite at once: it finds each one in the record and flags what it
-        cannot find. Useful first, but it is not the check. Your reading and your Confirm are.</>)}
+      {row('Locate every cite', <>The machine's pass over every cite at once: it finds each one in the record and marks what it
+        cannot find. It verifies nothing. Your reading and your Confirm are the check, and the Log is the record of it.</>)}
       {row('Add a case', <>A case missing from the record: choose the file and it is filed in the matter and searchable in a
         minute or two.</>)}
       {row('Pages', <>None here. Page numbers, the tables and the house style are made when the brief is exported to Word.</>)}
@@ -1565,7 +1566,9 @@ function ColumnDivider({ onStart, onDrag, onReset, title }: {
 }
 
 // ---------------------------------------------------------------------------
-// Confirm this brief — the button, the last run's counts, "N changed since"
+// Locate every cite (the machine pass; called "Confirm this brief" until
+// 09-27, when a lawyer read that name as the verification it is not) — the
+// button, the last run's counts, "N changed since"
 // ---------------------------------------------------------------------------
 function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, onRecheckAll, onStop, hasRun }: {
   counts: FlagCounts | null;
@@ -1600,12 +1603,13 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
         type="button"
         disabled={disabled}
         onClick={onConfirm}
-        className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
-        title={hasRun
-          ? 'Check the cites that are new or changed since the last check; the rest keep their flags'
-          : 'Read every citation, check it, and mark it in the text'}
+        className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-white/[0.12] text-[12px] text-white/60 hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+        title={(hasRun
+          ? 'Locate the cites that are new or changed since the last pass; the rest keep their marks. '
+          : 'A machine pass: finds every cite in the record and marks it in the text. ')
+          + 'It verifies nothing. Verification is your Confirm on each cite, after you have read the page.'}
       >
-        <ShieldCheck size={13} /> Confirm this brief
+        <Search size={13} /> Locate every cite
       </button>
       {counts && (
         <span className="text-[11px] text-white/45 whitespace-nowrap" title="The last check">
@@ -1619,9 +1623,9 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
           disabled={disabled}
           onClick={onRecheckAll}
           className="h-7 px-2 rounded text-[11px] text-white/50 hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
-          title="Check every cite again, changed or not — one model call per cite"
+          title="Run the machine pass over every cite again, changed or not — one model call per cite. Still not a verification."
         >
-          Re-check all
+          Locate again
         </button>
       )}
     </span>
