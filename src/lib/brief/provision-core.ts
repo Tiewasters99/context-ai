@@ -16,8 +16,14 @@
 //      page number or a year.
 
 export interface ProvisionQuery {
-  /** The section number as searched: "20-393", "2203", "433.2", "56". */
+  /** The section number as searched: "20-393", "2203", "433.2", "56"; a session law's chapter ("205"). */
   number: string;
+  /**
+   * For a session law or local law ("L. 2020, ch. 205", "Local Law 24 of
+   * 2019"): the words a document's NAME must all carry, each in any listed
+   * form — the year and the chapter, not the chapter alone.
+   */
+  nameWords?: string[][];
   /** Where the number came from. */
   from: 'cite' | 'brief';
   /** The strings to look for inside document text (case-insensitive). */
@@ -74,10 +80,43 @@ export function patternsFor(number: string, cite: string): string[] {
   return [...out];
 }
 
+/**
+ * A session law or local law — "L. 2020, ch. 205, §§ 1, 3", "Laws of 2020,
+ * ch. 205", "Local Law 24 of 2019", "Local Law No. 24 (2019)", "L.L. 2019/024"
+ * — is a year and a chapter (or number), never a section (Eden, 09-28: saved
+ * as "Local Law 2020, chapter 205"; the Bluebook form found nothing).
+ */
+export function sessionLaw(cite: string): { year: string; chapter: string; kind: 'session' | 'local' } | null {
+  const s = cite.replace(/\s+/g, ' ');
+  let m = /\b(?:L\.|Laws?(?:\s+of)?)\s*(\d{4}),?\s*(?:ch|chap|chapter)\.?\s*(\d+)/i.exec(s);
+  if (m) return { year: m[1], chapter: m[2], kind: 'session' };
+  m = /\bLocal\s+Law\s+(?:No\.?\s*)?(\d+)\s*(?:of|for|\(|,)\s*(\d{4})/i.exec(s);
+  if (m) return { year: m[2], chapter: m[1], kind: 'local' };
+  m = /\bL\.?L\.?\s*(\d{4})\s*[/-]\s*0*(\d+)/i.exec(s);
+  if (m) return { year: m[1], chapter: m[2], kind: 'local' };
+  return null;
+}
+
 /** What to search for, given the highlighted words and the brief's own text. Null when the words are not a provision. */
 export function provisionQuery(label: string, briefText: string): ProvisionQuery | null {
   const cite = label.replace(/\s+/g, ' ').trim().replace(/^[("'“‘\s]+|[)"'”’.,;:\s]+$/g, '');
   if (!cite) return null;
+  const sl = sessionLaw(cite);
+  if (sl) {
+    const ch = sl.chapter.replace(/^0+/, '');
+    const chapterForms = sl.kind === 'local'
+      ? [`Local Law ${ch}`, `Local Law No. ${ch}`, `L.L. ${sl.year}/${sl.chapter.padStart(3, '0')}`, `Int. ${ch}`, ` ${ch} `, ` ${ch}-`, `_${ch}_`, `${ch} of`]
+      : [`ch. ${ch}`, `ch ${ch}`, `chapter ${ch}`, `chap. ${ch}`, ` ${ch} `, `_${ch}_`, `L. ${sl.year}, ch. ${ch}`];
+    return {
+      number: ch,
+      from: 'cite',
+      nameWords: [[sl.year], chapterForms],
+      patterns: sl.kind === 'local'
+        ? [`Local Law ${ch}`, `Local Law No. ${ch}`, `L.L. ${sl.year}/${sl.chapter.padStart(3, '0')}`]
+        : [`ch. ${ch}`, `chapter ${ch}`, `L. ${sl.year}, ch. ${ch}`, `Chapter ${ch} of the Laws of ${sl.year}`],
+      name: sl.kind === 'local' ? `Local Law ${ch} of ${sl.year}` : `L. ${sl.year}, ch. ${ch}`,
+    };
+  }
   const own = sectionNumber(cite);
   if (own) return { number: own, from: 'cite', patterns: patternsFor(own, cite), name: own };
   if (!looksLikeProvision(cite) && !/\b(?:Rule|Act|Law|Regulation|Order|Code|Ordinance|Statute)\b/i.test(cite)) return null;

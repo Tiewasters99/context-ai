@@ -39,6 +39,21 @@ test('a numbered cite searches with its sign and body, never the bare number', (
   assert.ok(r.patterns.includes('6-02'));
 });
 
+test('a session law or local law is a year and a chapter, never a section', () => {
+  const q = provisionQuery('L. 2020, ch. 205, §§ 1, 3', BRIEF);
+  assert.equal(q.number, '205');
+  assert.deepEqual(q.nameWords[0], ['2020']);
+  assert.ok(q.nameWords[1].includes('chapter 205') && q.nameWords[1].includes('ch. 205'));
+  assert.ok(q.patterns.includes('ch. 205') && !q.patterns.some((p) => /§ 1\b/.test(p)));
+  const l = provisionQuery('Local Law No. 24 of 2019', BRIEF);
+  assert.equal(l.number, '24');
+  assert.deepEqual(l.nameWords[0], ['2019']);
+  assert.ok(l.nameWords[1].includes('Local Law 24'));
+  const ll = provisionQuery('L.L. 2019/024', BRIEF);
+  assert.equal(ll.number, '24');
+  assert.equal(provisionQuery('Laws of 2020, chapter 205', BRIEF).number, '205');
+});
+
 test('a case caption is not a provision; a bare name with no number in the brief searches its words', () => {
   assert.equal(provisionQuery('Morgan v. Allison Crane & Rigging LLC, 114 F.4th 214', BRIEF), null);
   assert.ok(!looksLikeProvision('Taylor v. Phoenixville Sch. Dist.'));

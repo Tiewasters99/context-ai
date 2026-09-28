@@ -32,6 +32,20 @@ export async function findProvisionByName(
   excludeDocumentId: string | null,
 ): Promise<ProvisionHit[]> {
   if (!matterIds.length) return [];
+  if (q.nameWords?.length) {
+    // a session or local law: the name must carry EVERY word (year and chapter), each in any form
+    let query = supabase.from('documents').select('id, title, source_filename').in('matterspace_id', matterIds);
+    for (const forms of q.nameWords) {
+      query = query.or(forms.flatMap((f) => [`title.ilike.%${esc(f)}%`, `source_filename.ilike.%${esc(f)}%`]).join(','));
+    }
+    if (excludeDocumentId) query = query.neq('id', excludeDocumentId);
+    const { data, error } = await query.limit(20);
+    if (error) throw new Error(error.message);
+    type Row = { id: string; title: string | null; source_filename: string | null };
+    return ((data ?? []) as Row[])
+      .map((d) => ({ document_id: d.id, title: d.title || d.source_filename || 'Untitled document', passages: [], namedForIt: true }))
+      .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }));
+  }
   const needles = q.number
     ? [`Section ${q.number}`, `§ ${q.number}`, `§${q.number}`, `Sec. ${q.number}`, `Rule ${q.number}`, ` ${q.number} `, `${q.number}(`, `${q.number}.pdf`, `${q.number}.doc`]
     : [q.name];
