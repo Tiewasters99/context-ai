@@ -121,7 +121,7 @@ export default function CiteTable(p: CiteTableProps) {
       <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-white/[0.05]">
         {p.rows.length === 0 && (
           <p className="text-[12px] text-white/40 p-3 leading-relaxed">
-            No cites yet. <span className="text-white/60">Confirm this brief</span> reads every citation, checks it, and marks it in the text.
+            No cites yet. <span className="text-white/60">Locate every cite</span> finds each citation in the record and marks it in the text; your Confirm on each one, after reading the page, is the check.
           </p>
         )}
         {p.rows.length > 0 && shown.length === 0 && <p className="text-[12px] text-white/40 p-3">No cites with that flag.</p>}
