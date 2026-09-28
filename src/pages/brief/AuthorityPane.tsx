@@ -32,7 +32,7 @@ export interface PaneState {
   cite?: { raw: string; context: string; from: number | null } | null;
 }
 
-export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, initials, onInitials, onConfirm }: {
+export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, openProblem, initials, onInitials, onConfirm }: {
   state: PaneState | null;
   onClose?: () => void;
   /** Full screen (phone, narrow window): a back arrow instead of a close. */
@@ -43,6 +43,8 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   onChangeAppendix?: () => void;
   /** The latest human reading of this cite (migration 103), if any. */
   confirmation?: CiteConfirmation | null;
+  /** A problem logged on these cite words that no later confirmation answered — confirming asks how it was resolved. */
+  openProblem?: CiteConfirmation | null;
   /** The initials the log signs with, editable here. */
   initials?: string;
   onInitials?: (v: string) => void;
@@ -52,7 +54,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   // The note box: 'problem' asks what is wrong; 'resolved' asks what was found
   // and how it was fixed, when a red cite is being confirmed (the note sits in
   // the log beside the problem — Eden, 09-28).
-  const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved'>(false);
+  const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved' | 'note'>(false);
   const [problemNote, setProblemNote] = useState('');
   const [busy, setBusy] = useState(false);
   const press = async (status: ConfirmationStatus, note = '') => {
@@ -61,7 +63,8 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
     try { await onConfirm(status, note); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
   };
   const confirmPress = () => {
-    if (confirmation?.status === 'problem') { setProblemNote(''); setProblemOpen('resolved'); return; }
+    if (openProblem || confirmation?.status === 'problem') { setProblemNote(''); setProblemOpen('resolved'); return; }
+    if (confirmation?.status === 'confirmed') { setProblemNote(''); setProblemOpen('note'); return; }   // a note on a green cite
     void press('confirmed');
   };
   if (!state) {
@@ -132,12 +135,12 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
                   value={problemNote}
                   onChange={(e) => setProblemNote(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
-                  placeholder={problemOpen === 'problem' ? 'What is wrong (pin, quotation, proposition…)?' : 'Resolved how? What was found (pin corrected, sentence tightened…)?'}
+                  placeholder={problemOpen === 'problem' ? 'What is wrong (pin, quotation, proposition…)?' : problemOpen === 'resolved' ? `Resolved how? What was found${openProblem?.note ? ` (flag: “${openProblem.note}”)` : ''}?` : 'A note on this confirmed cite (what was checked or fixed)'}
                   className={`flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none ${problemOpen === 'problem' ? 'focus:border-red-300/50' : 'focus:border-emerald-300/50'}`}
                   aria-label={problemOpen === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
                 />
                 <button onClick={() => void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote)} disabled={busy || !problemNote.trim()} className={`h-7 px-2 rounded border text-[12px] disabled:opacity-50 ${problemOpen === 'problem' ? 'border-red-400/40 text-red-200' : 'border-emerald-400/40 text-emerald-200'}`}>
-                  {problemOpen === 'problem' ? 'Log it' : 'Confirm, resolved'}
+                  {problemOpen === 'problem' ? 'Log it' : problemOpen === 'resolved' ? 'Confirm, resolved' : 'Log the note'}
                 </button>
               </div>
             )}

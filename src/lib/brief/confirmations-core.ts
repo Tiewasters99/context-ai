@@ -83,6 +83,26 @@ export function carryPlan(oldRows: CiteConfirmation[], newText: string): CarryPl
   return plan;
 }
 
+/**
+ * The newest reading of these cite WORDS anywhere in the brief, whatever
+ * sentence they sat in. A rewritten paragraph makes a new occurrence, but the
+ * flag on the words is still the flag (Eden, 09-28: swapped in a new
+ * paragraph, confirmed, and the red-to-green note was never asked for).
+ */
+export function lastReadingOfWords(rows: CiteConfirmation[], raw: string): CiteConfirmation | null {
+  const r = flat(raw);
+  if (!r) return null;
+  let best: CiteConfirmation | null = null;
+  for (const row of rows) if (flat(row.cite_raw) === r && (!best || row.created_at > best.created_at)) best = row;
+  return best;
+}
+
+/** The problem on these words that no later confirmation has answered; null when none is open. */
+export function openProblemForWords(rows: CiteConfirmation[], raw: string): CiteConfirmation | null {
+  const last = lastReadingOfWords(rows, raw);
+  return last && last.status === 'problem' ? last : null;
+}
+
 /** The note a carried row carries: where it came from, who read it, when. */
 export function carryNote(row: CiteConfirmation, fromTitle: string): string {
   const when = new Date(row.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
