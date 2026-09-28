@@ -79,7 +79,7 @@ import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
 import { provisionQuery } from '@/lib/brief/provision-core';
 import { parseIndexCite } from '@/lib/brief/index-cite';
-import { findProvisionInRecord, type ProvisionHit } from '@/lib/brief/provision-search';
+import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
 import AddCaseCard from './AddCaseCard';
@@ -960,8 +960,11 @@ function DeskEditor(p: DeskProps) {
     const ids = subtreeIds(allMatters, root);
     p.setBusy(`Searching ${recordRootName ?? 'the record'} for ${q.number ? `§ ${q.number}` : `“${q.name}”`}…`);
     let hits: ProvisionHit[];
-    try { hits = await findProvisionInRecord(q, ids.length ? ids : [root], meta.id); }
-    catch (e) { p.setBusy(null); p.setNotice(`The record could not be searched: ${(e as Error).message}`); return true; }
+    try {
+      // the section's own text, by name, first; the text scan only when no document is named for it
+      hits = await findProvisionByName(q, ids.length ? ids : [root], meta.id);
+      if (!hits.length) hits = await findProvisionInRecord(q, ids.length ? ids : [root], meta.id);
+    } catch (e) { p.setBusy(null); p.setNotice(`The record could not be searched: ${(e as Error).message}`); return true; }
     p.setBusy(null);
     if (!hits.length) {
       p.setNotice(`Nothing in ${recordRootName ?? 'this matter'} names or quotes ${q.number ? `§ ${q.number}` : `“${q.name}”`}${q.from === 'brief' ? ` (the number the brief pairs with “${label.trim()}”)` : ''}. File its text with Add a case — a name that starts with the section number is found at once.`);
@@ -970,15 +973,17 @@ function DeskEditor(p: DeskProps) {
     const open = (h: ProvisionHit) => {
       const first = h.passages[0];
       openDocument(h.document_id, {
-        passageId: first.passage_id,
+        passageId: first?.passage_id || undefined,
+        page: first?.passage_id ? undefined : (first?.page ?? 1),
         heading: label,
         title: h.title,
         caveat: h.namedForIt
-          ? null
-          : `Found inside this document's text${first.page ? ` (page ${first.page})` : ''}, not by its name${q.from === 'brief' ? ` — § ${q.number}, the number the brief pairs with “${label.trim()}”` : ''}.`,
+          ? (q.from === 'brief' ? `§ ${q.number}: the number the brief pairs with “${label.trim()}”.` : null)
+          : `Found inside this document's text${first?.page ? ` (page ${first.page})` : ''}, not by its name${q.from === 'brief' ? ` — § ${q.number}, the number the brief pairs with “${label.trim()}”` : ''}.`,
       });
     };
-    if (hits.length === 1 || hits[0].namedForIt) { open(hits[0]); return true; }
+    // one document, or exactly one named for the section: open it; several named for it (2203 and 2203(h)(1)): offer them
+    if (hits.length === 1 || (hits[0].namedForIt && !hits[1]?.namedForIt)) { open(hits[0]); return true; }
     setContentHits({ label, number: q.number, from: q.from, hits });
     return true;
   };
@@ -1774,8 +1779,8 @@ function DeskEditor(p: DeskProps) {
                   const first = h.passages[0];
                   setContentHits(null);
                   openDocument(h.document_id, {
-                    passageId: first.passage_id || undefined, page: first.passage_id ? undefined : (first.page ?? 1), heading: contentHits.label, title: h.title,
-                    caveat: h.namedForIt ? null : `Found inside this document's text${first.page ? ` (page ${first.page})` : ''}, not by its name.`,
+                    passageId: first?.passage_id || undefined, page: first?.passage_id ? undefined : (first?.page ?? 1), heading: contentHits.label, title: h.title,
+                    caveat: h.namedForIt ? null : `Found inside this document's text${first?.page ? ` (page ${first.page})` : ''}, not by its name.`,
                   });
                 }}
                 className={`block w-full text-left px-3 py-2 rounded-md border hover:bg-white/[0.03] ${h.namedForIt ? 'border-[#e8b84a]/40' : 'border-white/[0.08] hover:border-[#e8b84a]/50'}`}
@@ -1785,7 +1790,7 @@ function DeskEditor(p: DeskProps) {
                   {h.namedForIt && <span className="ml-2 text-[11px] text-[#e8b84a]/80">named for it</span>}
                   <span className="ml-2 text-[11px] text-white/40">{h.passages.length} page{h.passages.length === 1 ? '' : 's'}</span>
                 </div>
-                <div className="text-[11px] text-white/45 line-clamp-2">{h.passages[0].snippet}</div>
+                <div className="text-[11px] text-white/45 line-clamp-2">{h.passages[0]?.snippet ?? 'Named for the section; opens at its first page.'}</div>
               </button>
             ))}
           </div>

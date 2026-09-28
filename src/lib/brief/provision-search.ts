@@ -18,6 +18,44 @@ export interface ProvisionHit {
 const esc = (s: string) => s.replace(/[%_\\]/g, (c) => '\\' + c).replace(/[,()]/g, ' ');
 
 /**
+ * Documents in `matterIds` NAMED for the section ("NYC Charter Section
+ * 2203(h)(1)", "2203 Powers and duties…", "Rule 4. Appeal as of Right"): the
+ * section's own text, found by name before any text scan. A text scan reads
+ * a bounded number of passages, and in a matter with a dozen drafts that
+ * quote the section, the drafts fill that budget before the section itself
+ * appears (Eden, 09-28: "a dozen unrelated entries, but not the actual
+ * Charter section").
+ */
+export async function findProvisionByName(
+  q: ProvisionQuery,
+  matterIds: string[],
+  excludeDocumentId: string | null,
+): Promise<ProvisionHit[]> {
+  if (!matterIds.length) return [];
+  const needles = q.number
+    ? [`Section ${q.number}`, `§ ${q.number}`, `§${q.number}`, `Sec. ${q.number}`, `Rule ${q.number}`, ` ${q.number} `, `${q.number}(`, `${q.number}.pdf`, `${q.number}.doc`]
+    : [q.name];
+  // a number that starts the name ("2203 Powers and duties") has no space before it
+  if (q.number) needles.push(`${q.number} `);
+  const ors = needles.flatMap((n) => [`title.ilike.%${esc(n)}%`, `source_filename.ilike.%${esc(n)}%`]).join(',');
+  let query = supabase.from('documents').select('id, title, source_filename').in('matterspace_id', matterIds).or(ors).limit(20);
+  if (excludeDocumentId) query = query.neq('id', excludeDocumentId);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  type Row = { id: string; title: string | null; source_filename: string | null };
+  const rows = ((data ?? []) as Row[]).filter((d) => {
+    // the number must stand on its own in the name: "2203" is not "12203" or "2203.5"
+    if (!q.number) return true;
+    const name = `${d.title ?? ''} ${d.source_filename ?? ''}`;
+    const re = new RegExp(`(^|[^0-9.])${q.number.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![0-9]|\\.\\d)`);
+    return re.test(name);
+  });
+  return rows
+    .map((d) => ({ document_id: d.id, title: d.title || d.source_filename || 'Untitled document', passages: [], namedForIt: true }))
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { numeric: true }));
+}
+
+/**
  * Documents in `matterIds` whose text carries the provision. `excludeDocumentId`
  * is the brief itself: it cites the section, it is not its text.
  */
@@ -25,7 +63,7 @@ export async function findProvisionInRecord(
   q: ProvisionQuery,
   matterIds: string[],
   excludeDocumentId: string | null,
-  limit = 60,
+  limit = 200,
 ): Promise<ProvisionHit[]> {
   if (!matterIds.length || !q.patterns.length) return [];
   const ors = q.patterns.map((p) => `text.ilike.%${esc(p)}%`).join(',');
