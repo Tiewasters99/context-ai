@@ -326,9 +326,17 @@ function DeskEditor(p: DeskProps) {
   );
   // Confirm the highlighted cite without opening it on the desk (a hard copy,
   // another window): the row records no authority, and the log says so.
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [highlightTick, setHighlightTick] = useState(0);        // re-read the highlight's own status after a press
+  const highlightedConfirmation = useMemo(() => {
+    const h = highlightedCtx.current;
+    void highlightTick;
+    return h ? latestFor(confs, h.raw, h.context, h.from) : null;
+  }, [confs, highlightTick]);  
   const confirmHighlighted = async (status: ConfirmationStatus, note = '') => {
     const h = highlightedCtx.current;
-    if (!h) return;
+    if (!h || confirmBusy) return;
+    setConfirmBusy(true);
     try {
       const row = await addConfirmation({
         document_id: meta.id,
@@ -337,9 +345,15 @@ function DeskEditor(p: DeskProps) {
         status, note, initials,
       });
       setConfs((cur) => [...cur, row]);
-      p.setNotice(null);
+      setHighlightTick((t) => t + 1);
+      const when = new Date(row.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      p.setNotice(status === 'confirmed'
+        ? `Logged: ${h.raw} confirmed · ${row.initials} · ${when}. It is green in the brief and in the Log.`
+        : `Logged: a problem with ${h.raw} · ${row.initials} · ${when}. It is amber in the brief and in the Log.`);
     } catch (e) {
       p.setNotice((e as Error).message);
+    } finally {
+      setConfirmBusy(false);
     }
   };
   const confirmCite = async (status: ConfirmationStatus, note: string) => {
@@ -729,7 +743,17 @@ function DeskEditor(p: DeskProps) {
     const reg = g.CSS?.highlights;
     if (!reg || !g.Highlight) return;
     const proj = project(editor.state.doc);
-    const text = proj.text;
+    // Match on whitespace-collapsed text (the stored sentence is collapsed), mapping back to real offsets.
+    const map: number[] = [];
+    let text = '';
+    let prevSpace = false;
+    for (let i = 0; i < proj.text.length; i++) {
+      const ch = proj.text[i];
+      const isSpace = /\s/.test(ch);
+      if (isSpace && prevSpace) continue;
+      map.push(i); text += isSpace ? ' ' : ch; prevSpace = isSpace;
+    }
+    const orig = (k: number) => (k < map.length ? map[k] : proj.text.length);
     const ranges: Record<'confirmed' | 'problem', Range[]> = { confirmed: [], problem: [] };
     for (const row of latest) {
       const raw = row.cite_raw.trim();
@@ -750,7 +774,7 @@ function DeskEditor(p: DeskProps) {
       let pm: { from: number; to: number } | null = null;
       let bestD = Infinity;
       for (const at of cands) {
-        const cand = plainRangeToPm(proj, at, at + raw.length);
+        const cand = plainRangeToPm(proj, orig(at), orig(at + raw.length - 1) + 1);
         if (!cand) continue;
         const d = row.pm_from === null ? cands.indexOf(at) : Math.abs(cand.from - row.pm_from);
         if (d < bestD) { bestD = d; pm = cand; }
@@ -841,6 +865,7 @@ function DeskEditor(p: DeskProps) {
       const { from, to } = editor.state.selection;
       const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
       if (text.length >= 2 && text.length <= 400) {
+        if (highlighted.current !== text) setHighlightTick((t) => t + 1);
         highlighted.current = text; setHasHighlight(true);
         // the sentence the cite sits in = its paragraph, for the log and for finding it again after edits
         try { highlightedCtx.current = { raw: text, context: editor.state.doc.resolve(from).parent.textContent.replace(/\s+/g, ' ').trim(), from }; } catch { highlightedCtx.current = { raw: text, context: '', from }; }
@@ -1126,12 +1151,14 @@ function DeskEditor(p: DeskProps) {
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void confirmHighlighted('confirmed')}
-            disabled={!hasHighlight || !initials.trim()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40"
-            title={hasHighlight ? 'I checked this cite (here or elsewhere, a hard copy or another source): log it as confirmed with my initials' : 'Highlight a cite in the brief first; then Confirm logs it with your initials'}
+            disabled={!hasHighlight || !initials.trim() || confirmBusy}
+            className={`h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-[12px] disabled:opacity-40 ${highlightedConfirmation?.status === 'confirmed' ? 'border-emerald-400/60 bg-emerald-400/25 text-emerald-100' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
+            title={!hasHighlight ? 'Highlight a cite in the brief first; then Confirm logs it with your initials'
+              : highlightedConfirmation ? `Already ${highlightedConfirmation.status === 'confirmed' ? 'confirmed' : 'marked as a problem'} by ${highlightedConfirmation.initials}, ${new Date(highlightedConfirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Press again to log another reading.`
+                : 'I checked this cite (here or elsewhere, a hard copy or another source): log it as confirmed with my initials'}
             data-testid="confirm-highlighted"
           >
-            <Check size={13} /> Confirm
+            <Check size={13} /> {confirmBusy ? 'Logging…' : highlightedConfirmation?.status === 'confirmed' ? `Confirmed · ${highlightedConfirmation.initials}` : 'Confirm'}
           </button>
         )}
         {(
