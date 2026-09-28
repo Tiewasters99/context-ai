@@ -12,6 +12,7 @@ import { ArrowLeft, BookOpen, Search, X, Check, AlertTriangle } from 'lucide-rea
 import DocumentReader, { type ReaderGoto } from '@/pages/DocumentReader';
 import type { DeskEntry } from '@/lib/brief/anchor';
 import { caseNameOf } from '@/lib/brief/resolve';
+import { findQueryFor } from '@/lib/brief/find-query';
 import type { CiteConfirmation, ConfirmationStatus } from '@/lib/brief/confirmations';
 
 export interface PaneState {
@@ -195,9 +196,22 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
       </div>
     );
   } else if (res.status === 'not_a_case') {
-    body = <Note>Not a reported case, so there is no copy in the corpus to open.</Note>;
+    // A statute, regulation or rule: the machine pass only looks cases up by
+    // reporter cite. The text is usually filed ("12182 Prohibition of
+    // discrimination…", "Rule 4. Appeal as of Right"); search the record for
+    // it, the same query Find in corpus would run.
+    const q = findQueryFor(state.entry.citation || state.heading);
+    body = (
+      <div className="p-4 space-y-3">
+        <p className="text-[13px] text-white/70">A statute, regulation or rule. The machine pass looks only cases up by reporter cite; the text is usually filed in the record.</p>
+        <button onClick={() => onSearch(q)} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20">
+          <Search size={12} /> Search the record for “{q}”
+        </button>
+        <p className="text-[12px] text-white/45">Or highlight the cite in the brief and press Find in corpus.</p>
+      </div>
+    );
   } else {
-    body = <Note>The lookup failed{res.error ? `: ${res.error}` : ''}. Confirm again to retry it.</Note>;
+    body = <Note>The lookup failed{res.error ? `: ${res.error}` : ''}. Run Locate every cite again to retry it.</Note>;
   }
   return <Frame>{header}{body}</Frame>;
 }
