@@ -107,14 +107,14 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
             >
               <AlertTriangle size={13} /> Problem
             </button>
-            <label className="inline-flex items-center gap-1 text-[11px] text-white/45" title="The initials the log signs with">
-              as
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-white/55" title="Click and type your initials; they are kept on this computer and go on every row you log">
+              Your initials
               <input
                 value={initials ?? ''}
                 onChange={(e) => onInitials?.(e.target.value.toUpperCase().slice(0, 6))}
-                className="w-11 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-1.5 text-[12px] text-white/85 outline-none focus:border-[#e8b84a]/50 text-center"
+                className="w-14 h-7 bg-white/[0.06] border border-[#e8b84a]/40 rounded px-1.5 text-[12px] text-white/90 font-medium outline-none focus:border-[#e8b84a] text-center"
                 aria-label="Your initials"
-                placeholder="EQ"
+                placeholder="type"
               />
             </label>
             {problemOpen && (
