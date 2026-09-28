@@ -100,6 +100,9 @@ test('B. parseDocketCite: appellate and district docket entries', async () => {
   assert.equal(parseDocketCite('A-8'), null);
   assert.equal(parseDocketCite('114 F.4th 214'), null);
   assert.equal(parseDocketCite('Doc. 5 says nothing of the kind'), null, 'prose around it is not a cite');
+  assert.deepEqual(parseDocketCite('Id., Doc. 23', '26-2098'), { docket: '26-2098', entry: 23, kind: 'appellate' }, 'Id. carries the docket over');
+  assert.deepEqual(parseDocketCite('Doc. 23.', '26-2098'), { docket: '26-2098', entry: 23, kind: 'appellate' });
+  assert.equal(parseDocketCite('Id., Doc. 23'), null, 'with no docket to carry over there is nothing to open');
 });
 
 test('B. isSealedIn: own tier or any ancestor\'s', () => {
