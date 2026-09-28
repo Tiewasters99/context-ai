@@ -65,6 +65,7 @@ import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
 import { parseReporterCites } from '../../../lib/bluebook.mjs';
 import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import CardDialog from '@/components/ui/CardDialog';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
@@ -747,11 +748,43 @@ function DeskEditor(p: DeskProps) {
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     const cite = parseRecordCite(label);
     if (!cite) {
+      const dk = parseDocketCite(label);
+      if (dk && await openDocketCite(dk, label)) return;
       if (await openByReporter(label)) return;
       setSearch(findQueryFor(label));
       return;
     }
     await openRecordCite(cite, label);
+  };
+
+  // "No. 26-2098, Doc. 5" / "ECF 80": the docket sheet in the record at the
+  // page listing the entry; the filed paper, when the pull holds it, is named.
+  const openDocketCite = async (dk: ReturnType<typeof parseDocketCite>, label: string): Promise<boolean> => {
+    if (!dk) return false;
+    try {
+      const hit = await findDocketEntry(supabase, dk);
+      if (!hit) {
+        p.setNotice(dk.kind === 'appellate'
+          ? `No docket sheet for No. ${dk.docket} is filed in your matters.`
+          : 'No district-court docket sheet is filed in your matters.');
+        return false;
+      }
+      const where = dk.kind === 'appellate' ? `No. ${dk.docket}, Doc. ${dk.entry}` : `ECF ${dk.entry}`;
+      openDocument(hit.documentId, {
+        page: hit.page,
+        heading: label,
+        title: hit.title,
+        caveat: [
+          hit.basis === 'entry' ? `Docket entry ${dk.entry} is listed on this page.` : `Entry ${dk.entry} was not found in the sheet's text; showing its first page.`,
+          hit.papers ? `The filed papers are in “${hit.papers.title}”.` : null,
+          `(${where})`,
+        ].filter(Boolean).join(' '),
+      });
+      return true;
+    } catch (e) {
+      p.setNotice(`The docket could not be searched: ${(e as Error).message}`);
+      return false;
+    }
   };
 
   // The words highlighted in the brief, for "Find in corpus". Kept after the
