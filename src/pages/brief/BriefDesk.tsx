@@ -315,6 +315,20 @@ function DeskEditor(p: DeskProps) {
   // The words + sentence + place of the last highlight, carried into the pane by Find in corpus.
   const highlightedCtx = useRef<{ raw: string; context: string; from: number } | null>(null);
   const citeRef = useRef<{ raw: string; context: string; from: number | null } | null>(null);
+  // The sentence a cite sits in = its paragraph's words WITHOUT its footnotes'
+  // (a footnote is an inline node; textContent would splice its text into the
+  // sentence — 09-28, the pronoun note made a paragraph's cites impossible to
+  // find again). One rule for the highlight, the clicked underline and the log.
+  const paragraphContextAt = (from: number | null): string => {
+    const ed = editorRef.current;
+    if (!ed || from === null) return '';
+    try {
+      const para = ed.state.doc.resolve(from).parent;
+      let ctx = '';
+      para.forEach((child) => { if (child.type.name !== 'footnote') ctx += child.textContent; });
+      return ctx.replace(/\s+/g, ' ').trim();
+    } catch { return ''; }
+  };
   const latest = useMemo(() => latestByCite(confs), [confs]);
   const confirmCounts = useMemo(() => ({
     confirmed: latest.filter((r) => r.status === 'confirmed').length,
@@ -488,15 +502,25 @@ function DeskEditor(p: DeskProps) {
           ? (res!.passage?.caveat ?? 'No star pages in this copy — showing page 1.')
           : null;
     gotoNonce.current += 1;
+    // The cite's words AS THE BRIEF HAS THEM (the entry's raw is normalised; the
+    // log and the green paint match on the text), else the entry's.
+    let raw = e?.raw ?? row.attrs?.raw ?? '';
+    if (row.from !== null && row.to !== null && editorRef.current) {
+      try { raw = editorRef.current.state.doc.textBetween(row.from, row.to, ' ', ' ').trim() || raw; } catch { /* keep the entry's */ }
+    }
     setPane({
       rowKey: rowKey(row),
       entry: e,
-      heading: e?.raw ?? row.attrs?.raw ?? '',
+      heading: raw,
       stale: row.stale && row.from !== null,
       docId,
       docTitle: resolved ? res!.hits[0].title : null,
       goto: docId ? (passageId ? { passageId, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current }) : null,
       caveat,
+      // The cite this pane is open FOR, so Confirm / Problem are there when the
+      // case was opened by clicking its underline or its table row (09-28: the
+      // pane had no Confirm at all on that path; only Find in corpus carried it).
+      cite: raw ? { raw, context: paragraphContextAt(row.from), from: row.from } : null,
     });
     if (narrow) openOverlay('authority');
     // A cite the last machine pass did not find may be in the record NOW (added
@@ -507,7 +531,7 @@ function DeskEditor(p: DeskProps) {
         try {
           const fresh = await resolveEntry(supabase, root, e);
           if (fresh.status === 'resolved' && fresh.hits[0]) {
-            citeRef.current = { raw: e.raw, context: '', from: row.from };
+            citeRef.current = { raw: e.raw, context: paragraphContextAt(row.from), from: row.from };
             openDocument(fresh.hits[0].document_id, {
               passageId: fresh.passage?.passage_id,
               heading: e.raw,
@@ -893,16 +917,8 @@ function DeskEditor(p: DeskProps) {
       if (text.length >= 2 && text.length <= 400) {
         if (highlighted.current !== text) setHighlightTick((t) => t + 1);
         highlighted.current = text; setHasHighlight(true);
-        // the sentence the cite sits in = its paragraph, for the log and for finding it again after edits
-        // the sentence's paragraph WITHOUT its footnotes' words (a footnote is an inline
-        // node; textContent would splice its text into the sentence — 09-28, the pronoun
-        // note made a paragraph's cites impossible to find again)
-        try {
-          const para = editor.state.doc.resolve(from).parent;
-          let ctx = '';
-          para.forEach((child) => { if (child.type.name !== 'footnote') ctx += child.textContent; });
-          highlightedCtx.current = { raw: text, context: ctx.replace(/\s+/g, ' ').trim(), from };
-        } catch { highlightedCtx.current = { raw: text, context: '', from }; }
+        // the sentence the cite sits in, for the log and for finding it again after edits
+        highlightedCtx.current = { raw: text, context: paragraphContextAt(from), from };
       }
       else if (!text) setHasHighlight(false);
       (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
