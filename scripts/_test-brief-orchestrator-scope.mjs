@@ -89,6 +89,19 @@ test('B. nearestCommonAncestor', () => {
   assert.equal(nearestCommonAncestor(m, []), null);
 });
 
+test('B. parseDocketCite: appellate and district docket entries', async () => {
+  const { parseDocketCite } = await import('../src/lib/brief/docket-cite.ts');
+  assert.deepEqual(parseDocketCite('No. 26-2098, Doc. 5'), { docket: '26-2098', entry: 5, kind: 'appellate' });
+  assert.deepEqual(parseDocketCite('No. 26-2098, Doc. 5.'), { docket: '26-2098', entry: 5, kind: 'appellate' });
+  assert.deepEqual(parseDocketCite('26-2098, Dkt. 18'), { docket: '26-2098', entry: 18, kind: 'appellate' });
+  assert.deepEqual(parseDocketCite('ECF 80'), { docket: null, entry: 80, kind: 'district' });
+  assert.deepEqual(parseDocketCite('ECF No. 70-1 at 522'), null, 'an attachment cite (70-1) is not an entry: left to search');
+  assert.deepEqual(parseDocketCite('ECF 66 at 3'), { docket: null, entry: 66, kind: 'district' });
+  assert.equal(parseDocketCite('A-8'), null);
+  assert.equal(parseDocketCite('114 F.4th 214'), null);
+  assert.equal(parseDocketCite('Doc. 5 says nothing of the kind'), null, 'prose around it is not a cite');
+});
+
 test('B. isSealedIn: own tier or any ancestor\'s', () => {
   const m = [
     { id: 'legal', parent_matterspace_id: null, ai_tier: 'A' },
