@@ -60,6 +60,9 @@
     },
     "api/cloud-export.mjs": {
       "maxDuration": 60
+    },
+    "api/gpt/*.mjs": {
+      "maxDuration": 60
     }
   },
   "headers": [
@@ -72,6 +75,10 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/gpt/openapi.json",
+      "destination": "/api/gpt/openapi"
+    },
     {
       "source": "/api/briefing/delta",
       "destination": "/api/briefing-delta"

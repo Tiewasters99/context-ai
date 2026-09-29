@@ -92,6 +92,20 @@ hand-written and small, `x-openai-isConsequential: true` on `fileText`,
 requires. A harness (`scripts/_verify-gpt-openapi.mjs`) validates the document against
 the OpenAPI 3.1 JSON schema and checks every `operationId` maps to a tool that exists.
 
+**Built 2026-09-29 (steps 3–4).** `lib/gpt-ops.mjs` is the whole contract: the `OPS` table
+(15 operations), `shapeArgs` (only exposed parameters pass, typed against the tool's own
+`inputSchema`, clamped: passages ≤ 20, contents page 200, grep ≤ 200 matches / 400 context
+chars, `getPassage` ≤ 2 context pages; `fileText` text extensions only, ≤ 200 KB, utf8 forced),
+`capResult` (strings > 4,000 chars cut, then the largest array halved until the JSON is under
+90,000 chars; `truncated:true` either way), `httpFor` (sealed/paused/agent-scope → 403,
+"not found" → 404, bad input → 400, meter refusal → 429 + Retry-After, else 500) and
+`buildOpenApi(origin)`. One Vercel function, `api/gpt/[op].mjs`, serves every operation AND
+the document (`GET /api/gpt/openapi.json`, rewritten to `/api/gpt/openapi`; the handler also
+answers the `.json` spelling itself); `api/gpt/openapi.mjs` was not created. Response
+envelope: `{ok, op, matter:{id,name,short_code}|null, truncated, data}`; errors
+`{ok:false, error, message}`. `createChart` is marked consequential too (it files a
+document). Harness: `scripts/_verify-gpt-openapi.mjs` (73 checks, fakes, no database).
+
 ## 4. The GPT itself (builder settings)
 
 - Name **Contextspaces**; description "Your matters, documents and record, from
