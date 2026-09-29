@@ -123,6 +123,15 @@ document). Harness: `scripts/_verify-gpt-openapi.mjs` (73 checks, fakes, no data
   their own Contextspaces account, so what they see is theirs by RLS. Listing in the
   GPT Store is a later, separate step (OpenAI review).
 
+**Built 2026-09-29 (step 5).** Public routes `/gpt-connect` (`src/pages/GptConnect.tsx`: the
+phone reader's page — steps, can/cannot, how information is handled, switching it off, a
+lawyer's set-up footnote; `GPT_LINK` constant to fill once the GPT exists) and `/privacy`
+(`src/pages/Privacy.tsx`, operated by Grapheon.ai, LLC; the landing footer's Privacy link now
+points here). `docs/specs/gpt-instructions.md` holds the paste-ready builder text (name,
+description, instructions, starters, Actions/OAuth settings, first-test script). Connections ›
+ChatGPT carries a callout to the phone route. Remaining: step 6 (Eden: create the GPT, mint
+the client, test on an iPhone).
+
 ## 5. Build plan and estimate
 
 | Step | Work | Est. |

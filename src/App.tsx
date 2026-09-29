@@ -51,6 +51,8 @@ import AuthCallback from '@/pages/AuthCallback';
 import AuthConfirm from '@/pages/AuthConfirm';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
+import GptConnect from '@/pages/GptConnect';
+import Privacy from '@/pages/Privacy';
 import BriefDesk from '@/pages/brief/BriefDesk';
 import BriefDeskHome from '@/pages/brief/BriefDeskHome';
 import { canOpenPath } from '@/lib/plan';
@@ -158,6 +160,9 @@ export default function App() {
             <Route path="/auth/confirm" element={<AuthConfirm />} />
             <Route path="/auth/reset" element={<ResetPassword />} />
             <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+            {/* Public: a client on a phone, and the privacy page the GPT builder requires. */}
+            <Route path="/gpt-connect" element={<GptConnect />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route
               path="/app"
               element={
