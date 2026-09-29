@@ -81,6 +81,12 @@ say "there is more".
 - **Scope** — one scope, `contextspaces`, informational; matter rights come from the
   consent screen, as now.
 
+**Built 2026-09-29 (mint on the server).** `MCP_OAUTH_SECRET` is a Sensitive variable in Vercel, so
+the local script cannot obtain it. `POST /api/oauth-client-mint` mints the confidential client where
+the secret already lives and returns only the client id + one-time secret; callable by a signed-in
+user whose email is in `OAUTH_CLIENT_ADMIN_EMAILS` (unset = endpoint off, 503). Page:
+`/app/connections/gpt-client` (`src/pages/GptClientMint.tsx`). Harness `scripts/_verify-oauth-client-mint.mjs`.
+
 ## 3. The OpenAPI document
 
 `api/gpt/openapi.mjs` serves `/api/gpt/openapi.json`: OpenAPI 3.1, `servers` derived

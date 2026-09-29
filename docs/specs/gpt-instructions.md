@@ -62,14 +62,14 @@ Web browsing off. Code interpreter off. Image generation off.
 
 - Import from URL: `https://www.contextspaces.ai/api/gpt/openapi.json`
 - Authentication: **OAuth**
-  - Client ID / Client Secret: from `node scripts/register-oauth-client.mjs --name "Contextspaces GPT" --redirect <callback> --redirect <callback on chatgpt.com> --out C:/Users/equai/gpt-oauth-client.txt` (the callback URL is shown in the builder after you choose OAuth and save; it has the form `https://chat.openai.com/aip/g-<GPT_ID>/oauth/callback`; register the `https://chatgpt.com/...` twin too). The script needs production `MCP_OAUTH_SECRET` in the environment or `.env.local`; it writes id + secret to the `--out` file and prints only the path. Paste both, then delete the file.
+  - Client ID / Client Secret: minted on the server at **Contextspaces › Connections › ChatGPT › mint its OAuth client** (`/app/connections/gpt-client`), signed in as the account owner (the email must be listed in Vercel's `OAUTH_CLIENT_ADMIN_EMAILS`). Paste the callback URL the builder shows after you choose OAuth and save (form `https://chat.openai.com/aip/g-<GPT_ID>/oauth/callback`) and its `https://chatgpt.com/...` twin, one per line; mint; copy both values into the builder. Shown once. (`scripts/register-oauth-client.mjs` does the same locally but needs the signing secret, which is Sensitive in Vercel and cannot be pulled.)
   - Authorization URL: `https://www.contextspaces.ai/oauth/authorize`
   - Token URL: `https://www.contextspaces.ai/api/oauth-token`
   - Scope: `contextspaces`
   - Token Exchange Method: Default (POST request). (Basic authorization header also works.)
 - Privacy policy URL: `https://www.contextspaces.ai/privacy`
 
-Order of operations (the callback URL changes when OAuth parameters change): create the GPT → Actions → import the schema → choose OAuth → save once to see the callback URL → mint the client with that callback → paste id + secret → save again → test `listMatters` in the builder preview → publish "Anyone with the link".
+Order of operations (the callback URL changes when OAuth parameters change): create the GPT → Actions → import the schema → choose OAuth → save once to see the callback URL → mint the client on the Connections page with that callback → paste id + secret → save again → test `listMatters` in the builder preview → publish "Anyone with the link".
 
 ## First test (Eden, on an iPhone)
 

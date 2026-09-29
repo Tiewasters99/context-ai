@@ -63,6 +63,9 @@
     },
     "api/gpt/*.mjs": {
       "maxDuration": 60
+    },
+    "api/oauth-client-mint.mjs": {
+      "maxDuration": 15
     }
   },
   "headers": [

@@ -23,6 +23,7 @@ import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
 import ChatGPTConnect from '@/pages/ChatGPTConnect';
+import GptClientMint from '@/pages/GptClientMint';
 import Connections from '@/pages/Connections';
 import Settings from '@/pages/Settings';
 import BucketizerHome from '@/pages/BucketizerHome';
@@ -209,6 +210,7 @@ export default function App() {
               <Route path="connections/gemini" element={<GeminiConnect />} />
               <Route path="connections/grok" element={<GrokConnect />} />
               <Route path="connections/chatgpt" element={<ChatGPTConnect />} />
+              <Route path="connections/gpt-client" element={<GptClientMint />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
               <Route path="brief" element={<BriefDeskHome />} />
