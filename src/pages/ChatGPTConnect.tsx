@@ -144,6 +144,16 @@ export default function ChatGPTConnect() {
               calling GPT through the OpenAI API.
             </span>
           </div>
+
+          {/* The phone route (2026-09-29). ChatGPT's custom connectors are
+              desktop-web only; the Custom GPT with Actions runs in the phone
+              apps. Clients go there; this page stays the connector recipe. */}
+          <div className="mt-4 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">On a phone, or setting up a client?</strong>{' '}
+            The connector below only works in ChatGPT on a computer. The{' '}
+            <Link to="/gpt-connect" className="text-[var(--color-primary)] underline underline-offset-2">Contextspaces GPT</Link>{' '}
+            runs in the ChatGPT iPhone and Android apps with nothing to enable: open it, sign in to Contextspaces once, ask.
+          </div>
         </header>
 
         {/* Walkthrough */}
