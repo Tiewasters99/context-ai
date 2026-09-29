@@ -62,6 +62,17 @@ say "there is more".
   - `/api/oauth-token`: when the client is confidential, require the secret (constant-time
     compare against `secret_hash`) instead of PKCE; everything else unchanged
     (refresh tokens, grant ids, expiry).
+  - **Built 2026-09-29 (steps 1–2).** `lib/oauth-bearer.mjs` holds `authenticate`
+    (alias `resolveBearer`), `AuthError`, `adminClient`, `userScopedClient`,
+    `callToolOptsFor`; `api/mcp.mjs` imports and re-exports them. `lib/oauth-clients.mjs`
+    mints and checks confidential clients. The token endpoint takes the secret in the
+    POST body **or** as HTTP Basic (OpenAI's docs list the fields but not their
+    transport), on the code exchange and on every refresh; a confidential client that
+    sent a `code_challenge` is still held to the verifier (no downgrade). The metadata
+    advertises `none`, `client_secret_post`, `client_secret_basic`. `scripts/register-oauth-client.mjs
+    --name … --redirect … --out <file>` writes id + secret to the file and prints only
+    its path (never run it where stdout is captured in a chat). Harness:
+    `scripts/_verify-oauth-confidential.mjs` (60 checks).
 - **Redirect URIs** — a GPT's callback is `https://chat.openai.com/aip/g-<GPT_ID>/oauth/callback`
   (and the `chatgpt.com` twin). The GPT id exists only after the GPT is created, so
   set-up is: create the GPT in the builder → copy the callback → run the script with

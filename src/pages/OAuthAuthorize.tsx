@@ -98,14 +98,19 @@ export default function OAuthAuthorize() {
     scope: params.get('scope') || 'mcp',
   }), [params]);
 
+  const clientMeta = useMemo(() => readJwtPayload(oauth.client_id), [oauth.client_id]);
+  // A confidential client (a Custom GPT's Actions) proves itself with a secret
+  // at the token endpoint and sends no PKCE. This reading of the client_id is
+  // unsigned, so it only decides what this page SAYS; /api/oauth-approve
+  // verifies the signature and refuses a public client without a challenge.
+  const confidentialClient = clientMeta?.confidential === true;
+
   const paramErrors: string[] = [];
   if (oauth.response_type !== 'code') paramErrors.push('response_type must be "code"');
   if (!oauth.client_id) paramErrors.push('client_id missing');
   if (!oauth.redirect_uri) paramErrors.push('redirect_uri missing');
-  if (!oauth.code_challenge) paramErrors.push('code_challenge missing (PKCE required)');
-  if (oauth.code_challenge_method !== 'S256') paramErrors.push('only S256 code_challenge_method is supported');
-
-  const clientMeta = useMemo(() => readJwtPayload(oauth.client_id), [oauth.client_id]);
+  if (!oauth.code_challenge && !confidentialClient) paramErrors.push('code_challenge missing (PKCE required)');
+  if (oauth.code_challenge && oauth.code_challenge_method !== 'S256') paramErrors.push('only S256 code_challenge_method is supported');
   const clientName = clientMeta?.client_name || 'an MCP client';
 
   // How to connect (migration 087). Full assistant is the default for every
