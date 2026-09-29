@@ -59,6 +59,29 @@ export const DOC_ABBREVIATIONS: Record<string, string[]> = {
   dec: ['Decision'],
 };
 
+/** Agencies and courts a cite names by acronym; a document's name or first page may carry the long form. */
+export const ACRONYMS: Record<string, string[]> = {
+  oath: ['Office of Administrative Trials and Hearings', 'Office of Administrative Trials & Hearings', 'Administrative Trials'],
+  dcwp: ['Department of Consumer and Worker Protection', 'Consumer and Worker Protection'],
+  dca: ['Department of Consumer Affairs', 'Consumer Affairs'],
+  dohmh: ['Department of Health and Mental Hygiene', 'Health and Mental Hygiene'],
+  hpd: ['Housing Preservation and Development'],
+  dob: ['Department of Buildings'],
+  dep: ['Department of Environmental Protection'],
+  dot: ['Department of Transportation'],
+  ecb: ['Environmental Control Board'],
+  nypd: ['Police Department'],
+  ftc: ['Federal Trade Commission'],
+  sec: ['Securities and Exchange Commission'],
+  eeoc: ['Equal Employment Opportunity Commission'],
+  nlrb: ['National Labor Relations Board'],
+  dol: ['Department of Labor'],
+  ag: ['Attorney General'],
+  oag: ['Office of the Attorney General', 'Attorney General'],
+  psc: ['Public Service Commission'],
+  nyserda: ['Energy Research and Development Authority'],
+};
+
 const STOP = new Set(['the', 'of', 'to', 'and', 'a', 'an', 'in', 're', 'for', 'on', 'by', 'v', 'vs', 'see', 'at', 'id', 'supra', 'infra', 'citing', 'quoting']);
 
 /** The cite's words as a name search: null when the words name no court document. */
@@ -83,6 +106,8 @@ export function parseDocumentCite(label: string): DocumentCite | null {
     if (!key || STOP.has(key) || /^\d+$/.test(key)) continue;
     const long = DOC_ABBREVIATIONS[key];
     if (long) { isDocument = true; words.push([...new Set([...long, t.replace(/\.$/, '')])]); continue; }
+    const acro = ACRONYMS[key];
+    if (acro) { words.push([t.replace(/\.$/, ''), ...acro]); continue; }
     if (/^(petition|complaint|affidavit|affirmation|declaration|transcript|deposition|exhibit|memorandum|brief|motion|opposition|stipulation|letter|opinion|order|judgment|answer|certification|subpoena|report|hearing|notice|record|appendix|decision|agreement)s?$/i.test(t)) isDocument = true;
     words.push([t]);
   }
