@@ -78,7 +78,7 @@ import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volum
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
 import { provisionQuery } from '@/lib/brief/provision-core';
-import { parseIndexCite, indexCiteFromBrief } from '@/lib/brief/index-cite';
+import { parseIndexCite, indexCiteFromBrief, definingText } from '@/lib/brief/index-cite';
 import { parseDocumentCite } from '@/lib/brief/doc-abbrev';
 import { assistantMatch } from '@/lib/brief/assistant-match';
 import { fetchMatterDocumentRows, type DocumentsSource } from '@/lib/vault-documents';
@@ -911,8 +911,11 @@ function DeskEditor(p: DeskProps) {
   const openByIndexNumber = async (label: string): Promise<boolean> => {
     // the number in the highlight; else, for a caption highlighted on its own,
     // the number the brief gives after that caption
+    const briefText = editorRef.current?.state.doc.textContent ?? '';
+    const defined = definingText(label, briefText);   // '… OATH Index No. 26-1305 … (the “OATH Petition”)'
     const c = parseIndexCite(label)
-      ?? (/\sv\.?\s|^\s*(?:Matter of|In re)\b/i.test(label) ? indexCiteFromBrief(label, editorRef.current?.state.doc.textContent ?? '') : null);
+      ?? (/\sv\.?\s|^\s*(?:Matter of|In re)\b/i.test(label) ? indexCiteFromBrief(label, briefText) : null)
+      ?? (defined ? parseIndexCite(defined) : null);
     if (!c) return false;
     const root = recordRootRef.current ?? meta.matterspace_id;
     const ids = subtreeIds(allMatters, root);
@@ -1029,7 +1032,22 @@ function DeskEditor(p: DeskProps) {
       const { data, error } = await q.limit(20);
       if (error) throw new Error(error.message);
       type Doc = { id: string; title: string | null; source_filename: string | null };
-      const docs = (data ?? []) as Doc[];
+      let docs = (data ?? []) as Doc[];
+      let how = 'by name';
+      if (!docs.length) {
+        // the caption on a first page: "OFFICE OF ADMINISTRATIVE TRIALS & HEARINGS … DEPARTMENT OF
+        // CONSUMER AND WORKER PROTECTION, Petitioner" is "OATH Pet." (the acronyms' long forms)
+        let pq = supabase.from('passages').select('document_id').in('matterspace_id', scope).eq('summary_level', 0).lte('sequence_number', 4).neq('document_id', meta.id);
+        for (const forms of c.words) pq = pq.or(forms.map((f) => `text.ilike.%${escLike(f)}%`).join(','));
+        const { data: pd, error: pe } = await pq.limit(60);
+        if (pe) throw new Error(pe.message);
+        const ids = [...new Set(((pd ?? []) as { document_id: string }[]).map((r) => r.document_id))];
+        if (ids.length) {
+          const { data: dd } = await supabase.from('documents').select('id, title, source_filename').in('id', ids);
+          docs = (dd ?? []) as Doc[];
+          how = 'on its first page';
+        }
+      }
       p.setBusy(null);
       if (!docs.length) {
         missNote.current = `No document in ${recordRootName ?? 'this matter'} is named with ${c.words.map((w) => w.length > 1 ? `“${w[0]}”${w.length > 2 ? ` (or ${w.slice(1, -1).join(', ')})` : ''}` : `“${w[0]}”`).join(' and ')}. Rename it in the Reader to the words the brief uses, or Add a case.`;
@@ -1038,12 +1056,12 @@ function DeskEditor(p: DeskProps) {
       const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
       const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
       if (docs.length === 1) {
-        openDocument(docs[0].id, { page: c.page ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched by name: ${c.words.map((w) => w[0]).join(', ')}${pin}.` });
+        openDocument(docs[0].id, { page: c.page ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}. Check the caption.` });
         return true;
       }
       setContentHits({
         label, number: c.words.map((w) => w[0]).join(' '), from: 'cite',
-        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: `Named with ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
       });
       return true;
     } catch (e) {

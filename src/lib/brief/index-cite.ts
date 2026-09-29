@@ -47,9 +47,36 @@ export function indexCiteFromBrief(caption: string, briefText: string): IndexCit
   return null;
 }
 
+/**
+ * A term the brief DEFINES — '… OATH Index No. 26-1305 … (the “OATH Petition”)'
+ * — highlighted later on its own ("OATH Pet.", "the OATH Petition"): the
+ * words that defined it, so the number and the parties in the definition can
+ * be searched. The brief is the source. Null when the brief defines no such
+ * term.
+ */
+export function definingText(label: string, briefText: string): string | null {
+  const text = briefText.replace(/\s+/g, ' ');
+  const words = label.replace(/[*_]/g, '').replace(/^\s*(?:the|a|an)\s+/i, '').replace(/[.,;:]+$/, '').trim();
+  if (words.length < 3) return null;
+  // the term as defined, the shorthand's abbreviations expanded a little ("Pet." → "Petition")
+  const variants = [...new Set([words, words.replace(/\bPet\.?$/i, 'Petition'), words.replace(/\bCompl\.?$/i, 'Complaint'), words.replace(/\bAff\.?$/i, 'Affidavit'), words.replace(/\bAgmt\.?$/i, 'Agreement'), words.replace(/\bOrder$/i, 'Order')])];
+  for (const v of variants) {
+    const re = new RegExp(`\\((?:the|hereinafter|hereafter)?\\s*[“"']${v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[”"']\\)`, 'i');
+    const m = re.exec(text);
+    if (m) return text.slice(Math.max(0, m.index - 400), m.index);
+  }
+  return null;
+}
+
 export function parseIndexCite(text: string): IndexCite | null {
   const s = text.replace(/\s+/g, ' ').trim();
   const idx = /\b(?:Index|Ind\.|Idx\.)\s*(?:No\.?|Number|#)\s*:?\s*(\d{3,7})\s*[/-]\s*(\d{2,4})\b/i.exec(s);
+  // an agency's own index: "OATH Index No. 26-1305" — the whole hyphenated number is the identifier
+  const agency = !idx && /\b(?:OATH|ECB|DCWP|DOB|DOHMH|Agency)?\s*Index\s*(?:No\.?|Number|#)\s*:?\s*(\d{2,4}-\d{3,6})\b/i.exec(s);
+  if (agency) {
+    const number = agency[1];
+    return { number, year: null, titleNeedles: [number, number.replace('-', '_'), number.replace('-', '.')], textNeedles: [number, number.replace('-', ' ')], surname: null };
+  }
   const dkt = /\b(?:Docket|Dkt\.?|Case|Civ\.?|Civil Action)?\s*No\.?\s*:?\s*((?:\d{1,2}:)?\d{2,4}-(?:cv|cr|mc|md|bk|ap|civ|CV|CR)-\d{3,6}(?:-[A-Z]{2,4})*)/i.exec(s);
   const cap = /^(?:(?:In\s+re|Matter\s+of|In\s+the\s+Matter\s+of|Ex\s+parte)\s+)?(?:the\s+)?([A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*)*?)(?:,|\s+v\.?\s|\s+ex\s+rel\.|\s*$)/.exec(s.replace(/^[*_]+|[*_]+$/g, ''));
   const surnameOf = (party: string | undefined): string | null => {

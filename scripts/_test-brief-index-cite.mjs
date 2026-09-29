@@ -1,7 +1,7 @@
 // node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-index-cite.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseIndexCite, indexCiteFromBrief } from '../src/lib/brief/index-cite.ts';
+import { parseIndexCite, indexCiteFromBrief, definingText } from '../src/lib/brief/index-cite.ts';
 
 test('a caption highlighted without its number takes the number the brief gives after it', () => {
   const brief = "In *Matter of DiSanto v. New York City Dep’t of Health & Mental Hygiene*, Index No. 508835/2024 (Sup. Ct., Kings County), the court signed an order to show cause.";
@@ -32,4 +32,15 @@ test('not an index cite', () => {
   assert.equal(parseIndexCite('Morgan v. Allison Crane & Rigging LLC, 114 F.4th 214 (3d Cir. 2024)'), null);
   assert.equal(parseIndexCite('A-1601'), null);
   assert.equal(parseIndexCite('No. 26-2098, Doc. 5'), null);
+});
+
+test("an agency's own index number, and a term the brief defines", () => {
+  const c = parseIndexCite('OATH Index No. 26-1305');
+  assert.equal(c.number, '26-1305');
+  assert.ok(c.titleNeedles.includes('26-1305') && c.textNeedles.includes('26-1305'));
+  const brief = 'Radiant at OATH, DCWP v. Radiant Solar, Inc. and William James Bushell, OATH Index No. 26-1305, assigned to ALJ Christine Stecura (the “OATH Petition”). A copy of the OATH Petition is annexed as Exhibit A.';
+  const d = definingText('OATH Pet.', brief);
+  assert.ok(d && d.includes('26-1305'), 'the definition is the words before "(the “OATH Petition”)"');
+  assert.equal(parseIndexCite(d).number, '26-1305');
+  assert.equal(definingText('Holder Rule', brief), null);
 });
