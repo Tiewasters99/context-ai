@@ -2597,15 +2597,27 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
         <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px]" data-testid="carry-confirmations">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-white/70">Carry the check from an earlier version:</span>
-            <select value={carryFrom} onChange={(e) => setCarryFrom(e.target.value)} className="h-7 max-w-[320px] bg-white/[0.06] border border-white/[0.12] rounded px-1.5 text-[12px] text-white/85 outline-none" aria-label="Earlier brief to carry from">
-              <option value="">Choose a brief…</option>
-              {carry.candidates.map((b) => (
-                <option key={b.id} value={b.id}>{b.title}{carry.matterName(b.matterspace_id) ? ` — ${carry.matterName(b.matterspace_id)}` : ''} · {new Date(b.updated_at).toLocaleDateString()}</option>
-              ))}
-            </select>
             <button onClick={() => void runCarry()} disabled={!carryFrom || carrying} className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40">
-              {carrying ? 'Carrying…' : 'Carry'}
+              {carrying ? 'Carrying…' : carryFrom ? `Carry from “${carry.candidates.find((b) => b.id === carryFrom)?.title ?? ''}”` : 'Choose a brief below, then Carry'}
             </button>
+          </div>
+          {/* A list, not a native <select>: on Windows the select's popup drew
+              white text on a white menu and the briefs were invisible (Eden,
+              09-29: "nothing shows underneath it"). */}
+          <div className="mt-2 rounded-md border border-white/[0.08] divide-y divide-white/[0.06] max-h-[220px] overflow-y-auto" role="listbox" aria-label="Earlier brief to carry from">
+            {carry.candidates.map((b) => (
+              <button
+                key={b.id}
+                role="option"
+                aria-selected={carryFrom === b.id}
+                onClick={() => setCarryFrom(carryFrom === b.id ? '' : b.id)}
+                className={`w-full text-left px-3 py-1.5 flex items-baseline gap-2 hover:bg-white/[0.04] ${carryFrom === b.id ? 'bg-emerald-400/10 text-emerald-100' : 'text-white/85'}`}
+              >
+                <span className="flex-1 min-w-0 truncate">{b.title}</span>
+                <span className="shrink-0 text-[11px] text-white/45 max-w-[40%] truncate">{carry.matterName(b.matterspace_id) ?? ''}</span>
+                <span className="shrink-0 text-[11px] text-white/35">{new Date(b.updated_at).toLocaleDateString()}</span>
+              </button>
+            ))}
           </div>
           <p className="mt-1 text-[11px] text-white/40 leading-snug">
             A reading carries only when the cite's words AND its sentence are unchanged here; each carried line says where it came from and who read it. A cite whose sentence changed is listed for a fresh look.
