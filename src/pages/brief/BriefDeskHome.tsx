@@ -138,7 +138,7 @@ export default function BriefDeskHome() {
         <div className="mb-2">
           <MatterTreePick value={chosen?.id ?? null} onChange={(id) => { setMatterId(id); setErr(null); }} maxHeight={220} collapsible />
         </div>
-        <p className="text-[11px] text-white/40 mb-5">Choose the case itself, not a folder inside it: the brief's cites are looked up in this matter and everything beneath it. You can change it later under Versions.</p>
+        <p className="text-[11px] text-white/40 mb-5">Choose the case itself, not a folder inside it: the brief is filed here whichever way it comes in (a file from this computer, a document from Contextspaces, a blank brief), and its cites are looked up in this matter and everything beneath it. On the desk, the cite table's header shows the matter searched, with “change”.</p>
 
         <button
           type="button"
@@ -171,7 +171,7 @@ export default function BriefDeskHome() {
           <button
             type="button"
             disabled={!!busy}
-            onClick={() => { setErr(null); setPicking(true); }}
+            onClick={() => { if (!chosen) { setErr('Choose the case this brief belongs to first; the brief is filed there, whichever way it comes in.'); return; } setErr(null); setPicking(true); }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/[0.1] text-[12px] text-white/80 hover:bg-white/[0.05] disabled:opacity-40"
           >
             <FolderOpen size={13} /> From Contextspaces
@@ -227,7 +227,8 @@ export default function BriefDeskHome() {
           onPicked={(picked) => {
             setPicking(false);
             setBusy(`Bringing in ${picked.title}…`);
-            importBriefFromDocument(picked.documentId).then(
+            // filed in the matter chosen under "File it in", like a file from this computer
+            importBriefFromDocument(picked.documentId, chosen?.id ?? null).then(
               (r) => (r.existing ? navigate(`/app/brief/${r.id}`) : land(r.id, picked.title, r.losses)),
               (e) => { setErr((e as Error).message); setBusy(null); },
             );

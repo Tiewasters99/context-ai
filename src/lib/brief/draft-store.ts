@@ -352,7 +352,14 @@ export async function importBriefFile(matterId: string, file: File): Promise<Imp
  * (footnotes and headings survive); anything else (a PDF) from its indexed
  * text, and the brief says so.
  */
-export async function importBriefFromDocument(documentId: string): Promise<ImportResult> {
+/**
+ * `targetMatterId`: where the new brief is filed. Unset, the document's own
+ * matter — which for a draft filed among the exhibits is the exhibits folder,
+ * and the desk then searches only that folder (Eden, 09-29: v12 landed in
+ * "Article 78 Petition Exhibits"; the case is "Bushell"). The desk home
+ * passes the matter the person chose under "File it in".
+ */
+export async function importBriefFromDocument(documentId: string, targetMatterId?: string | null): Promise<ImportResult> {
   if (await hasDraftBody(documentId)) return { id: documentId, losses: [], existing: true };
   const { data, error } = await supabase.from('documents').select(DOC_COLUMNS).eq('id', documentId).maybeSingle();
   if (error) throw new Error(error.message);
@@ -377,7 +384,7 @@ export async function importBriefFromDocument(documentId: string): Promise<Impor
     const { text } = await loadCorpusDocumentText(documentId);
     imported = importIndexedText(text);
   }
-  const id = await createBrief(src.matterspace_id, src.title || 'Untitled brief', imported.doc, {
+  const id = await createBrief(targetMatterId || src.matterspace_id, src.title || 'Untitled brief', imported.doc, {
     imported_from: 'contextspaces',
     source_document_id: src.id,
     import_losses: imported.losses,
