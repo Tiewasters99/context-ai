@@ -131,8 +131,8 @@ export default function GptConnect() {
           <div className="flex items-center gap-2 text-[#8a8694] mb-2"><FileText size={14} /><h3 className="text-[13px] uppercase tracking-[0.14em]">For the lawyer setting it up</h3></div>
           <p className="text-[13px] leading-relaxed text-[#8a8694]">
             The GPT is built once, in ChatGPT’s GPT builder, from the OpenAPI document at{' '}
-            <code className="text-[#b8b4be]">/api/gpt/openapi.json</code> with OAuth (client id and secret minted by{' '}
-            <code className="text-[#b8b4be]">scripts/register-oauth-client.mjs</code>, authorize URL <code className="text-[#b8b4be]">/oauth/authorize</code>,
+            <code className="text-[#b8b4be]">/api/gpt/openapi.json</code> with OAuth (client id and secret minted at{' '}
+            <Link to="/app/connections/gpt-client" className="text-[#b8b4be] underline underline-offset-2">Connections › mint a GPT client</Link>, authorize URL <code className="text-[#b8b4be]">/oauth/authorize</code>,
             token URL <code className="text-[#b8b4be]">/api/oauth-token</code>, scope <code className="text-[#b8b4be]">contextspaces</code>) and the instructions in{' '}
             <code className="text-[#b8b4be]">docs/specs/gpt-instructions.md</code>. Share it “anyone with the link”; each person signs in with their own
             Contextspaces account, so what they see is theirs. The full recipe is <code className="text-[#b8b4be]">docs/specs/GPT-ACTIONS-2026-09-29.md</code>.

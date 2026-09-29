@@ -153,6 +153,7 @@ export default function ChatGPTConnect() {
             The connector below only works in ChatGPT on a computer. The{' '}
             <Link to="/gpt-connect" className="text-[var(--color-primary)] underline underline-offset-2">Contextspaces GPT</Link>{' '}
             runs in the ChatGPT iPhone and Android apps with nothing to enable: open it, sign in to Contextspaces once, ask.
+            Setting the GPT up (account owner): <Link to="/app/connections/gpt-client" className="text-[var(--color-primary)] underline underline-offset-2">mint its OAuth client</Link>.
           </div>
         </header>
 
