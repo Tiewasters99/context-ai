@@ -756,13 +756,15 @@ mode = 'deployed';
 // ===========================================================================
 section('10. source facts');
 {
-  const mcp = fs.readFileSync(repoFile('api', 'mcp.mjs'), 'utf8');
+  // Since 2026-09-29 the bearer check lives in lib/oauth-bearer.mjs (shared
+  // with the GPT Actions facade); api/mcp.mjs imports and re-exports it.
+  const mcp = fs.readFileSync(repoFile('lib', 'oauth-bearer.mjs'), 'utf8');
   const pathB = mcp.slice(mcp.indexOf("token.startsWith('cspa_')"), mcp.indexOf('// Path C'));
   // Since 087 path B hands the verified payload to oauthIdentity(), which is
   // where the grant check (and the agent link) lives.
   const oauthFn = mcp.slice(mcp.indexOf('async function oauthIdentity('), mcp.indexOf('// callTool options, per caller'));
   check(/oauthIdentity\(payload, 'opaque'\)/.test(pathB) && /checkAccessGrant\(payload\)/.test(oauthFn),
-    'api/mcp.mjs checks the grant on the opaque access-token path');
+    'lib/oauth-bearer.mjs (api/mcp.mjs) checks the grant on the opaque access-token path');
   check(/throw new AuthError\(401, 'invalid_token'\)/.test(oauthFn),
     'a refused grant becomes a 401 invalid_token, the code clients re-authorize on');
 
