@@ -17,6 +17,7 @@ import { supabase } from '@/lib/supabase';
 interface Minted { client_id: string; client_secret: string; client_name: string; redirect_uris: string[]; minted_at: string }
 
 const serif = { fontFamily: 'Playfair Display Variable, serif' } as const;
+const GPT_CALLBACKS = 'https://chat.openai.com/aip/*/oauth/callback\nhttps://chatgpt.com/aip/*/oauth/callback';
 
 function CopyField({ label, value, secret = false }: { label: string; value: string; secret?: boolean }) {
   const [copied, setCopied] = useState(false);
@@ -38,7 +39,11 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
 
 export default function GptClientMint() {
   const [name, setName] = useState('Contextspaces GPT');
-  const [redirects, setRedirects] = useState('');
+  // Prefilled for a Custom GPT: the builder changes the callback's id every
+  // time the OAuth settings are saved, so a client pinned to one id is
+  // refused on the very next save. The wildcard covers any id on the two
+  // OpenAI hosts; the rest of the path stays exact.
+  const [redirects, setRedirects] = useState(GPT_CALLBACKS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [minted, setMinted] = useState<Minted | null>(null);
@@ -89,8 +94,8 @@ export default function GptClientMint() {
         {!minted ? (
           <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-5">
             <ol className="text-sm text-[var(--color-text-secondary)] leading-relaxed space-y-2">
-              <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">1.</span><span>In the GPT builder, add the Action (import <code>https://www.contextspaces.ai/api/gpt/openapi.json</code>), choose <strong className="text-[var(--color-text-bright)]">OAuth</strong>, and save once. The builder then shows the <strong className="text-[var(--color-text-bright)]">callback URL</strong>.</span></li>
-              <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">2.</span><span>Paste that URL below, one per line. Add the <code>chatgpt.com</code> twin of the same path as a second line.</span></li>
+              <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">1.</span><span>In the GPT builder, add the Action (import <code>https://www.contextspaces.ai/api/gpt/openapi.json</code>) and choose <strong className="text-[var(--color-text-bright)]">OAuth</strong>.</span></li>
+              <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">2.</span><span>Leave the two callback lines below as they are. The builder shows a callback like <code>https://chat.openai.com/aip/g-…/oauth/callback</code> and changes the <code>g-…</code> part every time the OAuth settings are saved; the <code>*</code> stands for whatever it is today.</span></li>
               <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">3.</span><span>Mint, copy both values into the builder, then leave this page. They are not shown again.</span></li>
             </ol>
             <label className="block">
@@ -101,7 +106,7 @@ export default function GptClientMint() {
             <label className="block">
               <span className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-text-secondary)]">Callback URLs (one per line)</span>
               <textarea value={redirects} onChange={(e) => setRedirects(e.target.value)} rows={3} spellCheck={false}
-                placeholder={'https://chat.openai.com/aip/g-XXXXXXXX/oauth/callback\nhttps://chatgpt.com/aip/g-XXXXXXXX/oauth/callback'}
+                placeholder={GPT_CALLBACKS}
                 className="mt-1.5 w-full rounded-md border border-[var(--color-border)] bg-transparent px-3 py-2 text-[12px] font-mono text-[var(--color-text-bright)] outline-none focus:border-[var(--color-primary)]" />
             </label>
             {error && (
@@ -125,7 +130,7 @@ export default function GptClientMint() {
             <p className="text-xs text-[var(--color-text-secondary)]">
               {minted.client_name} · callbacks: {minted.redirect_uris.join(' , ')} · minted {new Date(minted.minted_at).toLocaleString()}
             </p>
-            <button type="button" onClick={() => { setMinted(null); setRedirects(''); }} className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)] underline underline-offset-2">
+            <button type="button" onClick={() => { setMinted(null); setRedirects(GPT_CALLBACKS); }} className="text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)] underline underline-offset-2">
               Done — clear this page
             </button>
           </section>

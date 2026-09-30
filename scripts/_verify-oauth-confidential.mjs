@@ -455,6 +455,34 @@ let gptCode, gptTokens;
   check(g.n === 1, 'one grant row for the GPT (re-consent attaches, never duplicates)');
 }
 
+section('D2. wildcard callbacks (the GPT builder changes its callback id on every save)');
+{
+  const wild = clients.mintConfidentialClient({ client_name: 'GPT wild', redirect_uris: ['https://chat.openai.com/aip/*/oauth/callback', 'https://chatgpt.com/aip/*/oauth/callback'] }, SECRET);
+  const wp = verifyJwt(wild.client_id, SECRET);
+  check(clients.validRedirectPattern('https://chat.openai.com/aip/*/oauth/callback') && !clients.validRedirectPattern('https://*.openai.com/aip/x/oauth/callback')
+    && !clients.validRedirectPattern('https://chat.openai.com/aip/g-*/oauth/callback') && !clients.validRedirectPattern('https://chat.openai.com/*/*/cb')
+    && !clients.validRedirectPattern('http://chat.openai.com/aip/*/oauth/callback') && clients.validRedirectPattern(GPT_REDIRECT),
+    'validRedirectPattern: one whole path segment may be *, never the host, never partial, never two, https only');
+  const okA = 'https://chat.openai.com/aip/g-3d36a083cf2e8774609b7b564e237ec026120033/oauth/callback';
+  const okB = 'https://chatgpt.com/aip/g-34728110fac607eb3cf0a98d7a83b25c8ebd516a/oauth/callback';
+  check(clients.redirectUriAllowed(wp, okA) && clients.redirectUriAllowed(wp, okB), 'any g-id on either OpenAI host is allowed');
+  check(!clients.redirectUriAllowed(wp, 'https://chat.openai.com/aip/g-1/x/oauth/callback') && !clients.redirectUriAllowed(wp, 'https://chat.openai.com/aip//oauth/callback')
+    && !clients.redirectUriAllowed(wp, 'https://evil.example/aip/g-1/oauth/callback') && !clients.redirectUriAllowed(wp, 'https://chat.openai.com.evil.example/aip/g-1/oauth/callback')
+    && !clients.redirectUriAllowed(wp, 'https://chat.openai.com/aip/g-1/oauth/callback?x=1'),
+    'the wildcard covers exactly one segment: extra segments, empty, other hosts, look-alike hosts and query strings are refused');
+  const pubWild = signJwt({ typ: 'client', client_name: 'pub', redirect_uris: ['https://grok.com/aip/*/callback'], grant_types: ['authorization_code'] }, SECRET, 3600);
+  check(!clients.redirectUriAllowed(verifyJwt(pubWild, SECRET), 'https://grok.com/aip/x/callback'), 'a PUBLIC client with a wildcard gets no wildcard matching (exact only)');
+  const a = await approveAs(wild.client_id, okA, {});
+  check(a.statusCode === 200 && codePayloadOf(codeOf(a)).redirect_uri === okA, 'consent with a wildcard client and today\'s callback id → approved, the code binds the exact callback');
+  const t = await tokenPost({ grant_type: 'authorization_code', code: codeOf(a), redirect_uri: okA, client_id: wild.client_id, client_secret: wild.client_secret });
+  check(t.statusCode === 200 && !!t.json()?.access_token, 'and the exchange succeeds with that exact callback');
+  const a2 = await approveAs(wild.client_id, okB, {});
+  const t2 = await tokenPost({ grant_type: 'authorization_code', code: codeOf(a2), redirect_uri: okA, client_id: wild.client_id, client_secret: wild.client_secret });
+  check(a2.statusCode === 200 && t2.statusCode === 400 && t2.json()?.error === 'invalid_grant', 'a code minted for one callback cannot be redeemed with another (redirect_uri mismatch)');
+  const bad = await approveAs(wild.client_id, 'https://evil.example/aip/g-1/oauth/callback', {});
+  check(bad.statusCode === 400 && bad.json()?.error === 'invalid_redirect_uri', 'another host is still refused at consent');
+}
+
 section('E. the code exchange: the secret in place of the verifier');
 {
   const missing = await tokenPost({ grant_type: 'authorization_code', code: gptCode, redirect_uri: GPT_REDIRECT, client_id: GPT });
