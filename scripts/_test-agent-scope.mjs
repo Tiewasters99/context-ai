@@ -621,7 +621,7 @@ check(db.agent_tasks.find((t) => t.id === T_OPEN).status === 'open', 'and change
   const names = TOOLS.map((t) => t.name);
   check(['my_tasks', 'claim_task', 'ask_human', 'post_result'].every((n) => names.includes(n)),
     'the four task tools are listed for every connector');
-  check(names.length === 24, 'and the 20 existing tools are all still there', `n=${names.length}`);
+  check(names.length === 25, 'and the existing tools are all still there (25 with get_document_text, 2026-09-30)', `n=${names.length}`);
 }
 
 // ===========================================================================
