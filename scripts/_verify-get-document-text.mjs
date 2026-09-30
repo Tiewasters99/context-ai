@@ -24,7 +24,7 @@ const check = (ok, label, detail = '') => {
   if (ok) passes += 1; else failures += 1;
 };
 
-const { handleGetDocumentText, TOOLS, DOCUMENT_TEXT_MAX_CHARS } = await import('../lib/mcp-core.mjs');
+const { handleGetDocumentText, resolveDocumentRef, TOOLS, DOCUMENT_TEXT_MAX_CHARS } = await import('../lib/mcp-core.mjs');
 const { toolClass } = await import('../lib/connector-meter.mjs');
 const { OPS } = await import('../lib/gpt-ops.mjs');
 const src = (await import('node:fs')).readFileSync(new URL('../lib/mcp-core.mjs', import.meta.url), 'utf8');
@@ -41,6 +41,13 @@ function fakeDb(tables) {
         eq(k, v) { q.filters.push((r) => r[k] === v); return api; },
         order(k, { ascending = true } = {}) { q.order = (a, b) => (ascending ? a[k] - b[k] : b[k] - a[k]); return api; },
         range(a, b) { q.range = [a, b]; return api; },
+        limit(n) { q.range = [0, n - 1]; return api; },
+        // or('title.ilike.%q%,source_filename.ilike.%q%') — the one shape the resolver sends
+        or(expr) {
+          const parts = expr.split(',').map((p) => { const m = /^(\w+)\.ilike\.%(.*)%$/.exec(p); return m && { col: m[1], needle: m[2].toLowerCase() }; }).filter(Boolean);
+          q.filters.push((r) => parts.some((p) => String(r[p.col] || '').toLowerCase().includes(p.needle)));
+          return api;
+        },
         single() { q.single = true; return api; },
         then(resolve) {
           let out = rows.filter((r) => q.filters.every((f) => f(r)));
@@ -65,8 +72,11 @@ const passages = Array.from({ length: 7 }, (_, i) => ({
 }));
 const db = fakeDb({
   documents: [
-    { id: DOC, title: 'Verified Petition v12', doc_type: 'brief', page_count: 7, matterspace_id: 'm1', processing_status: 'ready' },
-    { id: 'd2', title: 'Still extracting', doc_type: 'other', page_count: null, matterspace_id: 'm1', processing_status: 'extracting' },
+    { id: DOC, title: 'Verified Petition v12', doc_type: 'brief', page_count: 7, matterspace_id: 'm1', processing_status: 'ready', created_at: '2026-09-29T00:00:00Z' },
+    { id: 'd2', title: 'Still extracting', doc_type: 'other', page_count: null, matterspace_id: 'm1', processing_status: 'extracting', created_at: '2026-09-28T00:00:00Z' },
+    { id: 'd3', title: 'Verified Petition v8', doc_type: 'brief', page_count: 6, matterspace_id: 'm1', processing_status: 'ready', created_at: '2026-09-20T00:00:00Z' },
+    { id: 'd4', title: '2026-01-22 Petition (1)', doc_type: 'other', page_count: 30, matterspace_id: 'm2', processing_status: 'ready', source_filename: 'DCWP OATH petition.pdf', created_at: '2026-09-10T00:00:00Z' },
+    { id: 'd5', title: 'Verified Petition SEALED', doc_type: 'brief', page_count: 1, matterspace_id: 'sealed1', processing_status: 'ready', created_at: '2026-09-30T00:00:00Z' },
   ],
   passages: [
     ...passages,
@@ -104,6 +114,31 @@ console.log('\n--- reading in order, under a budget ---');
   check(!!threw && /get_document_text/.test(threw.message), 'an unknown document is an error naming the tool');
 }
 
+console.log('\n--- a document named by title ---');
+{
+  const sealed = new Set(['sealed1']);
+  let r = await resolveDocumentRef(db, '0f3a1c2e-1111-4222-8333-444455556666');
+  check(r.id === '0f3a1c2e-1111-4222-8333-444455556666', 'a UUID-shaped ref passes straight through (no lookup)');
+  r = await resolveDocumentRef(db, 'petition v12', { sealed });
+  check(r.id === DOC, 'a unique substring of the title resolves', JSON.stringify(r));
+  r = await resolveDocumentRef(db, 'Verified Petition v8', { sealed });
+  check(r.id === 'd3', 'an exact title wins even though "Verified Petition v8" is a substring of nothing else here');
+  r = await resolveDocumentRef(db, 'Verified Petition', { sealed });
+  check(!r.id && r.answer.candidates.length === 2 && r.answer.candidates[0].id === DOC && /2 documents match/.test(r.answer.note),
+    'several matches → the candidates, newest first, and "call again with the id"', JSON.stringify(r.answer.candidates.map((c) => c.id)));
+  check(!r.answer.candidates.some((c) => c.id === 'd5'), 'a sealed matter\'s document is never a candidate');
+  r = await resolveDocumentRef(db, 'DCWP OATH', { sealed });
+  check(r.id === 'd4', 'the filename counts too (the OATH petition Eden could not find by title on 09-29)');
+  r = await resolveDocumentRef(db, 'Verified Petition', { sealed, within: new Set(['m2']) });
+  check(!r.id && r.answer.candidates.length === 0 && /in that matter/.test(r.answer.note), 'narrowed to a matter with no such document → none, said plainly');
+  r = await resolveDocumentRef(db, 'nothing like this', { sealed });
+  check(!r.id && /No document has/.test(r.answer.note) && r.answer.document === null, 'no match → a note, not an error');
+  r = await resolveDocumentRef(db, 'Petition, (v12)', { sealed });
+  check(r.id === DOC, 'commas and parentheses in the ref are dropped, not sent to PostgREST');
+  let threw = null; try { await resolveDocumentRef(db, '   '); } catch (e) { threw = e; }
+  check(!!threw, 'a blank ref is refused');
+}
+
 console.log('\n--- wiring ---');
 {
   const t = TOOLS.find((x) => x.name === 'get_document_text');
@@ -111,7 +146,9 @@ console.log('\n--- wiring ---');
   check(/case 'get_document_text':\s*return handleGetDocumentText\(supabase, args\);/.test(src), 'dispatched by callTool (so the seal, the agent scope, the pause and the Record all apply — the arg is named doc, which every check already keys on)');
   check(toolClass('get_document_text') === 'read', 'the meter counts it as a read');
   const op = OPS.find((o) => o.id === 'getDocumentText');
-  check(!!op && op.tool === 'get_document_text' && op.consequential === false && op.params.join() === 'doc,offset,limit', 'exposed to the GPT as getDocumentText, not consequential');
+  check(!!op && op.tool === 'get_document_text' && op.consequential === false && op.params.join() === 'doc,matter,offset,limit', 'exposed to the GPT as getDocumentText (doc, matter, offset, limit), not consequential');
+  check(/name === 'get_document_text' && !agent && typeof args\.doc === 'string'/.test(src) && src.indexOf("name === 'get_document_text' && !agent") < src.indexOf('const paused = await enforceAiPause'),
+    'a title becomes a UUID in dispatchWithSeal BEFORE the pause, seal and scope checks read doc');
   check(/get_document_text \{doc\}/.test(src), 'the task-board hint tells an assistant it exists');
 }
 
