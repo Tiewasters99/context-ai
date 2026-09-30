@@ -19,7 +19,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-import { mintConfidentialClient } from '../lib/oauth-clients.mjs';
+import { mintConfidentialClient, validRedirectPattern } from '../lib/oauth-clients.mjs';
 import { getOauthSecret } from '../lib/oauth-jwt.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -76,10 +76,10 @@ export default async function handler(req, res) {
     return json(res, 400, { error: 'invalid_request', detail: `1 to ${MAX_REDIRECTS} redirect_uris required` });
   }
   for (const u of redirect_uris) {
-    let parsed;
-    try { parsed = new URL(u); } catch { parsed = null; }
-    if (!parsed || parsed.protocol !== 'https:' || parsed.hash || parsed.search) {
-      return json(res, 400, { error: 'invalid_request', detail: `redirect_uri must be an https URL without query or fragment: ${u}` });
+    // https, no query or fragment; one whole-segment "*" allowed in the path
+    // (never the host) — the GPT builder's callback id changes on every save.
+    if (!validRedirectPattern(u)) {
+      return json(res, 400, { error: 'invalid_request', detail: `redirect_uri must be an https URL without query or fragment, with at most one wildcard path segment: ${u}` });
     }
   }
   if (new Set(redirect_uris).size !== redirect_uris.length) return json(res, 400, { error: 'invalid_request', detail: 'duplicate redirect_uri' });

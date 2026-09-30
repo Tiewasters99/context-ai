@@ -114,6 +114,15 @@ section('what may be minted');
   check(r.statusCode === 400, 'garbage refused');
   r = await post({ client_name: 'x', redirect_uris: [CB, CB] });
   check(r.statusCode === 400 && /duplicate/.test(r.json()?.detail || ''), 'duplicates refused');
+  r = await post({ client_name: 'x', redirect_uris: ['https://*.openai.com/aip/g-1/oauth/callback'] });
+  check(r.statusCode === 400, 'a wildcard in the host refused');
+  r = await post({ client_name: 'x', redirect_uris: ['https://chat.openai.com/*/*/oauth/callback'] });
+  check(r.statusCode === 400, 'two wildcards refused');
+  r = await post({ client_name: 'x', redirect_uris: ['https://chat.openai.com/aip/g-*/oauth/callback'] });
+  check(r.statusCode === 400, 'a partial-segment wildcard refused');
+  r = await post({ client_name: 'GPT', redirect_uris: ['https://chat.openai.com/aip/*/oauth/callback', 'https://chatgpt.com/aip/*/oauth/callback'] });
+  check(r.statusCode === 200 && verifyJwt(r.json()?.client_id, SECRET)?.redirect_uris?.[0] === 'https://chat.openai.com/aip/*/oauth/callback',
+    'one whole-segment wildcard per line accepted (the GPT builder case)');
 }
 
 section('the mint');

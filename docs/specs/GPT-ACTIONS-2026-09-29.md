@@ -87,6 +87,14 @@ the secret already lives and returns only the client id + one-time secret; calla
 user whose email is in `OAUTH_CLIENT_ADMIN_EMAILS` (unset = endpoint off, 503). Page:
 `/app/connections/gpt-client` (`src/pages/GptClientMint.tsx`). Harness `scripts/_verify-oauth-client-mint.mjs`.
 
+**Built 2026-09-29 (wildcard callback).** Live test showed the builder issues a NEW callback id
+(`/aip/g-<id>/oauth/callback`) on every save of the OAuth settings, and a new client id is such a
+save, so a client pinned to one id is refused on the next attempt. A confidential client may now
+register one whole-segment wildcard in the path (`https://chat.openai.com/aip/*/oauth/callback`);
+host and the rest of the path stay exact, public clients stay exact-match only, and the code still
+binds the exact callback it was minted for (`lib/oauth-clients.mjs` `redirectUriAllowed`). The
+mint page is prefilled with the two wildcard lines.
+
 ## 3. The OpenAPI document
 
 `api/gpt/openapi.mjs` serves `/api/gpt/openapi.json`: OpenAPI 3.1, `servers` derived

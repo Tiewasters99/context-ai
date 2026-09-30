@@ -20,7 +20,7 @@ import { fetchMatterTier } from '../lib/ai-tier-policy.mjs';
 import {
   AgentConsentError, checkAgentScope, parseAgentConsent, unusableTokenHash,
 } from '../lib/oauth-agent-consent.mjs';
-import { isConfidentialClient } from '../lib/oauth-clients.mjs';
+import { isConfidentialClient, redirectUriAllowed } from '../lib/oauth-clients.mjs';
 import { approveGrant } from '../lib/oauth-grants.mjs';
 import { signJwt, verifyJwt, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
@@ -81,7 +81,9 @@ export default async function handler(req, res) {
   if (!client || client.typ !== 'client' || !Array.isArray(client.redirect_uris)) {
     return json(res, 400, { error: 'invalid_client' });
   }
-  if (!client.redirect_uris.includes(redirect_uri)) {
+  // Exact for a public client; a confidential one may hold a wildcard path
+  // segment (lib/oauth-clients.mjs, redirectUriAllowed).
+  if (!redirectUriAllowed(client, redirect_uri)) {
     return json(res, 400, { error: 'invalid_redirect_uri', detail: 'redirect_uri not in registration' });
   }
   // PKCE is what a PUBLIC client has instead of a secret, so it is required of
