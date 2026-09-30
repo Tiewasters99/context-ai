@@ -52,7 +52,7 @@ const ORIGIN = 'https://www.contextspaces.ai';
 const doc = buildOpenApi(ORIGIN);
 const text = JSON.stringify(doc);
 check(doc.openapi === '3.1.0' && doc.servers?.[0]?.url === ORIGIN, 'OpenAPI 3.1.0 with servers = the request origin');
-check(Object.keys(doc.paths).length === OPS.length && OPS.length === 15, `one path per operation (${OPS.length})`);
+check(Object.keys(doc.paths).length === OPS.length && OPS.length === 16, `one path per operation (${OPS.length})`);
 check(OPS.length < 30, 'under OpenAI\'s 30-operation ceiling');
 check(text.length < 100000, `the document itself fits the 100,000-character payload cap (${text.length})`);
 const toolNames = new Set(TOOLS.map((t) => t.name));
@@ -77,6 +77,7 @@ for (const [p, v] of Object.entries(doc.paths)) {
 check(capsOk, 'every path is a POST; summaries ≤ 300 and parameter descriptions ≤ 700 characters', capsBad.join('; '));
 const consequential = Object.fromEntries(Object.entries(doc.paths).map(([p, v]) => [p.split('/').pop(), v.post['x-openai-isConsequential']]));
 const writes = ['fileText', 'setMatterState', 'claimTask', 'postResult', 'createChart'];
+check(consequential.getDocumentText === false, 'getDocumentText is a read');
 check(writes.every((w) => consequential[w] === true), 'the five writes are consequential (ChatGPT asks each time)');
 check(Object.entries(consequential).filter(([k]) => !writes.includes(k)).every(([, v]) => v === false), 'every read is not (ChatGPT may "always allow")');
 const sec = doc.components.securitySchemes.contextspacesOAuth;
@@ -119,6 +120,10 @@ a = shapeArgs(op('grepMatter'), { matter: 'bushell', pattern: 'Holder Rule', max
 check(a.max_matches === 200 && a.context_chars === 400, 'grep caps: 200 matches, 400 context chars');
 a = shapeArgs(op('listMatters'), {});
 check(a.format === 'tree' && Object.keys(a).length === 1, 'listMatters with no body → the compact tree');
+a = shapeArgs(op('getDocumentText'), { doc: 'd1', offset: -5, limit: 99999 });
+check(a.offset === 0 && a.limit === 12000, 'getDocumentText: offset ≥ 0, limit ≤ 12,000');
+a = shapeArgs(op('getDocumentText'), { doc: 'd1' });
+check(a.offset === 0 && a.limit === 12000, 'getDocumentText defaults: from the top, a full page of text');
 a = shapeArgs(op('getPassage'), { id: 'abc', context_pages: 9 });
 check(a.context_pages === 2, 'getPassage context_pages ≤ 2');
 a = shapeArgs(op('fileText'), { matter: 'bushell', filename: 'notes.md', content: '# Notes' });
@@ -238,7 +243,7 @@ const call = async (opId, body, { method = 'POST', auth = 'Bearer cspa_ok', viaQ
   r = await call('openapi.json', undefined, { method: 'GET', auth: null });
   check(r.statusCode === 200 && r.json()?.openapi === '3.1.0' && r.json()?.servers?.[0]?.url === 'https://www.contextspaces.ai', 'GET openapi.json serves the document, unauthenticated, for this origin');
   r = await call('openapi', undefined, { method: 'GET', auth: null });
-  check(r.statusCode === 200 && Object.keys(r.json()?.paths || {}).length === 15, 'GET openapi (no extension) too');
+  check(r.statusCode === 200 && Object.keys(r.json()?.paths || {}).length === 16, 'GET openapi (no extension) too');
   r = await call('openapi.json', {}, { method: 'POST', auth: null });
   check(r.statusCode === 405, 'POST to the document → 405');
   // The op can also arrive only in the URL (no query object).
@@ -295,5 +300,5 @@ section('source facts');
   check(!fs.existsSync(path.resolve(__dirname, '..', 'api', 'gpt', 'openapi.mjs')), 'one function serves both the operations and the document');
 }
 
-console.log(`\n${failures ? `${failures} FAILURE(S)` : `GPT ACTIONS FACADE HOLDS — ${passes} checks: fifteen operations over the same core, capped for Actions, refused for the same reasons.`}\n`);
+console.log(`\n${failures ? `${failures} FAILURE(S)` : `GPT ACTIONS FACADE HOLDS — ${passes} checks: sixteen operations over the same core, capped for Actions, refused for the same reasons.`}\n`);
 process.exit(failures ? 1 : 0);
