@@ -17,7 +17,10 @@ import { ArrowLeft, Smartphone, ShieldCheck, Lock, Search, FileText, Power } fro
 
 // Filled in once the GPT exists (its share link from the builder). Empty →
 // the page tells the reader to use the link their lawyer sent.
-const GPT_LINK = 'https://chatgpt.com/g/g-6abc520052988191b96cc5fb3b125c43';
+// 2026-09-30: OpenAI removed link sharing for GPTs on individual plans the
+// same night this was filled in; a link only its creator can open is worse
+// than none. Empty until the plugin route (docs/specs) gives James a way in.
+const GPT_LINK = '';
 
 const serif = { fontFamily: '"Playfair Display Variable", serif' } as const;
 
