@@ -17,7 +17,7 @@ import { ArrowLeft, Smartphone, ShieldCheck, Lock, Search, FileText, Power } fro
 
 // Filled in once the GPT exists (its share link from the builder). Empty →
 // the page tells the reader to use the link their lawyer sent.
-const GPT_LINK = '';
+const GPT_LINK = 'https://chatgpt.com/g/g-6abc520052988191b96cc5fb3b125c43';
 
 const serif = { fontFamily: '"Playfair Display Variable", serif' } as const;
 
