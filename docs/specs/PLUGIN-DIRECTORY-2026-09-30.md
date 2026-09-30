@@ -243,3 +243,40 @@ clock. The build can start now; nothing in steps 1–4 waits on OpenAI.
 
 Custom UI (MCP Apps components); a multi-account `openai/profile` tool; Codex-specific packaging;
 listing in other directories; translations; commerce.
+
+## 10. Kickoff prompt for the build (Opus, one worktree, one PR per step)
+
+> Read `docs/specs/PLUGIN-DIRECTORY-2026-09-30.md` §0–§2 and `CLAUDE.md`. Work in a fresh worktree off
+> `origin/main` (never the main checkout); node_modules may be junctioned from another worktree.
+> Build **step 1** as one PR named `feat/mcp-plugin-ready`:
+> (a) every entry in `TOOLS` (`lib/mcp-core.mjs`) gets `annotations: { readOnlyHint, destructiveHint,
+> openWorldHint }` as explicit booleans per the table in §2.1, and `securitySchemes: [{ type: 'oauth2',
+> scopes: ['mcp'] }]`; (b) in `api/mcp.mjs`, when a tool call is refused for authentication (not the
+> seal or the pause), return an MCP result with `isError: true` and
+> `_meta['mcp/www_authenticate']` = `Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource", error="invalid_token", error_description="…"`;
+> (c) in `lib/oauth-bearer.mjs` `oauthIdentity`, refuse an access token whose `aud` is present and is not
+> `<origin>/api/mcp` (401 `invalid_token`; pass the request origin in); (d) response hygiene: remove
+> `created_at`/`updated_at`/uploader ids from `list_matter_contents`, `search` results and `my_tasks`
+> unless a test in `scripts/` depends on them — if one does, keep the field and list it in
+> `src/pages/Privacy.tsx` under "Connected assistants"; (e) rewrite the server `instructions` in
+> `api/mcp.mjs` so the first 512 characters say: call list_matters first, cite document and page,
+> sealed matters do not answer, writes ask first; (f) `public/.well-known/openai-apps-challenge` with
+> the placeholder `PASTE_TOKEN_FROM_OPENAI_PORTAL` and a `vercel.json` header `Content-Type: text/plain`
+> for that path. Harness `scripts/_verify-mcp-plugin-ready.mjs`: every tool has the three booleans and
+> a security scheme; the read set equals `READ_TOOLS` in `lib/connector-meter.mjs`; the audience check
+> refuses a wrong `aud` and accepts the right one and a token with no `aud` (pre-existing tokens);
+> the auth `_meta` shape. Run `_verify-oauth-confidential`, `_verify-oauth-agent`, `_test-agent-scope`,
+> `_verify-connector-meter`, `_verify-gpt-openapi`, `_verify-get-document-text`; do NOT run
+> `_verify-mcp-seal` (live database). Commit as Tiewasters99 <equainton@gmail.com>, no AI attribution.
+> Then **step 2** as `feat/terms-support-pages`: `src/pages/Terms.tsx` (plain first draft marked
+> "DRAFT — for Eden's review" in the page until he removes it) and `src/pages/Support.tsx` in the style
+> of `src/pages/Privacy.tsx`; public routes `/terms`, `/support` in `src/App.tsx`; fix the landing
+> footer's Terms and Contact links. Then **step 4** as `feat/plugin-package`: `plugin/contextspaces/`
+> with `plugin.json`, `mcp.json`, `skills/contextspaces-matters/SKILL.md` (front matter `name`,
+> `description`; body = the Instructions block of `docs/specs/gpt-instructions.md` with operation names
+> replaced by tool names), `assets/icon.png` and `logo.png` (square, 512 px, the landing page's gold on
+> black, generated with a script committed beside them), and `scripts/_verify-plugin-package.mjs`
+> checking every limit in §1 (name kebab-case ≤64, displayName ≤30, shortDescription ≤30,
+> longDescription ≤4000, description ≤1024, four HTTPS URLs ≤1024, ≤3 default prompts ≤128, exactly
+> 5 positive + 3 negative test cases from §4, icons square ≥48) and zipping to `plugin/contextspaces.zip`
+> (ignored by git). Step 3 and step 5 are Eden's (§6, §7).

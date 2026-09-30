@@ -206,3 +206,27 @@ Human confirmations from the GPT (the Cite Verification Record's `propose_attest
 right door for that, later); assistant-match batching; importing a docx server-side; corpus-first
 rating (`check.ts` reusing `resolve_citation` before the free sources, the 09-16 memo's idea);
 anything in the desk's UI beyond the one menu entry and the progress line.
+
+## 7. Kickoff prompt for the build (Opus, after Eden answers D1–D5)
+
+> Read `docs/specs/GPT-CITECHECK-2026-09-30.md` in full, then `src/lib/brief/confirm.ts`,
+> `src/lib/cite-check/{extract-cites,check,persist}.ts`, `lib/bucketizer-run.mjs`,
+> `api/bucketizer-run.mjs`, `worker/discovery-worker.mjs` and `supabase/migrations/079_bucketizer_server_runs.sql`.
+> Fresh worktree off `origin/main`. Step 0 first as its own PR: `check.ts` sends `llmAuthHeader()` to
+> `/api/legal-source`. Then C1 as `feat/cite-check-core-lib` (move, do not fork: the prompts and
+> contracts to `lib/cite-check-core.mjs`, `persist.ts` to `lib/cite-check-persist.mjs` with the client
+> passed in, `cite-check/lib/sources.mjs` to `lib/legal-sources.mjs`; `src/` re-exports; new
+> `lib/brief-check-run.mjs` `runBriefCheck({db, run, body, llm, sources, log, signal})` used by BOTH the
+> browser `confirmBrief` and the worker; harness `_verify-cite-check-core.mjs` proves the DeskEntry
+> output is byte-identical to the old path on the DeCamara fixture). Then C2 as `feat/brief-check-job`
+> (migration `104_brief_check_jobs.sql` exactly as §2 C2, verified in PGlite with 100/101/103/079;
+> `api/brief-check.mjs` start/status/cancel gated by `BRIEF_SERVER_RUNS=1`; worker `job_type
+> 'brief_cite_check'` with `assertJobScope`, `serverLlmCall({userId: run.created_by, feature:
+> 'citecheck.check'})`, `haltRun` on 402/429/pause/seal, progress per cite; harness
+> `_verify-brief-check-job.mjs`). Then C3 as `feat/brief-check-doors` (MCP tools `check_brief`,
+> `brief_check_status`, `brief_check_report` through `callTool`, `check_brief` costed in
+> `connector-meter`; GPT ops in `lib/gpt-ops.mjs` with `checkBrief` consequential; the desk's "Run on
+> the server" menu entry and progress line; the report filed as a document if D3 is yes; instructions
+> line in `docs/specs/gpt-instructions.md`). Migrations are pasted by Eden; never apply SQL to
+> production. Commit as Tiewasters99 <equainton@gmail.com>, no AI attribution. The worker redeploy on
+> Fly is Eden's step and gates production.
