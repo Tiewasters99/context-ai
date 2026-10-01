@@ -787,6 +787,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
   useEffect(() => { pageStateRef.current = page; }, [page]);
 
+  // The page the slots are painted around. Scrolling a page at a time paints
+  // at once; a jump of several pages (the rail's thumb dragged, a search hit)
+  // waits until the page holds still for a moment. Painting every page a fast
+  // drag passed over queued dozens of renders and froze the pane (10-01).
+  const [paintPage, setPaintPage] = useState(1);
+  const paintPageRef = useRef(1);
+  useEffect(() => {
+    const settle = () => { paintPageRef.current = page; setPaintPage(page); };
+    if (Math.abs(page - paintPageRef.current) <= 1) { settle(); return; }
+    const t = setTimeout(settle, 140);
+    return () => clearTimeout(t);
+  }, [page]);
+
   // The pages actually on screen, most visible first, by overlap with the
   // viewport. The rail's "current page" is a single point 40% down the
   // screen, which on a zoomed page can name the next page while the reader
@@ -844,9 +857,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (tops && el) el.scrollTo({ top: Math.max(0, tops[clamped - 1] - 8) });
   }, [totalPages]);
 
-  // The rail's thumb, and its drag: the scroll position as a fraction of
-  // the document's scroll range, in both directions.
-  const [scrollFraction, setScrollFraction] = useState(0);
+  // The rail's drag: a fraction of the document's scroll range → a scroll
+  // position. The thumb follows the scroll itself (PageRail), so moving it
+  // does not re-render the whole reader every frame.
   const seekTo = useCallback((f: number) => {
     const el = contentRef.current;
     if (!el) return;
@@ -873,9 +886,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         p = Math.max(1, p);
         if (p !== pageStateRef.current) setPage(p);
         computeVisible();
-        const range = el.scrollHeight - el.clientHeight;
-        const f = range > 0 ? el.scrollTop / range : 0;
-        setScrollFraction((prev) => (Math.abs(prev - f) < 0.002 ? prev : f));
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -1041,8 +1051,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (!pdf) return;
 
     let cancelled = false;
-    const from = Math.max(1, page - 2);
-    const to = Math.min(totalPages, page + 2);
+    const from = Math.max(1, paintPage - 2);
+    const to = Math.min(totalPages, paintPage + 2);
 
     for (const [p] of Array.from(renderedKeyRef.current)) {
       if (p >= from - 3 && p <= to + 3) continue;
@@ -1126,7 +1136,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }
 
     return () => { cancelled = true; };
-  }, [page, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
+  }, [paintPage, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
 
   // On unmount, stop whatever pdfjs still has in flight.
   useEffect(() => () => {
@@ -3219,7 +3229,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             <PageRail
               page={page}
               total={totalPages}
-              fraction={scrollFraction}
+              scroller={contentRef}
               theme={theme}
               onSeek={seekTo}
             />
@@ -3676,11 +3686,11 @@ const ANNOTATION_DOT: Record<AnnotationColor, string> = {
 // pages and through a page alike; it used to snap to page tops, so on a
 // phone with the page taller than the screen the bottom of every page
 // was out of reach. The page number is derived from the scroll, as ever.
-export function PageRail({ page, total, fraction, theme, onSeek }: {
+export function PageRail({ page, total, scroller, theme, onSeek }: {
   page: number;
   total: number;
-  /** Scroll position as a fraction of the document's scroll range. */
-  fraction: number;
+  /** The scrolling page stack; the thumb follows its scroll position. */
+  scroller: React.RefObject<HTMLDivElement | null>;
   theme: Theme;
   onSeek: (fraction: number) => void;
 }) {
@@ -3689,6 +3699,39 @@ export function PageRail({ page, total, fraction, theme, onSeek }: {
   const [hover, setHover] = useState(false);
   const THUMB = 56;
   const dark = theme === 'dark';
+
+  // The scroll position as a fraction of the scroll range, read here so only
+  // the rail re-renders as the document moves.
+  const [fraction, setFraction] = useState(0);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let raf = 0;
+    const read = () => {
+      raf = 0;
+      const range = el.scrollHeight - el.clientHeight;
+      const f = range > 0 ? el.scrollTop / range : 0;
+      setFraction((prev) => (Math.abs(prev - f) < 0.002 ? prev : f));
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(read); };
+    read();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [scroller]);
+
+  // A drag seeks at most once a frame: pointer events can outrun the screen.
+  const pendingSeek = useRef<number | null>(null);
+  const seekRaf = useRef(0);
+  const seek = (f: number) => {
+    pendingSeek.current = f;
+    if (seekRaf.current) return;
+    seekRaf.current = requestAnimationFrame(() => {
+      seekRaf.current = 0;
+      if (pendingSeek.current !== null) onSeek(pendingSeek.current);
+      pendingSeek.current = null;
+    });
+  };
+  useEffect(() => () => { if (seekRaf.current) cancelAnimationFrame(seekRaf.current); }, []);
 
   const fractionAt = (clientY: number): number => {
     const el = railRef.current;
@@ -3707,9 +3750,9 @@ export function PageRail({ page, total, fraction, theme, onSeek }: {
       onPointerDown={(e) => {
         (e.currentTarget as Element).setPointerCapture(e.pointerId);
         setDragging(true);
-        onSeek(fractionAt(e.clientY));
+        seek(fractionAt(e.clientY));
       }}
-      onPointerMove={(e) => { if (dragging) onSeek(fractionAt(e.clientY)); }}
+      onPointerMove={(e) => { if (dragging) seek(fractionAt(e.clientY)); }}
       onPointerUp={() => setDragging(false)}
       onPointerCancel={() => setDragging(false)}
       onPointerEnter={() => setHover(true)}
