@@ -83,6 +83,30 @@ export function agentCoversMatter(
   return scopeCoversMatter(matters, agent.matter_scope, matterId);
 }
 
+/**
+ * Why an agent can see `matterId`, for the matter's Share dialog: its own
+ * "All my matters" grant, this matter ticked, or the nearest ticked matter
+ * above it. Null when it cannot see it — a sealed matter always answers
+ * null, whatever the agent was granted.
+ */
+export type AgentCoverage =
+  | { kind: 'all' }
+  | { kind: 'self' }
+  | { kind: 'ancestor'; viaId: string };
+
+export function agentCoverageReason(
+  matters: readonly ScopeMatter[],
+  agent: { matter_scope: readonly string[] | null | undefined; scope_all?: boolean | null },
+  matterId: string,
+): AgentCoverage | null {
+  if (!agentCoversMatter(matters, agent, matterId)) return null;
+  if (agent.scope_all === true) return { kind: 'all' };
+  const granted = new Set(agent.matter_scope ?? []);
+  if (granted.has(matterId)) return { kind: 'self' };
+  const via = ancestorsInclusive(matters, matterId).slice(1).find((id) => granted.has(id));
+  return via ? { kind: 'ancestor', viaId: via } : null;
+}
+
 /** Every matter the scope reaches, descendants included, seals excluded. */
 export function coveredMatterIds(
   matters: readonly ScopeMatter[],
