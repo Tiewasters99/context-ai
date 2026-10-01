@@ -45,6 +45,7 @@ const migration = (name) => {
 };
 const M081 = '081_vault_document_search_and_category.sql';
 const M102 = '102_category_section_sign.sql';
+const M104 = '104_vault_search_by_words.sql';
 
 // PGlite attaches its whole bundled module source to a thrown error, which
 // turns one bad statement into a megabyte of unreadable CI log.
@@ -885,6 +886,55 @@ check(big.length === 25 && big.every((r) => r.matterspace_id === mBig),
 const bigBob = await search(BOB, { q: 'zylstra', limit: 100 });
 check(bigBob.length === 0,
   'and Bob, who is not in that matter, still finds none of its 7,600 documents');
+
+// ---------------------------------------------------------------------------
+// G. 104: a name is found by its words, not one literal string.
+// ---------------------------------------------------------------------------
+console.log('\n--- G. 104 search by words -----------------------------------');
+{
+  // 10-01: "Verified Petition v. 18" missed the filed name below under 081.
+  const filed = await mkDoc(mShared, 'Bushell-Verified-Petition-Art78-v18-FILING.docx',
+    'Bushell-Verified-Petition-Art78-v18-FILING');
+  const v17 = await mkDoc(mShared, 'Bushell-Verified-Petition-Art78-v17.docx');
+  const hidden = await mkDoc(mPrivate, 'Teman_Verified_Petition_v18.docx');
+  const ids = (rows) => rows.map((r) => r.document_id);
+  const QUERY = 'Verified Petition v. 18';
+
+  check(!ids(await search(ALICE, { q: QUERY, limit: 100 })).includes(filed),
+    'negative control: under 081, "Verified Petition v. 18" misses the hyphenated filing');
+
+  const RANK_QUERIES = ['watson', 'watson v long', 'decl of smith', 'fed. r. civ. p. 26'];
+  const before104 = [];
+  for (const rq of RANK_QUERIES) before104.push(ids(await search(ALICE, { q: rq, limit: 100 })));
+
+  await db.exec(migration(M104));
+  check(true, '104 executes over 081');
+
+  const alice = ids(await search(ALICE, { q: QUERY, limit: 100 }));
+  check(alice.includes(filed), '104: "Verified Petition v. 18" finds Bushell-Verified-Petition-Art78-v18-FILING');
+  check(!alice.includes(v17), '104: every word must match — v17 is not a hit for "v. 18"');
+  check(alice.includes(hidden), "104: underscores read as spaces too (Alice's own private matter)");
+  check(ids(await search(ALICE, { q: 'petition verified 18', limit: 100 })).includes(filed),
+    '104: the words may come in any order');
+
+  const bob = ids(await search(BOB, { q: QUERY, limit: 100 }));
+  check(bob.includes(filed) && !bob.includes(hidden),
+    '104: isolation unchanged — Bob finds the shared filing, never the private one');
+  const bobSpoof = ids(await search(BOB, { q: QUERY, matters: [mPrivate, mForeign], limit: 100 }));
+  check(bobSpoof.length === 0, '104: naming matters Bob cannot read still returns nothing');
+
+  // What 081 already found, 104 still finds, in the same order (a literal
+  // hit is always a word hit; extra word-only hits may only come after).
+  for (const [i, rq] of RANK_QUERIES.entries()) {
+    const after = ids(await search(ALICE, { q: rq, limit: 100 }));
+    check(JSON.stringify(after.slice(0, before104[i].length)) === JSON.stringify(before104[i]),
+      `104: "${rq}" keeps 081's ${before104[i].length} hits, in 081's order`, `${after.length} now`);
+  }
+  check((await search(ALICE, { q: 'wa', limit: 100 })).length > 0,
+    '104: the under-three-characters prefix branch still answers');
+  check((await search(ALICE, { q: '%_%', limit: 100 })).length === 0,
+    '104: a punctuation-only query keeps the literal test — "%_%" is not a wildcard');
+}
 
 // ---------------------------------------------------------------------------
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);
