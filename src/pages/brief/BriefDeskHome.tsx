@@ -18,14 +18,19 @@ import { supabase } from '@/lib/supabase';
 
 /** Documents by title or filename, anywhere the person can read; ready or not (the row says which). */
 async function searchDocumentsByName(query: string): Promise<PickerDocument[]> {
-  // LIKE wildcards escaped; commas and parentheses dropped, since they are
-  // PostgREST's own separators inside an `or=(…)` filter.
-  const q = query.replace(/[,()]/g, ' ').replace(/[%_\\]/g, (c) => '\\' + c).trim();
-  if (!q) return [];
-  const { data, error } = await supabase
+  // Word by word, punctuation ignored: every word must appear in the title or
+  // the filename, in any order. One literal substring missed the filed name
+  // "Bushell-Verified-Petition-Art78-v18-FILING" for "Verified Petition v. 18"
+  // (10-01) — hyphens, underscores and dots are how filenames spell spaces.
+  // Splitting on non-alphanumerics also drops LIKE wildcards and PostgREST's
+  // own `or=(…)` separators, so nothing needs escaping.
+  const words = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (!words.length) return [];
+  let req = supabase
     .from('documents')
-    .select('id, title, source_filename, processing_status, storage_path')
-    .or(`title.ilike.%${q}%,source_filename.ilike.%${q}%`)
+    .select('id, title, source_filename, processing_status, storage_path');
+  for (const w of words) req = req.or(`title.ilike.%${w}%,source_filename.ilike.%${w}%`);
+  const { data, error } = await req
     .order('title', { ascending: true })
     .limit(200);
   if (error) throw new Error(error.message);
