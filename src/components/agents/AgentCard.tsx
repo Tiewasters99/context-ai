@@ -17,6 +17,7 @@ export default function AgentCard({
   title,
   subtitle,
   maxWidth = 560,
+  z = 50,
   onClose,
   children,
   footer,
@@ -25,6 +26,8 @@ export default function AgentCard({
   title: string;
   subtitle?: string;
   maxWidth?: number;
+  /** Stacking order. Raised when opened from inside another dialog (Share). */
+  z?: number;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
@@ -35,7 +38,7 @@ export default function AgentCard({
       title={title}
       subtitle={subtitle}
       maxWidth={maxWidth}
-      z={50}
+      z={z}
       onClose={onClose}
       surface="rgba(10,10,16,0.98)"
       bodyClassName="px-5 py-4 space-y-4"

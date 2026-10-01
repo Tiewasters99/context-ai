@@ -31,25 +31,22 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { stashAuthorizeRequest } from '@/lib/oauthAuthorizeResume';
 import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces';
-import { normalizeScope } from '@/lib/agent-scope';
+import { isEffectivelySealed, normalizeScope } from '@/lib/agent-scope';
 import { AGENT_PROVIDERS, readAgentForConsent, type AgentProvider } from '@/lib/agentTokens';
 import AgentMatterPicker from '@/components/agents/AgentMatterPicker';
+import {
+  clearPendingAgentConnect,
+  defaultConnectAs,
+  guessAgentProvider,
+  hintFitsClient,
+  readPendingAgentConnect,
+} from '@/lib/pending-agent-connect';
 import { AGENT_SCOPE_COPY } from '@/components/agents/AgentsSection';
 
 export const FULL_ASSISTANT_COPY = 'Sees every matter you can see, except SecureSpaces.';
 // The agent choice with "All my matters" ticked (migration 088).
 export const AGENT_ALL_SCOPE_COPY =
   'This agent sees every matter you can see, including ones you create later. Never a SecureSpace.';
-
-/** Best guess at the provider from the name the client registered under. */
-export function guessAgentProvider(clientName: string): AgentProvider {
-  const n = clientName || '';
-  if (/grok|xai|x\.ai/i.test(n)) return 'grok';
-  if (/chatgpt|openai|\bgpt\b/i.test(n)) return 'chatgpt';
-  if (/claude|anthropic/i.test(n)) return 'claude';
-  if (/gemini|antigravity|google/i.test(n)) return 'gemini';
-  return 'other';
-}
 
 /** sha256 hex, the same hash oauth_grants.client_id_hash stores (065). */
 async function sha256Hex(text: string): Promise<string> {
@@ -113,14 +110,30 @@ export default function OAuthAuthorize() {
   if (oauth.code_challenge && oauth.code_challenge_method !== 'S256') paramErrors.push('only S256 code_challenge_method is supported');
   const clientName = clientMeta?.client_name || 'an MCP client';
 
-  // How to connect (migration 087). Full assistant is the default for every
-  // client, as before. The one exception is a client already connected here
-  // as an agent: re-approving it starts from that agent (same name, same
-  // matters) so a routine re-sign-in never silently widens it to full access.
-  const [connectAs, setConnectAs] = useState<'assistant' | 'agent'>('assistant');
+  // How to connect (migration 087). Which choice the screen starts on:
+  //   * Grok → "An agent". Its connection is account-wide and Grok Bots act
+  //     unattended; on 09-25 it was approved as a full assistant by accident
+  //     twice. Scoped is the safe default.
+  //   * A matter's "Connect an agent to this matter" left a hint in this
+  //     browser (src/lib/pending-agent-connect.ts) → "An agent", with that
+  //     matter ticked. The hint grants nothing; the person still confirms.
+  //   * Everything else (Claude, ChatGPT, …) → "A full assistant", as before.
+  // A client already connected here as an agent is then switched to that
+  // agent (same name, same matters) by the effect below, so a routine
+  // re-sign-in never silently widens it to full access.
+  const [hint] = useState(() => {
+    const h = readPendingAgentConnect();
+    return hintFitsClient(h, clientMeta?.client_name || '') ? h : null;
+  });
+  const [connectAs, setConnectAs] = useState<'assistant' | 'agent'>(
+    () => defaultConnectAs({ clientName: clientMeta?.client_name || '', hint }),
+  );
   const [agentName, setAgentName] = useState<string>(clientMeta?.client_name || '');
-  const [agentProvider, setAgentProvider] = useState<AgentProvider>(() => guessAgentProvider(clientMeta?.client_name || ''));
-  const [agentScope, setAgentScope] = useState<string[]>([]);
+  const [agentProvider, setAgentProvider] = useState<AgentProvider>(() => {
+    const g = guessAgentProvider(clientMeta?.client_name || '');
+    return g === 'other' && hint ? hint.provider : g;
+  });
+  const [agentScope, setAgentScope] = useState<string[]>(() => (hint ? [hint.matterId] : []));
   // 088: "All my matters (except SecureSpaces)". Off by default.
   const [agentScopeAll, setAgentScopeAll] = useState(false);
   const [existingAgent, setExistingAgent] = useState<string | null>(null);
@@ -132,6 +145,7 @@ export default function OAuthAuthorize() {
     if (user) void refreshServerspaces();
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const allMatters = useMemo(() => serverspaces.flatMap((s) => s.matterspaces ?? []), [serverspaces]);
+  const hintMatterName = hint ? allMatters.find((m) => m.id === hint.matterId)?.name ?? null : null;
 
   useEffect(() => {
     if (!user || !oauth.client_id) return;
@@ -173,6 +187,8 @@ export default function OAuthAuthorize() {
   // Approve → POST to /api/oauth-approve with the Supabase token in Authorization.
   const approve = async () => {
     if (submitting) return;
+    // The matter hint has done its job once the person presses a button.
+    clearPendingAgentConnect();
     setSubmitError(null);
     setSubmitting(true);
     try {
@@ -352,6 +368,12 @@ export default function OAuthAuthorize() {
   }
 
   // Signed in — consent screen.
+  // A NEW agent needs a matter (or "All my matters") before it can be
+  // connected: an agent that sees nothing is never made by a stray click.
+  // Re-approving an existing agent keeps whatever it has, even nothing.
+  const agentNeedsScope =
+    connectAs === 'agent' && !existingAgent && !agentScopeAll &&
+    normalizeScope(allMatters, agentScope).length === 0;
   return (
     <Frame>
       <h1 className="text-[18px] font-semibold text-white mb-2 flex items-center gap-2">
@@ -381,6 +403,11 @@ export default function OAuthAuthorize() {
 
       {connectAs === 'agent' && (
         <div className="rounded-lg border border-[rgba(232,184,74,0.25)] bg-[rgba(232,184,74,0.04)] p-4 mb-4 space-y-3">
+          {!existingAgent && hint && agentScope.includes(hint.matterId) && !isEffectivelySealed(allMatters, hint.matterId) && (
+            <p className="text-[12px] text-white/70">
+              Pre-ticked from <span className="text-white">{hintMatterName ?? 'the matter you chose'}</span> — change it if you like.
+            </p>
+          )}
           {existingAgent && (
             <p className="text-[12px] text-white/70">
               {clientName} is already connected here as the agent <span className="text-white">{existingAgent}</span>.
@@ -417,8 +444,8 @@ export default function OAuthAuthorize() {
               onScopeAllChange={setAgentScopeAll}
             />
             <p className="text-[11px] text-white/45 mt-1.5 leading-relaxed">
-              A ticked matter includes its sub-matters. Tick nothing and the agent can see nothing
-              until you grant a matter under Connections › Agents.
+              A ticked matter includes its sub-matters. Tick at least one, or All my matters, to
+              connect. You can change them later under Connections › Agents.
             </p>
           </div>
           <p className="text-[12px] text-white/70 leading-relaxed">{agentScopeAll ? AGENT_ALL_SCOPE_COPY : AGENT_SCOPE_COPY}</p>
@@ -470,7 +497,8 @@ export default function OAuthAuthorize() {
         </button>
         <button
           onClick={approve}
-          disabled={submitting}
+          disabled={submitting || agentNeedsScope}
+          title={agentNeedsScope ? 'Tick a matter, or All my matters, first.' : undefined}
           className="flex-1 py-2 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[13px] font-bold transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
         >
           {submitting && <Loader2 size={13} className="animate-spin" />}
