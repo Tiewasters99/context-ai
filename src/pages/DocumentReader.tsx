@@ -2358,9 +2358,16 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   }, []);
   const [marksOpen, setMarksOpen] = useState(!isMobile);
 
+  // The query the current `matches` answer, and a counter so a slow PDF
+  // search that a newer keystroke has overtaken drops its answer.
+  const searchedQueryRef = useRef('');
+  const searchSeqRef = useRef(0);
   const runSearch = useCallback(async (query: string) => {
     const q = query.trim();
+    const seq = ++searchSeqRef.current;
+    searchedQueryRef.current = q;
     if (!q) {
+      setSearching(false);
       setMatches([]);
       setMatchIdx(0);
       setSearched(false);
@@ -2446,6 +2453,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     } catch (e) {
       console.warn('[reader] find failed', e);
     }
+    if (seq !== searchSeqRef.current) return; // overtaken by a newer query
     found.sort((a, b) => a.page - b.page || a.index - b.index);
 
     setMatches(found);
@@ -2455,21 +2463,37 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (found.length > 0) gotoPage(found[0].page);
   }, [fileKind, gotoPage, id, clearTextMatches, showTextMatch]);
 
+  // A query typed but not yet searched is searched first: the arrows (and
+  // Enter) never sit dead beside words in the box (Eden, 10-01: typed a word,
+  // clicked the arrow, nothing happened).
+  const unsearched = () => searchQuery.trim() !== searchedQueryRef.current;
   const goNextMatch = useCallback(() => {
+    if (searchQuery.trim() !== searchedQueryRef.current) { void runSearch(searchQuery); return; }
     if (matches.length === 0) return;
     const next = (matchIdx + 1) % matches.length;
     setMatchIdx(next);
     if (fileKind === 'pdf') gotoPage(matches[next].page);
     else showTextMatch(textRangesRef.current, next);
-  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch]);
+  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch, searchQuery, runSearch]);
   const goPrevMatch = useCallback(() => {
+    if (searchQuery.trim() !== searchedQueryRef.current) { void runSearch(searchQuery); return; }
     if (matches.length === 0) return;
     const next = (matchIdx - 1 + matches.length) % matches.length;
     setMatchIdx(next);
     if (fileKind === 'pdf') gotoPage(matches[next].page);
     else showTextMatch(textRangesRef.current, next);
-  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch]);
+  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch, searchQuery, runSearch]);
+  // Search as you type, once the typing pauses.
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (searchQuery.trim() === searchedQueryRef.current) return;
+    const t = setTimeout(() => { void runSearch(searchQuery); }, 450);
+    return () => clearTimeout(t);
+  }, [searchOpen, searchQuery, runSearch]);
   const closeSearch = useCallback(() => {
+    searchSeqRef.current++;
+    searchedQueryRef.current = '';
+    setSearching(false);
     setSearchOpen(false);
     setSearchQuery('');
     setMatches([]);
@@ -2647,7 +2671,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') void runSearch(searchQuery);
+                      if (e.key === 'Enter') { if (e.shiftKey) goPrevMatch(); else goNextMatch(); }
                       else if (e.key === 'Escape') closeSearch();
                     }}
                     placeholder="Find in document…"
@@ -2666,7 +2690,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                   ) : null}
                   <button
                     onClick={goPrevMatch}
-                    disabled={matches.length === 0}
+                    disabled={matches.length === 0 && !unsearched()}
                     className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
                     title="Previous match"
                   >
@@ -2674,7 +2698,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                   </button>
                   <button
                     onClick={goNextMatch}
-                    disabled={matches.length === 0}
+                    disabled={matches.length === 0 && !unsearched()}
                     className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
                     title="Next match"
                   >
