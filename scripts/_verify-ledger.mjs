@@ -764,7 +764,11 @@ console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ---------
     const hit = sentinels.filter((s) => blob.includes(s));
     if (hit.length) leaks.push(`${tool.name}: ${hit.join(',')}`);
   }
-  check(leaks.length === 0 && TOOLS.length === 24,
+  // The count is pinned so a new tool is looked at before it is counted.
+  // 25th, get_document_text (#327): `doc` may be a TITLE, which can be
+  // privileged; the allow-list keeps `doc` only as a uuid, so a title is a
+  // presence and a length (checked 10-01).
+  check(leaks.length === 0 && TOOLS.length === 25,
     `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
     leaks.join(' | '));
 

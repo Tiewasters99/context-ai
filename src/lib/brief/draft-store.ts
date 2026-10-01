@@ -365,6 +365,18 @@ export async function importBriefFromDocument(documentId: string, targetMatterId
   if (error) throw new Error(error.message);
   if (!data) throw new Error('This document is not in a matter you can open.');
   const src = data as BriefMeta;
+  // A copy filed in ANOTHER matter is the document's words leaving its own
+  // matter, so a sealed document's words never do: its brief stays inside its
+  // seal. Checked before anything is read, and fails closed like
+  // sealedRefusal() — a seal that cannot be confirmed is treated as a seal.
+  const target = targetMatterId || src.matterspace_id;
+  if (target !== src.matterspace_id) {
+    const tier = await effectiveTier(src.matterspace_id).catch(() => null);
+    if (tier === null) throw new Error('The document’s seal could not be confirmed, so nothing was brought in. Try again in a moment.');
+    if (tier !== 'A') {
+      throw new Error('This document is in a SecureSpace, so its brief can only be filed in its own matter. Choose that matter under “File it in” and bring it in again.');
+    }
+  }
   const { kindOf, importBytes, importIndexedText } = await import('./import');
   const kind = kindOf(src.source_filename ?? src.storage_path ?? '');
   let imported: { doc: BriefDoc; losses: string[] };
@@ -384,7 +396,7 @@ export async function importBriefFromDocument(documentId: string, targetMatterId
     const { text } = await loadCorpusDocumentText(documentId);
     imported = importIndexedText(text);
   }
-  const id = await createBrief(targetMatterId || src.matterspace_id, src.title || 'Untitled brief', imported.doc, {
+  const id = await createBrief(target, src.title || 'Untitled brief', imported.doc, {
     imported_from: 'contextspaces',
     source_document_id: src.id,
     import_losses: imported.losses,
