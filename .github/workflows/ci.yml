@@ -928,4 +928,17 @@ jobs:
       # No database.
       - name: Brief Desk — versions, the redline, and the confirmation log
         if: ${{ !cancelled() }}
-        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-versions.mjs scripts/_test-brief-carry.mjs
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-versions.mjs scripts/_test-brief-carry.mjs scripts/_test-brief-edit-lease.mjs
+
+      # Migration 105: one person edits a brief at a time. The hold through
+      # its INVOKER functions as `authenticated`, over the real 016 access
+      # functions and RLS, with Supabase's default grants on new tables: the
+      # first window holds; a second (same person or not) does not; renewal
+      # keeps the start; a 150 s lapse passes it on; Take over works and the
+      # loser learns at once; a viewer never holds; an outsider gets nothing;
+      # release is only one's own; the table cannot be written directly.
+      - name: Migration 105 — one editor at a time (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-brief-edit-lease.mjs
