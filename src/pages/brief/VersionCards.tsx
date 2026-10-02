@@ -16,8 +16,10 @@ import type { BriefDoc } from '@/lib/brief/md';
 
 // ── Save as the next version ─────────────────────────────────────────
 
-export function SaveAsVersionCard({ meta, suggested, getBody, flush, onSaved, onClose }: {
+export function SaveAsVersionCard({ meta, matterLabel, suggested, getBody, flush, onSaved, onClose }: {
   meta: BriefMeta;
+  /** The matter it is saved in, by name, so the card says where it will be. */
+  matterLabel: string | null;
   suggested: string;
   /** The brief as it is on screen now. */
   getBody: () => BriefDoc | null;
@@ -66,7 +68,7 @@ export function SaveAsVersionCard({ meta, suggested, getBody, flush, onSaved, on
     <CardDialog
       storageKey="cs.brief.save-as-version"
       title="Save as a new version"
-      subtitle={`The brief as it is now becomes a new document in this matter, and opens. “${meta.title}” stays exactly as it was.`}
+      subtitle={`The brief as it is now becomes a new document in ${matterLabel ? `“${matterLabel}”` : 'this matter'}, and opens. “${meta.title}” stays exactly as it was.`}
       onClose={onClose}
       busy={busy}
       maxWidth={520}
