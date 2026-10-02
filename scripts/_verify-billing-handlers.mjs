@@ -194,7 +194,12 @@ function signedEvent(event, { secret = WEBHOOK_SECRET, tSeconds = null, mangle =
   const payload = JSON.stringify(event);
   const t = tSeconds ?? Math.floor(Date.now() / 1000);
   const sig = createHmac('sha256', secret).update(`${t}.${payload}`).digest('hex');
-  return { payload, header: `t=${t},v1=${mangle ? sig.replace(/^../, 'ff') : sig}` };
+  // Mangling flips the first hex digit, so the result always differs. It used
+  // to overwrite the first two with 'ff', a no-op whenever the real signature
+  // already began 'ff' (1 run in 256): the "bad" signature was valid and the
+  // check failed (CI, 10-01, PR #339).
+  const bad = (s) => (s[0] === '0' ? '1' : '0') + s.slice(1);
+  return { payload, header: `t=${t},v1=${mangle ? bad(sig) : sig}` };
 }
 
 // ===========================================================================
