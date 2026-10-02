@@ -90,6 +90,7 @@ import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
 import { SaveAsVersionCard, CompareCard } from './VersionCards';
 import { nextVersionTitle, nextVersionLabel } from '@/lib/brief/versions';
+import { noteNumberOf } from '@/lib/brief/note-pin';
 import { useBriefEditLease, type LeaseState } from '@/lib/brief/edit-lease';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
@@ -592,7 +593,8 @@ function DeskEditor(p: DeskProps) {
       stale: row.stale && row.from !== null,
       docId,
       docTitle: resolved ? res!.hits[0].title : null,
-      goto: docId ? (passageId ? { passageId, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current }) : null,
+      // "at 2 n.1": a Word authority opens at its footnote 1 (10-02).
+      goto: docId ? { ...(passageId ? { passageId } : { page: 1 }), ...withNote(raw), nonce: gotoNonce.current } : null,
       caveat,
       // The cite this pane is open FOR, so Confirm / Problem are there when the
       // case was opened by clicking its underline or its table row (09-28: the
@@ -640,13 +642,15 @@ function DeskEditor(p: DeskProps) {
       ...pane,
       docId: documentId,
       docTitle: hit?.title ?? null,
-      goto: passage ? { passageId: passage.passage_id, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current },
+      goto: { ...(passage ? { passageId: passage.passage_id } : { page: 1 }), ...withNote(pane.heading), nonce: gotoNonce.current },
       caveat: passage && passage.basis !== 'printed' ? passage.caveat ?? 'No star pages in this copy — showing page 1.' : null,
     });
   };
 
   // Any document into the pane: from the search, from a highlight, or from an
   // assistant working beside the lawyer (the 'cs:brief-open' event below).
+  /** The footnote a cite pins to, for the pane's jump ("at 2 n.1" → footnote 1). */
+  const withNote = (cite: string | null | undefined) => { const n = noteNumberOf(cite); return n ? { footnote: n } : {}; };
   const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null } = {}) => {
     markPlace();
     gotoNonce.current += 1;
@@ -654,7 +658,7 @@ function DeskEditor(p: DeskProps) {
     setPane((cur) => ({
       rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
       docId: documentId, docTitle: o.title ?? null,
-      goto: o.passageId ? { passageId: o.passageId, nonce: gotoNonce.current } : { page: o.page ?? 1, nonce: gotoNonce.current },
+      goto: { ...(o.passageId ? { passageId: o.passageId } : { page: o.page ?? 1 }), ...withNote(o.heading ?? cite?.raw), nonce: gotoNonce.current },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
       appendix: o.appendix ?? null,
       cite: cite ?? null,

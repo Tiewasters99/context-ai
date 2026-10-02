@@ -29,6 +29,7 @@ import {
   PenLine,
 } from 'lucide-react';
 import mammoth from 'mammoth';
+import { labelWordNotes } from '@/lib/reader-notes';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -310,6 +311,8 @@ export interface ReaderGoto {
   page?: number;
   passageId?: string;
   anchor?: TextAnchor;
+  /** A footnote the cite pins to ("at 2 n.1"): a Word file opens AT that note. */
+  footnote?: number;
   nonce: number;
 }
 
@@ -719,7 +722,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           // treat it as a single scrollable document.
           const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer as ArrayBuffer });
           if (cancelled) return;
-          setDocHtml(result.value);
+          setDocHtml(labelWordNotes(result.value));
           setTotalPages(1);
           setPage(1);
         }
@@ -2559,7 +2562,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
       if (!root) return;
       let ranges: Range[] = [];
-      if (goto.anchor) {
+      // "at 2 n.1": the note itself, by position (mammoth's ids are its own,
+      // not Word's numbers). Falls through to the passage when there is none.
+      if (goto.footnote) {
+        const notes = root.querySelectorAll<HTMLElement>('li[id^="footnote-"]');
+        const li = notes[goto.footnote - 1];
+        if (li) {
+          const r = document.createRange();
+          r.selectNodeContents(li);
+          ranges = [r];
+        }
+      }
+      if (!ranges.length && goto.anchor) {
         const flat = flattenText(root);
         const at = offsetsFromAnchor(flat.text, goto.anchor);
         const r = at ? rangeFromOffsets(flat, at.start, at.end) : null;
@@ -4129,6 +4143,8 @@ function ReaderStyle({ theme }: { theme: Theme }) {
   const sbInk = dark ? 'rgba(255,255,255,0.65)' : 'rgba(42,30,16,0.75)';
   return (
     <style>{`
+      /* A Word file's notes, labelled (src/lib/reader-notes.ts). */
+      .reader-notes-heading { margin-top: 2.5em; padding-top: 0.8em; border-top: 1px solid currentColor; font-size: 0.95em; opacity: 0.85; }
       .textLayer {
         position: absolute;
         left: 0;
