@@ -5,11 +5,14 @@
 // every matter above it (matter_role() walks matter_ancestry(), migration
 // 016) and so does an agent's grant (agent-scope.ts) — so a re-parent is a
 // sharing change, and nothing said so. This module answers "who and what
-// would gain or lose sight of it" from data the browser already has, so the
-// sidebar can ask first when the answer is not "nobody".
+// would gain or lose sight of it" from data the browser already has. Every
+// move is asked about (Eden, 10-02: "you shouldn't be able to move matters
+// or submatters around unless they were misfiled and you should be reminded
+// of what you are doing"), so the card always names where from and where to,
+// flags a move from one client's matter to another's, and adds these lines.
 //
 // Display only. The server decides access; this never grants or refuses
-// anything, it only decides whether to ask and what to say. Where the browser
+// anything, it only decides what to say. Where the browser
 // cannot know (a sharing list it may not read), it says less, never something
 // false: the answer is marked uncertain and the dialog is shown.
 //
@@ -83,8 +86,44 @@ export interface MoveImpact {
   /** The nearest sealed matter above (or the matter itself), before and after. */
   sealBeforeId: string | null;
   sealAfterId: string | null;
-  /** Anything at all would change, or could not be ruled out: ask first. */
-  changed: boolean;
+  /** Who or what can see it would change, or that could not be ruled out. */
+  accessChanged: boolean;
+  /** Where it sits now and where it would go: the parent chain, top first. */
+  fromPath: MovePath;
+  toPath: MovePath;
+  /** It leaves one top-level matter for another (or for the top level, or from it). */
+  crossMatter: CrossMatter;
+}
+
+/** A parent chain, top first. `hidden` = it starts below a matter this account cannot open. */
+export interface MovePath {
+  ids: string[];
+  hidden: boolean;
+}
+
+/**
+ * A move between top-level matters ("clients"): a sub-matter of UKC moved
+ * under Teman, a top-level matter moved under another one, or a sub-matter
+ * moved out to the top level. A move inside one top-level matter is 'none'.
+ */
+export type CrossMatter =
+  | { kind: 'none' }
+  | { kind: 'join'; fromTopId: string | null; toTopId: string }
+  | { kind: 'leave'; fromTopId: string };
+
+/** The parent chain of a position, top first; [] for the top level. */
+export function pathTo(matters: readonly ScopeMatter[], parentId: string | null): MovePath {
+  if (!parentId) return { ids: [], hidden: false };
+  if (!matters.some((m) => m.id === parentId)) return { ids: [], hidden: true };
+  const up = ancestorsAbove(matters, parentId);
+  return { ids: [...up.ids].reverse().concat(parentId), hidden: !!up.hiddenParent };
+}
+
+/** The top-level matter a matter sits in (itself, at the top), or the hidden matter the walk stops at. */
+export function topMatterOf(matters: readonly ScopeMatter[], matterId: string): string {
+  const up = ancestorsAbove(matters, matterId);
+  if (up.hiddenParent) return up.hiddenParent;
+  return up.ids.length ? up.ids[up.ids.length - 1] : matterId;
 }
 
 /** The tree with one matter given a new parent. */
@@ -230,7 +269,7 @@ export function computeMoveImpact(input: MoveInput): MoveImpact {
   const sealedBefore = isEffectivelySealed(before, matterId);
   const sealedAfter = isEffectivelySealed(after, matterId);
 
-  const changed =
+  const accessChanged =
     gain.userIds.length > 0 || gain.unreadable.length > 0
     || lose.userIds.length > 0 || lose.unreadable.length > 0
     || selfLoses
@@ -253,8 +292,27 @@ export function computeMoveImpact(input: MoveInput): MoveImpact {
     sealedAfter,
     sealBeforeId: sealingMatter(before, matterId),
     sealAfterId: sealingMatter(after, matterId),
-    changed,
+    accessChanged,
+    fromPath: pathTo(before, oldParentId),
+    toPath: pathTo(after, newParentId),
+    crossMatter: crossMatterOf(before, after, matterId, oldParentId, newParentId),
   };
+}
+
+function crossMatterOf(
+  before: readonly ScopeMatter[],
+  after: readonly ScopeMatter[],
+  matterId: string,
+  oldParentId: string | null,
+  newParentId: string | null,
+): CrossMatter {
+  // A top-level matter that stays top-level is not a move at all.
+  if (!oldParentId && !newParentId) return { kind: 'none' };
+  const fromTop = topMatterOf(before, matterId);
+  const toTop = topMatterOf(after, matterId);
+  if (fromTop === toTop) return { kind: 'none' };
+  if (!newParentId) return { kind: 'leave', fromTopId: fromTop };
+  return { kind: 'join', fromTopId: oldParentId ? fromTop : null, toTopId: toTop };
 }
 
 // ── the words ────────────────────────────────────────────────────────
@@ -289,8 +347,13 @@ export interface MoveLine {
 }
 
 export interface MoveWords {
-  /** "Move Teman into UKC?" */
+  /** "Move Teman?" */
   title: string;
+  /** "Moving is for fixing a misfiled matter." */
+  framing: string;
+  /** "Legal › UKC" and "Legal › Teman": where it sits now, and where it would go. */
+  from: string;
+  to: string;
   /** "Move into UKC" */
   action: string;
   lines: MoveLine[];
@@ -298,9 +361,18 @@ export interface MoveWords {
   blocked: boolean;
 }
 
+export const MOVE_FRAMING = 'Moving is for fixing a misfiled matter.';
+
+/** "Legal › UKC › X"; a chain that starts below a hidden matter starts with "…". */
+export function pathText(serverspaceName: string, path: MovePath, nameOf: (matterId: string) => string): string {
+  return [serverspaceName, ...(path.hidden ? ['…'] : []), ...path.ids.map(nameOf)].join(' › ');
+}
+
 /**
- * Everything the confirmation says, from the impact. `nameOf` names a matter
- * (or the serverspace, for null); `labelOf` names a person.
+ * Everything the confirmation says, from the impact. Every move is asked
+ * about (Eden, 10-02: moving is for fixing a misfiling); the card always says
+ * where from and where to, and adds the access lines when they apply.
+ * `nameOf` names a matter; `labelOf` names a person.
  */
 export function moveWords(
   impact: MoveImpact,
@@ -311,8 +383,10 @@ export function moveWords(
   const name = nameOf(impact.matterId);
   const what = whatMoves(name, impact.descendantCount);
   const dest = impact.newParentId ? nameOf(impact.newParentId) : serverspaceName;
-  const title = impact.newParentId ? `Move ${name} into ${dest}?` : `Move ${name} to the top of ${dest}?`;
+  const title = `Move ${name}?`;
   const action = impact.newParentId ? `Move into ${dest}` : `Move to the top of ${dest}`;
+  const from = pathText(serverspaceName, impact.fromPath, nameOf);
+  const to = pathText(serverspaceName, impact.toPath, nameOf);
   const lines: MoveLine[] = [];
 
   if (impact.selfLoses) {
@@ -320,15 +394,40 @@ export function moveWords(
       tone: 'warn',
       text: `You would lose access to ${name} yourself, and could not move it back. Ask an owner of ${serverspaceName} to move it.`,
     });
-    return { title, action, lines, blocked: true };
+    return { title, framing: MOVE_FRAMING, from, to, action, lines, blocked: true };
   }
 
-  // The seal first: it is the line that matters most.
-  if (impact.sealedBefore && !impact.sealedAfter) {
-    const from = impact.sealBeforeId ? nameOf(impact.sealBeforeId) : 'its SecureSpace';
+  if (impact.descendantCount > 0) {
+    lines.push({
+      tone: 'plain',
+      text: impact.descendantCount === 1
+        ? 'Its sub-matter goes with it.'
+        : `Its ${impact.descendantCount} sub-matters go with it.`,
+    });
+  }
+
+  // Leaving one client's matter for another's.
+  const cross = impact.crossMatter;
+  if (cross.kind === 'join') {
     lines.push({
       tone: 'warn',
-      text: `It will leave its SecureSpace (${from}): outside AI will be able to see ${what}.`,
+      text: cross.fromTopId
+        ? `${name} will leave ${nameOf(cross.fromTopId)} and become part of ${nameOf(cross.toTopId)}, a different matter.`
+        : `${name} will become part of ${nameOf(cross.toTopId)}, a different matter.`,
+    });
+  } else if (cross.kind === 'leave') {
+    lines.push({
+      tone: 'warn',
+      text: `${name} will leave ${nameOf(cross.fromTopId)} and become a matter of its own at the top of ${serverspaceName}.`,
+    });
+  }
+
+  // The seal next: it is the access line that matters most.
+  if (impact.sealedBefore && !impact.sealedAfter) {
+    const sealFrom = impact.sealBeforeId ? nameOf(impact.sealBeforeId) : 'its SecureSpace';
+    lines.push({
+      tone: 'warn',
+      text: `It will leave its SecureSpace (${sealFrom}): outside AI will be able to see ${what}.`,
     });
   } else if (!impact.sealedBefore && impact.sealedAfter) {
     const into = impact.sealAfterId ? nameOf(impact.sealAfterId) : 'a SecureSpace';
@@ -369,15 +468,10 @@ export function moveWords(
   agents(impact.agentsGain, 'will be able to see it');
   agents(impact.agentsLose, 'will no longer see it');
   if (impact.agentsUnknown) {
-    lines.push({ tone: 'plain', text: 'Your agents could not be checked, so we can\'t say whether any of them will gain or lose sight of it.' });
+    lines.push({ tone: 'plain', text: "Your agents could not be checked, so we can't say whether any of them will gain or lose sight of it." });
   }
 
-  if (!lines.length) {
-    // Asked because something could not be ruled out, with nothing specific to say.
-    lines.push({ tone: 'plain', text: `We could not fully check who can see ${what}, so we are asking before moving it.` });
-  }
-
-  return { title, action, lines, blocked: false };
+  return { title, framing: MOVE_FRAMING, from, to, action, lines, blocked: false };
 }
 
 /** The Undo toast's text. */

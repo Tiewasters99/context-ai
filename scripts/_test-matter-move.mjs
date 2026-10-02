@@ -1,4 +1,5 @@
-// What a drag in the sidebar changes, asked before it happens (Gap 5).
+// What a drag in the sidebar changes. Every move is asked about first (Gap 5;
+// Eden 10-02: moving is for fixing a misfiled matter).
 //
 // Run:  node --test scripts/_test-matter-move.mjs
 //
@@ -94,6 +95,9 @@ test('the tree helpers: subtree, re-parent, ancestors and a parent this account 
 
 // ── people ───────────────────────────────────────────────────────────
 
+const texts = (w) => w.lines.map((l) => l.text);
+const lineMatching = (w, re) => w.lines.find((l) => re.test(l.text));
+
 test('people gaining access: those on the new parent who do not already reach the matter', () => {
   const i = impact('teman', 'ukc');
   assert.deepEqual(i.gain.userIds.sort(), ['bob', 'cat']);
@@ -101,14 +105,20 @@ test('people gaining access: those on the new parent who do not already reach th
   assert.equal(i.gain.certain, true);
   assert.deepEqual(i.lose.userIds, [], 'ann is on Teman itself and keeps it');
   assert.equal(i.descendantCount, 2);
-  assert.equal(i.changed, true);
+  assert.equal(i.accessChanged, true);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.equal(w.title, 'Move Teman into UKC?');
+  assert.equal(w.title, 'Move Teman?');
+  assert.equal(w.framing, 'Moving is for fixing a misfiled matter.');
+  assert.equal(w.from, 'Legal');
+  assert.equal(w.to, 'Legal › UKC');
   assert.equal(w.action, 'Move into UKC');
   assert.equal(w.blocked, false);
-  assert.deepEqual(w.lines.map((l) => l.text), [
+  assert.deepEqual(texts(w), [
+    'Its 2 sub-matters go with it.',
+    'Teman will become part of UKC, a different matter.',
     '2 people on UKC will be able to see Teman and its 2 sub-matters: bob@x.com and Cat Ng.',
   ]);
+  assert.equal(w.lines[1].tone, 'warn', 'the different-matter line is amber');
 });
 
 test('serverspace members, people on the matter itself and the mover are never counted', () => {
@@ -123,28 +133,35 @@ test('people losing access: those on the old parent who do not reach it on the n
   assert.deepEqual(i.lose.via, ['teman']);
   assert.deepEqual(i.gain.userIds, []);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.equal(w.title, 'Move Amazon to the top of Legal?');
+  assert.equal(w.title, 'Move Amazon?');
+  assert.equal(w.from, 'Legal › Teman');
+  assert.equal(w.to, 'Legal');
   assert.equal(w.action, 'Move to the top of Legal');
-  assert.deepEqual(w.lines.map((l) => l.text), ['1 person on Teman will no longer see Amazon: Ann Lee.']);
+  assert.deepEqual(texts(w), [
+    'Amazon will leave Teman and become a matter of its own at the top of Legal.',
+    '1 person on Teman will no longer see Amazon: Ann Lee.',
+  ]);
 });
 
-test('someone on both the old and the new path keeps it: no change for them', () => {
+test('someone on both the old and the new path keeps it: no access change, still a card', () => {
   // Amazon (under Teman, ann) into Bushell (ann): ann loses Teman's path but gains Bushell's.
   const i = impact('amazon', 'bushell');
   assert.deepEqual(i.gain.userIds, []);
   assert.deepEqual(i.lose.userIds, []);
-  assert.equal(i.changed, false);
+  assert.equal(i.accessChanged, false);
+  const w = moveWords(i, nameOf, labelOf, 'Legal');
+  assert.deepEqual(texts(w), ['Amazon will leave Teman and become part of Bushell, a different matter.']);
 });
 
 test('a sharing list that could not be read is named, never counted as nobody', () => {
-  // The read failed for UKC: say "anyone shared on UKC", ask first.
+  // The read failed for UKC: say "anyone shared on UKC".
   const i = impact('lone', 'ukc', { membersOf: allMembers({ ukc: null }) });
   assert.deepEqual(i.gain.userIds, []);
   assert.deepEqual(i.gain.unreadable, ['ukc']);
-  assert.equal(i.changed, true);
+  assert.equal(i.accessChanged, true);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.match(w.lines[0].text, /^Anyone shared on UKC will be able to see Lone\. That sharing list is not visible to you/);
-  assert.doesNotMatch(w.lines.map((l) => l.text).join(' '), /\b0 people\b/);
+  assert.ok(lineMatching(w, /^Anyone shared on UKC will be able to see Lone\. That sharing list is not visible to you/));
+  assert.doesNotMatch(texts(w).join(' '), /\b0 people\b/);
 });
 
 test('a parent this account cannot open is unknown, and so is everything above it', () => {
@@ -157,16 +174,19 @@ test('a parent this account cannot open is unknown, and so is everything above i
     membersOf: new Map([['kid', []], ['lone', []]]),
   });
   assert.deepEqual(i.lose.unreadable, ['hidden']);
-  assert.equal(i.changed, true);
+  assert.equal(i.accessChanged, true);
+  assert.deepEqual(i.fromPath, { ids: [], hidden: true });
   const w = moveWords(i, (id) => partial.find((m) => m.id === id)?.name ?? 'a matter above it that you cannot open', labelOf, 'Legal');
-  assert.match(w.lines[0].text, /^Anyone shared on a matter above it that you cannot open will no longer see Kid\./);
+  assert.equal(w.from, 'Legal › …');
+  assert.equal(w.to, 'Legal › Lone');
+  assert.ok(lineMatching(w, /^Anyone shared on a matter above it that you cannot open will no longer see Kid\./));
 });
 
 test('a list that would rule someone out was not read: the count says "up to"', () => {
   const i = impact('teman', 'ukc', { serverspaceMembers: null });
   assert.equal(i.gain.certain, false);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.match(w.lines[0].text, /^Up to 2 people on UKC will be able to see Teman/);
+  assert.ok(lineMatching(w, /^Up to 2 people on UKC will be able to see Teman/));
 });
 
 test('the mover would lose the matter themselves: the move is not offered', () => {
@@ -178,6 +198,7 @@ test('the mover would lose the matter themselves: the move is not offered', () =
   assert.equal(i.selfLoses, true);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
   assert.equal(w.blocked, true);
+  assert.equal(w.from, 'Legal › Teman', 'the route is still shown');
   assert.equal(w.lines[0].tone, 'warn');
   assert.match(w.lines[0].text, /You would lose access to Amazon yourself/);
 });
@@ -190,27 +211,27 @@ test('agents gaining and losing: grants on the new vs the old ancestry', () => {
   assert.deepEqual(i.agentsGain.map((a) => a.label), ['UKC bot']);
   assert.deepEqual(i.agentsLose, []);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.ok(w.lines.some((l) => l.text === '1 agent (UKC bot) will be able to see it.'));
+  assert.ok(texts(w).includes('1 agent (UKC bot) will be able to see it.'));
 
   // Amazon out of Teman: Grok (granted Teman) loses it.
   const j = impact('amazon', null, { agents: [GROK, EVERYTHING] });
   assert.deepEqual(j.agentsLose.map((a) => a.label), ['Grok']);
   assert.deepEqual(j.agentsGain, []);
-  assert.ok(moveWords(j, nameOf, labelOf, 'Legal').lines.some((l) => l.text === '1 agent (Grok) will no longer see it.'));
+  assert.ok(texts(moveWords(j, nameOf, labelOf, 'Legal')).includes('1 agent (Grok) will no longer see it.'));
 });
 
 test('an "All my matters" agent is unaffected by a move between open matters', () => {
   const i = impact('lone', 'other', { agents: [EVERYTHING] });
   assert.deepEqual(i.agentsGain, []);
   assert.deepEqual(i.agentsLose, []);
-  assert.equal(i.changed, false);
+  assert.equal(i.accessChanged, false);
 });
 
-test('agents that could not be read: ask, and say so', () => {
+test('agents that could not be read: say so', () => {
   const i = impact('lone', 'other', { agents: null });
-  assert.equal(i.changed, true);
+  assert.equal(i.accessChanged, true);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.match(w.lines[0].text, /Your agents could not be checked/);
+  assert.ok(lineMatching(w, /Your agents could not be checked/));
 });
 
 // ── the seal ─────────────────────────────────────────────────────────
@@ -222,9 +243,12 @@ test('into a SecureSpace: sealed, and every agent that saw it loses it', () => {
   assert.equal(i.sealAfterId, 'vault');
   assert.deepEqual(i.agentsLose.map((a) => a.label).sort(), ['Everything bot', 'Grok']);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.equal(w.lines[0].tone, 'seal', 'the seal line comes first');
-  assert.equal(w.lines[0].text, 'It will be sealed inside the SecureSpace Vault: no outside AI will be able to see it.');
-  assert.ok(w.lines.some((l) => /1 person on Vault will be able to see Teman and its 2 sub-matters: Dee\./.test(l.text)));
+  const t = texts(w);
+  const seal = t.indexOf('It will be sealed inside the SecureSpace Vault: no outside AI will be able to see it.');
+  const person = t.findIndex((x) => /1 person on Vault will be able to see Teman and its 2 sub-matters: Dee\./.test(x));
+  const agent = t.findIndex((x) => /^2 agents/.test(x));
+  assert.ok(seal >= 0 && person > seal && agent > seal, 'the seal line comes before people and agents');
+  assert.equal(w.lines[seal].tone, 'seal');
 });
 
 test('out of a SecureSpace: unsealed, a warning, and agents granted the new parent see it', () => {
@@ -234,8 +258,9 @@ test('out of a SecureSpace: unsealed, a warning, and agents granted the new pare
   assert.equal(i.sealBeforeId, 'vault');
   assert.deepEqual(i.agentsGain.map((a) => a.label).sort(), ['Everything bot', 'UKC bot']);
   const w = moveWords(i, nameOf, labelOf, 'Legal');
-  assert.equal(w.lines[0].tone, 'warn');
-  assert.equal(w.lines[0].text, 'It will leave its SecureSpace (Vault): outside AI will be able to see Sealed-Child.');
+  const line = lineMatching(w, /^It will leave its SecureSpace/);
+  assert.equal(line.tone, 'warn');
+  assert.equal(line.text, 'It will leave its SecureSpace (Vault): outside AI will be able to see Sealed-Child.');
 });
 
 test('a matter sealed in its own right stays sealed wherever it goes', () => {
@@ -243,16 +268,58 @@ test('a matter sealed in its own right stays sealed wherever it goes', () => {
   assert.equal(i.sealedBefore, true);
   assert.equal(i.sealedAfter, true);
   assert.deepEqual(i.agentsGain, []);
-  assert.equal(i.changed, false);
+  assert.equal(i.accessChanged, false);
+});
+
+// ── a different matter (client) ──────────────────────────────────────
+
+test('different-matter detection, both directions and the top-level edges', () => {
+  // A top-level matter into another top-level matter.
+  assert.deepEqual(impact('teman', 'ukc').crossMatter, { kind: 'join', fromTopId: null, toTopId: 'ukc' });
+  // A sub-matter of one client into another client's matter (and back).
+  assert.deepEqual(impact('amazon', 'ukc').crossMatter, { kind: 'join', fromTopId: 'teman', toTopId: 'ukc' });
+  assert.deepEqual(impact('ukcx', 'priv').crossMatter, { kind: 'join', fromTopId: 'ukc', toTopId: 'teman' });
+  // A sub-matter out to the top level.
+  assert.deepEqual(impact('ukcx', null).crossMatter, { kind: 'leave', fromTopId: 'ukc' });
+  // Inside one top-level matter: not a different matter.
+  assert.deepEqual(impact('amazon', 'priv').crossMatter, { kind: 'none' });
+  // Deeper: Privilege's own child back up to Teman.
+  const deeper = M.concat([{ id: 'pkid', name: 'P-Kid', parent_matterspace_id: 'priv', ai_tier: 'A' }]);
+  assert.deepEqual(
+    impact('pkid', 'teman', { matters: deeper, membersOf: allMembers({ pkid: [] }) }).crossMatter,
+    { kind: 'none' },
+  );
+  // A top-level matter staying top-level is not a different matter.
+  assert.deepEqual(impact('lone', null).crossMatter, { kind: 'none' });
+
+  const words = (id, to) => texts(moveWords(impact(id, to), nameOf, labelOf, 'Legal'));
+  assert.ok(words('ukcx', 'priv').includes('UKC-Exhibits will leave UKC and become part of Teman, a different matter.'));
+  assert.ok(words('ukcx', null).includes('UKC-Exhibits will leave UKC and become a matter of its own at the top of Legal.'));
+  assert.ok(!words('amazon', 'priv').some((x) => /different matter|matter of its own/.test(x)));
+});
+
+test('the route is the full breadcrumb, top first', () => {
+  const deeper = M.concat([{ id: 'pkid', name: 'P-Kid', parent_matterspace_id: 'priv', ai_tier: 'A' }]);
+  const i = impact('pkid', 'ukcx', { matters: deeper, membersOf: allMembers({ pkid: [] }) });
+  const w = moveWords(i, (id) => deeper.find((m) => m.id === id)?.name ?? '?', labelOf, 'Legal');
+  assert.equal(w.from, 'Legal › Teman › Privilege');
+  assert.equal(w.to, 'Legal › UKC › UKC-Exhibits');
+  assert.equal(w.action, 'Move into UKC-Exhibits');
 });
 
 // ── nothing changes ──────────────────────────────────────────────────
 
-test('nothing changes: same people, same agents, same seal → no dialog', () => {
-  const i = impact('lone', 'other', { agents: [GROK, UKC_BOT, EVERYTHING] });
-  assert.equal(i.changed, false);
+test('nothing about access changes: still a card, with the route and no access lines', () => {
+  const i = impact('amazon', 'priv', { agents: [GROK, UKC_BOT, EVERYTHING] });
+  assert.equal(i.accessChanged, false);
   assert.deepEqual(i.gain, { userIds: [], via: [], unreadable: [], certain: true });
   assert.deepEqual(i.lose, { userIds: [], via: [], unreadable: [], certain: true });
+  const w = moveWords(i, nameOf, labelOf, 'Legal');
+  assert.equal(w.title, 'Move Amazon?');
+  assert.equal(w.from, 'Legal › Teman');
+  assert.equal(w.to, 'Legal › Teman › Privilege');
+  assert.equal(w.blocked, false);
+  assert.deepEqual(w.lines, []);
 });
 
 test('the Undo toast text', () => {
@@ -262,23 +329,26 @@ test('the Undo toast text', () => {
 
 // ── the sidebar wiring (source assertions) ───────────────────────────
 
-test('the sidebar asks before a move that changes access, and offers Undo after every move', () => {
+test('the sidebar asks before EVERY move, and offers Undo after every move', () => {
   const s = src('src/components/layout/Sidebar.tsx');
   assert.match(s, /activationConstraint: \{ delay: 250, tolerance: 5 \}/, 'press and hold to drag');
   assert.doesNotMatch(s, /activationConstraint: \{ distance: 5 \}/);
   assert.match(s, /computeMoveImpact\(/);
-  assert.match(s, /if \(impact\.changed\)/, 'only a change opens the dialog');
+  assert.doesNotMatch(s, /impact\.changed|impact\.accessChanged/, 'no path skips the card');
+  assert.match(s, /setPendingMove\(\{ move, words \}\)/);
   assert.match(s, /<MoveMatterConfirm/);
   assert.match(s, /<MovedToast/);
   assert.match(s, /applyMove\(movedToast, movedToast\.oldParentId\)/, 'Undo restores the previous parent');
-  // The move is written only after the check, never before it.
-  const check = s.indexOf('computeMoveImpact(');
-  const write = s.indexOf("const error = await applyMove(move, move.newParentId)");
-  assert.ok(check > 0 && write > check, 'the update follows the check');
+  // The only forward write is the card's confirm.
+  const writes = s.match(/applyMove\([^)]*newParentId\)/g) ?? [];
+  assert.deepEqual(writes, ['applyMove(pendingMove.move, pendingMove.move.newParentId)']);
 });
 
-test('the dialog: Cancel has the focus, Enter does not move, the toast is portalled', () => {
+test('the dialog: framing, from and to, Cancel has the focus, Enter does not move, the toast is portalled', () => {
   const s = src('src/components/matter/MoveMatterConfirm.tsx');
+  assert.match(s, /\{words\.framing\}/);
+  assert.match(s, /\{words\.from\}/);
+  assert.match(s, /\{words\.to\}/);
   assert.match(s, /cancelRef\.current\?\.focus\(\)/);
   assert.match(s, /if \(e\.key === 'Enter'\) e\.preventDefault\(\)/);
   assert.match(s, /<CardDialog/);

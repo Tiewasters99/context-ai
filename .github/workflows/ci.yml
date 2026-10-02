@@ -789,11 +789,12 @@ jobs:
         run: node --test scripts/_test-agent-ui.mjs
 
       # A drag in the sidebar re-parents a matter, and with it who and which
-      # agents can see it (Gap 5, Eden 09-30). The pure "what changes" rule:
-      # people gained and lost, agents gained and lost, into and out of a
-      # SecureSpace, a list that could not be read said as such, and no
-      # dialog when nothing changes; plus the sidebar's wiring by source.
-      - name: Sidebar — moving a matter says who gains or loses sight of it
+      # agents can see it (Gap 5, Eden 09-30/10-02). Every move is asked about,
+      # with the route from and to; the pure rule: a move into a different
+      # client's matter (both directions, top-level edges), people and agents
+      # gained and lost, into and out of a SecureSpace, a list that could not
+      # be read said as such; plus the sidebar's wiring by source.
+      - name: Sidebar — moving a matter always asks, and says from where to where and who gains or loses sight of it
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-matter-move.mjs
 

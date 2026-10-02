@@ -1,7 +1,9 @@
 // The two halves of a safe move in the sidebar (Eden, 09-30):
 //
-//   * MoveMatterConfirm — asked before a drag re-parents a matter when the
-//     move would change who or what can see it (lib/matter-move.ts decides).
+//   * MoveMatterConfirm — asked before EVERY drag that re-parents a matter
+//     (Eden, 10-02: moving is for fixing a misfiling). It says from where to
+//     where, flags a move into a different client's matter, and adds who or
+//     what would gain or lose sight of it (lib/matter-move.ts).
 //     Cancel is the default: it has the focus, and Enter on the move button
 //     does nothing (Space and a click still work).
 //   * MovedToast — after every move, "Moved Teman into UKC · Undo" for ten
@@ -63,6 +65,13 @@ export function MoveMatterConfirm({
         </>
       }
     >
+      <p className="text-[12px] text-white/50 leading-relaxed mb-3">{words.framing}</p>
+      <dl className="mb-3.5 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-[13px] leading-relaxed grid grid-cols-[auto_minmax(0,1fr)] gap-x-2.5 gap-y-1">
+        <dt className="text-white/45">From:</dt>
+        <dd className="text-white/90 break-words">{words.from}</dd>
+        <dt className="text-white/45">To:</dt>
+        <dd className="text-white font-medium break-words">{words.to}</dd>
+      </dl>
       <ul className="space-y-2.5">
         {words.lines.map((line, i) => (
           <li

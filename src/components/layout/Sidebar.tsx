@@ -145,8 +145,9 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
     useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
 
-  // A move that changes who or what can see a matter is asked about first
-  // (lib/matter-move.ts); every move can be undone for ten seconds.
+  // Every move is asked about first, saying from where to where and what it
+  // changes about who can see the matter (lib/matter-move.ts); every move
+  // can be undone for ten seconds.
   const queryClient = useQueryClient();
   useAgentTokens();   // warm the agents read the move check needs
   const [checkingMove, setCheckingMove] = useState(false);
@@ -249,8 +250,11 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
       doneText: movedText(name, newParentId ? nameOf(newParentId) : space.name, !newParentId),
     };
 
+    // Every move is asked about (Eden, 10-02: moving is for fixing a
+    // misfiled matter), and the card says from where to where. What can be
+    // read about access first is added to it.
     setCheckingMove(true);
-    let words: MoveWords | null = null;
+    let words: MoveWords;
     try {
       // Who is shared above the matter now, and above it after the move.
       // Only matters in the tree are asked for: row-level security returns
@@ -288,29 +292,31 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         me: user.id,
         agents,
       });
-      if (impact.changed) {
-        words = moveWords(impact, nameOf, (u) => labels.get(u) ?? 'someone', space.name);
-      }
+      words = moveWords(impact, nameOf, (u) => labels.get(u) ?? 'someone', space.name);
     } catch (err) {
-      // The check itself failed: ask, and say so, rather than move blind.
-      words = {
-        title: newParentId ? `Move ${name} into ${nameOf(newParentId)}?` : `Move ${name} to the top of ${space.name}?`,
-        action: newParentId ? `Move into ${nameOf(newParentId)}` : `Move to the top of ${space.name}`,
-        lines: [{ tone: 'plain', text: `We could not check who can see ${name} (${err instanceof Error ? err.message : String(err)}), so we are asking before moving it.` }],
-        blocked: false,
-      };
+      // The reads failed: the same card, with every sharing list and the
+      // agents marked as not checked, rather than moving blind.
+      console.error('move check:', err);
+      words = moveWords(
+        computeMoveImpact({
+          matters,
+          matterId: src.matterId,
+          newParentId,
+          membersOf: new Map(),
+          serverspaceMembers: null,
+          me: user.id,
+          agents: null,
+        }),
+        nameOf,
+        () => 'someone',
+        space.name,
+      );
     } finally {
       setCheckingMove(false);
     }
 
-    if (words) {
-      setMoveError(null);
-      setPendingMove({ move, words });
-      return;
-    }
-    const error = await applyMove(move, move.newParentId);
-    if (error) { setReparentError(error); return; }
-    showMovedToast(move);
+    setMoveError(null);
+    setPendingMove({ move, words });
   };
 
   // The signed-in user's own live agents, for the move check. null = they
