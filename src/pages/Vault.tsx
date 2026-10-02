@@ -49,6 +49,8 @@ import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
+import { getVaultClip, pasteVaultClip, VAULT_CHANGED_EVENT } from '@/lib/vault-clipboard';
 
 // 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
 // case — they highlighted, then silently showed Home. They return to the menu
@@ -121,6 +123,12 @@ export default function Vault() {
   // saved elsewhere meanwhile (the Brief Desk's "Save as v19", another
   // window) shows without a reload (10-02). At most every 10 s.
   const [listTick, setListTick] = useState(0);
+  // A paste (Cut / Copy, here or from the sidebar) changed some folder's files.
+  useEffect(() => {
+    const changed = () => setListTick((n) => n + 1);
+    window.addEventListener(VAULT_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(VAULT_CHANGED_EVENT, changed);
+  }, []);
   useEffect(() => {
     let last = Date.now();
     const back = () => {
@@ -309,6 +317,25 @@ export default function Vault() {
 
   // Drop handler shared by every matter row in the rail: reads the payload
   // ImportPanel's drag source set (one document, or the whole selection).
+  // Right-click a matter in the rail: Paste here (Cut / Copy, 10-02).
+  const [railMenu, setRailMenu] = useState<ContextMenuState | null>(null);
+  const closeRailMenu = useCallback(() => setRailMenu(null), []);
+  const railPasteMenu = useCallback((e: React.MouseEvent, targetMatterId: string, name: string) => {
+    const clip = getVaultClip();
+    if (!clip) return; // nothing to paste: the browser's own menu
+    e.preventDefault();
+    const n = clip.items.length;
+    setRailMenu({
+      x: e.clientX, y: e.clientY, items: [{
+        label: `Paste ${n.toLocaleString()} document${n === 1 ? '' : 's'} into ${name}`,
+        hint: clip.mode === 'cut' ? 'move' : 'copy',
+        onSelect: () => {
+          void pasteVaultClip(targetMatterId, name).then((r) => setVaultNotice({ kind: r.ok ? 'ok' : 'err', text: r.text }));
+        },
+      }],
+    });
+  }, []);
+
   const handleFileDrop = useCallback((e: React.DragEvent, targetMatterId: string) => {
     e.preventDefault();
     const items = readVaultDrag(e.dataTransfer);
@@ -847,7 +874,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} folders={matter ? folders : undefined} onMoveFiles={matter ? moveFiles : undefined} onNewFolder={matter ? () => openNewMatter(matter.serverspace_id, matter.id, matter.name) : undefined} onOpenFolder={(id) => switchToMatter(folders.find((f) => f.id === id)?.shortCode ?? id)} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} folders={matter ? folders : undefined} onMoveFiles={matter ? moveFiles : undefined} onNewFolder={matter ? () => openNewMatter(matter.serverspace_id, matter.id, matter.name) : undefined} onOpenFolder={(id) => switchToMatter(folders.find((f) => f.id === id)?.shortCode ?? id)} matterName={matter?.name} onPasteResult={(r) => setVaultNotice({ kind: r.ok ? 'ok' : 'err', text: r.text })} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF, DOCX, deck or image
           // opens in the full-screen DocumentReader (pages, search,
           // annotations; a picture is drawn as itself), laid over this list
@@ -1067,6 +1094,7 @@ export default function Vault() {
                               onDelete={openDeleteMatter}
                               onShare={(id, name) => setShareTarget({ id, name })}
                               onDropFile={handleFileDrop}
+                              onPasteMenu={railPasteMenu}
                             />
                           ))}
                           <button
@@ -1145,6 +1173,7 @@ export default function Vault() {
 
       {/* Main area */}
       <div className="flex-1 flex relative">
+        <ContextMenu menu={railMenu} onClose={closeRailMenu} />
         {vaultNotice && (
           <div
             className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-lg px-3 py-2 rounded-lg border text-xs shadow-xl ${
@@ -1341,6 +1370,8 @@ interface VaultMatterNodeProps {
   onDelete: (matterId: string, matterName: string) => void;
   onShare: (matterId: string, matterName: string) => void;
   onDropFile: (e: React.DragEvent, targetMatterId: string) => void;
+  /** Right-click: Paste what was Cut or Copied into this matter. */
+  onPasteMenu: (e: React.MouseEvent, targetMatterId: string, name: string) => void;
 }
 
 function VaultMatterNode({
@@ -1355,6 +1386,7 @@ function VaultMatterNode({
   onDelete,
   onShare,
   onDropFile,
+  onPasteMenu,
 }: VaultMatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
@@ -1375,6 +1407,7 @@ function VaultMatterNode({
         }}
         onDragLeave={() => setDropHover(false)}
         onDrop={(e) => { setDropHover(false); onDropFile(e, matter.id); }}
+        onContextMenu={(e) => onPasteMenu(e, matter.id, matter.name)}
         className={`group flex items-center gap-1 rounded transition-colors ${
           dropHover
             ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60'
@@ -1441,6 +1474,7 @@ function VaultMatterNode({
               onDelete={onDelete}
               onShare={onShare}
               onDropFile={onDropFile}
+              onPasteMenu={onPasteMenu}
             />
           ))}
         </div>

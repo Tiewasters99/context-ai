@@ -6,6 +6,8 @@ import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-form
 import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import ContentSearch from './ContentSearch';
 import { isVaultDrag, readVaultDrag, writeVaultDrag, type VaultDragItem } from '@/lib/vault-drag';
+import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
+import { clearVaultClip, pasteVaultClip, setVaultClip, useVaultClip, type ClipMode } from '@/lib/vault-clipboard';
 import {
   buildVaultGroups,
   shareRenderBudget,
@@ -64,6 +66,10 @@ interface ImportPanelProps {
   onNewFolder?: () => void;
   /** Go into a folder. */
   onOpenFolder?: (folderId: string) => void;
+  /** The open matter's name, for "Paste into …". */
+  matterName?: string;
+  /** What a paste did, in a sentence, for the page's notice line. */
+  onPasteResult?: (r: { ok: boolean; text: string }) => void;
 }
 
 /**
@@ -160,8 +166,9 @@ function friendlyIngestError(msg: string): string {
 // shows its file name instead, and a picture the pipeline is still working
 // on says so. A click opens it exactly as the row does; Ctrl/Shift-click or
 // the corner check selects it, and a drag carries the whole selection.
-function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, onDragStart }: {
+function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, onDragStart, onContextMenu }: {
   file: VaultFile;
+  onContextMenu?: (e: React.MouseEvent) => void;
   onOpen?: () => void;
   selected?: boolean;
   /** A click with Ctrl/Cmd or Shift held: returns true when it was a selection, not an open. */
@@ -191,6 +198,7 @@ function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, 
       aria-selected={selected}
       draggable={!!onDragStart}
       onDragStart={onDragStart}
+      onContextMenu={onContextMenu}
       onClick={(e) => { if (onSelectClick?.(e)) return; onOpen?.(); }}
       onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onOpen) { e.preventDefault(); onOpen(); } }}
       title={file.imageLabel ? `${file.imageLabel}\n${file.name}` : file.name}
@@ -242,7 +250,7 @@ function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, 
   );
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory, folders, onMoveFiles, onNewFolder, onOpenFolder }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory, folders, onMoveFiles, onNewFolder, onOpenFolder, matterName, onPasteResult }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(RENDER_WINDOW);
   const [dragOver, setDragOver] = useState(false);
@@ -450,6 +458,86 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   };
 
   const byId = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
+
+  // ── Cut / Copy / Paste (Eden, 10-02) ───────────────────────────────────
+  // Right-click a file: Cut or Copy (the whole selection, as a drag carries
+  // it). Right-click a folder, or empty space in the list: Paste here. Also
+  // Ctrl+X / Ctrl+C / Ctrl+V. Cut moves, Copy copies, both through the
+  // server's own SecureSpace checks (src/lib/vault-clipboard.ts).
+  const clip = useVaultClip();
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const itemsOf = (ids: string[]): VaultDragItem[] => ids
+    .map((id) => byId.get(id))
+    .filter((f): f is VaultFile => !!f?.matterspace_id)
+    .map((f) => ({ docId: f.id, fromMatterId: f.matterspace_id! }));
+  const putOnClip = (mode: ClipMode, ids: string[]) => {
+    const items = itemsOf(ids);
+    if (!items.length) return;
+    setVaultClip(mode, items);
+    report({ ok: true, text: `${items.length.toLocaleString()} document${items.length === 1 ? '' : 's'} ${mode === 'cut' ? 'cut' : 'copied'}: right-click a folder and choose Paste here, or press Ctrl+V in the folder.` });
+  };
+  const report = (r: { ok: boolean; text: string }) => {
+    if (onPasteResult) onPasteResult(r); else setOrganizeNote(r.text);
+  };
+  const [pasting, setPasting] = useState(false);
+  const pasteInto = async (targetId: string, targetName: string) => {
+    if (!clip || pasting) return;
+    setPasting(true);
+    try {
+      const r = await pasteVaultClip(targetId, targetName);
+      setSelected(new Set());
+      report(r);
+    } finally {
+      setPasting(false);
+    }
+  };
+  const clipNoun = clip ? `${clip.items.length.toLocaleString()} document${clip.items.length === 1 ? '' : 's'}` : '';
+  const fileMenu = (e: React.MouseEvent, file: VaultFile) => {
+    if (!canMove || !file.matterspace_id) return;
+    e.preventDefault();
+    // Right-clicking a file outside the selection selects just that file, as
+    // Explorer does.
+    const ids = selected.has(file.id) ? [...selected] : [file.id];
+    if (!selected.has(file.id)) { setSelected(new Set([file.id])); anchorRef.current = file.id; }
+    const n = ids.length > 1 ? ` ${ids.length.toLocaleString()}` : '';
+    setMenu({
+      x: e.clientX, y: e.clientY, items: [
+        { label: `Cut${n}`, hint: 'Ctrl+X', onSelect: () => putOnClip('cut', ids) },
+        { label: `Copy${n}`, hint: 'Ctrl+C', onSelect: () => putOnClip('copy', ids) },
+      ],
+    });
+  };
+  const folderMenu = (e: React.MouseEvent, folderId: string, name: string) => {
+    if (!canMove) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({
+      x: e.clientX, y: e.clientY, items: [
+        clip
+          ? { label: `Paste ${clipNoun} into ${name}`, hint: clip.mode === 'cut' ? 'move' : 'copy', onSelect: () => void pasteInto(folderId, name) }
+          : { label: 'Paste', hint: 'Cut or Copy a document first', onSelect: () => {}, disabled: true },
+      ],
+    });
+  };
+  const areaMenu = (e: React.MouseEvent) => {
+    if (!canMove || !matterId) return;
+    if ((e.target as Element).closest('[data-file-id], [data-drop-folder]')) return;
+    folderMenu(e, matterId, matterName ?? 'this folder');
+  };
+  useEffect(() => {
+    if (!canMove) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest('input, textarea, [contenteditable="true"]') || window.getSelection()?.toString())) return;
+      const k = e.key.toLowerCase();
+      if ((k === 'x' || k === 'c') && selected.size) { e.preventDefault(); putOnClip(k === 'x' ? 'cut' : 'copy', [...selected]); }
+      else if (k === 'v' && clip && matterId) { e.preventDefault(); void pasteInto(matterId, matterName ?? 'this folder'); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
   const startDrag = (e: React.DragEvent, file: VaultFile) => {
     if (!file.matterspace_id) return;
     const ids = selected.has(file.id) ? [...selected] : [file.id];
@@ -513,8 +601,9 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
 
   // A folder chip or a folder's group header, as a place to drop files.
   const [dropFolder, setDropFolder] = useState<string | null>(null);
-  const dropProps = (folderId: string) => (canMove ? {
+  const dropProps = (folderId: string, name?: string) => (canMove ? {
     'data-drop-folder': folderId,
+    onContextMenu: (e: React.MouseEvent) => folderMenu(e, folderId, name ?? 'this folder'),
     onDragOver: (e: React.DragEvent) => {
       if (!isVaultDrag(e.dataTransfer)) return;
       e.preventDefault();
@@ -610,6 +699,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       draggable={!!file.matterspace_id}
       // A folder above the list, or a matter in the rail, reads this on drop.
       onDragStart={(e) => startDrag(e, file)}
+      onContextMenu={(e) => fileMenu(e, file)}
       onClick={(e) => { if (selectClick(e, file.id)) return; if (canOpen) onOpenFile!(file); }}
       className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors group select-none ${
         isSelected ? 'bg-[rgba(232,184,74,0.10)] ring-1 ring-[#e8b84a]/60' : 'hover:bg-[rgba(255,255,255,0.03)]'
@@ -904,7 +994,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                     type="button"
                     onClick={() => onOpenFolder?.(f.id)}
                     title={`Open ${f.name} — or drop files here to move them in`}
-                    {...dropProps(f.id)}
+                    {...dropProps(f.id, f.name)}
                     className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition-colors ${
                       dropFolder === f.id
                         ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.18)] text-[#e8b84a]'
@@ -949,7 +1039,17 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               </div>
             )}
 
-            <div ref={areaRef} onPointerDown={onAreaPointerDown} className="relative pb-10">
+            {clip && canMove && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 px-3 py-1.5 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/[0.06] text-[11.5px] text-white/75" data-testid="vault-clipboard">
+                <span>
+                  {clipNoun} {clip.mode === 'cut' ? 'cut' : 'copied'}. Right-click a folder and choose <span className="text-[#e8b84a]">Paste</span>, or press Ctrl+V to paste into {matterName ?? 'this folder'}.
+                </span>
+                {pasting && <Loader2 size={12} className="animate-spin text-[#e8b84a]" />}
+                <button type="button" onClick={clearVaultClip} className="ml-auto text-white/50 hover:text-white">Cancel</button>
+              </div>
+            )}
+            <ContextMenu menu={menu} onClose={closeMenu} />
+            <div ref={areaRef} onPointerDown={onAreaPointerDown} onContextMenu={areaMenu} className="relative pb-10">
             {box && (
               <div
                 aria-hidden
@@ -970,7 +1070,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                       <button
                         type="button"
                         onClick={() => toggleGroup(g.id)}
-                        {...dropProps(g.id)}
+                        {...dropProps(g.id, g.name)}
                         className={`flex items-center gap-2 w-full text-left mb-2 px-1 py-0.5 rounded group/header ${dropFolder === g.id ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60' : ''}`}
                       >
                         {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}
@@ -990,6 +1090,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                             onSelectClick={canMove ? (e) => selectClick(e, file.id) : undefined}
                             onToggle={canMove ? () => toggleSelected(file.id) : undefined}
                             onDragStart={(e) => startDrag(e, file)}
+                            onContextMenu={(e) => fileMenu(e, file)}
                           />
                         ))}
                       </div>
@@ -1007,7 +1108,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                       <button
                         onClick={() => toggleGroup(g.id)}
                         // In date mode a group IS a folder, so it takes drops.
-                        {...(grouping === 'date' ? dropProps(g.id) : {})}
+                        {...(grouping === 'date' ? dropProps(g.id, g.name) : {})}
                         className={`flex items-center gap-2 w-full text-left mb-1.5 px-1 py-0.5 rounded group/header ${dropFolder === g.id ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60' : ''}`}
                       >
                         {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}

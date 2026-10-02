@@ -38,6 +38,8 @@ import { useServerspaces, useServerspacesRefresh } from '@/hooks/useServerspaces
 import { ensureMySecureSpace } from '@/lib/securechat';
 import { runInAssistant } from '@/lib/assistant-bus';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
+import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
+import { getVaultClip, pasteVaultClip } from '@/lib/vault-clipboard';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import ShareModal from '@/components/serverspace/ShareModal';
@@ -746,6 +748,29 @@ function MatterNode({
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(matter.name);
   const [renameErr, setRenameErr] = useState<string | null>(null);
+  // Paste what was Cut or Copied in the Vault into this matter (10-02). With
+  // nothing on the clipboard the browser's own menu shows, as before.
+  const [pasteMenu, setPasteMenu] = useState<ContextMenuState | null>(null);
+  const [pasteNote, setPasteNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const openPasteMenu = (e: React.MouseEvent) => {
+    const clip = getVaultClip();
+    if (!clip || renaming) return;
+    e.preventDefault();
+    const n = clip.items.length;
+    setPasteMenu({
+      x: e.clientX, y: e.clientY, items: [{
+        label: `Paste ${n.toLocaleString()} document${n === 1 ? '' : 's'} into ${matter.name}`,
+        hint: clip.mode === 'cut' ? 'move' : 'copy',
+        onSelect: () => {
+          setPasteNote({ ok: true, text: 'Pasting…' });
+          void pasteVaultClip(matter.id, matter.name).then((r) => {
+            setPasteNote(r);
+            setTimeout(() => setPasteNote((cur) => (cur === r ? null : cur)), 8000);
+          });
+        },
+      }],
+    });
+  };
   const saveRename = async () => {
     const next = draft.trim();
     setRenaming(false);
@@ -804,6 +829,7 @@ function MatterNode({
         ref={setRowRef}
         {...attributes}
         {...listeners}
+        onContextMenu={openPasteMenu}
         className={`group flex items-center gap-1 rounded-md transition-colors ${
           isActive(path)
             ? 'bg-[#16161d] text-white'
@@ -910,6 +936,8 @@ function MatterNode({
         </button>
       </div>
       {renameErr && <p className="px-2 py-1 text-[11px] text-red-300">{renameErr}</p>}
+      {pasteNote && <p className={`px-2 py-1 text-[11px] ${pasteNote.ok ? 'text-white/60' : 'text-red-300'}`}>{pasteNote.text}</p>}
+      <ContextMenu menu={pasteMenu} onClose={() => setPasteMenu(null)} />
       {isExpanded && hasChildren && (
         <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px">
           {children.map((child) => (
