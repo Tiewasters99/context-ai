@@ -68,7 +68,7 @@ const storedOf = (r: Resolution): StoredResolution => ({
 });
 import {
   loadConfirmations, addConfirmation, carryConfirmations, latestFor, latestByCite, openProblemForWords, rememberedInitials, rememberInitials, guessInitials,
-  confirmationsCsv, whereRead, type CiteConfirmation, type ConfirmationStatus,
+  confirmationsCsv, whereRead, openProblems, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus,
 } from '@/lib/brief/confirmations';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
@@ -1852,6 +1852,19 @@ function DeskEditor(p: DeskProps) {
         >
           <ConfirmLog
             rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials}
+            briefText={editorRef.current?.state.doc.textContent ?? ''}
+            onResolve={async (was, note) => {
+              // A reading of the SAME occurrence the flag was on (words,
+              // sentence, place), so the flag's own line turns green; the
+              // note says what changed. Appended, like every reading.
+              const row = await addConfirmation({
+                document_id: meta.id,
+                cite_raw: was.cite_raw, context: was.context, pm_from: was.pm_from,
+                authority_document_id: null, authority_title: null, authority_page: null,
+                status: 'confirmed', note, initials,
+              });
+              setConfs((cur) => [...cur, row]);
+            }}
             carry={{
               candidates: carryCandidates,
               matterName,
@@ -2555,13 +2568,30 @@ function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, on
 }
 
 // The log: every Confirm / Problem press, newest first, with a CSV for the file.
-function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
+function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, briefText, onResolve }: {
   rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
   initials: string; onInitials: (v: string) => void;
+  /** The brief's words now, to say which open flags no longer have their text in it. */
+  briefText: string;
+  /** Resolve an open flag by hand, with a note (10-02: a redraft left ¶ 90's flag with nowhere to say why). */
+  onResolve: (was: CiteConfirmation, note: string) => Promise<void>;
   /** Carry an earlier brief's readings onto this one (v8 → v9): the candidates and the run. */
   carry?: { candidates: RecentBrief[]; matterName: (id: string) => string | null; run: (fromId: string, fromTitle: string) => Promise<string> };
 }) {
   const sorted = [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const open = useMemo(() => openProblems(rows, briefText), [rows, briefText]);
+  const [resolving, setResolving] = useState<string | null>(null);
+  const [resolveNote, setResolveNote] = useState('');
+  const [resolveBusy, setResolveBusy] = useState(false);
+  const [resolveErr, setResolveErr] = useState<string | null>(null);
+  const saveResolve = async (was: CiteConfirmation) => {
+    const note = resolveNote.trim();
+    if (!note || resolveBusy) return;
+    setResolveBusy(true); setResolveErr(null);
+    try { await onResolve(was, note); setResolving(null); setResolveNote(''); }
+    catch (e) { setResolveErr((e as Error).message); }
+    finally { setResolveBusy(false); }
+  };
   const [carryFrom, setCarryFrom] = useState('');
   const [carrying, setCarrying] = useState(false);
   const [carryResult, setCarryResult] = useState<string | null>(null);
@@ -2593,6 +2623,53 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry }: {
       <p className="text-[11px] text-white/40 leading-snug">
         How to add to it: highlight a cite in the brief, press <span className="text-[#e8b84a]">Find in corpus</span>, read the page that opens, then press <span className="text-emerald-300">Confirm</span> in the pane header, or <span className="text-red-300">Problem</span> with a word on what is wrong. Confirmed cites turn green in the brief; problems red.
       </p>
+      {open.length > 0 && (
+        <div className="rounded-lg border border-red-400/25 bg-red-400/[0.04] px-3 py-2 text-[12px]" data-testid="open-problems">
+          <p className="text-red-200/90 mb-1">Open problems ({open.length}). When a redraft answered one but nothing asked you why, resolve it here with a note.</p>
+          <div className="divide-y divide-white/[0.06]">
+            {open.map(({ row: r, inBrief }) => (
+              <div key={r.id} className="py-1.5">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-white/85 font-medium min-w-0 truncate max-w-full">{r.cite_raw}</span>
+                  {!inBrief && (
+                    <span className="text-[10.5px] px-1.5 py-0.5 rounded-full border border-amber-300/40 text-amber-200/90" title="These words are not in the brief any more: the passage was redrafted.">no longer in the brief</span>
+                  )}
+                  <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                </div>
+                {r.note && <div className="text-red-200/80">{r.note}</div>}
+                {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
+                {resolving === r.id ? (
+                  <div className="mt-1.5 space-y-1.5">
+                    <textarea
+                      autoFocus
+                      value={resolveNote}
+                      onChange={(e) => setResolveNote(e.target.value.slice(0, NOTE_MAX))}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void saveResolve(r); if (e.key === 'Escape') setResolving(null); }}
+                      rows={3}
+                      placeholder="How was it resolved? (e.g. Redrafted to quote the holding; new text confirmed against the opinion)"
+                      aria-label="How the problem was resolved"
+                      className="w-full bg-white/[0.06] border border-white/15 rounded px-2 py-1.5 text-[12px] text-white/90 outline-none focus:border-emerald-400/60 resize-y"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => void saveResolve(r)} disabled={!resolveNote.trim() || resolveBusy || !initials.trim()} className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40">
+                        {resolveBusy ? 'Logging…' : `Resolve · ${initials.trim() || 'initials?'}`}
+                      </button>
+                      <button onClick={() => setResolving(null)} className="h-7 px-2 text-[12px] text-white/55 hover:text-white">Cancel</button>
+                      <span className="ml-auto text-[11px] text-white/35">{resolveNote.length}/{NOTE_MAX}</span>
+                    </div>
+                    {!initials.trim() && <p className="text-[11px] text-amber-200/80">Type your initials above first; the log records who resolved it.</p>}
+                    {resolveErr && <p className="text-[11px] text-red-300">{resolveErr}</p>}
+                  </div>
+                ) : (
+                  <button onClick={() => { setResolving(r.id); setResolveNote(''); setResolveErr(null); }} className="mt-1 text-[11.5px] text-emerald-300/90 hover:text-emerald-200">
+                    Resolve with a note…
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {carry && carry.candidates.length > 0 && (
         <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px]" data-testid="carry-confirmations">
           <div className="flex flex-wrap items-center gap-2">
