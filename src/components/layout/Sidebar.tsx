@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Home,
@@ -47,6 +48,19 @@ import NewServerspaceModal from '@/components/serverspace/NewServerspaceModal';
 import SecureSpacesSection from '@/components/securespace/SecureSpacesSection';
 import SealMatterModal, { type SealTarget } from '@/components/securespace/SealMatterModal';
 import { SiteSearchMount } from '@/components/search/SiteSearch';
+import { MoveMatterConfirm, MovedToast, MOVED_TOAST_MS } from '@/components/matter/MoveMatterConfirm';
+import { AGENT_TOKENS_KEY, useAgentTokens } from '@/hooks/useAgentTokens';
+import { agentLabel, isLiveAgent, listAgentTokens } from '@/lib/agentTokens';
+import { isAgentsNotReady } from '@/lib/agentTasks';
+import {
+  ancestorsAbove,
+  computeMoveImpact,
+  movedText,
+  moveWords,
+  withParent,
+  type MoveAgent,
+  type MoveWords,
+} from '@/lib/matter-move';
 
 // Drag-and-drop ids are encoded as "matter:<uuid>" or "ss-root:<uuid>" so
 // dragEnd can tell whether the drop target is a matter (nest underneath)
@@ -58,6 +72,17 @@ type DropData =
   | { kind: 'matter'; matterId: string; serverspaceId: string }
   | { kind: 'ss-root'; serverspaceId: string }
   | { kind: 'securespaces' };
+
+// A re-parent: which matter, from where, to where. Kept so the same update
+// can be made after the confirmation, and undone afterwards.
+interface MatterMove {
+  matterId: string;
+  serverspaceId: string;
+  oldParentId: string | null;
+  newParentId: string | null;
+  /** "Moved Teman into UKC", said by the Undo toast. */
+  doneText: string;
+}
 
 interface SidebarProps {
   onToggleAssistant?: () => void;
@@ -111,11 +136,27 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
   // Drag-and-drop state for re-parenting matters in the sidebar tree.
   const [dragging, setDragging] = useState<DragData | null>(null);
   const [reparentError, setReparentError] = useState<string | null>(null);
-  // Distance-activation so single clicks on rows continue to navigate
-  // via the embedded <Link>; only an actual movement engages drag mode.
+  // Press and HOLD to drag (Eden, 09-30). It used to be any 5px of movement,
+  // so a click that slipped while the button was down picked a matter up and
+  // dropped it on its neighbour: that is how Teman landed inside UKC. Now
+  // the row must be held still (within 5px) for a quarter of a second before
+  // it lifts; moving sooner cancels the drag, and the press stays a click.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(PointerSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
+
+  // A move that changes who or what can see a matter is asked about first
+  // (lib/matter-move.ts); every move can be undone for ten seconds.
+  const queryClient = useQueryClient();
+  useAgentTokens();   // warm the agents read the move check needs
+  const [checkingMove, setCheckingMove] = useState(false);
+  const [pendingMove, setPendingMove] = useState<{ move: MatterMove; words: MoveWords } | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [movedToast, setMovedToast] = useState<MatterMove | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
 
   // Descendants of the currently-dragged matter — used to grey out invalid
   // drop targets (a matter can't be dropped under one of its own children).
@@ -191,21 +232,154 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
       return;
     }
 
-    const { error } = await supabase
-      .from('matterspaces')
-      .update({ parent_matterspace_id: newParentId })
-      .eq('id', src.matterId);
-    if (error) {
-      setReparentError(error.message);
+    // One move at a time: a second drop while the first is being checked or
+    // confirmed is ignored.
+    if (checkingMove || pendingMove || !user) return;
+    const space = serverspaces.find((s) => s.id === targetServerspaceId);
+    if (!space) return;
+    const matters = space.matterspaces;
+    const nameOf = (id: string) =>
+      matters.find((m) => m.id === id)?.name ?? 'a matter above it that you cannot open';
+    const name = nameOf(src.matterId);
+    const move: MatterMove = {
+      matterId: src.matterId,
+      serverspaceId: targetServerspaceId,
+      oldParentId: currentParent,
+      newParentId,
+      doneText: movedText(name, newParentId ? nameOf(newParentId) : space.name, !newParentId),
+    };
+
+    setCheckingMove(true);
+    let words: MoveWords | null = null;
+    try {
+      // Who is shared above the matter now, and above it after the move.
+      // Only matters in the tree are asked for: row-level security returns
+      // nothing (not an error) for a matter this account cannot open, so an
+      // empty answer there would read as "nobody" when it means "unknown".
+      const ids = [...new Set([
+        src.matterId,
+        ...ancestorsAbove(matters, src.matterId).ids,
+        ...ancestorsAbove(withParent(matters, src.matterId, newParentId), src.matterId).ids,
+      ])];
+      const [mm, sm, agents] = await Promise.all([
+        supabase
+          .from('matterspace_members')
+          .select('matterspace_id, user_id, user:profiles(email, display_name)')
+          .in('matterspace_id', ids),
+        supabase.from('serverspace_members').select('user_id').eq('serverspace_id', targetServerspaceId),
+        loadAgentsForMove(),
+      ]);
+      const membersOf = new Map<string, string[] | null>();
+      const labels = new Map<string, string>();
+      if (!mm.error) {
+        for (const id of ids) membersOf.set(id, []);
+        for (const r of (mm.data ?? []) as Array<{ matterspace_id: string; user_id: string; user: unknown }>) {
+          membersOf.get(r.matterspace_id)?.push(r.user_id);
+          const u = (Array.isArray(r.user) ? r.user[0] : r.user) as { email?: string | null; display_name?: string | null } | null;
+          labels.set(r.user_id, u?.display_name || u?.email || 'someone');
+        }
+      }
+      const impact = computeMoveImpact({
+        matters,
+        matterId: src.matterId,
+        newParentId,
+        membersOf,
+        serverspaceMembers: sm.error ? null : (sm.data ?? []).map((r: { user_id: string }) => r.user_id),
+        me: user.id,
+        agents,
+      });
+      if (impact.changed) {
+        words = moveWords(impact, nameOf, (u) => labels.get(u) ?? 'someone', space.name);
+      }
+    } catch (err) {
+      // The check itself failed: ask, and say so, rather than move blind.
+      words = {
+        title: newParentId ? `Move ${name} into ${nameOf(newParentId)}?` : `Move ${name} to the top of ${space.name}?`,
+        action: newParentId ? `Move into ${nameOf(newParentId)}` : `Move to the top of ${space.name}`,
+        lines: [{ tone: 'plain', text: `We could not check who can see ${name} (${err instanceof Error ? err.message : String(err)}), so we are asking before moving it.` }],
+        blocked: false,
+      };
+    } finally {
+      setCheckingMove(false);
+    }
+
+    if (words) {
+      setMoveError(null);
+      setPendingMove({ move, words });
       return;
     }
+    const error = await applyMove(move, move.newParentId);
+    if (error) { setReparentError(error); return; }
+    showMovedToast(move);
+  };
+
+  // The signed-in user's own live agents, for the move check. null = they
+  // could not be read (the dialog then says so); no agents feature yet = none.
+  const loadAgentsForMove = async (): Promise<MoveAgent[] | null> => {
+    try {
+      const list = await queryClient.fetchQuery({ queryKey: AGENT_TOKENS_KEY, queryFn: listAgentTokens, staleTime: 30_000 });
+      return list.filter((a) => isLiveAgent(a)).map((a) => ({
+        id: a.id,
+        label: agentLabel(a),
+        matter_scope: a.matter_scope,
+        scope_all: a.scope_all,
+      }));
+    } catch (err) {
+      return isAgentsNotReady(err) ? [] : null;
+    }
+  };
+
+  // The one write a move (or its undo) makes. Returns an error message, or null.
+  const applyMove = async (move: MatterMove, parentId: string | null): Promise<string | null> => {
+    const { error } = await supabase
+      .from('matterspaces')
+      .update({ parent_matterspace_id: parentId })
+      .eq('id', move.matterId);
+    if (error) return error.message;
     // Expand the destination so the user immediately sees the moved matter.
-    if (newParentId) {
-      setExpandedMatters((prev) => new Set(prev).add(newParentId));
+    if (parentId) {
+      setExpandedMatters((prev) => new Set(prev).add(parentId));
     } else {
-      setExpandedSpaces((prev) => new Set(prev).add(targetServerspaceId));
+      setExpandedSpaces((prev) => new Set(prev).add(move.serverspaceId));
     }
     await refreshServerspaces();
+    return null;
+  };
+
+  const showMovedToast = (move: MatterMove) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setUndoBusy(false);
+    setMovedToast(move);
+    toastTimer.current = setTimeout(() => setMovedToast(null), MOVED_TOAST_MS);
+  };
+
+  const dismissMovedToast = () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = null;
+    setMovedToast(null);
+  };
+
+  const confirmMove = async () => {
+    if (!pendingMove || moveBusy) return;
+    setMoveBusy(true);
+    setMoveError(null);
+    const error = await applyMove(pendingMove.move, pendingMove.move.newParentId);
+    setMoveBusy(false);
+    if (error) { setMoveError(`Not moved: ${error}`); return; }
+    const move = pendingMove.move;
+    setPendingMove(null);
+    showMovedToast(move);
+  };
+
+  const undoMove = async () => {
+    if (!movedToast || undoBusy) return;
+    // Hold the toast while the undo is written, so it cannot time out mid-write.
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setUndoBusy(true);
+    const error = await applyMove(movedToast, movedToast.oldParentId);
+    setUndoBusy(false);
+    dismissMovedToast();
+    if (error) setReparentError(`Could not undo the move: ${error}`);
   };
 
   const openNewMatter = (
@@ -414,6 +588,11 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
+        {checkingMove && !collapsed && (
+          <div className="mx-2 mb-2 px-2 py-1.5 rounded-md border border-white/10 bg-white/[0.03] text-[11px] text-white/60 leading-snug">
+            Checking who can see it…
+          </div>
+        )}
         {reparentError && !collapsed && (
           <div className="mx-2 mb-2 px-2 py-1.5 rounded-md border border-red-400/30 bg-red-400/10 text-[11px] text-red-300 leading-snug">
             {reparentError}
@@ -634,6 +813,23 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               setExpandedMatters((prev) => new Set(prev).add(newMatterContext.parentMatterId!));
             }
           }}
+        />
+      )}
+      {pendingMove && (
+        <MoveMatterConfirm
+          words={pendingMove.words}
+          busy={moveBusy}
+          error={moveError}
+          onCancel={() => { if (!moveBusy) { setPendingMove(null); setMoveError(null); } }}
+          onConfirm={() => void confirmMove()}
+        />
+      )}
+      {movedToast && (
+        <MovedToast
+          text={movedToast.doneText}
+          busy={undoBusy}
+          onUndo={() => void undoMove()}
+          onDismiss={dismissMovedToast}
         />
       )}
       {sealTarget && (
