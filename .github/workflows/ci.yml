@@ -942,3 +942,10 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-brief-edit-lease.mjs
+
+      # Word footnotes and endnotes reach the indexed text (10-02): numbered as
+      # Word numbers them (by where the marks fall), separators skipped, the
+      # body text unchanged, a file without notes indexed exactly as before.
+      - name: Ingestion — Word footnotes and endnotes are indexed
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-docx-notes.mjs
