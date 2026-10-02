@@ -43,7 +43,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { briefExtensions, type FlagKind } from '@/lib/brief/schema';
-import { serialize, type BriefDoc } from '@/lib/brief/md';
+import type { BriefDoc } from '@/lib/brief/md';
 import {
   loadBrief, saveBody, takeSnapshot, listSnapshots, loadSnapshot, restoreSnapshot,
   importBriefFromDocument, exportBrief, listRecentBriefs, type BriefMeta, type SnapshotRow, type ImportResult, type RecentBrief,
@@ -90,6 +90,7 @@ import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
 import { SaveAsVersionCard, CompareCard } from './VersionCards';
 import { nextVersionTitle, nextVersionLabel } from '@/lib/brief/versions';
+import { useBriefEditLease, type LeaseState } from '@/lib/brief/edit-lease';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
 import { project, plainRangeToPm } from '@/lib/brief/anchor';
@@ -132,6 +133,9 @@ export default function BriefDesk() {
   const [showVersions, setShowVersions] = useState(false);
 
   const [mount, setMount] = useState(0); // a new editor only on (re)load, never per save
+  // One person edits a brief at a time (105): this window may type only while
+  // it holds the brief. A phone never edits, so never holds it.
+  const { lease, takeOver } = useBriefEditLease(id, !isMobile);
   const updatedAt = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saving = useRef(false);
@@ -191,7 +195,15 @@ export default function BriefDesk() {
       meta={meta}
       setMeta={setMeta}
       initial={initial!}
-      editable={!isMobile}
+      // Editable unless another window holds it. While the first claim is in
+      // flight it stays editable, so the on-open steps (laying the last run's
+      // marks) run as before; a second window turns read-only a moment later.
+      editable={!isMobile && lease.kind !== 'theirs'}
+      lease={lease}
+      onTakeOver={async () => {
+        // Start from what the other window last saved, never a stale copy.
+        if (await takeOver()) reload();
+      }}
       save={save}
       setSave={setSave}
       saveError={saveError}
@@ -223,6 +235,9 @@ interface DeskProps {
   setMeta: (m: BriefMeta) => void;
   initial: BriefDoc;
   editable: boolean;
+  /** Who may edit this brief now (105); the read-only line says who. */
+  lease: LeaseState;
+  onTakeOver: () => Promise<void>;
   save: Save;
   setSave: (s: Save) => void;
   saveError: string | null;
@@ -284,7 +299,7 @@ function DeskEditor(p: DeskProps) {
     editable: p.editable,
     editorProps: { attributes: { class: 'brief-doc', spellcheck: 'true' } },
     onUpdate: () => {
-      if (saveRef.current === 'conflict') return;
+      if (saveRef.current === 'conflict' || !editableRef.current) return;
       setSave('dirty');
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => void flush(), QUIET_MS);
@@ -292,6 +307,14 @@ function DeskEditor(p: DeskProps) {
     onBlur: () => { if (timer.current) void flush(); },
   });
   useEffect(() => { editorRef.current = editor; }, [editor]);
+  // Editable follows the hold (105). Losing it stops this window's saves at
+  // once: whatever it had not saved stays on screen for "Save as".
+  const editableRef = useRef(p.editable);
+  useEffect(() => {
+    editableRef.current = p.editable;
+    if (!p.editable && timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (editor && editor.isEditable !== p.editable) editor.setEditable(p.editable);
+  }, [editor, p.editable, timer]);
 
   // ── D3: the run, the marks, the table, the authority ─────────────────────
   const wide = !useIsMobile(1400);
@@ -1461,12 +1484,6 @@ function DeskEditor(p: DeskProps) {
     }
   };
 
-  const copyMine = async () => {
-    if (!editor) return;
-    await navigator.clipboard.writeText(serialize(editor.getJSON()));
-    p.setNotice('Your version is on the clipboard as Markdown.');
-  };
-
   // The machine pass lives with the cite table, not in the writing toolbar
   // (Eden, 09-28: "it should be a bit hidden so it's not the first thing you
   // are drawn to"). Still one click, still shows its counts and progress.
@@ -1501,12 +1518,12 @@ function DeskEditor(p: DeskProps) {
       )}
 
       {save === 'conflict' && (
+        // Inform only (Eden, 10-02): versions are reconciled in a considered
+        // step, not by a button here. What is on screen can be kept as the
+        // next version.
         <Banner tone="warn">
-          This brief was changed elsewhere (another tab or another person) after you opened it. Nothing here was saved over it.
-          <span className="ml-2 inline-flex gap-2">
-            <button className="underline" onClick={() => void copyMine()}>Copy my version</button>
-            <button className="underline" onClick={p.onReload}>Reload theirs</button>
-          </span>
+          This brief was changed in another window after you opened it, so your edits here are not being saved to it.
+          To keep what is on screen, use “Save as {nextVersionLabel(meta.title ?? '')}”.
         </Banner>
       )}
       {p.arrival && p.editable && !run && !progress && (
@@ -1527,7 +1544,9 @@ function DeskEditor(p: DeskProps) {
           </span>
         </Banner>
       )}
-      {!p.editable && (
+      {p.lease.kind === 'theirs' ? (
+        <LeaseBanner lease={p.lease} onTakeOver={p.onTakeOver} saveAsLabel={nextVersionLabel(meta.title ?? '')} />
+      ) : !p.editable && p.lease.kind !== 'checking' && (
         <Banner tone="info">Read-only on a phone. Open the brief on a laptop to edit it.</Banner>
       )}
       {(p.notice || p.busy) && (
@@ -1661,7 +1680,7 @@ function DeskEditor(p: DeskProps) {
         >
           <GitCompare size={14} /> <span className="hidden md:inline">Compare</span>
         </button>
-        {p.editable && (
+        {(p.editable || (p.lease.kind === 'theirs' && p.lease.lost)) && (
           <button
             onClick={() => setShowSaveAs(true)}
             className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/40 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/10"
@@ -2376,6 +2395,42 @@ function SaveBadge({ save, error }: { save: Save; error: string | null }) {
     <span className={`inline-flex items-center gap-1 h-6 px-2 rounded border text-[12px] whitespace-nowrap ${tone}`} title={error ?? (save === 'saved' ? 'Every change is on the server' : save === 'dirty' ? 'Saves two seconds after you stop typing' : undefined)} data-testid="save-badge">
       <Icon size={12} className={save === 'saving' ? 'animate-spin' : undefined} /> {text}
     </span>
+  );
+}
+
+/** Read-only because another window holds the brief (105). */
+function LeaseBanner({ lease, onTakeOver, saveAsLabel }: {
+  lease: Extract<LeaseState, { kind: 'theirs' }>;
+  onTakeOver: () => Promise<void>;
+  saveAsLabel: string;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const since = new Date(lease.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const who = lease.sameUser ? 'another window of yours' : lease.holderName;
+  return (
+    <Banner tone={lease.lost ? 'warn' : 'info'}>
+      {lease.lost
+        ? <>Editing moved to {who} at {since}. This window is now read-only; anything typed here in the last few seconds may not have been saved. To keep what is on screen, use “Save as {saveAsLabel}”.</>
+        : <>Read-only: this brief is being edited in {who} (since {since}). One person edits a brief at a time.</>}
+      <span className="ml-2 inline-flex items-center gap-2">
+        {asking ? (
+          <>
+            <span className="text-white/70">The other window becomes read-only.</span>
+            <button
+              className="underline disabled:opacity-50"
+              disabled={busy}
+              onClick={() => { setBusy(true); void onTakeOver().finally(() => { setBusy(false); setAsking(false); }); }}
+            >
+              {busy ? 'Taking over…' : 'Take over'}
+            </button>
+            <button className="underline text-white/60" onClick={() => setAsking(false)}>Cancel</button>
+          </>
+        ) : (
+          <button className="underline" onClick={() => setAsking(true)}>Take over editing</button>
+        )}
+      </span>
+    </Banner>
   );
 }
 
