@@ -11,6 +11,7 @@ import {
   PanelLeft,
   Users,
   Trash2,
+  Pencil,
   Plug,
   UserPlus,
   Folder,
@@ -738,6 +739,22 @@ function MatterNode({
 }: MatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
+  // Rename in place (Eden, 10-02: a misspelled sub-matter had no rename here).
+  // The same single update the matter page's heading makes; Enter or leaving
+  // the box saves, Escape or an empty name cancels.
+  const refreshServerspaces = useServerspacesRefresh();
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(matter.name);
+  const [renameErr, setRenameErr] = useState<string | null>(null);
+  const saveRename = async () => {
+    const next = draft.trim();
+    setRenaming(false);
+    if (!next || next === matter.name) { setDraft(matter.name); return; }
+    const { error } = await supabase.from('matterspaces').update({ name: next }).eq('id', matter.id);
+    if (error) { setDraft(matter.name); setRenameErr(`Not renamed: ${error.message}`); return; }
+    setRenameErr(null);
+    refreshServerspaces();
+  };
   const isExpanded = expandedMatters.has(matter.id);
   const myLabel = `${ancestorLabel} / ${matter.name}`;
   const path = `/app/matterspace/${matter.id}`;
@@ -804,8 +821,28 @@ function MatterNode({
         ) : (
           <span className="w-[21px] shrink-0" />
         )}
+        {renaming ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={(e) => e.currentTarget.select()}
+            onBlur={() => void saveRename()}
+            onKeyDown={(e) => {
+              // The row is draggable: keep keys (Space, Enter) and the pointer
+              // in the box, not on the drag handle.
+              e.stopPropagation();
+              if (e.key === 'Enter') e.currentTarget.blur();
+              if (e.key === 'Escape') { setDraft(matter.name); setRenaming(false); }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={`Rename ${matter.name}`}
+            className="flex-1 min-w-0 my-0.5 h-7 px-1.5 rounded bg-white/[0.08] border border-[#e8b84a]/60 text-[12px] text-white outline-none"
+          />
+        ) : (
         <Link
           to={path}
+          onDoubleClick={(e) => { e.preventDefault(); setDraft(matter.name); setRenaming(true); }}
           className={`flex-1 truncate py-1.5 text-[12px] ${
             isActive(path) ? 'font-medium text-white' : 'hover:text-white'
           }`}
@@ -821,6 +858,20 @@ function MatterNode({
           )}
           {matter.name}
         </Link>
+        )}
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDraft(matter.name);
+            setRenaming(true);
+          }}
+          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+          aria-label="Rename matter"
+          title="Rename"
+        >
+          <Pencil size={11} strokeWidth={2} />
+        </button>
         <button
           onClick={(e) => {
             e.preventDefault();
@@ -858,6 +909,7 @@ function MatterNode({
           <Trash2 size={11} strokeWidth={2} />
         </button>
       </div>
+      {renameErr && <p className="px-2 py-1 text-[11px] text-red-300">{renameErr}</p>}
       {isExpanded && hasChildren && (
         <div className="ml-3 pl-2 border-l border-[rgba(255,255,255,0.06)] mt-0.5 space-y-px">
           {children.map((child) => (
