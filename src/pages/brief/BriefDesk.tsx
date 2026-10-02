@@ -1888,13 +1888,16 @@ function DeskEditor(p: DeskProps) {
       {showSaveAs && editor && (
         <SaveAsVersionCard
           meta={meta}
+          matterLabel={matterName(meta.matterspace_id)}
           suggested={nextVersionTitle(meta.title ?? '')}
           getBody={() => (editorRef.current ? (editorRef.current.getJSON() as BriefDoc) : null)}
           flush={flush}
           onClose={() => setShowSaveAs(false)}
           onSaved={(id, title) => {
             setShowSaveAs(false);
-            p.setNotice(`Saved as “${title}”. It is in the Vault; “${meta.title}” is unchanged.`);
+            // Say WHERE (10-02: v19 was saved in "Bushell" and looked for in
+            // "Article 78 Petition Exhibits", where the original Word file is).
+            p.setNotice(`Saved as “${title}” in ${matterName(meta.matterspace_id) ?? 'this matter'} (Vault). “${meta.title}” is unchanged.`);
             goTo(`/app/brief/${id}`);
           }}
         />

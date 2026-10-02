@@ -116,6 +116,24 @@ export default function Vault() {
 
   // The reading order, restored per matter on arrival.
   const [grouping, setGrouping] = useState<VaultGrouping>('date');
+  // Re-read the file list when the person comes back to this tab: a document
+  // saved elsewhere meanwhile (the Brief Desk's "Save as v19", another
+  // window) shows without a reload (10-02). At most every 10 s.
+  const [listTick, setListTick] = useState(0);
+  useEffect(() => {
+    let last = Date.now();
+    const back = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - last < 10_000) return;
+      last = Date.now();
+      setListTick((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('focus', back);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('focus', back);
+    };
+  }, []);
 
   // Matter tree state — same shape as the main sidebar so users can
   // switch matters without leaving the Vault.
@@ -340,7 +358,7 @@ export default function Vault() {
       cancelled = true;
       cleanups.forEach((c) => c());
     };
-  }, [matter, matterScope, grouping, applyDocUpdates]);
+  }, [matter, matterScope, grouping, applyDocUpdates, listTick]);
 
   // Is anything actually processing? Asked only while this matter has a
   // document that has not reached a terminal state — the one window in which
