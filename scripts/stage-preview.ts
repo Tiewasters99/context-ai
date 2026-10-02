@@ -6,11 +6,10 @@
 // model call. Bundle with esbuild and open the HTML next to it:
 //
 //   npx esbuild scripts/stage-preview.ts --bundle --format=iife \
-//     --outfile=<anywhere>/stage-preview.js
+//     --outfile=<previewDir>/stage-preview.js
+//   node scripts/stage-preview-server.mjs <previewDir>   # serves + witness agent
 //
-//   <div id="room" style="position:fixed;inset:0"></div>
-//   <div id="views"></div><div id="chip"></div>
-//   <script src="stage-preview.js"></script>
+//   index.html needs: #room, #views, #witnesses (btn+menu), #arguebar, #chip.
 
 import { Vector3 } from 'three';
 import { CourtroomStage } from '../src/lib/courtroom/three/stage.ts';
@@ -37,6 +36,31 @@ let manual = false;
 // click the judge. Preview = canned courtroom responses; the app wires the
 // real judge agent here (same machinery as the to-offer colloquy).
 let lastAddress: { text: string; t: number } | null = null;
+
+/* ---- The witness list: witnesses are AI AGENTS with case knowledge and
+       personality (spec: feed a witness deposition testimony, exhibits,
+       notes — anything you actually have). This is the FLOW TEST: Witness A
+       knows only that they were called and that the pre-admitted skyline
+       photograph is apparently relevant; the agent plays along, occasionally
+       pushing back. Served by /api/witness on the preview server (Fable 5,
+       examination history = the witness's memory). ---- */
+interface WitnessDef {
+  id: string;
+  name: string;
+  sub: string;
+  portrait: string;
+}
+const WITNESSES: WitnessDef[] = [
+  {
+    id: 'A',
+    name: 'Witness A',
+    sub: 'Flow test — plays along; knows only the skyline photograph',
+    portrait: '/witness-demo.png',
+  },
+];
+let activeWitness: WitnessDef | null = null;
+let examination: { role: 'user' | 'assistant'; content: string }[] = [];
+let witnessBusy = false;
 
 function judgeAnswer(text: string): string | null {
   const t = text.toLowerCase();
@@ -93,6 +117,82 @@ const scene = createCourtroomScene(stage, {
   },
 });
 
+/* ---- The witness menu + the examination loop. ---- */
+
+function seatWitness(w: WitnessDef | null) {
+  manual = true;
+  activeWitness = w;
+  examination = [];
+  scene.setWitnessPortrait(w ? w.portrait : null);
+  scene.clearSpeech('witness');
+  if (w) {
+    stage.flyTo(scene.views.witness);
+    showChip(`<b>${w.name} takes the stand.</b><br><i>Ask a question ending in “?” from the bar — or dictate and click ■ — and the witness answers.</i>`);
+  } else {
+    showChip('<b>The witness is excused.</b>');
+  }
+}
+
+async function askWitness(question: string): Promise<void> {
+  if (!activeWitness || witnessBusy) return;
+  witnessBusy = true;
+  examination.push({ role: 'user', content: question });
+  scene.say('witness', '…', 9999); // on the stand, thinking
+  try {
+    const res = await fetch('/api/witness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ history: examination }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.answer) throw new Error(data.error || 'no answer');
+    examination.push({ role: 'assistant', content: data.answer });
+    scene.say('witness', data.answer, 9999);
+  } catch (e) {
+    scene.clearSpeech('witness');
+    showChip(`<b>The witness did not answer.</b><br><i>${e instanceof Error ? e.message : 'agent error'}</i>`);
+  } finally {
+    witnessBusy = false;
+  }
+}
+
+/** Counsel's line goes to the witness when one is on the stand, the line is
+ *  a question, and it isn't addressed to the Court. */
+function maybeExamine(text: string): void {
+  if (!activeWitness) return;
+  if (/your honor|the court/i.test(text) && !/witness/i.test(text)) return;
+  if (!text.trim().endsWith('?')) return;
+  void askWitness(text.trim());
+}
+
+{
+  const menu = document.getElementById('witnessmenu')!;
+  const btn = document.getElementById('witnessbtn')!;
+  btn.addEventListener('click', () => menu.classList.toggle('open'));
+  const render = () => {
+    menu.innerHTML = '';
+    for (const w of WITNESSES) {
+      const b = document.createElement('button');
+      b.innerHTML = `<b>${w.name}</b>${activeWitness?.id === w.id ? ' — on the stand' : ''}<span class="sub">${w.sub}</span>`;
+      b.onclick = () => {
+        menu.classList.remove('open');
+        seatWitness(activeWitness?.id === w.id ? null : w);
+        render();
+      };
+      menu.appendChild(b);
+    }
+    const off = document.createElement('button');
+    off.innerHTML = '<b>Excuse the witness</b><span class="sub">Clear the stand</span>';
+    off.onclick = () => {
+      menu.classList.remove('open');
+      seatWitness(null);
+      render();
+    };
+    menu.appendChild(off);
+  };
+  render();
+}
+
 /* ---- The argue bar: type as the lectern speaker; for now text, voice
        later (mic / phone / Connect all land in the same say() seam). ---- */
 {
@@ -108,6 +208,7 @@ const scene = createCourtroomScene(stage, {
     }
     scene.say(occ, text, 9999); // holds until replaced or edited
     lastAddress = { text, t: Date.now() }; // the Court can answer it
+    maybeExamine(text); // a question, with a witness seated → the stand answers
     input.value = '';
   };
   input.addEventListener('keydown', (e) => {
@@ -168,6 +269,14 @@ const scene = createCourtroomScene(stage, {
         setLive(false);
         input.value = dictated.trimEnd();
         input.focus();
+        // Dictation rarely carries a "?" — with a witness on the stand,
+        // stopping the mic rests the question and the witness answers.
+        const spoken = dictated.trim();
+        if (activeWitness && spoken) {
+          void askWitness(spoken.endsWith('?') ? spoken : `${spoken}?`);
+          input.value = '';
+          dictated = '';
+        }
       };
       rec.onerror = () => { /* onend follows and resets */ };
       setLive(true);
