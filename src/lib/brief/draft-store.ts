@@ -449,3 +449,70 @@ export async function exportBrief(
   });
   return { ok: true, snapshot: snap };
 }
+
+// ---------------------------------------------------------------------------
+// Versions as documents (Eden, 10-02): "Save as v19" and Compare
+// ---------------------------------------------------------------------------
+
+/** A title as a LIKE pattern that matches only itself: % _ and \ escaped. */
+const likeLiteral = (s: string) => s.replace(/[%_\\]/g, (c) => `\\${c}`);
+
+/**
+ * A brief with this exact title already in the matter, if any, so "Save as
+ * v19" never makes a second v19 without saying so.
+ */
+export async function briefTitleTaken(matterId: string, title: string): Promise<{ id: string; title: string } | null> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, title')
+    .eq('matterspace_id', matterId)
+    .ilike('title', likeLiteral(title))
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return ((data ?? [])[0] as { id: string; title: string } | undefined) ?? null;
+}
+
+/**
+ * Save the brief as it is now as a NEW document, the next version, in the
+ * same matter: its own body, its own first snapshot, in the Vault and search.
+ * The brief it came from is left exactly as it was.
+ */
+export async function saveAsNewVersion(meta: BriefMeta, body: BriefDoc, title: string): Promise<string> {
+  return createBrief(meta.matterspace_id, title, body, {
+    version_of: meta.id,
+    version_of_title: meta.title,
+  });
+}
+
+export interface VersionCandidate { id: string; title: string; matterspace_id: string; updated_at: string }
+
+/**
+ * Briefs to compare this one with: every brief in its matter, and every brief
+ * anywhere the person can read whose title shares its name before the version
+ * number (versions get filed in different folders: v18 in "Bushell", a copy
+ * in "Article 78 Petition Exhibits"). Only briefs with a body in the desk.
+ */
+export async function listVersionCandidates(meta: BriefMeta): Promise<VersionCandidate[]> {
+  const base = (meta.title ?? '').replace(/([^A-Za-z]|^)[vV](?:er(?:sion)?)?\.?\s?\d{1,4}(?!\d).*$/, '').replace(/[-_\s.]+$/, '');
+  const cols = 'id, title, matterspace_id, updated_at, draft_bodies!inner(document_id)';
+  const sameMatter = supabase.from('documents').select(cols).eq('matterspace_id', meta.matterspace_id).eq('doc_type', 'brief').limit(200);
+  const sameName = base.length >= 6
+    ? supabase.from('documents').select(cols).eq('doc_type', 'brief').ilike('title', `${likeLiteral(base)}%`).limit(200)
+    : null;
+  const [a, b] = await Promise.all([sameMatter, sameName ?? Promise.resolve({ data: [], error: null })]);
+  if (a.error) throw new Error(a.error.message);
+  if (b.error) throw new Error(b.error.message);
+  const seen = new Map<string, VersionCandidate>();
+  for (const r of [...(a.data ?? []), ...(b.data ?? [])] as VersionCandidate[]) {
+    if (r.id !== meta.id && !seen.has(r.id)) seen.set(r.id, { id: r.id, title: r.title, matterspace_id: r.matterspace_id, updated_at: r.updated_at });
+  }
+  return [...seen.values()];
+}
+
+/** A brief's body, for Compare. */
+export async function loadBriefBody(documentId: string): Promise<BriefDoc> {
+  const { data, error } = await supabase.from('draft_bodies').select('body').eq('document_id', documentId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('That document has no text in the desk to compare.');
+  return (data as { body: BriefDoc }).body;
+}
