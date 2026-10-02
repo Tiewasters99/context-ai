@@ -168,7 +168,9 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
       <Frame>
         {header}
         <div className="flex-1 min-h-0">
-          <DocumentReader key={state.docId} id={state.docId} embedded chrome="pane" goto={state.goto ?? undefined} />
+          {/* The Reader's own ✕ closes the pane: embedded without onClose it
+              did nothing (Eden, 10-02: "the x button is not working"). */}
+          <DocumentReader key={state.docId} id={state.docId} embedded chrome="pane" goto={state.goto ?? undefined} onClose={onClose} />
         </div>
       </Frame>
     );
