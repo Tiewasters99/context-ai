@@ -266,7 +266,7 @@ let legalSourceReply = { found: false };
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init) => {
   if (url === '/api/legal-source') {
-    seen.push({ url, env: JSON.parse(init.body) });
+    seen.push({ url, env: JSON.parse(init.body), auth: init.headers?.Authorization ?? init.headers?.authorization ?? null });
     return new Response(JSON.stringify(legalSourceReply), { status: 200, headers: { 'content-type': 'application/json' } });
   }
   if (url !== '/api/llm') throw new Error(`cite-check harness saw egress to ${url}`);
@@ -298,7 +298,7 @@ const q = (result) => {
 };
 globalThis.__ccSupabase = {
   auth: {
-    getSession: async () => ({ data: { session: null } }),
+    getSession: async () => ({ data: { session: { access_token: 'harness-user-token' } } }),
     getUser: async () => ({ data: { user: { id: '11111111-2222-4333-8444-555555555555' } }, error: null }),
   },
   from: (table) => ({
@@ -469,6 +469,11 @@ const FOUND = { found: true, full_text: 'The reasonableness of a particular use 
   check('exactly one model call', llmCalls().length === 1);
   check('the envelope names the act — citecheck.check', llmCalls()[0].env.feature === 'citecheck.check');
   check('and the authority is saved', writes.some((w) => w.table === 'authorities'));
+  // 10-02: the free-database lookup went out with no session; the route
+  // answered 401, read as "not found", for every cite.
+  const lookups = seen.filter((s) => s.url === '/api/legal-source');
+  check('the free-database lookup carries the person\'s session (the route answers 401 without it)',
+    lookups.length === 1 && lookups[0].auth === 'Bearer harness-user-token', JSON.stringify(lookups.map((l) => l.auth)));
 }
 
 // -- invalid → repair → valid ----------------------------------------------
