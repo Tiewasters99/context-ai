@@ -103,6 +103,24 @@ export function openProblemForWords(rows: CiteConfirmation[], raw: string): Cite
   return last && last.status === 'problem' ? last : null;
 }
 
+/**
+ * The problems still open (no later reading of the same words), newest first,
+ * each with whether its words are still in the brief. A flag whose words were
+ * redrafted away is otherwise stranded: confirming the NEW wording is a
+ * different set of words, so nothing asks how the old flag was answered
+ * (Eden, 10-02: ¶ 90 of Bushell v18). The Log resolves these by hand.
+ */
+export function openProblems(rows: CiteConfirmation[], briefText: string): { row: CiteConfirmation; inBrief: boolean }[] {
+  const text = flat(briefText);
+  return rows
+    .filter((r) => r.status === 'problem' && openProblemForWords(rows, r.cite_raw)?.id === r.id)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((row) => ({ row, inBrief: text.includes(flat(row.cite_raw)) }));
+}
+
+/** Longest note the log takes (migration 103: char_length(note) <= 400). */
+export const NOTE_MAX = 400;
+
 /** The note a carried row carries: where it came from, who read it, when. */
 export function carryNote(row: CiteConfirmation, fromTitle: string): string {
   const when = new Date(row.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
