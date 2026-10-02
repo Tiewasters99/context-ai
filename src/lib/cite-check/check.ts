@@ -4,6 +4,7 @@
 // fires on a verified mismatch.
 
 import { generateStructured } from '@/lib/llm';
+import { supabase } from '@/lib/supabase';
 import { parseServerRefusal, ServerRefusalError, isFinalRefusal } from '@/lib/llm/refusals';
 import {
   buildRepairContent,
@@ -32,9 +33,13 @@ interface LegalSourceResult {
 
 async function fetchFromFreeDb(cite: Cite, signal?: AbortSignal, matterId?: string): Promise<LegalSourceResult> {
   try {
+    // The route answers 401 without the person's session (api/legal-source.mjs),
+    // and a 401 is not a refusal kind, so for every cite it read as "not found
+    // on the free databases" (found 10-02, Fable's review). Send the session.
+    const token = (await supabase.auth.getSession()).data.session?.access_token;
     const res = await fetch('/api/legal-source', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({
         authority_type: cite.authority_type,
         citation_bluebook: cite.citation_bluebook,
