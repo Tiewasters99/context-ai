@@ -27,6 +27,7 @@ import { createClient } from '@supabase/supabase-js';
 import { runAssistantStream, bedrockCredsFromEnv, PENS } from '../lib/assistant-core.mjs';
 import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
+import { PLANS } from '../lib/surfaces.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -209,6 +210,9 @@ function sanitizeContext(c) {
   const num = (v) => (Number.isInteger(v) && v > 0 ? v : undefined);
   const out = {
     route: pick(c.route),
+    // The account's plan, for the map's WORDING only (lib/orchestrator-system.mjs
+    // mapForPlan); a known plan name or nothing. Doors stay locked server-side.
+    plan: typeof c.plan === 'string' && PLANS.includes(c.plan) ? c.plan : undefined,
     tab: pick(c.tab),
     matterName: pick(c.matterName),
     // The reader's companion context: the document open in front of the

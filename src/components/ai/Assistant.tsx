@@ -248,7 +248,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // as a claim about one vendor's servers. A PAUSED matter keeps nothing
   // either — the switch says nothing is going anywhere. And where the tier or
   // the pause has not been read yet, nothing is written: unknown is not open.
-  const { user } = useAuth();
+  const { user, plan } = useAuth();
   const chatStore = useMemo(() => browserSessionStore(), []);
   const mayKeepConversation = !scoped ? true : !ai.loading && ai.tier === 'A' && ai.paused === false;
 
@@ -644,6 +644,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             : undefined,
           context: {
             route: location.pathname,
+            // The map is drawn for the plan (wording only; doors stay locked server-side).
+            ...(plan ? { plan } : {}),
             ...getOrchestratorContext(),
             ...(commandMatterRef.current?.name
               ? { matterName: commandMatterRef.current.name }
