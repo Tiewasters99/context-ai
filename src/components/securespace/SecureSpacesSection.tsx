@@ -5,6 +5,7 @@ import { useDroppable } from '@dnd-kit/core';
 import type { Serverspace, ServerspaceMatter } from '@/hooks/useServerspaces';
 import { persistVaultFile, moveVaultDocument, type MatterRef } from '@/lib/vault-persist';
 import { useUploadEstimateGate, UPLOAD_CANCELLED_NOTICE } from '@/components/vault/UploadEstimateGate';
+import { VAULT_DRAG_TYPE, readVaultDrag } from '@/lib/vault-drag';
 
 // The SecureSpaces shelf at the bottom of the rail (Beta). One product, one
 // seal: a SecureSpace is not a second vault, it is a matter whose ai_tier is
@@ -25,7 +26,7 @@ import { useUploadEstimateGate, UPLOAD_CANCELLED_NOTICE } from '@/components/vau
 
 const TIER_B_COLOR = '#5aa88f';
 const SECURESPACES_DROP_ID = 'securespaces-drop';
-const VAULT_FILE_MIME = 'application/x-cs-vault-file';
+const VAULT_FILE_MIME = VAULT_DRAG_TYPE;
 
 export interface SecureSpaceRow {
   matter: ServerspaceMatter;
@@ -297,11 +298,14 @@ function SecureSpaceRowItem({
     setUploadError(null);
 
     // A Vault document dragged over: move it into this sealed matter.
-    const vaultPayload = e.dataTransfer.getData(VAULT_FILE_MIME);
-    if (vaultPayload) {
+    // A drag can carry the whole Vault selection; they move one after another
+    // and the first refusal stops the rest.
+    const vaultItems = readVaultDrag(e.dataTransfer);
+    if (vaultItems.length) {
       try {
-        const { docId } = JSON.parse(vaultPayload) as { docId: string };
-        await moveVaultDocument(docId, row.matter.id);
+        for (const { docId, fromMatterId } of vaultItems) {
+          if (fromMatterId !== row.matter.id) await moveVaultDocument(docId, row.matter.id);
+        }
       } catch (err) {
         setUploadError(err instanceof Error ? err.message : String(err));
       }
