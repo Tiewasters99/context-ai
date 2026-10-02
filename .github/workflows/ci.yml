@@ -919,3 +919,13 @@ jobs:
       - name: Brief Desk — the Orchestrator knows the brief and its record
         if: ${{ !cancelled() }}
         run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-orchestrator-scope.mjs
+
+      # Versions as documents (10-02): "Save as v19" names the next version
+      # (the last v-number moves on; "Art78" is not one), and Compare is a
+      # paragraph-then-word redline that rebuilds both versions exactly,
+      # footnotes included. With it, the confirmation log's carry and open
+      # problems (a flag redrafted away stays open until resolved by hand).
+      # No database.
+      - name: Brief Desk — versions, the redline, and the confirmation log
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-versions.mjs scripts/_test-brief-carry.mjs

@@ -38,7 +38,7 @@ import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText, Check,
   ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
-  ClipboardCheck,
+  ClipboardCheck, GitCompare, CopyPlus,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -88,6 +88,8 @@ const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
+import { SaveAsVersionCard, CompareCard } from './VersionCards';
+import { nextVersionTitle, nextVersionLabel } from '@/lib/brief/versions';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
 import { project, plainRangeToPm } from '@/lib/brief/anchor';
@@ -317,6 +319,10 @@ function DeskEditor(p: DeskProps) {
   // in the brief (green confirmed, red problem) and fills the Log.
   const [confs, setConfs] = useState<CiteConfirmation[]>([]);
   const [showLog, setShowLog] = useState(false);
+  // Versions as documents (10-02): Save as the next version; Compare two versions.
+  const [showSaveAs, setShowSaveAs] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
+  const goTo = useNavigate();
   // Earlier briefs a reading can be carried from (the Log's "Carry the check
   // from an earlier version"): every other brief the person has, newest first.
   const [carryCandidates, setCarryCandidates] = useState<RecentBrief[]>([]);
@@ -1647,6 +1653,24 @@ function DeskEditor(p: DeskProps) {
         >
           <History size={14} /> <span className="hidden md:inline">Versions</span>
         </button>
+        <button
+          onClick={() => setShowCompare(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Compare this brief with another version: a redline of every change"
+          data-testid="compare-button"
+        >
+          <GitCompare size={14} /> <span className="hidden md:inline">Compare</span>
+        </button>
+        {p.editable && (
+          <button
+            onClick={() => setShowSaveAs(true)}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/40 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/10"
+            title="Save the brief as it is now as the next version, a new document in the Vault; this version stays as it is"
+            data-testid="save-as-version"
+          >
+            <CopyPlus size={14} /> <span className="hidden md:inline">Save as {nextVersionLabel(meta.title ?? '')}</span>
+          </button>
+        )}
         <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} losses={importLosses(meta)} />
       </header>
 
@@ -1840,6 +1864,28 @@ function DeskEditor(p: DeskProps) {
             const metadata = { ...(meta.metadata ?? {}), cases_matter_id: m };
             void supabase.from('documents').update({ metadata }).eq('id', meta.id).then(({ error }) => { if (!error) p.setMeta({ ...meta, metadata }); });
           }}
+        />
+      )}
+      {showSaveAs && editor && (
+        <SaveAsVersionCard
+          meta={meta}
+          suggested={nextVersionTitle(meta.title ?? '')}
+          getBody={() => (editorRef.current ? (editorRef.current.getJSON() as BriefDoc) : null)}
+          flush={flush}
+          onClose={() => setShowSaveAs(false)}
+          onSaved={(id, title) => {
+            setShowSaveAs(false);
+            p.setNotice(`Saved as “${title}”. It is in the Vault; “${meta.title}” is unchanged.`);
+            goTo(`/app/brief/${id}`);
+          }}
+        />
+      )}
+      {showCompare && (
+        <CompareCard
+          meta={meta}
+          getBody={() => (editorRef.current ? (editorRef.current.getJSON() as BriefDoc) : null)}
+          matterName={matterName}
+          onClose={() => setShowCompare(false)}
         />
       )}
       {showLog && (
