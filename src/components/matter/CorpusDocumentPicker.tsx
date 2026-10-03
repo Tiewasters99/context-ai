@@ -47,7 +47,25 @@ import { useServerspaces } from '@/hooks/useServerspaces';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 
-type Doc = { id: string; title: string | null; source_filename: string | null };
+type Doc = { id: string; title: string | null; source_filename: string | null; processing_status: string | null; storage_path?: string | null };
+
+/**
+ * A row for a document whatever its ingest state. A document that is not
+ * "ready" is SHOWN, disabled, with the reason — never hidden: Eden, 09-28,
+ * uploaded a Word file to the Vault, opened the Brief Desk's picker seconds
+ * later, and found nothing ("it doesn't seem to be able to pick from documents
+ * inside Contextspaces"). `usableNow` lets a caller that reads the FILE, not
+ * the indexed text (the Brief Desk with a .docx), take it at once.
+ */
+export function pickerRowFor(d: Doc, usableNow?: (d: Doc) => boolean): PickerDocument {
+  const title = d.title || d.source_filename || 'Untitled document';
+  const st = d.processing_status ?? 'ready';
+  if (st === 'ready') return { id: d.id, title };
+  if (usableNow?.(d) && d.storage_path) return { id: d.id, title, hint: 'Still being read for search; its file can be used now' };
+  if (st === 'error') return { id: d.id, title, hint: 'Could not be read. Open it in the Vault to see why', disabled: true };
+  if (st === 'held') return { id: d.id, title, hint: 'Held: not read yet (see the Vault)', disabled: true };
+  return { id: d.id, title, hint: 'Just filed; still being read — usually a minute', disabled: true };
+}
 type Crumb = { id: string; name: string };
 
 export type PickedCorpusDocument = {
@@ -101,6 +119,22 @@ type Props = {
    */
   searchAll?: (query: string) => PickerDocument[];
   /**
+   * The same, answered by the server: every document the person can read,
+   * anywhere, by title or filename (the Brief Desk: a brief filed three
+   * folders away is one word in this box). Debounced; the newest answer wins.
+   */
+  searchAllAsync?: (query: string) => Promise<PickerDocument[]>;
+  /**
+   * Which not-yet-ready documents may be picked anyway (the caller reads the
+   * stored file, not the indexed text). Others are shown disabled, with why.
+   */
+  usableNow?: (doc: { id: string; source_filename: string | null; storage_path?: string | null }) => boolean;
+  /**
+   * The caller does not need the document's text (it reads the file itself):
+   * a pick returns at once, text '', and a not-ready document is not refused.
+   */
+  needsText?: boolean;
+  /**
    * Select a folder: the picker hands over that sub-matter AND every
    * sub-matter beneath it, and the caller returns the documents to select.
    * Folders and sub-matters are the same container in this product, so
@@ -135,9 +169,10 @@ async function fetchReadyDocs(matterId: string, onPage: (rows: Doc[]) => boolean
   const page = (from: number, withCount: boolean) =>
     supabase
       .from('documents')
-      .select('id, title, source_filename', withCount ? { count: 'exact' } : undefined)
+      // Every document, whatever its ingest state: pickerRowFor() disables
+      // the ones that cannot be used yet and says why on the row.
+      .select('id, title, source_filename, processing_status, storage_path', withCount ? { count: 'exact' } : undefined)
       .eq('matterspace_id', matterId)
-      .eq('processing_status', 'ready')
       .order('title', { ascending: true })
       // The unique tiebreaker. Titles tie constantly ("Exhibit A", a
       // repeated PACER filename), and rows the ORDER BY calls equal swap
@@ -184,6 +219,9 @@ export default function CorpusDocumentPicker({
   confirmLabel = 'Continue',
   loadDocuments,
   searchAll,
+  searchAllAsync,
+  usableNow,
+  needsText = true,
   onSelectFolder,
   toolbar,
   onCancel,
@@ -276,10 +314,7 @@ export default function CorpusDocumentPicker({
           // because state is set mid-fetch now, not once at the end.
           await fetchReadyDocs(currentMatter.id, (rows) => {
             if (cancelled) return false;
-            setDocs((prev) => [...prev, ...rows.map((d) => ({
-              id: d.id,
-              title: d.title || d.source_filename || 'Untitled document',
-            }))]);
+            setDocs((prev) => [...prev, ...rows.map((d) => pickerRowFor(d, usableNow))]);
           });
         }
       } catch (err) {
@@ -342,10 +377,41 @@ export default function CorpusDocumentPicker({
     return out;
   }
 
+  // The server-side search: debounced, newest answer wins, an error shows once.
+  const [remoteHits, setRemoteHits] = useState<{ q: string; rows: PickerDocument[] } | null>(null);
+  useEffect(() => {
+    if (!searchAllAsync) return;
+    const q = search.trim();
+    if (!q) { setRemoteHits(null); return; }
+    let live = true;
+    const t = setTimeout(() => {
+      searchAllAsync(q).then(
+        (rows) => { if (live) setRemoteHits({ q, rows }); },
+        (err) => { if (live) setError(err instanceof Error ? err.message : String(err)); },
+      );
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [search, searchAllAsync]);
+
   async function pickDocument(id: string) {
     setFetchingDoc(id);
     setError(null);
     try {
+      if (!needsText) {
+        // The caller reads the file itself: hand over the document and its
+        // own matter, no text, and do not refuse one that is still being read.
+        const { data: d, error: e } = await supabase
+          .from('documents').select('id, title, source_filename, matterspace_id').eq('id', id).maybeSingle();
+        if (e || !d) throw new Error(`document lookup: ${e?.message ?? 'not found'}`);
+        onPicked?.({
+          documentId: d.id,
+          title: d.title || d.source_filename || 'Untitled document',
+          text: '',
+          matterId: d.matterspace_id,
+          matterName: d.matterspace_id === currentMatter?.id ? path.map((c) => c.name).join(' › ') : undefined,
+        });
+        return;
+      }
       const loaded = await loadCorpusDocumentText(id);
       onPicked?.({
         documentId: loaded.documentId,
@@ -363,13 +429,14 @@ export default function CorpusDocumentPicker({
   const q = search.trim().toLowerCase();
   // Searching the whole tree replaces the level, folders and all: a search for
   // "Marlow" that shows the current folder's sub-folders is not a search.
-  const searching = Boolean(q && searchAll);
+  const searching = Boolean(q && (searchAll || searchAllAsync));
   const folderRows = searching ? [] : currentChildren
     .map((n) => ({ id: n.matter.id, name: n.matter.name, childCount: n.children.length }))
     .filter((r) => !q || r.name.toLowerCase().includes(q));
   const docRows = searching
-    ? searchAll!(search.trim())
+    ? (searchAll ? searchAll(search.trim()) : (remoteHits && remoteHits.q === search.trim() ? remoteHits.rows : []))
     : docs.filter((r) => !q || r.title.toLowerCase().includes(q));
+  const remoteSearching = Boolean(q && searchAllAsync && !searchAll && (!remoteHits || remoteHits.q !== search.trim()));
   // Only this many rows reach the DOM. DeCamara's 6,974 documents rendered
   // 63,016 nodes at once; the filter still runs over every row above, so a
   // title past the cap is one keystroke away. Folders are never capped.
@@ -461,7 +528,7 @@ export default function CorpusDocumentPicker({
               autoFocus
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={searchAll ? 'Search this matter\'s documents…' : space ? 'Filter this level…' : 'Filter serverspaces…'}
+              placeholder={searchAllAsync ? 'Search all your documents by name…' : searchAll ? 'Search this matter\'s documents…' : space ? 'Filter this level…' : 'Filter serverspaces…'}
               className="w-full h-8 pl-7 pr-2 rounded-md bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] text-[12px] text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]"
             />
           </div>
@@ -490,7 +557,7 @@ export default function CorpusDocumentPicker({
 
           {/* Level 0: the serverspaces, in the sidebar's order. Never shown
               confined — there is exactly one matter tree to choose from. */}
-          {!space && !busy && !confineToRoot && (
+          {!space && !busy && !confineToRoot && !searching && (
             <ul className="py-1">
               {serverspaces
                 .filter((s) => !q || s.name.toLowerCase().includes(q))
@@ -513,11 +580,12 @@ export default function CorpusDocumentPicker({
           )}
 
           {/* Matter levels: sub-matters first (the sidebar's tree), then this matter's documents */}
-          {space && !busy && (
+          {(space || searching) && !busy && (
             <>
               {folderRows.length === 0 && docRows.length === 0 && !docsLoading && !error && (
                 <p className="text-[12px] text-white/40 py-8 text-center">
-                  {searching ? 'No documents matched.'
+                  {remoteSearching ? 'Searching…'
+                    : searching ? 'No documents matched.'
                     : currentMatter ? 'Nothing here — no sub-matters, no documents.'
                       : 'No matters in this serverspace.'}
                 </p>

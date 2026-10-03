@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Upload, Loader2, Check, AlertTriangle } from 'lucide-react';
 import CardDialog from '@/components/ui/CardDialog';
 import { useMatterOptions } from '@/hooks/useMatterOptions';
+import MatterTreePick from '@/components/matters/MatterTreePick';
 import { resolveMatter, checkUploadAdmissible, persistVaultFile, watchDocumentStatus } from '@/lib/vault-persist';
 
 type Row = { key: string; name: string; state: 'uploading' | 'indexing' | 'ready' | 'refused' | 'error'; message?: string; documentId?: string };
@@ -74,17 +75,15 @@ export default function AddCaseCard({ defaultMatterId, fixedMatter, onClose, onO
       <div onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
         onDrop={(e) => { e.preventDefault(); setDragging(false); void add(e.dataTransfer.files); }}>
         {!fixedMatter ? (
-          <label className="block mb-3">
-            <span className="block text-[11px] uppercase tracking-[0.14em] text-white/40 mb-1">File it in</span>
-            <select
-              value={matterId}
-              onChange={(e) => setMatterId(e.target.value)}
-              className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg px-3 py-2 text-[13px] text-white/90 outline-none focus:border-[#e8b84a]/50"
-            >
-              {!chosen && <option value={matterId}>This brief's matter</option>}
-              {options.map((o) => <option key={o.id} value={o.id}>{o.label}{o.sealed ? '  (sealed)' : ''}</option>)}
-            </select>
-          </label>
+          // The matter as a tree, sub-matters under their parents (09-27: a
+          // flat list hid "DeCamara › Appeal" behind the brief's own matter).
+          <div className="mb-3">
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <span className="text-[11px] uppercase tracking-[0.14em] text-white/40">File it in</span>
+              <span className="text-[12px] text-white/70 truncate" data-testid="add-case-matter">{chosen?.label ?? "This brief's matter"}</span>
+            </div>
+            <MatterTreePick value={matterId} onChange={setMatterId} maxHeight={220} collapsible />
+          </div>
         ) : null}
         <button
           type="button"

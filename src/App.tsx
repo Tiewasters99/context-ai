@@ -23,6 +23,7 @@ import ClaudeConnect from '@/pages/ClaudeConnect';
 import GeminiConnect from '@/pages/GeminiConnect';
 import GrokConnect from '@/pages/GrokConnect';
 import ChatGPTConnect from '@/pages/ChatGPTConnect';
+import GptClientMint from '@/pages/GptClientMint';
 import Connections from '@/pages/Connections';
 import Settings from '@/pages/Settings';
 import BucketizerHome from '@/pages/BucketizerHome';
@@ -51,6 +52,8 @@ import AuthCallback from '@/pages/AuthCallback';
 import AuthConfirm from '@/pages/AuthConfirm';
 import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
+import GptConnect from '@/pages/GptConnect';
+import Privacy from '@/pages/Privacy';
 import BriefDesk from '@/pages/brief/BriefDesk';
 import BriefDeskHome from '@/pages/brief/BriefDeskHome';
 import { canOpenPath } from '@/lib/plan';
@@ -158,6 +161,9 @@ export default function App() {
             <Route path="/auth/confirm" element={<AuthConfirm />} />
             <Route path="/auth/reset" element={<ResetPassword />} />
             <Route path="/oauth/authorize" element={<OAuthAuthorize />} />
+            {/* Public: a client on a phone, and the privacy page the GPT builder requires. */}
+            <Route path="/gpt-connect" element={<GptConnect />} />
+            <Route path="/privacy" element={<Privacy />} />
             <Route
               path="/app"
               element={
@@ -204,6 +210,7 @@ export default function App() {
               <Route path="connections/gemini" element={<GeminiConnect />} />
               <Route path="connections/grok" element={<GrokConnect />} />
               <Route path="connections/chatgpt" element={<ChatGPTConnect />} />
+              <Route path="connections/gpt-client" element={<GptClientMint />} />
               <Route path="m/:id" element={<MeetingView />} />
               <Route path="document/:id" element={<DocumentReader />} />
               <Route path="brief" element={<BriefDeskHome />} />

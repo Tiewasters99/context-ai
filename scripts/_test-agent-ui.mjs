@@ -17,6 +17,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  agentCoverageReason,
   agentCoversMatter,
   ancestorsInclusive,
   coveredMatterIds,
@@ -38,6 +39,17 @@ import {
   recipientsForMatter,
   taskRecipientRef,
 } from '../src/lib/task-recipients.ts';
+import {
+  PENDING_AGENT_CONNECT_KEY,
+  PENDING_AGENT_CONNECT_TTL_MS,
+  clearPendingAgentConnect,
+  defaultConnectAs,
+  guessAgentProvider,
+  hintFitsClient,
+  readPendingAgentConnect,
+  writePendingAgentConnect,
+} from '../src/lib/pending-agent-connect.ts';
+import { coverageLabel, fullAccessLine, joinNames } from '../src/lib/matter-ai-access.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -338,7 +350,10 @@ test('every human event names the signed-in user', () => {
 
 test('the OAuth consent screen offers both ways to connect, full assistant by default', () => {
   const s = src('src/pages/OAuthAuthorize.tsx');
-  assert.match(s, /useState<'assistant' \| 'agent'>\('assistant'\)/, 'full assistant stays the default');
+  // Gap 4 (09-30): the default is decided by defaultConnectAs — Grok and a
+  // matter's hint start on "An agent", every other client on "A full
+  // assistant" (driven directly in section 11).
+  assert.match(s, /useState<'assistant' \| 'agent'>\(\s*\(\) => defaultConnectAs\(\{ clientName: clientMeta\?\.client_name \|\| '', hint \}\),?\s*\)/, 'the default comes from defaultConnectAs');
   assert.match(s, /FULL_ASSISTANT_COPY = 'Sees every matter you can see, except SecureSpaces\.'/);
   assert.match(s, /import \{ AGENT_SCOPE_COPY \} from '@\/components\/agents\/AgentsSection'/,
     'the agent wording is the Agents section\'s own constant, not a retyped copy');
@@ -394,7 +409,7 @@ test('the picker offers "All my matters", greys the tree, and keeps the ticks un
   const o = src('src/pages/OAuthAuthorize.tsx');
   assert.match(o, /scopeAll=\{agentScopeAll\}\s+onScopeAllChange=\{setAgentScopeAll\}/);
   assert.match(o, /\.\.\.\(agentScopeAll \? \{ scope_all: true \} : \{\}\)/, 'the consent POST carries scope_all only when ticked');
-  assert.match(o, /useState<'assistant' \| 'agent'>\('assistant'\)/, 'the default is still "a full assistant"');
+  assert.match(o, /defaultConnectAs\(\{ clientName/, 'the default is decided by defaultConnectAs (section 11)');
   assert.match(o, /setAgentScopeAll\(a\.scope_all === true\)/, 're-consent starts from the agent as it is');
 });
 
@@ -513,4 +528,159 @@ test('the Agents page is the front door: every connection, all tasks, New task',
   const dash = src('src/pages/Dashboard.tsx');
   assert.match(dash, /\{ label: 'Agents', icon: Bot, action: 'agents', surface: 'agentTasks' \}/);
   assert.match(dash, /navigate\('\/app\/agent-tasks'\)/);
+});
+
+// ---------------------------------------------------------------------------
+// 11. Agent connection gaps (09-30): who can see a matter, and connecting
+//     an agent from it
+// ---------------------------------------------------------------------------
+
+test('why an agent sees a matter: this matter, via an ancestor, or all matters', () => {
+  assert.deepEqual(agentCoverageReason(M, { matter_scope: ['A1'] }, 'A1'), { kind: 'self' });
+  assert.deepEqual(agentCoverageReason(M, { matter_scope: ['A'] }, 'A1'), { kind: 'ancestor', viaId: 'A' });
+  assert.deepEqual(agentCoverageReason(M, { matter_scope: ['B1', 'A'] }, 'A1'), { kind: 'ancestor', viaId: 'A' });
+  assert.deepEqual(agentCoverageReason(M, { matter_scope: [], scope_all: true }, 'B1'), { kind: 'all' });
+  assert.equal(agentCoverageReason(M, { matter_scope: ['B'] }, 'A1'), null);
+  assert.equal(agentCoverageReason(M, { matter_scope: [] }, 'A'), null);
+});
+
+test('a sealed matter, or one under a sealed ancestor, shows no agent at all', () => {
+  assert.equal(agentCoverageReason(M, { matter_scope: ['A'] }, 'A2'), null);
+  assert.equal(agentCoverageReason(M, { matter_scope: ['A'] }, 'A2x'), null);
+  assert.equal(agentCoverageReason(M, { matter_scope: ['A2x'] }, 'A2x'), null);
+  assert.equal(agentCoverageReason(M, { matter_scope: [], scope_all: true }, 'S1'), null);
+});
+
+test('the Share dialog wording for coverage and full-access connections', () => {
+  const names = { A: 'Bushell' };
+  const nameOf = (id) => names[id];
+  assert.equal(coverageLabel({ kind: 'self' }, nameOf), 'this matter');
+  assert.equal(coverageLabel({ kind: 'ancestor', viaId: 'A' }, nameOf), 'via Bushell');
+  assert.equal(coverageLabel({ kind: 'all' }, nameOf), 'All matters');
+  assert.equal(joinNames(['Claude']), 'Claude');
+  assert.equal(joinNames(['Claude', 'ChatGPT', 'Gemini']), 'Claude, ChatGPT and Gemini');
+  assert.equal(fullAccessLine([], 0), null);
+  assert.equal(
+    fullAccessLine(['claude.ai', 'ChatGPT', 'Claude Desktop'], 0),
+    'Claude and ChatGPT, connected with your full access, can also see this matter.',
+  );
+  assert.equal(
+    fullAccessLine([], 2),
+    '2 connections set up with a key, connected with your full access, can also see this matter.',
+  );
+  // Matter-side copy carries no jargon.
+  for (const line of [fullAccessLine(['Grok'], 1), coverageLabel({ kind: 'ancestor', viaId: 'Z' }, nameOf)]) {
+    assert.doesNotMatch(line, /\b(token|MCP|RLS|OAuth)\b/i, line);
+  }
+});
+
+function memStore() {
+  const m = new Map();
+  return {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, String(v)),
+    removeItem: (k) => m.delete(k),
+    m,
+  };
+}
+
+test('the matter hint: fresh for 30 minutes, then cleared; malformed is ignored', () => {
+  const st = memStore();
+  const t0 = 1_000_000;
+  writePendingAgentConnect({ matterId: 'A1', provider: 'grok' }, t0, st);
+  assert.deepEqual(readPendingAgentConnect(t0 + 60_000, st), { matterId: 'A1', provider: 'grok', at: t0 });
+  assert.equal(readPendingAgentConnect(t0 + PENDING_AGENT_CONNECT_TTL_MS, st)?.matterId, 'A1');
+  assert.equal(readPendingAgentConnect(t0 + PENDING_AGENT_CONNECT_TTL_MS + 1, st), null, 'expired');
+  assert.equal(st.m.has(PENDING_AGENT_CONNECT_KEY), false, 'an expired hint is cleared');
+  st.setItem(PENDING_AGENT_CONNECT_KEY, '{not json');
+  assert.equal(readPendingAgentConnect(t0, st), null);
+  st.setItem(PENDING_AGENT_CONNECT_KEY, JSON.stringify({ matterId: 'A1', provider: 'bard', at: t0 }));
+  assert.equal(readPendingAgentConnect(t0, st), null, 'unknown provider');
+  st.setItem(PENDING_AGENT_CONNECT_KEY, JSON.stringify({ matterId: 'A1', provider: 'grok', at: t0 + 5_000 }));
+  assert.equal(readPendingAgentConnect(t0, st), null, 'written in the future');
+  writePendingAgentConnect({ matterId: 'A1', provider: 'grok' }, t0, st);
+  clearPendingAgentConnect(st);
+  assert.equal(readPendingAgentConnect(t0, st), null);
+  // Storage that throws (private window) never throws out of the helpers.
+  const bad = { getItem() { throw new Error('x'); }, setItem() { throw new Error('x'); }, removeItem() { throw new Error('x'); } };
+  writePendingAgentConnect({ matterId: 'A1', provider: 'grok' }, t0, bad);
+  assert.equal(readPendingAgentConnect(t0, bad), null);
+  clearPendingAgentConnect(bad);
+  assert.equal(readPendingAgentConnect(t0, null), null);
+});
+
+test('which way the consent screen starts', () => {
+  const hint = (provider) => ({ matterId: 'A1', provider, at: 0 });
+  assert.equal(guessAgentProvider('Grok'), 'grok');
+  // Grok: agent, with or without a hint.
+  assert.equal(defaultConnectAs({ clientName: 'Grok', hint: null }), 'agent');
+  assert.equal(defaultConnectAs({ clientName: 'xAI Grok connector', hint: null }), 'agent');
+  // Everything else: full assistant, unchanged.
+  assert.equal(defaultConnectAs({ clientName: 'claude.ai', hint: null }), 'assistant');
+  assert.equal(defaultConnectAs({ clientName: 'ChatGPT', hint: null }), 'assistant');
+  assert.equal(defaultConnectAs({ clientName: 'Some MCP client', hint: null }), 'assistant');
+  // A hint meant for this client: agent.
+  assert.equal(defaultConnectAs({ clientName: 'ChatGPT', hint: hint('chatgpt') }), 'agent');
+  assert.equal(defaultConnectAs({ clientName: 'Some MCP client', hint: hint('other') }), 'agent');
+  assert.equal(defaultConnectAs({ clientName: 'Some MCP client', hint: hint('grok') }), 'agent');
+  // A stale Grok hint does not turn a Claude sign-in into an agent.
+  assert.equal(hintFitsClient(hint('grok'), 'claude.ai'), false);
+  assert.equal(defaultConnectAs({ clientName: 'claude.ai', hint: hint('grok') }), 'assistant');
+  assert.equal(hintFitsClient(null, 'Grok'), false);
+});
+
+test('the consent screen uses the hint, clears it on submit, and never makes an empty new agent', () => {
+  const o = src('src/pages/OAuthAuthorize.tsx');
+  assert.match(o, /hintFitsClient\(h, clientMeta\?\.client_name \|\| ''\) \? h : null/);
+  assert.match(o, /useState<string\[\]>\(\(\) => \(hint \? \[hint\.matterId\] : \[\]\)\)/, 'the hinted matter is pre-ticked');
+  assert.match(o, /Pre-ticked from/);
+  assert.match(o, /!existingAgent && hint &&/, 'an existing agent prefill wins over the hint');
+  assert.match(o, /const approve = async \(\) => \{\s*if \(submitting\) return;[\s\S]{0,120}clearPendingAgentConnect\(\);/, 'cleared on submit');
+  assert.match(o, /connectAs === 'agent' && !existingAgent && !agentScopeAll &&\s*normalizeScope\(allMatters, agentScope\)\.length === 0/);
+  assert.match(o, /disabled=\{submitting \|\| agentNeedsScope\}/);
+  // Nothing server-side reads the hint.
+  for (const f of ['api/oauth-approve.mjs', 'lib/oauth-agent-consent.mjs']) {
+    assert.doesNotMatch(src(f), /pendingAgentConnect/, f);
+  }
+});
+
+test('the Share dialog lists AI with access, for matters only, and its cards sit above it', () => {
+  const share = src('src/components/serverspace/ShareModal.tsx');
+  assert.match(share, /\{scope === 'matterspace' && <MatterAgentsSection matterId=\{scopeId\} matterName=\{scopeName\} \/>\}/);
+  const m = src('src/components/agents/MatterAgentsSection.tsx');
+  assert.ok(m.includes('This matter is in a SecureSpace. No outside AI can see it.'));
+  assert.match(m, /if \(sealed\) \{/, 'the seal short-circuits the list');
+  assert.match(m, /await revokeAgentToken\(a\.id\);\s*if \(link\) await revokeOauthGrant\(link\.grantId\)/, 'Revoke is the Agents list, same two calls');
+  assert.match(m, /<EditMattersCard\s+agent=\{editing\}\s+z=\{CARD_Z\}/);
+  assert.match(m, /const CARD_Z = 80;/, 'above the Share dialog (z 70)');
+  assert.match(m, /updateAgentScope\(a\.id, normalizeScope\(matters, \[\.\.\.a\.matter_scope, matterId\]\)\)/, 'adding keeps the rest of its grant');
+  assert.match(m, /candidates=\{live\.filter\(\(a\) => !agentCoversMatter\(matters, a, matterId\)\)\}/, 'only agents that cannot see it yet');
+  // Full-access connections come from the shared recipients read (tokens
+  // through readUserTokens, grants with '*'), not a read of its own.
+  assert.match(m, /const \{ assistants \} = useRecipientsForMatter\(matterId\);/);
+  assert.match(m, /assistants\.filter\(\(r\) => r\.kind === 'grant'\)/);
+  assert.doesNotMatch(m, /fixed inset-0/);
+  // Matter-side copy: no jargon in the visible strings.
+  const visible = m.replace(/\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  const texts = [...visible.matchAll(/>([^<>{}]+)</g)].map((x) => x[1]).filter((x) => !/[=;(]/.test(x)).join(' ');
+  assert.doesNotMatch(texts, /\b(token|MCP|RLS)\b/i, texts);
+});
+
+test('the Connect pages tell the truth about agents', () => {
+  const g = src('src/pages/GrokConnect.tsx');
+  assert.doesNotMatch(g, /Not yet verified by us/);
+  assert.doesNotMatch(g, /Grok, in three steps/);
+  assert.match(g, /grok\.com\/connectors/);
+  for (const label of ['New Connector', 'Custom', 'Connect Grok as', 'An agent', 'Connect as an agent']) {
+    assert.ok(g.includes(label), label);
+  }
+  assert.match(g, /account-wide/);
+  assert.ok(g.indexOf('Grok as an agent') < g.indexOf('Generate a new token'), 'the agent route leads; the token path is demoted');
+  for (const f of ['ClaudeConnect', 'GeminiConnect']) {
+    assert.doesNotMatch(src(`src/pages/${f}.tsx`), /no per-matter setting/i, f);
+    assert.match(src(`src/pages/${f}.tsx`), /to="\/app\/connections#agents"/, f);
+  }
+  const c = src('src/pages/ChatGPTConnect.tsx');
+  assert.doesNotMatch(c, /RLS/);
+  assert.match(c, /to="\/app\/connections#agents"/);
 });

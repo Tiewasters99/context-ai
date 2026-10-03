@@ -5,9 +5,17 @@
 // code + PKCE verifier match. The code's payload binds the redirect_uri and
 // client_id; the client must supply the same values that were used at
 // /authorize.
+//
+// Confidential client (lib/oauth-clients.mjs; a Custom GPT's Actions, which
+// send client_id + client_secret and no PKCE): the secret, in the POST body
+// or as HTTP Basic, stands in for the verifier — on the code exchange and on
+// every refresh. Wrong or missing secret → 401 invalid_client (RFC 6749 §5.2).
+// A confidential client that DID send a code_challenge is still held to the
+// verifier, so a challenge can never be dropped on the way to the token.
 
 import { checkRefreshGrant, ensureGrantOnApprove } from '../lib/oauth-grants.mjs';
 import { signJwt, verifyJwt, pkceS256, safeEqual, getOauthSecret } from '../lib/oauth-jwt.mjs';
+import { clientSecretMatches, isConfidentialClient, presentedClientSecret } from '../lib/oauth-clients.mjs';
 
 // Access tokens live 12 hours: long enough that a full trial-prep day never
 // mid-session refreshes (each refresh is a chance for a mobile client to
@@ -60,12 +68,37 @@ export default async function handler(req, res) {
   console.log('[oauth-token] grant=%s contentType=%s keys=%j',
     grant, req.headers['content-type'], Object.keys(body || {}));
 
+  // Who is asking. The client_id comes in the body or, with the secret, as
+  // HTTP Basic (client_secret_basic). It must be a client this server minted.
+  const client_id = body.client_id || basicClientId(req.headers) || undefined;
+  const client = client_id ? verifyJwt(client_id, secret) : null;
+  if (grant === 'authorization_code' || grant === 'refresh_token') {
+    if (!client_id) {
+      return json(res, 400, { error: 'invalid_request', error_description: 'client_id required' });
+    }
+    if (!client || client.typ !== 'client') {
+      console.warn('[oauth-token] unknown client_id (len=%d)', client_id.length);
+      return json(res, 401, { error: 'invalid_client', error_description: 'unknown client' });
+    }
+    if (isConfidentialClient(client)) {
+      const presented = presentedClientSecret(body, req.headers);
+      if (!clientSecretMatches(client, presented)) {
+        console.warn('[oauth-token] confidential client refused: secret %s', presented ? 'wrong' : 'missing');
+        res.setHeader('www-authenticate', 'Basic realm="oauth-token"');
+        return json(res, 401, { error: 'invalid_client', error_description: 'client authentication failed' });
+      }
+    }
+  }
+  const confidential = isConfidentialClient(client);
+
   if (grant === 'authorization_code') {
-    const { code, code_verifier, redirect_uri, client_id } = body;
-    if (!code || !code_verifier || !redirect_uri || !client_id) {
+    const { code, code_verifier, redirect_uri } = body;
+    if (!code || !redirect_uri || (!code_verifier && !confidential)) {
       console.warn('[oauth-token] missing field(s):',
-        { hasCode: !!code, hasVerifier: !!code_verifier, hasRedirect: !!redirect_uri, hasClient: !!client_id });
-      return json(res, 400, { error: 'invalid_request', error_description: 'code, code_verifier, redirect_uri, client_id required' });
+        { hasCode: !!code, hasVerifier: !!code_verifier, hasRedirect: !!redirect_uri, confidential });
+      return json(res, 400, { error: 'invalid_request', error_description: confidential
+        ? 'code, redirect_uri, client_id, client_secret required'
+        : 'code, code_verifier, redirect_uri, client_id required' });
     }
     const codePayload = verifyJwt(code, secret);
     if (!codePayload || codePayload.typ !== 'code') {
@@ -83,11 +116,16 @@ export default async function handler(req, res) {
       return json(res, 400, { error: 'invalid_grant', error_description: 'client_id mismatch' });
     }
     // PKCE: verifier hashed with S256 must equal the stored code_challenge.
-    const computed = pkceS256(code_verifier);
-    if (!safeEqual(computed, codePayload.code_challenge)) {
-      console.warn('[oauth-token] pkce mismatch: computedLen=%d storedLen=%d',
-        computed.length, codePayload.code_challenge?.length);
-      return json(res, 400, { error: 'invalid_grant', error_description: 'pkce mismatch' });
+    // A public client's code always carries one (/api/oauth-approve insists);
+    // a confidential client's may not, and then its secret (checked above) is
+    // the proof. If it DID send a challenge, the verifier is still required.
+    if (codePayload.code_challenge || !confidential) {
+      const computed = code_verifier ? pkceS256(code_verifier) : '';
+      if (!codePayload.code_challenge || !code_verifier || !safeEqual(computed, codePayload.code_challenge)) {
+        console.warn('[oauth-token] pkce mismatch: computedLen=%d storedLen=%d',
+          computed.length, codePayload.code_challenge?.length);
+        return json(res, 400, { error: 'invalid_grant', error_description: 'pkce mismatch' });
+      }
     }
 
     // The grant id normally arrives on the code, minted at /api/oauth-approve.
@@ -107,11 +145,10 @@ export default async function handler(req, res) {
       return json(res, 400, { error: 'invalid_grant', error_description: 'bad code' });
     }
     if (!gid) {
-      const client = verifyJwt(client_id, secret);
       const recorded = await ensureGrantOnApprove({
         user_id: codePayload.sub,
         client_id,
-        client_name: (client && client.typ === 'client' && client.client_name) || null,
+        client_name: client.client_name || null,
         scope: codePayload.scope || 'mcp',
       });
       if (recorded.outcome === 'locked') {
@@ -127,8 +164,8 @@ export default async function handler(req, res) {
   }
 
   if (grant === 'refresh_token') {
-    const { refresh_token, client_id } = body;
-    if (!refresh_token || !client_id) {
+    const { refresh_token } = body;
+    if (!refresh_token) {
       console.warn('[oauth-token] refresh missing field(s)');
       return json(res, 400, { error: 'invalid_request', error_description: 'refresh_token and client_id required' });
     }
@@ -154,13 +191,12 @@ export default async function handler(req, res) {
     // a grant for this client was already revoked, which is what stops a
     // pre-revocation refresh token being replayed to walk back in. After
     // LEGACY_NO_GID_CUTOFF_ISO a gid-less token is refused outright.
-    const client = verifyJwt(client_id, secret);
     const check = await checkRefreshGrant({
       gid: rPayload.gid || null,
       agt: rPayload.agt || null,
       user_id: rPayload.sub,
       client_id,
-      client_name: (client && client.typ === 'client' && client.client_name) || null,
+      client_name: client.client_name || null,
       scope: rPayload.scope || 'mcp',
     });
     if (!check.ok) {
@@ -188,7 +224,7 @@ export default async function handler(req, res) {
 // Build-time marker so we can confirm in production logs which version
 // of this file is actually serving traffic. Bump this string whenever
 // you change token shape so a stale Vercel deploy is obvious at a glance.
-const TOKEN_BUILD = '2026-09-25-agent087';
+const TOKEN_BUILD = '2026-09-29-confidential';
 
 function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, gid = null, agt = null) {
   // `agt` (migration 087): the connector_tokens id of the agent this OAuth
@@ -252,6 +288,17 @@ function issueTokens(res, secret, user_id, client_id, scope, resource, issuer, g
     refresh_token,
     scope,
   });
+}
+
+// The client_id half of an HTTP Basic Authorization header (client_secret_basic).
+function basicClientId(headers) {
+  const auth = headers && (headers.authorization || headers.Authorization);
+  if (typeof auth !== 'string' || !/^basic /i.test(auth)) return null;
+  try {
+    const decoded = Buffer.from(auth.slice(6).trim(), 'base64').toString('utf8');
+    const i = decoded.indexOf(':');
+    return i > 0 ? decodeURIComponent(decoded.slice(0, i)) : null;
+  } catch { return null; }
 }
 
 function json(res, status, obj) {

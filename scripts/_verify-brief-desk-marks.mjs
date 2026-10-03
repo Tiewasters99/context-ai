@@ -356,8 +356,18 @@ console.log('\n--- G. importing a brief (src/lib/brief/import.ts) --------------
   // The filing, from source: a filed document is copied, never converted.
   const store = read('src/lib/brief/draft-store.ts');
   const fromDoc = store.slice(store.indexOf('export async function importBriefFromDocument'), store.indexOf('// Export (D1'));
-  check(/createBrief\(src\.matterspace_id,/.test(fromDoc) && /source_document_id: src\.id/.test(fromDoc),
-    "a document from Contextspaces becomes a NEW brief in its own matter, pointing back at the original");
+  // 09-29 (#318): filed in the matter chosen under "File it in", else the
+  // document's own matter.
+  check(/const target = targetMatterId \|\| src\.matterspace_id;/.test(fromDoc)
+    && /createBrief\(target,/.test(fromDoc) && /source_document_id: src\.id/.test(fromDoc),
+    'a document from Contextspaces becomes a NEW brief in the chosen matter (else its own), pointing back at the original');
+  // 10-01: and a sealed document's words never leave its matter that way.
+  const sealGate = fromDoc.indexOf('if (target !== src.matterspace_id)');
+  check(sealGate > 0
+    && /effectiveTier\(src\.matterspace_id\)\.catch\(\(\) => null\)/.test(fromDoc)
+    && /if \(tier === null\) throw/.test(fromDoc) && /if \(tier !== 'A'\)/.test(fromDoc)
+    && sealGate < fromDoc.indexOf('storageObjectBlob(') && sealGate < fromDoc.indexOf('loadCorpusDocumentText('),
+    'a sealed document is never filed into another matter: checked before anything is read, and an unconfirmed seal refuses');
   check(!/\.update\(|\.delete\(|createBody\(src|draft_bodies/.test(fromDoc.replace(/hasDraftBody/g, '')),
     'and the original document is never updated, deleted or given a body');
   check(!/\.download\(/.test(store) && !/openInDesk/.test(store) && !/openInDesk/.test(read('src/pages/brief/BriefDesk.tsx')),

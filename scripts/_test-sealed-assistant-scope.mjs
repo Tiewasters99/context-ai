@@ -456,7 +456,10 @@ test('Assistant.tsx wires the pin to PinToggle, and a pinned card does not move'
   const src = read('src/components/ai/Assistant.tsx');
   assert.match(src, /<PinToggle pinned=\{pinned\} onToggle=\{togglePin\} \/>/);
   assert.match(src, /if \(isMobile \|\| pinned \|\|/, 'drag is refused while pinned');
-  assert.match(src, /resize: pinned \? 'none' : 'both'/);
+  // Since #270 the card resizes from its four edges and corners (no native
+  // CSS resize handle); a pinned card draws none of them.
+  assert.match(src, /\{!isMobile && !pinned && \(Object\.keys\(EDGE_CLASS\) as Edge\[\]\)\.map/, 'no resize edges while pinned');
+  assert.doesNotMatch(src, /resize: pinned \? 'none' : 'both'/, 'the native resize handle is gone');
   assert.match(src, /if \(pinned\) return;/, 'double-click-to-dock is refused while pinned');
   assert.match(src, /\{!isMobile && <PinToggle/, 'no pin on a phone');
   // The panel keeps its own z-50: it must stay above the route card (z-12).

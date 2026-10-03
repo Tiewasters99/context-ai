@@ -342,6 +342,7 @@ const vocab094 = (() => {
 const db = await freshDb();
 await db.exec(vocab094);
 await db.exec(migrationSql('100_brief_desk.sql'));
+await db.exec(migrationSql('103_cite_confirmations.sql'));
 await db.exec(`grant select, insert, update, delete on all tables in schema public to anon, authenticated, service_role;`);
 const q = async (sql, params) => (await db.query(sql, params)).rows;
 const attempt = async (sql, params) => { try { await db.query(sql, params); return null; } catch (e) { return e; } };
@@ -450,13 +451,46 @@ let SNAP;
 }
 
 {
-  // A document deleted takes its body, snapshots and notes with it (cascade) —
+  // 103: the human check is append-only. A matter writer confirms as
+  // themselves; a viewer and a stranger cannot; nobody updates or deletes.
+  console.log('\n--- 103: cite confirmations (append-only, RLS) ---');
+  await asUser(MEL);
+  const ok = await attempt(`insert into public.cite_confirmations (document_id, cite_raw, context, authority_page, status, initials, user_id)
+    values ($1, 'Morgan, 114 F.4th at 220', 'The standard sentence.', 220, 'confirmed', 'EQ', $2)`, [D, MEL]);
+  check(ok === null, 'a matter member logs a confirmation as themselves', ok?.message ?? '');
+  const forged = await attempt(`insert into public.cite_confirmations (document_id, cite_raw, status, initials, user_id)
+    values ($1, 'Morgan, 114 F.4th at 220', 'confirmed', 'RC', $2)`, [D, VIC]);
+  check(forged !== null, "a member cannot log a row under someone else's user id");
+  const badStatus = await attempt(`insert into public.cite_confirmations (document_id, cite_raw, status, initials, user_id)
+    values ($1, 'x', 'maybe', 'EQ', $2)`, [D, MEL]);
+  check(badStatus !== null, "status is 'confirmed' or 'problem', nothing else");
+  const noInitials = await attempt(`insert into public.cite_confirmations (document_id, cite_raw, status, initials, user_id)
+    values ($1, 'x', 'confirmed', '', $2)`, [D, MEL]);
+  check(noInitials !== null, 'initials are required');
+  const [{ id: CONF }] = await q(`select id from public.cite_confirmations where document_id = $1`, [D]);
+  await q(`update public.cite_confirmations set status = 'problem' where id = $1`, [CONF]);
+  await q(`delete from public.cite_confirmations where id = $1`, [CONF]);
+  const still = await q(`select status from public.cite_confirmations where id = $1`, [CONF]);
+  check(still.length === 1 && still[0].status === 'confirmed', 'the author can neither change nor delete a logged row (no policy exists)');
+  await asUser(VIC);
+  const seen = await q(`select count(*)::int n from public.cite_confirmations where document_id = $1`, [D]);
+  check(seen[0].n === 1, 'a viewer of the matter reads the log');
+  const viewerWrite = await attempt(`insert into public.cite_confirmations (document_id, cite_raw, status, initials, user_id)
+    values ($1, 'x', 'confirmed', 'VV', $2)`, [D, VIC]);
+  check(viewerWrite !== null, 'a viewer cannot confirm');
+  await asUser(STR);
+  const hidden = await q(`select count(*)::int n from public.cite_confirmations where document_id = $1`, [D]);
+  check(hidden[0].n === 0, 'a stranger sees no rows');
+}
+
+{
+  // A document deleted takes its body, snapshots, notes and confirmations with it (cascade) —
   // the history lives and dies with the brief, not with an edit.
   await asSuper();
   await q(`delete from public.cite_check_runs`);
   await q(`delete from public.documents where id = $1`, [D]);
-  const left = await q(`select (select count(*) from public.draft_bodies)::int b, (select count(*) from public.draft_snapshots)::int s`);
-  check(left[0].b === 0 && left[0].s === 0, 'deleting the document removes its body and snapshots');
+  const left = await q(`select (select count(*) from public.draft_bodies)::int b, (select count(*) from public.draft_snapshots)::int s, (select count(*) from public.cite_confirmations)::int c`);
+  check(left[0].b === 0 && left[0].s === 0 && left[0].c === 0, 'deleting the document removes its body, snapshots and confirmations');
 }
 await db.close();
 

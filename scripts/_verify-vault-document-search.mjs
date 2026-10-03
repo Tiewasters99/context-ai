@@ -44,6 +44,8 @@ const migration = (name) => {
   return fs.readFileSync(migrationPath(name), 'utf8');
 };
 const M081 = '081_vault_document_search_and_category.sql';
+const M102 = '102_category_section_sign.sql';
+const M104 = '104_vault_search_by_words.sql';
 
 // PGlite attaches its whole bundled module source to a thrown error, which
 // turns one bad statement into a megabyte of unreadable CI log.
@@ -488,6 +490,39 @@ check(
 // F. Categories: deterministic, and a person's choice is untouchable.
 // ---------------------------------------------------------------------------
 console.log('\n--- F. categories --------------------------------------------');
+
+// 102: under 081 alone, a "§" anywhere in a name was a statute — seven notes
+// titled "Inventory §3 — …" sat on the statute shelf in production (09-27).
+// Rows shaped exactly like those, then 102 pasted over 081 as production gets it.
+{
+  const shelf = async (id) => one(`select category, category_source from public.documents where id = $1`, [id]);
+  const note = await mkDoc(mShared, 'Inventory §3 — Missing / PACER Pull List (2026-09-18)');
+  const kept = await mkDoc(mShared, 'Inventory §9 — shelved as a statute by hand');
+  await db.query(`update public.documents set category = 'statute', category_source = 'user' where id = $1`, [kept]);
+  const real = await mkDoc(mShared, '42 USC 12102 Definition of disability.pdf');
+  const leading = await mkDoc(mShared, '§ 1983 claims outline.pdf');
+  const before102 = await shelf(note);
+  check(before102.category === 'statute' && before102.category_source === 'rule',
+    'negative control: under 081 alone, a note with a "§" in its name lands on the statute shelf', JSON.stringify(before102));
+  const leadingBefore = await shelf(leading);
+  check(leadingBefore.category === 'other' && leadingBefore.category_source === 'rule',
+    'negative control: under 081 alone, a leading "§" is lost to the sort key and the statute sits under Other', JSON.stringify(leadingBefore));
+  await db.exec(migration(M102));
+  const after = await shelf(note);
+  check(after.category !== 'statute' && after.category_source === 'rule',
+    '102 takes the note off the statute shelf, still as the rule\'s decision', JSON.stringify(after));
+  const leadingAfter = await shelf(leading);
+  check(leadingAfter.category === 'statute' && leadingAfter.category_source === 'rule',
+    '102 moves the leading-"§" statute from Other onto the statute shelf', JSON.stringify(leadingAfter));
+  const keptAfter = await shelf(kept);
+  check(keptAfter.category === 'statute' && keptAfter.category_source === 'user',
+    "a person's own choice of the statute shelf is untouched by 102", JSON.stringify(keptAfter));
+  check((await shelf(real)).category === 'statute', 'a real statute stays on the statute shelf');
+  const again = await q(`select category, category_source, count(*)::int n from public.documents group by 1,2 order by 1,2`);
+  await db.exec(migration(M102));
+  const again2 = await q(`select category, category_source, count(*)::int n from public.documents group by 1,2 order by 1,2`);
+  check(JSON.stringify(again) === JSON.stringify(again2), 'a second paste of 102 changes no data');
+}
 // Real-shaped names: Westlaw exports, PACER filenames, scanned exhibits.
 const FIXTURE = [
   ['Glasstech Inc v Freund.pdf', 'case'],
@@ -509,6 +544,16 @@ const FIXTURE = [
   ['Wright & Miller, Federal Practice § 1391.pdf', 'secondary'],
   ['Harvard Law Review - Spoliation.pdf', 'secondary'],
   ['Restatement (Second) of Torts § 402A.pdf', 'secondary'],
+  // 102: the section sign counts only where a statute puts it.
+  ['§ 1983 claims outline.pdf', 'statute'],
+  ['2026-09-18 04 - § 1983 claims outline.pdf', 'statute'],
+  ['(§ 1983) elements chart.pdf', 'statute'],
+  ['Tex. Bus. & Com. Code § 17.46.pdf', 'statute'],
+  ['N.Y. Gen. Bus. Law § 349.pdf', 'statute'],
+  ['28 U.S.C. § 1331.pdf', 'statute'],
+  ['Inventory §4 — Defects (2026-09-18).md', 'other'],
+  ['Inventory §1 — District Docket (2026-09-18).md', 'pleading'],
+  ['Memo §2 working notes.docx', 'supporting'],
   ['76 Yale L. Rev. 101.pdf', 'secondary'],
   ['Complaint.pdf', 'pleading'],
   ['Amended Answer and Counterclaims.pdf', 'pleading'],
@@ -690,11 +735,12 @@ const before = await q(
   `select category, category_source, count(*)::int n from public.documents
     group by 1,2 order by 1,2`);
 await db.exec(migration(M081));
+await db.exec(migration(M102));
 const after = await q(
   `select category, category_source, count(*)::int n from public.documents
     group by 1,2 order by 1,2`);
 check(JSON.stringify(before) === JSON.stringify(after),
-  'a second paste of 081 changes no data');
+  'a second paste of 081 (then 102, as production has them) changes no data');
 const idx2 = (await q(
   `select indexname from pg_indexes where tablename = 'documents' order by indexname`))
   .map((r) => r.indexname);
@@ -840,6 +886,55 @@ check(big.length === 25 && big.every((r) => r.matterspace_id === mBig),
 const bigBob = await search(BOB, { q: 'zylstra', limit: 100 });
 check(bigBob.length === 0,
   'and Bob, who is not in that matter, still finds none of its 7,600 documents');
+
+// ---------------------------------------------------------------------------
+// G. 104: a name is found by its words, not one literal string.
+// ---------------------------------------------------------------------------
+console.log('\n--- G. 104 search by words -----------------------------------');
+{
+  // 10-01: "Verified Petition v. 18" missed the filed name below under 081.
+  const filed = await mkDoc(mShared, 'Bushell-Verified-Petition-Art78-v18-FILING.docx',
+    'Bushell-Verified-Petition-Art78-v18-FILING');
+  const v17 = await mkDoc(mShared, 'Bushell-Verified-Petition-Art78-v17.docx');
+  const hidden = await mkDoc(mPrivate, 'Teman_Verified_Petition_v18.docx');
+  const ids = (rows) => rows.map((r) => r.document_id);
+  const QUERY = 'Verified Petition v. 18';
+
+  check(!ids(await search(ALICE, { q: QUERY, limit: 100 })).includes(filed),
+    'negative control: under 081, "Verified Petition v. 18" misses the hyphenated filing');
+
+  const RANK_QUERIES = ['watson', 'watson v long', 'decl of smith', 'fed. r. civ. p. 26'];
+  const before104 = [];
+  for (const rq of RANK_QUERIES) before104.push(ids(await search(ALICE, { q: rq, limit: 100 })));
+
+  await db.exec(migration(M104));
+  check(true, '104 executes over 081');
+
+  const alice = ids(await search(ALICE, { q: QUERY, limit: 100 }));
+  check(alice.includes(filed), '104: "Verified Petition v. 18" finds Bushell-Verified-Petition-Art78-v18-FILING');
+  check(!alice.includes(v17), '104: every word must match — v17 is not a hit for "v. 18"');
+  check(alice.includes(hidden), "104: underscores read as spaces too (Alice's own private matter)");
+  check(ids(await search(ALICE, { q: 'petition verified 18', limit: 100 })).includes(filed),
+    '104: the words may come in any order');
+
+  const bob = ids(await search(BOB, { q: QUERY, limit: 100 }));
+  check(bob.includes(filed) && !bob.includes(hidden),
+    '104: isolation unchanged — Bob finds the shared filing, never the private one');
+  const bobSpoof = ids(await search(BOB, { q: QUERY, matters: [mPrivate, mForeign], limit: 100 }));
+  check(bobSpoof.length === 0, '104: naming matters Bob cannot read still returns nothing');
+
+  // What 081 already found, 104 still finds, in the same order (a literal
+  // hit is always a word hit; extra word-only hits may only come after).
+  for (const [i, rq] of RANK_QUERIES.entries()) {
+    const after = ids(await search(ALICE, { q: rq, limit: 100 }));
+    check(JSON.stringify(after.slice(0, before104[i].length)) === JSON.stringify(before104[i]),
+      `104: "${rq}" keeps 081's ${before104[i].length} hits, in 081's order`, `${after.length} now`);
+  }
+  check((await search(ALICE, { q: 'wa', limit: 100 })).length > 0,
+    '104: the under-three-characters prefix branch still answers');
+  check((await search(ALICE, { q: '%_%', limit: 100 })).length === 0,
+    '104: a punctuation-only query keeps the literal test — "%_%" is not a wildcard');
+}
 
 // ---------------------------------------------------------------------------
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}\n`);

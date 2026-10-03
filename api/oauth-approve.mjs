@@ -3,6 +3,7 @@
 // Inputs (POST body):
 //   client_id, redirect_uri, code_challenge, code_challenge_method ('S256'),
 //   state, resource, scope
+//   (code_challenge is optional for a CONFIDENTIAL client — lib/oauth-clients.mjs)
 //   connect_as ('assistant' | 'agent') and, for 'agent',
 //   agent: { name, provider, matter_scope: [matter ids] }   (migration 087)
 // Plus Authorization: Bearer <supabase access_token> — proves the caller is
@@ -19,6 +20,7 @@ import { fetchMatterTier } from '../lib/ai-tier-policy.mjs';
 import {
   AgentConsentError, checkAgentScope, parseAgentConsent, unusableTokenHash,
 } from '../lib/oauth-agent-consent.mjs';
+import { isConfidentialClient, redirectUriAllowed } from '../lib/oauth-clients.mjs';
 import { approveGrant } from '../lib/oauth-grants.mjs';
 import { signJwt, verifyJwt, getOauthSecret } from '../lib/oauth-jwt.mjs';
 
@@ -68,8 +70,8 @@ export default async function handler(req, res) {
   // 2. Validate the OAuth params.
   const body = typeof req.body === 'string' ? safeJson(req.body) : (req.body || {});
   const { client_id, redirect_uri, code_challenge, code_challenge_method, state, resource, scope } = body;
-  if (!client_id || !redirect_uri || !code_challenge) {
-    return json(res, 400, { error: 'invalid_request', detail: 'client_id, redirect_uri, code_challenge required' });
+  if (!client_id || !redirect_uri) {
+    return json(res, 400, { error: 'invalid_request', detail: 'client_id, redirect_uri required' });
   }
   if (code_challenge_method && code_challenge_method !== 'S256') {
     return json(res, 400, { error: 'invalid_request', detail: 'only S256 supported' });
@@ -79,8 +81,19 @@ export default async function handler(req, res) {
   if (!client || client.typ !== 'client' || !Array.isArray(client.redirect_uris)) {
     return json(res, 400, { error: 'invalid_client' });
   }
-  if (!client.redirect_uris.includes(redirect_uri)) {
+  // Exact for a public client; a confidential one may hold a wildcard path
+  // segment (lib/oauth-clients.mjs, redirectUriAllowed).
+  if (!redirectUriAllowed(client, redirect_uri)) {
     return json(res, 400, { error: 'invalid_redirect_uri', detail: 'redirect_uri not in registration' });
+  }
+  // PKCE is what a PUBLIC client has instead of a secret, so it is required of
+  // one. A CONFIDENTIAL client (lib/oauth-clients.mjs — a Custom GPT's Actions)
+  // proves itself with its secret at the token endpoint and sends no
+  // challenge; decided on the VERIFIED payload, never on the raw request. A
+  // confidential client that does send a challenge is held to it there.
+  const confidential = isConfidentialClient(client);
+  if (!code_challenge && !confidential) {
+    return json(res, 400, { error: 'invalid_request', detail: 'code_challenge required (PKCE)' });
   }
 
   // 4. Which connection the user chose (migration 087). "Full assistant" is
@@ -172,7 +185,8 @@ export default async function handler(req, res) {
       sub: user_id,
       client_id,           // bound to the same client
       redirect_uri,
-      code_challenge,
+      // omitted, not '', when a confidential client sent none
+      ...(code_challenge ? { code_challenge } : {}),
       resource: resource || null,
       scope: scope || 'mcp',
       ...(gid ? { gid } : {}),

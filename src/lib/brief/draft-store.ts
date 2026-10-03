@@ -352,12 +352,31 @@ export async function importBriefFile(matterId: string, file: File): Promise<Imp
  * (footnotes and headings survive); anything else (a PDF) from its indexed
  * text, and the brief says so.
  */
-export async function importBriefFromDocument(documentId: string): Promise<ImportResult> {
+/**
+ * `targetMatterId`: where the new brief is filed. Unset, the document's own
+ * matter — which for a draft filed among the exhibits is the exhibits folder,
+ * and the desk then searches only that folder (Eden, 09-29: v12 landed in
+ * "Article 78 Petition Exhibits"; the case is "Bushell"). The desk home
+ * passes the matter the person chose under "File it in".
+ */
+export async function importBriefFromDocument(documentId: string, targetMatterId?: string | null): Promise<ImportResult> {
   if (await hasDraftBody(documentId)) return { id: documentId, losses: [], existing: true };
   const { data, error } = await supabase.from('documents').select(DOC_COLUMNS).eq('id', documentId).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) throw new Error('This document is not in a matter you can open.');
   const src = data as BriefMeta;
+  // A copy filed in ANOTHER matter is the document's words leaving its own
+  // matter, so a sealed document's words never do: its brief stays inside its
+  // seal. Checked before anything is read, and fails closed like
+  // sealedRefusal() — a seal that cannot be confirmed is treated as a seal.
+  const target = targetMatterId || src.matterspace_id;
+  if (target !== src.matterspace_id) {
+    const tier = await effectiveTier(src.matterspace_id).catch(() => null);
+    if (tier === null) throw new Error('The document’s seal could not be confirmed, so nothing was brought in. Try again in a moment.');
+    if (tier !== 'A') {
+      throw new Error('This document is in a SecureSpace, so its brief can only be filed in its own matter. Choose that matter under “File it in” and bring it in again.');
+    }
+  }
   const { kindOf, importBytes, importIndexedText } = await import('./import');
   const kind = kindOf(src.source_filename ?? src.storage_path ?? '');
   let imported: { doc: BriefDoc; losses: string[] };
@@ -377,7 +396,7 @@ export async function importBriefFromDocument(documentId: string): Promise<Impor
     const { text } = await loadCorpusDocumentText(documentId);
     imported = importIndexedText(text);
   }
-  const id = await createBrief(src.matterspace_id, src.title || 'Untitled brief', imported.doc, {
+  const id = await createBrief(target, src.title || 'Untitled brief', imported.doc, {
     imported_from: 'contextspaces',
     source_document_id: src.id,
     import_losses: imported.losses,
@@ -429,4 +448,71 @@ export async function exportBrief(
     document_id: meta.id, snapshot_id: snap.id, destination,
   });
   return { ok: true, snapshot: snap };
+}
+
+// ---------------------------------------------------------------------------
+// Versions as documents (Eden, 10-02): "Save as v19" and Compare
+// ---------------------------------------------------------------------------
+
+/** A title as a LIKE pattern that matches only itself: % _ and \ escaped. */
+const likeLiteral = (s: string) => s.replace(/[%_\\]/g, (c) => `\\${c}`);
+
+/**
+ * A brief with this exact title already in the matter, if any, so "Save as
+ * v19" never makes a second v19 without saying so.
+ */
+export async function briefTitleTaken(matterId: string, title: string): Promise<{ id: string; title: string } | null> {
+  const { data, error } = await supabase
+    .from('documents')
+    .select('id, title')
+    .eq('matterspace_id', matterId)
+    .ilike('title', likeLiteral(title))
+    .limit(1);
+  if (error) throw new Error(error.message);
+  return ((data ?? [])[0] as { id: string; title: string } | undefined) ?? null;
+}
+
+/**
+ * Save the brief as it is now as a NEW document, the next version, in the
+ * same matter: its own body, its own first snapshot, in the Vault and search.
+ * The brief it came from is left exactly as it was.
+ */
+export async function saveAsNewVersion(meta: BriefMeta, body: BriefDoc, title: string): Promise<string> {
+  return createBrief(meta.matterspace_id, title, body, {
+    version_of: meta.id,
+    version_of_title: meta.title,
+  });
+}
+
+export interface VersionCandidate { id: string; title: string; matterspace_id: string; updated_at: string }
+
+/**
+ * Briefs to compare this one with: every brief in its matter, and every brief
+ * anywhere the person can read whose title shares its name before the version
+ * number (versions get filed in different folders: v18 in "Bushell", a copy
+ * in "Article 78 Petition Exhibits"). Only briefs with a body in the desk.
+ */
+export async function listVersionCandidates(meta: BriefMeta): Promise<VersionCandidate[]> {
+  const base = (meta.title ?? '').replace(/([^A-Za-z]|^)[vV](?:er(?:sion)?)?\.?\s?\d{1,4}(?!\d).*$/, '').replace(/[-_\s.]+$/, '');
+  const cols = 'id, title, matterspace_id, updated_at, draft_bodies!inner(document_id)';
+  const sameMatter = supabase.from('documents').select(cols).eq('matterspace_id', meta.matterspace_id).eq('doc_type', 'brief').limit(200);
+  const sameName = base.length >= 6
+    ? supabase.from('documents').select(cols).eq('doc_type', 'brief').ilike('title', `${likeLiteral(base)}%`).limit(200)
+    : null;
+  const [a, b] = await Promise.all([sameMatter, sameName ?? Promise.resolve({ data: [], error: null })]);
+  if (a.error) throw new Error(a.error.message);
+  if (b.error) throw new Error(b.error.message);
+  const seen = new Map<string, VersionCandidate>();
+  for (const r of [...(a.data ?? []), ...(b.data ?? [])] as VersionCandidate[]) {
+    if (r.id !== meta.id && !seen.has(r.id)) seen.set(r.id, { id: r.id, title: r.title, matterspace_id: r.matterspace_id, updated_at: r.updated_at });
+  }
+  return [...seen.values()];
+}
+
+/** A brief's body, for Compare. */
+export async function loadBriefBody(documentId: string): Promise<BriefDoc> {
+  const { data, error } = await supabase.from('draft_bodies').select('body').eq('document_id', documentId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error('That document has no text in the desk to compare.');
+  return (data as { body: BriefDoc }).body;
 }

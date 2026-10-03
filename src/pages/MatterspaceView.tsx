@@ -22,6 +22,7 @@ import AiPauseControl from '@/components/matter/AiPauseControl';
 import DisconnectMatterControl from '@/components/matter/DisconnectMatterControl';
 import AskAssistantButton from '@/components/ai/AskAssistantButton';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
+import MatterZipButton from '@/components/matter/MatterZipButton';
 import { matterEntry } from '@/lib/second-factor';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { MATTER_COVER_KEY } from '@/hooks/useMatterCover';
@@ -393,6 +394,9 @@ export default function MatterspaceView() {
                 <Stamp size={15} strokeWidth={1.75} />
                 Discovery
               </button>
+              {/* Every stored file of this matter as one .zip (09-28: the
+                  appendix, for filing, without twelve separate downloads). */}
+              <MatterZipButton matterId={matter.id} matterName={matter.name} />
               <button
                 onClick={enterVault}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"

@@ -221,6 +221,10 @@ function clientFor(db) {
           }
           return null;
         }),
+        // resolve.ts reads the parsed header of name-matched documents (same case, same year).
+        select: (cols) => ({
+          in: (col, ids) => wrap(async () => (await db.query(`select ${cols} from public.${table} where ${col} = any($1::uuid[])`, [ids])).rows),
+        }),
       };
     },
     rpc: (fn, args) => wrap(async () => {
@@ -295,6 +299,16 @@ async function scenario(sql101, { verbose }) {
     return id;
   };
   const wc = (name, reporters) => ({ kind: 'case', case_name: name, reporters });
+  // A Westlaw Supreme Court file that opens with the S. Ct. cite only (Pioneer,
+  // 09-28): the index never learns "507 U.S. 380"; the single-star pages are
+  // the U.S. Reports pages, unnamed.
+  const PIONEER = await doc(M, 'Pioneer Inv Services Co v Brunswick Associates Ltd Partnership', {
+    ...wc("Pioneer Inv. Servs. Co. v. Brunswick Assocs., Ltd. P'ship", [{ volume: 113, reporter: 'S. Ct.', page: 1489 }]),
+    date: { year: 1993, month: 3, day: 24 }, court: { level: 'scotus', line: 'Supreme Court of the United States' },
+  }, [
+    { printed_page: 380, printed_page_end: 382, page_source: 'printed', star_pages: { 2: [1489, 1490] } },
+    { printed_page: 394, printed_page_end: 396, page_source: 'printed', star_pages: { 2: [1497, 1498] } },
+  ]);
   const ROE = await doc(M, 'Roe v. Doe', wc('Roe v. Doe', [
     { volume: 180, reporter: 'A.D.3d', page: 609 }, { volume: 117, reporter: 'N.Y.S.3d', page: 239 }, { volume: 9, reporter: 'N.E.3d', page: 500 }]), [
     { printed_page: 609, printed_page_end: 609, page_source: 'printed', star_pages: { 2: [239, 239] } },
@@ -317,7 +331,7 @@ async function scenario(sql101, { verbose }) {
   const SMITH = await doc(M, 'Smith v. Acme Corp.', null, [{}], { category: 'case' });   // a WL-only case, filed as a case
   const APPX = await doc(M, "Lee v. Park", wc('Lee v. Park', [{ volume: 770, reporter: "F. App'x", page: 12 }]),
     [{ printed_page: 12, printed_page_end: 15 }]);
-  const all = { ROE, OWEN1, OWEN2, OWENX, ONLYX, SEALED, PDFIDX, BARE, APPX };
+  const all = { ROE, OWEN1, OWEN2, OWENX, ONLYX, SEALED, PDFIDX, BARE, APPX, PIONEER };
 
   // The rows: the backfill's path (levels read back from passages), through
   // the real upsertDocumentCitations — as the member's own session for the
@@ -362,6 +376,18 @@ async function scenario(sql101, { verbose }) {
   {
     const r = await resolveEntry(client, M, entry("Lee v. Park, 770 F. App'x 12, 14 (2d Cir. 2019)"));
     check(r.status === 'resolved' && r.hits[0].document_id === APPX, "F. App'x as a brief writes it finds the stored F. App'x", r.status);
+  }
+  {
+    // The brief cites the U.S. Reports; the file opened with the S. Ct. cite only.
+    const r = await resolveEntry(client, M, entry("Pioneer Inv. Servs. Co. v. Brunswick Assocs. Ltd. P'ship, 507 U.S. 380, 395 (1993)"));
+    check(r.status === 'resolved' && r.hits[0].document_id === PIONEER && r.hits[0].how === 'name',
+      'every reporter cite missed: the same case name AND year in the parsed header is the case (Pioneer)', `${r.status} ${r.hits[0]?.how}`);
+    check(r.passage?.basis === 'printed' && r.passage.printed_page <= 395 && r.passage.printed_page_end >= 395,
+      '… and a U.S. pin opens at the single-star (U.S. Reports) page of the Supreme Court file', JSON.stringify(r.passage));
+    const wrongYear = await resolveEntry(client, M, entry("Pioneer Inv. Servs. Co. v. Brunswick Assocs. Ltd. P'ship, 507 U.S. 380, 395 (1994)"));
+    check(wrongYear.status === 'not_in_corpus', 'the same name with another year is not that case — not in corpus', wrongYear.status);
+    const noYear = await resolveEntry(client, M, entry("Pioneer Inv. Servs. Co. v. Brunswick Assocs. Ltd. P'ship, 507 U.S. 380, 395"));
+    check(noYear.status === 'not_in_corpus', 'no year to check against: no name guess', noYear.status);
   }
   {
     const r = await resolveEntry(client, M, entry('Owen v. Jones, 143 F.3d 1219, 1221 (2d Cir. 1998)'));

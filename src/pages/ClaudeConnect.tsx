@@ -205,11 +205,15 @@ export default function ClaudeConnect() {
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed space-y-3">
             <p>
               <strong className="text-[var(--color-text-bright)]">What Claude can reach.</strong>{' '}
-              A connection carries your own access — no more, and no less.
-              Claude sees the matters your Contextspaces account can open,
-              reading the database as you do. There is no per-matter setting
-              to configure, and none to forget: if you can open it, so can a
-              connected Claude.
+              A full connection carries your own access — no more, and no
+              less. Claude sees the matters your Contextspaces account can
+              open, reading the database as you do: if you can open it, so can
+              a connected Claude. To limit Claude to certain matters, connect
+              it as an agent instead: on the Contextspaces sign-in page choose{' '}
+              <strong className="text-[var(--color-text-bright)]">An agent</strong>{' '}
+              and tick the matters, or add one under{' '}
+              <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">Connections › Agents</Link>. An agent sees only
+              the matters you give it.
             </p>
             <p>
               <strong className="text-[var(--color-text-bright)]">Except sealed matters.</strong>{' '}

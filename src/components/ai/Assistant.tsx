@@ -193,6 +193,20 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   );
   const input = inThisScope ? conv.input : '';
 
+  // A drafted question (assistant-bus `draft`) lands once the panel is in the
+  // command's scope, so the swap to that matter's conversation cannot clear it.
+  const pendingDraftRef = useRef<string | null>(null);
+  useEffect(() => {
+    const draft = pendingDraftRef.current;
+    if (draft === null || !inThisScope) return;
+    pendingDraftRef.current = null;
+    setInputRef.current(draft);
+    setTimeout(() => {
+      const el = inputRef.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }, 0);
+  });
+
   // The pen that actually answered, from the server's `session` event. It is
   // stamped with the matter it answered FOR, so walking from a sealed matter
   // to an open one cannot leave the sealed pen's name in the header.
@@ -234,7 +248,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // as a claim about one vendor's servers. A PAUSED matter keeps nothing
   // either — the switch says nothing is going anywhere. And where the tier or
   // the pause has not been read yet, nothing is written: unknown is not open.
-  const { user } = useAuth();
+  const { user, plan } = useAuth();
   const chatStore = useMemo(() => browserSessionStore(), []);
   const mayKeepConversation = !scoped ? true : !ai.loading && ai.tier === 'A' && ai.paused === false;
 
@@ -630,6 +644,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             : undefined,
           context: {
             route: location.pathname,
+            // The map is drawn for the plan (wording only; doors stay locked server-side).
+            ...(plan ? { plan } : {}),
             ...getOrchestratorContext(),
             ...(commandMatterRef.current?.name
               ? { matterName: commandMatterRef.current.name }
@@ -797,13 +813,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       // A command may carry no prompt: it scopes and opens the panel
       // (SecureChat's door) without spending a model call.
       if (cmd.prompt?.trim()) void sendRef.current(cmd.prompt.trim());
-      else if (cmd.draft) {
-        setInputRef.current(cmd.draft);
-        setTimeout(() => {
-          const el = inputRef.current;
-          if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-        }, 0);
-      }
+      else if (cmd.draft) pendingDraftRef.current = cmd.draft;
     };
     window.addEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
     return () => window.removeEventListener(ASSISTANT_COMMAND_EVENT, onCommand);
@@ -978,6 +988,14 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             )}
             {describe.searchNote && conversationEmpty && (
               <p className="mt-1 text-[11px] leading-snug text-white/45">{describe.searchNote}</p>
+            )}
+            {/* The Brief Desk: what the panel knows before a word is typed —
+                the brief, and that the record is the matter above. */}
+            {conversationEmpty && getOrchestratorContext().brief?.title && (
+              <p className="mt-1 text-[11px] leading-snug text-white/45" data-testid="brief-strip">
+                Reading the brief <span className="text-white/65">“{getOrchestratorContext().brief!.title}”</span>
+                {' '}· its record cites and the court below are in this matter.
+              </p>
             )}
           </div>
         )}

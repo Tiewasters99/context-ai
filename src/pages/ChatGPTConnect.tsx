@@ -23,7 +23,6 @@ import {
   AlertCircle,
   X,
   ShieldCheck,
-  Monitor,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { readUserTokens } from '@/lib/agents-schema';
@@ -146,24 +145,15 @@ export default function ChatGPTConnect() {
             </span>
           </div>
 
-          <div className="mt-4 max-w-2xl rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed flex gap-3">
-            <Monitor size={18} className="text-[var(--color-text-bright)] mt-0.5 flex-shrink-0" />
-            <span>
-              <strong className="text-[var(--color-text-bright)]">
-                Desktop browser only — for now.
-              </strong>{' '}
-              OpenAI runs custom plugins like this one only on chatgpt.com in a
-              desktop browser. You can create the plugin from any browser, but
-              ChatGPT then tells you it is usable on desktop only, and the
-              ChatGPT iPhone and Android apps have no plugin settings at all.
-              That limit is OpenAI's, not ours; nothing on the Contextspaces
-              side changes it.
-              For Contextspaces on your phone today, connect the{' '}
-              <Link to="/app/connections/claude" className="text-[var(--color-primary)] underline">
-                Claude app
-              </Link>{' '}
-              instead — its connectors carry over to mobile.
-            </span>
+          {/* The phone route (2026-09-29). ChatGPT's custom connectors are
+              desktop-web only; the Custom GPT with Actions runs in the phone
+              apps. Clients go there; this page stays the connector recipe. */}
+          <div className="mt-4 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">On a phone, or setting up a client?</strong>{' '}
+            The connector below only works in ChatGPT on a computer. The{' '}
+            <Link to="/gpt-connect" className="text-[var(--color-primary)] underline underline-offset-2">Contextspaces GPT</Link>{' '}
+            runs in the ChatGPT iPhone and Android apps with nothing to enable: open it, sign in to Contextspaces once, ask.
+            Setting the GPT up (account owner): <Link to="/app/connections/gpt-client" className="text-[var(--color-primary)] underline underline-offset-2">mint its OAuth client</Link>.
           </div>
         </header>
 
@@ -257,13 +247,16 @@ export default function ChatGPTConnect() {
         {/* Permissions */}
         <div className="mb-10 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
           <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-          ChatGPT sees only what your account can see — Contextspaces' RLS gates
-          per-matter access regardless of which AI is asking. Revoke ChatGPT's
-          access at any time from the{' '}
-          <strong className="text-[var(--color-text-bright)]">
-            Plugins
-          </strong>{' '}
-          page (older builds: <em>Settings → Connectors</em>) in ChatGPT.
+          Connected as <strong className="text-[var(--color-text-bright)]">A full assistant</strong>,
+          ChatGPT carries your own access: every matter your account can open,
+          and never a SecureSpace. To limit it to certain matters, choose{' '}
+          <strong className="text-[var(--color-text-bright)]">An agent</strong>{' '}
+          on the Contextspaces sign-in page in step 3 and tick them; you can
+          change them later under{' '}
+          <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">Connections › Agents</Link>. To end its access, revoke
+          it in Contextspaces under{' '}
+          <Link to="/app/connections" className="text-[var(--color-primary)] hover:underline">Connections › Approved AI clients</Link>,
+          or remove it on ChatGPT's Plugins page (older builds: <em>Settings → Connectors</em>).
         </div>
 
         {/* API path */}

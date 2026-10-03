@@ -1,6 +1,12 @@
-// Grok MCP connection page — mirror of ClaudeConnect/GeminiConnect,
-// tailored to xAI's Grok which exposes MCP via grok.com's settings
-// (URL + Bearer token) and via the xAI API for SDK users.
+// Grok MCP connection page.
+//
+// grok.com connects to MCP servers by OAuth only, and its connectors are
+// account-wide (docs.x.ai/grok/connectors, confirmed 09-25). So the page
+// leads with the verified flow: add a Custom connector with our URL, sign
+// in, and connect Grok as AN AGENT on the consent screen (OAuthAuthorize
+// starts there for Grok). The Bearer-token generator is kept, demoted, for
+// the xAI API and other HTTP MCP clients that send their own headers, and as
+// the place to revoke tokens made here before 09-25.
 
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -115,97 +121,137 @@ export default function GrokConnect() {
             Connect to Grok
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            Wire Contextspaces into{' '}
             <strong className="text-[var(--color-text-bright)]">Grok</strong>{' '}
-            via xAI's MCP support. Once connected, Grok can search your
-            matters, pull pincites from your Vault, and act inside any
-            workflow you point it at — same toolset Claude and Gemini get.
+            connects by signing in to Contextspaces, not with a pasted token,
+            and it connects best as an{' '}
+            <strong className="text-[var(--color-text-bright)]">agent</strong>:
+            it sees only the matters you tick, never a SecureSpace, and works
+            the tasks you hand it from a document, a list, a page or a
+            calendar entry.
           </p>
 
-          <div className="mt-5 max-w-2xl rounded-lg border border-[#f0c850]/35 bg-[#f0c850]/5 px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-            <strong className="text-[var(--color-text-bright)]">Not yet verified by us.</strong>{' '}
-            Contextspaces speaks one protocol to every client, and Claude and
-            ChatGPT both reach it. But nobody here has completed a round trip
-            from Grok to a working list of your matters, so treat the steps
-            below as what the protocol requires rather than as a walkthrough
-            someone has followed. If a menu doesn't match what you see, it is
-            this page that is out of date, not your account.
-          </div>
-
-          <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
-            <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-            A connector token made on this page carries your own access — no
-            more, no less: whatever your Contextspaces account can open, a
-            client holding the token can open, except matters kept in a
-            SecureSpace, which are invisible to every outside connector. It can
-            read, search, file new documents and organise them; it cannot
-            delete a document or overwrite an original. Revoke a token below
-            and it stops working on the next request.
-          </div>
-
-          <div className="mt-3 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
-            <strong className="text-[var(--color-text-bright)]">A Grok Bot that works tasks.</strong>{' '}
-            To hand a Grok Bot tasks from a document, list, page or calendar
-            entry, and limit it to the matters you choose, add it as an agent
-            instead. An agent's token sees only the matters you tick, and never
-            a SecureSpace.{' '}
-            <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">
-              Connections › Agents
-            </Link>
+          <div className="mt-5 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            <strong className="text-[var(--color-text-bright)]">Checked end to end on 25 September 2026.</strong>{' '}
+            A Grok task ran from start to finish with these steps. If one of
+            Grok's menus no longer matches what you see, Grok has moved it
+            since; the Contextspaces side is unchanged.
           </div>
         </header>
 
-        {/* Walkthrough */}
-        <section className="mb-10 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        {/* Walkthrough — the verified flow (GROK-AGENT-SETUP v3, 09-25).
+            Labels on our side are OAuthAuthorize.tsx's own. */}
+        <section className="mb-6 rounded-lg border border-[var(--color-primary)]/40 bg-[var(--color-surface)] p-6">
           <h2 className="text-lg font-semibold text-[var(--color-text-bright)] mb-4"
               style={{ fontFamily: 'Playfair Display Variable, serif' }}>
-            Grok, in three steps
+            Grok as an agent, in four steps
           </h2>
           <ol className="space-y-3 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
               <span>
-                Open{' '}
-                <a href="https://grok.com" target="_blank" rel="noopener noreferrer"
+                Go to{' '}
+                <a href="https://grok.com/connectors" target="_blank" rel="noopener noreferrer"
                    className="text-[var(--color-primary)] hover:underline">
-                  grok.com
+                  grok.com/connectors
                 </a>
-                {' '}and sign in.
+                , click <strong className="text-[var(--color-text-bright)]">New Connector</strong>,
+                then choose <strong className="text-[var(--color-text-bright)]">Custom</strong>.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
-              <span>
-                Scroll down to <strong className="text-[var(--color-text-bright)]">Generate a new token</strong>,
-                type a label (e.g. "Grok — Web"), and click{' '}
-                <strong className="text-[var(--color-text-bright)]">Generate</strong>. A dialog opens
-                with the Contextspaces endpoint URL and a one-time Bearer token —
-                copy both before closing.
+              <span className="flex-1 min-w-0">
+                Paste this address as the server URL, and continue:
+                <span className="mt-2 flex items-center gap-2 bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded px-3 py-2">
+                  <code className="text-xs text-[var(--color-primary)] font-mono break-all flex-1">
+                    {MCP_ENDPOINT_URL}
+                  </code>
+                  <CopyButton value={MCP_ENDPOINT_URL} label="URL" />
+                </span>
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
-                In Grok's settings, find the{' '}
-                <strong className="text-[var(--color-text-bright)]">MCP Connectors</strong>{' '}
-                panel (sometimes labelled Tools, Custom Servers, or Integrations
-                depending on your build), add a new server, paste the URL into
-                the URL field and the token into the Bearer / Authorization
-                field, and save.
+                Grok opens a Contextspaces page. Sign in if it asks. The page
+                says <strong className="text-[var(--color-text-bright)]">Authorize Grok</strong>;
+                under <strong className="text-[var(--color-text-bright)]">Connect Grok as</strong>,
+                keep <strong className="text-[var(--color-text-bright)]">An agent</strong>{' '}
+                (it starts there for Grok). Under{' '}
+                <strong className="text-[var(--color-text-bright)]">Matters it may see</strong>,
+                tick the matters Grok may work in (a ticked matter includes its
+                sub-matters), or{' '}
+                <strong className="text-[var(--color-text-bright)]">All my matters (except SecureSpaces)</strong>.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="text-[var(--color-primary)] font-mono flex-shrink-0">4.</span>
+              <span>
+                Click <strong className="text-[var(--color-text-bright)]">Connect as an agent</strong>.
+                You land back in Grok, which now lists Contextspaces as
+                connected. Hand it a task with{' '}
+                <strong className="text-[var(--color-text-bright)]">Delegate</strong> on a
+                document in one of those matters, then ask Grok to check its
+                Contextspaces tasks.
               </span>
             </li>
           </ol>
           <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
-            xAI's MCP UI is still evolving; the exact menu name may differ in
-            your build. If you're using the xAI API directly, the same URL +
-            Bearer-token shape works in any HTTP MCP client.
+            Starting from a matter instead? Open the matter's{' '}
+            <strong>Share</strong> dialog and choose{' '}
+            <strong>Connect an agent to this matter</strong>: it shows these
+            steps and ticks that matter for you on the Contextspaces page.
           </p>
         </section>
 
+        <div className="mb-3 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+          <strong className="text-[var(--color-text-bright)]">One agent for all of Grok.</strong>{' '}
+          Grok's connectors are account-wide, so every Grok chat and every
+          Grok Bot on your Grok account shares this one agent and its matters;
+          there is no giving one bot different matters from another. To change
+          what it sees, go to{' '}
+          <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">
+            Connections › Agents
+          </Link>{' '}
+          and choose <strong className="text-[var(--color-text-bright)]">Edit matters</strong>{' '}
+          (or use a matter's Share dialog). Revoke it there and Grok is cut
+          off on its next request.
+        </div>
+
+        <div className="mb-10 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
+          <strong className="text-[var(--color-text-bright)]">If you chose "A full assistant".</strong>{' '}
+          Grok then carries your own access: every matter you can see, except
+          SecureSpaces, and it cannot work the task board (it will say "These
+          tools are for agent connections"). To switch, revoke it under
+          Connections › Approved AI clients and repeat the steps above,
+          choosing An agent.
+        </div>
+
+        {/* Demoted: the token path. grok.com cannot use it (OAuth only);
+            it stays for the xAI API and other HTTP MCP clients, and as the
+            place to revoke tokens made here before 09-25. */}
+        <h2 className="text-lg font-semibold text-[var(--color-text-bright)] mb-2"
+            style={{ fontFamily: 'Playfair Display Variable, serif' }}>
+          The xAI API, or another HTTP MCP client
+        </h2>
+        <p className="mb-6 max-w-2xl text-sm text-[var(--color-text-secondary)] leading-relaxed">
+          Not for grok.com. A script or client that sends its own headers can
+          connect with this address and a Bearer token instead of signing in.
+          A token made below carries your own access, no more, no less:
+          whatever your account can open, except SecureSpaces. It can read,
+          search, file new documents and organise them; it cannot delete a
+          document or overwrite an original. To give such a client only
+          certain matters, add it as an agent under{' '}
+          <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">
+            Connections › Agents
+          </Link>{' '}
+          and use that agent's token instead.
+        </p>
+
         {/* Endpoint banner */}
-        <div className="mb-10 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-5">
+        <div className="mb-6 rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-5">
           <div className="flex items-start justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <div className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
                 Endpoint URL
               </div>
@@ -268,7 +314,7 @@ export default function GrokConnect() {
             <div className="text-sm text-[var(--color-text-muted)]">Loading…</div>
           ) : tokens.length === 0 ? (
             <div className="rounded-lg border border-dashed border-[var(--color-border)] p-6 text-center text-sm text-[var(--color-text-muted)]">
-              No tokens yet. Generate one above to connect Grok to your matters.
+              No tokens yet. Grok itself needs none: it connects by signing in.
             </div>
           ) : (
             <ul className="space-y-2">
@@ -352,10 +398,11 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
       bodyClassName="px-6 py-5"
     >
       <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
-        In Grok's settings, open the{' '}
-        <strong className="text-[var(--color-text-bright)]">MCP Connectors</strong>{' '}
-        panel and add a new server with the URL and token below. Name it{' '}
-        <em>Contextspaces</em>.
+        In your client (the xAI API, or any HTTP MCP client), add a server
+        with the URL below and send the token as{' '}
+        <code className="text-xs">Authorization: Bearer …</code>. Name it{' '}
+        <em>Contextspaces</em>. grok.com does not take tokens; it connects by
+        signing in.
       </p>
 
       <div className="mb-4">

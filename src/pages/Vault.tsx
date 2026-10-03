@@ -37,6 +37,7 @@ import {
   type IngestServiceStatus,
   type DocumentStatusRow,
 } from '@/lib/vault-persist';
+import { isVaultDrag, readVaultDrag, type VaultDragItem } from '@/lib/vault-drag';
 // How this matter is read: date added (what the Vault has always done), A–Z,
 // or Table-of-Authorities order. The choice travels to the SERVER as an ORDER
 // BY — nothing here sorts 7,600 rows in the browser — and is remembered per
@@ -48,6 +49,8 @@ import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
+import { getVaultClip, pasteVaultClip, VAULT_CHANGED_EVENT } from '@/lib/vault-clipboard';
 
 // 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
 // case — they highlighted, then silently showed Home. They return to the menu
@@ -90,7 +93,7 @@ export default function Vault() {
   // User-visible notice for operations that previously failed silently
   // (zip entries skipped, move/delete errors). One slot; new notices replace
   // old ones.
-  const [vaultNotice, setVaultNotice] = useState<{ kind: 'warn' | 'err'; text: string } | null>(null);
+  const [vaultNotice, setVaultNotice] = useState<{ kind: 'ok' | 'warn' | 'err'; text: string } | null>(null);
   // Whether anything is actually processing (migration 066). Null until asked,
   // and null again on any failure — null means "say nothing new", so a Vault
   // running against a database without 066 behaves exactly as it does today.
@@ -116,6 +119,30 @@ export default function Vault() {
 
   // The reading order, restored per matter on arrival.
   const [grouping, setGrouping] = useState<VaultGrouping>('date');
+  // Re-read the file list when the person comes back to this tab: a document
+  // saved elsewhere meanwhile (the Brief Desk's "Save as v19", another
+  // window) shows without a reload (10-02). At most every 10 s.
+  const [listTick, setListTick] = useState(0);
+  // A paste (Cut / Copy, here or from the sidebar) changed some folder's files.
+  useEffect(() => {
+    const changed = () => setListTick((n) => n + 1);
+    window.addEventListener(VAULT_CHANGED_EVENT, changed);
+    return () => window.removeEventListener(VAULT_CHANGED_EVENT, changed);
+  }, []);
+  useEffect(() => {
+    let last = Date.now();
+    const back = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - last < 10_000) return;
+      last = Date.now();
+      setListTick((n) => n + 1);
+    };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('focus', back);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('focus', back);
+    };
+  }, []);
 
   // Matter tree state — same shape as the main sidebar so users can
   // switch matters without leaving the Vault.
@@ -228,30 +255,50 @@ export default function Vault() {
     return { ids, nameById };
   }, [matter, serverspaces]);
 
-  // Drop handler shared by every matter row in the rail. Reads the file
-  // payload set by ImportPanel's drag source, calls the move endpoint,
-  // and re-lists so the moved file lands in the right group (or
-  // disappears, if the target is outside the current scope).
-  const handleFileDrop = useCallback(async (
-    e: React.DragEvent,
+  // Move one or many documents into a matter or folder, then re-list once so
+  // each lands in its new group (or leaves the list, if the target is outside
+  // the current scope). Four moves at a time; a refusal that would repeat for
+  // every file (a sealed matter asking for step-up) stops the rest, so the
+  // user reads one notice, not sixty.
+  const moveFiles = useCallback(async (
+    items: VaultDragItem[],
     targetMatterId: string,
   ) => {
-    e.preventDefault();
-    const raw = e.dataTransfer.getData('application/x-cs-vault-file');
-    if (!raw) return;
-    let payload: { docId: string; fromMatterId: string };
-    try { payload = JSON.parse(raw); } catch { return; }
-    if (payload.fromMatterId === targetMatterId) return;
-    setVaultFiles((prev) => prev.filter((f) => f.id !== payload.docId));
-    try {
-      await moveVaultDocument(payload.docId, targetMatterId);
-    } catch (err) {
-      // The row was removed optimistically — without a notice a failed move
-      // looks exactly like a successful one. The refresh below restores it.
-      console.error('move failed', err);
+    const todo = items.filter((i) => i.fromMatterId !== targetMatterId);
+    if (todo.length === 0) return;
+    const ids = new Set(todo.map((i) => i.docId));
+    // Leaving the list is shown at once; the refresh below puts back anything
+    // that did not actually move.
+    setVaultFiles((prev) => prev.filter((f) => !ids.has(f.id)));
+    let moved = 0;
+    const failures: string[] = [];
+    let stopped = false;
+    const queue = [...todo];
+    const worker = async () => {
+      for (let item = queue.shift(); item && !stopped; item = queue.shift()) {
+        try {
+          await moveVaultDocument(item.docId, targetMatterId);
+          moved++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : 'unknown error';
+          failures.push(msg);
+          if (/sealed/i.test(msg)) stopped = true;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, todo.length) }, worker));
+    const targetName = serverspaces.flatMap((s) => s.matterspaces ?? []).find((m) => m.id === targetMatterId)?.name
+      ?? 'the folder';
+    const noun = (n: number) => `${n.toLocaleString()} document${n === 1 ? '' : 's'}`;
+    if (failures.length === 0) {
+      setVaultNotice({ kind: 'ok', text: `Moved ${noun(moved)} to ${targetName}.` });
+    } else {
+      // A failed move looks exactly like a successful one unless it is said.
+      console.error('move failed', failures);
+      const left = todo.length - moved;
       setVaultNotice({
         kind: 'err',
-        text: `Move failed — the document stays in its current matter. (${err instanceof Error ? err.message : 'unknown error'})`,
+        text: `${moved ? `Moved ${noun(moved)} to ${targetName}; ` : ''}${noun(left)} stayed where ${left === 1 ? 'it was' : 'they were'}. (${failures[0]})`,
       });
     }
     if (matter && matterScope) {
@@ -266,7 +313,47 @@ export default function Vault() {
         });
       }
     }
-  }, [matter, matterScope, grouping]);
+  }, [matter, matterScope, grouping, serverspaces]);
+
+  // Drop handler shared by every matter row in the rail: reads the payload
+  // ImportPanel's drag source set (one document, or the whole selection).
+  // Right-click a matter in the rail: Paste here (Cut / Copy, 10-02).
+  const [railMenu, setRailMenu] = useState<ContextMenuState | null>(null);
+  const closeRailMenu = useCallback(() => setRailMenu(null), []);
+  const railPasteMenu = useCallback((e: React.MouseEvent, targetMatterId: string, name: string) => {
+    const clip = getVaultClip();
+    if (!clip) return; // nothing to paste: the browser's own menu
+    e.preventDefault();
+    const n = clip.items.length;
+    setRailMenu({
+      x: e.clientX, y: e.clientY, items: [{
+        label: `Paste ${n.toLocaleString()} document${n === 1 ? '' : 's'} into ${name}`,
+        hint: clip.mode === 'cut' ? 'move' : 'copy',
+        onSelect: () => {
+          void pasteVaultClip(targetMatterId, name).then((r) => setVaultNotice({ kind: r.ok ? 'ok' : 'err', text: r.text }));
+        },
+      }],
+    });
+  }, []);
+
+  const handleFileDrop = useCallback((e: React.DragEvent, targetMatterId: string) => {
+    e.preventDefault();
+    const items = readVaultDrag(e.dataTransfer);
+    if (items.length) void moveFiles(items, targetMatterId);
+  }, [moveFiles]);
+
+  // The current matter's own folders (its direct sub-matters), shown above
+  // the file list as places to drop files — the rail's rows reveal their
+  // controls only on hover, which is too hidden for the everyday "make a
+  // folder, drag pictures into it".
+  const folders = useMemo(() => {
+    if (!matter) return [];
+    const all = serverspaces.find((s) => s.id === matter.serverspace_id)?.matterspaces ?? [];
+    return all
+      .filter((m) => m.parent_matterspace_id === matter.id)
+      .map((m) => ({ id: m.id, name: m.name, shortCode: m.short_code ?? null }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [matter, serverspaces]);
 
   // The one way a pipeline status update lands on a row. Every
   // watchDocumentStatus subscription uses it, so a new field on
@@ -340,7 +427,7 @@ export default function Vault() {
       cancelled = true;
       cleanups.forEach((c) => c());
     };
-  }, [matter, matterScope, grouping, applyDocUpdates]);
+  }, [matter, matterScope, grouping, applyDocUpdates, listTick]);
 
   // Is anything actually processing? Asked only while this matter has a
   // document that has not reached a terminal state — the one window in which
@@ -787,7 +874,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} folders={matter ? folders : undefined} onMoveFiles={matter ? moveFiles : undefined} onNewFolder={matter ? () => openNewMatter(matter.serverspace_id, matter.id, matter.name) : undefined} onOpenFolder={(id) => switchToMatter(folders.find((f) => f.id === id)?.shortCode ?? id)} matterName={matter?.name} onPasteResult={(r) => setVaultNotice({ kind: r.ok ? 'ok' : 'err', text: r.text })} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF, DOCX, deck or image
           // opens in the full-screen DocumentReader (pages, search,
           // annotations; a picture is drawn as itself), laid over this list
@@ -1007,6 +1094,7 @@ export default function Vault() {
                               onDelete={openDeleteMatter}
                               onShare={(id, name) => setShareTarget({ id, name })}
                               onDropFile={handleFileDrop}
+                              onPasteMenu={railPasteMenu}
                             />
                           ))}
                           <button
@@ -1085,12 +1173,15 @@ export default function Vault() {
 
       {/* Main area */}
       <div className="flex-1 flex relative">
+        <ContextMenu menu={railMenu} onClose={closeRailMenu} />
         {vaultNotice && (
           <div
             className={`absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 max-w-lg px-3 py-2 rounded-lg border text-xs shadow-xl ${
               vaultNotice.kind === 'err'
                 ? 'bg-[#2a1214] border-[#f87171]/40 text-[#f8b4b4]'
-                : 'bg-[#2a2412] border-[#e8b84a]/40 text-[#f0dfa8]'
+                : vaultNotice.kind === 'ok'
+                  ? 'bg-[#12241a] border-[#5aa88f]/40 text-[#b8e0cf]'
+                  : 'bg-[#2a2412] border-[#e8b84a]/40 text-[#f0dfa8]'
             }`}
           >
             <span className="flex-1">{vaultNotice.text}</span>
@@ -1279,6 +1370,8 @@ interface VaultMatterNodeProps {
   onDelete: (matterId: string, matterName: string) => void;
   onShare: (matterId: string, matterName: string) => void;
   onDropFile: (e: React.DragEvent, targetMatterId: string) => void;
+  /** Right-click: Paste what was Cut or Copied into this matter. */
+  onPasteMenu: (e: React.MouseEvent, targetMatterId: string, name: string) => void;
 }
 
 function VaultMatterNode({
@@ -1293,6 +1386,7 @@ function VaultMatterNode({
   onDelete,
   onShare,
   onDropFile,
+  onPasteMenu,
 }: VaultMatterNodeProps) {
   const { matter, children } = node;
   const hasChildren = children.length > 0;
@@ -1305,7 +1399,7 @@ function VaultMatterNode({
     <div>
       <div
         onDragOver={(e) => {
-          if (e.dataTransfer.types.includes('application/x-cs-vault-file')) {
+          if (isVaultDrag(e.dataTransfer)) {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             if (!dropHover) setDropHover(true);
@@ -1313,6 +1407,7 @@ function VaultMatterNode({
         }}
         onDragLeave={() => setDropHover(false)}
         onDrop={(e) => { setDropHover(false); onDropFile(e, matter.id); }}
+        onContextMenu={(e) => onPasteMenu(e, matter.id, matter.name)}
         className={`group flex items-center gap-1 rounded transition-colors ${
           dropHover
             ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60'
@@ -1379,6 +1474,7 @@ function VaultMatterNode({
               onDelete={onDelete}
               onShare={onShare}
               onDropFile={onDropFile}
+              onPasteMenu={onPasteMenu}
             />
           ))}
         </div>

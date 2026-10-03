@@ -36,37 +36,72 @@ import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import Placeholder from '@tiptap/extension-placeholder';
 import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
-  Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText,
-  ShieldCheck, ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
+  Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText, Check,
+  ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
+  ClipboardCheck, GitCompare, CopyPlus,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { briefExtensions, type FlagKind } from '@/lib/brief/schema';
-import { serialize, type BriefDoc } from '@/lib/brief/md';
+import type { BriefDoc } from '@/lib/brief/md';
 import {
   loadBrief, saveBody, takeSnapshot, listSnapshots, loadSnapshot, restoreSnapshot,
-  importBriefFromDocument, exportBrief, type BriefMeta, type SnapshotRow, type ImportResult,
+  importBriefFromDocument, exportBrief, listRecentBriefs, type BriefMeta, type SnapshotRow, type ImportResult, type RecentBrief,
 } from '@/lib/brief/draft-store';
 import {
-  applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow,
+  applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow, type DeskEntry, type StoredResolution,
 } from '@/lib/brief/anchor';
 import {
   confirmBrief, loadLatestRun, loadNotes, saveNote,
   type CiteNote, type ConfirmProgress, type DeskRun,
 } from '@/lib/brief/confirm';
-import { passageForPrintedPage } from '@/lib/brief/resolve';
+import { passageForPrintedPage, resolveEntry, type Resolution } from '@/lib/brief/resolve';
+
+/** A live resolveEntry() answer, cut down to what the pane and the table read. */
+const storedOf = (r: Resolution): StoredResolution => ({
+  status: r.status,
+  pin: r.pin,
+  hits: r.hits.map((h) => ({ document_id: h.document_id, title: h.title, how: h.how, star_level: h.star_level })),
+  passage: r.passage
+    ? { passage_id: r.passage.passage_id, page_start: r.passage.page_start, basis: r.passage.basis, caveat: r.passage.caveat, printed_page: r.passage.printed_page }
+    : null,
+});
+import {
+  loadConfirmations, addConfirmation, carryConfirmations, latestFor, latestByCite, openProblemForWords, rememberedInitials, rememberInitials, guessInitials,
+  confirmationsCsv, whereRead, openProblems, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus,
+} from '@/lib/brief/confirmations';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
 import { parseReporterCites } from '../../../lib/bluebook.mjs';
-import { parseRecordCite, appendixSetsFor, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
+import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
+import { provisionQuery } from '@/lib/brief/provision-core';
+import { parseIndexCite, indexCiteFromBrief, definingText } from '@/lib/brief/index-cite';
+import { parseDocumentCite } from '@/lib/brief/doc-abbrev';
+import { assistantMatch } from '@/lib/brief/assistant-match';
+import { fetchMatterDocumentRows, type DocumentsSource } from '@/lib/vault-documents';
+
+/** The model for the judgment step (the same the machine pass uses). */
+const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
+import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
+import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
+import { SaveAsVersionCard, CompareCard } from './VersionCards';
+import { nextVersionTitle, nextVersionLabel } from '@/lib/brief/versions';
+import { noteNumberOf } from '@/lib/brief/note-pin';
+import { useBriefEditLease, type LeaseState } from '@/lib/brief/edit-lease';
 import AddCaseCard from './AddCaseCard';
 import { runInAssistant } from '@/lib/assistant-bus';
 import { project, plainRangeToPm } from '@/lib/brief/anchor';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
 import AuthorityPane, { type PaneState } from './AuthorityPane';
+import MatterTreePick from '@/components/matters/MatterTreePick';
+import { useServerspaces } from '@/hooks/useServerspaces';
+import { nearestCommonAncestor, isSealedIn, subtreeIds } from '@/lib/matter-tree';
+import { setSurfaceContext, clearSurfaceContext } from '@/lib/orchestrator-context';
 
 type Load = 'loading' | 'ready' | 'nobody' | 'error';
 /** How a brief arrived: set by an import, read once. */
@@ -99,6 +134,9 @@ export default function BriefDesk() {
   const [showVersions, setShowVersions] = useState(false);
 
   const [mount, setMount] = useState(0); // a new editor only on (re)load, never per save
+  // One person edits a brief at a time (105): this window may type only while
+  // it holds the brief. A phone never edits, so never holds it.
+  const { lease, takeOver } = useBriefEditLease(id, !isMobile);
   const updatedAt = useRef<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saving = useRef(false);
@@ -158,7 +196,15 @@ export default function BriefDesk() {
       meta={meta}
       setMeta={setMeta}
       initial={initial!}
-      editable={!isMobile}
+      // Editable unless another window holds it. While the first claim is in
+      // flight it stays editable, so the on-open steps (laying the last run's
+      // marks) run as before; a second window turns read-only a moment later.
+      editable={!isMobile && lease.kind !== 'theirs'}
+      lease={lease}
+      onTakeOver={async () => {
+        // Start from what the other window last saved, never a stale copy.
+        if (await takeOver()) reload();
+      }}
       save={save}
       setSave={setSave}
       saveError={saveError}
@@ -190,6 +236,9 @@ interface DeskProps {
   setMeta: (m: BriefMeta) => void;
   initial: BriefDoc;
   editable: boolean;
+  /** Who may edit this brief now (105); the read-only line says who. */
+  lease: LeaseState;
+  onTakeOver: () => Promise<void>;
   save: Save;
   setSave: (s: Save) => void;
   saveError: string | null;
@@ -251,7 +300,7 @@ function DeskEditor(p: DeskProps) {
     editable: p.editable,
     editorProps: { attributes: { class: 'brief-doc', spellcheck: 'true' } },
     onUpdate: () => {
-      if (saveRef.current === 'conflict') return;
+      if (saveRef.current === 'conflict' || !editableRef.current) return;
       setSave('dirty');
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => void flush(), QUIET_MS);
@@ -259,6 +308,14 @@ function DeskEditor(p: DeskProps) {
     onBlur: () => { if (timer.current) void flush(); },
   });
   useEffect(() => { editorRef.current = editor; }, [editor]);
+  // Editable follows the hold (105). Losing it stops this window's saves at
+  // once: whatever it had not saved stays on screen for "Save as".
+  const editableRef = useRef(p.editable);
+  useEffect(() => {
+    editableRef.current = p.editable;
+    if (!p.editable && timer.current) { clearTimeout(timer.current); timer.current = null; }
+    if (editor && editor.isEditable !== p.editable) editor.setEditable(p.editable);
+  }, [editor, p.editable, timer]);
 
   // ── D3: the run, the marks, the table, the authority ─────────────────────
   const wide = !useIsMobile(1400);
@@ -279,6 +336,143 @@ function DeskEditor(p: DeskProps) {
   const [showReadingNote, setShowReadingNote] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [showAddCase, setShowAddCase] = useState(false);
+
+  // ── The human check (migration 103) ─────────────────────────────────────
+  // Highlight a cite, Find in corpus, read the page, press Confirm with your
+  // initials: one append-only row. The latest row per cite colours the cite
+  // in the brief (green confirmed, red problem) and fills the Log.
+  const [confs, setConfs] = useState<CiteConfirmation[]>([]);
+  const [showLog, setShowLog] = useState(false);
+  // Versions as documents (10-02): Save as the next version; Compare two versions.
+  const [showSaveAs, setShowSaveAs] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
+  const goTo = useNavigate();
+  // Earlier briefs a reading can be carried from (the Log's "Carry the check
+  // from an earlier version"): every other brief the person has, newest first.
+  const [carryCandidates, setCarryCandidates] = useState<RecentBrief[]>([]);
+  useEffect(() => {
+    if (!showLog) return;
+    let live = true;
+    listRecentBriefs(40).then((bs) => { if (live) setCarryCandidates(bs.filter((b) => b.id !== meta.id)); }).catch(() => {});
+    return () => { live = false; };
+  }, [showLog, meta.id]);
+  const [initials, setInitialsState] = useState<string>(() => rememberedInitials() ?? '');
+  const setInitials = (v: string) => { setInitialsState(v); rememberInitials(v); };
+  useEffect(() => {
+    let live = true;
+    loadConfirmations(meta.id).then((rows) => { if (live) setConfs(rows); }).catch((e) => p.setNotice(`The confirmation log could not be read: ${(e as Error).message}`));
+    if (!rememberedInitials()) {
+      supabase.auth.getUser().then(async ({ data }) => {
+        const u = data.user; if (!u || !live) return;
+        const { data: prof } = await supabase.from('profiles').select('display_name, email').eq('id', u.id).maybeSingle();
+        const g = guessInitials((prof as { display_name?: string | null } | null)?.display_name ?? (u.user_metadata?.full_name as string | undefined), u.email);
+        if (live && g && !rememberedInitials()) setInitialsState(g);
+      });
+    }
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per brief
+  }, [meta.id]);
+  // The words + sentence + place of the last highlight, carried into the pane by Find in corpus.
+  const highlightedCtx = useRef<{ raw: string; context: string; from: number } | null>(null);
+  const citeRef = useRef<{ raw: string; context: string; from: number | null } | null>(null);
+  // The sentence a cite sits in = its paragraph's words WITHOUT its footnotes'
+  // (a footnote is an inline node; textContent would splice its text into the
+  // sentence — 09-28, the pronoun note made a paragraph's cites impossible to
+  // find again). One rule for the highlight, the clicked underline and the log.
+  const paragraphContextAt = (from: number | null): string => {
+    const ed = editorRef.current;
+    if (!ed || from === null) return '';
+    try {
+      const para = ed.state.doc.resolve(from).parent;
+      let ctx = '';
+      para.forEach((child) => { if (child.type.name !== 'footnote') ctx += child.textContent; });
+      return ctx.replace(/\s+/g, ' ').trim();
+    } catch { return ''; }
+  };
+  const latest = useMemo(() => latestByCite(confs), [confs]);
+  const confirmCounts = useMemo(() => ({
+    confirmed: latest.filter((r) => r.status === 'confirmed').length,
+    problems: latest.filter((r) => r.status === 'problem').length,
+  }), [latest]);
+  const paneConfirmation = useMemo(
+    () => (pane?.cite ? latestFor(confs, pane.cite.raw, pane.cite.context, pane.cite.from) : null),
+    [pane?.cite, confs],
+  );
+  // The unanswered flag on this cite's WORDS, in whatever sentence they sat (a
+  // rewritten paragraph is a new occurrence; the flag is still the flag).
+  const paneOpenProblem = useMemo(() => (pane?.cite ? openProblemForWords(confs, pane.cite.raw) : null), [pane?.cite, confs]);
+  // Confirm the highlighted cite without opening it on the desk (a hard copy,
+  // another window): the row records no authority, and the log says so.
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  // The toolbar's note card: a Problem ("what is wrong"), or the note that
+  // goes with confirming a cite that was red ("resolved how? what was found?"
+  // — Eden, 09-28: a place to record why a flag went from red to green).
+  const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' | 'note'; was?: CiteConfirmation | null } | null>(null);
+  const [problemNote, setProblemNote] = useState('');
+  /** What the last rule-based path would have said on a miss; shown only if the assistant has no answer either. */
+  const missNote = useRef<string | null>(null);
+  /** The toolbar's Confirm: resolve an open flag on these words, add a note to a green cite, or just confirm. */
+  const confirmFromToolbar = () => {
+    const raw = highlightedCtx.current?.raw ?? highlighted.current ?? '';
+    const open = openProblemForWords(confs, raw);
+    if (open) { setProblemNote(''); setProblemFor({ raw, kind: 'resolved', was: open }); return; }
+    if (highlightedConfirmation?.status === 'confirmed') { setProblemNote(''); setProblemFor({ raw, kind: 'note', was: highlightedConfirmation }); return; }
+    void confirmHighlighted('confirmed');
+  };
+  const [highlightTick, setHighlightTick] = useState(0);        // re-read the highlight's own status after a press
+  const highlightedConfirmation = useMemo(() => {
+    const h = highlightedCtx.current;
+    void highlightTick;
+    return h ? latestFor(confs, h.raw, h.context, h.from) : null;
+  }, [confs, highlightTick]);  
+  const confirmHighlighted = async (status: ConfirmationStatus, note = '') => {
+    const h = highlightedCtx.current;
+    if (!h || confirmBusy) return;
+    setConfirmBusy(true);
+    try {
+      const row = await addConfirmation({
+        document_id: meta.id,
+        cite_raw: h.raw, context: h.context, pm_from: h.from,
+        authority_document_id: null, authority_title: null, authority_page: null,
+        status, note, initials,
+      });
+      setConfs((cur) => [...cur, row]);
+      setHighlightTick((t) => t + 1);
+      const when = new Date(row.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      p.setNotice(status === 'confirmed'
+        ? `Logged: ${h.raw} confirmed · ${row.initials} · ${when}. It is green in the brief and in the Log.`
+        : `Logged: a problem with ${h.raw} · ${row.initials} · ${when}. It is red in the brief and in the Log.`);
+    } catch (e) {
+      p.setNotice((e as Error).message);
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+  const confirmCite = async (status: ConfirmationStatus, note: string) => {
+    if (!pane?.cite || !pane.docId) return;
+    try {
+      // a record volume is opened by id with no title in hand: name it for the log
+      let title = pane.docTitle;
+      if (!title) {
+        const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+        title = (data as { title: string | null } | null)?.title ?? null;
+      }
+      const row = await addConfirmation({
+        document_id: meta.id,
+        cite_raw: pane.cite.raw,
+        context: pane.cite.context,
+        pm_from: pane.cite.from,
+        authority_document_id: pane.docId,
+        authority_title: title,
+        authority_page: pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
+        status, note, initials,
+      });
+      setConfs((cur) => [...cur, row]);
+      p.setNotice(null);
+    } catch (e) {
+      p.setNotice((e as Error).message);
+    }
+  };
   // Where the lawyer was reading when an authority opened (Eden, 09-27: "I was
   // looking at a cite and then lost my place").
   const briefScrollRef = useRef<HTMLDivElement>(null);
@@ -296,7 +490,8 @@ function DeskEditor(p: DeskProps) {
     const max = ed.state.doc.content.size;
     ed.commands.setTextSelection({ from: Math.min(rp.from, max), to: Math.min(rp.to, max) });
     ed.commands.focus();
-    if (briefScrollRef.current) briefScrollRef.current.scrollTo({ top: rp.scroll, behavior: 'smooth' });
+    // At once: "go back to my place quickly" (Eden, 09-27).
+    if (briefScrollRef.current) briefScrollRef.current.scrollTop = rp.scroll;
   };
   // Column widths, the lawyer's own (0 = the brief and the pane share evenly).
   const rowRef = useRef<HTMLDivElement>(null);
@@ -369,6 +564,7 @@ function DeskEditor(p: DeskProps) {
   };
   const closeOverlay = () => { if (overlay) window.history.back(); };
 
+  const recordRootRef = useRef<string | null>(null);   // the record the brief draws on (set below, read here)
   const openRow = useCallback((row: TableRow) => {
     markPlace();
     const e = row.entry;
@@ -384,17 +580,52 @@ function DeskEditor(p: DeskProps) {
           ? (res!.passage?.caveat ?? 'No star pages in this copy — showing page 1.')
           : null;
     gotoNonce.current += 1;
+    // The cite's words AS THE BRIEF HAS THEM (the entry's raw is normalised; the
+    // log and the green paint match on the text), else the entry's.
+    let raw = e?.raw ?? row.attrs?.raw ?? '';
+    if (row.from !== null && row.to !== null && editorRef.current) {
+      try { raw = editorRef.current.state.doc.textBetween(row.from, row.to, ' ', ' ').trim() || raw; } catch { /* keep the entry's */ }
+    }
     setPane({
       rowKey: rowKey(row),
       entry: e,
-      heading: e?.raw ?? row.attrs?.raw ?? '',
+      heading: raw,
       stale: row.stale && row.from !== null,
       docId,
       docTitle: resolved ? res!.hits[0].title : null,
-      goto: docId ? (passageId ? { passageId, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current }) : null,
+      // "at 2 n.1": a Word authority opens at its footnote 1 (10-02).
+      goto: docId ? { ...(passageId ? { passageId } : { page: 1 }), ...withNote(raw), nonce: gotoNonce.current } : null,
       caveat,
+      // The cite this pane is open FOR, so Confirm / Problem are there when the
+      // case was opened by clicking its underline or its table row (09-28: the
+      // pane had no Confirm at all on that path; only Find in corpus carried it).
+      cite: raw ? { raw, context: paragraphContextAt(row.from), from: row.from } : null,
     });
     if (narrow) openOverlay('authority');
+    // A cite the last machine pass did not find may be in the record NOW (added
+    // since — Frilando, 09-28): look again, live, and open it if it is there.
+    if (e && res && res.status === 'not_in_corpus' && recordRootRef.current) {
+      const root = recordRootRef.current;
+      void (async () => {
+        try {
+          const fresh = await resolveEntry(supabase, root, e);
+          if (fresh.status === 'resolved' && fresh.hits[0]) {
+            citeRef.current = { raw: e.raw, context: paragraphContextAt(row.from), from: row.from };
+            openDocument(fresh.hits[0].document_id, {
+              passageId: fresh.passage?.passage_id,
+              heading: e.raw,
+              title: fresh.hits[0].title,
+              caveat: 'Found in the record now — it was added after the last Locate pass. Locate every cite again to update the table.',
+            });
+          } else if (fresh.status === 'two_copies') {
+            // More than one copy (Pioneer ×3, 09-28): the pane offers them,
+            // instead of keeping the pass's stale "not in corpus".
+            const key = rowKey(row);
+            setPane((cur) => (cur && cur.rowKey === key ? { ...cur, entry: { ...e, resolution: storedOf(fresh) } } : cur));
+          }
+        } catch { /* the pane already says not in corpus */ }
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- openOverlay reads the latest overlay
   }, [narrow, overlay]);
 
@@ -411,21 +642,26 @@ function DeskEditor(p: DeskProps) {
       ...pane,
       docId: documentId,
       docTitle: hit?.title ?? null,
-      goto: passage ? { passageId: passage.passage_id, nonce: gotoNonce.current } : { page: 1, nonce: gotoNonce.current },
+      goto: { ...(passage ? { passageId: passage.passage_id } : { page: 1 }), ...withNote(pane.heading), nonce: gotoNonce.current },
       caveat: passage && passage.basis !== 'printed' ? passage.caveat ?? 'No star pages in this copy — showing page 1.' : null,
     });
   };
 
   // Any document into the pane: from the search, from a highlight, or from an
   // assistant working beside the lawyer (the 'cs:brief-open' event below).
-  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null } = {}) => {
+  /** The footnote a cite pins to, for the pane's jump ("at 2 n.1" → footnote 1). */
+  const withNote = (cite: string | null | undefined) => { const n = noteNumberOf(cite); return n ? { footnote: n } : {}; };
+  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null } = {}) => {
     markPlace();
     gotoNonce.current += 1;
+    const cite = citeRef.current; citeRef.current = null;      // consumed by the first document opened for it
     setPane((cur) => ({
       rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
       docId: documentId, docTitle: o.title ?? null,
-      goto: o.passageId ? { passageId: o.passageId, nonce: gotoNonce.current } : { page: o.page ?? 1, nonce: gotoNonce.current },
+      goto: { ...(o.passageId ? { passageId: o.passageId } : { page: o.page ?? 1 }), ...withNote(o.heading ?? cite?.raw), nonce: gotoNonce.current },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
+      appendix: o.appendix ?? null,
+      cite: cite ?? null,
     }));
     if (narrow) openOverlay('authority');
   };
@@ -434,21 +670,202 @@ function DeskEditor(p: DeskProps) {
   // ── Record cites: "A-10" is a page of the appendix THIS brief cites ─────
   // Which appendix is the lawyer's call, asked once and kept on the brief
   // (metadata.record_matter_id); then every A-cite opens at its stamped page.
-  const [chooser, setChooser] = useState<{ cite: RecordCite; label: string; sets: { matterId: string; name: string; volumes: Volume[] }[] } | null>(null);
-  const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string) => {
+  // The chooser lists the sets; with a cite, the pick also opens it. Without
+  // one (from "change" in Versions, no A-cite open), the pick is only kept.
+  const [chooser, setChooser] = useState<{ cite: RecordCite | null; label: string; current: string | null; sets: { matterId: string; name: string; volumes: Volume[] }[] } | null>(null);
+  const recordMatterId = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id ?? null;
+  // The kept appendix by its matter's name, for "Appendix: … · change".
+  const [appendixName, setAppendixName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!recordMatterId) { setAppendixName(null); return; }
+    let live = true;
+    supabase.from('matterspaces').select('name').eq('id', recordMatterId).maybeSingle()
+      .then(({ data }) => { if (live) setAppendixName((data as { name: string } | null)?.name ?? null); });
+    return () => { live = false; };
+  }, [recordMatterId]);
+  // ── The matter the brief draws on ────────────────────────────────────────
+  // The Orchestrator is bound to ONE matter and told to search nowhere else.
+  // The brief's own folder holds only the brief, and the case open in the
+  // pane sits in a leaf folder (09-27: bound to "Disability", it could not
+  // find the district court's opinion and offered to move documents). So the
+  // desk binds it to the record: the matter the lawyer chose, else the nearest
+  // matter that holds both the appendix and the cases folder, else the
+  // brief's own. Kept on the brief (metadata.record_root_matter_id).
+  const { data: spaces = [] } = useServerspaces();
+  const allMatters = useMemo(() => spaces.flatMap((s) => s.matterspaces ?? []), [spaces]);
+  const matterName = useCallback((id: string | null | undefined) => allMatters.find((m) => m.id === id)?.name ?? null, [allMatters]);
+  const casesMatterId = (meta.metadata as { cases_matter_id?: string } | null)?.cases_matter_id ?? null;
+  const chosenRootId = (meta.metadata as { record_root_matter_id?: string } | null)?.record_root_matter_id ?? null;
+  // The seal: the brief's highlighted words go to the pen the BOUND matter
+  // chooses. A brief filed under a seal may only be bound to a record that is
+  // sealed too — never to an open case above its sealed appendix, and never
+  // to an open matter the picker offered.
+  const briefSealed = isSealedIn(allMatters, meta.matterspace_id);
+  const keepsTheSeal = useCallback((id: string) => !briefSealed || isSealedIn(allMatters, id), [briefSealed, allMatters]);
+  const recordRootId = useMemo(() => {
+    if (chosenRootId && keepsTheSeal(chosenRootId)) return chosenRootId;
+    const anchors = [recordMatterId, casesMatterId].filter((x): x is string => !!x);
+    let derived = nearestCommonAncestor(allMatters, anchors);
+    // The anchors are folders INSIDE the case (an appendix set, a cases
+    // folder). When they meet only at one of themselves, the case is that
+    // folder's parent — the record is the whole case, not the appendix alone.
+    if (derived && anchors.includes(derived)) {
+      derived = allMatters.find((m) => m.id === derived)?.parent_matterspace_id ?? derived;
+    }
+    return derived && keepsTheSeal(derived) ? derived : meta.matterspace_id;
+  }, [chosenRootId, allMatters, recordMatterId, casesMatterId, meta.matterspace_id, keepsTheSeal]);
+  useEffect(() => { recordRootRef.current = recordRootId; }, [recordRootId]);
+  const recordRootName = matterName(recordRootId);
+  const [showRecordPick, setShowRecordPick] = useState(false);
+  const rememberRecordRoot = async (matterId: string) => {
+    if (!keepsTheSeal(matterId)) {
+      p.setNotice('This brief is in a SecureSpace. Its record must be inside the seal too; choose a sealed matter.');
+      return;
+    }
+    const metadata = { ...(meta.metadata ?? {}), record_root_matter_id: matterId };
+    const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
+    if (!error) p.setMeta({ ...meta, metadata });
+  };
+  // What the Orchestrator is told while the desk is open — over whatever the
+  // pane's Reader publishes (its matter is the case's folder). The caption is
+  // the brief's first lines as they read: court, docket, parties.
+  useEffect(() => {
+    if (!editor) return;
+    const caption = project(editor.state.doc).text.replace(/\s+/g, ' ').trim().slice(0, 600);
+    setSurfaceContext({
+      matterId: recordRootId,
+      matterName: recordRootName ?? undefined,
+      brief: {
+        title: meta.title ?? 'Untitled brief',
+        caption: caption || undefined,
+        recordMatterName: recordRootName ?? undefined,
+        appendixMatterName: matterName(recordMatterId) ?? undefined,
+        casesMatterName: matterName(casesMatterId) ?? undefined,
+        citesChecked: rows.length || undefined,
+      },
+    });
+  }, [editor, recordRootId, recordRootName, recordMatterId, casesMatterId, meta.title, rows.length, matterName]);
+  useEffect(() => () => clearSurfaceContext(), []);
+
+  // The last A-cite opened, so "change" can re-open it in the new appendix.
+  const lastRecord = useRef<{ cite: RecordCite; label: string } | null>(null);
+  const openRecordIn = async (volumes: Volume[], cite: RecordCite, label: string, name: string | null) => {
     const v = volumes.find((x) => cite.first >= x.from && cite.first <= x.to);
     if (!v) { p.setNotice(`No volume of that appendix covers A-${cite.first}.`); return; }
+    lastRecord.current = { cite, label };
     const at = await pageOfStamp(supabase, v, cite.first);
     openDocument(v.id, {
       page: at.page,
       heading: label,
       caveat: at.basis === 'estimate' ? `The A-${cite.first} stamp is not in this volume's text; this is where it should fall.` : null,
+      appendix: { name: name ?? appendixName ?? 'the chosen appendix' },
     });
   };
   const rememberRecord = async (matterId: string) => {
     const metadata = { ...(meta.metadata ?? {}), record_matter_id: matterId };
     const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
     if (!error) p.setMeta({ ...meta, metadata });
+  };
+  const namesOf = async (ids: string[]) => {
+    const { data } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+    return new Map(((data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+  };
+  // An A-cite to its page. `rechoose` ignores the kept appendix and asks
+  // again — the lawyer's "change" — and with no cite lists every appendix.
+  const openRecordCite = async (cite: RecordCite | null, label: string, rechoose = false) => {
+    p.setBusy('Finding the appendices…');
+    try {
+      const sets = await appendixSets(supabase, cite?.first ?? null);
+      p.setBusy(null);
+      const kept = recordMatterId;
+      if (cite && !rechoose && kept && sets.has(kept)) { await openRecordIn(sets.get(kept)!, cite, label, appendixName); return; }
+      if (sets.size === 0) {
+        p.setNotice(cite ? `No appendix volume in your matters covers A-${cite.first}.` : 'No appendix volumes are filed in your matters. A volume is one named for its range, "(A-1 to A-77)".');
+        return;
+      }
+      const ids = [...sets.keys()];
+      const names = await namesOf(ids);
+      if (sets.size === 1 && (!rechoose || ids[0] === kept)) {
+        // Nothing to choose between. Kept as the answer; on "change", said so.
+        const [only] = ids;
+        if (only !== kept) await rememberRecord(only);
+        if (rechoose) { p.setNotice(`Only one appendix in your matters${cite ? ` covers A-${cite.first}` : ''}: ${names.get(only) ?? 'this one'}.`); return; }
+        if (cite) await openRecordIn(sets.get(only)!, cite, label, names.get(only) ?? null);
+        return;
+      }
+      setChooser({
+        cite, label, current: kept,
+        sets: ids.map((id) => ({ matterId: id, name: names.get(id) ?? 'A matter', volumes: sets.get(id)! }))
+          .sort((a, b) => Number(/final/i.test(b.name)) - Number(/final/i.test(a.name)) || a.name.localeCompare(b.name)),
+      });
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
+    }
+  };
+  // "De Camara Dep. Vol. I 63:21–64:2": a transcript page, no record page. The
+  // appendix's text knows a sheet's transcript pages but not whose deposition
+  // it is; the builder's PAGE MAP (a CSV filed in the appendix's matter) does.
+  // Read once per appendix; the sheet opens with the A-page named, so the
+  // lawyer can add it to the brief.
+  const pageMapRef = useRef<{ matterId: string; rows: PageMapRow[]; title: string } | null>(null);
+  const loadPageMap = async (matterId: string) => {
+    if (pageMapRef.current?.matterId === matterId) return pageMapRef.current;
+    const { data, error } = await supabase
+      .from('documents')
+      .select('id, title, source_filename, storage_path, created_at')
+      .eq('matterspace_id', matterId)
+      .not('storage_path', 'is', null)
+      .or('title.ilike.%page map%,title.ilike.%pagemap%,source_filename.ilike.%page map%,source_filename.ilike.%pagemap%')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error) throw new Error(error.message);
+    type Row = { id: string; title: string | null; source_filename: string | null; storage_path: string };
+    const doc = ((data ?? []) as Row[]).find((d) => /\.csv$/i.test(d.source_filename ?? d.storage_path));
+    let rows: PageMapRow[] = [];
+    if (doc) rows = parsePageMap(await (await storageObjectBlob(doc.storage_path)).text());
+    pageMapRef.current = { matterId, rows, title: doc?.title ?? '' };
+    return pageMapRef.current;
+  };
+  const openDepoCite = async (dp: DepoCite, label: string): Promise<void> => {
+    const matterId = recordMatterId;
+    const where = appendixName ?? 'the appendix this brief cites';
+    if (!matterId) {
+      p.setNotice(`“${label}” names a transcript page, not a record page. Open one A-cite first, so the desk knows which appendix this brief cites; then it can look the transcript page up in that appendix's page map.`);
+      return;
+    }
+    p.setBusy('Reading the appendix page map…');
+    let map: { rows: PageMapRow[]; title: string };
+    try { map = await loadPageMap(matterId); } catch (e) { p.setBusy(null); p.setNotice(`The appendix page map could not be read: ${(e as Error).message}`); return; }
+    p.setBusy(null);
+    if (!map.rows.length) {
+      p.setNotice(`“${label}” names a transcript page, not a record page, and ${where} has no page map filed. File the appendix builder's page map (a CSV named “page map”, columns a_page, volume, pdf_page_in_volume, deponent, version, tr_pages) in that matter, and deposition cites will open at their A-page.`);
+      return;
+    }
+    const hits = findDepoPage(map.rows, dp);
+    if (!hits.length) {
+      p.setNotice(`No sheet of ${where} carries ${dp.deponent}${dp.volume !== null ? ` Vol. ${dp.volume}` : ''} p. ${dp.page}, by its page map (“${map.title}”). Check the deponent's name and the page number.`);
+      return;
+    }
+    const h = hits[0];
+    const others = hits.slice(1).filter((o) => o.a_page !== h.a_page).map((o) => `A-${o.a_page} (${o.deponent}${o.version ? `, ${o.version}` : ''})`);
+    const caveat = [
+      `${label.replace(/^\s*\(?\s*(?:citing|see|quoting)\s+/i, '').replace(/[).;,\s]+$/, '')} is A-${h.a_page}${h.tr_pages ? ` (the sheet holds tr. ${h.tr_pages})` : ''}${h.version ? `, ${h.version} transcript` : ''}. The brief cites the transcript without its record page — add A-${h.a_page}.`,
+      others.length ? `Also at ${others.join('; ')}${dp.volume === null ? '; the cite names no volume' : ''}.` : null,
+    ].filter(Boolean).join(' ');
+    const rc: RecordCite = { first: h.a_page, last: null };
+    const sets = await appendixSets(supabase, h.a_page);
+    const v = (sets.get(matterId) ?? []).find((x) => h.a_page >= x.from && h.a_page <= x.to);
+    if (!v) { await openRecordCite(rc, label); p.setNotice(caveat); return; }
+    lastRecord.current = { cite: rc, label };
+    const page = h.pdf_page ?? (await pageOfStamp(supabase, v, h.a_page)).page;
+    openDocument(v.id, { page, heading: label, caveat, appendix: { name: appendixName ?? map.title } });
+  };
+  // "change": with an A-cite open, re-ask for that number and re-open it
+  // there; otherwise list every appendix and only keep the choice.
+  const changeAppendix = () => {
+    const last = lastRecord.current;
+    void openRecordCite(last?.cite ?? null, last?.label ?? '', true);
   };
   // "Morgan v. Allison Crane & Rigging, LLC, 114 F.4th 214, 218": the case that
   // carries 114 F.4th 214 in any matter this person can read (the index ingest
@@ -484,55 +901,406 @@ function DeskEditor(p: DeskProps) {
     return false;
   };
 
+  // The reporter index missed: the same resolver the Locate pass uses, bound
+  // to the record (same case name AND year counts — Pioneer's file opens
+  // with its S. Ct. cite only). One copy opens; several are offered.
+  const openByResolver = async (label: string): Promise<boolean> => {
+    const root = recordRootRef.current;
+    if (!root) return false;
+    let fresh: Resolution;
+    try {
+      fresh = await resolveEntry(supabase, root, { citation: label, case_name: null, pin: null });
+    } catch { return false; }
+    if (fresh.status === 'resolved' && fresh.hits[0]) {
+      openDocument(fresh.hits[0].document_id, {
+        passageId: fresh.passage?.passage_id,
+        heading: label,
+        title: fresh.hits[0].title,
+        caveat: [
+          fresh.hits[0].how === 'name' ? 'Matched by the case name and the year: this file opens with another of the case\'s reporter cites.' : null,
+          fresh.passage && fresh.passage.basis !== 'printed' ? fresh.passage.caveat : null,
+        ].filter(Boolean).join(' ') || null,
+      });
+      return true;
+    }
+    if (fresh.status === 'two_copies') {
+      markPlace();
+      const cite = citeRef.current; citeRef.current = null;
+      // The pane's chooser reads only the entry's resolution, citation and name.
+      const entry = { raw: label, citation: label, case_name: null, pin: null, resolution: storedOf(fresh) } as unknown as DeskEntry;
+      setPane({ rowKey: null, entry, heading: label, stale: false, docId: null, docTitle: null, goto: null, caveat: null, cite: cite ?? null });
+      if (narrow) openOverlay('authority');
+      return true;
+    }
+    return false;
+  };
+
+  // A case cited by index or docket number — "Index No. 508835/2024" — found
+  // by that number in the record: on a document's title or filename (a court
+  // download keeps the court's name for it), else on a first page. A second
+  // look by the first party's surname plus the year, when the number is not
+  // in the name. One document opens; several are offered. (Eden, 09-28:
+  // DiSanto, filed as "508835_2024_PETRINA_DISANTO_…pdf", was "not found".)
+  const openByIndexNumber = async (label: string): Promise<boolean> => {
+    // the number in the highlight; else, for a caption highlighted on its own,
+    // the number the brief gives after that caption
+    const briefText = editorRef.current?.state.doc.textContent ?? '';
+    const defined = definingText(label, briefText);   // '… OATH Index No. 26-1305 … (the “OATH Petition”)'
+    const c = parseIndexCite(label)
+      ?? (/\sv\.?\s|^\s*(?:Matter of|In re)\b/i.test(label) ? indexCiteFromBrief(label, briefText) : null)
+      ?? (defined ? parseIndexCite(defined) : null);
+    if (!c) return false;
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    const scope = ids.length ? ids : [root];
+    const escLike = (s: string) => s.replace(/[%_\\]/g, (x) => '\\' + x).replace(/[,()]/g, ' ');
+    p.setBusy(`Looking for No. ${c.number}${c.year ? `/${c.year}` : ''} in ${recordRootName ?? 'the record'}…`);
+    try {
+      type Doc = { id: string; title: string | null; source_filename: string | null };
+      const byName = async (needles: string[]) => {
+        const ors = needles.flatMap((n) => [`title.ilike.%${escLike(n)}%`, `source_filename.ilike.%${escLike(n)}%`]).join(',');
+        const { data, error } = await supabase.from('documents').select('id, title, source_filename').in('matterspace_id', scope).neq('id', meta.id).or(ors).limit(20);
+        if (error) throw new Error(error.message);
+        return (data ?? []) as Doc[];
+      };
+      let docs = await byName(c.titleNeedles);
+      let how = 'its index number is in the document\'s name';
+      if (!docs.length && c.surname && c.year) {
+        const all = await byName([c.surname]);
+        docs = all.filter((d) => `${d.title ?? ''} ${d.source_filename ?? ''}`.includes(c.year as string));
+        how = `"${c.surname}" and ${c.year} are in the document's name`;
+      }
+      let passageId: string | undefined;
+      if (!docs.length) {
+        const ors = c.textNeedles.map((n) => `text.ilike.%${escLike(n)}%`).join(',');
+        const { data, error } = await supabase.from('passages').select('id, document_id, page_start').in('matterspace_id', scope).eq('summary_level', 0).neq('document_id', meta.id).or(ors).order('page_start', { ascending: true }).limit(20);
+        if (error) throw new Error(error.message);
+        type P = { id: string; document_id: string; page_start: number | null };
+        const rows = (data ?? []) as P[];
+        const firstByDoc = new Map<string, P>();
+        for (const r of rows) if (!firstByDoc.has(r.document_id)) firstByDoc.set(r.document_id, r);
+        if (firstByDoc.size) {
+          const { data: dd } = await supabase.from('documents').select('id, title, source_filename').in('id', [...firstByDoc.keys()]);
+          docs = ((dd ?? []) as Doc[]);
+          if (docs.length === 1) passageId = firstByDoc.get(docs[0].id)?.id;
+          how = 'its index number is on a page of the document';
+        }
+      }
+      p.setBusy(null);
+      if (!docs.length) {
+        missNote.current = `No document in ${recordRootName ?? 'this matter'} carries No. ${c.number}${c.year ? `/${c.year}` : ''} in its name or on a page${c.surname ? `, and none is named "${c.surname}"${c.year ? ` with ${c.year}` : ''}` : ''}. If it is filed under another name, rename it to the case name in the Reader; if not, Add a case.`;
+        return false;
+      }
+      const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
+      if (docs.length === 1) {
+        openDocument(docs[0].id, { passageId, page: passageId ? undefined : 1, heading: label, title: titleOf(docs[0]), caveat: `Matched because ${how}. Check the caption on the first page.` });
+        return true;
+      }
+      setContentHits({
+        label, number: `No. ${c.number}${c.year ? `/${c.year}` : ''}`, from: 'cite',
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: 1, snippet: `Matched because ${how}.` }], namedForIt: true })),
+      });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The record could not be searched: ${(e as Error).message}`);
+      return true;
+    }
+  };
+
+  // After every rule has run and missed: the judgment step. The assistant is
+  // shown the cite, its sentence and the NAMES of the record's documents, and
+  // asked which one the cite means. It chooses only from that list; what
+  // opens says it was the assistant's pick; nothing is confirmed by it.
+  // (Eden, 09-28: "give the Desk some intelligence … application of some
+  // intelligence solves the issue quite quickly.")
+  const openByAssistant = async (label: string): Promise<boolean> => {
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    const scope = ids.length ? ids : [root];
+    p.setBusy(`Asking the assistant which document in ${recordRootName ?? 'the record'} this is…`);
+    try {
+      const page = await fetchMatterDocumentRows(supabase as unknown as DocumentsSource, scope, { order: 'name', ceiling: 400 });
+      const candidates = page.rows
+        .filter((r) => r.id !== meta.id && r.processing_status !== 'error')
+        .map((r) => ({ id: r.id, title: r.title || r.source_filename || 'Untitled document', filename: r.source_filename }));
+      const sentence = highlightedCtx.current?.raw === label ? highlightedCtx.current.context : '';
+      const m = await assistantMatch({ cite: label, sentence, candidates, modelId: ASSISTANT_MATCH_MODEL, matterId: root });
+      p.setBusy(null);
+      if (!m) return false;
+      const doc = candidates.find((c) => c.id === m.document_id)!;
+      openDocument(doc.id, {
+        page: 1,
+        heading: label,
+        title: doc.title,
+        caveat: `The assistant's pick from the file's names (${m.confidence} confidence): ${m.why} Read the caption before you confirm.`,
+      });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      missNote.current = `${missNote.current ? missNote.current + ' ' : ''}(The assistant could not be asked: ${(e as Error).message})`;
+      return false;
+    }
+  };
+
+  // A record document cited by shorthand — "OATH Pet. at 4", "Bushell Aff.
+  // ¶ 12" — found by NAME in the record: the court-filing abbreviations
+  // expanded (Pet. → Petition; Aff. → Affidavit or Affirmation), every word
+  // of the cite in the document's name in some form. One opens at the pinned
+  // page; several (two petitions) are offered. (Eden, 09-28: "'Pet.' is a
+  // common shorthand … the system should resolve common abbreviations".)
+  const openByDocumentName = async (label: string): Promise<boolean> => {
+    const c = parseDocumentCite(label);
+    if (!c || !c.isDocument) return false;
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    const scope = ids.length ? ids : [root];
+    const escLike = (s: string) => s.replace(/[%_\\]/g, (x) => '\\' + x).replace(/[,()]/g, ' ');
+    p.setBusy(`Looking for ${c.words.map((w) => w[0]).join(' ')} in ${recordRootName ?? 'the record'}…`);
+    try {
+      let q = supabase.from('documents').select('id, title, source_filename').in('matterspace_id', scope).neq('id', meta.id);
+      for (const forms of c.words) {
+        q = q.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
+      }
+      const { data, error } = await q.limit(20);
+      if (error) throw new Error(error.message);
+      type Doc = { id: string; title: string | null; source_filename: string | null };
+      let docs = (data ?? []) as Doc[];
+      let how = 'by name';
+      if (!docs.length) {
+        // the caption on a first page: "OFFICE OF ADMINISTRATIVE TRIALS & HEARINGS … DEPARTMENT OF
+        // CONSUMER AND WORKER PROTECTION, Petitioner" is "OATH Pet." (the acronyms' long forms)
+        let pq = supabase.from('passages').select('document_id').in('matterspace_id', scope).eq('summary_level', 0).lte('sequence_number', 4).neq('document_id', meta.id);
+        for (const forms of c.words) pq = pq.or(forms.map((f) => `text.ilike.%${escLike(f)}%`).join(','));
+        const { data: pd, error: pe } = await pq.limit(60);
+        if (pe) throw new Error(pe.message);
+        const ids = [...new Set(((pd ?? []) as { document_id: string }[]).map((r) => r.document_id))];
+        if (ids.length) {
+          const { data: dd } = await supabase.from('documents').select('id, title, source_filename').in('id', ids);
+          docs = (dd ?? []) as Doc[];
+          how = 'on its first page';
+        }
+      }
+      p.setBusy(null);
+      if (!docs.length) {
+        missNote.current = `No document in ${recordRootName ?? 'this matter'} is named with ${c.words.map((w) => w.length > 1 ? `“${w[0]}”${w.length > 2 ? ` (or ${w.slice(1, -1).join(', ')})` : ''}` : `“${w[0]}”`).join(' and ')}. Rename it in the Reader to the words the brief uses, or Add a case.`;
+        return false;
+      }
+      const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
+      const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
+      if (docs.length === 1) {
+        openDocument(docs[0].id, { page: c.page ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}. Check the caption.` });
+        return true;
+      }
+      setContentHits({
+        label, number: c.words.map((w) => w[0]).join(' '), from: 'cite',
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
+      });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The record could not be searched: ${(e as Error).message}`);
+      return true;
+    }
+  };
+
+  // A statute, rule or regulation — by number, or by a NAME the brief itself
+  // pairs with a number ("the Holder Rule, 16 C.F.R. § 433.2") — found inside
+  // the record's documents, not only by their names (Eden, 09-28: Admin Code
+  // § 20-393, Charter § 2203, 6 RCNY § 6-02, CPLR 3001/7803/7805 and the
+  // Holder Rule all "not found" while GBL § 771, quoted in a filed document,
+  // was). One document opens at the page; several are offered.
+  const [contentHits, setContentHits] = useState<{ label: string; number: string; from: 'cite' | 'brief'; hits: ProvisionHit[] } | null>(null);
+  const openByContent = async (label: string): Promise<boolean> => {
+    const briefText = editorRef.current?.state.doc.textContent ?? '';
+    const q = provisionQuery(label, briefText);
+    if (!q) return false;
+    const root = recordRootRef.current ?? meta.matterspace_id;
+    const ids = subtreeIds(allMatters, root);
+    p.setBusy(`Searching ${recordRootName ?? 'the record'} for ${q.number ? `§ ${q.number}` : `“${q.name}”`}…`);
+    let hits: ProvisionHit[];
+    try {
+      // the section's own text, by name, first; the text scan only when no document is named for it
+      hits = await findProvisionByName(q, ids.length ? ids : [root], meta.id);
+      if (!hits.length) hits = await findProvisionInRecord(q, ids.length ? ids : [root], meta.id);
+    } catch (e) { p.setBusy(null); p.setNotice(`The record could not be searched: ${(e as Error).message}`); return true; }
+    p.setBusy(null);
+    if (!hits.length) {
+      missNote.current = `Nothing in ${recordRootName ?? 'this matter'} names or quotes ${q.number ? `§ ${q.number}` : `“${q.name}”`}${q.from === 'brief' ? ` (the number the brief pairs with “${label.trim()}”)` : ''}. File its text with Add a case — a name that starts with the section number is found at once.`;
+      return false;
+    }
+    const open = (h: ProvisionHit) => {
+      const first = h.passages[0];
+      openDocument(h.document_id, {
+        passageId: first?.passage_id || undefined,
+        page: first?.passage_id ? undefined : (first?.page ?? 1),
+        heading: label,
+        title: h.title,
+        caveat: h.namedForIt
+          ? (q.from === 'brief' ? `§ ${q.number}: the number the brief pairs with “${label.trim()}”.` : null)
+          : `Found inside this document's text${first?.page ? ` (page ${first.page})` : ''}, not by its name${q.from === 'brief' ? ` — § ${q.number}, the number the brief pairs with “${label.trim()}”` : ''}.`,
+      });
+    };
+    // one document, or exactly one named for the section: open it; several named for it (2203 and 2203(h)(1)): offer them
+    if (hits.length === 1 || (hits[0].namedForIt && !hits[1]?.namedForIt)) { open(hits[0]); return true; }
+    setContentHits({ label, number: q.number, from: q.from, hits });
+    return true;
+  };
+
   // "Does the case support this?" — the proposition and the authority, into
   // the Orchestrator's box. Nothing is sent until the lawyer presses Enter.
   const askAbout = async () => {
     const sel = (highlighted.current ?? '').trim();
     if (!sel) return;
     let title: string | null = pane?.docTitle ?? null;
-    let matterId = meta.matterspace_id;
-    if (pane?.docId) {
-      const { data } = await supabase.from('documents').select('title, matterspace_id').eq('id', pane.docId).maybeSingle();
-      const d = data as { title: string | null; matterspace_id: string } | null;
-      if (d) { title = title ?? d.title; matterId = d.matterspace_id; }
+    if (pane?.docId && !title) {
+      const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+      title = (data as { title: string | null } | null)?.title ?? null;
     }
+    // Bound to the record the brief draws on — never the case's own folder.
     runInAssistant({
-      matterId,
+      matterId: recordRootId,
+      matterName: recordRootName ?? undefined,
       draft: title
         ? `Does ${title} support this proposition from the brief? “${sel}” `
         : `Which authority in this matter supports this proposition from the brief? “${sel}” `,
     });
   };
 
+  // The brief shows what has been read: the latest row per cite colours its
+  // words (CSS Custom Highlights, the text untouched). Each cite is found by
+  // its sentence first, then its words inside it, so it survives reflow and
+  // small edits elsewhere; a sentence that was itself edited simply loses its
+  // colour until it is read again.
+  const paintConfirmed = useCallback(() => {
+    if (!editor) return;
+    const g = globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown };
+    const reg = g.CSS?.highlights;
+    if (!reg || !g.Highlight) return;
+    const proj = project(editor.state.doc);
+    // Match on whitespace-collapsed text (the stored sentence is collapsed), mapping back to real offsets.
+    const map: number[] = [];
+    let text = '';
+    let prevSpace = false;
+    for (let i = 0; i < proj.text.length; i++) {
+      const ch = proj.text[i];
+      const isSpace = /\s/.test(ch);
+      if (isSpace && prevSpace) continue;
+      map.push(i); text += isSpace ? ' ' : ch; prevSpace = isSpace;
+    }
+    const orig = (k: number) => (k < map.length ? map[k] : proj.text.length);
+    const ranges: Record<'confirmed' | 'problem', Range[]> = { confirmed: [], problem: [] };
+    for (const row of latest) {
+      const raw = row.cite_raw.trim();
+      if (!raw) continue;
+      // every occurrence of the words inside the sentence; the one nearest the
+      // recorded place is this row's (the same cite twice in a paragraph)
+      const cands: number[] = [];
+      if (row.context) {
+        const c = text.indexOf(row.context.trim());
+        if (c >= 0) {
+          const end = c + row.context.trim().length + 8;
+          for (let k = text.indexOf(raw, c); k >= 0 && k < end; k = text.indexOf(raw, k + 1)) cands.push(k);
+        }
+      }
+      if (!cands.length) {
+        // the sentence is not found as stored (edited since, or a footnote's words were
+        // captured with it): fall back to every occurrence of the cite in the brief, and
+        // let the recorded place pick
+        for (let k = text.indexOf(raw); k >= 0; k = text.indexOf(raw, k + 1)) cands.push(k);
+        if (row.pm_from === null && cands.length > 1) cands.length = 1;
+      }
+      if (!cands.length) continue;
+      let pm: { from: number; to: number } | null = null;
+      let bestD = Infinity;
+      for (const at of cands) {
+        const cand = plainRangeToPm(proj, orig(at), orig(at + raw.length - 1) + 1);
+        if (!cand) continue;
+        const d = row.pm_from === null ? cands.indexOf(at) : Math.abs(cand.from - row.pm_from);
+        if (d < bestD) { bestD = d; pm = cand; }
+      }
+      if (!pm) continue;
+      try {
+        const a = editor.view.domAtPos(pm.from); const b = editor.view.domAtPos(pm.to);
+        const r = document.createRange(); r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset);
+        ranges[row.status].push(r);
+      } catch { /* a position outside the rendered view */ }
+    }
+    if (ranges.confirmed.length) reg.set('brief-confirmed', new g.Highlight(...ranges.confirmed)); else reg.delete('brief-confirmed');
+    if (ranges.problem.length) reg.set('brief-problem', new g.Highlight(...ranges.problem)); else reg.delete('brief-problem');
+  }, [editor, latest]);
+  useEffect(() => {
+    paintConfirmed();
+    if (!editor) return;
+    const onUpdate = () => paintConfirmed();
+    editor.on('update', onUpdate);
+    return () => { editor.off('update', onUpdate); };
+  }, [editor, paintConfirmed]);
+
   const findHighlighted = async () => {
     const label = highlighted.current ?? '';
+    // whatever opens next beside the brief was opened FOR this cite
+    citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
+    missNote.current = null;
     const cite = parseRecordCite(label);
     if (!cite) {
+      // "De Camara Dep. Vol. I 63:21–64:2": the appendix sheet, through its page map.
+      const dp = parseDepoCite(label);
+      if (dp) { await openDepoCite(dp, label); return; }
+      // "Id., Doc. 23": the docket number comes from the sentence ("No. 26-2098, Doc. 18. … Id., Doc. 23")
+      // or, failing that, from the last docket cite opened on this desk.
+      const ctx = highlightedCtx.current?.raw === label ? highlightedCtx.current.context : '';
+      const before = ctx ? ctx.slice(0, Math.max(0, ctx.indexOf(label))) : '';
+      const inSentence = [...before.matchAll(/No\.\s*(\d{2}-\d{4,5})/g)].pop()?.[1] ?? null;
+      const dk = parseDocketCite(label, inSentence ?? lastDocket.current);
+      if (dk) { lastDocket.current = dk.docket ?? lastDocket.current; if (await openDocketCite(dk, label)) return; }
+      else if (/^(?:Id\.,?\s*)?(?:Doc\.|Dkt\.)\s*\d/i.test(label.trim())) {
+        p.setNotice('Which docket is “Id.” here? Highlight the cite together with the docket number it follows (No. 26-2098, Doc. 18), or open one full docket cite first.');
+        return;
+      }
       if (await openByReporter(label)) return;
+      if (await openByResolver(label)) return;
+      if (await openByIndexNumber(label)) return;
+      if (await openByDocumentName(label)) return;
+      if (await openByContent(label)) return;
+      if (await openByAssistant(label)) return;
+      if (missNote.current) p.setNotice(missNote.current);
       setSearch(findQueryFor(label));
       return;
     }
+    await openRecordCite(cite, label);
+  };
+
+  // "No. 26-2098, Doc. 5" / "ECF 80": the docket sheet in the record at the
+  // page listing the entry; the filed paper, when the pull holds it, is named.
+  const lastDocket = useRef<string | null>(null);
+  const openDocketCite = async (dk: ReturnType<typeof parseDocketCite>, label: string): Promise<boolean> => {
+    if (!dk) return false;
     try {
-      const sets = await appendixSetsFor(supabase, cite.first);
-      const kept = (meta.metadata as { record_matter_id?: string } | null)?.record_matter_id;
-      if (kept && sets.has(kept)) { await openRecordIn(sets.get(kept)!, cite, label); return; }
-      if (sets.size === 0) { p.setNotice(`No appendix volume in your matters covers A-${cite.first}.`); return; }
-      if (sets.size === 1) {
-        const [only] = [...sets.entries()];
-        await rememberRecord(only[0]);
-        await openRecordIn(only[1], cite, label);
-        return;
+      const hit = await findDocketEntry(supabase, dk);
+      if (!hit) {
+        p.setNotice(dk.kind === 'appellate'
+          ? `No docket sheet for No. ${dk.docket} is filed in your matters.`
+          : 'No district-court docket sheet is filed in your matters.');
+        return false;
       }
-      const ids = [...sets.keys()];
-      const { data } = await supabase.from('matterspaces').select('id, name').in('id', ids);
-      const names = new Map(((data ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
-      setChooser({
-        cite, label,
-        sets: ids.map((id) => ({ matterId: id, name: names.get(id) ?? 'A matter', volumes: sets.get(id)! }))
-          .sort((a, b) => Number(/final/i.test(b.name)) - Number(/final/i.test(a.name)) || a.name.localeCompare(b.name)),
+      const where = dk.kind === 'appellate' ? `No. ${dk.docket}, Doc. ${dk.entry}` : `ECF ${dk.entry}`;
+      openDocument(hit.documentId, {
+        page: hit.page,
+        heading: label,
+        title: hit.title,
+        caveat: [
+          hit.basis === 'entry' ? `Docket entry ${dk.entry} is listed on this page.`
+            : hit.basis === 'estimate' ? `Entry ${dk.entry}'s line is not in the sheet's text layer; this is the page where its neighbours are listed.`
+              : `Entry ${dk.entry} was not found in the sheet's text; showing its first page.`,
+          hit.papers ? `The filed papers are in “${hit.papers.title}”.` : null,
+          `(${where})`,
+        ].filter(Boolean).join(' '),
       });
+      return true;
     } catch (e) {
-      p.setNotice(`The appendix could not be searched: ${(e as Error).message}`);
+      p.setNotice(`The docket could not be searched: ${(e as Error).message}`);
+      return false;
     }
   };
 
@@ -546,7 +1314,12 @@ function DeskEditor(p: DeskProps) {
     const onSel = () => {
       const { from, to } = editor.state.selection;
       const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
-      if (text.length >= 2 && text.length <= 400) { highlighted.current = text; setHasHighlight(true); }
+      if (text.length >= 2 && text.length <= 400) {
+        if (highlighted.current !== text) setHighlightTick((t) => t + 1);
+        highlighted.current = text; setHasHighlight(true);
+        // the sentence the cite sits in, for the log and for finding it again after edits
+        highlightedCtx.current = { raw: text, context: paragraphContextAt(from), from };
+      }
       else if (!text) setHasHighlight(false);
       (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
         ...((window as unknown as { __briefDesk?: object }).__briefDesk ?? {}),
@@ -618,6 +1391,7 @@ function DeskEditor(p: DeskProps) {
         all,
         onProgress: setProgress,
         signal: ac.signal,
+        recordMatterId: recordRootId,
       });
       runRef.current = out.run;
       setRun(out.run);
@@ -631,7 +1405,7 @@ function DeskEditor(p: DeskProps) {
       if (out.dropped) parts.push(`${out.dropped} no longer in the brief`);
       if (result.notLocated.length) parts.push(`${result.notLocated.length} not located in the text (listed at the end of the table)`);
       if (out.setAside) parts.push(`${out.setAside} the model named that are not in the text, set aside`);
-      p.setNotice(`Confirmed: ${parts.join('; ')}.${out.snapshotPublished ? '' : ' The version was saved, but search could not be updated.'}`);
+      p.setNotice(`Located: ${parts.join('; ')}. Nothing is verified yet: read each page and press Confirm.${out.snapshotPublished ? '' : ' The version was saved, but search could not be updated.'}`);
     } catch (e) {
       p.setNotice(e instanceof DOMException && e.name === 'AbortError'
         ? 'Stopped. The check was left unfinished and nothing on the page changed.'
@@ -714,12 +1488,27 @@ function DeskEditor(p: DeskProps) {
     }
   };
 
-  const copyMine = async () => {
-    if (!editor) return;
-    await navigator.clipboard.writeText(serialize(editor.getJSON()));
-    p.setNotice('Your version is on the clipboard as Markdown.');
-  };
-
+  // The machine pass lives with the cite table, not in the writing toolbar
+  // (Eden, 09-28: "it should be a bit hidden so it's not the first thing you
+  // are drawn to"). Still one click, still shows its counts and progress.
+  const locateControl = (
+    <ConfirmControl
+      counts={run?.counts ?? null}
+      changedSince={changedSince}
+      progress={progress}
+      disabled={!!p.busy || save === 'conflict'}
+      onConfirm={() => void confirm(false)}
+      onRecheckAll={() => void confirm(true)}
+      onStop={() => abortRef.current?.abort()}
+      hasRun={!!run}
+      // Where every lookup goes (Find in corpus, the pass, the Orchestrator):
+      // always in view, always changeable. Until 09-28 it showed only on the
+      // arrival banner, and a brief imported into the wrong matter searched
+      // the wrong case with nothing on screen to say so.
+      record={recordRootName ?? matterName(meta.matterspace_id) ?? 'this matter'}
+      onChangeRecord={() => setShowRecordPick(true)}
+    />
+  );
   const topBlock = (
     <>
       {p.editable && editor && (
@@ -729,41 +1518,39 @@ function DeskEditor(p: DeskProps) {
           onBack={returnPoint ? backToPlace : undefined}
           onSnapshot={() => void snapshot(null)}
           busy={!!p.busy || !!progress}
-          confirm={
-            <ConfirmControl
-              counts={run?.counts ?? null}
-              changedSince={changedSince}
-              progress={progress}
-              disabled={!!p.busy || save === 'conflict'}
-              onConfirm={() => void confirm(false)}
-              onRecheckAll={() => void confirm(true)}
-              onStop={() => abortRef.current?.abort()}
-              hasRun={!!run}
-            />
-          }
         />
       )}
 
       {save === 'conflict' && (
+        // Inform only (Eden, 10-02): versions are reconciled in a considered
+        // step, not by a button here. What is on screen can be kept as the
+        // next version.
         <Banner tone="warn">
-          This brief was changed elsewhere (another tab or another person) after you opened it. Nothing here was saved over it.
-          <span className="ml-2 inline-flex gap-2">
-            <button className="underline" onClick={() => void copyMine()}>Copy my version</button>
-            <button className="underline" onClick={p.onReload}>Reload theirs</button>
-          </span>
+          This brief was changed in another window after you opened it, so your edits here are not being saved to it.
+          To keep what is on screen, use “Save as {nextVersionLabel(meta.title ?? '')}”.
         </Banner>
       )}
       {p.arrival && p.editable && !run && !progress && (
         <Banner tone="info" onClose={p.clearLosses}>
           <button
             onClick={() => { p.clearLosses(); void confirm(false); }}
-            className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/40 bg-[#e8b84a]/15 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/25"
+            className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-white/[0.14] text-[12px] text-white/70 hover:bg-white/[0.06] hover:text-white"
+            title="A machine pass that finds each cite in the record and marks it. It verifies nothing; your Confirm on each cite does."
           >
-            <ShieldCheck size={13} /> Confirm this brief
+            <Search size={13} /> Locate every cite
           </button>
+          {/* Where the check looks: the matter the brief draws on, changeable
+              before the first Confirm (a brief filed in a narrow folder). */}
+          <span className="ml-3 text-[12px] text-white/55" data-testid="arrival-record">
+            Its cites are looked up in <span className="text-white/80">{recordRootName ?? 'this matter'}</span>
+            {' · '}
+            <button onClick={() => setShowRecordPick(true)} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2">change</button>
+          </span>
         </Banner>
       )}
-      {!p.editable && (
+      {p.lease.kind === 'theirs' ? (
+        <LeaseBanner lease={p.lease} onTakeOver={p.onTakeOver} saveAsLabel={nextVersionLabel(meta.title ?? '')} />
+      ) : !p.editable && p.lease.kind !== 'checking' && (
         <Banner tone="info">Read-only on a phone. Open the brief on a laptop to edit it.</Banner>
       )}
       {(p.notice || p.busy) && (
@@ -791,24 +1578,57 @@ function DeskEditor(p: DeskProps) {
           aria-label="Brief title"
         />
         <SaveBadge save={save} error={p.saveError} />
-        {hasHighlight && (
+        {(
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void findHighlighted()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20"
-            title="Find the highlighted authority in Contextspaces and open it beside the brief"
+            disabled={!hasHighlight}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
+            title={hasHighlight ? 'Find the highlighted authority in Contextspaces and open it beside the brief' : 'Highlight a cite in the brief first, then press this to open it beside the brief'}
           >
             <Search size={13} /> Find in corpus
           </button>
         )}
-        {hasHighlight && (
+        {(
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void askAbout()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06]"
-            title="Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter"
+            disabled={!hasHighlight}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06] disabled:opacity-40"
+            title={hasHighlight ? "Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter" : 'Highlight a sentence in the brief first, then ask the Orchestrator about it'}
           >
             <MessageSquareQuote size={13} /> Ask about this
+          </button>
+        )}
+        {/* The check done elsewhere — a hard copy on the desk, Westlaw in another window:
+            the highlighted cite is confirmed (or a problem logged) without opening it here. */}
+        {(
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={confirmFromToolbar}
+            disabled={!hasHighlight || !initials.trim() || confirmBusy}
+            className={`h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-[12px] disabled:opacity-40 ${highlightedConfirmation?.status === 'confirmed' ? 'border-emerald-400/60 bg-emerald-400/25 text-emerald-100' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
+            title={!hasHighlight ? 'Highlight a cite in the brief first; then Confirm logs it with your initials'
+              : highlightedConfirmation ? `Already ${highlightedConfirmation.status === 'confirmed' ? 'confirmed' : 'marked as a problem'} by ${highlightedConfirmation.initials}, ${new Date(highlightedConfirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Press again to log another reading.`
+                : 'I checked this cite (here or elsewhere, a hard copy or another source): log it as confirmed with my initials'}
+            data-testid="confirm-highlighted"
+          >
+            <Check size={13} /> {confirmBusy ? 'Logging…' : highlightedConfirmation?.status === 'confirmed' ? `Confirmed · ${highlightedConfirmation.initials}` : 'Confirm'}
+          </button>
+        )}
+        {(
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            // A card of the desk's own, not window.prompt: Chrome suppresses
+            // the browser prompt silently in some sessions, and the button
+            // then did nothing (Eden, 09-28, in the Bushell petition).
+            onClick={() => { setProblemNote(''); setProblemFor({ raw: highlightedCtx.current?.raw ?? highlighted.current ?? '', kind: 'problem' }); }}
+            disabled={!hasHighlight || !initials.trim()}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
+            title={hasHighlight ? 'Something is wrong with this cite: say what, and it goes in the log' : 'Highlight a cite in the brief first; then Problem logs what is wrong'}
+            data-testid="problem-highlighted"
+          >
+            <AlertTriangle size={13} /> Problem
           </button>
         )}
         <button
@@ -830,9 +1650,24 @@ function DeskEditor(p: DeskProps) {
         <button
           onClick={() => setShowReadingNote(true)}
           className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
-          title="Why footnotes sit in the text and there are no page numbers"
+          title="Find a cite, read it, confirm it: how the desk is used"
         >
-          <Info size={14} /> <span className="hidden md:inline">How this page reads</span>
+          <Info size={14} /> <span className="hidden md:inline">How this page works</span>
+        </button>
+        <button
+          onClick={() => setShowLog(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="The log of cites read and confirmed by a person: who, when, which page"
+          data-testid="log-button"
+        >
+          <ClipboardCheck size={14} />
+          <span className="hidden md:inline">Log</span>
+          {(confirmCounts.confirmed > 0 || confirmCounts.problems > 0) && (
+            <span className="text-[11px]">
+              <span className="text-emerald-300/90">{confirmCounts.confirmed}</span>
+              {confirmCounts.problems > 0 && <span className="text-red-300/90"> · {confirmCounts.problems}</span>}
+            </span>
+          )}
         </button>
         <button
           onClick={() => p.setShowVersions(!p.showVersions)}
@@ -841,6 +1676,24 @@ function DeskEditor(p: DeskProps) {
         >
           <History size={14} /> <span className="hidden md:inline">Versions</span>
         </button>
+        <button
+          onClick={() => setShowCompare(true)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Compare this brief with another version: a redline of every change"
+          data-testid="compare-button"
+        >
+          <GitCompare size={14} /> <span className="hidden md:inline">Compare</span>
+        </button>
+        {(p.editable || (p.lease.kind === 'theirs' && p.lease.lost)) && (
+          <button
+            onClick={() => setShowSaveAs(true)}
+            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/40 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/10"
+            title="Save the brief as it is now as the next version, a new document in the Vault; this version stays as it is"
+            data-testid="save-as-version"
+          >
+            <CopyPlus size={14} /> <span className="hidden md:inline">Save as {nextVersionLabel(meta.title ?? '')}</span>
+          </button>
+        )}
         <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} losses={importLosses(meta)} />
       </header>
 
@@ -884,6 +1737,12 @@ function DeskEditor(p: DeskProps) {
                   onClose={pane ? () => setPane(null) : undefined}
                   onPickCopy={(d) => void pickCopy(d)}
                   onSearch={setSearch}
+                  onChangeAppendix={changeAppendix}
+                  confirmation={paneConfirmation}
+              openProblem={paneOpenProblem}
+                  initials={initials}
+                  onInitials={setInitials}
+                  onConfirm={confirmCite}
                 />
               </div>
             </VEdges>
@@ -904,6 +1763,7 @@ function DeskEditor(p: DeskProps) {
           <CiteTable
             width={tableW}
             variant="column"
+            header={locateControl}
             rows={rows}
             notes={notes}
             me={me}
@@ -922,6 +1782,10 @@ function DeskEditor(p: DeskProps) {
         {p.showVersions && (
           <Versions
             meta={meta}
+            appendix={recordMatterId ? (appendixName ?? '…') : null}
+            onChangeAppendix={changeAppendix}
+            record={recordRootName}
+            onChangeRecord={() => setShowRecordPick(true)}
             onClose={() => p.setShowVersions(false)}
             onRestore={async (snapId) => {
               if (!editor || !updatedAt.current) return;
@@ -962,9 +1826,12 @@ function DeskEditor(p: DeskProps) {
             onLocate={locate}
             onSaveNote={onSaveNote}
             header={
-              <button onClick={() => setTableCollapsed((v) => !v)} className="text-white/40 hover:text-white mr-1" title={tableCollapsed ? 'Show the cite table' : 'Collapse the cite table'}>
-                {tableCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-              </button>
+              <>
+                <button onClick={() => setTableCollapsed((v) => !v)} className="text-white/40 hover:text-white mr-1" title={tableCollapsed ? 'Show the cite table' : 'Collapse the cite table'}>
+                  {tableCollapsed ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+                {locateControl}
+              </>
             }
           />
         </div>
@@ -980,6 +1847,12 @@ function DeskEditor(p: DeskProps) {
               onClose={closeOverlay}
               onPickCopy={(d) => void pickCopy(d)}
               onSearch={setSearch}
+              onChangeAppendix={changeAppendix}
+              confirmation={paneConfirmation}
+              openProblem={paneOpenProblem}
+              initials={initials}
+              onInitials={setInitials}
+              onConfirm={confirmCite}
             />
           ) : (
             <CiteTable
@@ -993,9 +1866,12 @@ function DeskEditor(p: DeskProps) {
               onLocate={locate}
               onSaveNote={onSaveNote}
               header={
-                <button onClick={closeOverlay} className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the brief">
-                  <ArrowLeft size={15} />
-                </button>
+                <>
+                  <button onClick={closeOverlay} className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the brief">
+                    <ArrowLeft size={15} />
+                  </button>
+                  {locateControl}
+                </>
               }
             />
           )}
@@ -1013,22 +1889,177 @@ function DeskEditor(p: DeskProps) {
           }}
         />
       )}
+      {showSaveAs && editor && (
+        <SaveAsVersionCard
+          meta={meta}
+          matterLabel={matterName(meta.matterspace_id)}
+          suggested={nextVersionTitle(meta.title ?? '')}
+          getBody={() => (editorRef.current ? (editorRef.current.getJSON() as BriefDoc) : null)}
+          flush={flush}
+          onClose={() => setShowSaveAs(false)}
+          onSaved={(id, title) => {
+            setShowSaveAs(false);
+            // Say WHERE (10-02: v19 was saved in "Bushell" and looked for in
+            // "Article 78 Petition Exhibits", where the original Word file is).
+            p.setNotice(`Saved as “${title}” in ${matterName(meta.matterspace_id) ?? 'this matter'} (Vault). “${meta.title}” is unchanged.`);
+            goTo(`/app/brief/${id}`);
+          }}
+        />
+      )}
+      {showCompare && (
+        <CompareCard
+          meta={meta}
+          getBody={() => (editorRef.current ? (editorRef.current.getJSON() as BriefDoc) : null)}
+          matterName={matterName}
+          onClose={() => setShowCompare(false)}
+        />
+      )}
+      {showLog && (
+        <CardDialog
+          storageKey="cs.brief.confirm-log"
+          title="Cites read and confirmed"
+          subtitle="Every press of Confirm or Problem, newest first. Nothing here is edited or deleted; a second reading is a second line."
+          onClose={() => setShowLog(false)}
+          maxWidth={720}
+        >
+          <ConfirmLog
+            rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials}
+            briefText={editorRef.current?.state.doc.textContent ?? ''}
+            onResolve={async (was, note) => {
+              // A reading of the SAME occurrence the flag was on (words,
+              // sentence, place), so the flag's own line turns green; the
+              // note says what changed. Appended, like every reading.
+              const row = await addConfirmation({
+                document_id: meta.id,
+                cite_raw: was.cite_raw, context: was.context, pm_from: was.pm_from,
+                authority_document_id: null, authority_title: null, authority_page: null,
+                status: 'confirmed', note, initials,
+              });
+              setConfs((cur) => [...cur, row]);
+            }}
+            carry={{
+              candidates: carryCandidates,
+              matterName,
+              run: async (fromId, fromTitle) => {
+                const text = editorRef.current?.state.doc.textContent ?? '';
+                const r = await carryConfirmations(fromId, fromTitle, meta.id, text);
+                setConfs(await loadConfirmations(meta.id));
+                const changed = r.changed.slice(0, 12).map((x) => `  • ${x.cite_raw}`).join('\n');
+                return `Carried ${r.inserted} of ${r.carry.length + r.changed.length + r.gone.length}: same words, same sentence.`
+                  + (r.changed.length ? `\n${r.changed.length} to read again (the sentence changed):\n${changed}${r.changed.length > 12 ? '\n  …' : ''}` : '')
+                  + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '');
+              },
+            }}
+          />
+        </CardDialog>
+      )}
       {showReadingNote && (
         <CardDialog
           storageKey="cs.brief.reading-note"
-          title="How this page reads"
-          subtitle="The desk shows your words, not the printed page."
+          title="How this page works"
+          subtitle="Find a cite, read it, confirm it. The desk keeps the record."
           onClose={() => setShowReadingNote(false)}
           maxWidth={560}
         >
           <ReadingNote />
         </CardDialog>
       )}
+      {showRecordPick && (
+        <CardDialog
+          storageKey="cs.brief.record-pick"
+          title="Which matter does this brief draw on?"
+          subtitle="The Orchestrator searches this matter and everything beneath it: the record, the appendix, the cases. Your choice is kept with this brief."
+          onClose={() => setShowRecordPick(false)}
+          maxWidth={520}
+        >
+          <div className="mb-2 text-[12px] text-white/60">Now: <span className="text-white/85">{recordRootName ?? 'not chosen'}</span></div>
+          <MatterTreePick
+            value={recordRootId}
+            onChange={(id) => { setShowRecordPick(false); void rememberRecordRoot(id); }}
+            maxHeight={300}
+          />
+        </CardDialog>
+      )}
+      {problemFor !== null && (
+        <CardDialog
+          storageKey="cs.brief.problem-note"
+          title={problemFor.kind === 'problem' ? 'What is wrong with this cite?' : problemFor.kind === 'resolved' ? 'Resolved — what was found, and how?' : 'A note on this confirmed cite'}
+          subtitle={problemFor.kind === 'problem'
+            ? `${problemFor.raw || 'The highlighted cite'} — one line goes in the log with your initials (${initials || '…'}) and the time. The cite turns red in the brief.`
+            : problemFor.kind === 'resolved'
+              ? `${problemFor.raw || 'The highlighted cite'} was marked as a problem${problemFor.was?.note ? ` (“${problemFor.was.note}”, ${problemFor.was.initials})` : ''}. Say what was found and how it was fixed; it goes in the log beside the problem, with your initials (${initials || '…'}), and the cite turns green.`
+              : `${problemFor.raw || 'The highlighted cite'} is already confirmed${problemFor.was ? ` (${problemFor.was.initials}, ${new Date(problemFor.was.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : ''}. Add what was checked or fixed; it goes in the log as a further confirmed line with your initials (${initials || '…'}).`}
+          onClose={() => setProblemFor(null)}
+          maxWidth={560}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              value={problemNote}
+              onChange={(e) => setProblemNote(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && problemNote.trim()) { const n = problemNote.trim(); const k = problemFor.kind; setProblemFor(null); void confirmHighlighted(k === 'problem' ? 'problem' : 'confirmed', n); }
+                if (e.key === 'Escape') setProblemFor(null);
+              }}
+              placeholder={problemFor.kind === 'problem'
+                ? 'Wrong pin · misquoted · does not support the proposition · overruled…'
+                : problemFor.kind === 'resolved'
+                  ? 'Pin corrected to 507 · quotation conformed · sentence tightened to what the case holds…'
+                  : 'What was checked or fixed: pin corrected · paragraph redrafted · quotation verified…'}
+              className={`flex-1 min-w-0 h-8 bg-white/[0.04] border border-white/[0.12] rounded px-2 text-[13px] text-white/90 outline-none ${problemFor.kind === 'problem' ? 'focus:border-red-300/60' : 'focus:border-emerald-300/60'}`}
+              aria-label={problemFor.kind === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
+              data-testid="problem-note"
+            />
+            <button
+              onClick={() => { const n = problemNote.trim(); if (!n) return; const k = problemFor.kind; setProblemFor(null); void confirmHighlighted(k === 'problem' ? 'problem' : 'confirmed', n); }}
+              disabled={!problemNote.trim() || confirmBusy}
+              className={`h-8 px-3 rounded border text-[12px] disabled:opacity-40 ${problemFor.kind === 'problem' ? 'border-red-400/40 bg-red-400/10 text-red-200 hover:bg-red-400/20' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
+            >
+              {problemFor.kind === 'problem' ? 'Log it' : problemFor.kind === 'resolved' ? 'Confirm, resolved' : 'Log the note'}
+            </button>
+          </div>
+        </CardDialog>
+      )}
+      {contentHits && (
+        <CardDialog
+          storageKey="cs.brief.content-hits"
+          title={contentHits.number ? `§ ${contentHits.number} inside the record` : `“${contentHits.number || contentHits.label}” inside the record`}
+          subtitle={`${contentHits.hits.length} documents in ${recordRootName ?? 'this matter'} carry it${contentHits.from === 'brief' ? ` — the number the brief pairs with “${contentHits.label.trim()}”` : ''}. Pick one; it opens at the first page that has it.`}
+          onClose={() => setContentHits(null)}
+          maxWidth={560}
+        >
+          <div className="space-y-1.5">
+            {contentHits.hits.map((h) => (
+              <button
+                key={h.document_id}
+                onClick={() => {
+                  const first = h.passages[0];
+                  setContentHits(null);
+                  openDocument(h.document_id, {
+                    passageId: first?.passage_id || undefined, page: first?.passage_id ? undefined : (first?.page ?? 1), heading: contentHits.label, title: h.title,
+                    caveat: h.namedForIt ? null : `Found inside this document's text${first?.page ? ` (page ${first.page})` : ''}, not by its name.`,
+                  });
+                }}
+                className={`block w-full text-left px-3 py-2 rounded-md border hover:bg-white/[0.03] ${h.namedForIt ? 'border-[#e8b84a]/40' : 'border-white/[0.08] hover:border-[#e8b84a]/50'}`}
+              >
+                <div className="text-[13px] text-white/90">
+                  {h.title}
+                  {h.namedForIt && <span className="ml-2 text-[11px] text-[#e8b84a]/80">named for it</span>}
+                  <span className="ml-2 text-[11px] text-white/40">{h.passages.length} page{h.passages.length === 1 ? '' : 's'}</span>
+                </div>
+                <div className="text-[11px] text-white/45 line-clamp-2">{h.passages[0]?.snippet ?? 'Named for the section; opens at its first page.'}</div>
+              </button>
+            ))}
+          </div>
+        </CardDialog>
+      )}
       {chooser && (
         <CardDialog
           storageKey="cs.brief.appendix-chooser"
           title="Which appendix does this brief cite?"
-          subtitle={`More than one appendix in your matters has A-${chooser.cite.first}. Your choice is kept with this brief.`}
+          subtitle={chooser.cite
+            ? `More than one appendix in your matters has A-${chooser.cite.first}. Your choice is kept with this brief.`
+            : 'Every appendix in your matters. Your choice is kept with this brief; A-cites open in it.'}
           onClose={() => setChooser(null)}
           maxWidth={520}
         >
@@ -1040,11 +2071,14 @@ function DeskEditor(p: DeskProps) {
                   const pick = chooser;
                   setChooser(null);
                   await rememberRecord(s.matterId);
-                  await openRecordIn(s.volumes, pick.cite, pick.label);
+                  if (pick.cite) await openRecordIn(s.volumes, pick.cite, pick.label, s.name);
                 }}
-                className="block w-full text-left px-3 py-2 rounded-md border border-white/[0.08] hover:border-[#e8b84a]/50 hover:bg-white/[0.03]"
+                className={`block w-full text-left px-3 py-2 rounded-md border hover:bg-white/[0.03] ${s.matterId === chooser.current ? 'border-[#e8b84a]/40' : 'border-white/[0.08] hover:border-[#e8b84a]/50'}`}
               >
-                <div className="text-[13px] text-white/90">{s.name}</div>
+                <div className="text-[13px] text-white/90">
+                  {s.name}
+                  {s.matterId === chooser.current && <span className="ml-2 text-[11px] text-[#e8b84a]/80">now</span>}
+                </div>
                 <div className="text-[11px] text-white/45">{s.volumes.length === 1 ? s.volumes[0].title : `${s.volumes.length} volumes`}</div>
               </button>
             ))}
@@ -1164,23 +2198,25 @@ function ReadingNote() {
   return (
     <div className="text-white">
       <p className="text-[12.5px] text-white/70 leading-relaxed mb-2">
-        The brief is held here as text you edit and check, one continuous page. Nothing about its
-        printed form is lost: it is made when you export.
+        The brief is on the left as text. Everything it cites opens on the right. The check of each cite is yours,
+        and the desk keeps the record of it.
       </p>
-      {row('Footnotes', <>Each note sits where its number is in the text, as a small tinted note with its number. On export
-        to Word it becomes a real footnote at the foot of the page.</>)}
-      {row('Page numbers', <>None here: the text is not yet laid out on pages. Pages, page numbers, the tables of contents and
-        authorities and your house style are made by the Word export or by your assistant.</>)}
-      {row('Headings', <>Part headings (centred), point headings and sub-points, as your master file has them.</>)}
-      {row('Cites', <>After <em>Confirm this brief</em>, each cite is underlined in its flag's colour; click one to open the
-        authority beside the brief. A <span className="underline decoration-dashed">dashed</span> underline means the words changed
-        since the check.</>)}
-      {row('Flags', <><span className="text-red-400 font-semibold">[STAR]</span>, <span className="text-red-400 font-semibold">[OPP]</span>,{' '}
-        <span className="text-red-400 font-semibold">[EDEN]</span> and <span className="text-red-400 font-semibold">[verify]</span> are
-        your working flags, printed bold red in the Word export.</>)}
-      {row('Highlight', <>A private working mark. It is not exported.</>)}
-      {row('Export', <>Markdown for your assistant or the house-style build; Word for your words with real footnotes in one
-        plain style.</>)}
+      {row('1. Find it', <>Highlight a cite in the brief and press <span className="text-[#e8b84a]">Find in corpus</span>. The case,
+        statute or appendix page opens beside the brief at the pinned page. A record cite (A-10) opens the Joint Appendix at
+        its stamp.</>)}
+      {row('2. Read it', <>Read the page. <span className="text-white/85">Ask about this</span> puts the highlighted sentence to the
+        Orchestrator with the authority open: whether the case supports the proposition, which record page a fact sits on, or a
+        proposed rewrite. Nothing is sent until you press Enter.</>)}
+      {row('3. Confirm it', <>In the pane header press <span className="text-emerald-300">Confirm</span> if the cite is right, or{' '}
+        <span className="text-red-300">Problem</span> with a word on what is wrong. Your initials are typed once and remembered.
+        Confirmed cites turn <span className="text-emerald-300">green</span> in the brief, problems <span className="text-red-300">red</span>.</>)}
+      {row('The Log', <>Every press, newest first: who, when, which authority and page, and a CSV for the file. Nothing in it is
+        edited or deleted; a second reading is a second line.</>)}
+      {row('Locate every cite', <>The machine's pass over every cite at once: it finds each one in the record and marks what it
+        cannot find. It verifies nothing. Your reading and your Confirm are the check, and the Log is the record of it.</>)}
+      {row('Add a case', <>A case missing from the record: choose the file and it is filed in the matter and searchable in a
+        minute or two.</>)}
+      {row('Pages', <>None here. Page numbers, the tables and the house style are made when the brief is exported to Word.</>)}
     </div>
   );
 }
@@ -1272,9 +2308,11 @@ function ColumnDivider({ onStart, onDrag, onReset, title }: {
 }
 
 // ---------------------------------------------------------------------------
-// Confirm this brief — the button, the last run's counts, "N changed since"
+// Locate every cite (the machine pass; called "Confirm this brief" until
+// 09-27, when a lawyer read that name as the verification it is not) — the
+// button, the last run's counts, "N changed since"
 // ---------------------------------------------------------------------------
-function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, onRecheckAll, onStop, hasRun }: {
+function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, onRecheckAll, onStop, hasRun, record, onChangeRecord }: {
   counts: FlagCounts | null;
   changedSince: number;
   progress: ConfirmProgress | null;
@@ -1283,6 +2321,9 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
   onRecheckAll: () => void;
   onStop: () => void;
   hasRun: boolean;
+  /** The matter tree every lookup searches, by name, with "change". */
+  record?: string;
+  onChangeRecord?: () => void;
 }) {
   if (progress) {
     const words = progress.phase === 'snapshot' ? 'Saving a version…'
@@ -1307,12 +2348,13 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
         type="button"
         disabled={disabled}
         onClick={onConfirm}
-        className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
-        title={hasRun
-          ? 'Check the cites that are new or changed since the last check; the rest keep their flags'
-          : 'Read every citation, check it, and mark it in the text'}
+        className="h-7 px-2.5 inline-flex items-center gap-1.5 rounded border border-white/[0.12] text-[12px] text-white/60 hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
+        title={(hasRun
+          ? 'Locate the cites that are new or changed since the last pass; the rest keep their marks. '
+          : 'A machine pass: finds every cite in the record and marks it in the text. ')
+          + 'It verifies nothing. Verification is your Confirm on each cite, after you have read the page.'}
       >
-        <ShieldCheck size={13} /> Confirm this brief
+        <Search size={13} /> Locate every cite
       </button>
       {counts && (
         <span className="text-[11px] text-white/45 whitespace-nowrap" title="The last check">
@@ -1326,10 +2368,16 @@ function ConfirmControl({ counts, changedSince, progress, disabled, onConfirm, o
           disabled={disabled}
           onClick={onRecheckAll}
           className="h-7 px-2 rounded text-[11px] text-white/50 hover:text-white hover:bg-white/[0.06] disabled:opacity-40"
-          title="Check every cite again, changed or not — one model call per cite"
+          title="Run the machine pass over every cite again, changed or not — one model call per cite. Still not a verification."
         >
-          Re-check all
+          Locate again
         </button>
+      )}
+      {record && onChangeRecord && (
+        <span className="text-[11px] text-white/45 whitespace-nowrap" data-testid="record-scope" title="Find in corpus, the machine pass and the Orchestrator all search this matter and the matters inside it. A brief filed in the wrong matter searches the wrong case: change it here.">
+          · in <span className="text-white/70">{record}</span>{' '}
+          <button type="button" onClick={onChangeRecord} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2">change</button>
+        </span>
       )}
     </span>
   );
@@ -1345,8 +2393,52 @@ function Shell({ children }: { children: React.ReactNode }) {
 function SaveBadge({ save, error }: { save: Save; error: string | null }) {
   const text = save === 'saved' ? 'Saved' : save === 'saving' ? 'Saving…' : save === 'dirty' ? 'Unsaved'
     : save === 'conflict' ? 'Not saved — changed elsewhere' : 'Not saved';
-  const tone = save === 'saved' ? 'text-white/40' : save === 'conflict' || save === 'error' ? 'text-red-300' : 'text-[#e8b84a]';
-  return <span className={`text-[11px] whitespace-nowrap ${tone}`} title={error ?? undefined}>{text}</span>;
+  // Legible at a glance (Eden, 09-28: could not find the word at all): a mark
+  // and the word, grey when saved, gold while the save is owed, red when it
+  // did not land.
+  const tone = save === 'saved' ? 'text-white/65 border-white/[0.12]' : save === 'conflict' || save === 'error' ? 'text-red-200 border-red-400/40 bg-red-400/10' : 'text-[#e8b84a] border-[#e8b84a]/40 bg-[#e8b84a]/10';
+  const Icon = save === 'saved' ? Check : save === 'saving' ? Loader2 : AlertTriangle;
+  return (
+    <span className={`inline-flex items-center gap-1 h-6 px-2 rounded border text-[12px] whitespace-nowrap ${tone}`} title={error ?? (save === 'saved' ? 'Every change is on the server' : save === 'dirty' ? 'Saves two seconds after you stop typing' : undefined)} data-testid="save-badge">
+      <Icon size={12} className={save === 'saving' ? 'animate-spin' : undefined} /> {text}
+    </span>
+  );
+}
+
+/** Read-only because another window holds the brief (105). */
+function LeaseBanner({ lease, onTakeOver, saveAsLabel }: {
+  lease: Extract<LeaseState, { kind: 'theirs' }>;
+  onTakeOver: () => Promise<void>;
+  saveAsLabel: string;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const since = new Date(lease.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const who = lease.sameUser ? 'another window of yours' : lease.holderName;
+  return (
+    <Banner tone={lease.lost ? 'warn' : 'info'}>
+      {lease.lost
+        ? <>Editing moved to {who} at {since}. This window is now read-only; anything typed here in the last few seconds may not have been saved. To keep what is on screen, use “Save as {saveAsLabel}”.</>
+        : <>Read-only: this brief is being edited in {who} (since {since}). One person edits a brief at a time.</>}
+      <span className="ml-2 inline-flex items-center gap-2">
+        {asking ? (
+          <>
+            <span className="text-white/70">The other window becomes read-only.</span>
+            <button
+              className="underline disabled:opacity-50"
+              disabled={busy}
+              onClick={() => { setBusy(true); void onTakeOver().finally(() => { setBusy(false); setAsking(false); }); }}
+            >
+              {busy ? 'Taking over…' : 'Take over'}
+            </button>
+            <button className="underline text-white/60" onClick={() => setAsking(false)}>Cancel</button>
+          </>
+        ) : (
+          <button className="underline" onClick={() => setAsking(true)}>Take over editing</button>
+        )}
+      </span>
+    </Banner>
+  );
 }
 
 function Banner({ tone, children, onClose }: { tone: 'info' | 'warn'; children: React.ReactNode; onClose?: () => void }) {
@@ -1506,8 +2598,14 @@ function MenuItem({ title, note, onClick, disabled }: { title: string; note: str
   );
 }
 
-function Versions({ meta, onClose, onRestore, canRestore }: {
+function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, onClose, onRestore, canRestore }: {
   meta: BriefMeta; onClose: () => void; onRestore: (id: string) => Promise<void>; canRestore: boolean;
+  /** The appendix this brief's A-cites open in, by its matter's name; null when none is kept yet. */
+  appendix: string | null;
+  onChangeAppendix: () => void;
+  /** The matter the brief draws on — what the Orchestrator searches. */
+  record: string | null;
+  onChangeRecord: () => void;
 }) {
   const [rows, setRows] = useState<SnapshotRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1554,7 +2652,183 @@ function Versions({ meta, onClose, onRestore, canRestore }: {
           </div>
         ))}
       </div>
+      {/* What this brief remembers: the record it draws on, and the appendix its A-cites open in. */}
+      <div className="px-3 py-2 border-t border-white/[0.06] text-[11px] text-white/45" data-testid="versions-record">
+        Record: <span className="text-white/65">{record ?? '…'}</span>
+        {' · '}
+        <button onClick={onChangeRecord} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2" title="The matter the Orchestrator searches for this brief: its record, appendix and cases">
+          change
+        </button>
+      </div>
+      <div className="px-3 py-2 border-t border-white/[0.06] text-[11px] text-white/45" data-testid="versions-appendix">
+        {appendix ? (
+          <>Appendix: <span className="text-white/65">{appendix}</span></>
+        ) : (
+          <>Appendix: <span className="text-white/40">not chosen yet — the first A-cite asks</span></>
+        )}
+        {' · '}
+        <button onClick={onChangeAppendix} className="text-[#e8b84a]/80 hover:text-[#e8b84a] hover:underline underline-offset-2" title="Choose the appendix this brief's A-cites open in">
+          {appendix ? 'change' : 'choose'}
+        </button>
+      </div>
     </aside>
+  );
+}
+
+// The log: every Confirm / Problem press, newest first, with a CSV for the file.
+function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, briefText, onResolve }: {
+  rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
+  initials: string; onInitials: (v: string) => void;
+  /** The brief's words now, to say which open flags no longer have their text in it. */
+  briefText: string;
+  /** Resolve an open flag by hand, with a note (10-02: a redraft left ¶ 90's flag with nowhere to say why). */
+  onResolve: (was: CiteConfirmation, note: string) => Promise<void>;
+  /** Carry an earlier brief's readings onto this one (v8 → v9): the candidates and the run. */
+  carry?: { candidates: RecentBrief[]; matterName: (id: string) => string | null; run: (fromId: string, fromTitle: string) => Promise<string> };
+}) {
+  const sorted = [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at));
+  const open = useMemo(() => openProblems(rows, briefText), [rows, briefText]);
+  const [resolving, setResolving] = useState<string | null>(null);
+  const [resolveNote, setResolveNote] = useState('');
+  const [resolveBusy, setResolveBusy] = useState(false);
+  const [resolveErr, setResolveErr] = useState<string | null>(null);
+  const saveResolve = async (was: CiteConfirmation) => {
+    const note = resolveNote.trim();
+    if (!note || resolveBusy) return;
+    setResolveBusy(true); setResolveErr(null);
+    try { await onResolve(was, note); setResolving(null); setResolveNote(''); }
+    catch (e) { setResolveErr((e as Error).message); }
+    finally { setResolveBusy(false); }
+  };
+  const [carryFrom, setCarryFrom] = useState('');
+  const [carrying, setCarrying] = useState(false);
+  const [carryResult, setCarryResult] = useState<string | null>(null);
+  const runCarry = async () => {
+    const c = carry?.candidates.find((b) => b.id === carryFrom);
+    if (!carry || !c || carrying) return;
+    setCarrying(true); setCarryResult(null);
+    try { setCarryResult(await carry.run(c.id, c.title)); }
+    catch (e) { setCarryResult(`Not carried: ${(e as Error).message}`); }
+    finally { setCarrying(false); }
+  };
+  const download = () => {
+    const blob = new Blob([confirmationsCsv(rows, briefTitle)], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `${briefTitle.replace(/[^\w.-]+/g, '_')} - cite confirmations.csv`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+  return (
+    <div className="space-y-3" data-testid="confirm-log">
+      <div className="flex flex-wrap items-center gap-3 text-[12px] text-white/70">
+        <span><span className="text-emerald-300">{counts.confirmed}</span> confirmed · <span className="text-red-300">{counts.problems}</span> with a problem · {rows.length} {rows.length === 1 ? 'entry' : 'entries'} in all</span>
+        <label className="inline-flex items-center gap-1.5 text-white/55">Your initials
+          <input value={initials} onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))} className="w-14 h-7 bg-white/[0.06] border border-[#e8b84a]/40 rounded px-1.5 text-[12px] text-white/90 text-center outline-none focus:border-[#e8b84a] font-medium" aria-label="Your initials" placeholder="type" title="Click and type your initials; they are kept on this computer" />
+        </label>
+        <button onClick={download} disabled={!rows.length} className="ml-auto inline-flex items-center gap-1 text-[12px] text-[#e8b84a]/80 hover:text-[#e8b84a] disabled:opacity-40">
+          <Download size={12} /> CSV
+        </button>
+      </div>
+      <p className="text-[11px] text-white/40 leading-snug">
+        How to add to it: highlight a cite in the brief, press <span className="text-[#e8b84a]">Find in corpus</span>, read the page that opens, then press <span className="text-emerald-300">Confirm</span> in the pane header, or <span className="text-red-300">Problem</span> with a word on what is wrong. Confirmed cites turn green in the brief; problems red.
+      </p>
+      {open.length > 0 && (
+        <div className="rounded-lg border border-red-400/25 bg-red-400/[0.04] px-3 py-2 text-[12px]" data-testid="open-problems">
+          <p className="text-red-200/90 mb-1">Open problems ({open.length}). When a redraft answered one but nothing asked you why, resolve it here with a note.</p>
+          <div className="divide-y divide-white/[0.06]">
+            {open.map(({ row: r, inBrief }) => (
+              <div key={r.id} className="py-1.5">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span className="text-white/85 font-medium min-w-0 truncate max-w-full">{r.cite_raw}</span>
+                  {!inBrief && (
+                    <span className="text-[10.5px] px-1.5 py-0.5 rounded-full border border-amber-300/40 text-amber-200/90" title="These words are not in the brief any more: the passage was redrafted.">no longer in the brief</span>
+                  )}
+                  <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+                </div>
+                {r.note && <div className="text-red-200/80">{r.note}</div>}
+                {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
+                {resolving === r.id ? (
+                  <div className="mt-1.5 space-y-1.5">
+                    <textarea
+                      autoFocus
+                      value={resolveNote}
+                      onChange={(e) => setResolveNote(e.target.value.slice(0, NOTE_MAX))}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void saveResolve(r); if (e.key === 'Escape') setResolving(null); }}
+                      rows={3}
+                      placeholder="How was it resolved? (e.g. Redrafted to quote the holding; new text confirmed against the opinion)"
+                      aria-label="How the problem was resolved"
+                      className="w-full bg-white/[0.06] border border-white/15 rounded px-2 py-1.5 text-[12px] text-white/90 outline-none focus:border-emerald-400/60 resize-y"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => void saveResolve(r)} disabled={!resolveNote.trim() || resolveBusy || !initials.trim()} className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40">
+                        {resolveBusy ? 'Logging…' : `Resolve · ${initials.trim() || 'initials?'}`}
+                      </button>
+                      <button onClick={() => setResolving(null)} className="h-7 px-2 text-[12px] text-white/55 hover:text-white">Cancel</button>
+                      <span className="ml-auto text-[11px] text-white/35">{resolveNote.length}/{NOTE_MAX}</span>
+                    </div>
+                    {!initials.trim() && <p className="text-[11px] text-amber-200/80">Type your initials above first; the log records who resolved it.</p>}
+                    {resolveErr && <p className="text-[11px] text-red-300">{resolveErr}</p>}
+                  </div>
+                ) : (
+                  <button onClick={() => { setResolving(r.id); setResolveNote(''); setResolveErr(null); }} className="mt-1 text-[11.5px] text-emerald-300/90 hover:text-emerald-200">
+                    Resolve with a note…
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {carry && carry.candidates.length > 0 && (
+        <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-[12px]" data-testid="carry-confirmations">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-white/70">Carry the check from an earlier version:</span>
+            <button onClick={() => void runCarry()} disabled={!carryFrom || carrying} className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40">
+              {carrying ? 'Carrying…' : carryFrom ? `Carry from “${carry.candidates.find((b) => b.id === carryFrom)?.title ?? ''}”` : 'Choose a brief below, then Carry'}
+            </button>
+          </div>
+          {/* A list, not a native <select>: on Windows the select's popup drew
+              white text on a white menu and the briefs were invisible (Eden,
+              09-29: "nothing shows underneath it"). */}
+          <div className="mt-2 rounded-md border border-white/[0.08] divide-y divide-white/[0.06] max-h-[220px] overflow-y-auto" role="listbox" aria-label="Earlier brief to carry from">
+            {carry.candidates.map((b) => (
+              <button
+                key={b.id}
+                role="option"
+                aria-selected={carryFrom === b.id}
+                onClick={() => setCarryFrom(carryFrom === b.id ? '' : b.id)}
+                className={`w-full text-left px-3 py-1.5 flex items-baseline gap-2 hover:bg-white/[0.04] ${carryFrom === b.id ? 'bg-emerald-400/10 text-emerald-100' : 'text-white/85'}`}
+              >
+                <span className="flex-1 min-w-0 truncate">{b.title}</span>
+                <span className="shrink-0 text-[11px] text-white/45 max-w-[40%] truncate">{carry.matterName(b.matterspace_id) ?? ''}</span>
+                <span className="shrink-0 text-[11px] text-white/35">{new Date(b.updated_at).toLocaleDateString()}</span>
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-white/40 leading-snug">
+            A reading carries only when the cite's words AND its sentence are unchanged here; each carried line says where it came from and who read it. A cite whose sentence changed is listed for a fresh look.
+          </p>
+          {carryResult && <p className="mt-1 text-[12px] text-white/80 whitespace-pre-line">{carryResult}</p>}
+        </div>
+      )}
+      {sorted.length === 0 ? (
+        <p className="text-[12px] text-white/45">Nothing read yet.</p>
+      ) : (
+        <div className="rounded-lg border border-white/[0.08] divide-y divide-white/[0.06] max-h-[60vh] overflow-y-auto">
+          {sorted.map((r) => (
+            <div key={r.id} className="px-3 py-2 text-[12px]">
+              <div className="flex items-baseline gap-2">
+                <span className={r.status === 'confirmed' ? 'text-emerald-300' : 'text-red-300'}>{r.status === 'confirmed' ? 'Confirmed' : 'Problem'}</span>
+                <span className="text-white/85 font-medium truncate">{r.cite_raw}</span>
+                <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
+              </div>
+              <div className="text-white/45 truncate">{whereRead(r)}</div>
+              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{r.status === 'confirmed' ? 'Resolved: ' : ''}{r.note}</div>}
+              {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1613,6 +2887,22 @@ const BRIEF_CSS = `
 .brief-doc mark.brief-hl { background: #fff0a8; color: inherit; padding: 0 1px; }
 ::highlight(brief-find) { background-color: rgba(232,184,74,0.35); }
 ::highlight(brief-find-current) { background-color: rgba(232,150,40,0.85); color: #111; }
+/* Scrollbars with arrow buttons at both ends, for line-by-line movement in the brief
+   and in every scroller of the reading pane (Eden, 09-28: "no little caret at the bottom
+   of the scroller"; then "in the depositions the caret is not visible" — it was drawn light
+   on a light page). Solid dark buttons and track, so they read against any page. */
+.brief-col::-webkit-scrollbar, .authority-pane ::-webkit-scrollbar, .authority-pane::-webkit-scrollbar { width: 14px; height: 14px; }
+.brief-col::-webkit-scrollbar-track, .authority-pane ::-webkit-scrollbar-track, .authority-pane::-webkit-scrollbar-track { background: #15151d; }
+.brief-col::-webkit-scrollbar-thumb, .authority-pane ::-webkit-scrollbar-thumb, .authority-pane::-webkit-scrollbar-thumb { background: #5a5a6a; border-radius: 7px; border: 3px solid #15151d; }
+.brief-col::-webkit-scrollbar-thumb:hover, .authority-pane ::-webkit-scrollbar-thumb:hover, .authority-pane::-webkit-scrollbar-thumb:hover { background: #8a8a9a; }
+.brief-col::-webkit-scrollbar-button:single-button, .authority-pane ::-webkit-scrollbar-button:single-button, .authority-pane::-webkit-scrollbar-button:single-button { display: block; height: 16px; width: 14px; background-color: #2a2a36; background-repeat: no-repeat; background-position: center; background-size: 9px 9px; }
+.brief-col::-webkit-scrollbar-button:single-button:hover, .authority-pane ::-webkit-scrollbar-button:single-button:hover, .authority-pane::-webkit-scrollbar-button:single-button:hover { background-color: #3d3d4d; }
+.brief-col::-webkit-scrollbar-button:single-button:vertical:decrement, .authority-pane ::-webkit-scrollbar-button:single-button:vertical:decrement, .authority-pane::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M1 7 L5 3 L9 7' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
+.brief-col::-webkit-scrollbar-button:single-button:vertical:increment, .authority-pane ::-webkit-scrollbar-button:single-button:vertical:increment, .authority-pane::-webkit-scrollbar-button:single-button:vertical:increment { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M1 3 L5 7 L9 3' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
+.brief-col::-webkit-scrollbar-button:single-button:horizontal:decrement, .authority-pane ::-webkit-scrollbar-button:single-button:horizontal:decrement, .authority-pane::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M7 1 L3 5 L7 9' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
+.brief-col::-webkit-scrollbar-button:single-button:horizontal:increment, .authority-pane ::-webkit-scrollbar-button:single-button:horizontal:increment, .authority-pane::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M3 1 L7 5 L3 9' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
+::highlight(brief-confirmed) { background-color: rgba(52,211,153,0.22); text-decoration: underline; text-decoration-color: rgba(52,211,153,0.9); }
+::highlight(brief-problem) { background-color: rgba(248,113,113,0.30); text-decoration: underline wavy; text-decoration-color: rgba(248,113,113,0.95); }
 .brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
   text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }
 .brief-doc .brief-cite:hover { background: rgba(232,184,74,0.14); }
