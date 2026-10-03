@@ -5,11 +5,10 @@ import { useAuth } from '@/contexts/AuthContext';
 
 type View = 'signin' | 'signup' | 'reset';
 
-// New accounts are closed until launch (Eden, 2026-09-25): Supabase Auth has
-// "disable_signup" on, so the form could only ever fail. Until October 15 the
-// Sign Up tab explains that and says how to ask for early access. At launch:
-// flip this to true AND turn sign-ups back on in Supabase Auth.
-const SIGNUPS_OPEN = false;
+// Launch switch (opened 2026-10-15). While false, the Sign Up tab shows the
+// early-access note instead of the form. It must match Supabase Auth's
+// "disable_signup": with that still on, the form can only fail.
+const SIGNUPS_OPEN = true;
 const EARLY_ACCESS_EMAIL = 'quaintonlaw@gmail.com';
 
 export default function Auth() {
