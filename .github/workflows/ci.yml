@@ -959,3 +959,10 @@ jobs:
       - name: Ingestion — Word footnotes and endnotes are indexed
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-docx-notes.mjs
+
+      # The Orchestrator's map is drawn for the account's plan (10-02, P0): for
+      # every plan, every room it points to is one the plan can open; closed
+      # rooms are named as not in the plan; workshop / no plan get it whole.
+      - name: Orchestrator — the map tells the truth about the plan
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-orchestrator-map.mjs
