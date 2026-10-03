@@ -167,22 +167,25 @@ export default function ChatGPTConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">1.</span>
               <span>
-                In ChatGPT, open{' '}
+                On chatgpt.com in a desktop browser, open{' '}
                 <strong className="text-[var(--color-text-bright)]">
-                  Settings → Connectors → Advanced
+                  Settings → Security and login
                 </strong>{' '}
                 and switch on{' '}
-                <strong className="text-[var(--color-text-bright)]">Developer mode</strong>.
-                Custom MCP servers with a full toolset are gated behind it.
+                <strong className="text-[var(--color-text-bright)]">Developer mode</strong>{' '}
+                (OpenAI labels it "elevated risk"). Custom MCP servers with a
+                full toolset are gated behind it. Older builds keep the same
+                toggle under <em>Settings → Connectors → Advanced</em>.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
               <span>
-                Go back to{' '}
-                <strong className="text-[var(--color-text-bright)]">Settings → Connectors</strong>{' '}
-                and choose{' '}
-                <strong className="text-[var(--color-text-bright)]">Create</strong>{' '}
+                Open the{' '}
+                <strong className="text-[var(--color-text-bright)]">Plugins</strong>{' '}
+                page in the sidebar (chatgpt.com/plugins; older builds:{' '}
+                <em>Settings → Connectors</em>) and choose{' '}
+                <strong className="text-[var(--color-text-bright)]">+ Create app</strong>{' '}
                 (or <em>Add custom connector</em>). Name it{' '}
                 <em>Contextspaces</em> and paste the endpoint URL below into the{' '}
                 <strong className="text-[var(--color-text-bright)]">MCP Server URL</strong> field.
@@ -253,7 +256,7 @@ export default function ChatGPTConnect() {
           <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">Connections › Agents</Link>. To end its access, revoke
           it in Contextspaces under{' '}
           <Link to="/app/connections" className="text-[var(--color-primary)] hover:underline">Connections › Approved AI clients</Link>,
-          or remove the connector in ChatGPT's connector settings.
+          or remove it on ChatGPT's Plugins page (older builds: <em>Settings → Connectors</em>).
         </div>
 
         {/* API path */}
