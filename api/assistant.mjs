@@ -27,6 +27,7 @@ import { createClient } from '@supabase/supabase-js';
 import { runAssistantStream, bedrockCredsFromEnv, PENS } from '../lib/assistant-core.mjs';
 import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
+import { PLANS } from '../lib/surfaces.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -209,6 +210,9 @@ function sanitizeContext(c) {
   const num = (v) => (Number.isInteger(v) && v > 0 ? v : undefined);
   const out = {
     route: pick(c.route),
+    // The account's plan, for the map's WORDING only (lib/orchestrator-system.mjs
+    // mapForPlan); a known plan name or nothing. Doors stay locked server-side.
+    plan: typeof c.plan === 'string' && PLANS.includes(c.plan) ? c.plan : undefined,
     tab: pick(c.tab),
     matterName: pick(c.matterName),
     // The reader's companion context: the document open in front of the
@@ -229,6 +233,18 @@ function sanitizeContext(c) {
     indexed: typeof c.indexed === 'boolean' ? c.indexed : undefined,
     sourceDocumentId: pick(c.sourceDocumentId, 64),
     unindexedReason: c.unindexedReason === 'generated' || c.unindexedReason === 'not-ingested' ? c.unindexedReason : undefined,
+    // The Brief Desk: the brief and the matters it draws on. Names and the
+    // caption only — bounded, since it is prompt, not record.
+    brief: c.brief && typeof c.brief === 'object' && pick(c.brief.title)
+      ? {
+        title: pick(c.brief.title),
+        caption: pick(c.brief.caption, 600),
+        recordMatterName: pick(c.brief.recordMatterName),
+        appendixMatterName: pick(c.brief.appendixMatterName),
+        casesMatterName: pick(c.brief.casesMatterName),
+        citesChecked: num(c.brief.citesChecked),
+      }
+      : undefined,
   };
   return Object.values(out).some((v) => v !== undefined) ? out : undefined;
 }

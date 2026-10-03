@@ -52,7 +52,7 @@ const code = (p) => read(p).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\
 
 // The model ids the server actually emits — PENS, lib/assistant-core.mjs.
 const SEALED_MODEL = 'moonshotai.kimi-k2.5';
-const TIER_A_MODEL = 'claude-opus-4-8';
+const TIER_A_MODEL = 'claude-opus-5-5';
 
 // ── 1. The pen's name ─────────────────────────────────────────────────────
 
@@ -72,7 +72,8 @@ test('an id the map does not know is shown verbatim, never guessed at', () => {
 });
 
 test('the Tier-A ids map to the names the product already uses', () => {
-  assert.equal(penLabel(TIER_A_MODEL), 'Opus 4.8');
+  assert.equal(penLabel(TIER_A_MODEL), 'Opus 5.5');
+  assert.equal(penLabel('claude-opus-4-8'), 'Opus 4.8');
   assert.equal(penLabel('anthropic.claude-opus-5'), 'Opus 5');
 });
 
@@ -123,7 +124,7 @@ test('an unsealed matter is unchanged: name, the Tier-A pen, no seal', () => {
   assert.equal(d.sealed, false);
   assert.equal(`${d.lead}${d.name}${d.tail}`, 'In Anlauf');
   assert.equal(d.penNote, openPenSentence());
-  assert.equal(d.penChip, 'Opus 4.8');
+  assert.equal(d.penChip, 'Opus 5.5');
   assert.deepEqual(d.starters, []);
   assert.equal(d.searchNote, '');
 });
@@ -185,8 +186,8 @@ test('the strip corrects itself when the server names another pen', () => {
   });
   assert.equal(d.corrected, true);
   assert.equal(d.sealed, false, 'the server’s answer wins outright');
-  assert.equal(d.penNote, openPenSentence('Opus 4.8'));
-  assert.equal(d.penChip, 'Opus 4.8');
+  assert.equal(d.penNote, openPenSentence('Opus 5.5'));
+  assert.equal(d.penChip, 'Opus 5.5');
 });
 
 test('the strip corrects itself the other way too — unsealed page, sealed answer', () => {
@@ -455,7 +456,10 @@ test('Assistant.tsx wires the pin to PinToggle, and a pinned card does not move'
   const src = read('src/components/ai/Assistant.tsx');
   assert.match(src, /<PinToggle pinned=\{pinned\} onToggle=\{togglePin\} \/>/);
   assert.match(src, /if \(isMobile \|\| pinned \|\|/, 'drag is refused while pinned');
-  assert.match(src, /resize: pinned \? 'none' : 'both'/);
+  // Since #270 the card resizes from its four edges and corners (no native
+  // CSS resize handle); a pinned card draws none of them.
+  assert.match(src, /\{!isMobile && !pinned && \(Object\.keys\(EDGE_CLASS\) as Edge\[\]\)\.map/, 'no resize edges while pinned');
+  assert.doesNotMatch(src, /resize: pinned \? 'none' : 'both'/, 'the native resize handle is gone');
   assert.match(src, /if \(pinned\) return;/, 'double-click-to-dock is refused while pinned');
   assert.match(src, /\{!isMobile && <PinToggle/, 'no pin on a phone');
   // The panel keeps its own z-50: it must stay above the route card (z-12).

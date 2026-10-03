@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import CardDialog from '@/components/ui/CardDialog';
 import { CAN_POST_LABEL, SHARE_CAN_POST_NOTE } from '@/lib/conversations';
+import MatterAgentsSection from '@/components/agents/MatterAgentsSection';
 
 type Scope = 'serverspace' | 'matterspace';
 type Role = 'owner' | 'admin' | 'member' | 'viewer';
@@ -357,6 +358,10 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
             })}
           </ul>
         )}
+        {/* Agents are not members, so they are listed on their own: which of
+            your agents can see this matter, and why (Gap 2), and a way to
+            connect one to it (Gap 3). Matters only; a serverspace has none. */}
+        {scope === 'matterspace' && <MatterAgentsSection matterId={scopeId} matterName={scopeName} />}
       </div>
     </CardDialog>
   );

@@ -144,6 +144,13 @@ export function project(doc: PMNode): Projection {
   return { text, segments };
 }
 
+/** A plain-text range of the projection → ProseMirror positions, or null across a gap. */
+export function plainRangeToPm(p: Projection, start: number, end: number): { from: number; to: number } | null {
+  const from = toPm(p.segments, start, 'start');
+  const to = toPm(p.segments, end, 'end');
+  return from === null || to === null || to <= from ? null : { from, to };
+}
+
 /** A plain-text offset → ProseMirror position. `edge` 'end' maps an exclusive end. */
 function toPm(segments: Segment[], off: number, edge: 'start' | 'end'): number | null {
   for (const s of segments) {

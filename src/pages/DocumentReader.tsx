@@ -29,6 +29,7 @@ import {
   PenLine,
 } from 'lucide-react';
 import mammoth from 'mammoth';
+import { labelWordNotes } from '@/lib/reader-notes';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -190,6 +191,21 @@ type LoadState = 'loading' | 'ready' | 'error';
 type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
 
+// A find query as a regex: each word literal, any whitespace between words
+// (a transcript's text is broken by line; the brief quotes it in one line).
+export function phraseRegex(q: string): RegExp {
+  const words = q.trim().split(/\s+/).filter(Boolean);
+  const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(words.map(esc).join('\\s+'), 'gi');
+}
+// The same query for Postgres LIKE: wildcards escaped ("100%" finds "100%"),
+// any run of whitespace a wildcard. Wider than the regex; the regex decides.
+export function likePattern(q: string): string {
+  const words = q.trim().split(/\s+/).filter(Boolean);
+  const esc = (w: string) => w.replace(/[%_\\]/g, (c) => '\\' + c);
+  return '%' + words.map(esc).join('%') + '%';
+}
+
 // Find every occurrence of `needle` in the text of a rendered document,
 // as DOM Ranges. The text nodes are joined into one string first, so a
 // hit may run across inline boundaries — a brief sets the case name in
@@ -197,20 +213,18 @@ type Match = { page: number; index: number };
 // has to be found as one thing.
 function findInRendered(root: HTMLElement, needle: string): Range[] {
   // The same text walk the margin marks anchor to (src/lib/text-anchor.ts).
-  const { text: flat, pieces } = flattenText(root);
-  // A few letters change length when lower-cased (İ, ß…), which would put
-  // every offset after them off; match case-sensitively then, rather than
-  // light the wrong words.
-  const hay = flat.toLowerCase();
-  const exact = hay.length !== flat.length;
-  const text = exact ? flat : hay;
-  const q = exact ? needle : needle.toLowerCase();
+  const { text, pieces } = flattenText(root);
   const ranges: Range[] = [];
-  if (!q) return ranges;
+  if (!needle.trim()) return ranges;
+  // Case-insensitive in the regex engine (no lower-casing, which changes
+  // some letters' length and would put every later offset off), and any
+  // whitespace between the words: a transcript's lines break mid-phrase.
+  const re = phraseRegex(needle);
   let i = 0; // piece cursor — hits arrive in document order
-  let at = text.indexOf(q);
-  while (at !== -1) {
-    const end = at + q.length;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (!m[0].length) { re.lastIndex += 1; continue; }
+    const at = m.index;
+    const end = at + m[0].length;
     while (i < pieces.length - 1 && pieces[i + 1].start <= at) i++;
     let j = i;
     while (j < pieces.length - 1 && pieces[j + 1].start < end) j++;
@@ -218,7 +232,6 @@ function findInRendered(root: HTMLElement, needle: string): Range[] {
     r.setStart(pieces[i].node, at - pieces[i].start);
     r.setEnd(pieces[j].node, end - pieces[j].start);
     ranges.push(r);
-    at = text.indexOf(q, end);
   }
   return ranges;
 }
@@ -299,6 +312,8 @@ export interface ReaderGoto {
   page?: number;
   passageId?: string;
   anchor?: TextAnchor;
+  /** A footnote the cite pins to ("at 2 n.1"): a Word file opens AT that note. */
+  footnote?: number;
   nonce: number;
 }
 
@@ -314,6 +329,7 @@ type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChr
 
 export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full' }: ReaderProps = {}) {
   const pane = chrome === 'pane';
+  const paneChrome = pane;
   const hideCover = embedded || pane;
   const hidePageEditor = embedded || pane;
   const hideSidebarToggle = pane;
@@ -385,6 +401,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const [matches, setMatches] = useState<Match[]>([]);
   const [matchIdx, setMatchIdx] = useState(0);
   const [searching, setSearching] = useState(false);
+  /** A find has run for the current query (so "Not found" means it looked). */
+  const [searched, setSearched] = useState(false);
   const pageTextCacheRef = useRef<string[]>([]);
   const textRangesRef = useRef<Range[]>([]);
   // React 19 resets innerHTML whenever this object is a new one, which a
@@ -463,6 +481,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
 
   // Restore persisted prefs.
   useEffect(() => {
+    // A pane beside another surface fits to its own width (below) and leaves
+    // the full Reader's saved zoom and fit alone, in both directions.
+    if (pane) return;
     const z = localStorage.getItem('ctx_reader_zoom');
     if (z) {
       const parsed = parseFloat(z);
@@ -472,10 +493,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (t === 'parchment' || t === 'dark') setTheme(t);
     const f = localStorage.getItem('ctx_reader_fit');
     if (f === '0') setFitPage(false);
-  }, []);
-  useEffect(() => { localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom]);
+  }, [pane]);
+  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom, pane]);
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
-  useEffect(() => { localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage]);
+  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage, pane]);
   useEffect(() => {
     // On a phone the thumbnail rail would swallow the page, so start closed
     // regardless of the saved desktop preference.
@@ -717,7 +738,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           // treat it as a single scrollable document.
           const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer as ArrayBuffer });
           if (cancelled) return;
-          setDocHtml(result.value);
+          setDocHtml(labelWordNotes(result.value));
           setTotalPages(1);
           setPage(1);
         }
@@ -757,19 +778,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     const pane = contentRef.current;
     const d = pageDims?.[0];
     if (!pane || !d || pane.clientWidth <= 0 || pane.clientHeight <= 0) return zoom;
-    const PAD = 24; // breathing room around the page
+    const PAD = paneChrome ? 6 : 24; // breathing room around the page
     // The margin rails flank each page in-flow; subtract them so the page
-    // never overflows horizontally.
-    const rails = 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
-    const fit = Math.min(
-      (pane.clientWidth - PAD * 2 - rails) / d.w,
-      (pane.clientHeight - PAD * 2) / d.h,
-    );
+    // never overflows horizontally. A pane draws none.
+    const rails = paneChrome ? 0 : 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
+    const byWidth = (pane.clientWidth - PAD * 2 - rails) / d.w;
+    const fit = paneChrome ? byWidth : Math.min(byWidth, (pane.clientHeight - PAD * 2) / d.h);
     return Math.max(0.1, Math.min(fit, 6));
     // containerTick re-measures the pane on resize / sidebar / fullscreen;
     // loadState re-measures once the pane exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState]);
+  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState, paneChrome]);
 
   // Top offset of every slot inside the scroll content — the map between
   // scrollTop and page numbers, used by jumps and by scroll derivation.
@@ -786,6 +805,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const slotTopsRef = useRef<number[] | null>(null);
   useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
   useEffect(() => { pageStateRef.current = page; }, [page]);
+
+  // The page the slots are painted around. Scrolling a page at a time paints
+  // at once; a jump of several pages (the rail's thumb dragged, a search hit)
+  // waits until the page holds still for a moment. Painting every page a fast
+  // drag passed over queued dozens of renders and froze the pane (10-01).
+  const [paintPage, setPaintPage] = useState(1);
+  const paintPageRef = useRef(1);
+  useEffect(() => {
+    const settle = () => { paintPageRef.current = page; setPaintPage(page); };
+    if (Math.abs(page - paintPageRef.current) <= 1) { settle(); return; }
+    const t = setTimeout(settle, 140);
+    return () => clearTimeout(t);
+  }, [page]);
 
   // The pages actually on screen, most visible first, by overlap with the
   // viewport. The rail's "current page" is a single point 40% down the
@@ -844,9 +876,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (tops && el) el.scrollTo({ top: Math.max(0, tops[clamped - 1] - 8) });
   }, [totalPages]);
 
-  // The rail's thumb, and its drag: the scroll position as a fraction of
-  // the document's scroll range, in both directions.
-  const [scrollFraction, setScrollFraction] = useState(0);
+  // The rail's drag: a fraction of the document's scroll range → a scroll
+  // position. The thumb follows the scroll itself (PageRail), so moving it
+  // does not re-render the whole reader every frame.
   const seekTo = useCallback((f: number) => {
     const el = contentRef.current;
     if (!el) return;
@@ -873,9 +905,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         p = Math.max(1, p);
         if (p !== pageStateRef.current) setPage(p);
         computeVisible();
-        const range = el.scrollHeight - el.clientHeight;
-        const f = range > 0 ? el.scrollTop / range : 0;
-        setScrollFraction((prev) => (Math.abs(prev - f) < 0.002 ? prev : f));
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -978,6 +1007,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     hits.replaceChildren();
     const q = searchQueryRef.current.trim().toLowerCase();
     if (!q) return null;
+    const re = phraseRegex(q);
     const onPage = matchesRef.current.map((m, i) => ({ ...m, i })).filter((m) => m.page === p);
     if (!onPage.length) return null;
     const currentOrdinal = onPage.findIndex((m) => m.i === matchIdxRef.current);
@@ -987,12 +1017,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     let currentEl: HTMLElement | null = null;
     const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const hay = (node.textContent ?? '').toLowerCase();
-      let at = hay.indexOf(q);
-      while (at !== -1) {
+      const hay = node.textContent ?? '';
+      re.lastIndex = 0;
+      for (let m = re.exec(hay); m; m = re.exec(hay)) {
+        const at = m.index;
+        if (!m[0].length) { re.lastIndex += 1; continue; }
         const range = document.createRange();
         range.setStart(node, at);
-        range.setEnd(node, at + q.length);
+        range.setEnd(node, at + m[0].length);
         const isCurrent = ordinal === currentOrdinal;
         for (const r of Array.from(range.getClientRects())) {
           if (!r.width || !r.height) continue;
@@ -1006,7 +1038,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           if (isCurrent && !currentEl) currentEl = el;
         }
         ordinal += 1;
-        at = hay.indexOf(q, at + q.length);
       }
     }
     return currentEl;
@@ -1039,8 +1070,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (!pdf) return;
 
     let cancelled = false;
-    const from = Math.max(1, page - 2);
-    const to = Math.min(totalPages, page + 2);
+    const from = Math.max(1, paintPage - 2);
+    const to = Math.min(totalPages, paintPage + 2);
 
     for (const [p] of Array.from(renderedKeyRef.current)) {
       if (p >= from - 3 && p <= to + 3) continue;
@@ -1124,7 +1155,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }
 
     return () => { cancelled = true; };
-  }, [page, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
+  }, [paintPage, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
 
   // On unmount, stop whatever pdfjs still has in flight.
   useEffect(() => () => {
@@ -1674,9 +1705,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     runInAssistant({
       matterId: doc.matterspace_id ?? undefined,
       matterName: matterName ?? undefined,
-      prompt: q
-        ? `On ${where}: “${q.slice(0, 1200)}” — What is this passage saying, and what does it connect to?`
-        : undefined,
+      // The passage goes into the box, cursor after it; the reader asks the
+      // question. Nothing is sent until they do.
+      draft: q ? `On ${where}: “${q.slice(0, 1200)}” — ` : undefined,
     });
   }, [doc, fileKind, page, matterName, visiblePages]);
   const handleDownload = useCallback(async () => {
@@ -2267,8 +2298,22 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       sel?.removeAllRanges();
       sel?.addRange(cur);
     }
-    const pane = contentRef.current;
-    if (!cur || !pane) return;
+    if (!cur) return;
+    // Scroll whatever actually scrolls around the match. In 'pane' chrome (the
+    // Brief Desk) the scroller is .reader-scroll, not the content element, and
+    // scrolling the wrong one left every match painted but out of view
+    // (Eden, 09-28: "Find in text in cases is not working").
+    let node: Node | null = cur.startContainer;
+    let scroller: HTMLElement | null = null;
+    while (node && node !== document.body) {
+      if (node instanceof HTMLElement) {
+        const cs = getComputedStyle(node);
+        if (/(auto|scroll)/.test(cs.overflowY) && node.scrollHeight > node.clientHeight + 1) { scroller = node; break; }
+      }
+      node = node.parentNode;
+    }
+    const pane = scroller ?? contentRef.current;
+    if (!pane) return;
     const rect = cur.getBoundingClientRect();
     const pr = pane.getBoundingClientRect();
     pane.scrollBy({ top: rect.top - pr.top - pr.height / 2 + rect.height / 2, behavior: 'smooth' });
@@ -2342,11 +2387,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   }, []);
   const [marksOpen, setMarksOpen] = useState(!isMobile);
 
+  // The query the current `matches` answer, and a counter so a slow PDF
+  // search that a newer keystroke has overtaken drops its answer.
+  const searchedQueryRef = useRef('');
+  const searchSeqRef = useRef(0);
   const runSearch = useCallback(async (query: string) => {
     const q = query.trim();
+    const seq = ++searchSeqRef.current;
+    searchedQueryRef.current = q;
     if (!q) {
+      setSearching(false);
       setMatches([]);
       setMatchIdx(0);
+      setSearched(false);
       clearTextMatches();
       return;
     }
@@ -2358,6 +2411,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       textRangesRef.current = ranges;
       setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
       setMatchIdx(0);
+      setSearched(true);
       showTextMatch(ranges, 0);
       return;
     }
@@ -2367,89 +2421,113 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (!pdf) return;
 
     setSearching(true);
-    const needle = q.toLowerCase();
+    // A phrase matches across any whitespace: a transcript's text is broken
+    // by line ("individual\nstudents"), and the brief quotes it in one line.
+    const re = phraseRegex(q);
     const found: Match[] = [];
+    const countIn = (text: string, page: number) => {
+      re.lastIndex = 0;
+      for (let m = re.exec(text); m; m = re.exec(text)) {
+        found.push({ page, index: m.index });
+        if (!m[0].length) re.lastIndex += 1;
+      }
+    };
 
-    // The indexed text first. It is what search reads everywhere else in
-    // the app, it is one query, and for most OCR'd books it is the only
-    // place the words exist: the scan's PDF carries no text layer at all
-    // (Brandeis's Other People's Money found nothing for "money"). Hits
-    // name the page; the boxes over the words come from the text layer
-    // when the page has one.
-    if (id) {
-      // Escape LIKE's own wildcards so "100%" finds "100%". The backslash is
-      // spelled out: it is the pattern's escape character as well.
-      const bs = String.fromCharCode(92);
-      const pattern = '%' + q.replace(new RegExp('[%_' + bs + ']', 'g'), (c) => bs + c) + '%';
-      const { data } = await supabase
-        .from('passages')
-        .select('page_start, text')
-        .eq('document_id', id)
-        .eq('summary_level', 0)
-        .ilike('text', pattern)
-        .order('page_start', { ascending: true })
-        .limit(2000);
-      for (const row of (data ?? []) as { page_start: number | null; text: string | null }[]) {
-        if (!row.page_start || !row.text) continue;
-        const hay = row.text.toLowerCase();
-        let at = hay.indexOf(needle);
-        while (at !== -1) {
-          found.push({ page: row.page_start, index: at });
-          at = hay.indexOf(needle, at + needle.length);
+    try {
+      // The indexed text first. It is what search reads everywhere else in
+      // the app, it is one query, and for most OCR'd books it is the only
+      // place the words exist: the scan's PDF carries no text layer at all
+      // (Brandeis's Other People's Money found nothing for "money"). Hits
+      // name the page; the boxes over the words come from the text layer
+      // when the page has one.
+      if (id) {
+        const { data } = await supabase
+          .from('passages')
+          .select('page_start, text, metadata')
+          .eq('document_id', id)
+          .eq('summary_level', 0)
+          .ilike('text', likePattern(q))
+          .order('page_start', { ascending: true })
+          .limit(2000);
+        type Row = { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null };
+        for (const row of (data ?? []) as Row[]) {
+          if (!row.text) continue;
+          // A transcript's passages are filed under the printed page; the
+          // page to go to is the physical one, metadata.pdf_page (four
+          // printed pages sit on one sheet of a condensed transcript).
+          const physical = Number(row.metadata?.pdf_page);
+          const page = Number.isFinite(physical) && physical > 0 ? physical : row.page_start;
+          if (!page) continue;
+          countIn(row.text, page);
         }
       }
-    }
 
-    // Nothing indexed — an edited copy, say — so read the PDF's own text
-    // layer, page by page.
-    if (!found.length) {
-      for (let p = 1; p <= pdf.numPages; p++) {
-        let pageText = pageTextCacheRef.current[p - 1];
-        if (!pageText) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const pdfPage = (await pdf.getPage(p)) as any;
-          const content = await pdfPage.getTextContent();
-          pageText = (content.items as Array<{ str?: string }>)
-            .map((i) => i.str || '')
-            .join(' ');
-          pageTextCacheRef.current[p - 1] = pageText;
-        }
-        const hay = pageText.toLowerCase();
-        let i = 0;
-        let at: number;
-        while ((at = hay.indexOf(needle, i)) !== -1) {
-          found.push({ page: p, index: at });
-          i = at + needle.length;
+      // Nothing indexed — an edited copy, say — so read the PDF's own text
+      // layer, page by page.
+      if (!found.length) {
+        for (let p = 1; p <= pdf.numPages; p++) {
+          let pageText = pageTextCacheRef.current[p - 1];
+          if (!pageText) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const pdfPage = (await pdf.getPage(p)) as any;
+            const content = await pdfPage.getTextContent();
+            pageText = (content.items as Array<{ str?: string }>)
+              .map((i) => i.str || '')
+              .join(' ');
+            pageTextCacheRef.current[p - 1] = pageText;
+          }
+          countIn(pageText, p);
         }
       }
+    } catch (e) {
+      console.warn('[reader] find failed', e);
     }
+    if (seq !== searchSeqRef.current) return; // overtaken by a newer query
     found.sort((a, b) => a.page - b.page || a.index - b.index);
 
     setMatches(found);
     setMatchIdx(0);
     setSearching(false);
+    setSearched(true);
     if (found.length > 0) gotoPage(found[0].page);
   }, [fileKind, gotoPage, id, clearTextMatches, showTextMatch]);
 
+  // A query typed but not yet searched is searched first: the arrows (and
+  // Enter) never sit dead beside words in the box (Eden, 10-01: typed a word,
+  // clicked the arrow, nothing happened).
+  const unsearched = () => searchQuery.trim() !== searchedQueryRef.current;
   const goNextMatch = useCallback(() => {
+    if (searchQuery.trim() !== searchedQueryRef.current) { void runSearch(searchQuery); return; }
     if (matches.length === 0) return;
     const next = (matchIdx + 1) % matches.length;
     setMatchIdx(next);
     if (fileKind === 'pdf') gotoPage(matches[next].page);
     else showTextMatch(textRangesRef.current, next);
-  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch]);
+  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch, searchQuery, runSearch]);
   const goPrevMatch = useCallback(() => {
+    if (searchQuery.trim() !== searchedQueryRef.current) { void runSearch(searchQuery); return; }
     if (matches.length === 0) return;
     const next = (matchIdx - 1 + matches.length) % matches.length;
     setMatchIdx(next);
     if (fileKind === 'pdf') gotoPage(matches[next].page);
     else showTextMatch(textRangesRef.current, next);
-  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch]);
+  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch, searchQuery, runSearch]);
+  // Search as you type, once the typing pauses.
+  useEffect(() => {
+    if (!searchOpen) return;
+    if (searchQuery.trim() === searchedQueryRef.current) return;
+    const t = setTimeout(() => { void runSearch(searchQuery); }, 450);
+    return () => clearTimeout(t);
+  }, [searchOpen, searchQuery, runSearch]);
   const closeSearch = useCallback(() => {
+    searchSeqRef.current++;
+    searchedQueryRef.current = '';
+    setSearching(false);
     setSearchOpen(false);
     setSearchQuery('');
     setMatches([]);
     setMatchIdx(0);
+    setSearched(false);
     clearTextMatches();
   }, [clearTextMatches]);
 
@@ -2471,12 +2549,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       if (goto.passageId) {
         const { data } = await supabase
           .from('passages')
-          .select('page_start, text')
+          .select('page_start, text, metadata')
           .eq('id', goto.passageId)
           .maybeSingle();
-        const row = data as { page_start: number | null; text: string | null } | null;
+        const row = data as { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null } | null;
         if (row) {
-          target = target ?? row.page_start;
+          // A transcript's passages are filed under its printed page; the
+          // physical page, the one to go to, is metadata.pdf_page.
+          const physical = Number(row.metadata?.pdf_page);
+          target = target ?? (Number.isFinite(physical) && physical > 0 ? physical : row.page_start);
           phrase = row.text ? firstWords(row.text, 12) : null;
         }
       }
@@ -2497,7 +2578,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
       if (!root) return;
       let ranges: Range[] = [];
-      if (goto.anchor) {
+      // "at 2 n.1": the note itself, by position (mammoth's ids are its own,
+      // not Word's numbers). Falls through to the passage when there is none.
+      if (goto.footnote) {
+        const notes = root.querySelectorAll<HTMLElement>('li[id^="footnote-"]');
+        const li = notes[goto.footnote - 1];
+        if (li) {
+          const r = document.createRange();
+          r.selectNodeContents(li);
+          ranges = [r];
+        }
+      }
+      if (!ranges.length && goto.anchor) {
         const flat = flattenText(root);
         const at = offsetsFromAnchor(flat.text, goto.anchor);
         const r = at ? rangeFromOffsets(flat, at.start, at.end) : null;
@@ -2619,7 +2711,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter') void runSearch(searchQuery);
+                      if (e.key === 'Enter') { if (e.shiftKey) goPrevMatch(); else goNextMatch(); }
                       else if (e.key === 'Escape') closeSearch();
                     }}
                     placeholder="Find in document…"
@@ -2627,16 +2719,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     // 16px on a phone, so iOS Safari doesn't zoom the page on focus.
                     style={isMobile ? { fontSize: 16 } : undefined}
                   />
-                  {matches.length > 0 ? (
-                    <span className="text-[10px] text-white/55 tabular-nums px-1">
+                  {searching ? (
+                    <span className="text-[11px] text-white/55 px-1 whitespace-nowrap">Searching…</span>
+                  ) : matches.length > 0 ? (
+                    <span className="text-[11px] text-white/70 tabular-nums px-1 whitespace-nowrap">
                       {matchIdx + 1}/{matches.length}
                     </span>
-                  ) : searchQuery && !searching ? (
-                    <span className="text-[10px] text-white/35 px-1">0</span>
+                  ) : searchQuery && searched ? (
+                    <span className="text-[11px] text-amber-300/80 px-1 whitespace-nowrap">Not found</span>
                   ) : null}
                   <button
                     onClick={goPrevMatch}
-                    disabled={matches.length === 0}
+                    disabled={matches.length === 0 && !unsearched()}
                     className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
                     title="Previous match"
                   >
@@ -2644,7 +2738,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                   </button>
                   <button
                     onClick={goNextMatch}
-                    disabled={matches.length === 0}
+                    disabled={matches.length === 0 && !unsearched()}
                     className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
                     title="Next match"
                   >
@@ -2975,7 +3069,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
-            className="reader-scroll flex-1 overflow-auto flex justify-center items-start py-6 px-4"
+            className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
             style={{ backgroundColor: rootBg }}
             // A selection copied off the PDF text layer would otherwise carry
             // the layer's own paint — transformed spans, transparent ink,
@@ -3029,6 +3123,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     onRemove={removeAnnotationCb}
                     onOpenNote={openNoteAt}
                     onOpenRef={openRefAt}
+                    bare={paneChrome}
                   />
                 ))}
               </div>
@@ -3164,7 +3259,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             <PageRail
               page={page}
               total={totalPages}
-              fraction={scrollFraction}
+              scroller={contentRef}
               theme={theme}
               onSeek={seekTo}
             />
@@ -3515,6 +3610,7 @@ const PageSlot = memo(function PageSlot({
   onRemove,
   onOpenNote,
   onOpenRef,
+  bare,
 }: {
   p: number;
   w: number;
@@ -3535,14 +3631,16 @@ const PageSlot = memo(function PageSlot({
   onRemove: (id: string) => void;
   onOpenNote: (n: Annotation, a: { x: number; y: number }) => void;
   onOpenRef: (link: IncomingLink, a: { x: number; y: number }) => void;
+  /** A pane: the page alone, without the margin rails. */
+  bare?: boolean;
 }) {
   return (
     <div className="flex flex-row items-stretch" style={{ marginBottom: PAGE_GAP }}>
-      <CrossRefRail
+      {!bare && <CrossRefRail
         refs={incomingLinks.filter((r) => r.target_page === p)}
         isMobile={isMobile}
         onOpen={onOpenRef}
-      />
+      />}
       <div
         className="relative shadow-2xl"
         style={{ width: w, height: h, backgroundColor: '#ffffff' }}
@@ -3578,12 +3676,12 @@ const PageSlot = memo(function PageSlot({
           onAreaChosen={onAreaChosen}
         />
       </div>
-      <NotesRail
+      {!bare && <NotesRail
         notes={annotations.filter((a) => a.page === p && annotationIsNote(a))}
         currentUserId={currentUserId}
         isMobile={isMobile}
         onOpen={onOpenNote}
-      />
+      />}
     </div>
   );
 });
@@ -3618,11 +3716,11 @@ const ANNOTATION_DOT: Record<AnnotationColor, string> = {
 // pages and through a page alike; it used to snap to page tops, so on a
 // phone with the page taller than the screen the bottom of every page
 // was out of reach. The page number is derived from the scroll, as ever.
-export function PageRail({ page, total, fraction, theme, onSeek }: {
+export function PageRail({ page, total, scroller, theme, onSeek }: {
   page: number;
   total: number;
-  /** Scroll position as a fraction of the document's scroll range. */
-  fraction: number;
+  /** The scrolling page stack; the thumb follows its scroll position. */
+  scroller: React.RefObject<HTMLDivElement | null>;
   theme: Theme;
   onSeek: (fraction: number) => void;
 }) {
@@ -3631,6 +3729,39 @@ export function PageRail({ page, total, fraction, theme, onSeek }: {
   const [hover, setHover] = useState(false);
   const THUMB = 56;
   const dark = theme === 'dark';
+
+  // The scroll position as a fraction of the scroll range, read here so only
+  // the rail re-renders as the document moves.
+  const [fraction, setFraction] = useState(0);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let raf = 0;
+    const read = () => {
+      raf = 0;
+      const range = el.scrollHeight - el.clientHeight;
+      const f = range > 0 ? el.scrollTop / range : 0;
+      setFraction((prev) => (Math.abs(prev - f) < 0.002 ? prev : f));
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(read); };
+    read();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
+  }, [scroller]);
+
+  // A drag seeks at most once a frame: pointer events can outrun the screen.
+  const pendingSeek = useRef<number | null>(null);
+  const seekRaf = useRef(0);
+  const seek = (f: number) => {
+    pendingSeek.current = f;
+    if (seekRaf.current) return;
+    seekRaf.current = requestAnimationFrame(() => {
+      seekRaf.current = 0;
+      if (pendingSeek.current !== null) onSeek(pendingSeek.current);
+      pendingSeek.current = null;
+    });
+  };
+  useEffect(() => () => { if (seekRaf.current) cancelAnimationFrame(seekRaf.current); }, []);
 
   const fractionAt = (clientY: number): number => {
     const el = railRef.current;
@@ -3649,9 +3780,9 @@ export function PageRail({ page, total, fraction, theme, onSeek }: {
       onPointerDown={(e) => {
         (e.currentTarget as Element).setPointerCapture(e.pointerId);
         setDragging(true);
-        onSeek(fractionAt(e.clientY));
+        seek(fractionAt(e.clientY));
       }}
-      onPointerMove={(e) => { if (dragging) onSeek(fractionAt(e.clientY)); }}
+      onPointerMove={(e) => { if (dragging) seek(fractionAt(e.clientY)); }}
       onPointerUp={() => setDragging(false)}
       onPointerCancel={() => setDragging(false)}
       onPointerEnter={() => setHover(true)}
@@ -4028,6 +4159,8 @@ function ReaderStyle({ theme }: { theme: Theme }) {
   const sbInk = dark ? 'rgba(255,255,255,0.65)' : 'rgba(42,30,16,0.75)';
   return (
     <style>{`
+      /* A Word file's notes, labelled (src/lib/reader-notes.ts). */
+      .reader-notes-heading { margin-top: 2.5em; padding-top: 0.8em; border-top: 1px solid currentColor; font-size: 0.95em; opacity: 0.85; }
       .textLayer {
         position: absolute;
         left: 0;

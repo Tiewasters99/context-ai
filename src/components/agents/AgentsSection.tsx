@@ -93,12 +93,25 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 // ── Add an agent ─────────────────────────────────────────────────────
 
-export function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+export function AddAgentCard({
+  onClose,
+  onCreated,
+  initialProvider = 'grok',
+  initialScope = [],
+  z,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  /** A matter's "Connect an agent" opens this with its provider and matter set. */
+  initialProvider?: AgentProvider;
+  initialScope?: string[];
+  z?: number;
+}) {
   const { user } = useAuth();
   const { all } = useMatterIndex();
   const [name, setName] = useState('');
-  const [provider, setProvider] = useState<AgentProvider>('grok');
-  const [scope, setScope] = useState<string[]>([]);
+  const [provider, setProvider] = useState<AgentProvider>(initialProvider);
+  const [scope, setScope] = useState<string[]>(initialScope);
   const [scopeAll, setScopeAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +147,7 @@ export function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCr
     return (
       <AgentCard
         storageKey="cs.agents.addAgent"
+        z={z}
         title={`${issued.name}: connection details`}
         subtitle="The token is shown once. Copy it into the agent now; Contextspaces keeps only a fingerprint of it."
         onClose={onClose}
@@ -179,6 +193,7 @@ export function AddAgentCard({ onClose, onCreated }: { onClose: () => void; onCr
   return (
     <AgentCard
       storageKey="cs.agents.addAgent"
+      z={z}
       title="Add an agent"
       subtitle={AGENT_SCOPE_COPY}
       onClose={onClose}
@@ -243,10 +258,13 @@ export function EditMattersCard({
   agent,
   onClose,
   onSaved,
+  z,
 }: {
   agent: AgentToken;
   onClose: () => void;
   onSaved: () => void;
+  /** Raised when opened from the matter's Share dialog. */
+  z?: number;
 }) {
   const { all } = useMatterIndex();
   const [scope, setScope] = useState<string[]>(agent.matter_scope);
@@ -271,6 +289,7 @@ export function EditMattersCard({
   return (
     <AgentCard
       storageKey="cs.agents.editMatters"
+      z={z}
       title={`Matters ${agentLabel(agent)} may see`}
       subtitle={scopeAll ? ALL_MATTERS_SUBTITLE : AGENT_SCOPE_COPY}
       onClose={onClose}

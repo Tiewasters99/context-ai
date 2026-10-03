@@ -146,14 +146,19 @@ export default function GeminiConnect() {
 
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
-            A connector token carries your own access — no more, no less.
-            There is no per-matter setting on a token: whatever your
-            Contextspaces account can open, a client holding the token can
-            open, except matters kept in a SecureSpace, which are invisible to
-            every outside connector. It can read, search, file new documents
-            and organise them; it cannot delete a document or overwrite an
-            original. Revoke a token below and it stops working on the next
-            request.
+            A token made on this page carries your own access — no more, no
+            less: whatever your Contextspaces account can open, a client
+            holding the token can open, except matters kept in a SecureSpace,
+            which are invisible to every outside connector. It can read,
+            search, file new documents and organise them; it cannot delete a
+            document or overwrite an original. Revoke a token below and it
+            stops working on the next request.
+            <span className="block mt-2">
+              To limit Gemini to certain matters, add it as an agent under{' '}
+              <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">Connections › Agents</Link> instead and put that
+              agent's token in the same config file. An agent's token sees only
+              the matters you tick, and never a SecureSpace.
+            </span>
           </div>
         </header>
 

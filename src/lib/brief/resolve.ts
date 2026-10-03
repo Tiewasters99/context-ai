@@ -115,6 +115,33 @@ export async function resolveEntry(client: RpcClient, matterId: string, entry: E
     });
   }
 
+  // Every reporter cite missed. A Westlaw file often opens with ONE of a
+  // case's parallel cites (Pioneer, 09-28: "113 S.Ct. 1489" and never "507
+  // U.S. 380"), so the index has no row for the reporter the brief uses. The
+  // same case name AND the same decision year is that case, not a guess; a
+  // name alone would be (the RPC's rule). Only where the client can read the
+  // header the ingest parsed.
+  let usByStar = false;   // a Supreme Court file's unnamed single-star pages are U.S. Reports pages
+  if (cites.length && !hits.length && hasFrom(client)) {
+    const byName = caseNameOf(entry);
+    const year = yearOf(entry.citation);
+    if (byName && year) {
+      const named = await callResolve(client, {
+        p_matter: matterId, p_reporter: null, p_volume: null, p_page: null, p_case_name: byName,
+      });
+      if (named.length) {
+        const heads = await headersOf(client, [...new Set(named.map((h) => h.document_id))]);
+        const same = new Set([...heads].filter(([, h]) => h.year === year).map(([id]) => id));
+        hits = named.filter((h) => same.has(h.document_id));
+        if (hits.length) {
+          matched = cites[0];
+          const h = heads.get(hits[0].document_id);
+          usByStar = cites[0].reporter === 'U.S.' && h?.scotus === true && !h.reporters.includes('U.S.');
+        }
+      }
+    }
+  }
+
   // The pin: the one written after the cite that matched; else the
   // extractor's own field. A pin written after one reporter is not a page of
   // another — in "556 U.S. 662, 678, 129 S. Ct. 1937, 1949" matched on the
@@ -127,10 +154,43 @@ export async function resolveEntry(client: RpcClient, matterId: string, entry: E
   if (documents.length > 1) return { status: 'two_copies', cites, pin, hits, passage: null };
 
   const hit = hits[0];
-  // A name match has no reporter, so no level: open where the case begins.
+  // A name match has no reporter, so no level: open where the case begins —
+  // unless the file is a Supreme Court opinion whose single-star pages name
+  // no reporter: Westlaw's first star set on a Supreme Court case is the U.S.
+  // Reports, so a U.S. pin is looked up at level 1.
   const ordinal = hit.how === 'reporter' ? hit.star_level : 1;
-  const passage = await passageForPrintedPage(client, hit.document_id, hit.how === 'reporter' ? pin : null, ordinal);
+  const passage = await passageForPrintedPage(client, hit.document_id, hit.how === 'reporter' || usByStar ? pin : null, ordinal);
   return { status: 'resolved', cites, pin, hits, passage };
+}
+
+/** The decision year in a citation's court parenthetical: "(3d Cir. 2012)", "(1993)" → 2012, 1993. */
+export function yearOf(citation: string | null | undefined): number | null {
+  const s = String(citation ?? '');
+  let m: RegExpExecArray | null; let last: string | null = null;
+  const re = /\(([^()]*?)\b((?:1[89]|20)\d{2})\)/g;
+  while ((m = re.exec(s))) last = m[2];
+  return last ? Number(last) : null;
+}
+
+type FromClient = RpcClient & { from(table: string): { select(cols: string): { in(col: string, ids: string[]): PromiseLike<{ data: unknown; error: { message: string } | null }> } } };
+const hasFrom = (c: RpcClient): c is FromClient => typeof (c as { from?: unknown }).from === 'function';
+
+/** What the ingest parsed from each document's Westlaw header: the year, the court, the reporters it opens with. */
+async function headersOf(client: FromClient, ids: string[]): Promise<Map<string, { year: number | null; scotus: boolean; reporters: string[] }>> {
+  const out = new Map<string, { year: number | null; scotus: boolean; reporters: string[] }>();
+  if (!ids.length) return out;
+  const { data } = await client.from('documents').select('id, metadata').in('id', ids);
+  type Row = { id: string; metadata: { westlaw_case?: { date?: { year?: unknown }; court?: { level?: unknown }; reporters?: { reporter?: unknown }[] } } | null };
+  for (const r of (data ?? []) as Row[]) {
+    const wc = r.metadata?.westlaw_case;
+    const y = Number(wc?.date?.year);
+    out.set(r.id, {
+      year: Number.isFinite(y) && y > 0 ? y : null,
+      scotus: wc?.court?.level === 'scotus',
+      reporters: (wc?.reporters ?? []).map((x) => String(x?.reporter ?? '')),
+    });
+  }
+  return out;
 }
 
 /** public.passage_for_printed_page — null when the document has no passages or is out of scope. */

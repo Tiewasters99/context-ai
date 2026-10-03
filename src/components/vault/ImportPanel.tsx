@@ -1,10 +1,13 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2, List, LayoutGrid, Image as ImageIcon } from 'lucide-react';
+import { Upload, FolderOpen, FileText, X, Loader2, CheckCircle, Search, AlertCircle, ChevronDown, ChevronRight, Folder, RefreshCw, Tag, Wand2, List, LayoutGrid, Image as ImageIcon, Check, FolderPlus } from 'lucide-react';
 import type { VaultFile } from '@/lib/vault-types';
 import { thumbUrl, isThumbable } from '@/lib/vault-thumbs';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
 import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import ContentSearch from './ContentSearch';
+import { isVaultDrag, readVaultDrag, writeVaultDrag, type VaultDragItem } from '@/lib/vault-drag';
+import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
+import { clearVaultClip, pasteVaultClip, setVaultClip, useVaultClip, type ClipMode } from '@/lib/vault-clipboard';
 import {
   buildVaultGroups,
   shareRenderBudget,
@@ -55,6 +58,18 @@ interface ImportPanelProps {
   onOrganize?: () => Promise<number>;
   /** Re-file ONE document by hand. Null hands it back to the rule. */
   onSetCategory?: (documentId: string, category: string | null) => Promise<void>;
+  /** The open matter's own folders (direct sub-matters), shown as drop targets above the list. */
+  folders?: { id: string; name: string }[];
+  /** Move documents into a matter or folder — the selection, or one dragged file. */
+  onMoveFiles?: (items: VaultDragItem[], targetMatterId: string) => Promise<void>;
+  /** Open the dialog that makes a folder inside the open matter. */
+  onNewFolder?: () => void;
+  /** Go into a folder. */
+  onOpenFolder?: (folderId: string) => void;
+  /** The open matter's name, for "Paste into …". */
+  matterName?: string;
+  /** What a paste did, in a sentence, for the page's notice line. */
+  onPasteResult?: (r: { ok: boolean; text: string }) => void;
 }
 
 /**
@@ -149,8 +164,18 @@ function friendlyIngestError(msg: string): string {
 // renders of the same scene can be told apart at a glance. A picture not yet
 // described (uploaded before the feature, or still in the worker's queue)
 // shows its file name instead, and a picture the pipeline is still working
-// on says so. A click opens it exactly as the row does.
-function PictureTile({ file, onOpen }: { file: VaultFile; onOpen?: () => void }) {
+// on says so. A click opens it exactly as the row does; Ctrl/Shift-click or
+// the corner check selects it, and a drag carries the whole selection.
+function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, onDragStart, onContextMenu }: {
+  file: VaultFile;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  onOpen?: () => void;
+  selected?: boolean;
+  /** A click with Ctrl/Cmd or Shift held: returns true when it was a selection, not an open. */
+  onSelectClick?: (e: React.MouseEvent) => boolean;
+  onToggle?: () => void;
+  onDragStart?: (e: React.DragEvent) => void;
+}) {
   // The signed thumbnail URL, remembered with the path it was signed for, so a
   // tile reused for another picture never shows the previous one's image.
   const [thumb, setThumb] = useState<{ path: string | undefined; url: string | null }>({ path: undefined, url: null });
@@ -166,13 +191,38 @@ function PictureTile({ file, onOpen }: { file: VaultFile; onOpen?: () => void })
   const busy = file.status !== 'indexed' && file.status !== 'error';
   const label = file.imageLabel || file.name.replace(/\.[a-z0-9]+$/i, '');
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      disabled={!onOpen}
+    <div
+      role="button"
+      tabIndex={0}
+      data-file-id={file.id}
+      aria-selected={selected}
+      draggable={!!onDragStart}
+      onDragStart={onDragStart}
+      onContextMenu={onContextMenu}
+      onClick={(e) => { if (onSelectClick?.(e)) return; onOpen?.(); }}
+      onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && onOpen) { e.preventDefault(); onOpen(); } }}
       title={file.imageLabel ? `${file.imageLabel}\n${file.name}` : file.name}
-      className="group/tile flex flex-col text-left rounded-lg overflow-hidden border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] hover:border-[#e8b84a]/50 hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:cursor-default"
+      className={`group/tile relative flex flex-col text-left rounded-lg overflow-hidden border transition-colors select-none ${onOpen ? 'cursor-pointer' : 'cursor-default'} ${
+        selected
+          ? 'border-[#e8b84a] ring-1 ring-[#e8b84a] bg-[rgba(232,184,74,0.10)]'
+          : 'border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] hover:border-[#e8b84a]/50 hover:bg-[rgba(255,255,255,0.04)]'
+      }`}
     >
+      {onToggle && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onToggle(); }}
+          aria-label={selected ? 'Deselect' : 'Select'}
+          aria-pressed={selected}
+          className={`absolute top-1.5 left-1.5 z-10 w-5 h-5 rounded flex items-center justify-center border transition-opacity ${
+            selected
+              ? 'opacity-100 bg-[#e8b84a] border-[#e8b84a] text-black'
+              : 'opacity-0 group-hover/tile:opacity-100 focus:opacity-100 bg-black/60 border-white/50 text-transparent hover:text-white/70'
+          }`}
+        >
+          <Check size={12} strokeWidth={3} />
+        </button>
+      )}
       <div className="relative w-full aspect-square bg-[rgba(0,0,0,0.35)] flex items-center justify-center overflow-hidden">
         {src && !failed ? (
           <img
@@ -196,11 +246,11 @@ function PictureTile({ file, onOpen }: { file: VaultFile; onOpen?: () => void })
       <p className={`px-2 py-1.5 text-[11px] leading-snug line-clamp-2 ${file.imageLabel ? 'text-[#f5f1e8]' : 'text-white/55'} group-hover/tile:text-[#e8b84a] transition-colors`}>
         {label}
       </p>
-    </button>
+    </div>
   );
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory, folders, onMoveFiles, onNewFolder, onOpenFolder, matterName, onPasteResult }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(RENDER_WINDOW);
   const [dragOver, setDragOver] = useState(false);
@@ -339,6 +389,241 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     [groups, shown, collapsedGroups],
   );
 
+  // The picture grid, cut by folder the same way the list is in date mode:
+  // a matter whose pictures sit in its sub-folders shows one collapsible
+  // header per folder instead of one undivided wall of thumbnails.
+  const pictureGroups = useMemo(() => (showPictures ? buildVaultGroups(pictures, 'date') : null), [showPictures, pictures]);
+  const pictureTake = useMemo(
+    () => (pictureGroups ? shareRenderBudget(pictureGroups, shown, collapsedGroups) : null),
+    [pictureGroups, shown, collapsedGroups],
+  );
+
+  // ---- Selection, File Explorer style -------------------------------------
+  // Ctrl/Cmd-click adds or removes one, Shift-click takes the range from the
+  // last one clicked, dragging a box across empty space catches everything it
+  // touches (Ctrl held adds to what is already selected), and the corner
+  // check does it without a keyboard. A plain click still OPENS, as it always
+  // has. Dragging any selected item carries the whole selection.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const anchorRef = useRef<string | null>(null);
+  const canMove = !!onMoveFiles && !!matterId;
+  useEffect(() => { setSelected(new Set()); anchorRef.current = null; }, [matterId]);
+  // A file that left the list (moved, deleted) leaves the selection too.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const present = new Set(files.map((f) => f.id));
+      const next = new Set([...prev].filter((id) => present.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [files]);
+  useEffect(() => {
+    if (selected.size === 0) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelected(new Set()); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [selected.size]);
+
+  // The order things are drawn in, which is what a Shift-click range means.
+  const drawnOrder = useMemo(() => {
+    const take = <T,>(gs: { id: string; files: T[] }[] | null, budget: Map<string, number> | null, flat: T[]) =>
+      gs && budget ? gs.flatMap((g) => g.files.slice(0, budget.get(g.id) ?? 0)) : flat.slice(0, shown);
+    return (showPictures ? take(pictureGroups, pictureTake, pictures) : take(groups, groupTake, filtered))
+      .filter((f) => !!f.matterspace_id)
+      .map((f) => f.id);
+  }, [showPictures, pictureGroups, pictureTake, pictures, groups, groupTake, filtered, shown]);
+
+  const toggleSelected = (id: string) => {
+    anchorRef.current = id;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  /** Handles a click with Ctrl/Cmd or Shift held; true when it was a selection. */
+  const selectClick = (e: React.MouseEvent, id: string): boolean => {
+    if (!canMove) return false;
+    if (e.shiftKey && anchorRef.current) {
+      const a = drawnOrder.indexOf(anchorRef.current);
+      const b = drawnOrder.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const range = drawnOrder.slice(Math.min(a, b), Math.max(a, b) + 1);
+        setSelected((prev) => new Set(e.ctrlKey || e.metaKey ? [...prev, ...range] : range));
+        return true;
+      }
+    }
+    if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleSelected(id); return true; }
+    return false;
+  };
+
+  const byId = useMemo(() => new Map(files.map((f) => [f.id, f])), [files]);
+
+  // ── Cut / Copy / Paste (Eden, 10-02) ───────────────────────────────────
+  // Right-click a file: Cut or Copy (the whole selection, as a drag carries
+  // it). Right-click a folder, or empty space in the list: Paste here. Also
+  // Ctrl+X / Ctrl+C / Ctrl+V. Cut moves, Copy copies, both through the
+  // server's own SecureSpace checks (src/lib/vault-clipboard.ts).
+  const clip = useVaultClip();
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const itemsOf = (ids: string[]): VaultDragItem[] => ids
+    .map((id) => byId.get(id))
+    .filter((f): f is VaultFile => !!f?.matterspace_id)
+    .map((f) => ({ docId: f.id, fromMatterId: f.matterspace_id! }));
+  const putOnClip = (mode: ClipMode, ids: string[]) => {
+    const items = itemsOf(ids);
+    if (!items.length) return;
+    setVaultClip(mode, items);
+    report({ ok: true, text: `${items.length.toLocaleString()} document${items.length === 1 ? '' : 's'} ${mode === 'cut' ? 'cut' : 'copied'}: right-click a folder and choose Paste here, or press Ctrl+V in the folder.` });
+  };
+  const report = (r: { ok: boolean; text: string }) => {
+    if (onPasteResult) onPasteResult(r); else setOrganizeNote(r.text);
+  };
+  const [pasting, setPasting] = useState(false);
+  const pasteInto = async (targetId: string, targetName: string) => {
+    if (!clip || pasting) return;
+    setPasting(true);
+    try {
+      const r = await pasteVaultClip(targetId, targetName);
+      setSelected(new Set());
+      report(r);
+    } finally {
+      setPasting(false);
+    }
+  };
+  const clipNoun = clip ? `${clip.items.length.toLocaleString()} document${clip.items.length === 1 ? '' : 's'}` : '';
+  const fileMenu = (e: React.MouseEvent, file: VaultFile) => {
+    if (!canMove || !file.matterspace_id) return;
+    e.preventDefault();
+    // Right-clicking a file outside the selection selects just that file, as
+    // Explorer does.
+    const ids = selected.has(file.id) ? [...selected] : [file.id];
+    if (!selected.has(file.id)) { setSelected(new Set([file.id])); anchorRef.current = file.id; }
+    const n = ids.length > 1 ? ` ${ids.length.toLocaleString()}` : '';
+    setMenu({
+      x: e.clientX, y: e.clientY, items: [
+        { label: `Cut${n}`, hint: 'Ctrl+X', onSelect: () => putOnClip('cut', ids) },
+        { label: `Copy${n}`, hint: 'Ctrl+C', onSelect: () => putOnClip('copy', ids) },
+      ],
+    });
+  };
+  const folderMenu = (e: React.MouseEvent, folderId: string, name: string) => {
+    if (!canMove) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({
+      x: e.clientX, y: e.clientY, items: [
+        clip
+          ? { label: `Paste ${clipNoun} into ${name}`, hint: clip.mode === 'cut' ? 'move' : 'copy', onSelect: () => void pasteInto(folderId, name) }
+          : { label: 'Paste', hint: 'Cut or Copy a document first', onSelect: () => {}, disabled: true },
+      ],
+    });
+  };
+  const areaMenu = (e: React.MouseEvent) => {
+    if (!canMove || !matterId) return;
+    if ((e.target as Element).closest('[data-file-id], [data-drop-folder]')) return;
+    folderMenu(e, matterId, matterName ?? 'this folder');
+  };
+  useEffect(() => {
+    if (!canMove) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest('input, textarea, [contenteditable="true"]') || window.getSelection()?.toString())) return;
+      const k = e.key.toLowerCase();
+      if ((k === 'x' || k === 'c') && selected.size) { e.preventDefault(); putOnClip(k === 'x' ? 'cut' : 'copy', [...selected]); }
+      else if (k === 'v' && clip && matterId) { e.preventDefault(); void pasteInto(matterId, matterName ?? 'this folder'); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+  const startDrag = (e: React.DragEvent, file: VaultFile) => {
+    if (!file.matterspace_id) return;
+    const ids = selected.has(file.id) ? [...selected] : [file.id];
+    const items = ids
+      .map((id) => byId.get(id))
+      .filter((f): f is VaultFile => !!f?.matterspace_id)
+      .map((f) => ({ docId: f.id, fromMatterId: f.matterspace_id! }));
+    writeVaultDrag(e.dataTransfer, items);
+    if (items.length > 1) {
+      // The count rides under the pointer, so it is plain that all of them go.
+      const ghost = document.createElement('div');
+      ghost.textContent = `${items.length.toLocaleString()} documents`;
+      ghost.style.cssText = 'position:fixed;top:-100px;left:0;padding:6px 10px;border-radius:8px;background:#e8b84a;color:#000;font:600 12px system-ui,sans-serif;';
+      document.body.appendChild(ghost);
+      e.dataTransfer.setDragImage(ghost, 12, 12);
+      setTimeout(() => ghost.remove(), 0);
+    }
+  };
+
+  // The box: pressed on empty space inside the list/grid (never on a file,
+  // which starts a native drag, or on a button), drawn in the area's own
+  // coordinates, and applied once it is more than a few pixels across so a
+  // plain click on the background just clears the selection.
+  const areaRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const onAreaPointerDown = (e: React.PointerEvent) => {
+    if (!canMove || e.button !== 0) return;
+    if ((e.target as Element).closest('[data-file-id], button, a, input, [data-drop-folder]')) return;
+    const area = areaRef.current;
+    if (!area) return;
+    e.preventDefault();
+    const additive = e.ctrlKey || e.metaKey;
+    const base = additive ? new Set(selected) : new Set<string>();
+    const start = { x: e.clientX, y: e.clientY };
+    let moved = false;
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - start.x;
+      const dy = ev.clientY - start.y;
+      if (!moved && Math.hypot(dx, dy) < 5) return;
+      moved = true;
+      const r = area.getBoundingClientRect();
+      setBox({ x0: start.x - r.left, y0: start.y - r.top, x1: ev.clientX - r.left, y1: ev.clientY - r.top });
+      const left = Math.min(start.x, ev.clientX), right = Math.max(start.x, ev.clientX);
+      const top = Math.min(start.y, ev.clientY), bottom = Math.max(start.y, ev.clientY);
+      const hit = new Set(base);
+      area.querySelectorAll<HTMLElement>('[data-file-id]').forEach((el) => {
+        const b = el.getBoundingClientRect();
+        if (b.right > left && b.left < right && b.bottom > top && b.top < bottom) hit.add(el.dataset.fileId!);
+      });
+      setSelected(hit);
+    };
+    const onUp = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      setBox(null);
+      if (!moved && !additive) setSelected(new Set());
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+
+  // A folder chip or a folder's group header, as a place to drop files.
+  const [dropFolder, setDropFolder] = useState<string | null>(null);
+  const dropProps = (folderId: string, name?: string) => (canMove ? {
+    'data-drop-folder': folderId,
+    onContextMenu: (e: React.MouseEvent) => folderMenu(e, folderId, name ?? 'this folder'),
+    onDragOver: (e: React.DragEvent) => {
+      if (!isVaultDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dropFolder !== folderId) setDropFolder(folderId);
+    },
+    onDragLeave: () => setDropFolder((cur) => (cur === folderId ? null : cur)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      setDropFolder(null);
+      const items = readVaultDrag(e.dataTransfer);
+      if (items.length) { setSelected(new Set()); void onMoveFiles!(items, folderId); }
+    },
+  } : {});
+  const folderCount = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const f of files) if (f.matterspace_id) n.set(f.matterspace_id, (n.get(f.matterspace_id) ?? 0) + 1);
+    return n;
+  }, [files]);
+
   const runOrganize = async () => {
     if (!onOrganize || organizing) return;
     setOrganizing(true);
@@ -366,12 +651,16 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
 
   // Rows actually drawn, and rows there are to draw — the two numbers the
   // "Show more" line reports.
-  const drawable = groups
-    ? groups.reduce((n, g) => n + (collapsedGroups.has(g.id) ? 0 : g.files.length), 0)
-    : filtered.length;
-  const drawn = groupTake
-    ? groups!.reduce((n, g) => n + (groupTake.get(g.id) ?? 0), 0)
-    : Math.min(shown, filtered.length);
+  // "the list" is the picture grid while that is what is on screen.
+  const [viewGroups, viewTake, viewFlat] = showPictures
+    ? [pictureGroups, pictureTake, pictures]
+    : [groups, groupTake, filtered];
+  const drawable = viewGroups
+    ? viewGroups.reduce((n, g) => n + (collapsedGroups.has(g.id) ? 0 : g.files.length), 0)
+    : viewFlat.length;
+  const drawn = viewTake
+    ? viewGroups!.reduce((n, g) => n + (viewTake.get(g.id) ?? 0), 0)
+    : Math.min(shown, viewFlat.length);
 
   const totalSize = files.reduce((sum, f) => sum + f.sizeBytes, 0);
   const indexedCount = files.filter((f) => f.status === 'indexed').length;
@@ -400,27 +689,40 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       serviceNotice && file.matterspace_id && file.storagePath &&
       (file.status === 'uploading' || file.status === 'indexing'),
     );
+    const isSelected = selected.has(file.id);
+    const selectable = canMove && !!file.matterspace_id;
     return (
     <div
       key={file.id}
+      data-file-id={file.matterspace_id ? file.id : undefined}
+      aria-selected={selectable ? isSelected : undefined}
       draggable={!!file.matterspace_id}
-      onDragStart={(e) => {
-        if (!file.matterspace_id) return;
-        // The Vault rail's matter rows read this on drop and call the
-        // move endpoint. Plain JSON over text/plain works across panels
-        // without needing a shared DndContext.
-        e.dataTransfer.setData(
-          'application/x-cs-vault-file',
-          JSON.stringify({ docId: file.id, fromMatterId: file.matterspace_id }),
-        );
-        e.dataTransfer.effectAllowed = 'move';
-      }}
-      onClick={() => { if (canOpen) onOpenFile!(file); }}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[rgba(255,255,255,0.03)] transition-colors group ${
+      // A folder above the list, or a matter in the rail, reads this on drop.
+      onDragStart={(e) => startDrag(e, file)}
+      onContextMenu={(e) => fileMenu(e, file)}
+      onClick={(e) => { if (selectClick(e, file.id)) return; if (canOpen) onOpenFile!(file); }}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors group select-none ${
+        isSelected ? 'bg-[rgba(232,184,74,0.10)] ring-1 ring-[#e8b84a]/60' : 'hover:bg-[rgba(255,255,255,0.03)]'
+      } ${
         canOpen ? 'cursor-pointer' : file.matterspace_id ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
-      title={canOpen ? 'Open document' : file.matterspace_id ? 'Drag to a matter in the rail to move' : undefined}
+      title={canOpen ? 'Open document' : file.matterspace_id ? 'Drag to a folder to move' : undefined}
     >
+      {selectable && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); toggleSelected(file.id); }}
+          aria-label={isSelected ? 'Deselect' : 'Select'}
+          aria-pressed={isSelected}
+          className={`w-4 h-4 shrink-0 rounded flex items-center justify-center border transition-opacity ${
+            isSelected
+              ? 'opacity-100 bg-[#e8b84a] border-[#e8b84a] text-black'
+              : `${selected.size ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'} border-white/40 text-transparent hover:text-white/60`
+          }`}
+        >
+          <Check size={10} strokeWidth={3} />
+        </button>
+      )}
       {file.status === 'indexed' && file.textStatus
         ? <CheckCircle size={14} className="text-white/35" />
         : statusIcon[file.status]}
@@ -681,16 +983,121 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               </div>
             )}
 
-            {showPictures ? (
-              <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
-                {pictures.slice(0, shown).map((file) => (
-                  <PictureTile
-                    key={file.id}
-                    file={file}
-                    onOpen={openable(file) ? () => onOpenFile!(file) : undefined}
-                  />
+            {/* Folders: this matter's own sub-folders, each a place to drop
+                files, and the way to make a new one. */}
+            {canMove && (onNewFolder || (folders && folders.length > 0)) && (
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <span className="text-[10px] uppercase tracking-wider text-white/40">Folders</span>
+                {folders?.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => onOpenFolder?.(f.id)}
+                    title={`Open ${f.name} — or drop files here to move them in`}
+                    {...dropProps(f.id, f.name)}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition-colors ${
+                      dropFolder === f.id
+                        ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.18)] text-[#e8b84a]'
+                        : 'border-[rgba(255,255,255,0.12)] text-white/80 hover:border-[#e8b84a]/50 hover:text-white'
+                    }`}
+                  >
+                    <Folder size={12} className="text-[#d4a054]" strokeWidth={1.75} />
+                    {f.name}
+                    <span className="text-white/35">{(folderCount.get(f.id) ?? 0).toLocaleString()}</span>
+                  </button>
                 ))}
+                {onNewFolder && (
+                  <button
+                    type="button"
+                    onClick={onNewFolder}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-dashed border-[rgba(255,255,255,0.2)] text-[11px] text-white/70 hover:border-[#e8b84a]/60 hover:text-[#e8b84a] transition-colors"
+                  >
+                    <FolderPlus size={12} strokeWidth={1.75} /> New folder
+                  </button>
+                )}
               </div>
+            )}
+
+            {selected.size > 0 && (
+              <div className="flex items-center gap-3 flex-wrap mb-3 px-3 py-2 rounded-lg border border-[#e8b84a]/40 bg-[rgba(232,184,74,0.08)] text-[11px] text-[#f0dfa8]">
+                <span className="font-semibold">{selected.size.toLocaleString()} selected</span>
+                <span className="text-white/55">Drag any of them onto a folder to move them all · a click still opens · Esc clears</span>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set(drawnOrder))}
+                  className="ml-auto text-white/70 hover:text-[#e8b84a]"
+                >
+                  Select all shown
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="text-white/70 hover:text-[#e8b84a]"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
+            {clip && canMove && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 px-3 py-1.5 rounded-lg border border-[#e8b84a]/30 bg-[#e8b84a]/[0.06] text-[11.5px] text-white/75" data-testid="vault-clipboard">
+                <span>
+                  {clipNoun} {clip.mode === 'cut' ? 'cut' : 'copied'}. Right-click a folder and choose <span className="text-[#e8b84a]">Paste</span>, or press Ctrl+V to paste into {matterName ?? 'this folder'}.
+                </span>
+                {pasting && <Loader2 size={12} className="animate-spin text-[#e8b84a]" />}
+                <button type="button" onClick={clearVaultClip} className="ml-auto text-white/50 hover:text-white">Cancel</button>
+              </div>
+            )}
+            <ContextMenu menu={menu} onClose={closeMenu} />
+            <div ref={areaRef} onPointerDown={onAreaPointerDown} onContextMenu={areaMenu} className="relative pb-10">
+            {box && (
+              <div
+                aria-hidden
+                className="absolute z-20 pointer-events-none border border-[#e8b84a] bg-[rgba(232,184,74,0.12)] rounded-sm"
+                style={{
+                  left: Math.min(box.x0, box.x1), top: Math.min(box.y0, box.y1),
+                  width: Math.abs(box.x1 - box.x0), height: Math.abs(box.y1 - box.y0),
+                }}
+              />
+            )}
+            {showPictures ? (
+              (pictureGroups ?? [{ id: '__all__', name: '', files: pictures }]).map((g) => {
+                const collapsed = !!pictureGroups && collapsedGroups.has(g.id);
+                const take = pictureTake?.get(g.id) ?? Math.min(shown, g.files.length);
+                return (
+                  <div key={g.id} className={pictureGroups ? 'mb-4' : ''}>
+                    {pictureGroups && (
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(g.id)}
+                        {...dropProps(g.id, g.name)}
+                        className={`flex items-center gap-2 w-full text-left mb-2 px-1 py-0.5 rounded group/header ${dropFolder === g.id ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60' : ''}`}
+                      >
+                        {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}
+                        <Folder size={13} className="text-[#d4a054]" strokeWidth={1.75} />
+                        <span className="text-[12px] font-medium text-[#f5f1e8] group-hover/header:text-[#e8b84a] transition-colors">{g.name}</span>
+                        <span className="text-[10px] text-white/30 ml-auto">{g.files.length.toLocaleString()}</span>
+                      </button>
+                    )}
+                    {!collapsed && (
+                      <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fill,minmax(150px,1fr))]">
+                        {g.files.slice(0, take).map((file) => (
+                          <PictureTile
+                            key={file.id}
+                            file={file}
+                            onOpen={openable(file) ? () => onOpenFile!(file) : undefined}
+                            selected={selected.has(file.id)}
+                            onSelectClick={canMove ? (e) => selectClick(e, file.id) : undefined}
+                            onToggle={canMove ? () => toggleSelected(file.id) : undefined}
+                            onDragStart={(e) => startDrag(e, file)}
+                            onContextMenu={(e) => fileMenu(e, file)}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
             ) : groups ? (
               <div className="space-y-3">
                 {groups.map((g) => {
@@ -700,7 +1107,9 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                     <div key={g.id}>
                       <button
                         onClick={() => toggleGroup(g.id)}
-                        className="flex items-center gap-2 w-full text-left mb-1.5 group/header"
+                        // In date mode a group IS a folder, so it takes drops.
+                        {...(grouping === 'date' ? dropProps(g.id, g.name) : {})}
+                        className={`flex items-center gap-2 w-full text-left mb-1.5 px-1 py-0.5 rounded group/header ${dropFolder === g.id ? 'bg-[rgba(232,184,74,0.18)] ring-1 ring-[#e8b84a]/60' : ''}`}
                       >
                         {collapsed ? <ChevronRight size={13} className="text-white/50" strokeWidth={2.5} /> : <ChevronDown size={13} className="text-white/50" strokeWidth={2.5} />}
                         {grouping === 'date' && <Folder size={13} className="text-[#d4a054]" strokeWidth={1.75} />}
@@ -727,6 +1136,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
                 {filtered.slice(0, shown).map(renderFileRow)}
               </div>
             )}
+            </div>
 
             {/* The rows are all loaded; this is only how many are drawn. The
                 count is explicit so nobody reads the bottom of the list as
