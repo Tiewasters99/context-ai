@@ -174,6 +174,14 @@ function witness({ tier = 'A', upstream = null, authed = true, matterFound = tru
         matterFound ? [{ id: 'm-1', parent_matterspace_id: null, ai_tier: tier }] : [],
       ), { status: 200 });
     }
+    // The gate reads each named document's own matter (a sealed sub-matter's
+    // document under an open matter is refused). Every document here lives in
+    // the bound matter, so an answered call stays answered; a non-uuid id is
+    // refused by the gate before it would get here.
+    if (u.includes('/rest/v1/documents')) {
+      const ids = decodeURIComponent(u.match(/id=in\.\(([^)]*)\)/)?.[1] ?? '').split(',').filter(Boolean);
+      return new Response(JSON.stringify(ids.map((id) => ({ id, matterspace_id: 'm-1' }))), { status: 200 });
+    }
     if (u.endsWith('/rpc/ledger_append')) {
       try { ledgerRows.push(JSON.parse(init.body || '{}')); } catch { ledgerRows.push({ unparsed: true }); }
       return LEDGER_ANSWERS[ledgerMode]();
@@ -350,6 +358,9 @@ console.log('\n3. A sentinel planted anywhere never reaches a stored payload');
   const kept = rowsOfKind('completion.requested')[0]?.p_payload ?? {};
   check(Array.isArray(kept.document_ids) && kept.document_ids.length === 1,
     'a list of real uuids is kept, because ids are the one thing worth keeping');
+  check(providerRequests().length === 1 && !kept.refused,
+    'and that call — a real document in its own matter — is still ANSWERED, through the document gate',
+    `provider=${providerRequests().length} refused=${kept.refused ?? ''}`);
 }
 
 // ===========================================================================
