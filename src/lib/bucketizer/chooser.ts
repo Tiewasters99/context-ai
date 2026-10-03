@@ -71,6 +71,12 @@ export type ChooserState =
    * that said out loud and never swept up by "classify everything".
    */
   | 'held_partial'
+  /**
+   * In a SEALED sub-matter of an open matter. The tree's model calls are
+   * judged by the tree's matter, so this document cannot be sent from here;
+   * it is shown with that reason, never offered and never swept up.
+   */
+  | 'sealed'
   /** Still being ingested, failed, or held with nothing read. */
   | 'not_ready'
   /** Ready, but the file holds no text to read. */
@@ -195,8 +201,15 @@ export function buildChooserRows(input: {
   classifications: ChooserClassification[];
   /** matterspace id → name, for grouping the list and the confirmation. */
   matterNames?: Map<string, string>;
+  /**
+   * Matters in this tree whose seal the tree's own matter does not share
+   * (`documentHeldBySeal`, lib/ai-tier-policy.mjs). Empty when the tree's
+   * matter is itself sealed: its runs already go only to the sealed route.
+   */
+  sealedMatterIds?: Set<string>;
 }): ChooserRow[] {
   const inTree = new Set(input.matterIds);
+  const sealed = input.sealedMatterIds ?? new Set<string>();
 
   const byDoc = new Map<string, { rows: number; decided: number; last: string | null }>();
   for (const c of input.classifications) {
@@ -240,6 +253,22 @@ export function buildChooserRows(input: {
         status: 'a trial outline filed from this matter',
         blockedReason: 'This is one of this matter\'s own trial outlines. Classifying it would '
           + 'file the outline under the elements it quotes.',
+      });
+      continue;
+    }
+
+    // Ahead of the readiness checks on purpose: a sealed sub-matter's scan
+    // that is also `held` for OCR should say the reason that will not go away
+    // by waiting. The server refuses the same document at run start and again
+    // per document on the worker; this is the honest list, not the guard.
+    if (sealed.has(doc.matterspace_id)) {
+      rows.push({
+        ...base,
+        state: 'sealed',
+        status: 'in a sealed sub-matter',
+        blockedReason: 'This document is in a sealed sub-matter and this matter is not sealed, so it '
+          + 'cannot be classified from here — nothing in it is sent to a model. Classify it from '
+          + 'inside the sealed matter.',
       });
       continue;
     }

@@ -41,6 +41,7 @@ import {
   ACTIVE_RUN_STATUSES, SERVER_RUN_MIN_DOCUMENTS, BUCKETIZER_JOB_TYPE,
   enqueueRunJobs, haltRun,
 } from '../lib/bucketizer-run-queue.mjs';
+import { documentHeldBySeal, matterTierRows } from '../lib/ai-tier-policy.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -195,6 +196,34 @@ export default async function handler(req, res) {
         message:
           `${asked.length - visible.length} of the chosen documents are not in this matter, `
           + 'so nothing was started.',
+      });
+    }
+
+    // THE SEAL IS EACH DOCUMENT'S OWN. "Inside this matter's tree" is not
+    // "under this matter's seal": a sub-matter can be sealed while this one is
+    // open, and the run's model calls are judged by THIS matter. So a document
+    // whose own matter is sealed is refused here, before a row exists — the
+    // chooser already shows it as not choosable, so reaching this means a
+    // stale list or a hand-made request. Read with the service role: the tier
+    // is policy, not content (as in the /api/llm gate). An unanswerable lookup
+    // counts as sealed. The worker asks the same again per document.
+    const tierRows = matterTierRows(svc);
+    const heldMatters = new Map();
+    let sealedCount = 0;
+    for (const d of visible) {
+      if (d.matterspace_id === matterId) continue;
+      if (!heldMatters.has(d.matterspace_id)) {
+        heldMatters.set(d.matterspace_id, await documentHeldBySeal(tierRows, matterId, d.matterspace_id));
+      }
+      if (heldMatters.get(d.matterspace_id)) sealedCount += 1;
+    }
+    if (sealedCount > 0) {
+      return json(res, 403, {
+        error: 'documents_sealed',
+        message:
+          `${sealedCount} of the chosen documents ${sealedCount === 1 ? 'is' : 'are'} in a sealed `
+          + 'sub-matter, and this matter is not sealed, so nothing was started and nothing was sent '
+          + 'to any model. Choose again without them, or classify them from inside the sealed matter.',
       });
     }
 
