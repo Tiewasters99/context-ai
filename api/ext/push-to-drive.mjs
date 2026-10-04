@@ -7,6 +7,17 @@
 // same "Contextspaces" folder. Difference is auth: this endpoint
 // accepts a csp_* connector token instead of a Supabase session JWT,
 // because the extension authenticates via paste-a-token.
+//
+// The seal (098, S1b). A sealed matter's document is never pushed from here,
+// confirmed or not: the token that authenticates this route is a standing
+// credential whose JWT the second-factor gate does not see, so a
+// `confirm_leave_seal` in its body proves only that whoever holds the token
+// typed it. The refusal comes before the export gate, the Drive connection,
+// the token exchange and the storage download, and is written to the matter's
+// Record like an MCP connector's (lib/ext-seal.mjs). Sealed work leaves through
+// the web app, whose export gate asks the signed-in person per copy. For an
+// unsealed document nothing changes; the export gate below still runs, and
+// still takes its confirmation only from this request's body.
 
 import {
   authenticateConnectorToken,
@@ -19,6 +30,8 @@ import {
 } from '../../lib/connector-token-auth.mjs';
 
 import { decrypt } from '../../lib/connections-crypto.mjs';
+import { fetchMatterTier, isSealedTier } from '../../lib/ai-tier-policy.mjs';
+import { recordExtRefusal, sealedRefusal } from '../../lib/ext-seal.mjs';
 import { checkExport, sealResult } from '../../lib/export-gate.mjs'; // gate:import
 import { pathInMatter } from '../../lib/storage-path.mjs';
 
@@ -26,7 +39,15 @@ const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
 const MAX_EXPORT_BYTES = 75 * 1024 * 1024;
 
-export default async function handler(req, res) {
+export default async function handler(req, res, deps = {}) {
+  const authenticate = deps.authenticate ?? authenticateConnectorToken;
+  const userClient = deps.userClient ?? userScopedClient;
+  const tierOf = deps.tierOf ?? ((matterId) => fetchMatterTier(
+    process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    matterId,
+  ));
+
   corsHeaders(res);
   if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
   if (req.method !== 'POST') return json(res, 405, { error: 'method_not_allowed' });
@@ -37,7 +58,7 @@ export default async function handler(req, res) {
 
   let userId;
   try {
-    userId = await authenticateConnectorToken(req);
+    userId = await authenticate(req);
   } catch (err) {
     return handleAuthError(res, err);
   }
@@ -51,8 +72,8 @@ export default async function handler(req, res) {
   // the user can access this document. Use the admin client only for
   // the connections row (encrypted refresh token) and the storage
   // blob fetch.
-  const sb = userScopedClient(userId);
-  const admin = adminClient();
+  const sb = userClient(userId);
+  const admin = deps.adminClient ? deps.adminClient() : adminClient();
 
   const { data: doc, error: docErr } = await sb
     .from('documents')
@@ -70,10 +91,26 @@ export default async function handler(req, res) {
     return json(res, 413, { error: 'file_too_large', maxBytes: MAX_EXPORT_BYTES });
   }
 
+  // ── The seal: a connected app never carries a sealed document out ──────
+  // Service role for the tier (an ancestor the user cannot see still seals
+  // the document); a tier that cannot be read refuses.
+  if (doc.matterspace_id) {
+    let tier;
+    try {
+      tier = await tierOf(doc.matterspace_id);
+    } catch {
+      return json(res, 503, { error: 'seal_status_unknown' });
+    }
+    if (isSealedTier(tier)) {
+      await recordExtRefusal(sb, { route: 'ext.push_to_drive', matterId: doc.matterspace_id, documentId: doc.id, userId });
+      return json(res, 403, sealedRefusal());
+    }
+  }
+
   // A paused matter's bytes do not leave through a connected app (070; 099).
   // Before the export gate, the Drive connection and the storage download: a
   // refusal here reads nothing and sends nothing.
-  const paused = await pausedMatterRefusal(doc.matterspace_id);
+  const paused = await pausedMatterRefusal(doc.matterspace_id, { client: deps.adminClient ? deps.adminClient() : null });
   if (paused) return json(res, paused.status, paused.body);
 
   // ── SecureSpace export gate ─────────────────────────────────── gate:start

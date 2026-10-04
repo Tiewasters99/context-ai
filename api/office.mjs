@@ -37,6 +37,7 @@
 // local depth-parallax build; later its own domain).
 
 import { createClient } from '@supabase/supabase-js';
+import { isSealedTier, matterTierWithClient } from '../lib/ai-tier-policy.mjs';
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -49,6 +50,40 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const isUuid = (v) => typeof v === 'string' && UUID_RE.test(v);
+
+// The manifest's items without any whose document is sealed, or whose seal
+// could not be read (fails closed: omitted, never shown).
+export async function dropSealedItems(supabase, items) {
+  const keep = [];
+  for (const it of items) {
+    if (!it?.document_id) { keep.push(it); continue; }
+    try {
+      if (!(await documentIsSealed(supabase, it.document_id))) keep.push(it);
+    } catch {
+      // omitted
+    }
+  }
+  return keep;
+}
+
+// Is this document in a sealed matter (its own tier or an ancestor's is B or
+// C)? Read with the service role the room already runs on. After 098 it is one
+// column; before 098 is pasted (42703) the ancestry is walked. Any other
+// failure throws, and the caller refuses.
+export async function documentIsSealed(supabase, documentId) {
+  if (!documentId) return false;
+  const { data: d, error: dErr } = await supabase
+    .from('documents').select('matterspace_id').eq('id', documentId).maybeSingle();
+  if (dErr) throw new Error(`seal lookup: ${dErr.message}`);
+  if (!d?.matterspace_id) return false;
+  const { data: m, error: mErr } = await supabase
+    .from('matterspaces').select('sealed_effective').eq('id', d.matterspace_id).maybeSingle();
+  if (!mErr) return m?.sealed_effective === true;
+  if (mErr.code !== '42703' && !/sealed_effective/.test(mErr.message ?? '')) {
+    throw new Error(`seal lookup: ${mErr.message}`);
+  }
+  return isSealedTier(await matterTierWithClient(supabase, d.matterspace_id));
+}
 
 // The room's owner comes from the environment, never from the request.
 // Missing or malformed closes the office rather than opening it to everyone.
@@ -201,6 +236,20 @@ export default async function handler(req, res) {
       res.status(404).json({ error: 'No such book on the shelves' });
       return;
     }
+    // 098: a sealed matter's document is never read out in the public room,
+    // whatever the item row says (an item shelved before 098, or by a session
+    // that had confirmed its factor). Unknown is refused, not served.
+    let sealed;
+    try {
+      sealed = await documentIsSealed(supabase, item.document_id);
+    } catch {
+      res.status(503).json({ error: 'The book cannot be opened just now' });
+      return;
+    }
+    if (sealed) {
+      res.status(404).json({ error: 'No such book on the shelves' });
+      return;
+    }
     // What KIND of reading this is: a slide deck reads as slides (one card
     // per passage — ingest indexes one passage per slide), everything else
     // as flowing text pages. Only the shape travels; never the file.
@@ -273,11 +322,16 @@ export default async function handler(req, res) {
     return;
   }
 
+  // 098: nothing sealed ever appears on a public page. An item's excerpt is
+  // the document's own opening text, so an item whose document is sealed —
+  // shelved before 098, or sealed after it was published — is dropped whole,
+  // not trimmed. A seal that cannot be read drops the item too.
+  const shelved = await dropSealedItems(supabase, items.data ?? []);
   const images = await officeImages(supabase, [ownerId]);
   const out = selectRoom({
     ownerId,
     sections: sections.data ?? [],
-    items: items.data ?? [],
+    items: shelved,
     jackets: images.jackets,
     pages: images.pages,
   });

@@ -46,6 +46,7 @@ import {
 } from '@/lib/document-animations';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
+import { documentEntry } from '@/lib/second-factor';
 import DriveExportControl from '@/components/reader/DriveExportControl';
 import DelegateCard from '@/components/agents/DelegateCard';
 import { DRIVE_KINDS, DRIVE_LABEL, type DriveKind } from '@/lib/export-connectors';
@@ -358,8 +359,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const [loadProgress, setLoadProgress] = useState<PdfOpenProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // A sealed matter's file asked for on a session that has not confirmed a
-  // second factor (S4a: /api/document-url refuses it). The prompt is drawn
-  // in the reading pane; confirming re-runs whatever was refused.
+  // second factor (S4a: /api/document-url refuses it), or a sealed document's
+  // row that reads as nothing at aal1 (098: document_entry says why). The
+  // prompt is drawn in the reading pane; confirming re-runs whatever was
+  // refused.
   const [stepUp, setStepUp] = useState<{ mode: 'stepup' | 'enrol'; matterId: string | null; retry: 'load' | 'download' } | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [fileKind, setFileKind] = useState<FileKind>('pdf');
@@ -572,6 +575,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         .eq('id', id)
         .maybeSingle();
       if (cancelled) return;
+      if (!error && !data) {
+        // 098: a sealed document reads as nothing until this session confirms
+        // its second factor. Ask whether that nothing is "confirm it's you"
+        // before calling it missing.
+        const entry = await documentEntry(id);
+        if (cancelled) return;
+        if (entry === 'stepup' || entry === 'enrol') {
+          // The same prompt, and the same retry, as /api/document-url's refusal.
+          setStepUp({ mode: entry, matterId: null, retry: 'load' });
+          setLoadState('error');
+          return;
+        }
+      }
       if (error || !data) {
         setErrorMsg(error?.message || "Document not found, or you don't have access.");
         setLoadState('error');
