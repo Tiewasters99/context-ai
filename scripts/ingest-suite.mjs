@@ -513,7 +513,7 @@ try {
   await phase('G4', 'selection-time refusals', async () => {
   console.log('\n[G4] selection-time refusals');
   const r3 = checkUpload({ name: 'giant-record.pdf', size: VAULT_MAX_BYTES + 1 });
-  check('G4', r3?.code === 'too_large' && /up to 500 MB/.test(r3.message || ''), `oversize refused at selection: "${(r3?.message || JSON.stringify(r3)).slice(0, 90)}"`);
+  check('G4', r3?.code === 'too_large' && /up to 2.0 GB/.test(r3.message || ''), `oversize refused at selection: "${(r3?.message || JSON.stringify(r3)).slice(0, 90)}"`);
   const r4 = checkUpload({ name: '~$Petersburg Timeline.docx', size: 162 });
   check('G4', r4?.code === 'lock_file' && /lock file/.test(r4.message || ''), `Office lock file refused at selection: "${(r4?.message || JSON.stringify(r4)).slice(0, 90)}"`);
   const r5 = checkUpload({ name: 'chat-export.md', size: 0 });
