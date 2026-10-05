@@ -932,8 +932,10 @@ async function ingestDownloaded(job, doc, docId, ext, fileBuf, mediaPath) {
         mimeType = 'audio/mp3';
       }
       // Under twenty minutes the whole recording goes up as it is (a video
-      // keeps its VISUAL notes that way): read once, one copy in memory.
-      if (!mediaBuf) mediaBuf = mediaPath ? await fs.readFile(mediaPath) : buf;
+      // keeps its VISUAL notes that way) — from disk, in pieces, when it was
+      // streamed there: a 1.1 GB clip read into memory for the upload killed
+      // the machine (2026-10-05).
+      if (!mediaBuf) mediaBuf = mediaPath ?? buf;
       return transcribeMedia(mediaBuf, { apiKey: GOOGLE_API_KEY, mimeType, kind, onProgress });
     };
   }
