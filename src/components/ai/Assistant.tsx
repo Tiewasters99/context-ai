@@ -1,3 +1,4 @@
+import { BUILD_ID } from '@/lib/app-version';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { X, Send, Maximize2, Minimize2, Eraser } from 'lucide-react';
@@ -646,6 +647,8 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             route: location.pathname,
             // The map is drawn for the plan (wording only; doors stay locked server-side).
             ...(plan ? { plan } : {}),
+            // Which version this tab runs, for "fixed in your version" vs "reload".
+            build: BUILD_ID,
             ...getOrchestratorContext(),
             ...(commandMatterRef.current?.name
               ? { matterName: commandMatterRef.current.name }

@@ -213,6 +213,9 @@ function sanitizeContext(c) {
     // The account's plan, for the map's WORDING only (lib/orchestrator-system.mjs
     // mapForPlan); a known plan name or nothing. Doors stay locked server-side.
     plan: typeof c.plan === 'string' && PLANS.includes(c.plan) ? c.plan : undefined,
+    // The build this tab runs (src/lib/app-version.ts), so known_issues can tell
+    // "fixed in your version" from "reload to get it". A commit id or nothing.
+    build: typeof c.build === 'string' && /^[0-9a-f]{7,40}$/i.test(c.build) ? c.build.slice(0, 12).toLowerCase() : undefined,
     tab: pick(c.tab),
     matterName: pick(c.matterName),
     // The reader's companion context: the document open in front of the
