@@ -42,12 +42,15 @@
 import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
+import { MEDIA_EXTENSIONS } from '../lib/ingest-formats.mjs';
 import { pathInMatter, assertPathInProduction } from '../lib/storage-path.mjs';
 import { assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree } from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
@@ -847,9 +850,36 @@ async function ingestDocument(job) {
   if (job.payload?.ocr_retry) log(`  ${doc.source_filename}: OCR retry ${job.payload.ocr_retry} for ${Array.isArray(doc.ocr_pending?.pages) ? doc.ocr_pending.pages.length + ' page(s)' : 'the scan'}`);
 
   await progress(job, 5, `Downloading ${doc.source_filename}`);
-  const fileBuf = await downloadFromBucket('vault-documents', doc.storage_path);
   const ext = doc.source_filename?.includes('.')
     ? '.' + doc.source_filename.split('.').pop().toLowerCase() : '';
+  // A recording goes to disk, not into memory. Downloading a 1.2 GB video as
+  // a Buffer held it twice over (the response, then the copy) and the machine
+  // was killed at this line three times running (2026-10-04) — before ffmpeg,
+  // which reads from a file anyway. The pipeline is handed the first bytes
+  // only: for a file with a media extension it never reads them, it passes
+  // them to the transcribe hook below, which works from the path.
+  if (MEDIA_EXTENSIONS.includes(ext)) {
+    const mediaDir = await fs.mkdtemp(path.join(os.tmpdir(), 'media_'));
+    try {
+      const mediaPath = path.join(mediaDir, `in${ext}`);
+      await downloadToFile('vault-documents', doc.storage_path, mediaPath);
+      const fh = await fs.open(mediaPath, 'r');
+      let head;
+      try { head = await fh.read(Buffer.alloc(64 * 1024), 0, 64 * 1024, 0); } finally { await fh.close(); }
+      return await ingestDownloaded(job, doc, docId, ext, head.buffer.subarray(0, head.bytesRead), mediaPath);
+    } finally {
+      await fs.rm(mediaDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+  const fileBuf = await downloadFromBucket('vault-documents', doc.storage_path);
+  return ingestDownloaded(job, doc, docId, ext, fileBuf, null);
+}
+
+// The rest of an ingest job, once the file is in hand. `mediaPath` is set for
+// a recording that was streamed to disk; `fileBuf` is then only its first
+// bytes and must not be read as the recording.
+async function ingestDownloaded(job, doc, docId, ext, fileBuf, mediaPath) {
+  const forced = job.payload?.force === true;
 
   // A forced re-run swaps rather than wipes: the current passages stay
   // searchable until the new run succeeds, and a run that fails leaves the row
@@ -881,7 +911,7 @@ async function ingestDocument(job) {
       // either way; under twenty minutes the whole file still goes as-is.
       {
         const { transcribeInSegments } = await import('../lib/media-segments.mjs');
-        const inParts = await transcribeInSegments(buf, mediaExt, {
+        const inParts = await transcribeInSegments(mediaPath ?? buf, mediaExt, {
           onProgress,
           transcribeSegment: (mp3, { index, total }) =>
             transcribeMedia(mp3, { apiKey: GOOGLE_API_KEY, mimeType: 'audio/mp3', kind, onProgress, displayName: `part ${index + 1} of ${total}` }),
@@ -891,16 +921,19 @@ async function ingestDocument(job) {
           return inParts.pages;
         }
       }
-      let mediaBuf = buf;
+      let mediaBuf = null;
       let mimeType = mimeForMediaExt(mediaExt);
       // .wma has no Gemini support and .m4a is unreliable — transcode both to
       // speech-grade mp3 (16 kHz mono 32k: small enough that long recordings
       // upload without drops).
       if (!mimeType || mediaExt === '.m4a' || mediaExt === '.wma') {
         await progress(job, 15, 'Transcoding for transcription (ffmpeg)');
-        mediaBuf = await transcodeToMp3(buf, mediaExt);
+        mediaBuf = await transcodeToMp3(mediaPath ?? buf, mediaExt);
         mimeType = 'audio/mp3';
       }
+      // Under twenty minutes the whole recording goes up as it is (a video
+      // keeps its VISUAL notes that way): read once, one copy in memory.
+      if (!mediaBuf) mediaBuf = mediaPath ? await fs.readFile(mediaPath) : buf;
       return transcribeMedia(mediaBuf, { apiKey: GOOGLE_API_KEY, mimeType, kind, onProgress });
     };
   }
@@ -933,13 +966,15 @@ async function ingestDocument(job) {
 }
 
 // 16 kHz mono 32k mp3 — speech-grade and small (see scripts/transcribe-av.mjs).
+// `buf` is the bytes, or the path of a recording already on disk (left there).
 async function transcodeToMp3(buf, ext) {
   const { spawn } = await import('node:child_process');
   const tag = crypto.randomUUID().slice(0, 8);
-  const inPath = path.join(os.tmpdir(), `wrk_${tag}${ext || '.bin'}`);
+  const onDisk = typeof buf === 'string';
+  const inPath = onDisk ? buf : path.join(os.tmpdir(), `wrk_${tag}${ext || '.bin'}`);
   const outPath = path.join(os.tmpdir(), `wrk_${tag}.mp3`);
   try {
-    await fs.writeFile(inPath, buf);
+    if (!onDisk) await fs.writeFile(inPath, buf);
     await new Promise((resolve, reject) => {
       const ff = spawn('ffmpeg', ['-y', '-i', inPath, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '32k', outPath], { stdio: ['ignore', 'ignore', 'pipe'] });
       let err = '';
@@ -949,7 +984,7 @@ async function transcodeToMp3(buf, ext) {
     });
     return await fs.readFile(outPath);
   } finally {
-    await fs.unlink(inPath).catch(() => {});
+    if (!onDisk) await fs.unlink(inPath).catch(() => {});
     await fs.unlink(outPath).catch(() => {});
   }
 }
@@ -1531,6 +1566,28 @@ async function downloadFromBucket(bucket, storagePath, attempts = 3) {
     if (!error) return Buffer.from(await data.arrayBuffer());
     if (i >= attempts) throw new Error(`storage download ${bucket}/${storagePath}: ${error.message}`);
     await sleep(1000 * i);
+  }
+}
+
+// A stored object straight to a file, never whole in memory (recordings).
+// The size is checked against what storage said it would send: a short file
+// would otherwise be transcribed as if it were the whole recording.
+async function downloadToFile(bucket, storagePath, destPath, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      const { data, error } = await supabase.storage.from(bucket).createSignedUrl(storagePath, 3600);
+      if (error) throw new Error(error.message);
+      const res = await fetch(data.signedUrl);
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      await pipeline(Readable.fromWeb(res.body), createWriteStream(destPath));
+      const expected = Number(res.headers.get('content-length'));
+      const { size } = await fs.stat(destPath);
+      if (Number.isFinite(expected) && expected > 0 && size !== expected) throw new Error(`got ${size} of ${expected} bytes`);
+      return size;
+    } catch (err) {
+      if (i >= attempts) throw new Error(`storage download ${bucket}/${storagePath}: ${err?.message || err}`);
+      await sleep(1000 * i);
+    }
   }
 }
 
