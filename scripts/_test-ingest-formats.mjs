@@ -41,11 +41,11 @@ assert.strictEqual(core.TEXT_STATUS, TEXT_STATUS);
 ok('ingest-core re-exports the very same objects');
 
 // --- storage cap --------------------------------------------------------------
-assert.strictEqual(VAULT_MAX_BYTES, 500 * 1024 * 1024, 'cap matches the live vault-documents bucket (500 MB, 2026-09-04)');
-assert.strictEqual(formatBytes(VAULT_MAX_BYTES), '500 MB');
-assert.strictEqual(formatBytes(2 * 1024 * 1024 * 1024), '2.0 GB');
+assert.strictEqual(VAULT_MAX_BYTES, 2 * 1024 * 1024 * 1024, 'cap matches the live vault-documents bucket (2 GB, 2026-10-04)');
+assert.strictEqual(formatBytes(VAULT_MAX_BYTES), '2.0 GB');
+assert.strictEqual(formatBytes(500 * 1024 * 1024), '500 MB');
 assert.strictEqual(formatBytes(512), '1 KB');
-ok('VAULT_MAX_BYTES = 500 MB and formats as a person reads it');
+ok('VAULT_MAX_BYTES = 2 GB and formats as a person reads it');
 
 // --- checkUpload ------------------------------------------------------------
 assert.strictEqual(checkUpload({ name: 'brief.pdf', size: 1024 }), null);
@@ -57,10 +57,11 @@ assert.strictEqual(checkUpload({ name: 'Outlook-County Att', size: 1024 }), null
 
 const big = checkUpload({ name: 'record.pdf', size: VAULT_MAX_BYTES + 1 });
 assert.strictEqual(big.code, 'too_large');
-assert.match(big.message, /"record\.pdf" is 500 MB; the Vault accepts files up to 500 MB/);
+assert.match(big.message, /"record\.pdf" is 2\.0 GB; the Vault accepts files up to 2\.0 GB/);
 assert.match(big.message, /Split it/);
-const huge = checkUpload({ name: 'record.pdf', size: 1.5 * 1024 * 1024 * 1024 });
-assert.match(huge.message, /is 1\.5 GB/);
+const huge = checkUpload({ name: 'record.pdf', size: 3.5 * 1024 * 1024 * 1024 });
+assert.match(huge.message, /is 3\.5 GB/);
+assert.strictEqual(checkUpload({ name: 'deposition.mp4', size: 1.2 * 1024 * 1024 * 1024 }), null, 'a 1.2 GB video is under the cap');
 ok('too_large: names the file, its size, and the cap, and says what to do');
 
 const exe = checkUpload({ name: 'setup.exe', size: 10 });

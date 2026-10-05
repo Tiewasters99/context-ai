@@ -278,7 +278,7 @@ try {
 
   console.log('\n[R3] checkUpload: over the storage cap');
   const r3 = checkUpload({ name: 'giant-record.pdf', size: VAULT_MAX_BYTES + 1 });
-  if (r3?.code === 'too_large' && /up to 500 MB/.test(r3.message)) pass(`R3: ${r3.message.slice(0, 90)}…`);
+  if (r3?.code === 'too_large' && /up to 2.0 GB/.test(r3.message)) pass(`R3: ${r3.message.slice(0, 90)}…`);
   else fail(`R3: ${JSON.stringify(r3)}`);
 
   // ---- Stored with a reason -------------------------------------------------------
