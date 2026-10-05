@@ -35,6 +35,8 @@ import {
   type OauthAgentLink,
 } from '@/lib/agentTokens';
 import AgentCard, { cardField, cardLegend } from './AgentCard';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
+import { isStepUpRequired } from '@/lib/connector-token-create';
 import AgentMatterPicker from './AgentMatterPicker';
 
 export const AGENT_SCOPE_COPY =
@@ -114,6 +116,7 @@ export function AddAgentCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [issued, setIssued] = useState<{ token: string; name: string; provider: AgentProvider } | null>(null);
+  const [stepUp, setStepUp] = useState(false);
 
   const create = async () => {
     if (!user) { setError('You must be signed in.'); return; }
@@ -132,6 +135,8 @@ export function AddAgentCard({
       setIssued({ token, name: n, provider });
       onCreated();
     } catch (e) {
+      // 098: a person with a second factor confirms it before a new agent exists.
+      if (isStepUpRequired(e)) { setStepUp(true); return; }
       setError(isAgentsNotReady(e) ? AGENTS_MIGRATION_MESSAGE : e instanceof Error ? e.message : 'Could not create the agent.');
     } finally {
       setBusy(false);
@@ -212,6 +217,13 @@ export function AddAgentCard({
         </>
       }
     >
+      {stepUp && (
+        <StepUpPrompt
+          mode="stepup"
+          heading="Confirm it’s you to create an agent."
+          onConfirmed={() => { setStepUp(false); void create(); }}
+        />
+      )}
       <div>
         <p className={cardLegend}>Name</p>
         <input

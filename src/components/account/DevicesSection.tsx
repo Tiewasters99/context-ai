@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Laptop, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import StepUpPrompt from '@/components/account/StepUpPrompt';
 
 interface Device {
   id: string;
@@ -52,6 +53,7 @@ export default function DevicesSection() {
   const [available, setAvailable] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Device | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -95,6 +97,11 @@ export default function DevicesSection() {
     setError(null);
     const r = await call('POST', { session_id: d.id }).catch(() => ({ ok: false, body: null }));
     setBusy(null);
+    if (!r.ok && r.body?.error === 'step_up_required') {
+      // 098: signing another device out needs this session's second factor.
+      setPending(d);
+      return;
+    }
     if (!r.ok) {
       setError('That device was not signed out. Try again in a moment.');
       return;
@@ -149,7 +156,16 @@ export default function DevicesSection() {
           stops working within the hour.
         </p>
       )}
-      {error && <div className="px-4 py-2 text-[12px] text-[#f8b4b4]">{error}</div>}
+      {pending && (
+        <div className="px-4 py-3">
+          <StepUpPrompt
+            mode="stepup"
+            heading="Confirm it’s you to sign that device out."
+            onConfirmed={() => { const d = pending; setPending(null); void signOut(d); }}
+          />
+        </div>
+      )}
+            {error && <div className="px-4 py-2 text-[12px] text-[#f8b4b4]">{error}</div>}
     </div>
   );
 }

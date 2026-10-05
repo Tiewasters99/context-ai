@@ -3,16 +3,18 @@
 // Returns the documents in one matter, for the Chrome extension's
 // document picker. Auth: csp_* connector token.
 //
-// SecureSpace, 2026-09-20 — what this endpoint does and does not expose.
-// Titles, filenames, sizes and status. NO passage text, NO page images, NO
-// storage path, and NO signed URL: nothing here can be turned into the
-// document's content. The bytes leave through /api/ext/push-to-drive, which
-// is gated. As on /api/ext/matters, the seal is therefore MARKED rather than
-// enforced — the extension is the user's own tool — and the marking fails
-// closed: if the tier cannot be read, the matter is reported sealed.
+// SecureSpace — what this endpoint exposes. Titles, filenames, sizes and
+// status; NO passage text, page images, storage path or signed URL. Since 098
+// (S1b) a sealed matter's documents are not listed at all: the request is
+// refused with the seal's sentence and a tool.invoked {refused:'sealed'} row
+// in that matter's Record, as an MCP connector's would be (lib/ext-seal.mjs
+// says why the 2026-09-20 "mark, don't enforce" choice was reversed). The tier
+// is read with the service role and fails closed. Membership is asked first,
+// as the user, so a matter the person cannot reach is "not found" whether or
+// not it is sealed.
 //
-// The pause, by contrast, is ENFORCED (099): a paused matter is refused here
-// (403 ai_paused), and a pause that cannot be read refuses too (503).
+// The pause is enforced too (099): a paused matter is refused here
+// (403 ai_paused), and a pause that cannot be read refuses (503).
 
 import {
   authenticateConnectorToken,
@@ -24,15 +26,24 @@ import {
 } from '../../lib/connector-token-auth.mjs';
 
 import { fetchMatterTier, isSealedTier } from '../../lib/ai-tier-policy.mjs';
+import { recordExtRefusal, sealedRefusal } from '../../lib/ext-seal.mjs';
 
-export default async function handler(req, res) {
+export default async function handler(req, res, deps = {}) {
+  const authenticate = deps.authenticate ?? authenticateConnectorToken;
+  const userClient = deps.userClient ?? userScopedClient;
+  const tierOf = deps.tierOf ?? ((id) => fetchMatterTier(
+    process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    id,
+  ));
+
   corsHeaders(res);
   if (req.method === 'OPTIONS') { res.statusCode = 204; return res.end(); }
   if (req.method !== 'GET') return json(res, 405, { error: 'method_not_allowed' });
 
   let userId;
   try {
-    userId = await authenticateConnectorToken(req);
+    userId = await authenticate(req);
   } catch (err) {
     return handleAuthError(res, err);
   }
@@ -43,7 +54,7 @@ export default async function handler(req, res) {
   // RLS on documents already filters to matters the user has access to.
   // If the user can read the matter they can read its documents; if not,
   // the query returns an empty list and we 404 below.
-  const sb = userScopedClient(userId);
+  const sb = userClient(userId);
 
   const { data: matter, error: mErr } = await sb
     .from('matterspaces')
@@ -53,8 +64,22 @@ export default async function handler(req, res) {
   if (mErr) return json(res, 500, { error: `matter_lookup: ${mErr.message}` });
   if (!matter) return json(res, 404, { error: 'matter_not_found' });
 
+  // The matter's EFFECTIVE tier, read with the service role — an ancestor's
+  // seal must reach this listing even when the ancestor itself is invisible
+  // to the caller. Unreadable ⇒ refused, never listed.
+  let tier;
+  try {
+    tier = await tierOf(matterId);
+  } catch {
+    return json(res, 503, { error: 'seal_status_unknown' });
+  }
+  if (isSealedTier(tier)) {
+    await recordExtRefusal(sb, { route: 'ext.documents', matterId, userId });
+    return json(res, 403, sealedRefusal());
+  }
+
   // A paused matter lists nothing to a connected app (migration 070; 099).
-  const paused = await pausedMatterRefusal(matterId);
+  const paused = await pausedMatterRefusal(matterId, { client: deps.adminClient ? deps.adminClient() : null });
   if (paused) return json(res, paused.status, paused.body);
 
   const { data, error } = await sb
@@ -64,29 +89,12 @@ export default async function handler(req, res) {
     .order('created_at', { ascending: false });
   if (error) return json(res, 500, { error: `query_failed: ${error.message}` });
 
-  // The matter's EFFECTIVE tier, read with the service role — the tier is
-  // policy, not content, and an ancestor's seal must reach this listing even
-  // when the ancestor itself is invisible to the caller.
-  let tier = null;
-  let tierKnown = false;
-  try {
-    tier = await fetchMatterTier(
-      process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
-      matterId,
-    );
-    tierKnown = Boolean(tier);
-  } catch {
-    tierKnown = false;
-  }
-  const sealed = tierKnown ? isSealedTier(tier) : true;
-
   return json(res, 200, {
-    seal_status: tierKnown ? 'ok' : 'unknown',
-    ai_tier: tierKnown ? tier : null,
-    sealed,
+    seal_status: 'ok',
+    ai_tier: tier ?? null,
+    sealed: false,
     documents: (data ?? []).map((d) => ({
-      sealed,
+      sealed: false,
       id: d.id,
       title: d.title,
       source_filename: d.source_filename,

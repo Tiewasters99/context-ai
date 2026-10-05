@@ -518,8 +518,8 @@ test('the seal sentence says only what the audit permits', () => {
 test('the accepted-types sentence matches what the Vault actually accepts', () => {
   const detail = FIRST_RUN_COPY.steps.documents.detail;
   // The cap is a number the pipeline enforces, not a round figure chosen here.
-  assert.equal(formatBytes(VAULT_MAX_BYTES), '500 MB');
-  assert.ok(detail.includes('500 MB'), 'the size cap has drifted from lib/ingest-formats.mjs');
+  assert.equal(formatBytes(VAULT_MAX_BYTES), '2.0 GB');
+  assert.ok(detail.includes('2 GB'), 'the size cap has drifted from lib/ingest-formats.mjs');
   for (const kind of ['PDF', 'Word', 'text', 'spreadsheets', 'slides', 'email', '.zip']) {
     assert.ok(detail.includes(kind), `${kind} is missing from the accepted-types sentence`);
   }
