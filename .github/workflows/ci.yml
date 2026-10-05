@@ -514,6 +514,23 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-bucketizer-server-run.mjs
 
+      # A sealed sub-matter's documents never go to an unsealed model. A run
+      # on an OPEN parent may name documents anywhere in its subtree, and its
+      # model calls are judged by the parent — so a sealed child's document
+      # used to be read and sent to the parent's unsealed model. Against
+      # PGlite, with a fetch witness counting provider requests: the real
+      # runner HOLDS such a document (zero calls, zero passages read, the
+      # sentence on the row), fails closed when the tier cannot be read, still
+      # classifies an OPEN sub-matter's document (the 09-26 regression), and a
+      # run inside the sealed child still uses the sealed pen only. Then the
+      # /api/llm gate and the real handler re-derive each named document's
+      # matter server-side, and the chooser shows such documents as not
+      # choosable. Here, with the PGlite steps: the jsdom installs below prune
+      # PGlite.
+      - name: Bucketizer — a sealed sub-matter's documents never reach an unsealed model
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-bucketizer-sealed-descendants.mjs
+
       # Cite-check's two model calls, held to their contracts. Inside a sealed
       # matter both are answered by the sealed pen, which holds a forced-tool
       # shape less literally than Claude — and the old code turned every

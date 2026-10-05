@@ -181,6 +181,10 @@ export default async function handler(req, res) {
     bearer: req.headers.authorization,
     provider,
     matterId,
+    // Each named document is judged by ITS OWN matter, read server-side — the
+    // matter the browser names is not trusted to stand for them (a sealed
+    // sub-matter's document under an open parent was the hole).
+    documentIds,
   });
 
   // The Record's client is the CALLER's, never the service role: the row's

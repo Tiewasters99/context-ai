@@ -325,6 +325,7 @@ export default function llmProxy(): Plugin {
           bearer: req.headers['authorization'],
           provider: parsed.provider,
           matterId: parsed.matterId,
+          documentIds: Array.isArray(parsed.documentIds) ? parsed.documentIds : null,
         });
 
         // The matter's Record, same two rows as api/llm.mjs, same order.

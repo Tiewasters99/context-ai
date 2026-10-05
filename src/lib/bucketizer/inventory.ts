@@ -12,6 +12,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { fetchPaged } from '@/lib/paged';
+import { documentHeldBySeal, matterTierRows, type MatterTierRow } from '../../../lib/ai-tier-policy.mjs';
 import {
   buildChooserRows,
   type ChooserClassification,
@@ -55,31 +56,57 @@ export async function loadChooserInventory(matterId: string): Promise<ChooserInv
     { label: 'matter documents', ceiling: 100_000 },
   );
 
-  const [classifications, matterNames] = await Promise.all([
+  const [classifications, matters] = await Promise.all([
     fetchClassificationsFor(docs.rows.map((d) => d.id)),
-    fetchMatterNames(matterIds),
+    fetchTreeMatters(matterIds),
   ]);
+  const matterNames = new Map(matters.map((m) => [m.id, m.name]));
+  const sealedMatterIds = await sealedBelow(matterId, matterIds, matters);
 
   return {
     matterIds,
-    rows: buildChooserRows({ matterIds, documents: docs.rows, classifications, matterNames }),
+    rows: buildChooserRows({ matterIds, documents: docs.rows, classifications, matterNames, sealedMatterIds }),
     truncated: docs.truncated,
     total: docs.total,
   };
 }
 
-/** The tree's matter names, so a chosen document says where it lives. */
-async function fetchMatterNames(matterIds: string[]): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
+/**
+ * The tree's matters: the name, so a chosen document says where it lives, and
+ * the parent and tier, so a sealed sub-matter is known before anything is run.
+ */
+async function fetchTreeMatters(matterIds: string[]): Promise<(MatterTierRow & { name: string })[]> {
+  const out: (MatterTierRow & { name: string })[] = [];
   for (let i = 0; i < matterIds.length; i += 200) {
     const { data, error } = await supabase
       .from('matterspaces')
-      .select('id, name')
+      .select('id, name, parent_matterspace_id, ai_tier')
       .in('id', matterIds.slice(i, i + 200));
     if (error) throw new Error(error.message);
-    for (const row of (data ?? []) as { id: string; name: string }[]) names.set(row.id, row.name);
+    out.push(...((data ?? []) as (MatterTierRow & { name: string })[]));
   }
-  return names;
+  return out;
+}
+
+/**
+ * Which of the tree's sub-matters carry a seal this matter does not.
+ *
+ * The same rule the server applies (`documentHeldBySeal`), walked over the rows
+ * just read, so only an ancestor ABOVE this matter costs a query. It fails
+ * closed: a sub-matter whose seal cannot be answered is listed as sealed, and
+ * its documents are shown as not choosable rather than offered.
+ */
+async function sealedBelow(
+  matterId: string,
+  matterIds: string[],
+  matters: MatterTierRow[],
+): Promise<Set<string>> {
+  const fetchRow = matterTierRows(supabase, matters);
+  const sealed = new Set<string>();
+  for (const id of matterIds) {
+    if (id !== matterId && await documentHeldBySeal(fetchRow, matterId, id)) sealed.add(id);
+  }
+  return sealed;
 }
 
 /**

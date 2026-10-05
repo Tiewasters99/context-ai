@@ -19,6 +19,21 @@ export function fetchMatterTier(supabaseUrl: string, serviceKey: string, matterI
 export function matterTierWithClient(supabase: unknown, matterId: string): Promise<AiTier | null>;
 export function sealedMatterIds(supabase: unknown): Promise<Set<string>>;
 
+/** A walkEffectiveTier row fetcher over supabase-js, remembered per call. */
+export type MatterTierRow = { id: string; parent_matterspace_id: string | null; ai_tier: string | null };
+export function matterTierRows(
+  supabase: unknown,
+  seed?: MatterTierRow[],
+): (id: string) => Promise<MatterTierRow | null>;
+export function isCanonicalUuid(value: unknown): value is string;
+export const SEALED_DOCUMENT_MESSAGE: string;
+/** True = keep this document out of work bound to `boundMatterId`. Never throws. */
+export function documentHeldBySeal(
+  fetchRow: (id: string) => Promise<MatterTierRow | null>,
+  boundMatterId: string | null | undefined,
+  documentMatterId: string | null | undefined,
+): Promise<boolean>;
+
 /** The AI pause (migration 070). Inherited down the matter chain like the seal. */
 export interface AiPause {
   paused: boolean;
@@ -52,6 +67,8 @@ export function gateLlmRequest(opts: {
   bearer?: string;
   provider: string;
   matterId?: string;
+  /** The documents the call carries; each is judged by its own matter. */
+  documentIds?: unknown[] | null;
 }): Promise<
   | { ok: true; userId: string; tier?: AiTier; escalation: boolean }
   | {
