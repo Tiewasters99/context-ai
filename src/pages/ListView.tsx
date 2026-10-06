@@ -33,6 +33,7 @@ import type { EmbeddableViewProps } from '@/lib/canvas';
 import { useCoverExpanded } from '@/hooks/useCoverExpanded';
 import {
   useContentItem,
+  useContentItems,
   updateContentItem,
   createContentItem,
   useContentInvalidate,
@@ -155,6 +156,18 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   );
   const [coverExpanded, setCoverExpanded] = useCoverExpanded(id);
   const { data: item, isLoading, error } = useContentItem(id);
+  // The pages of this space, for the row nested under an item that was
+  // turned into one: the page's CURRENT title (it may have been renamed
+  // since), not the item text it was born with.
+  const { data: spacePages } = useContentItems(
+    item ? { spaceId: item.space_id, spaceType: item.space_type } : null,
+    'page',
+  );
+  const pageTitles = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of spacePages ?? []) m.set(p.id, p.title);
+    return m;
+  }, [spacePages]);
   const invalidate = useContentInvalidate();
 
   const [title, setTitle] = useState('');
@@ -567,6 +580,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
                     <SortableItem
                       key={it.id}
                       item={it}
+                      pageTitle={it.linked_page_id ? pageTitles.get(it.linked_page_id) ?? null : null}
                       today={today}
                       flash={flashItemId === it.id}
                       sortable={sortMode === 'manual'}
@@ -698,6 +712,10 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
 
 interface SortableItemProps {
   item: ChecklistItem;
+  /** Current title of the page this item was turned into, when it has one
+   *  and the page is still readable; null otherwise (the nested row then
+   *  shows the item text). */
+  pageTitle: string | null;
   today: string;
   flash?: boolean;
   sortable: boolean;
@@ -716,7 +734,7 @@ interface SortableItemProps {
   subMatterDisabledReason: string | null;
 }
 
-function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onTypeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
+function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onChangeText, onTypeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -744,12 +762,13 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-2 px-2 py-2 rounded-lg border transition-colors group ${
+      className={`rounded-lg border transition-colors group ${
         flash
           ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.12)]'
           : 'border-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.03)]'
       }`}
     >
+    <div className="flex items-center gap-2 px-2 py-2">
       {sortable && (
         <button
           {...attributes}
@@ -795,17 +814,9 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
         todayDue={!!todayDue}
         muted={item.done}
       />
-      {/* Standing markers: an item that has a page or a sub-matter says so
-          without being hovered, and the marker itself opens the target. */}
-      {item.linked_page_id && (
-        <button
-          onClick={onExpand}
-          className="p-1 rounded shrink-0 text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors"
-          title="Open page"
-        >
-          <FileText size={13} />
-        </button>
-      )}
+      {/* Standing marker: an item that has a sub-matter says so without
+          being hovered, and the marker itself opens it. (An item's page is
+          the row nested under it, below.) */}
       {item.linked_matter_id && (
         <button
           onClick={onSubMatter}
@@ -828,6 +839,21 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
       >
         <Trash2 size={13} />
       </button>
+    </div>
+    {/* The page this item was turned into, nested under it — so a page made
+        from a list item has a place: one click under the item it came from,
+        titled as the page is titled now. */}
+    {item.linked_page_id && (
+      <button
+        onClick={onExpand}
+        className="flex items-center gap-2 w-full text-left pl-[38px] pr-3 pb-2 -mt-1 text-[13px] text-[#e8b84a]/90 hover:text-[#e8b84a] transition-colors"
+        title="Open page"
+      >
+        <span className="w-3 border-t border-[rgba(232,184,74,0.35)]" aria-hidden />
+        <FileText size={13} className="shrink-0" />
+        <span className="truncate">{pageTitle ?? (item.text.trim() || 'Untitled Page')}</span>
+      </button>
+    )}
     </div>
   );
 }
