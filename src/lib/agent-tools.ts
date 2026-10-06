@@ -99,6 +99,23 @@ export const CHARTER_TOOL_GROUPS: CharterToolGroup[] = [
       },
     ],
   },
+  {
+    heading: 'Lists',
+    note: 'A list handed to an agent: it works the items it understands and leaves a one-line note on the rest.',
+    tools: [
+      {
+        name: 'get_list',
+        label: 'Read a list',
+        does: 'See the open items of a list, with their ids, due dates and notes.',
+      },
+      {
+        name: 'update_list_item',
+        label: 'Tick or annotate a list item',
+        does: 'Mark one item done, or leave a note under it (a question, or where the result is).',
+        writes: true,
+      },
+    ],
+  },
 ];
 
 export const CHARTER_TOOLS: CharterTool[] = CHARTER_TOOL_GROUPS.flatMap((g) => g.tools);
