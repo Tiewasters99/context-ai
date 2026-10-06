@@ -27,11 +27,13 @@ import {
   Loader2,
   Send,
   PenLine,
+  BookMarked,
 } from 'lucide-react';
 import mammoth from 'mammoth';
 import { labelWordNotes } from '@/lib/reader-notes';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
+import { LIBRARY_SERVERSPACE, findOrCreateLibrarySection, publishDocumentToOffice, captureJacket } from '@/lib/office-publish';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { hasDraftBody } from '@/lib/brief/draft-store';
@@ -1582,6 +1584,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // that context here (the route names a document, not a matter) and the
   // panel reads it when a message is sent.
   const [matterName, setMatterName] = useState<string | null>(null);
+  // A book in the Library serverspace can be filed to the Office Library
+  // from here (the serverspace's matter — "Literature" — names the shelf).
+  const [inLibrary, setInLibrary] = useState(false);
+  const [filing, setFiling] = useState<
+    | { step: 'confirm' }
+    | { step: 'working'; text: string }
+    | { step: 'done'; text: string }
+    | null
+  >(null);
   const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
   // Whether anything of this document is indexed. An edited copy is filed
   // without passages, and an import can fail or stall; from the model's
@@ -1624,14 +1635,60 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     const mid = doc?.matterspace_id;
     if (!mid) { setMatterName(null); return; }
     let stale = false;
-    void supabase
-      .from('matterspaces')
-      .select('name')
-      .eq('id', mid)
-      .maybeSingle()
-      .then(({ data }) => { if (!stale) setMatterName(data?.name ?? null); });
+    void (async () => {
+      const { data } = await supabase
+        .from('matterspaces')
+        .select('name, serverspace_id')
+        .eq('id', mid)
+        .maybeSingle();
+      if (stale) return;
+      setMatterName(data?.name ?? null);
+      let lib = false;
+      if (data?.serverspace_id) {
+        const { data: ss } = await supabase
+          .from('serverspaces')
+          .select('name')
+          .eq('id', data.serverspace_id)
+          .maybeSingle();
+        lib = String(ss?.name ?? '').trim().toLowerCase() === LIBRARY_SERVERSPACE;
+      }
+      if (!stale) setInLibrary(lib);
+    })();
     return () => { stale = true; };
   }, [doc?.matterspace_id]);
+
+  // File this book to the Office Library: the shelf is the matter's name,
+  // made on first use. The jacket is captured afterwards and reported as it
+  // goes; the filing itself is done by then.
+  const fileToOfficeLibrary = useCallback(async () => {
+    if (!doc || !matterName) return;
+    setFiling({ step: 'working', text: `Filing "${doc.title}"…` });
+    try {
+      const section = await findOrCreateLibrarySection(matterName);
+      const res = await publishDocumentToOffice(doc.id, section);
+      if (res.status === 'already') {
+        setFiling({ step: 'done', text: `"${doc.title}" is already on the ${section.title} shelf.` });
+        return;
+      }
+      setFiling({ step: 'working', text: `"${doc.title}" is on the ${section.title} shelf. Capturing the jacket…` });
+      const got = await captureJacket(res.itemId, doc.id, (done, total) => {
+        setFiling({ step: 'working', text: `Capturing the pages of "${doc.title}"… ${done} of ${total}` });
+      });
+      setFiling({
+        step: 'done',
+        text: got?.pages
+          ? `"${doc.title}" is in the Office Library (${section.title}), jacket and ${got.pages} pages.`
+          : `"${doc.title}" is in the Office Library (${section.title}).`,
+      });
+    } catch (e) {
+      setFiling({ step: 'done', text: e instanceof Error ? e.message : 'The book could not be filed.' });
+    }
+  }, [doc, matterName]);
+  useEffect(() => {
+    if (filing?.step !== 'done') return;
+    const t = window.setTimeout(() => setFiling((f) => (f?.step === 'done' ? null : f)), 8000);
+    return () => window.clearTimeout(t);
+  }, [filing]);
   // The text of each page on screen, from the PDF's own text layer (the
   // same cache the search fills). Fetched as pages come into view.
   useEffect(() => {
@@ -2766,6 +2823,16 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           )}
           {!(isMobile && searchOpen) && (
           <>
+          {doc && inLibrary && !isMobile && (
+            <button
+              onClick={() => setFiling((f) => (f ? null : { step: 'confirm' }))}
+              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
+              title="File to Office Library — put this book on the public Office shelf"
+              aria-label="File to Office Library"
+            >
+              <BookMarked size={15} />
+            </button>
+          )}
           {doc && (
             <button
               onClick={() => askAbout()}
@@ -3263,6 +3330,40 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               theme={theme}
               onSeek={seekTo}
             />
+          )}
+          {filing && (
+            <div
+              role={filing.step === 'confirm' ? 'dialog' : 'status'}
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl text-[13px] text-white/85 max-w-[min(92vw,640px)]"
+            >
+              {filing.step === 'confirm' ? (
+                <>
+                  <span>
+                    File <span className="text-white">"{doc?.title}"</span> to the Office Library, on the{' '}
+                    <span className="text-white">{matterName}</span> shelf? It will be public in the Reading Room.
+                  </span>
+                  <button
+                    onClick={() => void fileToOfficeLibrary()}
+                    className="font-semibold text-[#e8b84a] hover:underline whitespace-nowrap"
+                  >
+                    File it
+                  </button>
+                  <button onClick={() => setFiling(null)} className="text-white/45 hover:text-white">
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  {filing.step === 'working' && <Loader2 size={13} className="animate-spin shrink-0 text-[#e8b84a]" />}
+                  <span>{filing.text}</span>
+                  {filing.step === 'done' && (
+                    <button onClick={() => setFiling(null)} className="text-white/45 hover:text-white" aria-label="Dismiss">
+                      <X size={13} />
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           )}
           {undoable && (
             <div

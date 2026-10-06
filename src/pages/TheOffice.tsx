@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { canCaptureCover, captureOfficeImages } from '@/lib/office-cover';
+import { publishDocumentToOffice } from '@/lib/office-publish';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { useDraggableResizable } from '@/hooks/useDraggableResizable';
@@ -57,10 +58,6 @@ interface DocRow {
   title: string;
   author: string | null;
 }
-
-const SPINES = ['#7a2530', '#243a52', '#39505f', '#8a6d2a', '#2e5a50', '#5a4a6e', '#6e4a2e', '#3a5a6e', '#742d2d', '#2e6b64'];
-const spineFor = (title: string) =>
-  SPINES[Array.from(title).reduce((a, c) => a + c.charCodeAt(0), 0) % SPINES.length];
 
 // ---------------------------------------------------------------------------
 // The vault picker — the exact tree the sidebar and the Vault page render:
@@ -448,45 +445,23 @@ export default function TheOffice() {
     }
   };
 
-  // The drop: a vault document lands on a section → it is published.
+  // The drop: a vault document lands on a section → it is published. The
+  // same path the Reader's "File to Office Library" takes (lib/office-publish).
   const publishDoc = async (docId: string, section: OfficeSection) => {
-    const { data: doc } = await supabase
-      .from('documents')
-      .select('id, title, author')
-      .eq('id', docId)
-      .single();
-    if (!doc) { say('Could not read that document.'); return; }
-    if (items.some((it) => it.document_id === docId && it.section_id === section.id)) {
-      say(`"${doc.title}" is already on that shelf.`);
+    let res;
+    try {
+      res = await publishDocumentToOffice(docId, section);
+    } catch (e) {
+      say(e instanceof Error ? e.message : 'The book could not be shelved.');
       return;
     }
-    const { data: firstPassage } = await supabase
-      .from('passages')
-      .select('text')
-      .eq('document_id', docId)
-      .order('sequence_number')
-      .limit(1)
-      .maybeSingle();
-    const excerpt = (firstPassage?.text ?? '').slice(0, 700);
-    const { data: row, error } = await supabase
-      .from('office_items')
-      .insert({
-        section_id: section.id,
-        document_id: docId,
-        title: doc.title,
-        author: doc.author ?? '',
-        excerpt,
-        spine: spineFor(doc.title),
-      })
-      .select('id')
-      .single();
-    if (error) { say(error.message); return; }
-    say(`"${doc.title}" is now showing in ${section.title}.`);
+    const { data: doc } = await supabase.from('documents').select('title').eq('id', docId).single();
+    const title = doc?.title ?? 'That document';
+    if (res.status === 'already') { say(`"${title}" is already on that shelf.`); return; }
+    say(`"${title}" is now showing in ${section.title}.`);
     refresh();
     // The jacket follows on its own; a book that has none keeps its plate.
-    if (row?.id) {
-      void captureCover({ id: row.id, section_id: section.id, document_id: docId, title: doc.title } as OfficeItem, true);
-    }
+    void captureCover({ id: res.itemId, section_id: section.id, document_id: docId, title } as OfficeItem, true);
   };
 
   const seedStarter = async () => {
