@@ -768,7 +768,12 @@ console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ---------
   // 25th, get_document_text (#327): `doc` may be a TITLE, which can be
   // privileged; the allow-list keeps `doc` only as a uuid, so a title is a
   // presence and a length (checked 10-01).
-  check(leaks.length === 0 && TOOLS.length === 25,
+  // 26th and 27th, get_list / update_list_item (#362): `list` may be a TITLE
+  // and `item` an item's TEXT, `note` is prose — none is on an id or handle
+  // key, so all three are a presence and a length; the handlers quote `list`
+  // and `item` back in their errors, which scrubArgValues takes out again
+  // (checked 10-06).
+  check(leaks.length === 0 && TOOLS.length === 27,
     `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
     leaks.join(' | '));
 

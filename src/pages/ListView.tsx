@@ -54,6 +54,11 @@ interface ChecklistItem {
   due?: string | null;       // YYYY-MM-DD or null
   linked_page_id?: string | null;   // child page spawned from this item, if any
   linked_matter_id?: string | null; // sub-matter spawned from this item, if any
+  // One line under the item, written by an agent working the list from a
+  // terminal (the MCP update_list_item tool): a question when the item was
+  // unclear, or where the result is. Carried through every save here so it
+  // survives the next keystroke; cleared with the x beside it.
+  note?: string | null;
 }
 
 // The parent matter a list lives in, when it lives in one at all. Lists
@@ -98,7 +103,8 @@ function readListContent(content: Record<string, unknown> | undefined): Checklis
     const due = typeof o.due === 'string' ? o.due : null;
     const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
     const linked_matter_id = typeof o.linked_matter_id === 'string' ? o.linked_matter_id : null;
-    out.push({ id, text, done: !!o.done, due, linked_page_id, linked_matter_id });
+    const note = typeof o.note === 'string' && o.note ? o.note : null;
+    out.push({ id, text, done: !!o.done, due, linked_page_id, linked_matter_id, ...(note ? { note } : {}) });
   });
   return out;
 }
@@ -579,6 +585,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
                         commitSoon({ items: next });
                       }}
                       onChangeDue={(due) => updateItem(it.id, { due: due || null })}
+                      onClearNote={() => updateItem(it.id, { note: null })}
                       onDelete={() => deleteItem(it.id)}
                       onEnter={(currentText) => insertItemAfter(it.id, currentText)}
                       onExpand={() => expandItem(it.id)}
@@ -707,6 +714,7 @@ interface SortableItemProps {
    *  nothing; onChangeText still fires on blur and flushes. */
   onTypeText: (text: string) => void;
   onChangeDue: (due: string) => void;
+  onClearNote: () => void;
   onDelete: () => void;
   onEnter: (currentText: string) => string;
   onExpand: () => void;
@@ -716,7 +724,7 @@ interface SortableItemProps {
   subMatterDisabledReason: string | null;
 }
 
-function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onTypeText, onChangeDue, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
+function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, onTypeText, onChangeDue, onClearNote, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id, disabled: !sortable });
 
@@ -765,6 +773,7 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
           ? <CheckCircle2 size={18} className="text-[#4ade80]" />
           : <Circle size={18} className="text-white/40" />}
       </button>
+      <div className="flex-1 min-w-0 flex flex-col">
       <input
         type="text"
         value={text}
@@ -786,8 +795,23 @@ function SortableItem({ item, today, flash, sortable, onToggle, onChangeText, on
           }
         }}
         data-item-id={item.id}
-        className={`flex-1 bg-transparent outline-none text-[14px] ${item.done ? 'line-through text-white/40' : 'text-[#f5f2ed]'}`}
+        className={`w-full bg-transparent outline-none text-[14px] ${item.done ? 'line-through text-white/40' : 'text-[#f5f2ed]'}`}
       />
+      {/* An agent's line under the item (update_list_item): a question, or
+          where the result is. Read it, then clear it with the x. */}
+      {item.note && (
+        <div className="flex items-start gap-1 mt-0.5 text-[12px] leading-snug text-[#e8b84a]/85">
+          <span className="min-w-0 break-words italic">{item.note}</span>
+          <button
+            onClick={onClearNote}
+            className="shrink-0 p-0.5 rounded text-white/30 hover:text-white/70 transition-colors"
+            title="Clear note"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      )}
+      </div>
       <DueDateField
         value={item.due ?? ''}
         onChange={onChangeDue}
