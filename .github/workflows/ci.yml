@@ -123,6 +123,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-agent-tools.mjs
 
+      - name: Lists — get_list / update_list_item (offline)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-list-tools.mjs
+
       - name: Migration 057 — job priority (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-job-priority.mjs
