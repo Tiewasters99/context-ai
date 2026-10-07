@@ -120,6 +120,25 @@ export default function MainLayout() {
       )}
 
       <IntoFullscreen>
+        {/* The Orchestrator's standing presence (2026-10-07): one round
+            button in the bottom-right corner of every screen, so a question
+            can be asked wherever the person is, whatever they are doing —
+            the Reader, a list, the Office. It steps aside while the panel is
+            open (the panel takes that corner), and on a phone the tab bar's
+            Assistant entry already holds the same door. Inside
+            IntoFullscreen for the Assistant's own reason: the Reader takes
+            the browser full screen, and nothing outside that element shows. */}
+        {!isMobile && !assistantOpen && (
+          <button
+            onClick={() => setAssistantOpen(true)}
+            className="fixed bottom-5 right-5 z-[45] h-12 w-12 rounded-full flex items-center justify-center text-[#e8b84a] border border-[rgba(232,184,74,0.35)] shadow-[0_6px_24px_rgba(0,0,0,0.45)] backdrop-blur-[20px] transition-all hover:scale-105 hover:border-[rgba(232,184,74,0.7)] hover:shadow-[0_8px_28px_rgba(232,184,74,0.18)]"
+            style={{ backgroundColor: 'rgba(14, 14, 22, 0.88)' }}
+            title="Ask the Orchestrator"
+            aria-label="Ask the Orchestrator"
+          >
+            <Bot size={22} strokeWidth={1.75} />
+          </button>
+        )}
         <Assistant isOpen={assistantOpen} onClose={() => setAssistantOpen(false)} />
         {/* A server refusal — the month's budget, the rate window, a sealed
             matter — drawn once for the whole shell. Inside IntoFullscreen for
