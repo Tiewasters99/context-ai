@@ -3,10 +3,12 @@ import { useParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { parseServerRefusal } from "@/lib/llm/refusals";
 import { WaveformBanner } from "@/components/meetings/WaveformBanner";
-import { DeepgramLiveClient } from "@/lib/meetings/deepgram";
+import { DeepgramLiveClient, type LiveStatus } from "@/lib/meetings/deepgram";
+import { ASSISTANT_NAME, ASSISTANT_THE } from "@/components/ai/assistant-scope";
 import {
   applyChunk,
   emptyTranscript,
+  isNote,
   renderTranscriptForClaude,
   type TranscriptState,
 } from "@/lib/meetings/transcript";
@@ -49,10 +51,17 @@ export default function MeetingView() {
   >("loading");
 
   const [transcript, setTranscript] = useState<TranscriptState>(emptyTranscript);
-  const [status, setStatus] = useState<"idle" | "starting" | "live" | "error">(
-    "idle",
-  );
+  const [status, setStatus] = useState<LiveStatus>("idle");
+  const [statusNote, setStatusNote] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // The screen wake lock: null until Start, then whether the phone agreed to
+  // keep the screen on. A locked phone stops the microphone, so when this is
+  // false the page says so where the person can see it.
+  const [wakeLock, setWakeLock] = useState<{ held: boolean; reason?: string } | null>(null);
+  // One short line per thing the recording client did, newest last. For the
+  // next phone test: it says which link broke instead of "it stopped".
+  const [events, setEvents] = useState<string[]>([]);
+  const [showEvents, setShowEvents] = useState(false);
   const clientRef = useRef<DeepgramLiveClient | null>(null);
   const transcriptRef = useRef<TranscriptState>(emptyTranscript);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
@@ -227,9 +236,18 @@ export default function MeetingView() {
     };
   }, [meetingId, meetingState, watchEnabled, session]);
 
+  const logEvent = useCallback((line: string) => {
+    const t = new Date();
+    const hh = String(t.getHours()).padStart(2, "0");
+    const mm = String(t.getMinutes()).padStart(2, "0");
+    const ss = String(t.getSeconds()).padStart(2, "0");
+    setEvents((prev) => [...prev.slice(-59), `${hh}:${mm}:${ss} ${line}`]);
+  }, []);
+
   const start = useCallback(async () => {
     if (clientRef.current) return;
     setStatus("starting");
+    setStatusNote(null);
     setErrorMsg(null);
     const client = new DeepgramLiveClient({
       onChunk: (chunk) => {
@@ -242,12 +260,37 @@ export default function MeetingView() {
         if (chunk.isFinal) void persistChunk(meetingId, chunk);
       },
       onError: (err) => {
+        // Terminal: the client has already torn itself down. Let go of it so
+        // Start works again without a reload — the old page kept a dead
+        // client here and the button did nothing.
+        clientRef.current = null;
         setErrorMsg(err.message);
         setStatus("error");
       },
-      onOpen: () => setStatus("live"),
-      onClose: () => setStatus("idle"),
+      onStatus: (s, note) => {
+        setStatus(s);
+        setStatusNote(note ?? null);
+      },
       onStream: (stream) => setAudioStream(stream),
+      onWakeLock: (held, reason) => setWakeLock({ held, reason }),
+      onGap: (gapMs, heldMs) => {
+        // A line in the transcript itself, saved with the rest, so whoever
+        // reads this later knows the recording paused and for how long.
+        const lostMs = Math.max(0, gapMs - heldMs);
+        const text = lostMs < 1500
+          ? `[Connection dropped for ${formatDuration(gapMs)}; the audio was held and sent.]`
+          : `[Recording paused for ${formatDuration(gapMs)}${heldMs > 1500 ? `, ${formatDuration(heldMs)} of it recovered` : ""}. Nothing was captured while the phone was locked.]`;
+        const last = transcriptRef.current.finals[transcriptRef.current.finals.length - 1];
+        const at = (last?.end ?? 0) + 2;
+        const note = { text, isFinal: true, speaker: null, start: at, end: at };
+        setTranscript((prev) => {
+          const next = applyChunk(prev, note);
+          transcriptRef.current = next;
+          return next;
+        });
+        void persistChunk(meetingId, note);
+      },
+      onEvent: logEvent,
     }, meetingId);
     clientRef.current = client;
     try {
@@ -257,15 +300,19 @@ export default function MeetingView() {
       setStatus("error");
       clientRef.current = null;
     }
-  }, [meetingId]);
+  }, [meetingId, logEvent]);
 
   const stop = useCallback(async () => {
     const c = clientRef.current;
     clientRef.current = null;
     if (c) await c.stop();
     setStatus("idle");
+    setStatusNote(null);
+    setWakeLock(null);
     void endMeeting(meetingId);
   }, [meetingId]);
+
+  const recording = status === "live" || status === "reconnecting";
 
   useEffect(() => {
     return () => {
@@ -446,7 +493,7 @@ export default function MeetingView() {
           >
             {shareCopied ? "Copied" : "Copy link"}
           </button>
-          {status === "live" ? (
+          {recording ? (
             <button
               onClick={stop}
               className="h-8 px-4 rounded-lg bg-[var(--color-danger)] hover:opacity-90 text-[#1a0808] text-xs font-semibold transition"
@@ -471,9 +518,43 @@ export default function MeetingView() {
         </div>
       )}
 
+      {status === "reconnecting" && (
+        <div className="px-4 py-2 text-xs bg-[rgba(251,191,36,0.08)] text-[var(--color-warning)] border-b border-[rgba(251,191,36,0.2)]">
+          Reconnecting{statusNote ? ` — ${statusNote}` : ""}. Keep this page open; audio captured meanwhile is held and sent when the connection is back.
+        </div>
+      )}
+
+      {recording && wakeLock && !wakeLock.held && (
+        <div className="px-4 py-2 text-xs bg-[rgba(251,191,36,0.08)] text-[var(--color-warning)] border-b border-[rgba(251,191,36,0.2)]">
+          Keep the screen on — {wakeLock.reason ?? "the phone would not keep the screen awake"}. A locked phone stops the microphone. On an iPhone: Settings → Display &amp; Brightness → Auto-Lock → Never, and turn off Low Power Mode, for this call.
+        </div>
+      )}
+
+      {recording && wakeLock?.held && (
+        <div className="px-4 py-1.5 text-[11px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+          The screen will stay on while recording. Leaving this page or switching apps pauses the microphone.
+        </div>
+      )}
+
       <div className="px-4 pt-4 pb-3 shrink-0">
         <WaveformBanner stream={audioStream} active={status === "live"} />
       </div>
+
+      {events.length > 0 && (
+        <div className="px-4 pb-2 shrink-0">
+          <button
+            onClick={() => setShowEvents((v) => !v)}
+            className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+          >
+            {showEvents ? "Hide" : "Show"} recording log ({events.length})
+          </button>
+          {showEvents && (
+            <pre className="mt-1 max-h-32 overflow-y-auto text-[10px] leading-relaxed font-mono text-[var(--color-text-muted)] whitespace-pre-wrap">
+              {events.join("\n")}
+            </pre>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 min-h-0">
         <section className="flex flex-col min-h-0 border-b md:border-b-0 md:border-r border-[var(--color-border)]">
@@ -488,19 +569,27 @@ export default function MeetingView() {
               <p className="text-[var(--color-text-bright)] text-center mt-6 px-4 text-base">
                 {status === "live"
                   ? "Listening…"
+                  : status === "reconnecting"
+                    ? "Reconnecting…"
                   : otherDevices > 0
                     ? "Waiting for the capture device to start…"
                     : "Tap Start mic, or share this link with the device near the meeting."}
               </p>
             )}
-            {transcriptLines.map((line) => (
-              <div key={line.id} className="flex gap-2">
-                <span className="text-[var(--color-primary)]/70 text-xs font-mono shrink-0 mt-0.5 w-6">
-                  {line.speaker == null ? "•" : `S${line.speaker}`}
-                </span>
-                <span className="text-[var(--color-text)]">{line.text}</span>
-              </div>
-            ))}
+            {transcriptLines.map((line) =>
+              isNote(line.text) ? (
+                <div key={line.id} className="text-xs italic text-[var(--color-text-muted)] pl-8">
+                  {line.text}
+                </div>
+              ) : (
+                <div key={line.id} className="flex gap-2">
+                  <span className="text-[var(--color-primary)]/70 text-xs font-mono shrink-0 mt-0.5 w-6">
+                    {line.speaker == null ? "•" : `S${line.speaker}`}
+                  </span>
+                  <span className="text-[var(--color-text)]">{line.text}</span>
+                </div>
+              ),
+            )}
             {transcript.interim && (
               <div className="text-[var(--color-text-muted)] italic">
                 {transcript.interim}
@@ -516,7 +605,7 @@ export default function MeetingView() {
           <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4 text-sm leading-relaxed">
             {chatRows.length === 0 && !streamingReply && (
               <p className="text-[var(--color-text-bright)] text-base mt-2">
-                Ask anything, or let Grapheon flag what to watch. The transcript is sent automatically.
+                Ask anything, or let {ASSISTANT_THE} flag what to watch. The transcript is sent automatically.
               </p>
             )}
             {chatRows.map((row, i) => {
@@ -532,7 +621,7 @@ export default function MeetingView() {
                   }
                 >
                   <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)] mb-1">
-                    {m.role === "user" ? "You" : "Grapheon"}
+                    {m.role === "user" ? "You" : ASSISTANT_NAME}
                   </div>
                   <div className="whitespace-pre-wrap">{m.content}</div>
                 </div>
@@ -541,7 +630,7 @@ export default function MeetingView() {
             {streamingReply && (
               <div className="text-[var(--color-text)] bg-[var(--color-surface-raised)] border border-[var(--color-border)] rounded-xl p-3">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)] mb-1">
-                  Grapheon
+                  {ASSISTANT_NAME}
                 </div>
                 <div className="whitespace-pre-wrap">{streamingReply}</div>
               </div>
@@ -554,7 +643,7 @@ export default function MeetingView() {
             <input
               value={pending}
               onChange={(e) => setPending(e.target.value)}
-              placeholder="Ask Grapheon…"
+              placeholder={`Ask ${ASSISTANT_THE}…`}
               disabled={sending}
               className="flex-1 h-11 rounded-xl bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-4 text-sm text-[var(--color-text-bright)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)] disabled:opacity-50 transition"
             />
@@ -602,11 +691,19 @@ const FLAG_META: Record<FlagType, { icon: string; label: string }> = {
   risk: { icon: "⚠", label: "Risk" },
 };
 
-function StatusDot({ status }: { status: string }) {
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `${m} min ${r} s` : `${m} min`;
+}
+
+function StatusDot({ status }: { status: LiveStatus }) {
   const color =
     status === "live"
       ? "bg-[var(--color-success)] animate-pulse"
-      : status === "starting"
+      : status === "starting" || status === "reconnecting"
         ? "bg-[var(--color-warning)] animate-pulse"
         : status === "error"
           ? "bg-[var(--color-danger)]"
@@ -616,6 +713,8 @@ function StatusDot({ status }: { status: string }) {
       ? "Recording"
       : status === "starting"
         ? "Starting"
+        : status === "reconnecting"
+          ? "Reconnecting"
         : status === "error"
           ? "Error"
           : "Idle";

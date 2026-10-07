@@ -24,6 +24,8 @@ import { estimateDeepgramSessionCents } from '../lib/usage-prices.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+// As long as the session the meter charges for (an assumed hour).
+const DEEPGRAM_TOKEN_TTL_SECONDS = 3600;
 
 export default async function handler(req, res) {
   res.setHeader('access-control-allow-origin', '*');
@@ -107,19 +109,29 @@ export default async function handler(req, res) {
   });
   if (!meter.allowed) return sendUsageRefusal(res, meter);
 
+  // One credential per metered session. Deepgram's grant defaults to a
+  // 30-second token, which was fine when a meeting opened exactly one socket.
+  // The browser now reconnects when a phone drops the socket (screen lock,
+  // a throttled keepalive, a network blip), and each reconnect used to come
+  // back here — and be charged again, as a new session, for the same meeting.
+  // A token that lives as long as the session we charged for lets the browser
+  // reuse it; it comes back for a fresh one, and a fresh charge, only when
+  // the meeting outlives the hour. `expires_in` is what the browser reads.
   const grantRes = await fetch('https://api.deepgram.com/v1/auth/grant', {
     method: 'POST',
     headers: {
       Authorization: `Token ${apiKey}`,
       'Content-Type': 'application/json',
     },
+    body: JSON.stringify({ ttl_seconds: DEEPGRAM_TOKEN_TTL_SECONDS }),
   });
 
   res.setHeader('cache-control', 'no-store');
 
   if (grantRes.ok) {
     const data = await grantRes.json();
-    return json(res, 200, { credential: data.access_token, scheme: 'bearer' });
+    const expiresIn = Number(data.expires_in) > 0 ? Number(data.expires_in) : DEEPGRAM_TOKEN_TTL_SECONDS;
+    return json(res, 200, { credential: data.access_token, scheme: 'bearer', expires_in: expiresIn });
   }
 
   return json(res, 200, { credential: apiKey, scheme: 'token' });
