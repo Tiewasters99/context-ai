@@ -44,6 +44,19 @@ export interface ScopeFacts {
   livePen?: LivePen | null;
 }
 
+// ─── The assistant's name ─────────────────────────────────────────────────
+//
+// One name, used wherever the resident assistant is addressed or signs an
+// answer — the meeting page, the floating button, the chat. Change it here
+// and every surface follows. "Orchestrator" for now (lib/orchestrator-system.mjs
+// introduces itself by that name); the matter header's door still says
+// "Ask the assistant" because its sealed variant carries a distinction of
+// its own.
+
+export const ASSISTANT_NAME = 'Orchestrator';
+/** With the article, for a sentence: "Ask the Orchestrator". */
+export const ASSISTANT_THE = 'the Orchestrator';
+
 // ─── The sentences ────────────────────────────────────────────────────────
 
 /**
