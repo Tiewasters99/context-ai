@@ -30,7 +30,10 @@ export function applyChunk(
     end: chunk.end,
   };
   const last = state.finals[state.finals.length - 1];
-  if (last && last.speaker === line.speaker && line.start - last.end < 1.5) {
+  // A note the page wrote into the transcript — "[Recording paused …]" —
+  // stands on its own line, and speech never merges into it.
+  const mergeable = !isNote(line.text) && !(last && isNote(last.text));
+  if (mergeable && last && last.speaker === line.speaker && line.start - last.end < 1.5) {
     const merged: TranscriptLine = {
       ...last,
       text: `${last.text} ${line.text}`.trim(),
@@ -45,6 +48,11 @@ export function applyChunk(
     finals: [...state.finals, line],
     interim: "",
   };
+}
+
+/** A bracketed line is the page's own note about the recording, not speech. */
+export function isNote(text: string): boolean {
+  return text.startsWith("[") && text.endsWith("]");
 }
 
 export function renderTranscriptForClaude(state: TranscriptState): string {

@@ -10,6 +10,7 @@ import RefusalBanner from '@/components/ui/RefusalBanner';
 import FactorBanner from '@/components/account/FactorBanner';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { ASSISTANT_COMMAND_EVENT } from '@/lib/assistant-bus';
+import { ASSISTANT_THE } from '@/components/ai/assistant-scope';
 
 export default function MainLayout() {
   const navigate = useNavigate();
@@ -133,8 +134,8 @@ export default function MainLayout() {
             onClick={() => setAssistantOpen(true)}
             className="fixed bottom-5 right-5 z-[45] h-12 w-12 rounded-full flex items-center justify-center text-[#e8b84a] border border-[rgba(232,184,74,0.35)] shadow-[0_6px_24px_rgba(0,0,0,0.45)] backdrop-blur-[20px] transition-all hover:scale-105 hover:border-[rgba(232,184,74,0.7)] hover:shadow-[0_8px_28px_rgba(232,184,74,0.18)]"
             style={{ backgroundColor: 'rgba(14, 14, 22, 0.88)' }}
-            title="Ask the Orchestrator"
-            aria-label="Ask the Orchestrator"
+            title={`Ask ${ASSISTANT_THE}`}
+            aria-label={`Ask ${ASSISTANT_THE}`}
           >
             <Bot size={22} strokeWidth={1.75} />
           </button>
