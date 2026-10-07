@@ -288,6 +288,7 @@ export default function MeetingView() {
           transcriptRef.current = next;
           return next;
         });
+        channelRef.current?.broadcast(note);
         void persistChunk(meetingId, note);
       },
       onEvent: logEvent,

@@ -117,20 +117,31 @@ export default async function handler(req, res) {
   // A token that lives as long as the session we charged for lets the browser
   // reuse it; it comes back for a fresh one, and a fresh charge, only when
   // the meeting outlives the hour. `expires_in` is what the browser reads.
-  const grantRes = await fetch('https://api.deepgram.com/v1/auth/grant', {
+  //
+  // Deepgram documents the parameter but not its ceiling. If the hour is
+  // refused, ask once more without it (their 30-second default) before the
+  // long-lived key is ever handed to a browser — a refused TTL must not
+  // become a key leak.
+  const grant = async (body) => fetch('https://api.deepgram.com/v1/auth/grant', {
     method: 'POST',
     headers: {
       Authorization: `Token ${apiKey}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ ttl_seconds: DEEPGRAM_TOKEN_TTL_SECONDS }),
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
+  let grantRes = await grant({ ttl_seconds: DEEPGRAM_TOKEN_TTL_SECONDS });
+  let requestedTtl = DEEPGRAM_TOKEN_TTL_SECONDS;
+  if (!grantRes.ok) {
+    grantRes = await grant(null);
+    requestedTtl = 30;
+  }
 
   res.setHeader('cache-control', 'no-store');
 
   if (grantRes.ok) {
     const data = await grantRes.json();
-    const expiresIn = Number(data.expires_in) > 0 ? Number(data.expires_in) : DEEPGRAM_TOKEN_TTL_SECONDS;
+    const expiresIn = Number(data.expires_in) > 0 ? Number(data.expires_in) : requestedTtl;
     return json(res, 200, { credential: data.access_token, scheme: 'bearer', expires_in: expiresIn });
   }
 

@@ -246,6 +246,7 @@ export class DeepgramLiveClient {
     const ws = new WebSocket(url, [cred.scheme, cred.credential]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    let opened = false;
 
     // Deepgram's `start` is zero at each socket's first byte. The first byte
     // we send on this socket is the oldest held audio, if any — so this
@@ -255,6 +256,7 @@ export class DeepgramLiveClient {
 
     ws.addEventListener("open", () => {
       if (this.ws !== ws) return;
+      opened = true;
       this.event(`socket open${this.held.length ? `, sending ${Math.round(this.heldBytes / PCM_BYTES_PER_SECOND)} s held` : ""}`);
       this.flushHeld(ws);
       this.keepalive = setInterval(() => {
@@ -306,7 +308,11 @@ export class DeepgramLiveClient {
       if (this.keepalive) clearInterval(this.keepalive);
       this.keepalive = null;
       this.ws = null;
-      this.event(`socket closed (${ev.code})`);
+      this.event(`socket closed (${ev.code})${opened ? "" : " before it opened"}`);
+      // A socket that never opened was most likely refused its credential.
+      // Reusing that credential would loop forever at the backoff cap; one
+      // fresh credential (and its charge) is the lesser cost.
+      if (!opened) this.credential = null;
       if (this.running) this.scheduleReconnect("the transcriber's connection closed");
     });
   }
@@ -378,6 +384,7 @@ export class DeepgramLiveClient {
 
   private scheduleReconnect(reason: string) {
     if (!this.running) return;
+    if (this.status === "starting") return; // start() reports its own failure
     this.markOutage();
     this.setStatus("reconnecting", reason);
     if (this.reconnectTimer) return;
@@ -453,15 +460,27 @@ export class DeepgramLiveClient {
   /** The page is visible again, or something looks wrong: check and repair now. */
   private heal(why: string) {
     if (!this.running) return;
-    this.event(`check (${why}): ws ${this.ws ? this.ws.readyState : "none"}, mic ${this.micHealthy() ? "ok" : "down"}, ctx ${this.audioCtx?.state ?? "none"}`);
+    // The first bring-up looks after itself. On an iPhone, dismissing the
+    // microphone prompt hands focus back to the page while start() is still
+    // waiting on the microphone; healing then would open a second socket.
+    if (this.status === "starting") return;
     void this.acquireWakeLock();
     const socketOk = this.ws?.readyState === WebSocket.OPEN;
     if (socketOk && this.micHealthy()) {
       if (this.audioCtx && this.audioCtx.state !== "running") {
-        void this.audioCtx.resume().catch(() => {});
+        void this.audioCtx.resume().catch(() => { /* nothing to do */ });
+      }
+      // The socket rode out whatever paused the microphone (Siri, a call, a
+      // short lock the keepalive survived). Say so, or the page stays on
+      // "Reconnecting" for good.
+      if (this.status === "reconnecting") {
+        this.event(`check (${why}): everything is back`);
+        this.recovered();
+        this.setStatus("live");
       }
       return;
     }
+    this.event(`check (${why}): ws ${this.ws ? this.ws.readyState : "none"}, mic ${this.micHealthy() ? "ok" : "down"}, ctx ${this.audioCtx?.state ?? "none"}`);
     this.clearReconnectTimer();
     this.markOutage();
     this.setStatus("reconnecting", socketOk ? "the microphone paused" : "the transcriber's connection closed");
