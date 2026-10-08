@@ -135,6 +135,9 @@ export class DeepgramLiveClient {
     try {
       await this.startMic();
       await this.openSocket();
+      // Once more, now that the permission sheet is gone: if the browser let
+      // the lock go while it was up, this is where it is taken back.
+      await this.acquireWakeLock();
     } catch (err) {
       await this.fail(err instanceof Error ? err : new Error(String(err)));
       throw err;
@@ -460,11 +463,16 @@ export class DeepgramLiveClient {
   /** The page is visible again, or something looks wrong: check and repair now. */
   private heal(why: string) {
     if (!this.running) return;
-    // The first bring-up looks after itself. On an iPhone, dismissing the
-    // microphone prompt hands focus back to the page while start() is still
-    // waiting on the microphone; healing then would open a second socket.
-    if (this.status === "starting") return;
+    // The wake lock first, in every case. On an iPhone the microphone
+    // permission sheet can hide the page for a moment; the browser releases
+    // the lock, and the page comes back while start() is still waiting on the
+    // microphone. This used to return below before re-taking it, so the lock
+    // taken inside the Start tap was gone for the whole meeting — and the
+    // phone auto-locked mid-call (Eden, 2026-10-07).
     void this.acquireWakeLock();
+    // The rest of the first bring-up looks after itself: healing now would
+    // open a second socket.
+    if (this.status === "starting") return;
     const socketOk = this.ws?.readyState === WebSocket.OPEN;
     if (socketOk && this.micHealthy()) {
       if (this.audioCtx && this.audioCtx.state !== "running") {
@@ -539,6 +547,7 @@ export class DeepgramLiveClient {
     if (this.wakeLockRequesting) return;
     const nav = navigator as WakeLockNavigator;
     if (!nav.wakeLock) {
+      this.event("wake lock: not supported by this browser");
       this.handlers.onWakeLock?.(false, "this browser cannot keep the screen on");
       return;
     }
