@@ -1008,3 +1008,11 @@ jobs:
       - name: Orchestrator — the map tells the truth about the plan
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-orchestrator-map.mjs
+
+      # The Orchestrator's known-issues lookup (10-03, P1): entries sound and
+      # compiled; every quoted on-screen string still in the product; realistic
+      # complaints match their entry; "fixed" judged against the user's own
+      # version; the team's notes never returned; never offered to connectors.
+      - name: Orchestrator — known issues
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-known-issues.mjs
