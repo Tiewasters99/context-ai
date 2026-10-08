@@ -18,9 +18,10 @@
 //   { text: string, usedTools: string[] }     on success
 //   { error: string }                          on failure (with status code)
 //
-// Note: Vercel serverless timeout is 30s (vercel.json). A multi-round tool
-// loop on Opus usually finishes well under that; streaming (M1.1) removes the
-// ceiling entirely.
+// Note: this function's maxDuration is 300 s (vercel.json), and the answer
+// streams as SSE, so a long tool loop is not cut off mid-way. The browser
+// keeps its own inactivity watchdog (Assistant.tsx) for a request that goes
+// quiet, and a Stop button for the person.
 
 import { createClient } from '@supabase/supabase-js';
 

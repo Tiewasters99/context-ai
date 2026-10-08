@@ -53,7 +53,7 @@ export default function MainLayout() {
             />
           )}
           <div
-            className={`fixed inset-y-0 left-0 z-50 transition-transform duration-300 ease-in-out ${
+            className={`fixed inset-y-0 left-0 z-50 h-full transition-transform duration-300 ease-in-out ${
               drawerOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
           >

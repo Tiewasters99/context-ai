@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { X, Send, Maximize2, Minimize2, Eraser } from 'lucide-react';
+import { X, Send, Square, Maximize2, Minimize2, Eraser } from 'lucide-react';
 import type { ChatMessage } from '@/lib/types';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -136,6 +136,16 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   };
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
+  // The request in flight, so the person can stop it — and so a request that
+  // goes quiet is stopped for them. Without this a hung fetch left `loading`
+  // true for good: input greyed, nothing arriving, nothing to press. That is
+  // what "the Orchestrator froze" looked like on a phone (2026-10-07).
+  const abortRef = useRef<AbortController | null>(null);
+  const stopRef = useRef<(() => void) | null>(null);
+  // The Orchestrator offered to sign the user out (a confirm-required action):
+  // a one-tap button, pressed by them, never by the model.
+  const [signOutOffer, setSignOutOffer] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const { id: routeId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
@@ -248,7 +258,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
   // as a claim about one vendor's servers. A PAUSED matter keeps nothing
   // either — the switch says nothing is going anywhere. And where the tier or
   // the pause has not been read yet, nothing is written: unknown is not open.
-  const { user, plan } = useAuth();
+  const { user, plan, signOut } = useAuth();
   const chatStore = useMemo(() => browserSessionStore(), []);
   const mayKeepConversation = !scoped ? true : !ai.loading && ai.tier === 'A' && ai.paused === false;
 
@@ -616,6 +626,30 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     const setAssistant = (content: string) =>
       setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content } : m)));
 
+    // Stop: the person's, or the watchdog's. The server emits an event for
+    // every step it takes (session, tool, text), so silence for this long
+    // means the request is lost, not thinking. Sealed pens and long tool
+    // loops are slow but not silent; a first-byte timeout would cut those
+    // off, an inactivity timeout does not.
+    const INACTIVITY_MS = 90_000;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let stoppedBy: 'user' | 'watchdog' | null = null;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    const armWatchdog = () => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        stoppedBy = 'watchdog';
+        controller.abort();
+      }, INACTIVITY_MS);
+    };
+    const stopNow = () => {
+      stoppedBy = 'user';
+      controller.abort();
+    };
+    stopRef.current = stopNow;
+    armWatchdog();
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
@@ -634,6 +668,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       const sessionKey = `${boundMatterId ?? ''}|${boundCharterId ?? ''}`;
       const res = await fetch('/api/assistant', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           messages: next.map((m) => ({ role: m.role, content: m.content })),
@@ -672,6 +707,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
+        armWatchdog();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
@@ -732,13 +768,19 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             // performs the change, not the model.
             if (ev.action === 'create_sub_matter') void openCreateSubMatter(ev.input || {});
             else if (ev.action === 'move_document') void proposeMove(ev.input || {});
+            else if (ev.action === 'sign_out') setSignOutOffer(true);
           }
           // 'tool' / 'done' events need no UI change.
         }
       }
       if (!created) append('No answer was returned.');
     } catch (err) {
-      const msg = `⚠️ ${err instanceof Error ? err.message : 'Something went wrong.'}`;
+      const aborted = err instanceof DOMException && err.name === 'AbortError';
+      const msg = aborted
+        ? stoppedBy === 'user'
+          ? 'Stopped.'
+          : '⚠️ No answer came back for a minute and a half, so the request was stopped. Try again, or ask it a shorter way.'
+        : `⚠️ ${err instanceof Error ? err.message : 'Something went wrong.'}`;
       if (created) {
         acc += (acc ? '\n\n' : '') + msg;
         setAssistant(acc);
@@ -746,8 +788,25 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         append(msg);
       }
     } finally {
+      if (watchdog) clearTimeout(watchdog);
+      if (abortRef.current === controller) abortRef.current = null;
+      stopRef.current = null;
       setLoading(false);
       setSearching(false);
+    }
+  };
+
+  const handleStop = () => stopRef.current?.();
+
+  const confirmSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await signOut();
+      // ProtectedRoute sends a signed-out person to /auth on its own.
+    } finally {
+      setSigningOut(false);
+      setSignOutOffer(false);
     }
   };
 
@@ -1098,13 +1157,41 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
           {searching && (
             <div className="flex justify-start">
               <div className="max-w-[85%] px-3 py-2 rounded-xl rounded-bl-sm text-sm italic bg-[rgba(20,20,30,0.8)] text-[#8a8693]">
-                Searching the matter…
+                {/* "Searching the matter…" was a small lie on "help me sign
+                    out". The Orchestrator may be reading, searching or just
+                    thinking; say the true, plain thing. */}
+                Working on it…
               </div>
             </div>
           )}
           <div ref={messagesEndRef} />
           </div>
         </div>
+
+        {/* Sign out — offered by the Orchestrator, pressed by the person. */}
+        {signOutOffer && (
+          <div className="px-4 py-3 border-t border-[rgba(255,255,255,0.08)] bg-[rgba(20,20,30,0.6)]">
+            <p className="text-[12px] text-[#e8e4de] leading-snug mb-2">
+              Sign out of Contextspaces on this device?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => void confirmSignOut()}
+                disabled={signingOut}
+                className="flex-1 py-1.5 rounded-lg bg-[#f0c850] hover:bg-[#f5d565] text-[#0e0e12] text-[12px] font-bold transition-colors disabled:opacity-40"
+              >
+                {signingOut ? 'Signing out…' : 'Sign out'}
+              </button>
+              <button
+                onClick={() => setSignOutOffer(false)}
+                disabled={signingOut}
+                className="flex-1 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] text-[#e8e4de] text-[12px] hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
+              >
+                Not now
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Move confirmation (M2.2) — gated write, inline so it stays in context */}
         {pendingMove && (
@@ -1159,16 +1246,27 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={loading}
-              placeholder={loading ? 'Searching…' : 'Ask anything...'}
+              placeholder={loading ? 'Working on it…' : 'Ask anything...'}
               className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 outline-none disabled:opacity-60"
             />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || loading}
-              className="p-1 rounded text-[#8a8693] hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-[#8a8693] transition-colors"
-            >
-              <Send className="h-4 w-4" />
-            </button>
+            {loading ? (
+              <button
+                onClick={handleStop}
+                className="p-1 rounded text-[#8a8693] hover:text-[#f0c850] transition-colors"
+                title="Stop"
+                aria-label="Stop"
+              >
+                <Square className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!input.trim()}
+                className="p-1 rounded text-[#8a8693] hover:text-indigo-400 disabled:opacity-30 disabled:hover:text-[#8a8693] transition-colors"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
         )}
