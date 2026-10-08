@@ -445,6 +445,10 @@ test('below the threshold the request is the one it has always been', async (t) 
     assert.equal(ingestRequestBody('7e1c-doc'), '{"documentId":"7e1c-doc"}');
     assert.equal(ingestRequestBody('7e1c-doc', null), '{"documentId":"7e1c-doc"}');
     assert.equal(ingestRequestBody('7e1c-doc', undefined), '{"documentId":"7e1c-doc"}');
+    // storeOnly (the Workshop, migration 106) is absent unless asked for, so
+    // every upload the Vault has ever sent is byte-for-byte unchanged.
+    assert.equal(ingestRequestBody('7e1c-doc', null, false), '{"documentId":"7e1c-doc"}');
+    assert.equal(ingestRequestBody('7e1c-doc', null, true), '{"documentId":"7e1c-doc","storeOnly":true}');
   });
 
   await t.test('a confirmed upload adds exactly one field', () => {
@@ -482,7 +486,10 @@ test('below the threshold the request is the one it has always been', async (t) 
 
   await t.test('the Vault sends that body, and only that body', () => {
     const text = src('src/lib/vault-persist.ts');
-    assert.match(text, /body: ingestRequestBody\(documentId, declaration\)/);
+    assert.match(text, /body: ingestRequestBody\(documentId, declaration, storeOnly\)/);
+    // storeOnly reaches the body only when a caller asked for it; the Vault's
+    // own uploads never do.
+    assert.match(text, /opts\.storeOnly === true,/);
     assert.match(text, /chooseDeclaration\(opts\.ingestDeclaration, \{ name: file\.name, bytes: file\.size \}\)/);
     const gate = src('src/components/vault/UploadEstimateGate.tsx');
     assert.match(gate, /declarations: files\.map\(\(\) => null\)/,
