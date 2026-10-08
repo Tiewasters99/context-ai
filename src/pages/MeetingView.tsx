@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { parseServerRefusal } from "@/lib/llm/refusals";
 import { WaveformBanner } from "@/components/meetings/WaveformBanner";
 import { DeepgramLiveClient, type LiveStatus } from "@/lib/meetings/deepgram";
 import { ASSISTANT_NAME, ASSISTANT_THE } from "@/components/ai/assistant-scope";
+import { persistVaultFile, resolveMatter } from "@/lib/vault-persist";
 import {
   applyChunk,
   emptyTranscript,
@@ -68,6 +69,14 @@ export default function MeetingView() {
   // not. It comes off by itself if the recording stops or fails, because a
   // problem must be seen.
   const [covered, setCovered] = useState(false);
+  // Filing the transcript: the meeting's rows become a document in the
+  // meeting's matter, so the transcript is searchable, readable in the
+  // Reader, and visible to the connectors like anything else in the Vault.
+  // Until this, a transcript lived only in the meeting's own tables, and
+  // "where is the record of that call?" had no good answer (Eden, 10-08).
+  const [filing, setFiling] = useState(false);
+  const [filed, setFiled] = useState<{ documentId: string; title: string } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const clientRef = useRef<DeepgramLiveClient | null>(null);
   const transcriptRef = useRef<TranscriptState>(emptyTranscript);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
@@ -442,6 +451,38 @@ export default function MeetingView() {
     return rows;
   }, [messages, flags]);
 
+  const fileTranscript = useCallback(async () => {
+    if (filing || !meeting) return;
+    if (!meeting.matterspace_id) {
+      setFileError("This meeting is not linked to a matter yet. Link it first, then file the transcript.");
+      return;
+    }
+    setFiling(true);
+    setFileError(null);
+    try {
+      const ref = await resolveMatter(meeting.matterspace_id);
+      if (!ref) throw new Error("The meeting's matter could not be opened.");
+      const started = new Date(meeting.started_at);
+      const day = started.toISOString().slice(0, 10);
+      const title = `Meeting transcript — ${meeting.title?.trim() || ref.name} — ${day}`;
+      const markdown = renderTranscriptMarkdown({
+        title,
+        matterName: ref.name,
+        startedAt: started,
+        endedAt: meeting.ended_at ? new Date(meeting.ended_at) : null,
+        lines: transcriptRef.current.finals,
+        flags: flagsRef.current,
+      });
+      const file = new File([markdown], `${title}.md`, { type: "text/markdown" });
+      const { documentId } = await persistVaultFile(ref, file);
+      setFiled({ documentId, title });
+    } catch (err) {
+      setFileError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFiling(false);
+    }
+  }, [filing, meeting]);
+
   const copyShareUrl = useCallback(() => {
     void navigator.clipboard.writeText(window.location.href);
     setShareCopied(true);
@@ -499,6 +540,16 @@ export default function MeetingView() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {!recording && transcriptLines.length > 0 && (
+            <button
+              onClick={() => void fileTranscript()}
+              disabled={filing}
+              className="h-8 px-3 rounded-lg bg-[var(--color-surface-raised)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-xs font-medium transition text-[var(--color-text-secondary)] disabled:opacity-50"
+              title="Save this transcript as a document in the meeting's matter, where it is searchable and readable like any other document."
+            >
+              {filing ? "Filing…" : "File to matter"}
+            </button>
+          )}
           <button
             onClick={copyShareUrl}
             className="h-8 px-3 rounded-lg bg-[var(--color-surface-raised)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-xs font-medium transition text-[var(--color-text-secondary)] inline-flex items-center gap-1.5"
@@ -536,6 +587,22 @@ export default function MeetingView() {
       {errorMsg && (
         <div className="px-4 py-2 text-xs bg-[rgba(248,113,113,0.08)] text-[var(--color-danger)] border-b border-[rgba(248,113,113,0.2)]">
           {errorMsg}
+        </div>
+      )}
+
+      {filed && (
+        <div className="px-4 py-2 text-xs bg-[rgba(74,222,128,0.08)] text-[var(--color-success)] border-b border-[rgba(74,222,128,0.2)]">
+          Filed as{" "}
+          <Link to={`/app/document/${filed.documentId}`} className="underline">
+            {filed.title}
+          </Link>
+          . It is being indexed and will be searchable shortly.
+        </div>
+      )}
+
+      {fileError && (
+        <div className="px-4 py-2 text-xs bg-[rgba(248,113,113,0.08)] text-[var(--color-danger)] border-b border-[rgba(248,113,113,0.2)]">
+          {fileError}
         </div>
       )}
 
@@ -766,6 +833,58 @@ function RecordingCover({ onUncover }: { onUncover: () => void }) {
       </div>
     </div>
   );
+}
+
+function formatClock(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(r).padStart(2, "0");
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
+ * The transcript as a document: a header a reader can trust, then one line
+ * per turn with its clock time and speaker, then the flags the assistant
+ * raised during the meeting, dated. Notes the page wrote ("[Recording
+ * paused …]") stay in their place, so a gap is visible in the filed copy.
+ */
+function renderTranscriptMarkdown(args: {
+  title: string;
+  matterName: string;
+  startedAt: Date;
+  endedAt: Date | null;
+  lines: { text: string; speaker: number | null; start: number; end: number }[];
+  flags: FlagItem[];
+}): string {
+  const { title, matterName, startedAt, endedAt, lines, flags } = args;
+  const fmt = (d: Date) => d.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" });
+  const out: string[] = [];
+  out.push(`# ${title}`, "");
+  out.push(`- Matter: ${matterName}`);
+  out.push(`- Started: ${fmt(startedAt)}`);
+  if (endedAt) out.push(`- Ended: ${fmt(endedAt)}`);
+  out.push(`- Live transcription by Contextspaces Meetings. Speakers are numbered as the transcriber heard them, not named.`);
+  out.push("", "## Transcript", "");
+  for (const line of lines) {
+    if (isNote(line.text)) {
+      out.push(`_${line.text}_`, "");
+      continue;
+    }
+    const who = line.speaker == null ? "Speaker" : `Speaker ${line.speaker}`;
+    out.push(`**[${formatClock(line.start)}] ${who}:** ${line.text}`, "");
+  }
+  if (flags.length) {
+    out.push("## Flags raised during the meeting", "");
+    for (const f of flags) {
+      const label = FLAG_META[f.type]?.label ?? f.type;
+      out.push(`- **${label}** — ${f.text}${f.anchor ? ` _("${f.anchor}")_` : ""}`);
+    }
+    out.push("");
+  }
+  return out.join("\n");
 }
 
 function formatDuration(ms: number): string {
