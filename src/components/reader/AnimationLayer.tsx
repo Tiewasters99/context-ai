@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { IMAGE_FILE_RE } from '@/lib/document-workshop';
 import { Play, X, Loader2 } from 'lucide-react';
 import { clipUrl, type DocumentAnimation } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -154,6 +155,16 @@ function Player({ animation, onClose }: { animation: DocumentAnimation; onClose:
       style={{ ...style, opacity: shown ? 1 : 0, transform: shown ? 'scale(1)' : 'scale(0.96)' }}
     >
       {url ? (
+        // A still laid on the page (a Workshop image, migration 106) is shown
+        // where a clip would play: the plate, redrawn.
+        IMAGE_FILE_RE.test(path ?? '') ? (
+          <img
+            src={url}
+            alt={animation.label ?? 'The plate, redrawn'}
+            className="max-h-full max-w-full"
+            onError={() => setFailed('That picture could not be shown.')}
+          />
+        ) : (
         <video
           src={url}
           autoPlay
@@ -163,6 +174,7 @@ function Player({ animation, onClose }: { animation: DocumentAnimation; onClose:
           className="max-h-full max-w-full"
           onError={() => setFailed('That clip could not be played.')}
         />
+        )
       ) : (
         <p className="flex items-center gap-2 px-3 text-[12px] text-white/80">
           {trouble ?? <><Loader2 size={13} className="animate-spin" /> Opening the clip…</>}

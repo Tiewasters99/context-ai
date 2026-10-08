@@ -128,6 +128,7 @@ export declare function chooseDeclaration(
 export declare function ingestRequestBody(
   documentId: string,
   declaration?: IngestDeclaration | null,
+  storeOnly?: boolean,
 ): string;
 
 export declare function formatCents(cents: number): string;

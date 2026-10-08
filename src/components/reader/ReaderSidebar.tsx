@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { FileText, List, Film, Plus, Trash2 } from 'lucide-react';
+import { FileText, List, Film, Plus, Trash2, Hammer } from 'lucide-react';
 import type { DocumentAnimation } from '@/lib/document-animations';
+import WorkshopPanel, { type WorkshopPanelProps } from './WorkshopPanel';
 
 // Tree node returned by pdfjs `pdf.getOutline()`. The shape is flexible —
 // pdfjs may include extra properties we don't need.
@@ -24,9 +25,11 @@ type Props = {
   onRemoveAnimation: (id: string) => void;
   /** True while the reader is waiting for that rectangle. */
   addingAnimation: boolean;
+  /** The Workshop bench (migration 106); null where there is none (no matter). */
+  workshop: WorkshopPanelProps | null;
 };
 
-type Tab = 'pages' | 'contents' | 'animations';
+type Tab = 'pages' | 'contents' | 'animations' | 'workshop';
 
 export default function ReaderSidebar({
   totalPages,
@@ -39,13 +42,17 @@ export default function ReaderSidebar({
   onAddAnimation,
   onRemoveAnimation,
   addingAnimation,
+  workshop,
 }: Props) {
   const hasOutline = !!outline && outline.length > 0;
   const [tab, setTab] = useState<Tab>('pages');
+  // The bench needs room for a plate and what was made from it, side by
+  // side with the page; the other tabs are lists and keep the narrow column.
+  const wide = tab === 'workshop';
 
   return (
     <aside
-      className="w-60 shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md"
+      className={`${wide ? 'w-[360px]' : 'w-60'} shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md`}
     >
       <div className="flex items-center gap-1 px-2 h-9 border-b border-[var(--color-border)] shrink-0">
         <SidebarTab
@@ -67,6 +74,14 @@ export default function ReaderSidebar({
           icon={<Film size={13} />}
           label="Animations"
         />
+        {workshop && (
+          <SidebarTab
+            active={tab === 'workshop'}
+            onClick={() => setTab('workshop')}
+            icon={<Hammer size={13} />}
+            label="Workshop"
+          />
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -122,6 +137,8 @@ export default function ReaderSidebar({
             )}
           </div>
         )}
+
+        {tab === 'workshop' && workshop && <WorkshopPanel {...workshop} />}
 
         {tab === 'animations' && (
           <div className="p-2 space-y-2">

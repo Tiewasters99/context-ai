@@ -27,6 +27,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 import { processDocument, planPdfOcr, MEDIA_EXTENSIONS, OCRABLE_IMAGE_EXTENSIONS, needsWorkerIngest, isPdfStructureError } from '../lib/ingest-core.mjs';
+import { IMAGE_EXTENSIONS as IMAGE_FILE_EXTENSIONS, TEXT_STATUS } from '../lib/ingest-formats.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
@@ -106,6 +107,25 @@ export default async function handler(req, res) {
   // Only a fully indexed document is "already ready".
   if (doc.processing_status === 'ready' && !doc.text_status && !doc.ocr_pending) {
     return json(res, 200, { ok: true, alreadyReady: true });
+  }
+
+  // Store and stop (the Workshop, migration 106): a clip or a still brought
+  // back to sit beside the plate it was made from has nothing to transcribe
+  // or read, and a Flow clip sent through Gemini is a paid call answered
+  // with "[silence]". Only media and image files may ask; the row is marked
+  // stored-without-text with the reason and nothing below runs — no quote,
+  // no meter, no worker.
+  if (body?.storeOnly === true) {
+    const ext1 = '.' + (doc.source_filename || '').split('.').pop().toLowerCase();
+    const isMedia = MEDIA_EXTENSIONS.includes(ext1);
+    const isImage = IMAGE_FILE_EXTENSIONS.includes(ext1);
+    if (!isMedia && !isImage) return json(res, 400, { error: 'store_only_not_media' });
+    const { markStoredWithoutText } = await import('../lib/ingest-core.mjs');
+    await markStoredWithoutText(sb, documentId, isMedia ? TEXT_STATUS.MEDIA_NO_TRANSCRIPT : TEXT_STATUS.IMAGE_ONLY, {
+      message: 'Stored for the Workshop (not transcribed)',
+      metadata: { workshop_store_only: true },
+    });
+    return json(res, 200, { ok: true, storedOnly: true });
   }
 
   // A big upload must have been quoted before it is read (2026-09-20).

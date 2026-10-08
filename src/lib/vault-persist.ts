@@ -347,6 +347,16 @@ export interface PersistOptions {
    *               the file's name and size.
    */
   ingestDeclaration?: IngestDeclaration | null;
+  /**
+   * Store the file and stop: no transcription, no OCR, no embedding. For a
+   * clip or a still brought back to the Workshop (migration 106) — a plate
+   * coming alive has nothing to transcribe, and a Flow clip sent through
+   * Gemini would be a paid call answered with "[silence]". The row is marked
+   * stored-without-text with the reason, so the Vault says why it holds no
+   * passages. Server-side the request is refused for anything but media and
+   * images; the meter and the quote never fire because nothing is read.
+   */
+  storeOnly?: boolean;
 }
 
 export async function persistVaultFile(
@@ -431,6 +441,7 @@ export async function persistVaultFile(
     doc.id,
     accessToken,
     chooseDeclaration(opts.ingestDeclaration, { name: file.name, bytes: file.size }),
+    opts.storeOnly === true,
   );
 
   return { documentId: doc.id, storagePath };
@@ -458,13 +469,14 @@ async function postIngest(
   documentId: string,
   accessToken: string,
   declaration?: IngestDeclaration | null,
+  storeOnly = false,
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch('/api/ingest', {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${accessToken}` },
-      body: ingestRequestBody(documentId, declaration),
+      body: ingestRequestBody(documentId, declaration, storeOnly),
     });
   } catch (err) {
     console.error('ingest fetch:', err);
