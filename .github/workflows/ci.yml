@@ -624,6 +624,16 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-dialog-cards.mjs
+      # The Reader's Workshop button: the real sidebar mounted in jsdom shows
+      # the bench when the Reader asks for its tab, and falls back to Pages
+      # where there is no bench; the toolbar button held to its wiring as
+      # source (when it shows, open-on-the-bench, click again to close). Same
+      # --no-save jsdom as the steps above.
+      - name: Reader — the Workshop button opens the bench (jsdom + the real sidebar)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save jsdom@30.1.0
+          node --import ./scripts/_node-src-loader.mjs --test scripts/_test-reader-workshop-button.mjs
       # What the Assistant panel SAYS on a sealed matter before the first
       # message: the scope strip, the pen named in advance (and corrected when
       # the server names another), the word-search note, the pause, the

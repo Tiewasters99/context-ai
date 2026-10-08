@@ -10,6 +10,7 @@ import {
   X,
   Search,
   PanelLeft,
+  Hammer,
   Scan,
   Maximize,
   Minimize,
@@ -40,7 +41,7 @@ import { hasDraftBody } from '@/lib/brief/draft-store';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
-import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSidebar';
+import ReaderSidebar, { type OutlineNode, type SidebarTabId } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
 import AnimationAttach from '@/components/reader/AnimationAttach';
 import {
@@ -422,6 +423,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
 
   // Sidebar state — PDF only.
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Held here, not in the sidebar, so the toolbar's Workshop button can open
+  // the sidebar straight onto the bench.
+  const [sidebarTab, setSidebarTab] = useState<SidebarTabId>('pages');
   const [thumbnails, setThumbnails] = useState<(string | null)[]>([]);
   const [outline, setOutline] = useState<OutlineNode[] | null>(null);
 
@@ -2877,6 +2881,27 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               <PanelLeft size={15} />
             </button>
           )}
+          {/* The bench lives in the sidebar's fourth tab, where nobody found
+              it. This opens the sidebar straight onto it — in a pane too,
+              where the sidebar otherwise stays shut, since the bench is the
+              reason to open it there. Not on a phone: the 360px bench would
+              leave no page beside it. */}
+          {workshop && fileKind === 'pdf' && loadState === 'ready' && !isMobile && (
+            <button
+              onClick={() => {
+                if (sidebarOpen && sidebarTab === 'workshop') { setSidebarOpen(false); return; }
+                setSidebarTab('workshop');
+                setSidebarOpen(true);
+              }}
+              className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-xs shrink-0 ${
+                sidebarOpen && sidebarTab === 'workshop' ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+              }`}
+              title="Workshop: snip, snippets, bring in, lay on page"
+            >
+              <Hammer size={15} />
+              <span>Workshop</span>
+            </button>
+          )}
           <span
             ref={docTitleRef}
             contentEditable={!!doc}
@@ -3278,6 +3303,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             onRemoveAnimation={(animationId) => void removeAnimation(animationId)}
             addingAnimation={attaching}
             workshop={workshop}
+            tab={sidebarTab}
+            onTabChange={setSidebarTab}
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">

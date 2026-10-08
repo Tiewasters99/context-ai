@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { FileText, List, Film, Plus, Trash2, Hammer } from 'lucide-react';
 import type { DocumentAnimation } from '@/lib/document-animations';
 import WorkshopPanel, { type WorkshopPanelProps } from './WorkshopPanel';
@@ -27,9 +26,13 @@ type Props = {
   addingAnimation: boolean;
   /** The Workshop bench (migration 106); null where there is none (no matter). */
   workshop: WorkshopPanelProps | null;
+  /** Which tab shows. Held by the Reader, so its toolbar's Workshop button
+   *  can open the sidebar straight onto the bench. */
+  tab: SidebarTabId;
+  onTabChange: (tab: SidebarTabId) => void;
 };
 
-type Tab = 'pages' | 'contents' | 'animations' | 'workshop';
+export type SidebarTabId = 'pages' | 'contents' | 'animations' | 'workshop';
 
 export default function ReaderSidebar({
   totalPages,
@@ -43,9 +46,16 @@ export default function ReaderSidebar({
   onRemoveAnimation,
   addingAnimation,
   workshop,
+  tab: requestedTab,
+  onTabChange: setTab,
 }: Props) {
   const hasOutline = !!outline && outline.length > 0;
-  const [tab, setTab] = useState<Tab>('pages');
+  // The Reader remembers the last tab across documents; one this document
+  // cannot show (no matter, so no bench; no outline) falls back to Pages.
+  const tab: SidebarTabId =
+    (requestedTab === 'workshop' && !workshop) || (requestedTab === 'contents' && !hasOutline)
+      ? 'pages'
+      : requestedTab;
   // The bench needs room for a plate and what was made from it, side by
   // side with the page; the other tabs are lists and keep the narrow column.
   const wide = tab === 'workshop';
