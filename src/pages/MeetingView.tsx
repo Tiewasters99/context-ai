@@ -285,7 +285,7 @@ export default function MeetingView() {
         const lostMs = Math.max(0, gapMs - heldMs);
         const text = lostMs < 1500
           ? `[Connection dropped for ${formatDuration(gapMs)}; the audio was held and sent.]`
-          : `[Recording paused for ${formatDuration(gapMs)}${heldMs > 1500 ? `, ${formatDuration(heldMs)} of it recovered` : ""}. Nothing was captured while the phone was locked.]`;
+          : `[Recording paused for ${formatDuration(gapMs)}${heldMs > 1500 ? `, ${formatDuration(heldMs)} of it recovered` : ""}. Nothing was captured during the pause.]`;
         const last = transcriptRef.current.finals[transcriptRef.current.finals.length - 1];
         const at = (last?.end ?? 0) + 2;
         const note = { text, isFinal: true, speaker: null, start: at, end: at };

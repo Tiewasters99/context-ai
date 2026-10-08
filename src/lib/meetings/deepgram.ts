@@ -60,6 +60,16 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 15000;
 /** Treat a credential as spent a minute before it really is. */
 const CREDENTIAL_MARGIN_MS = 60_000;
+/**
+ * The worklet posts a frame every 100 ms, silence included. This long with no
+ * frame while the page is visible means the audio graph is dead — iOS has
+ * interrupted the AudioContext (a call, Siri, another app's audio) or muted
+ * the track and not said so — even though the socket is open and happy.
+ * Eden's 10-08 meeting: chunks stopped at 3 m 22 s, the socket stayed open,
+ * the page stayed "live", and seven more minutes of a call went unrecorded.
+ */
+const AUDIO_STALL_MS = 8_000;
+const PULSE_MS = 3_000;
 
 /**
  * Live transcription that survives what a phone does to a web page.
@@ -114,6 +124,10 @@ export class DeepgramLiveClient {
   private heldBytes = 0;
   private heldDropped = false;
   private heldSince = 0;
+  /** When the worklet last posted a frame; 0 before the microphone is up. */
+  private lastPcmAt = 0;
+  private pulse: ReturnType<typeof setInterval> | null = null;
+  private muteTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(handlers: Handlers, meetingId?: string) {
     this.handlers = handlers;
@@ -138,6 +152,7 @@ export class DeepgramLiveClient {
       // Once more, now that the permission sheet is gone: if the browser let
       // the lock go while it was up, this is where it is taken back.
       await this.acquireWakeLock();
+      this.startPulse();
     } catch (err) {
       await this.fail(err instanceof Error ? err : new Error(String(err)));
       throw err;
@@ -146,6 +161,7 @@ export class DeepgramLiveClient {
 
   async stop() {
     this.running = false;
+    this.stopPulse();
     this.clearReconnectTimer();
     this.detachLifecycleHandlers();
     await this.releaseWakeLock();
@@ -339,6 +355,7 @@ export class DeepgramLiveClient {
   // ── Held audio ─────────────────────────────────────────────────────────────
 
   private onPcm(buf: ArrayBuffer) {
+    this.lastPcmAt = Date.now();
     const ws = this.ws;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(buf);
@@ -495,8 +512,37 @@ export class DeepgramLiveClient {
     void this.reconnect();
   }
 
+  /**
+   * The audio pulse: every few seconds, while the page is visible, ask
+   * whether frames are still arriving. The socket cannot tell us — it stays
+   * open on keepalives with nothing to transcribe — so this is the only thing
+   * that notices a microphone the OS took away without a word.
+   */
+  private startPulse() {
+    this.stopPulse();
+    this.pulse = setInterval(() => {
+      if (!this.running || this.reconnecting) return;
+      if (document.visibilityState !== "visible") return;
+      if (this.status !== "live" && this.status !== "reconnecting") return;
+      if (!this.lastPcmAt) return;
+      const quiet = Date.now() - this.lastPcmAt;
+      if (quiet < AUDIO_STALL_MS) return;
+      this.event(`no audio for ${Math.round(quiet / 1000)} s; restarting the microphone`);
+      this.lastPcmAt = 0; // one restart per stall, not one per pulse
+      this.heal("audio stalled");
+    }, PULSE_MS);
+  }
+
+  private stopPulse() {
+    if (this.pulse) clearInterval(this.pulse);
+    this.pulse = null;
+    if (this.muteTimer) clearTimeout(this.muteTimer);
+    this.muteTimer = null;
+  }
+
   private async fail(err: Error) {
     this.running = false;
+    this.stopPulse();
     this.clearReconnectTimer();
     this.detachLifecycleHandlers();
     await this.releaseWakeLock();
@@ -592,7 +638,14 @@ export class DeepgramLiveClient {
   private micHealthy(): boolean {
     const track = this.stream?.getAudioTracks()[0];
     if (!track) return false;
-    return track.readyState === "live" && !track.muted;
+    if (track.readyState !== "live" || track.muted) return false;
+    // A live, unmuted track feeding a dead graph is still a dead microphone.
+    // iOS reports "interrupted" (not in the spec's type) during a call or
+    // Siri; anything but "running" means no frames.
+    if (this.audioCtx && (this.audioCtx.state as string) !== "running") return false;
+    // And the proof: frames. None for a while means none, whatever the flags.
+    if (this.lastPcmAt && Date.now() - this.lastPcmAt > AUDIO_STALL_MS) return false;
+    return true;
   }
 
   private async startMic() {
@@ -617,11 +670,22 @@ export class DeepgramLiveClient {
         this.markOutage();
         if (this.running && document.visibilityState === "visible") {
           this.setStatus("reconnecting", "the microphone paused");
+          // iOS does not always unmute a track it muted. Give it a moment,
+          // then ask for the microphone again rather than wait forever.
+          if (this.muteTimer) clearTimeout(this.muteTimer);
+          this.muteTimer = setTimeout(() => {
+            this.muteTimer = null;
+            if (this.running && this.stream === stream && track.muted) {
+              this.heal("still muted");
+            }
+          }, 3000);
         }
       });
       track.addEventListener("unmute", () => {
         if (this.stream !== stream) return;
         this.event("microphone unmuted");
+        if (this.muteTimer) clearTimeout(this.muteTimer);
+        this.muteTimer = null;
         if (this.running) this.heal("unmute");
       });
       track.addEventListener("ended", () => {
@@ -642,10 +706,13 @@ export class DeepgramLiveClient {
     this.audioCtx = audioCtx;
     audioCtx.addEventListener("statechange", () => {
       if (this.audioCtx !== audioCtx) return;
-      this.event(`audio context ${audioCtx.state}`);
-      if (audioCtx.state === "suspended" && this.running && document.visibilityState === "visible") {
-        // An interruption (a call, Siri, another app) that has ended.
-        void audioCtx.resume().catch(() => {});
+      const state = audioCtx.state as string;
+      this.event(`audio context ${state}`);
+      // "suspended" after an interruption that has ended, or iOS's own
+      // "interrupted" while a call or Siri has the audio session: try to
+      // resume; if the graph stays dead, the pulse restarts the microphone.
+      if (state !== "running" && state !== "closed" && this.running && document.visibilityState === "visible") {
+        void audioCtx.resume().catch(() => { /* nothing to do */ });
       }
     });
 
@@ -677,6 +744,8 @@ export class DeepgramLiveClient {
     if (audioCtx.state !== "running") {
       try { await audioCtx.resume(); } catch { /* nothing to do */ }
     }
+    // Frames are owed from now; the pulse measures from here.
+    this.lastPcmAt = Date.now();
     this.event(`microphone live (${track?.label || "default"})`);
   }
 
