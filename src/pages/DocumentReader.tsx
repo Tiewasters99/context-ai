@@ -44,8 +44,14 @@ import ReaderSidebar, { type OutlineNode } from '@/components/reader/ReaderSideb
 import AnimationLayer from '@/components/reader/AnimationLayer';
 import AnimationAttach from '@/components/reader/AnimationAttach';
 import {
-  listAnimations, deleteAnimation, type DocumentAnimation, type Turn,
+  listAnimations, deleteAnimation, createAnimation, type DocumentAnimation, type Turn,
 } from '@/lib/document-animations';
+import {
+  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem, nextTurn,
+  type WorkshopItem,
+} from '@/lib/document-workshop';
+import { persistVaultFile, resolveMatter as resolveVaultMatter } from '@/lib/vault-persist';
+import { downloadBlob } from '@/lib/export-page';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
 import { documentEntry } from '@/lib/second-factor';
@@ -456,6 +462,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // True while waiting for a rectangle to be drawn round a picture.
   const [attaching, setAttaching] = useState(false);
   const [pendingArea, setPendingArea] = useState<{ page: number; rect: FractionalRect } | null>(null);
+  // The Workshop bench (migration 106). `snipping` is the same rectangle
+  // mode as `attaching`, landing a snip on the bench instead of opening the
+  // attach dialog; `resnip` is the snip whose rectangle is being redrawn.
+  const [workshopItems, setWorkshopItems] = useState<WorkshopItem[]>([]);
+  const [snipping, setSnipping] = useState(false);
+  const [resnip, setResnip] = useState<WorkshopItem | null>(null);
+  const [workshopNotice, setWorkshopNotice] = useState<string | null>(null);
 
   const pdfDocRef = useRef<unknown>(null);
   // Natural (scale-1) size of every page, so the stack can lay out a
@@ -1905,6 +1918,140 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setAnimations((prev) => prev.filter((a) => a.id !== animationId));
   }, []);
 
+  // The Workshop bench for this document. A failure is an empty bench.
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    void listWorkshopItems(id).then((rows) => { if (!cancelled) setWorkshopItems(rows); });
+    return () => { cancelled = true; };
+  }, [id]);
+  useEffect(() => {
+    if (!workshopNotice) return;
+    const t = window.setTimeout(() => setWorkshopNotice(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [workshopNotice]);
+  // Esc gives up on the snip rectangle too.
+  useEffect(() => {
+    if (!snipping) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setSnipping(false);
+      setResnip(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [snipping]);
+
+  const workshopFail = useCallback((e: unknown, fallback: string) => {
+    setWorkshopNotice(e instanceof Error ? e.message : fallback);
+  }, []);
+
+  // A rectangle drawn in snip mode: a new snip, or the redrawn rectangle of
+  // an existing one (crop).
+  const landSnip = useCallback(async (p: number, rect: FractionalRect) => {
+    if (!doc) return;
+    try {
+      if (resnip) {
+        const updated = await updateWorkshopItem(resnip.id, { page: p, rect });
+        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      } else {
+        const made = await createSnip({ documentId: doc.id, page: p, rect });
+        setWorkshopItems((prev) => [...prev, made]);
+      }
+    } catch (e) {
+      workshopFail(e, 'The snip was not kept.');
+    } finally {
+      setResnip(null);
+    }
+  }, [doc, resnip, workshopFail]);
+
+  // The snip as a PNG at the chosen size, for Flow or Midjourney.
+  const downloadSnip = useCallback(async (item: WorkshopItem, scale: 1 | 2 | 3) => {
+    const pdf = pdfDocRef.current as PDFDocumentProxy | null;
+    if (!pdf || !item.rect) return;
+    try {
+      const canvas = await renderPageCanvas(pdf, item.page, { width: 1200 * scale, maxEdge: 1600 * scale });
+      const blob = await canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect), item.turn), 'image/png');
+      const base = (doc?.title || 'plate').replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'plate';
+      downloadBlob(blob, `${base} p${item.page} snip.png`);
+    } catch (e) {
+      workshopFail(e, 'The snip could not be drawn.');
+    }
+  }, [doc?.title, workshopFail]);
+
+  // A clip or a still brought back: filed in the matter, stored without a
+  // transcript, and set on the bench under its source.
+  const bringIn = useCallback(async (parent: WorkshopItem | null, file: File) => {
+    if (!doc?.matterspace_id) return;
+    try {
+      const matter = await resolveVaultMatter(doc.matterspace_id);
+      if (!matter) throw new Error("This document's matter could not be read.");
+      const { documentId } = await persistVaultFile(matter, file, { storeOnly: true, ingestDeclaration: null });
+      const made = await addMedia({
+        documentId: doc.id, page: parent?.page ?? page, parentId: parent?.id ?? null,
+        mediaDocumentId: documentId, label: file.name.replace(/\.[^.]+$/, ''),
+      });
+      setWorkshopItems((prev) => [...prev, made]);
+      setWorkshopNotice(`"${file.name}" is on the bench and filed in the matter (not transcribed).`);
+    } catch (e) {
+      workshopFail(e, 'The file could not be brought in.');
+    }
+  }, [doc, page, workshopFail]);
+
+  // The decision: the media item laid on the page where its plate sits
+  // (062), upright per the snip's turn.
+  const layOnPage = useCallback(async (media: WorkshopItem, source: WorkshopItem) => {
+    if (!doc || !source.rect || !media.media_document_id) return;
+    try {
+      const { animation, error } = await createAnimation({
+        documentId: doc.id, mediaDocumentId: media.media_document_id,
+        page: source.page, rect: source.rect, turn: source.turn, loops: true,
+        label: media.label ?? source.label ?? null,
+      });
+      if (error || !animation) throw new Error(error ?? 'It could not be laid on the page.');
+      setAnimations((prev) => [...prev, animation]);
+      setWorkshopNotice(`Laid on page ${source.page}. A reader taps the plate and it plays.`);
+    } catch (e) {
+      workshopFail(e, 'It could not be laid on the page.');
+    }
+  }, [doc, workshopFail]);
+
+  const workshop = doc?.matterspace_id ? {
+    page,
+    items: workshopItems,
+    snipping,
+    selectionText: selectionMenu?.anchorText?.trim() || null,
+    canWrite: !!user,
+    notice: workshopNotice,
+    onSnip: () => { setResnip(null); setAttaching(false); setSnipping(true); },
+    onCancelSnip: () => { setSnipping(false); setResnip(null); },
+    onSnippet: async (text: string) => {
+      if (!doc) return;
+      try {
+        const made = await createSnippet({ documentId: doc.id, page, text });
+        setWorkshopItems((prev) => [...prev, made]);
+      } catch (e) { workshopFail(e, 'The snippet was not kept.'); }
+    },
+    makePreview: makeAnimationPreview,
+    onDownload: downloadSnip,
+    onTurn: async (item: WorkshopItem) => {
+      try {
+        const updated = await updateWorkshopItem(item.id, { turn: nextTurn(item.turn) });
+        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      } catch (e) { workshopFail(e, 'The turn was not kept.'); }
+    },
+    onResnip: (item: WorkshopItem) => { setResnip(item); setAttaching(false); setSnipping(true); gotoPage(item.page); },
+    onDelete: async (item: WorkshopItem) => {
+      const err = await deleteWorkshopItem(item.id);
+      if (err) { setWorkshopNotice(err); return; }
+      setWorkshopItems((prev) => prev.filter((it) => it.id !== item.id && it.parent_id !== item.id));
+    },
+    onBringIn: bringIn,
+    onLayOnPage: layOnPage,
+    onJumpPage: (p: number) => gotoPage(p),
+  } : null;
+
   // Load annotations + incoming cross-references once per document, and
   // keep them live: margin notes are collaborative, so a teammate's note
   // should appear without a reload (the matter_comments realtime pattern;
@@ -3127,9 +3274,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             onJumpPage={(p) => gotoPage(p)}
             onJumpDest={(d) => void jumpDest(d)}
             animations={animations}
-            onAddAnimation={doc?.matterspace_id ? () => setAttaching(true) : null}
+            onAddAnimation={doc?.matterspace_id ? () => { setSnipping(false); setAttaching(true); } : null}
             onRemoveAnimation={(animationId) => void removeAnimation(animationId)}
             addingAnimation={attaching}
+            workshop={workshop}
           />
         )}
         <div className="flex-1 flex flex-col min-w-0">
@@ -3176,8 +3324,13 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
                     pending={visibleSet.has(i + 1)}
                     annotations={annotations}
                     animations={animations}
-                    attachMode={attaching}
+                    attachMode={attaching || snipping}
                     onAreaChosen={(chosenPage, rect) => {
+                      if (snipping) {
+                        setSnipping(false);
+                        void landSnip(chosenPage, rect);
+                        return;
+                      }
                       setAttaching(false);
                       setPendingArea({ page: chosenPage, rect });
                     }}

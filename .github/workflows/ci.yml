@@ -406,6 +406,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs
 
+      - name: Migration 106 — the Workshop bench (PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-document-workshop.mjs
+
       # The pause is a safety switch, so what it is worth is what can be
       # demonstrated about it: every model-facing case runs with global fetch
       # replaced by a witness and asserts the witness saw nothing. Part C is a

@@ -1,64 +1,51 @@
 # The Workshop beside a book
 
-**Date:** 7 October 2026
+**Date:** 7 October 2026, revised 8 October after Eden's Beagle example and the discovery of migration 062
 **Owner:** Eden Quainton
-**Status:** Design for decision. Nothing here is built.
+**Status:** Phase A built (PR pending). B–E are design.
 
 ## What it is
 
-A book in the Library serverspace opens in the Reader with empty space on either side of the page. The Workshop uses that space: a panel beside the page where you bring in a picture or a clip you made elsewhere, or make one here, and pin it to the book at the page you are on. A pinned picture or clip is a **plate** (the word for an illustration bound into a printed book). Plates travel with the book: in the Reader they sit in the margin at their page; when the book is filed to the Office Library, they go with it, and the Reading Room shows the book with its plates, moving where a plate is a clip.
+A book in the Library serverspace opens in the Reader. The Workshop is a bench beside the page: snip a plate off the page (or keep a passage of text), take it away to make something from it (a clip in Google Flow, a still in Midjourney), bring the result back, and lay the two side by side before deciding whether the book should carry it. If it should, one click lays the result on the page where the plate sits; a reader taps the plate and it plays. The book is otherwise unchanged.
 
-The panel is hidden by default. One control on the Reader's toolbar shows it; the choice is remembered on that device. A person who only wants to read never sees it.
+The bench is hidden by default: a **Workshop** tab in the Reader's existing left sidebar, which is itself closed until the sidebar button is pressed. A person who only wants to read never sees it.
 
-## Where the material comes from
+## What was already there
 
-Two sources, in this order of importance:
+Migration 062, "living illustrations": a clip (an ordinary document filed in the same matter) attached to a rectangle on one page, with the quarter turn that makes a sideways plate upright; tapping the plate plays the clip. One is attached today, the dragonfly plate in *Literature*. The Workshop is the bench that feeds 062; 062 is the decision made.
 
-1. **Import.** Drop or choose a file: an image or a clip from Google Flow, Midjourney, Astra, Runway, Kling, a phone. This is where the Flow credits and the current TikTok workflow are, and it costs nothing new. Flow's and Midjourney's credits cannot be spent through an API, so import is the only way those two reach the book.
-2. **Generate.** A prompt box with the open page's text (or the selection) pre-filled, a provider picker, the cost shown before the call, and the result landing in the panel as a plate to keep or discard. First providers: **GPT (gpt-image)** for stills, **Runway** for clips, because Astra already proves Runway suits the work. Each is an adapter (`lib/gen-image-openai.mjs`, `lib/gen-video-runway.mjs`); Kling and Google Veo are later adapters behind the same picker. Clip generation is asynchronous (a task that is polled); the panel shows it working and keeps the page usable.
+## The bench (Phase A, built)
 
-A plate made from an imported file is identical to a generated one once it is in the book: the provider is a label on the plate, not a different kind of thing. (The Studio / Film Builder brief of 27 September makes the same rule for takes; the adapters here should be the ones the Studio uses.)
-
-## Where plates live
-
-| | |
+| Item | What it is |
 |---|---|
-| Table | `book_plates`: id, document_id, matterspace_id, page, kind (`image` \| `video`), storage_path, thumb_path, width, height, duration_sec, prompt, provider, source (`import` \| `generated`), caption, sort_order, created_by, created_at. RLS as `documents` (matter membership). |
-| Originals | A private bucket, `book-plates`, under the matter's path (`<matter>/<document>/<plate>.<ext>`), checked by `lib/storage-path.mjs` like every other object. |
-| Public copies | Only when the book is on an Office shelf: the plate's file is copied into the public `cover-images` bucket the Office already uses for jackets and page images (`office_items/<item>/plates/<plate>.<ext>`), and `api/office?book=` lists them. Taking a book off the shelf removes the copies. The Reading Room stays one-way glass: it never sees the private bucket. |
+| **Snip** | A rectangle drawn on the page, plus a quarter turn. A recipe, not pixels: re-rendered from the PDF each time it is shown or downloaded. *Rotate* is one more quarter turn; *crop* is drawing the rectangle again; *resize* is the download size (1×, 2×, 3×). |
+| **Snippet** | A passage of the page's text (paste, or *Use selection*). For the law-student case: the paragraph a clip should illustrate. |
+| **Brought in** | A clip or a still from Flow, Midjourney, Astra, Runway or a phone, filed in the matter as a document **stored without a transcript** (no Gemini call), shown under the snip or snippet it was made from. |
+| **Lay on page** | The media item laid where its plate sits, upright per the snip's turn: a 062 row. A still is shown where a clip would play. |
 
-Limits: images up to 25 MB, clips up to 200 MB and 60 s for v1. A clip is stored as uploaded; playback in the Reader and the Reading Room uses the browser's own player.
+Table `document_workshop_items` (migration 106): `page`, `kind` (snip / snippet / media), `rect`, `turn`, `text`, `media_document_id`, `parent_id`. RLS as 062: author or matter access, and a media item must point at a file the author can reach.
 
-## What the person sees
+The store-only path (`/api/ingest` with `storeOnly: true`) accepts media and image files only and marks the row with the reason; nothing is read, quoted, metered or sent to the worker.
 
-**Reader, panel hidden (default).** A small bookmark-and-image icon on the toolbar, lit when the book has plates. Plates for the current page show as a thin strip in the margin: a thumbnail per plate; click opens it full size, a clip plays in place.
+## Phases
 
-**Reader, panel shown.** The panel takes the outer margin (the side with more room; right by default). Top: *Bring in* (drop zone / choose file) and *Make* (prompt, provider, cost, Go). Below: the plates pinned at this page, each with caption, provider label, "move to page", delete. Drag a plate from the panel onto a page to re-pin it.
+| Phase | Ships |
+|---|---|
+| **A** | The bench as above. *Built.* |
+| **B** | The book carries its illustrations into the Office Library and the Reading Room: public copies of laid-on media for a book on a shelf, served by `api/office?book=`, shown between pages. The Reading Room stays one-way glass (it never sees the private bucket). |
+| **C** | Narration: an ElevenLabs voice per book, one audio file per chapter, Play audio, page sync from the timing data. |
+| **D** | Generate inside the app: GPT for stills, Runway for clips, as adapters behind one picker, cost shown first. An open model on our own box (see the Princeton Compute note) is a later adapter on the same picker. |
+| **E** | Paid editions: a storefront on the Stripe setup, a purchase, a reader that checks it. Separate from the free Reading Room. |
 
-**Office Library / Reading Room.** Between pages, where a plate is pinned, the plate: an image at the page's width, a clip with controls, muted autoplay off. The book's card on the shelf shows the first plate as a second face of the jacket when the person chooses it.
+## Not in A
 
-## What is deliberately not in v1
+- No retouching beyond crop, rotate and size.
+- No plates on documents outside a matter (the bench needs a matter to file into).
+- No public exposure: a brought-in file is private to the matter until Phase B.
+- The Vault's upload path is unchanged; only the Workshop uses store-only.
 
-- No editing of images (crop, inpaint). Bring the edited file back in instead.
-- No audio, no music, no multi-clip sequencing — that is the Studio's job.
-- No plates on documents outside the Library serverspace. The matter-work Reader is unchanged.
-- No public plates without filing: a plate is private until the book is on a shelf.
+## Decided
 
-## Build order
-
-| Phase | Ships | Size |
-|---|---|---|
-| A | Table + private bucket + migration; panel with **import only**; plates in the Reader margin and full-size view. | 1 PR, the largest |
-| B | Plates travel with filing: public copies, `api/office` serves them, the Reading Room renders them. | 1 PR |
-| C | **Make an image** (GPT) with the page text pre-filled; cost line. | 1 PR |
-| D | **Make a clip** (Runway), asynchronous. | 1 PR, needs a Runway API key in `.env` (placeholder first) |
-| E | Kling / Veo adapters; the Studio uses the same adapters. | later |
-
-A is useful on its own with the Flow and Midjourney material already being made.
-
-## Decisions for Eden
-
-1. **Plates per page or per book?** This design pins each plate to a page (so a clip for chapter 3 sits at chapter 3). The alternative — one gallery for the whole book — is simpler but loses the "illustrated edition" feel.
-2. **The Reading Room.** Showing clips there makes the public page heavier; fine for a few plates, not for dozens. Cap at 12 plates per book in the Reading Room, or no cap?
-3. **Runway key.** Phase D needs one; the placeholder goes into `.env` first, then you paste it there (never in chat).
-4. **Which side.** Right margin by default; or follow the Reader's sidebar (page thumbnails) so the two never share a side?
+- Per page: every item on the bench belongs to a page, and laying on the page uses the snip's own rectangle.
+- Left side, as a sidebar tab, so it shares the one toggle the Reader already has.
+- Rights: PD text and plates are clean; generated media follows the commercial-use terms of the plan it was made on.
