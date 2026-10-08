@@ -62,6 +62,12 @@ export default function MeetingView() {
   // next phone test: it says which link broke instead of "it stopped".
   const [events, setEvents] = useState<string[]>([]);
   const [showEvents, setShowEvents] = useState(false);
+  // The cover: an opaque screen over the page while the recording runs
+  // underneath. A phone face-up on a conference table shows a picture, not a
+  // transcript scrolling. Press and hold to uncover, so a brushed hand does
+  // not. It comes off by itself if the recording stops or fails, because a
+  // problem must be seen.
+  const [covered, setCovered] = useState(false);
   const clientRef = useRef<DeepgramLiveClient | null>(null);
   const transcriptRef = useRef<TranscriptState>(emptyTranscript);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
@@ -316,6 +322,10 @@ export default function MeetingView() {
   const recording = status === "live" || status === "reconnecting";
 
   useEffect(() => {
+    if (!recording) setCovered(false);
+  }, [recording]);
+
+  useEffect(() => {
     return () => {
       void clientRef.current?.stop();
       clientRef.current = null;
@@ -455,6 +465,7 @@ export default function MeetingView() {
 
   return (
     <div className="flex flex-col h-full">
+      {covered && <RecordingCover onUncover={() => setCovered(false)} />}
       <div className="flex items-center justify-between gap-3 px-4 h-12 border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <StatusDot status={status} />
@@ -494,6 +505,15 @@ export default function MeetingView() {
           >
             {shareCopied ? "Copied" : "Copy link"}
           </button>
+          {recording && (
+            <button
+              onClick={() => setCovered(true)}
+              className="h-8 px-3 rounded-lg bg-[var(--color-surface-raised)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)] text-xs font-medium transition text-[var(--color-text-secondary)]"
+              title="Cover the screen. Recording continues underneath; press and hold the screen to uncover. Recording-consent rules vary by state and are yours to follow."
+            >
+              Cover
+            </button>
+          )}
           {recording ? (
             <button
               onClick={stop}
@@ -691,6 +711,62 @@ const FLAG_META: Record<FlagType, { icon: string; label: string }> = {
   opportunity: { icon: "✦", label: "Opportunity" },
   risk: { icon: "⚠", label: "Risk" },
 };
+
+/**
+ * The screen a covered meeting shows: the matter's cover picture if one is
+ * set (the same variables the shell paints with), else black. Nothing on it
+ * says "recording". Press and hold anywhere for a second to take it off; a
+ * hint says so for the first moments and then fades, so the screen is quiet.
+ */
+function RecordingCover({ onUncover }: { onUncover: () => void }) {
+  const HOLD_MS = 1000;
+  const holdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [holding, setHolding] = useState(false);
+  const [hint, setHint] = useState(true);
+
+  useEffect(() => {
+    const t = setTimeout(() => setHint(false), 4000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const beginHold = () => {
+    setHolding(true);
+    if (holdRef.current) clearTimeout(holdRef.current);
+    holdRef.current = setTimeout(onUncover, HOLD_MS);
+  };
+  const endHold = () => {
+    setHolding(false);
+    if (holdRef.current) clearTimeout(holdRef.current);
+    holdRef.current = null;
+  };
+  useEffect(() => () => { if (holdRef.current) clearTimeout(holdRef.current); }, []);
+
+  return (
+    <div
+      role="button"
+      aria-label="Screen covered while recording. Press and hold to uncover."
+      className="fixed inset-0 z-[200] select-none bg-black bg-cover bg-center"
+      style={{
+        backgroundImage: "var(--ambient-cover, var(--page-cover, none))",
+        touchAction: "none",
+        WebkitTouchCallout: "none",
+      }}
+      onPointerDown={beginHold}
+      onPointerUp={endHold}
+      onPointerCancel={endHold}
+      onPointerLeave={endHold}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      <div
+        className={`absolute inset-x-0 bottom-10 text-center text-[11px] tracking-[0.2em] uppercase transition-opacity duration-700 ${
+          hint || holding ? "opacity-40" : "opacity-0"
+        } text-white`}
+      >
+        {holding ? "Hold…" : "Hold to uncover"}
+      </div>
+    </div>
+  );
+}
 
 function formatDuration(ms: number): string {
   const s = Math.round(ms / 1000);
