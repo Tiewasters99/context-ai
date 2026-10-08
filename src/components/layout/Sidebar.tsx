@@ -430,7 +430,12 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
 
   return (
     <aside
-      className={`${sidebarWidth} h-screen flex flex-col shrink-0 transition-all duration-200 ease-in-out border-r border-[rgba(255,255,255,0.08)] backdrop-blur-[30px]`}
+      // On a phone the sidebar lives inside a fixed drawer and must fill
+      // THAT, not the screen: 100vh on iOS is the viewport with Safari's
+      // bars collapsed, so an h-screen sidebar ran past the drawer by the
+      // height of the toolbar — and Sign Out, at the bottom, sat under it
+      // with nothing to scroll (2026-10-07).
+      className={`${sidebarWidth} ${isMobile ? 'h-full' : 'h-screen'} flex flex-col shrink-0 transition-all duration-200 ease-in-out border-r border-[rgba(255,255,255,0.08)] backdrop-blur-[30px]`}
       style={{ backgroundColor: 'rgba(8, 8, 14, 0.82)' }}
     >
       {/* Brand + Collapse Toggle */}
@@ -775,8 +780,12 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
         </DndContext>
       </nav>
 
-      {/* Bottom Actions — account plumbing, not rooms. */}
-      <div className="border-t border-[rgba(255,255,255,0.06)] p-2.5 space-y-px">
+      {/* Bottom Actions — account plumbing, not rooms. Clears the phone's
+          home indicator, so the last row is a tap target, not a gesture bar. */}
+      <div
+        className="border-t border-[rgba(255,255,255,0.06)] p-2.5 space-y-px shrink-0"
+        style={isMobile ? { paddingBottom: 'calc(0.625rem + env(safe-area-inset-bottom))' } : undefined}
+      >
         <Link
           to="/app/connections"
           className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
