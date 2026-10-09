@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check,
+  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan,
 } from 'lucide-react';
 import type { Turn } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -25,15 +25,18 @@ export type WorkshopPanelProps = {
   items: WorkshopItem[];
   /** True while the reader is waiting for a rectangle to be drawn. */
   snipping: boolean;
-  /** The text under the reader's current selection, if any. */
-  selectionText: string | null;
+  /** The reader's current selection, if any: its words, and the box round
+   *  them on the page (a PDF's selection has one; a passage pasted in does not). */
+  selection: { text: string; page: number; rect: FractionalRect | null } | null;
   canWrite: boolean;
   onSnip: () => void;
   onCancelSnip: () => void;
-  onSnippet: (text: string) => Promise<void>;
+  /** Keep a passage; `at` is where its words sit, when known. */
+  onSnippet: (text: string, at: { page: number; rect: FractionalRect | null } | null) => Promise<void>;
   makePreview: (page: number, rect: FractionalRect, turn: Turn) => Promise<string | null>;
   onDownload: (item: WorkshopItem, scale: 1 | 2 | 3) => Promise<void>;
   onTurn: (item: WorkshopItem) => Promise<void>;
+  /** Draw the item's rectangle (again): a snip's crop, or where a snippet's clip should play. */
   onResnip: (item: WorkshopItem) => void;
   onDelete: (item: WorkshopItem) => Promise<void>;
   onBringIn: (parent: WorkshopItem | null, file: File) => Promise<void>;
@@ -60,6 +63,9 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
   const elsewhere = sources.filter((s) => s.page !== p.page);
 
   const [snippetDraft, setSnippetDraft] = useState('');
+  // Where the draft's words sit, taken with them from the selection; a
+  // pasted or retyped passage has none, and is placed on the bench instead.
+  const [snippetAt, setSnippetAt] = useState<{ page: number; rect: FractionalRect | null } | null>(null);
   const [savingSnippet, setSavingSnippet] = useState(false);
 
   return (
@@ -111,9 +117,15 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
       <div className="rounded-md border border-[var(--color-border)] p-2 space-y-1.5">
         <div className="flex items-center justify-between">
           <span className="inline-flex items-center gap-1 text-[11px] text-white/55"><Quote size={11} /> Snippet</span>
-          {p.selectionText && (
+          {p.selection && (
             <button
-              onClick={() => setSnippetDraft(p.selectionText ?? '')}
+              onMouseDown={(e) => e.preventDefault()} // keep the selection on the page
+              onClick={() => {
+                const s = p.selection;
+                if (!s) return;
+                setSnippetDraft(s.text);
+                setSnippetAt({ page: s.page, rect: s.rect });
+              }}
               className="text-[11px] text-[#e8b84a]/85 hover:text-[#e8b84a]"
             >
               Use selection
@@ -123,20 +135,31 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
         <textarea
           value={snippetDraft}
           onChange={(e) => setSnippetDraft(e.target.value)}
-          placeholder="A passage to illustrate — paste it, or select it on the page and press Use selection"
+          placeholder="A passage to illustrate — select it on the page and press Use selection (a clip can then play over those words), or paste it"
           rows={3}
           className="w-full resize-y rounded bg-black/20 border border-[var(--color-border)] px-2 py-1 text-[12px] text-white/85 outline-none focus:border-white/30 placeholder:text-white/30"
         />
-        <button
-          disabled={!p.canWrite || savingSnippet || !snippetDraft.trim()}
-          onClick={async () => {
-            setSavingSnippet(true);
-            try { await p.onSnippet(snippetDraft.trim()); setSnippetDraft(''); } finally { setSavingSnippet(false); }
-          }}
-          className="inline-flex items-center gap-1 rounded-md bg-[rgba(232,184,74,0.12)] border border-[rgba(232,184,74,0.35)] px-2 py-1 text-[11px] text-[#e8b84a] hover:bg-[rgba(232,184,74,0.2)] disabled:opacity-40"
-        >
-          {savingSnippet ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Keep on the bench (p. {p.page})
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            disabled={!p.canWrite || savingSnippet || !snippetDraft.trim()}
+            onClick={async () => {
+              setSavingSnippet(true);
+              try {
+                await p.onSnippet(snippetDraft.trim(), snippetAt);
+                setSnippetDraft('');
+                setSnippetAt(null);
+              } finally { setSavingSnippet(false); }
+            }}
+            className="inline-flex items-center gap-1 rounded-md bg-[rgba(232,184,74,0.12)] border border-[rgba(232,184,74,0.35)] px-2 py-1 text-[11px] text-[#e8b84a] hover:bg-[rgba(232,184,74,0.2)] disabled:opacity-40"
+          >
+            {savingSnippet ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Keep on the bench (p. {snippetAt?.page ?? p.page})
+          </button>
+          {snippetDraft.trim() && (
+            <span className="text-[10px] text-white/40">
+              {snippetAt?.rect ? 'with its place on the page' : 'place it on the page afterwards'}
+            </span>
+          )}
+        </div>
       </div>
 
       {sources.length === 0 && loose.length === 0 && !p.snipping && (
@@ -206,6 +229,11 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
         <button onClick={() => p.onJumpPage(item.page)} className="text-[10px] tabular-nums text-white/45 hover:text-white/80 px-1" title="Go to the page">
           p. {item.page}{item.turn ? ` · ${item.turn}°` : ''}
         </button>
+        {item.kind === 'snippet' && !item.rect && (
+          <span className="text-[10px] text-amber-300/80" title="Nothing can play over these words until they are placed on the page">
+            not placed
+          </span>
+        )}
         <div className="flex-1" />
         {item.kind === 'snip' && (
           <>
@@ -213,6 +241,16 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
             <IconBtn title="Draw the rectangle again (crop)" onClick={() => p.onResnip(item)}><Scissors size={12} /></IconBtn>
             <DownloadMenu busy={busy === 'dl'} onPick={(scale) => run('dl', () => p.onDownload(item, scale))} />
           </>
+        )}
+        {item.kind === 'snippet' && (
+          <button
+            onClick={() => p.onResnip(item)}
+            disabled={!p.canWrite}
+            title={item.rect ? 'Draw again where a clip should play over these words' : 'Draw a rectangle round these words on the page; a clip made from them will play there'}
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] hover:bg-white/5 disabled:opacity-40 ${item.rect ? 'text-white/55 hover:text-white' : 'text-[#e8b84a]/85 hover:text-[#e8b84a]'}`}
+          >
+            <Scan size={12} /> {item.rect ? 'Place again' : 'Place on page'}
+          </button>
         )}
         <label title="Bring in what you made from this" className={`p-1 rounded text-white/55 hover:text-white hover:bg-white/5 cursor-pointer ${p.canWrite ? '' : 'opacity-40 pointer-events-none'}`}>
           {busy === 'in' ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
@@ -252,7 +290,9 @@ function MediaRow({ item, source, p }: { item: WorkshopItem; source: WorkshopIte
     return () => { live = false; };
   }, [path]);
 
-  const canLay = !!source && source.kind === 'snip' && !!source.rect;
+  // A plate, or a placed passage: anything with a box on the page.
+  const canLay = !!source && !!source.rect;
+  const overWords = source?.kind === 'snippet';
   const run = async (what: string, fn: () => Promise<void>) => {
     setBusy(what);
     try { await fn(); } finally { setBusy(null); }
@@ -278,7 +318,9 @@ function MediaRow({ item, source, p }: { item: WorkshopItem; source: WorkshopIte
           <button
             disabled={!p.canWrite || busy === 'lay'}
             onClick={() => run('lay', () => p.onLayOnPage(item, source as WorkshopItem))}
-            title="Lay this on the page where the plate sits — a reader taps the plate and it plays"
+            title={overWords
+              ? 'Lay this on the page over the passage — a reader taps the words and it plays'
+              : 'Lay this on the page where the plate sits — a reader taps the plate and it plays'}
             className="inline-flex items-center gap-1 rounded-md bg-[rgba(232,184,74,0.12)] border border-[rgba(232,184,74,0.35)] px-1.5 py-0.5 text-[11px] text-[#e8b84a] hover:bg-[rgba(232,184,74,0.2)] disabled:opacity-40"
           >
             {busy === 'lay' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Lay on page

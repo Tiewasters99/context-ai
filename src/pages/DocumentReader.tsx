@@ -49,7 +49,7 @@ import {
   listAnimations, deleteAnimation, createAnimation, type DocumentAnimation, type Turn,
 } from '@/lib/document-animations';
 import {
-  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem, nextTurn,
+  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem, nextTurn, unionRect,
   type WorkshopItem,
 } from '@/lib/document-workshop';
 import { persistVaultFile, resolveMatter as resolveVaultMatter } from '@/lib/vault-persist';
@@ -1952,8 +1952,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setWorkshopNotice(e instanceof Error ? e.message : fallback);
   }, []);
 
-  // A rectangle drawn in snip mode: a new snip, or the redrawn rectangle of
-  // an existing one (crop).
+  // A rectangle drawn in snip mode: a new snip, the redrawn rectangle of an
+  // existing one (crop), or where a passage's clip should play (a snippet
+  // being placed on the page).
   const landSnip = useCallback(async (p: number, rect: FractionalRect) => {
     if (!doc) return;
     try {
@@ -2026,15 +2027,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     page,
     items: workshopItems,
     snipping,
-    selectionText: selectionMenu?.anchorText?.trim() || null,
+    selection: selectionMenu?.anchorText?.trim()
+      ? { text: selectionMenu.anchorText.trim(), page: selectionMenu.page, rect: unionRect(selectionMenu.rects) }
+      : null,
     canWrite: !!user,
     notice: workshopNotice,
     onSnip: () => { setResnip(null); setAttaching(false); setSnipping(true); },
     onCancelSnip: () => { setSnipping(false); setResnip(null); },
-    onSnippet: async (text: string) => {
+    onSnippet: async (text: string, at: { page: number; rect: FractionalRect | null } | null) => {
       if (!doc) return;
       try {
-        const made = await createSnippet({ documentId: doc.id, page, text });
+        const made = await createSnippet({ documentId: doc.id, page: at?.page ?? page, text, rect: at?.rect ?? null });
         setWorkshopItems((prev) => [...prev, made]);
       } catch (e) { workshopFail(e, 'The snippet was not kept.'); }
     },
