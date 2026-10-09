@@ -11,6 +11,7 @@ import {
   Search,
   PanelLeft,
   Hammer,
+  Undo2,
   Scan,
   Maximize,
   Minimize,
@@ -2303,6 +2304,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         // the × on it shows on hover, which a finger never does. Offer undo
         // for a moment, and keep the order for Ctrl/⌘-Z.
         createdRef.current.push(ann.id);
+        setUndoDepth(createdRef.current.length);
         setUndoable({ id: ann.id, color, at: Date.now() });
       }
       // Clear selection + popover regardless of success.
@@ -2317,14 +2319,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     if (ok) {
       setAnnotations((prev) => prev.filter((a) => a.id !== annId));
       createdRef.current = createdRef.current.filter((x) => x !== annId);
+      setUndoDepth(createdRef.current.length);
       setUndoable((u) => (u?.id === annId ? null : u));
     }
   }, []);
 
   // Undo: the last highlight made in this sitting. The toast offers it for
-  // eight seconds after each highlight; Ctrl-Z / ⌘-Z takes them back in
-  // order for as long as the reader stays open.
+  // eight seconds after each highlight — too short to be found by someone
+  // still looking at the words they marked — so the toolbar also carries an
+  // Undo button for as long as there is a highlight to take back, and
+  // Ctrl-Z / ⌘-Z takes them back in order for as long as the reader stays
+  // open. `undoDepth` mirrors the ref so the button can render.
   const createdRef = useRef<string[]>([]);
+  const [undoDepth, setUndoDepth] = useState(0);
   const [undoable, setUndoable] = useState<{ id: string; color: AnnotationColor; at: number } | null>(null);
   useEffect(() => {
     if (!undoable) return;
@@ -2900,6 +2907,19 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             >
               <Hammer size={15} />
               <span>Workshop</span>
+            </button>
+          )}
+          {/* Takes back the last highlight made in this sitting, newest
+              first; appears with the first one and goes when none is left. */}
+          {undoDepth > 0 && (
+            <button
+              onClick={undoLastHighlight}
+              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-xs shrink-0 text-white/70 hover:text-white"
+              title={`Undo the last highlight (${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}Z)`}
+              aria-label="Undo the last highlight"
+            >
+              <Undo2 size={15} />
+              {!isMobile && <span>Undo</span>}
             </button>
           )}
           <span
@@ -4429,9 +4449,11 @@ function SelectionMenu({
 }
 
 function ReaderStyle({ theme }: { theme: Theme }) {
+  // The words being chosen, at the strength a gold highlight will have once
+  // the color is picked: what is seen is what is made.
   const selectionBg =
     theme === 'dark'
-      ? 'rgba(245, 207, 96, 0.55)'
+      ? 'rgba(245, 207, 96, 0.5)'
       : 'rgba(212, 160, 84, 0.45)';
   const dark = theme === 'dark';
   const sbTrack = dark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(42, 30, 16, 0.08)';
@@ -4447,7 +4469,10 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         left: 0;
         top: 0;
         overflow: hidden;
-        opacity: 0.25;
+        /* Full strength, as pdf.js 5 has it: the glyphs are transparent
+           anyway, and a dimmed layer dimmed the selection with it (a 0.55
+           gold at 0.25 opacity was a 14% wash nobody could see). */
+        opacity: 1;
         line-height: 1.0;
         user-select: text;
         pointer-events: auto;
@@ -4476,7 +4501,8 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
       }
       .textLayer .markedContent { display: contents; }
-      .textLayer ::selection { background: ${selectionBg}; }
+      .textLayer ::selection { background: ${selectionBg}; color: transparent; }
+      .textLayer br::selection { background: transparent; }
       /* Search hits: the words themselves, lit at full strength over the
          page; the current match stronger, with a ring. Multiply keeps the
          ink readable through the color. */
@@ -4568,7 +4594,8 @@ function ReaderStyle({ theme }: { theme: Theme }) {
           box-shadow: none !important;
         }
       }
-      .textLayer ::-moz-selection { background: ${selectionBg}; }
+      .textLayer ::-moz-selection { background: ${selectionBg}; color: transparent; }
+      .textLayer br::-moz-selection { background: transparent; }
 
       .docx-page :is(h1,h2,h3,h4) { font-weight: 700; margin: 1em 0 0.4em; line-height: 1.25; }
       .docx-page h1 { font-size: 1.8em; }
