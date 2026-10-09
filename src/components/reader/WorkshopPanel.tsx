@@ -36,6 +36,8 @@ export type WorkshopPanelProps = {
   makePreview: (page: number, rect: FractionalRect, turn: Turn) => Promise<string | null>;
   onDownload: (item: WorkshopItem, scale: 1 | 2 | 3) => Promise<void>;
   onTurn: (item: WorkshopItem) => Promise<void>;
+  /** A snippet's words, corrected or completed by hand. */
+  onRetext: (item: WorkshopItem, text: string) => Promise<void>;
   /** Draw the item's rectangle (again): a snip's crop, or where a snippet's clip should play. */
   onResnip: (item: WorkshopItem) => void;
   onDelete: (item: WorkshopItem) => Promise<void>;
@@ -135,6 +137,9 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
         <textarea
           value={snippetDraft}
           onChange={(e) => setSnippetDraft(e.target.value)}
+          // Typing here means reading, not drawing: leave rectangle mode so
+          // the page can be selected from again to complete the passage.
+          onFocus={() => { if (p.snipping) p.onCancelSnip(); }}
           placeholder="A passage to illustrate — select it on the page and press Use selection (a clip can then play over those words), or paste it"
           rows={3}
           className="w-full resize-y rounded bg-black/20 border border-[var(--color-border)] px-2 py-1 text-[12px] text-white/85 outline-none focus:border-white/30 placeholder:text-white/30"
@@ -185,6 +190,58 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
   );
 }
 
+// A kept passage reads as a paragraph and edits as one: click the words to
+// correct or complete them by hand (a selection off a scan is often short
+// a line), click away or press Ctrl/⌘-Enter to keep the change, Esc to drop
+// it. Only the words change; the place on the page stays.
+function SnippetText({ item, canWrite, onRetext }: { item: WorkshopItem; canWrite: boolean; onRetext: (item: WorkshopItem, text: string) => Promise<void> }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(item.text ?? '');
+  const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      const el = ref.current;
+      if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    }
+  }, [editing]);
+
+  const keep = async () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (!next || next === (item.text ?? '')) { setDraft(item.text ?? ''); return; }
+    setSaving(true);
+    try { await onRetext(item, next); } finally { setSaving(false); }
+  };
+
+  if (!editing) {
+    return (
+      <p
+        onClick={canWrite ? () => { setDraft(item.text ?? ''); setEditing(true); } : undefined}
+        title={canWrite ? 'Click to correct or complete the passage' : undefined}
+        className={`px-2 pt-2 text-[12px] leading-relaxed text-white/80 whitespace-pre-wrap ${canWrite ? 'cursor-text rounded hover:bg-white/[0.03]' : ''} ${saving ? 'opacity-50' : ''}`}
+      >
+        {item.text}
+      </p>
+    );
+  }
+  return (
+    <textarea
+      ref={ref}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => void keep()}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); setDraft(item.text ?? ''); setEditing(false); }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void keep(); }
+      }}
+      rows={Math.min(12, Math.max(3, draft.split('\n').length + 1))}
+      className="mx-2 mt-2 w-[calc(100%-16px)] resize-y rounded bg-black/20 border border-[#e8b84a]/50 px-2 py-1 text-[12px] leading-relaxed text-white/85 outline-none"
+    />
+  );
+}
+
 function SectionLabel({ children }: { children: string }) {
   return <p className="px-1 pt-1 text-[10px] uppercase tracking-wider text-white/35">{children}</p>;
 }
@@ -222,7 +279,7 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
           )}
         </div>
       ) : (
-        <p className="px-2 pt-2 text-[12px] leading-relaxed text-white/80 whitespace-pre-wrap">{item.text}</p>
+        <SnippetText item={item} canWrite={p.canWrite} onRetext={p.onRetext} />
       )}
 
       <div className="flex items-center gap-1 px-1.5 py-1">

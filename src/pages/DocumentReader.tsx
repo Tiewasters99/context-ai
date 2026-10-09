@@ -2049,6 +2049,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
       } catch (e) { workshopFail(e, 'The turn was not kept.'); }
     },
+    onRetext: async (item: WorkshopItem, text: string) => {
+      try {
+        const updated = await updateWorkshopItem(item.id, { text });
+        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      } catch (e) { workshopFail(e, 'The passage was not kept.'); }
+    },
     onResnip: (item: WorkshopItem) => { setResnip(item); setAttaching(false); setSnipping(true); gotoPage(item.page); },
     onDelete: async (item: WorkshopItem) => {
       const err = await deleteWorkshopItem(item.id);
@@ -3403,6 +3409,35 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         )}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
+          {/* While a rectangle is being drawn the page is a crosshair canvas
+              and text cannot be selected; say so on the page itself, with a
+              way out, rather than only in the sidebar (which may be closed,
+              or not where the eye is). */}
+          {(snipping || attaching) && (
+            <div
+              role="status"
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-[#e8b84a]/60 shadow-2xl text-[12px] text-white/85"
+            >
+              <Scan size={14} className="text-[#e8b84a] shrink-0" />
+              <span>
+                {attaching
+                  ? 'Drag a rectangle round the picture — the clip will play there.'
+                  : resnip?.kind === 'snippet'
+                    ? 'Drag a rectangle round the passage — its clip will play there.'
+                    : resnip
+                      ? 'Drag the rectangle again round the plate.'
+                      : 'Drag a rectangle round the plate to snip it.'}
+                {' '}Text cannot be selected meanwhile.
+              </span>
+              <button
+                onClick={() => { setSnipping(false); setResnip(null); setAttaching(false); }}
+                className="font-semibold text-[#e8b84a] hover:underline shrink-0"
+                title="Stop drawing (Esc)"
+              >
+                Stop
+              </button>
+            </div>
+          )}
           <div
             ref={contentRef}
             className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
