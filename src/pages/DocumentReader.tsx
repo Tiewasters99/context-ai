@@ -2222,6 +2222,77 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     };
   }, [loadState, fileKind]);
 
+  // A click on one of the reader's own highlights opens a small menu on it:
+  // recolour, or take it back. This is how an old highlight is removed —
+  // the × drawn on the box never showed on hover, because the text layer
+  // (which must stay on top for selection) sits over the box and takes the
+  // hover itself. A click is a press and release within a few pixels; a
+  // drag is a selection and belongs to the effect above. Where highlights
+  // overlap, the newest is the one meant.
+  const [markMenu, setMarkMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const annotationsRef = useRef<Annotation[]>([]);
+  annotationsRef.current = annotations;
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') return;
+    const uid = user?.id ?? null;
+    let downAt: { x: number; y: number } | null = null;
+    function onDown(e: MouseEvent) {
+      downAt = { x: e.clientX, y: e.clientY };
+    }
+    function onUp(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('[data-mark-menu]')) return;
+      const start = downAt;
+      downAt = null;
+      if (!start || Math.abs(e.clientX - start.x) > 4 || Math.abs(e.clientY - start.y) > 4) {
+        setMarkMenu(null);
+        return;
+      }
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) { setMarkMenu(null); return; }
+      let hit: { id: string; top: number } | null = null;
+      for (let i = 0; i < textLayerRefs.current.length; i++) {
+        const el = textLayerRefs.current[i];
+        if (!el) continue;
+        const box = el.getBoundingClientRect();
+        if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) continue;
+        const fx = (e.clientX - box.left) / box.width;
+        const fy = (e.clientY - box.top) / box.height;
+        const onPage = annotationsRef.current.filter(
+          (a) => a.page === i + 1 && !annotationIsNote(a) && (uid == null || a.user_id === uid),
+        );
+        for (let k = onPage.length - 1; k >= 0 && !hit; k--) {
+          const a = onPage[k];
+          const r = a.rects.find((q) => fx >= q.x && fx <= q.x + q.w && fy >= q.y && fy <= q.y + q.h);
+          if (r) hit = { id: a.id, top: box.top + Math.min(...a.rects.map((q) => q.y)) * box.height };
+        }
+        break;
+      }
+      setMarkMenu(hit ? { id: hit.id, x: e.clientX, y: hit.top } : null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMarkMenu(null);
+    }
+    const scroller = contentRef.current;
+    const onScroll = () => setMarkMenu(null);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKey);
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onKey);
+      scroller?.removeEventListener('scroll', onScroll);
+    };
+  }, [loadState, fileKind, user?.id]);
+
+  const recolorAnnotation = useCallback(async (annId: string, color: AnnotationColor) => {
+    const ok = await updateAnnotation(annId, { color });
+    if (ok) setAnnotations((prev) => prev.map((a) => (a.id === annId ? { ...a, color } : a)));
+    setMarkMenu(null);
+  }, []);
+
   // The same selection menu for a rendered document (Word, text, markdown,
   // slides, screenplay). There is no page and no text layer: the selection
   // is anchored by its character offsets in the rendered text plus the
@@ -3675,6 +3746,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           onClose={() => setCtxMenu(null)}
         />
       )}
+      {markMenu && !selectionMenu && (() => {
+        const mark = annotations.find((a) => a.id === markMenu.id);
+        return mark ? (
+          <MarkMenu
+            x={markMenu.x}
+            y={markMenu.y}
+            color={mark.color}
+            onPick={(c) => void recolorAnnotation(mark.id, c)}
+            onRemove={() => { setMarkMenu(null); void removeAnnotation(mark.id); }}
+          />
+        ) : null;
+      })()}
       {selectionMenu && (
         <SelectionMenu
           x={selectionMenu.x}
@@ -4375,6 +4458,55 @@ function TextMarksPanel({
         })}
       </ul>
     </aside>
+  );
+}
+
+// On a highlight that already exists: the same four colours, the one it
+// has ringed, and a way to take it back. Opens on a click on the mark.
+function MarkMenu({
+  x,
+  y,
+  color,
+  onPick,
+  onRemove,
+}: {
+  x: number;
+  y: number;
+  color: AnnotationColor;
+  onPick: (color: AnnotationColor) => void;
+  onRemove: () => void;
+}) {
+  const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
+  const top = Math.max(8, y - 44);
+  return (
+    <div
+      data-mark-menu
+      role="menu"
+      aria-label="This highlight"
+      className="fixed z-[60] flex items-center gap-1 px-1.5 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
+      style={{ left: x, top, transform: 'translateX(-50%)' }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {colors.map((c) => (
+        <button
+          key={c}
+          onClick={() => { if (c !== color) onPick(c); }}
+          className={`w-5 h-5 rounded-full transition ${c === color ? 'ring-2 ring-white ring-offset-1 ring-offset-[#1a1a22]' : 'hover:scale-110'}`}
+          style={{ backgroundColor: ANNOTATION_DOT[c] }}
+          title={c === color ? `Highlighted ${c}` : `Change to ${c}`}
+          aria-label={c === color ? `Highlighted ${c}` : `Change to ${c}`}
+        />
+      ))}
+      <div className="w-px h-4 bg-white/15 mx-0.5" />
+      <button
+        onClick={onRemove}
+        className="h-5 px-1.5 inline-flex items-center gap-1 rounded text-white/70 hover:text-[#e8b84a] transition text-[11px] font-medium"
+        title="Remove this highlight"
+      >
+        <X size={13} />
+        Remove
+      </button>
+    </div>
   );
 }
 
