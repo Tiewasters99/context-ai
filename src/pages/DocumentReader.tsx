@@ -39,6 +39,7 @@ import { LIBRARY_SERVERSPACE, findOrCreateLibrarySection, publishDocumentToOffic
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { hasDraftBody } from '@/lib/brief/draft-store';
+import { guardTextLayerSelection, releaseTextLayerGuards } from '@/lib/pdf-text-selection';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
@@ -584,6 +585,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setPageDims(null);
     renderedKeyRef.current.clear();
     canvasRefs.current = [];
+    releaseTextLayerGuards();
     textLayerRefs.current = [];
     restoredRef.current = false;
     anchorReadyRef.current = false;
@@ -1158,6 +1160,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         renderTasksRef.current.set(p, textLayer);
         await textLayer.render();
         if (cancelled) return;
+        guardTextLayerSelection(layerEl);
         renderTasksRef.current.delete(p);
         renderedKeyRef.current.set(p, key);
         revealIfCurrent(paintHits(p));
@@ -4671,6 +4674,19 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
       }
       .textLayer .markedContent { display: contents; }
+      /* The selection guard (src/lib/pdf-text-selection.ts): an empty,
+         unselectable div under the spans that covers the layer while a
+         drag is in progress, so a gap between spans ends the selection
+         where the mouse is instead of at the next span on the page. */
+      .textLayer .endOfContent {
+        display: block;
+        position: absolute;
+        inset: 100% 0 0;
+        z-index: 0;
+        cursor: default;
+        user-select: none;
+      }
+      .textLayer.selecting .endOfContent { top: 0; }
       .textLayer ::selection { background: ${selectionBg}; color: transparent; }
       .textLayer br::selection { background: transparent; }
       /* Search hits: the words themselves, lit at full strength over the
