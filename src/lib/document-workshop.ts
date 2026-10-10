@@ -111,7 +111,7 @@ export function addMedia(args: { documentId: string; page: number; parentId: str
 
 export async function updateWorkshopItem(
   id: string,
-  patch: Partial<Pick<WorkshopItem, 'rect' | 'turn' | 'label' | 'text' | 'page'>>,
+  patch: Partial<Pick<WorkshopItem, 'rect' | 'turn' | 'label' | 'text' | 'page' | 'parent_id'>>,
 ): Promise<WorkshopItem> {
   const { data, error } = await supabase
     .from('document_workshop_items')

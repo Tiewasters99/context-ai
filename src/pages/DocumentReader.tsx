@@ -2059,6 +2059,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       } catch (e) { workshopFail(e, 'The passage was not kept.'); }
     },
     onResnip: (item: WorkshopItem) => { setResnip(item); setAttaching(false); setSnipping(true); gotoPage(item.page); },
+    onAdopt: async (media: WorkshopItem, source: WorkshopItem) => {
+      try {
+        const updated = await updateWorkshopItem(media.id, { parent_id: source.id, page: source.page });
+        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      } catch (e) { workshopFail(e, 'The clip was not moved.'); }
+    },
     onDelete: async (item: WorkshopItem) => {
       const err = await deleteWorkshopItem(item.id);
       if (err) { setWorkshopNotice(err); return; }
