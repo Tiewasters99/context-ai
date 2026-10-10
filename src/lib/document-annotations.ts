@@ -235,7 +235,7 @@ export async function deleteAnnotation(id: string): Promise<boolean> {
 
 export async function updateAnnotation(
   id: string,
-  patch: { note?: string | null; visibility?: AnnotationVisibility },
+  patch: { note?: string | null; visibility?: AnnotationVisibility; color?: AnnotationColor },
 ): Promise<boolean> {
   const { error } = await supabase
     .from('document_annotations')

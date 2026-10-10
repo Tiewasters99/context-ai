@@ -190,7 +190,7 @@ export default function ReaderSidebar({
             {onAddAnimation && (
               addingAnimation ? (
                 <p className="rounded-md border border-[var(--color-primary)] px-2 py-2 text-[11px] leading-relaxed text-[var(--color-primary)]">
-                  Draw a rectangle round the picture on the page, and the clip will play there.
+                  Draw a rectangle round the picture, or the passage, on the page, and the clip will play there.
                   Press Esc to stop.
                 </p>
               ) : (

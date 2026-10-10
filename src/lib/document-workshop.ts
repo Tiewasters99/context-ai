@@ -82,11 +82,24 @@ export function createSnip(args: { documentId: string; page: number; rect: Fract
   });
 }
 
-export function createSnippet(args: { documentId: string; page: number; text: string; label?: string | null }) {
+/** A passage. `rect` is where its words sit on the page (the box round the
+ *  selection it was taken from), so a clip made from it can be laid there;
+ *  a pasted passage has none until one is drawn (updateWorkshopItem). */
+export function createSnippet(args: { documentId: string; page: number; text: string; rect?: FractionalRect | null; label?: string | null }) {
   return insertItem({
     document_id: args.documentId, page: args.page, kind: 'snippet',
-    text: args.text, label: args.label ?? null,
+    text: args.text, rect: args.rect ?? null, label: args.label ?? null,
   });
+}
+
+/** The one box round several (the lines of a selection). */
+export function unionRect(rects: FractionalRect[]): FractionalRect | null {
+  if (rects.length === 0) return null;
+  const x = Math.min(...rects.map((r) => r.x));
+  const y = Math.min(...rects.map((r) => r.y));
+  const x2 = Math.max(...rects.map((r) => r.x + r.w));
+  const y2 = Math.max(...rects.map((r) => r.y + r.h));
+  return { x, y, w: x2 - x, h: y2 - y };
 }
 
 export function addMedia(args: { documentId: string; page: number; parentId: string | null; mediaDocumentId: string; label?: string | null }) {

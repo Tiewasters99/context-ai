@@ -39,6 +39,7 @@ import { LIBRARY_SERVERSPACE, findOrCreateLibrarySection, publishDocumentToOffic
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { hasDraftBody } from '@/lib/brief/draft-store';
+import { guardTextLayerSelection, releaseTextLayerGuards } from '@/lib/pdf-text-selection';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
@@ -49,7 +50,7 @@ import {
   listAnimations, deleteAnimation, createAnimation, type DocumentAnimation, type Turn,
 } from '@/lib/document-animations';
 import {
-  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem, nextTurn,
+  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem, nextTurn, unionRect,
   type WorkshopItem,
 } from '@/lib/document-workshop';
 import { persistVaultFile, resolveMatter as resolveVaultMatter } from '@/lib/vault-persist';
@@ -584,6 +585,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setPageDims(null);
     renderedKeyRef.current.clear();
     canvasRefs.current = [];
+    releaseTextLayerGuards();
     textLayerRefs.current = [];
     restoredRef.current = false;
     anchorReadyRef.current = false;
@@ -1158,6 +1160,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         renderTasksRef.current.set(p, textLayer);
         await textLayer.render();
         if (cancelled) return;
+        guardTextLayerSelection(layerEl);
         renderTasksRef.current.delete(p);
         renderedKeyRef.current.set(p, key);
         revealIfCurrent(paintHits(p));
@@ -1952,8 +1955,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setWorkshopNotice(e instanceof Error ? e.message : fallback);
   }, []);
 
-  // A rectangle drawn in snip mode: a new snip, or the redrawn rectangle of
-  // an existing one (crop).
+  // A rectangle drawn in snip mode: a new snip, the redrawn rectangle of an
+  // existing one (crop), or where a passage's clip should play (a snippet
+  // being placed on the page).
   const landSnip = useCallback(async (p: number, rect: FractionalRect) => {
     if (!doc) return;
     try {
@@ -2026,15 +2030,17 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     page,
     items: workshopItems,
     snipping,
-    selectionText: selectionMenu?.anchorText?.trim() || null,
+    selection: selectionMenu?.anchorText?.trim()
+      ? { text: selectionMenu.anchorText.trim(), page: selectionMenu.page, rect: unionRect(selectionMenu.rects) }
+      : null,
     canWrite: !!user,
     notice: workshopNotice,
     onSnip: () => { setResnip(null); setAttaching(false); setSnipping(true); },
     onCancelSnip: () => { setSnipping(false); setResnip(null); },
-    onSnippet: async (text: string) => {
+    onSnippet: async (text: string, at: { page: number; rect: FractionalRect | null } | null) => {
       if (!doc) return;
       try {
-        const made = await createSnippet({ documentId: doc.id, page, text });
+        const made = await createSnippet({ documentId: doc.id, page: at?.page ?? page, text, rect: at?.rect ?? null });
         setWorkshopItems((prev) => [...prev, made]);
       } catch (e) { workshopFail(e, 'The snippet was not kept.'); }
     },
@@ -2045,6 +2051,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         const updated = await updateWorkshopItem(item.id, { turn: nextTurn(item.turn) });
         setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
       } catch (e) { workshopFail(e, 'The turn was not kept.'); }
+    },
+    onRetext: async (item: WorkshopItem, text: string) => {
+      try {
+        const updated = await updateWorkshopItem(item.id, { text });
+        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
+      } catch (e) { workshopFail(e, 'The passage was not kept.'); }
     },
     onResnip: (item: WorkshopItem) => { setResnip(item); setAttaching(false); setSnipping(true); gotoPage(item.page); },
     onDelete: async (item: WorkshopItem) => {
@@ -2221,6 +2233,77 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       document.removeEventListener('dblclick', handleDoubleClick);
     };
   }, [loadState, fileKind]);
+
+  // A click on one of the reader's own highlights opens a small menu on it:
+  // recolour, or take it back. This is how an old highlight is removed —
+  // the × drawn on the box never showed on hover, because the text layer
+  // (which must stay on top for selection) sits over the box and takes the
+  // hover itself. A click is a press and release within a few pixels; a
+  // drag is a selection and belongs to the effect above. Where highlights
+  // overlap, the newest is the one meant.
+  const [markMenu, setMarkMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const annotationsRef = useRef<Annotation[]>([]);
+  annotationsRef.current = annotations;
+  useEffect(() => {
+    if (loadState !== 'ready' || fileKind !== 'pdf') return;
+    const uid = user?.id ?? null;
+    let downAt: { x: number; y: number } | null = null;
+    function onDown(e: MouseEvent) {
+      downAt = { x: e.clientX, y: e.clientY };
+    }
+    function onUp(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest?.('[data-mark-menu]')) return;
+      const start = downAt;
+      downAt = null;
+      if (!start || Math.abs(e.clientX - start.x) > 4 || Math.abs(e.clientY - start.y) > 4) {
+        setMarkMenu(null);
+        return;
+      }
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) { setMarkMenu(null); return; }
+      let hit: { id: string; top: number } | null = null;
+      for (let i = 0; i < textLayerRefs.current.length; i++) {
+        const el = textLayerRefs.current[i];
+        if (!el) continue;
+        const box = el.getBoundingClientRect();
+        if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) continue;
+        const fx = (e.clientX - box.left) / box.width;
+        const fy = (e.clientY - box.top) / box.height;
+        const onPage = annotationsRef.current.filter(
+          (a) => a.page === i + 1 && !annotationIsNote(a) && (uid == null || a.user_id === uid),
+        );
+        for (let k = onPage.length - 1; k >= 0 && !hit; k--) {
+          const a = onPage[k];
+          const r = a.rects.find((q) => fx >= q.x && fx <= q.x + q.w && fy >= q.y && fy <= q.y + q.h);
+          if (r) hit = { id: a.id, top: box.top + Math.min(...a.rects.map((q) => q.y)) * box.height };
+        }
+        break;
+      }
+      setMarkMenu(hit ? { id: hit.id, x: e.clientX, y: hit.top } : null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMarkMenu(null);
+    }
+    const scroller = contentRef.current;
+    const onScroll = () => setMarkMenu(null);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('keydown', onKey);
+    scroller?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('keydown', onKey);
+      scroller?.removeEventListener('scroll', onScroll);
+    };
+  }, [loadState, fileKind, user?.id]);
+
+  const recolorAnnotation = useCallback(async (annId: string, color: AnnotationColor) => {
+    const ok = await updateAnnotation(annId, { color });
+    if (ok) setAnnotations((prev) => prev.map((a) => (a.id === annId ? { ...a, color } : a)));
+    setMarkMenu(null);
+  }, []);
 
   // The same selection menu for a rendered document (Word, text, markdown,
   // slides, screenplay). There is no page and no text layer: the selection
@@ -3329,6 +3412,35 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         )}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
+          {/* While a rectangle is being drawn the page is a crosshair canvas
+              and text cannot be selected; say so on the page itself, with a
+              way out, rather than only in the sidebar (which may be closed,
+              or not where the eye is). */}
+          {(snipping || attaching) && (
+            <div
+              role="status"
+              className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-[#e8b84a]/60 shadow-2xl text-[12px] text-white/85"
+            >
+              <Scan size={14} className="text-[#e8b84a] shrink-0" />
+              <span>
+                {attaching
+                  ? 'Drag a rectangle round the picture — the clip will play there.'
+                  : resnip?.kind === 'snippet'
+                    ? 'Drag a rectangle round the passage — its clip will play there.'
+                    : resnip
+                      ? 'Drag the rectangle again round the plate.'
+                      : 'Drag a rectangle round the plate to snip it.'}
+                {' '}Text cannot be selected meanwhile.
+              </span>
+              <button
+                onClick={() => { setSnipping(false); setResnip(null); setAttaching(false); }}
+                className="font-semibold text-[#e8b84a] hover:underline shrink-0"
+                title="Stop drawing (Esc)"
+              >
+                Stop
+              </button>
+            </div>
+          )}
           <div
             ref={contentRef}
             className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
@@ -3675,6 +3787,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           onClose={() => setCtxMenu(null)}
         />
       )}
+      {markMenu && !selectionMenu && (() => {
+        const mark = annotations.find((a) => a.id === markMenu.id);
+        return mark ? (
+          <MarkMenu
+            x={markMenu.x}
+            y={markMenu.y}
+            color={mark.color}
+            onPick={(c) => void recolorAnnotation(mark.id, c)}
+            onRemove={() => { setMarkMenu(null); void removeAnnotation(mark.id); }}
+          />
+        ) : null;
+      })()}
       {selectionMenu && (
         <SelectionMenu
           x={selectionMenu.x}
@@ -4378,6 +4502,55 @@ function TextMarksPanel({
   );
 }
 
+// On a highlight that already exists: the same four colours, the one it
+// has ringed, and a way to take it back. Opens on a click on the mark.
+function MarkMenu({
+  x,
+  y,
+  color,
+  onPick,
+  onRemove,
+}: {
+  x: number;
+  y: number;
+  color: AnnotationColor;
+  onPick: (color: AnnotationColor) => void;
+  onRemove: () => void;
+}) {
+  const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
+  const top = Math.max(8, y - 44);
+  return (
+    <div
+      data-mark-menu
+      role="menu"
+      aria-label="This highlight"
+      className="fixed z-[60] flex items-center gap-1 px-1.5 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
+      style={{ left: x, top, transform: 'translateX(-50%)' }}
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {colors.map((c) => (
+        <button
+          key={c}
+          onClick={() => { if (c !== color) onPick(c); }}
+          className={`w-5 h-5 rounded-full transition ${c === color ? 'ring-2 ring-white ring-offset-1 ring-offset-[#1a1a22]' : 'hover:scale-110'}`}
+          style={{ backgroundColor: ANNOTATION_DOT[c] }}
+          title={c === color ? `Highlighted ${c}` : `Change to ${c}`}
+          aria-label={c === color ? `Highlighted ${c}` : `Change to ${c}`}
+        />
+      ))}
+      <div className="w-px h-4 bg-white/15 mx-0.5" />
+      <button
+        onClick={onRemove}
+        className="h-5 px-1.5 inline-flex items-center gap-1 rounded text-white/70 hover:text-[#e8b84a] transition text-[11px] font-medium"
+        title="Remove this highlight"
+      >
+        <X size={13} />
+        Remove
+      </button>
+    </div>
+  );
+}
+
 function SelectionMenu({
   x,
   y,
@@ -4501,6 +4674,19 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
       }
       .textLayer .markedContent { display: contents; }
+      /* The selection guard (src/lib/pdf-text-selection.ts): an empty,
+         unselectable div under the spans that covers the layer while a
+         drag is in progress, so a gap between spans ends the selection
+         where the mouse is instead of at the next span on the page. */
+      .textLayer .endOfContent {
+        display: block;
+        position: absolute;
+        inset: 100% 0 0;
+        z-index: 0;
+        cursor: default;
+        user-select: none;
+      }
+      .textLayer.selecting .endOfContent { top: 0; }
       .textLayer ::selection { background: ${selectionBg}; color: transparent; }
       .textLayer br::selection { background: transparent; }
       /* Search hits: the words themselves, lit at full strength over the
