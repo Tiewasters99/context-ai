@@ -7,17 +7,18 @@
 
 ## What it is
 
-A reader app, like a Kindle, for **rich-media editions**: a book whose pages carry clips, stills and (later) narration where its plates and passages sit, made on the Workshop bench in Contextspaces. Three rooms:
+A reader app, like a Kindle, for **rich-media editions**: a book whose pages carry clips, stills and (later) narration where its plates and passages sit. A niche product for bibliophiles — and for a bibliophile the making is the point, so the app has its own Workshop. Four rooms:
 
 | Room | What happens there |
 |---|---|
 | **Store** | Editions from the Grapheon library, and editions other people have published. Browse, sample, buy. |
-| **My Library** | What the reader owns. Downloaded for reading offline. |
+| **My Library** | What the reader owns, and what they are making. Downloaded for reading offline. |
 | **The Reader** | The page as in Contextspaces today: the text layer, highlights, a small badge after an illustrated passage, the clip in a panel that can be moved beside the words. |
+| **The Workshop** | The bench beside the page, as in Contextspaces today: snip a plate or keep a passage, take it to Flow or Midjourney, bring the result back, lay it on the page. Take a book from the Grapheon library or upload a PDF, illustrate it, read it, publish it. |
 
-Contextspaces keeps the *making* side (the Workshop, the Vault, the matter). The Grapheon Reader is the *publishing, selling and reading* side. The seam between them is one object, the **edition**: a package exported from a book and its 062 illustrations, which the reader app opens without any knowledge of matters, serverspaces or the Vault.
+The whole loop lives in the Reader; nobody needs a Contextspaces account to make an edition. Contextspaces keeps its own Workshop for books filed in matters (the law-student case), and the two run the same bench code (`WorkshopPanel`, `AnimationLayer`, the page) against different stores. The object both sides make is the **edition**: a book, its media, and where each piece sits — which the reader app opens and sells without any knowledge of matters, serverspaces or the Vault. A one-way bridge from Contextspaces ("Publish as edition" from a matter's bench) is a later convenience, not the foundation.
 
-This is Phase E of the Workshop spec (`BOOK-WORKSHOP-2026-10-07.md`), made its own product.
+This is Phase E of the Workshop spec (`BOOK-WORKSHOP-2026-10-07.md`), made its own product, with the bench inside it.
 
 ## Why web-first
 
@@ -34,25 +35,30 @@ Kindle does not sell books inside its iOS app: Apple takes 30% of in-app digital
 
 ## The edition
 
-An edition is a frozen snapshot, versioned; buyers get later versions free.
+An edition is the working object and the sold object: a draft while its maker benches it, a frozen version once published; buyers get later versions free.
 
 ```
 editions                      one row per edition
   id, slug, title, author, description, cover_path
-  publisher_user_id             who published it (Grapheon's own user for the library)
-  source_document_id            the Contextspaces document it was exported from (nullable: a straight upload)
+  publisher_user_id             who is making / published it (Grapheon's own user for the library)
+  source_document_id            the Contextspaces document it was bridged from (nullable; usually null)
   price_cents, currency         0 = free
   status                        draft | review | published | withdrawn
   rights                        'public_domain' | 'own' | 'licensed'  + rights_note (the attestation)
   version, published_at, created_at
 
-edition_assets                one row per file in the package
+edition_assets                one row per file
   id, edition_id, kind          'book' (the PDF) | 'media' | 'cover'
-  storage_path                  bucket `editions` (private); path <edition_id>/<version>/<file>
+  storage_path                  bucket `editions` (private); path <edition_id>/<file>
   bytes, sha256, mime
+  version_from                  the version this file first shipped in (publishing freezes, it never copies)
 
-edition_illustrations         062 rows, snapshotted at publish
-  id, edition_id, page, rect, turn, loops, label, asset_id → edition_assets
+edition_bench_items           the Workshop bench: migration 106's shape, keyed by edition
+  id, edition_id, page, kind (snip | snippet | media), rect, turn, text, asset_id, parent_id, label, sort_order
+
+edition_illustrations         what is laid on the page: 062's shape, keyed by edition; edited live on a draft,
+  id, edition_id, page, rect, turn, loops, label, asset_id → edition_assets, version_from
+                              a published version serves the rows with version_from <= version
 
 edition_purchases             ownership
   id, user_id, edition_id, stripe_session_id, amount_cents, currency, created_at, refunded_at
@@ -68,31 +74,30 @@ publisher_accounts            payouts (Phase 4)
   user_id, stripe_connect_account_id, status, created_at
 ```
 
-RLS: `editions` readable by anyone when `status = 'published'`, by the publisher always; `edition_assets` never readable directly — files are served by `api/editions.mjs` as short-lived signed URLs after an ownership check (free editions need sign-in but no purchase); `edition_marks`/`edition_progress` owner-only; `edition_purchases` owner-only, written only by the Stripe webhook (service role).
+RLS: `editions` readable by anyone when `status = 'published'`, by the publisher always; `edition_bench_items` and draft-state `edition_illustrations` publisher-only; `edition_assets` never readable directly — files are served by `api/editions.mjs` as short-lived signed URLs after an ownership check (free editions need sign-in but no purchase); `edition_marks`/`edition_progress` owner-only; `edition_purchases` owner-only, written only by the Stripe webhook (service role).
 
 **Format:** PDF, as the Workshop works on it. Facsimile editions of public-domain books are the pitch and the rectangle is the unit of illustration. EPUB (reflowing, phone-friendly) is a later addition that would attach illustrations to text anchors instead of rectangles; the `document_annotations.text_anchor` work (#215) is the seed. Not in this spec.
 
-## Publishing from the Workshop
+## The Workshop in the Reader
 
-A **Publish as edition** button on the bench (visible only to users in the Library serverspace, D5):
+**New edition** in My Library: pick a book from the Grapheon library (a PD text already in the `editions` bucket, copied as the new edition's `book` asset) or upload a PDF. The draft opens in the Reader with the bench beside the page — the same `WorkshopPanel` and `AnimationLayer` as Contextspaces, against `edition_bench_items` / `edition_illustrations` / `edition_assets` instead of 106 / 062 / the Vault. Snip, keep a passage, download at 1–3×, bring the result back (an upload straight to the `editions` bucket; nothing is transcribed or metered), lay it on the page, read it back. The maker reads their own draft exactly as a buyer will.
 
-1. Export: copy the PDF and every media file laid on the page (062 rows for the document) into the `editions` bucket under a new version; snapshot the 062 rows into `edition_illustrations`; capture the jacket (`captureJacket`) for the cover.
-2. Metadata: title and author from the document; description, price, rights attestation typed in a small form.
-3. Status `draft` → **Publish** flips to `published`. Republishing makes version n+1; the store serves the latest, My Library offers the update.
+**Publish**: title and author (from the PDF's metadata when it has any), description, price, rights attestation; the jacket captured from page 1 (`captureJacket`). Status `draft` → `published` at version 1. Editing continues on the draft underneath; **Publish update** freezes version n+1 — the store serves the latest, My Library offers the update to owners. Nothing is copied at publish time: assets and illustrations carry the version they first shipped in.
 
-A straight upload (Phase 4) is the same flow without a source document: upload a PDF, lay illustrations in a cut-down Workshop inside the reader app, publish.
+**The bridge from Contextspaces** (later, optional): "Publish as edition" on a matter's bench copies that document's PDF, its 062 rows and their media into a new draft edition owned by the same user, who then finishes it in the Reader. Only the Library serverspace sees the button (D5).
 
 ## The reader app
 
 Its own Vite entry, `edition.html` → `src/edition/`, deployed by the same Vercel project (as `reader.html` is) and reached at **read.grapheon.ai** by a host-based rewrite; Grapheon's own domain from day one so the address never says Contextspaces. One Supabase project, one sign-in (a Contextspaces account is a reader account; a reader account can stay a reader account), its own Terms and Privacy pages (D4).
 
-Routes: `/` the Store, `/e/<slug>` an edition's page (sample pages, buy), `/library` My Library, `/read/<edition id>` the Reader.
+Routes: `/` the Store, `/e/<slug>` an edition's page (sample pages, buy), `/library` My Library (owned and in the making), `/read/<edition id>` the Reader — with the bench when the edition is the reader's own draft.
 
-The Reader reuses the page, not a copy of it. Phase 1's first task extracts the book part of `DocumentReader.tsx` into `src/components/reader/PdfBook.tsx`: the pdfjs pipeline, `ReaderStyle`, the text layer and selection guard, `AnnotationsOverlay` + the highlight menu + Undo, `AnimationLayer`, the page counter and the find box. `DocumentReader` then renders `PdfBook` with the matter parts (notes rail, cross-references, Brief Desk, Orchestrator context, Workshop) around it. "One copy. One Reader."
+The Reader reuses the page and the bench, not copies of them. Phase 1's first task extracts the book part of `DocumentReader.tsx` into `src/components/reader/PdfBook.tsx`: the pdfjs pipeline, `ReaderStyle`, the text layer and selection guard, `AnnotationsOverlay` + the highlight menu + Undo, `AnimationLayer`, the page counter, the find box, the sidebar with its Workshop tab and the toolbar's Workshop button. `DocumentReader` then renders `PdfBook` with the matter parts (notes rail, cross-references, Brief Desk, Orchestrator context, filing) around it. "One copy. One Reader."
 
-`PdfBook` takes its data through two small interfaces so it does not know where it is:
+`PdfBook` takes its data through three small interfaces so it does not know where it is:
 - a **source**: `{ openPdf(): Promise<PDFDocumentProxy>, illustrations: Illustration[], mediaUrl(assetId): Promise<string> }`
 - a **marks store**: `{ list, create, update, remove }` — `document_annotations` in Contextspaces, `edition_marks` in the Reader.
+- a **bench store** (null for a book the reader cannot edit): `{ list, createSnip, createSnippet, bringIn(file), update, remove, lay(media, source) }` — 106 / 062 / store-only ingest in Contextspaces, `edition_bench_items` / `edition_illustrations` / the `editions` bucket in the Reader. `WorkshopPanel` already speaks to the page only through props; this is those props given a home.
 
 Offline (Phase 3): a service worker caches the app shell; **Download** on an edition fetches the PDF and media into the Cache API keyed by edition and version, the manifest and marks into IndexedDB; marks sync up when online (last write wins — one reader, one device at a time is the common case).
 
@@ -107,7 +112,7 @@ Phone: the page fits the width, pinch to zoom, the clip panel opens full-width b
 
 ## Creator publishing (Phase 4)
 
-Anyone with an account can publish. The shape is the Workshop's, so the work is mostly policy:
+Anyone with an account can publish. The bench is already in the app from Phase 1, so the work is policy and payouts:
 
 - **Rights attestation** on publish: public domain (with the edition year), their own work, or licensed (with the licensor named). Stored on the edition; shown on its page.
 - **Takedown**: a `report` link on every edition page to a Grapheon address; `withdrawn` status pulls it from the store and the files from new readers (owners keep what they bought, unless the claim is upheld — Eden's call, written into the Terms).
@@ -119,13 +124,13 @@ Anyone with an account can publish. The shape is the Workshop's, so the work is 
 
 | Phase | Ships | Sessions |
 |---|---|---|
-| **1** | `PdfBook` extracted and used by `DocumentReader` (no visible change); `editions` + `edition_assets` + `edition_illustrations` + `edition_marks` + `edition_progress` (migration); **Publish as edition** on the bench; `edition.html` with My Library (editions the signed-in user published) and the Reader. Eden reads *Innocents Abroad* with its clip at read.grapheon.ai. | 4–6 |
-| **2** | The Store, edition pages with samples, Stripe Checkout in Grapheon's account, `edition_purchases`, the webhook, Read-after-buy. A second account buys *Innocents Abroad*. | 3–4 |
+| **1** | `PdfBook` extracted and used by `DocumentReader` (no visible change — its own PR first); the `editions` tables and bucket (migration); `edition.html` at read.grapheon.ai with sign-in, My Library, **New edition** (library pick or upload), the Reader with the bench on a draft, **Publish** to version 1. Eden uploads *Innocents Abroad*, benches it in the Reader, lays the Flow clip, reads it back at read.grapheon.ai. | 5–7 |
+| **2** | The Store, edition pages with samples, Stripe Checkout in Grapheon's account, `edition_purchases`, the webhook, Read-after-buy, **Publish update**. A second account buys *Innocents Abroad*. | 3–4 |
 | **3** | PWA: installable, offline downloads, progress and marks sync. Read on the phone in airplane mode. | 2–3 |
-| **4** | Creator publishing: upload without a source document, the cut-down bench, rights attestation, takedown, Stripe Connect payouts. | 4–5 |
-| **5** | App Store / Play wrappers (reader-only). | 2 + review time |
+| **4** | Creator publishing opened: rights attestation enforced, takedown, Stripe Connect payouts, publisher invitations. | 3–4 |
+| **5** | App Store / Play wrappers (reader-only); the bridge from a Contextspaces matter, if wanted. | 2 + review time |
 
-Phase 1 can start now. It touches `DocumentReader.tsx` (the extraction) — coordinate with any session working in the Reader that week, and land the extraction as its own PR before anything else.
+Phase 1 can start now, in parallel with the launch. It touches `DocumentReader.tsx` (the extraction) — coordinate with any session working in the Reader that week, and land the extraction as its own PR before anything else.
 
 ## Decisions for Eden
 
@@ -133,7 +138,7 @@ Phase 1 can start now. It touches `DocumentReader.tsx` (the extraction) — coor
 - **D2 Format.** PDF-only for Phases 1–4 (recommended); EPUB later.
 - **D3 Stripe.** A Grapheon.ai LLC Stripe account, separate from Contextspaces'. Needs the LLC's EIN and a bank account; Eden creates it, pastes keys into `.env` placeholders (the standing API-key rule).
 - **D4 Terms and Privacy** for the Reader, separate from Contextspaces' (the `/terms` work in hand for the launch can be the template). Needed before Phase 2 takes money.
-- **D5 Who publishes in Phase 1.** Only the Library serverspace (Eden's own editions), recommended; opened in Phase 4.
+- **D5 Who makes editions in Phases 1–3.** Everyone can bench a book for themselves from Phase 1 (a reader illustrating their own copy is the product); **publishing to the Store** is Eden's account only until Phase 4 opens it. The Contextspaces bridge button, if built, shows only in the Library serverspace.
 - **D6 Grapheon's cut** on third-party sales (Phase 4). Kindle Direct is 30% or 70% depending on price band; Gumroad 10% + fees. A flat 20% is a reasonable opening position.
 - **D7 Reading Room.** Does the Office's free Reading Room keep showing text-only copies of books that now have paid editions, or does a shelf book link to its edition in the store? Recommended: both — the Reading Room is the sample.
 
