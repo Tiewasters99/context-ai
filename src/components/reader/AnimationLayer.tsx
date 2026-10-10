@@ -187,7 +187,9 @@ function textEndIn(pageBox: HTMLElement, layer: HTMLElement, rect: FractionalRec
     // Lines are compared by their bottom with a little slack, so the last
     // word of a line beats an earlier word on the same line.
     if (!best || bottom > best.bottom + r.height * 0.3 || (Math.abs(bottom - best.bottom) <= r.height * 0.3 && right > best.right)) {
-      best = { x: (right + 6) / pb.width, y: (r.top + r.height / 2 - pb.top) / pb.height, bottom, right };
+      // The badge is 24px and centred on this point, so its edge clears the
+      // last word by a few pixels rather than sitting on it.
+      best = { x: (right + 18) / pb.width, y: (r.top + r.height / 2 - pb.top) / pb.height, bottom, right };
     }
   }
   if (!best) return null;
