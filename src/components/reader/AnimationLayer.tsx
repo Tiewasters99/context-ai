@@ -1,23 +1,35 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { IMAGE_FILE_RE } from '@/lib/document-workshop';
-import { Play, X, Loader2 } from 'lucide-react';
+import { Play, X, Loader2, GripHorizontal } from 'lucide-react';
 import { clipUrl, type DocumentAnimation } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
 
-// Living illustrations, on the page itself: a quiet play badge sits on the
-// plate a clip belongs to, and tapping it plays the clip.
+// Living illustrations, on the page itself: a small play badge sits at the
+// end of what a clip belongs to — after the last word of a passage, or at
+// the foot of a plate — and tapping it plays the clip over that place.
 //
-// A plate printed sideways (landscape art turned a quarter turn to fit a
-// portrait page) would play sideways if the clip simply covered it, and
-// asking the reader to rotate the page first would make one gesture into
-// two. So the attachment carries the turn that makes the plate upright, and
-// a tap on a turned plate lifts the clip off the page and plays it upright,
-// centred and as large as the page allows.
+// The badge stays out of the reading: only the badge takes the pointer, so
+// the words under an illustrated passage still select and highlight, and
+// hovering the badge outlines what will play. The badge finds the end of
+// the passage from the text layer (the last line's last word inside the
+// rectangle); a plate, or a page whose text has not rendered yet, gets the
+// rectangle's bottom-right corner.
+//
+// The clip plays where its source sits, as a panel with a ribbon across the
+// top: drag the ribbon to move it aside, so the words and the picture can be
+// read together, or compared; drag the corner to resize it; double-click
+// the ribbon to put it back. A plate printed sideways (landscape art turned
+// a quarter turn to fit a portrait page) would play sideways if the clip
+// simply covered it, so its attachment carries the turn, and such a clip
+// opens upright, centred and as large as the page allows.
 //
 // This layer sits last in the page box, after the text layer (which takes
 // pointer events of its own), and is transparent except for the badge.
 
 const MIN_RECT = 0.02;   // a stray click is not a rectangle
+const RIBBON = 22;       // px, the panel's drag strip
+const MIN_W = 160;       // px, how small the panel may be dragged
+const MIN_H = 90 + RIBBON;
 
 export default function AnimationLayer({
   page,
@@ -32,9 +44,12 @@ export default function AnimationLayer({
 }) {
   const mine = animations.filter((a) => a.page === page);
   const [playing, setPlaying] = useState<string | null>(null);
+  const [hot, setHot] = useState<string | null>(null);
   const [draft, setDraft] = useState<FractionalRect | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const fromRef = useRef<{ x: number; y: number } | null>(null);
+  // Where each badge sits, found from the text layer; keyed by animation id.
+  const [ends, setEnds] = useState<Record<string, { x: number; y: number }>>({});
 
   const pointAt = (e: React.PointerEvent) => {
     const r = boxRef.current?.getBoundingClientRect();
@@ -50,6 +65,32 @@ export default function AnimationLayer({
     w: Math.abs(a.x - b.x),
     h: Math.abs(a.y - b.y),
   });
+
+  // The text layer renders after the page does, and again on a zoom; watch
+  // it so the badges find the end of their passage whenever it changes.
+  const rectKey = mine.map((a) => `${a.id}:${a.rect.x},${a.rect.y},${a.rect.w},${a.rect.h}`).join('|');
+  useEffect(() => {
+    const box = boxRef.current;
+    const pageBox = box?.parentElement;
+    const layer = pageBox?.querySelector<HTMLElement>('.textLayer');
+    if (!box || !pageBox || mine.length === 0) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const next: Record<string, { x: number; y: number }> = {};
+      for (const a of mine) {
+        const end = layer ? textEndIn(pageBox, layer, a.rect) : null;
+        next[a.id] = end ?? { x: a.rect.x + a.rect.w, y: a.rect.y + a.rect.h };
+      }
+      setEnds(next);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(measure); };
+    schedule();
+    const mo = layer ? new MutationObserver(schedule) : null;
+    mo?.observe(layer!, { childList: true });
+    return () => { mo?.disconnect(); if (frame) cancelAnimationFrame(frame); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rectKey, page]);
 
   return (
     <div
@@ -87,24 +128,34 @@ export default function AnimationLayer({
         />
       )}
 
-      {!attachMode && mine.map((a) => (
-        playing === a.id
-          ? <Player key={a.id} animation={a} onClose={() => setPlaying(null)} />
-          : (
+      {!attachMode && mine.map((a) => {
+        if (playing === a.id) {
+          return <Player key={a.id} animation={a} boxRef={boxRef} onClose={() => setPlaying(null)} />;
+        }
+        const end = ends[a.id] ?? { x: a.rect.x + a.rect.w, y: a.rect.y + a.rect.h };
+        return (
+          <div key={a.id}>
+            {hot === a.id && (
+              <div
+                className="absolute rounded-sm ring-2 ring-[#e8b84a]/60 pointer-events-none"
+                style={pct(a.rect)}
+                aria-hidden="true"
+              />
+            )}
             <button
-              key={a.id}
               onClick={() => setPlaying(a.id)}
+              onMouseEnter={() => setHot(a.id)}
+              onMouseLeave={() => setHot((h) => (h === a.id ? null : h))}
               title={a.label ? `Play: ${a.label}` : 'Play this illustration'}
               aria-label={a.label ? `Play ${a.label}` : `Play the illustration on page ${page}`}
-              className="absolute pointer-events-auto group flex items-center justify-center rounded-sm ring-0 hover:ring-2 hover:ring-[#e8b84a]/70 transition-all"
-              style={pct(a.rect)}
+              className="absolute z-[2] pointer-events-auto flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white/90 opacity-80 shadow-md backdrop-blur-[2px] transition-all hover:scale-110 hover:bg-black/75 hover:opacity-100"
+              style={{ left: `${end.x * 100}%`, top: `${end.y * 100}%` }}
             >
-              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/45 text-white/90 opacity-70 shadow-lg backdrop-blur-[2px] transition-all group-hover:bg-black/65 group-hover:opacity-100">
-                <Play size={20} className="ml-0.5" fill="currentColor" />
-              </span>
+              <Play size={11} className="ml-px" fill="currentColor" />
             </button>
-          )
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -116,11 +167,47 @@ const pct = (r: FractionalRect) => ({
   height: `${r.h * 100}%`,
 });
 
-function Player({ animation, onClose }: { animation: DocumentAnimation; onClose: () => void }) {
+/** The point just after the last word of the text inside `rect`: the right
+ *  end, at mid-height, of the lowest text span whose centre lies in the
+ *  rectangle. Null when no text is there (a plate, or not rendered yet). */
+function textEndIn(pageBox: HTMLElement, layer: HTMLElement, rect: FractionalRect): { x: number; y: number } | null {
+  const pb = pageBox.getBoundingClientRect();
+  if (pb.width === 0 || pb.height === 0) return null;
+  let best: { x: number; y: number; bottom: number; right: number } | null = null;
+  // Leaf spans only: a tagged PDF wraps lines in markedContent spans.
+  for (const span of Array.from(layer.querySelectorAll('span'))) {
+    if (span.children.length > 0 || !span.textContent?.trim()) continue;
+    const r = span.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    const cx = (r.left + r.width / 2 - pb.left) / pb.width;
+    const cy = (r.top + r.height / 2 - pb.top) / pb.height;
+    if (cx < rect.x || cx > rect.x + rect.w || cy < rect.y || cy > rect.y + rect.h) continue;
+    const bottom = r.bottom - pb.top;
+    const right = r.right - pb.left;
+    // Lines are compared by their bottom with a little slack, so the last
+    // word of a line beats an earlier word on the same line.
+    if (!best || bottom > best.bottom + r.height * 0.3 || (Math.abs(bottom - best.bottom) <= r.height * 0.3 && right > best.right)) {
+      best = { x: (right + 6) / pb.width, y: (r.top + r.height / 2 - pb.top) / pb.height, bottom, right };
+    }
+  }
+  if (!best) return null;
+  return { x: Math.min(0.99, best.x), y: best.y };
+}
+
+type Box = { left: number; top: number; width: number; height: number };
+
+function Player({ animation, boxRef, onClose }: {
+  animation: DocumentAnimation;
+  boxRef: React.RefObject<HTMLDivElement | null>;
+  onClose: () => void;
+}) {
   const path = animation.media?.storage_path ?? null;
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
+  // The panel in page pixels, so dragging and resizing are plain arithmetic.
+  const [box, setBox] = useState<Box | null>(null);
+  const dragRef = useRef<{ mode: 'move' | 'size'; px: number; py: number; from: Box } | null>(null);
   // A clip with no stored file needs no lookup — that is a fact about the
   // row, not something to discover.
   const trouble = failed ?? (path ? null : 'That clip has no stored file.');
@@ -142,52 +229,121 @@ function Player({ animation, onClose }: { animation: DocumentAnimation; onClose:
     return () => cancelAnimationFrame(t);
   }, []);
 
-  // A plate printed sideways plays upright and large, lifted off the page;
-  // an upright one plays exactly where it sits.
-  const turned = animation.turn !== 0;
-  const style = turned
-    ? { left: '4%', top: '4%', width: '92%', height: '92%' }
-    : pct(animation.rect);
+  // Where it opens: over its source; a plate printed sideways plays upright
+  // and large, lifted off the page. The ribbon sits above the picture so
+  // the picture itself still covers the plate.
+  const home = (): Box | null => {
+    const r = boxRef.current?.getBoundingClientRect();
+    if (!r || r.width === 0) return null;
+    const f = animation.turn !== 0
+      ? { x: 0.04, y: 0.04, w: 0.92, h: 0.92 }
+      : animation.rect;
+    return {
+      left: f.x * r.width,
+      top: f.y * r.height - RIBBON,
+      width: Math.max(MIN_W, f.w * r.width),
+      height: Math.max(MIN_H, f.h * r.height + RIBBON),
+    };
+  };
+  useLayoutEffect(() => {
+    setBox(home());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animation.id]);
+
+  const start = (mode: 'move' | 'size') => (e: React.PointerEvent) => {
+    if (!box || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    dragRef.current = { mode, px: e.clientX, py: e.clientY, from: box };
+  };
+  const move = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.px;
+    const dy = e.clientY - d.py;
+    if (d.mode === 'move') setBox({ ...d.from, left: d.from.left + dx, top: d.from.top + dy });
+    else setBox({ ...d.from, width: Math.max(MIN_W, d.from.width + dx), height: Math.max(MIN_H, d.from.height + dy) });
+  };
+  const stop = () => { dragRef.current = null; };
+
+  // Esc closes, as it does everywhere else in the reader.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const style = box
+    ? { left: box.left, top: box.top, width: box.width, height: box.height }
+    : { ...pct(animation.rect) };
+  const title = animation.label || animation.media?.title || 'Illustration';
 
   return (
     <div
-      className="absolute pointer-events-auto z-10 flex items-center justify-center bg-black/85 shadow-2xl transition-all duration-300"
+      className="absolute pointer-events-auto z-10 flex flex-col overflow-hidden rounded-sm bg-black/90 shadow-2xl transition-[opacity,transform] duration-300"
       style={{ ...style, opacity: shown ? 1 : 0, transform: shown ? 'scale(1)' : 'scale(0.96)' }}
     >
-      {url ? (
-        // A still laid on the page (a Workshop image, migration 106) is shown
-        // where a clip would play: the plate, redrawn.
-        IMAGE_FILE_RE.test(path ?? '') ? (
-          <img
-            src={url}
-            alt={animation.label ?? 'The plate, redrawn'}
-            className="max-h-full max-w-full"
-            onError={() => setFailed('That picture could not be shown.')}
-          />
-        ) : (
-        <video
-          src={url}
-          autoPlay
-          controls
-          playsInline
-          loop={animation.loops}
-          className="max-h-full max-w-full"
-          onError={() => setFailed('That clip could not be played.')}
-        />
-        )
-      ) : (
-        <p className="flex items-center gap-2 px-3 text-[12px] text-white/80">
-          {trouble ?? <><Loader2 size={13} className="animate-spin" /> Opening the clip…</>}
-        </p>
-      )}
-      <button
-        onClick={onClose}
-        aria-label="Close the clip"
-        title="Back to the page"
-        className="absolute right-1.5 top-1.5 rounded-full bg-black/60 p-1.5 text-white/80 hover:bg-black/80 hover:text-white"
+      <div
+        onPointerDown={start('move')}
+        onPointerMove={move}
+        onPointerUp={stop}
+        onPointerCancel={stop}
+        onDoubleClick={() => setBox(home())}
+        title="Drag to move this aside; double-click to put it back"
+        className="flex shrink-0 cursor-grab select-none items-center gap-1.5 bg-white/10 px-2 text-[11px] text-white/80 active:cursor-grabbing"
+        style={{ height: RIBBON }}
       >
-        <X size={15} />
-      </button>
+        <GripHorizontal size={13} className="shrink-0 text-white/50" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <button
+          onClick={onClose}
+          onPointerDown={(e) => e.stopPropagation()}
+          aria-label="Close the clip"
+          title="Back to the page"
+          className="-mr-1 rounded-full p-0.5 text-white/70 hover:bg-white/15 hover:text-white"
+        >
+          <X size={13} />
+        </button>
+      </div>
+      <div className="relative flex min-h-0 flex-1 items-center justify-center">
+        {url ? (
+          // A still laid on the page (a Workshop image, migration 106) is shown
+          // where a clip would play: the plate, redrawn.
+          IMAGE_FILE_RE.test(path ?? '') ? (
+            <img
+              src={url}
+              alt={animation.label ?? 'The plate, redrawn'}
+              className="max-h-full max-w-full"
+              onError={() => setFailed('That picture could not be shown.')}
+            />
+          ) : (
+          <video
+            src={url}
+            autoPlay
+            controls
+            playsInline
+            loop={animation.loops}
+            className="max-h-full max-w-full"
+            onError={() => setFailed('That clip could not be played.')}
+          />
+          )
+        ) : (
+          <p className="flex items-center gap-2 px-3 text-[12px] text-white/80">
+            {trouble ?? <><Loader2 size={13} className="animate-spin" /> Opening the clip…</>}
+          </p>
+        )}
+        <div
+          onPointerDown={start('size')}
+          onPointerMove={move}
+          onPointerUp={stop}
+          onPointerCancel={stop}
+          title="Drag to resize"
+          aria-hidden="true"
+          className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize"
+          style={{ background: 'linear-gradient(135deg, transparent 55%, rgba(255,255,255,0.45) 55%, rgba(255,255,255,0.45) 65%, transparent 65%, transparent 80%, rgba(255,255,255,0.45) 80%, rgba(255,255,255,0.45) 90%, transparent 90%)' }}
+        />
+      </div>
     </div>
   );
 }
