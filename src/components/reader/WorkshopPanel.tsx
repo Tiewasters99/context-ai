@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan,
+  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight,
 } from 'lucide-react';
 import type { Turn } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -40,6 +40,8 @@ export type WorkshopPanelProps = {
   onRetext: (item: WorkshopItem, text: string) => Promise<void>;
   /** Draw the item's rectangle (again): a snip's crop, or where a snippet's clip should play. */
   onResnip: (item: WorkshopItem) => void;
+  /** Put a clip brought in on its own under the plate or passage it was made from. */
+  onAdopt: (media: WorkshopItem, source: WorkshopItem) => Promise<void>;
   onDelete: (item: WorkshopItem) => Promise<void>;
   onBringIn: (parent: WorkshopItem | null, file: File) => Promise<void>;
   /** Lay a media item on the page where its source sits. Null when it cannot (no source rect). */
@@ -183,8 +185,14 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
         <SourceCard key={s.id} item={s} derived={mediaByParent.get(s.id) ?? []} p={p} />
       ))}
       {loose.length > 0 && <SectionLabel>Brought in on their own</SectionLabel>}
+      {loose.length > 0 && (
+        <p className="px-1 text-[10px] leading-relaxed text-white/40">
+          A clip on its own has nowhere to play. Put it under the plate or passage it was made from
+          and it can be laid on the page there.
+        </p>
+      )}
       {loose.map((m) => (
-        <MediaRow key={m.id} item={m} source={null} p={p} />
+        <MediaRow key={m.id} item={m} source={null} sources={sources} p={p} />
       ))}
     </div>
   );
@@ -334,7 +342,16 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
   );
 }
 
-function MediaRow({ item, source, p }: { item: WorkshopItem; source: WorkshopItem | null; p: WorkshopPanelProps }) {
+/** How a plate or passage reads in a short list. */
+function sourceName(s: WorkshopItem): string {
+  if (s.kind === 'snippet') {
+    const words = (s.text ?? '').trim().replace(/\s+/g, ' ');
+    return `“${words.length > 40 ? words.slice(0, 40) + '…' : words}” (p. ${s.page})`;
+  }
+  return `${s.label || 'Plate'} (p. ${s.page})`;
+}
+
+function MediaRow({ item, source, sources = [], p }: { item: WorkshopItem; source: WorkshopItem | null; sources?: WorkshopItem[]; p: WorkshopPanelProps }) {
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const path = item.media?.storage_path ?? null;
@@ -382,6 +399,32 @@ function MediaRow({ item, source, p }: { item: WorkshopItem; source: WorkshopIte
           >
             {busy === 'lay' ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />} Lay on page
           </button>
+        )}
+        {!source && sources.length > 0 && (
+          sources.length === 1 ? (
+            <button
+              disabled={!p.canWrite || busy === 'adopt'}
+              onClick={() => run('adopt', () => p.onAdopt(item, sources[0]))}
+              title={`Put this under ${sourceName(sources[0])}`}
+              className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-white/80 hover:border-white/25 hover:text-white disabled:opacity-40"
+            >
+              {busy === 'adopt' ? <Loader2 size={11} className="animate-spin" /> : <CornerDownRight size={11} />} Put under the {sources[0].kind === 'snippet' ? 'passage' : 'plate'}
+            </button>
+          ) : (
+            <select
+              value=""
+              disabled={!p.canWrite || busy === 'adopt'}
+              onChange={(e) => {
+                const s = sources.find((x) => x.id === e.target.value);
+                if (s) void run('adopt', () => p.onAdopt(item, s));
+              }}
+              title="Put this under the plate or passage it was made from"
+              className="max-w-[160px] rounded-md border border-[var(--color-border)] bg-transparent px-1 py-0.5 text-[11px] text-white/80 disabled:opacity-40"
+            >
+              <option value="" disabled>Put under…</option>
+              {sources.map((s) => <option key={s.id} value={s.id}>{sourceName(s)}</option>)}
+            </select>
+          )
         )}
         <IconBtn title="Take this off the bench (the file stays in the Vault)" danger busy={busy === 'del'} onClick={() => run('del', () => p.onDelete(item))}><Trash2 size={12} /></IconBtn>
       </div>
