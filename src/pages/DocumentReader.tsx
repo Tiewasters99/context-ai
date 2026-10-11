@@ -1,18 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  ChevronLeft,
-  ChevronRight,
   ZoomIn,
   ZoomOut,
   Sun,
   Moon,
   X,
   Search,
-  PanelLeft,
-  Hammer,
   Undo2,
-  Scan,
   Maximize,
   Minimize,
   Download,
@@ -39,23 +34,28 @@ import { LIBRARY_SERVERSPACE, findOrCreateLibrarySection, publishDocumentToOffic
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { fetchPaged } from '@/lib/paged';
 import { hasDraftBody } from '@/lib/brief/draft-store';
-import { guardTextLayerSelection, releaseTextLayerGuards } from '@/lib/pdf-text-selection';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
-import ReaderSidebar, { type OutlineNode, type SidebarTabId } from '@/components/reader/ReaderSidebar';
-import AnimationLayer from '@/components/reader/AnimationLayer';
+import PdfBook, {
+  type AttachArgs,
+  type BenchStore,
+  type BookSelection,
+  type MarksStore,
+  type PageLink,
+  type PageSides,
+  type PdfBookGoto,
+  type PdfBookHandle,
+  type PdfBookView,
+  type PdfSource,
+} from '@/components/reader/PdfBook';
 import AnimationAttach from '@/components/reader/AnimationAttach';
+import { listAnimations, deleteAnimation, createAnimation } from '@/lib/document-animations';
 import {
-  listAnimations, deleteAnimation, createAnimation, type DocumentAnimation, type Turn,
-} from '@/lib/document-animations';
-import {
-  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem, nextTurn, unionRect,
-  type WorkshopItem,
+  listWorkshopItems, createSnip, createSnippet, addMedia, updateWorkshopItem, deleteWorkshopItem,
 } from '@/lib/document-workshop';
 import { persistVaultFile, resolveMatter as resolveVaultMatter } from '@/lib/vault-persist';
-import { downloadBlob } from '@/lib/export-page';
-import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
+import { canvasToBlob } from '@/lib/pdf-page-image';
 import SealedExportDialog from '@/components/reader/SealedExportDialog';
 import { documentEntry } from '@/lib/second-factor';
 import DriveExportControl from '@/components/reader/DriveExportControl';
@@ -65,7 +65,6 @@ import CoverImage from '@/components/layout/CoverImage';
 import CoverModeToggle from '@/components/ui/CoverModeToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import PdfPageEditor from '@/components/vault/PdfPageEditor';
-import ModalPortal from '@/components/ui/ModalPortal';
 import { setOrchestratorContext, clearOrchestratorContext, getOrchestratorContext } from '@/lib/orchestrator-context';
 import { runInAssistant } from '@/lib/assistant-bus';
 import type { EmbeddableViewProps } from '@/lib/canvas';
@@ -109,13 +108,21 @@ import {
   type TextAnchor,
 } from '@/lib/text-anchor';
 import {
-  interceptStyledCopy,
   pdfDocumentText,
   reflowedHtml,
   selectionHtml,
   htmlPlainText,
   writeClipboard,
 } from '@/lib/reader-copy';
+import { phraseRegex, likePattern } from '@/lib/reader-find';
+import { ANNOTATION_DOT, ANNOTATION_FILL, printCss, scrollbarCss, type ReaderTheme } from '@/lib/reader-style';
+import {
+  FindBox,
+  LoadingCard,
+  ReaderMoreMenu,
+  SelectionMenu,
+  type MoreItem,
+} from '@/components/reader/reader-chrome';
 
 
 type DocMeta = {
@@ -199,23 +206,13 @@ async function pptxDeckHtml(data: ArrayBuffer): Promise<string> {
     .join('');
 }
 type LoadState = 'loading' | 'ready' | 'error';
-type Theme = 'parchment' | 'dark';
 type Match = { page: number; index: number };
 
-// A find query as a regex: each word literal, any whitespace between words
-// (a transcript's text is broken by line; the brief quotes it in one line).
-export function phraseRegex(q: string): RegExp {
-  const words = q.trim().split(/\s+/).filter(Boolean);
-  const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(words.map(esc).join('\\s+'), 'gi');
-}
-// The same query for Postgres LIKE: wildcards escaped ("100%" finds "100%"),
-// any run of whitespace a wildcard. Wider than the regex; the regex decides.
-export function likePattern(q: string): string {
-  const words = q.trim().split(/\s+/).filter(Boolean);
-  const esc = (w: string) => w.replace(/[%_\\]/g, (c) => '\\' + c);
-  return '%' + words.map(esc).join('%') + '%';
-}
+// The two shapes of a find query live in src/lib/reader-find.ts, shared
+// with the book; the page rail (PageRail) is the book's own now.
+
+// The opening words of a passage, for the find box.
+const firstWords = (t: string, n: number) => t.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
 
 // Find every occurrence of `needle` in the text of a rendered document,
 // as DOM Ranges. The text nodes are joined into one string first, so a
@@ -263,9 +260,6 @@ const FIND_HL_CURRENT = 'reader-find-current';
 const ANN_HL_COLORS: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
 const annHl = (c: AnnotationColor) => `reader-ann-${c}`;
 const ANN_HL_NOTE = 'reader-ann-note';
-
-// Vertical gap between page slots in the continuous stack.
-const PAGE_GAP = 16;
 
 // Two small lookups for the companion's provenance walk, typed at the
 // boundary so the walk's loop variable does not feed back into the query
@@ -388,25 +382,20 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const [imageDims, setImageDims] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => () => { if (imageUrl) URL.revokeObjectURL(imageUrl); }, [imageUrl]);
 
+  // For a PDF these mirror the book (PdfBook reports what it shows); a
+  // rendered document is one page.
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
+  // The pages actually on screen, most visible first (a PDF; the book reports them).
+  const [visiblePages, setVisiblePages] = useState<{ page: number; share: number }[]>([]);
   const [zoom, setZoom] = useState(1.5);
-  const [theme, setTheme] = useState<Theme>('parchment');
-
-  // Fit-page mode (PDF only). When on, each page is scaled so the entire
-  // page is visible at once — one screenful = exactly one PDF page, so the
-  // reader's pages line up with the PDF's pages for citation/citechecking.
-  // Default on. The stack scrolls continuously in either mode.
-  const [fitPage, setFitPage] = useState(true);
+  const [theme, setTheme] = useState<ReaderTheme>('parchment');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // Bumped whenever the content pane resizes, to re-fit the page.
-  const [containerTick, setContainerTick] = useState(0);
 
-  // Search state. A PDF's matches name a page and are drawn as boxes over
-  // the text layer; for the other formats the rendered document is the
-  // text itself, so each match is a DOM Range, kept here and lit with the
-  // CSS Custom Highlight API. `matches` carries one entry per range so the
-  // count and the arrows read the same either way.
+  // Search state, for the rendered formats (a PDF's find is the book's): the
+  // rendered document is the text itself, so each match is a DOM Range, kept
+  // here and lit with the CSS Custom Highlight API. `matches` carries one
+  // entry per range so the count and the arrows read the same.
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [matches, setMatches] = useState<Match[]>([]);
@@ -423,16 +412,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const docHtmlProp = useMemo(() => (docHtml ? { __html: docHtml } : undefined), [docHtml]);
   const titlePageHtmlProp = useMemo(() => (titlePageHtml ? { __html: titlePageHtml } : undefined), [titlePageHtml]);
 
-  // Sidebar state — PDF only.
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  // Held here, not in the sidebar, so the toolbar's Workshop button can open
-  // the sidebar straight onto the bench.
-  const [sidebarTab, setSidebarTab] = useState<SidebarTabId>('pages');
-  const [thumbnails, setThumbnails] = useState<(string | null)[]>([]);
-  const [outline, setOutline] = useState<OutlineNode[] | null>(null);
-
-  // Annotations state — PDF only. Loaded once per document; updated
-  // optimistically on create/delete so we don't round-trip the DB for UX.
+  // Annotations state. A PDF's marks are the book's (PdfBook reports them
+  // here, so the note cards can find them); a rendered document's are loaded
+  // once per document and updated optimistically on create/delete.
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   // Marks on documents without pages need migration 084's text_anchor
   // column; false once the database has shown it is missing.
@@ -462,77 +444,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const [openNote, setOpenNote] = useState<{ id: string; x: number; y: number } | null>(null);
   const [openRef, setOpenRef] = useState<{ link: IncomingLink; x: number; y: number } | null>(null);
   const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
-  // Living illustrations: a clip laid over a picture on the page, played
-  // by tapping it (migration 062).
-  const [animations, setAnimations] = useState<DocumentAnimation[]>([]);
-  // True while waiting for a rectangle to be drawn round a picture.
-  const [attaching, setAttaching] = useState(false);
-  const [pendingArea, setPendingArea] = useState<{ page: number; rect: FractionalRect } | null>(null);
-  // The Workshop bench (migration 106). `snipping` is the same rectangle
-  // mode as `attaching`, landing a snip on the bench instead of opening the
-  // attach dialog; `resnip` is the snip whose rectangle is being redrawn.
-  const [workshopItems, setWorkshopItems] = useState<WorkshopItem[]>([]);
-  const [snipping, setSnipping] = useState(false);
-  const [resnip, setResnip] = useState<WorkshopItem | null>(null);
-  const [workshopNotice, setWorkshopNotice] = useState<string | null>(null);
-
+  // The open PDF, handed up by the book once it has it: the whole-document
+  // copy and the companion's page texts read it here.
   const pdfDocRef = useRef<unknown>(null);
-  // Natural (scale-1) size of every page, so the stack can lay out a
-  // fixed-height slot per page before any page paints. Seeded with page
-  // 1's size on load; a background sweep corrects odd-sized pages.
-  const [pageDims, setPageDims] = useState<{ w: number; h: number }[] | null>(null);
-  // One canvas + text layer per slot; only slots near the viewport are
-  // painted. pdfjs refuses overlapping renders on one canvas, so each
-  // slot's in-flight task is tracked and cancelled per page number.
-  const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
-  const textLayerRefs = useRef<(HTMLDivElement | null)[]>([]);
-  // One overlay per slot for search hits, drawn over the page at full
-  // strength — the text layer itself sits at a quarter opacity so its
-  // transparent glyphs never show, which also made any tint on its spans
-  // all but invisible.
-  const hitLayerRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const renderedKeyRef = useRef(new Map<number, string>());
-  const renderTasksRef = useRef(new Map<number, { cancel(): void }>());
-  const stackRef = useRef<HTMLDivElement | null>(null);
+  const bookRef = useRef<PdfBookHandle | null>(null);
+  // A rendered document's root and its scrolling pane (a PDF's are the book's).
   const rootRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const pageStateRef = useRef(1);
-  const restoredRef = useRef(false);
-  const anchorReadyRef = useRef(false);
 
-  // Restore persisted prefs.
+  // Restore persisted prefs (a rendered document's; the book keeps its own,
+  // under the same keys).
   useEffect(() => {
-    // A pane beside another surface fits to its own width (below) and leaves
-    // the full Reader's saved zoom and fit alone, in both directions.
+    // A pane beside another surface leaves the full Reader's saved zoom
+    // alone, in both directions.
     if (pane) return;
     const z = localStorage.getItem('ctx_reader_zoom');
     if (z) {
       const parsed = parseFloat(z);
       if (parsed >= 0.5 && parsed <= 4) setZoom(parsed);
     }
-    const t = localStorage.getItem('ctx_reader_theme') as Theme | null;
+    const t = localStorage.getItem('ctx_reader_theme') as ReaderTheme | null;
     if (t === 'parchment' || t === 'dark') setTheme(t);
-    const f = localStorage.getItem('ctx_reader_fit');
-    if (f === '0') setFitPage(false);
   }, [pane]);
   useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_zoom', String(zoom)); }, [zoom, pane]);
   useEffect(() => { localStorage.setItem('ctx_reader_theme', theme); }, [theme]);
-  useEffect(() => { if (!pane) localStorage.setItem('ctx_reader_fit', fitPage ? '1' : '0'); }, [fitPage, pane]);
-  useEffect(() => {
-    // On a phone the thumbnail rail would swallow the page, so start closed
-    // regardless of the saved desktop preference.
-    // A pane has no room for it either, and no toggle to open it.
-    if (isMobile || pane) { setSidebarOpen(false); return; }
-    const s = localStorage.getItem('ctx_reader_sidebar_open');
-    if (s === '0') setSidebarOpen(false);
-  }, [isMobile, pane]);
-  useEffect(() => {
-    if (pane) return; // the pane's shut sidebar is not the reader's preference
-    localStorage.setItem('ctx_reader_sidebar_open', sidebarOpen ? '1' : '0');
-  }, [sidebarOpen, pane]);
-
-  // Deep links (?page=N) are honored by the restore + follow effects in the
-  // continuous-stack block below, once the stack can be measured.
 
   // Track OS fullscreen state so the toolbar button reflects reality even
   // when the user leaves fullscreen via Escape.
@@ -544,23 +479,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
-  // Re-fit the page whenever the content pane resizes — window resize,
-  // sidebar toggle, or entering/leaving fullscreen.
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setContainerTick((t) => t + 1));
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) {
       void document.exitFullscreen();
     } else if (rootRef.current) {
       void rootRef.current.requestFullscreen();
-      // Entering fullscreen is about reading one page at a time — fit it.
-      setFitPage(true);
     }
   }, []);
 
@@ -575,20 +498,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     setDocHtml(null);
     setImageUrl(null);
     setImageDims(null);
+    pdfDocRef.current = null;
     pageTextCacheRef.current = [];
     setMatches([]);
     setMatchIdx(0);
-    setThumbnails([]);
-    setOutline(null);
     setAnnotations([]);
     setSelectionMenu(null);
-    setPageDims(null);
-    renderedKeyRef.current.clear();
-    canvasRefs.current = [];
-    releaseTextLayerGuards();
-    textLayerRefs.current = [];
-    restoredRef.current = false;
-    anchorReadyRef.current = false;
 
     void (async () => {
       const { data, error } = await supabase
@@ -703,23 +618,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
 
       try {
         if (kind === 'pdf') {
-          const pdf = await openStoredPdf(data.storage_path, {
-            sizeBytes: data.file_size_bytes ?? null,
-            onProgress: (p) => { if (!cancelled) setLoadProgress(p); },
-          });
-          if (cancelled) return;
-          pdfDocRef.current = pdf;
-          // Page 1's size stands in for every slot until the dims sweep
-          // below reports the real per-page sizes.
-          const firstPage = await pdf.getPage(1);
-          const v1 = firstPage.getViewport({ scale: 1 });
-          if (cancelled) return;
-          setPageDims(new Array(pdf.numPages).fill({ w: v1.width, h: v1.height }));
-          setTotalPages(pdf.numPages);
-
-          const savedPage = localStorage.getItem(`ctx_reader_page_${id}`);
-          const start = savedPage ? parseInt(savedPage, 10) : 1;
-          setPage(start >= 1 && start <= pdf.numPages ? start : 1);
+          // The book opens the file itself (PdfBook, through the source built
+          // below) and reports when it is ready; nothing more to do here.
+          return;
         } else if (kind === 'fountain') {
           // Fountain — plain-text screenplay. Parse via fountain-js and let
           // the parser hand us back semantic HTML (h3 scene headings,
@@ -778,418 +679,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
 
     return () => { cancelled = true; };
   }, [id, reloadKey]);
-
-  // ── The continuous page stack ───────────────────────────────────────
-  // Every page owns a fixed-height slot in one scrollable column, so the
-  // pane's native scrollbar spans the whole document: drag the thumb to
-  // cross a hundred pages, roll the wheel to move a line. Only the slots
-  // near the viewport are painted; the rest stay white paper with a faint
-  // page number until scrolled into reach. Before this, the reader drew
-  // one page at a time — in fit mode nothing could scroll at all, and
-  // zoomed in the native bar spanned just the one page, which is why long
-  // cases could be scrolled finely but never quickly, and short pleadings
-  // quickly but never finely.
-
-  // One uniform scale for the stack. Fit mode sizes a page to the pane as
-  // the single-page reader did (a screenful ≈ a page, for citation work);
-  // zoom mode uses the chosen zoom. Page 1 stands in for the document's
-  // page size — filings are uniform, and odd-sized exhibits correct once
-  // the dims sweep reports in.
-  const renderedScale = useMemo(() => {
-    if (fileKind !== 'pdf' || !fitPage) return zoom;
-    const pane = contentRef.current;
-    const d = pageDims?.[0];
-    if (!pane || !d || pane.clientWidth <= 0 || pane.clientHeight <= 0) return zoom;
-    const PAD = paneChrome ? 6 : 24; // breathing room around the page
-    // The margin rails flank each page in-flow; subtract them so the page
-    // never overflows horizontally. A pane draws none.
-    const rails = paneChrome ? 0 : 2 * (isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W);
-    const byWidth = (pane.clientWidth - PAD * 2 - rails) / d.w;
-    const fit = paneChrome ? byWidth : Math.min(byWidth, (pane.clientHeight - PAD * 2) / d.h);
-    return Math.max(0.1, Math.min(fit, 6));
-    // containerTick re-measures the pane on resize / sidebar / fullscreen;
-    // loadState re-measures once the pane exists.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileKind, fitPage, zoom, pageDims, isMobile, containerTick, loadState, paneChrome]);
-
-  // Top offset of every slot inside the scroll content — the map between
-  // scrollTop and page numbers, used by jumps and by scroll derivation.
-  const slotTops = useMemo(() => {
-    if (!pageDims) return null;
-    const tops: number[] = [];
-    let y = 24; // the stack container's top padding (py-6)
-    for (const d of pageDims) {
-      tops.push(y);
-      y += d.h * renderedScale + PAGE_GAP;
-    }
-    return tops;
-  }, [pageDims, renderedScale]);
-  const slotTopsRef = useRef<number[] | null>(null);
-  useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
-  useEffect(() => { pageStateRef.current = page; }, [page]);
-
-  // The page the slots are painted around. Scrolling a page at a time paints
-  // at once; a jump of several pages (the rail's thumb dragged, a search hit)
-  // waits until the page holds still for a moment. Painting every page a fast
-  // drag passed over queued dozens of renders and froze the pane (10-01).
-  const [paintPage, setPaintPage] = useState(1);
-  const paintPageRef = useRef(1);
-  useEffect(() => {
-    const settle = () => { paintPageRef.current = page; setPaintPage(page); };
-    if (Math.abs(page - paintPageRef.current) <= 1) { settle(); return; }
-    const t = setTimeout(settle, 140);
-    return () => clearTimeout(t);
-  }, [page]);
-
-  // The pages actually on screen, most visible first, by overlap with the
-  // viewport. The rail's "current page" is a single point 40% down the
-  // screen, which on a zoomed page can name the next page while the reader
-  // is still on this one; the companion is told what is truly in view.
-  const [visiblePages, setVisiblePages] = useState<{ page: number; share: number }[]>([]);
-  // Pages in view that may still be waiting on their bytes show a spinner
-  // in the blank paper until the canvas covers it.
-  const visibleSet = useMemo(() => new Set(visiblePages.map((v) => v.page)), [visiblePages]);
-  const slotBandsRef = useRef<{ top: number; bottom: number }[] | null>(null);
-  useEffect(() => {
-    slotBandsRef.current = slotTops && pageDims
-      ? slotTops.map((top, i) => ({ top, bottom: top + pageDims[i].h * renderedScale }))
-      : null;
-  }, [slotTops, pageDims, renderedScale]);
-  const visibleKeyRef = useRef('');
-  const computeVisible = useCallback(() => {
-    const el = contentRef.current;
-    const bands = slotBandsRef.current;
-    if (!el || !bands) return;
-    const top = el.scrollTop;
-    const bottom = top + el.clientHeight;
-    const vh = Math.max(1, el.clientHeight);
-    const seen: { page: number; share: number }[] = [];
-    for (let i = 0; i < bands.length; i++) {
-      const b = bands[i];
-      if (b.bottom < top) continue;
-      if (b.top > bottom) break;
-      const overlap = Math.min(b.bottom, bottom) - Math.max(b.top, top);
-      if (overlap > 0) seen.push({ page: i + 1, share: overlap / vh });
-    }
-    seen.sort((a, b) => b.share - a.share);
-    const pick = seen.filter((s) => s.share >= 0.15).slice(0, 2);
-    // Shares are coarsened so a scroll of a few pixels does not re-render.
-    const key = pick.map((s) => `${s.page}:${Math.round(s.share * 20)}`).join(',');
-    if (key !== visibleKeyRef.current) {
-      visibleKeyRef.current = key;
-      setVisiblePages(pick.map((s) => ({ page: s.page, share: Math.round(s.share * 20) / 20 })));
-    }
-  }, []);
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') return;
-    const frame = requestAnimationFrame(computeVisible);
-    return () => cancelAnimationFrame(frame);
-  }, [page, slotTops, loadState, fileKind, computeVisible]);
-
-  // Every control that names a page — rail, slider, thumbnails, outline,
-  // search, deep links, arrow keys — lands here: set the indicator and
-  // scroll the stack. Hand-scrolling flows the other way (scroll → page)
-  // and never scrolls back, so the two directions cannot fight.
-  const gotoPage = useCallback((p: number) => {
-    const clamped = Math.max(1, Math.min(totalPages || 1, p));
-    setPage(clamped);
-    const tops = slotTopsRef.current;
-    const el = contentRef.current;
-    if (tops && el) el.scrollTo({ top: Math.max(0, tops[clamped - 1] - 8) });
-  }, [totalPages]);
-
-  // The rail's drag: a fraction of the document's scroll range → a scroll
-  // position. The thumb follows the scroll itself (PageRail), so moving it
-  // does not re-render the whole reader every frame.
-  const seekTo = useCallback((f: number) => {
-    const el = contentRef.current;
-    if (!el) return;
-    el.scrollTo({ top: Math.min(1, Math.max(0, f)) * Math.max(0, el.scrollHeight - el.clientHeight) });
-  }, []);
-
-  // Derive the current page while the user scrolls: the page whose band
-  // holds the point 40% down the viewport.
-  useEffect(() => {
-    const el = contentRef.current;
-    if (!el || loadState !== 'ready' || fileKind !== 'pdf') return;
-    let raf = 0;
-    const onScroll = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        const tops = slotTopsRef.current;
-        if (!tops || tops.length === 0) return;
-        const probe = el.scrollTop + el.clientHeight * 0.4;
-        let p = tops.length;
-        for (let i = 0; i < tops.length; i++) {
-          if (tops[i] > probe) { p = i; break; }
-        }
-        p = Math.max(1, p);
-        if (p !== pageStateRef.current) setPage(p);
-        computeVisible();
-      });
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      el.removeEventListener('scroll', onScroll);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [loadState, fileKind, computeVisible]);
-
-  // Restore the last-read page — or honor a ?page= deep link (the in-app
-  // assistant opens documents to a cited page) — once the stack can be
-  // measured, exactly once per document.
-  useEffect(() => {
-    if (restoredRef.current || !slotTops || loadState !== 'ready' || fileKind !== 'pdf') return;
-    restoredRef.current = true;
-    // ?page= belongs to the route's own Reader. An embedded one (a canvas
-    // card, the desk's pane) shares the URL with its host and is steered by
-    // the `goto` prop instead.
-    const linked = embedded ? NaN : parseInt(searchParams.get('page') ?? '', 10);
-    const saved = parseInt(localStorage.getItem(`ctx_reader_page_${id}`) ?? '', 10);
-    const target = Number.isFinite(linked) && linked >= 1 ? linked
-      : Number.isFinite(saved) && saved >= 1 ? saved
-      : 1;
-    if (target > 1) gotoPage(target);
-  }, [slotTops, loadState, fileKind, id, searchParams, gotoPage, embedded]);
-
-  // Follow later deep links on the SAME mounted document (query-only
-  // change, no remount). The route's Reader only, as above.
-  useEffect(() => {
-    if (embedded) return;
-    if (!restoredRef.current) return; // the restore effect takes the first
-    const p = parseInt(searchParams.get('page') ?? '', 10);
-    if (Number.isFinite(p) && p >= 1 && totalPages > 0) gotoPage(p);
-  }, [searchParams, totalPages, gotoPage, embedded]);
-
-  // When the geometry changes under the reader — zoom, fit toggle, pane
-  // resize, or the dims sweep correcting slot heights — re-anchor to the
-  // page being read instead of drifting to wherever the old offsets land.
-  useEffect(() => {
-    if (!slotTops || loadState !== 'ready' || fileKind !== 'pdf') return;
-    if (!restoredRef.current) return;
-    if (!anchorReadyRef.current) { anchorReadyRef.current = true; return; }
-    const el = contentRef.current;
-    if (el) el.scrollTo({ top: Math.max(0, slotTops[pageStateRef.current - 1] - 8) });
-  }, [slotTops, loadState, fileKind]);
-
-  // Remember where the reader stands, for next time this document opens.
-  useEffect(() => {
-    if (loadState === 'ready' && fileKind === 'pdf' && id && page >= 1) {
-      localStorage.setItem(`ctx_reader_page_${id}`, String(page));
-    }
-  }, [page, id, loadState, fileKind]);
-
-  // The dims sweep: real per-page sizes, replacing the page-1 stand-in.
-  // Cheap relative to the thumbnail strip, which renders every page.
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') return;
-    const pdf = pdfDocRef.current as {
-      numPages: number;
-      getPage(n: number): Promise<{ getViewport(o: { scale: number }): { width: number; height: number } }>;
-    } | null;
-    if (!pdf) return;
-    let cancelled = false;
-    void (async () => {
-      const dims: { w: number; h: number }[] = [];
-      for (let p = 1; p <= pdf.numPages; p++) {
-        try {
-          const v = (await pdf.getPage(p)).getViewport({ scale: 1 });
-          dims.push({ w: v.width, h: v.height });
-        } catch {
-          dims.push({ w: 612, h: 792 });
-        }
-        if (cancelled) return;
-      }
-      setPageDims((prev) => {
-        if (!prev || prev.length !== dims.length) return dims;
-        const changed = dims.some(
-          (d, i) => Math.abs(d.h - prev[i].h) > 0.5 || Math.abs(d.w - prev[i].w) > 0.5,
-        );
-        return changed ? dims : prev;
-      });
-    })();
-    return () => { cancelled = true; };
-  }, [loadState, fileKind, id]);
-
-  // Search hits, drawn as boxes over the words. Each occurrence of the
-  // query in a rendered text layer becomes a Range; its client rects,
-  // taken relative to the page box, become positioned divs in the slot's
-  // hit overlay — so a hit is the word, not the span it sits in, and the
-  // boxes ride along when the page is zoomed. The current match is marked,
-  // and scrolled into view once, when the match changes.
-  const matchesRef = useRef<Match[]>([]);
-  const matchIdxRef = useRef(0);
-  const searchQueryRef = useRef('');
-  const scrollToMatchRef = useRef(-1);
-  const paintHits = useCallback((p: number): HTMLElement | null => {
-    const layer = textLayerRefs.current[p - 1];
-    const hits = hitLayerRefs.current[p - 1];
-    if (!layer || !hits) return null;
-    hits.replaceChildren();
-    const q = searchQueryRef.current.trim().toLowerCase();
-    if (!q) return null;
-    const re = phraseRegex(q);
-    const onPage = matchesRef.current.map((m, i) => ({ ...m, i })).filter((m) => m.page === p);
-    if (!onPage.length) return null;
-    const currentOrdinal = onPage.findIndex((m) => m.i === matchIdxRef.current);
-    const box = layer.getBoundingClientRect();
-    if (!box.width || !box.height) return null;
-    let ordinal = 0;
-    let currentEl: HTMLElement | null = null;
-    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const hay = node.textContent ?? '';
-      re.lastIndex = 0;
-      for (let m = re.exec(hay); m; m = re.exec(hay)) {
-        const at = m.index;
-        if (!m[0].length) { re.lastIndex += 1; continue; }
-        const range = document.createRange();
-        range.setStart(node, at);
-        range.setEnd(node, at + m[0].length);
-        const isCurrent = ordinal === currentOrdinal;
-        for (const r of Array.from(range.getClientRects())) {
-          if (!r.width || !r.height) continue;
-          const el = document.createElement('div');
-          el.className = isCurrent ? 'search-hit current' : 'search-hit';
-          el.style.left = `${((r.left - box.left) / box.width) * 100}%`;
-          el.style.top = `${((r.top - box.top) / box.height) * 100}%`;
-          el.style.width = `${(r.width / box.width) * 100}%`;
-          el.style.height = `${(r.height / box.height) * 100}%`;
-          hits.appendChild(el);
-          if (isCurrent && !currentEl) currentEl = el;
-        }
-        ordinal += 1;
-      }
-    }
-    return currentEl;
-  }, []);
-  const revealIfCurrent = useCallback((el: HTMLElement | null) => {
-    if (!el || scrollToMatchRef.current < 0 || scrollToMatchRef.current !== matchIdxRef.current) return;
-    scrollToMatchRef.current = -1;
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, []);
-  useEffect(() => {
-    matchesRef.current = matches;
-    matchIdxRef.current = matchIdx;
-    searchQueryRef.current = searchQuery;
-    scrollToMatchRef.current = matches.length ? matchIdx : -1;
-    for (const p of Array.from(renderedKeyRef.current.keys())) revealIfCurrent(paintHits(p));
-  }, [matches, matchIdx, searchQuery, paintHits, revealIfCurrent]);
-
-  // Paint the slots near the viewport; free the ones left far behind so a
-  // long case never holds hundreds of live canvases. A page repaints only
-  // when its render key (scale, highlight state) changes.
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf' || !pageDims) return;
-    const pdf = pdfDocRef.current as {
-      getPage(n: number): Promise<{
-        getViewport(opts: { scale: number }): { width: number; height: number };
-        render(opts: unknown): { promise: Promise<void>; cancel(): void };
-        streamTextContent(): ReadableStream;
-      }>;
-    } | null;
-    if (!pdf) return;
-
-    let cancelled = false;
-    const from = Math.max(1, paintPage - 2);
-    const to = Math.min(totalPages, paintPage + 2);
-
-    for (const [p] of Array.from(renderedKeyRef.current)) {
-      if (p >= from - 3 && p <= to + 3) continue;
-      try { renderTasksRef.current.get(p)?.cancel(); } catch { /* settled */ }
-      renderTasksRef.current.delete(p);
-      const canvas = canvasRefs.current[p - 1];
-      if (canvas) {
-        canvas.width = 0;
-        canvas.height = 0;
-        canvas.style.width = '0px';
-        canvas.style.height = '0px';
-      }
-      const layer = textLayerRefs.current[p - 1];
-      if (layer) layer.innerHTML = '';
-      hitLayerRefs.current[p - 1]?.replaceChildren();
-      renderedKeyRef.current.delete(p);
-    }
-
-    const highlightFor = (p: number) =>
-      searchQuery && matches.some((m) => m.page === p) ? searchQuery : '';
-
-    const renderPage = async (p: number, key: string) => {
-      const canvas = canvasRefs.current[p - 1];
-      const layerEl = textLayerRefs.current[p - 1];
-      if (!canvas || !layerEl) return;
-      // pdfjs refuses two renders on one canvas ("Cannot use the same
-      // canvas during multiple render operations") — cancel this slot's
-      // in-flight work before starting over.
-      try { renderTasksRef.current.get(p)?.cancel(); } catch { /* settled */ }
-      renderTasksRef.current.delete(p);
-      try {
-        const pdfPage = await pdf.getPage(p);
-        if (cancelled) return;
-        const viewport = pdfPage.getViewport({ scale: renderedScale });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width = `${viewport.width}px`;
-        canvas.style.height = `${viewport.height}px`;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        // PACER-style rendering: leave the document's own colors alone —
-        // true white pages, true black ink, faithful images for scans —
-        // and let the surrounding frame do the dark-mode work. Recoloring
-        // via pdfjs pageColors made scanned exhibits black-on-black.
-        const task = pdfPage.render({ canvasContext: ctx, viewport });
-        renderTasksRef.current.set(p, task);
-        await task.promise;
-        if (cancelled) return;
-        renderTasksRef.current.delete(p);
-
-        layerEl.innerHTML = '';
-        // pdfjs's TextLayer sizes spans off viewer-supplied CSS variables;
-        // without them every span falls back to 16px and selection drifts
-        // inches off the canvas.
-        layerEl.style.setProperty('--scale-factor', String(renderedScale));
-        layerEl.style.setProperty('--total-scale-factor', String(renderedScale));
-        const pdfjsLib = await import('pdfjs-dist');
-        const textLayer = new pdfjsLib.TextLayer({
-          textContentSource: pdfPage.streamTextContent(),
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          viewport: viewport as any,
-          container: layerEl,
-        });
-        renderTasksRef.current.set(p, textLayer);
-        await textLayer.render();
-        if (cancelled) return;
-        guardTextLayerSelection(layerEl);
-        renderTasksRef.current.delete(p);
-        renderedKeyRef.current.set(p, key);
-        revealIfCurrent(paintHits(p));
-      } catch {
-        // Cancellation or a render race; a later pass repaints the slot.
-        renderTasksRef.current.delete(p);
-      }
-    };
-
-    for (let p = from; p <= to; p++) {
-      const key = `${renderedScale.toFixed(4)}|${highlightFor(p)}`;
-      if (renderedKeyRef.current.get(p) === key) continue;
-      renderedKeyRef.current.delete(p);
-      void renderPage(p, key);
-    }
-
-    return () => { cancelled = true; };
-  }, [paintPage, totalPages, renderedScale, loadState, fileKind, id, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
-
-  // On unmount, stop whatever pdfjs still has in flight.
-  useEffect(() => () => {
-    for (const t of renderTasksRef.current.values()) {
-      try { t.cancel(); } catch { /* settled */ }
-    }
-    renderTasksRef.current.clear();
-  }, []);
-
-  const goPrev = useCallback(() => gotoPage(pageStateRef.current - 1), [gotoPage]);
-  const goNext = useCallback(() => gotoPage(pageStateRef.current + 1), [gotoPage]);
 
   // ── Clean copy ──────────────────────────────────────────────────────
   // The whole document onto the clipboard as it should paste into Word:
@@ -1771,9 +1260,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // without one the panel opens scoped to the book, for whatever the
   // reader wants to ask.
   const pageOfNode = useCallback((node: Node | null | undefined): number | undefined => {
-    if (!node) return undefined;
-    const i = textLayerRefs.current.findIndex((el) => !!el && el.contains(node));
-    return i >= 0 ? i + 1 : undefined;
+    return bookRef.current?.pageOfNode(node);
   }, []);
   const askAbout = useCallback((quote?: string, atPage?: number) => {
     if (!doc) return;
@@ -1826,295 +1313,219 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }
   }, [doc, fileKind, downloading]);
 
-  // Fetch the PDF's outline (table of contents) once it loads. Many PDFs
-  // don't have one — that's fine, we just hide the Contents tab.
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdf = pdfDocRef.current as any;
-    if (!pdf) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const o = await pdf.getOutline();
-        if (!cancelled) setOutline(o || null);
-      } catch {
-        if (!cancelled) setOutline(null);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [loadState, fileKind, id]);
+  // ── The book's three doors (src/components/reader/PdfBook.tsx) ─────
+  // The matter's data, handed to the book through the three interfaces it
+  // takes: the file and what is laid on it, the reader's marks, the bench.
+  // The book knows nothing of matters; everything here is what makes it a
+  // Contextspaces document.
 
-  // Render the thumbnail strip sequentially. Each page rendered to an
-  // offscreen canvas at low scale, captured as a data URL, and added to
-  // the thumbnails state so the sidebar can show it.
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdf = pdfDocRef.current as any;
-    if (!pdf) return;
-    const N: number = pdf.numPages;
-    setThumbnails(new Array(N).fill(null));
-
-    let cancelled = false;
-    void (async () => {
-      for (let p = 1; p <= N; p++) {
-        if (cancelled) return;
-        try {
-          const pdfPage = await pdf.getPage(p);
-          const viewport = pdfPage.getViewport({ scale: 0.18 });
-          const off = document.createElement('canvas');
-          off.width = viewport.width;
-          off.height = viewport.height;
-          const ctx = off.getContext('2d');
-          if (!ctx) continue;
-          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-          if (cancelled) return;
-          const dataUrl = off.toDataURL('image/png');
-          setThumbnails((prev) => {
-            const next = prev.slice();
-            next[p - 1] = dataUrl;
-            return next;
-          });
-        } catch {
-          // Skip this thumbnail; sidebar will show "Rendering…" until eventually rerendered.
+  // The file. Keyed by the document and the reload counter, so a rename or
+  // a new cover never reopens the PDF.
+  const docId = doc?.id ?? null;
+  const storagePath = doc?.storage_path ?? null;
+  const fileSize = doc?.file_size_bytes ?? null;
+  const pdfSource = useMemo<PdfSource | null>(() => {
+    if (fileKind !== 'pdf' || !id || !docId || docId !== id || !storagePath) return null;
+    const documentId = docId;
+    return {
+      key: `${documentId}:${reloadKey}`,
+      // A PDF is opened by ranges, page by page, so a scanned book paints
+      // its first page in a second instead of after the whole file has
+      // arrived (src/lib/pdf-source.ts).
+      openPdf: (onProgress) => openStoredPdf(storagePath, { sizeBytes: fileSize, onProgress }),
+      // The clips attached to this document (migration 062).
+      listIllustrations: () => listAnimations(documentId),
+      removeIllustration: async (animationId) => {
+        const err = await deleteAnimation(animationId);
+        if (err) throw new Error(err);
+      },
+      // The indexed text first. It is what search reads everywhere else in
+      // the app, it is one query, and for most OCR'd books it is the only
+      // place the words exist: the scan's PDF carries no text layer at all
+      // (Brandeis's Other People's Money found nothing for "money"). Hits
+      // name the page; the boxes over the words come from the text layer
+      // when the page has one.
+      findInIndex: async (q) => {
+        const found: Match[] = [];
+        // A phrase matches across any whitespace: a transcript's text is broken
+        // by line ("individual\nstudents"), and the brief quotes it in one line.
+        const re = phraseRegex(q);
+        const countIn = (text: string, page: number) => {
+          re.lastIndex = 0;
+          for (let m = re.exec(text); m; m = re.exec(text)) {
+            found.push({ page, index: m.index });
+            if (!m[0].length) re.lastIndex += 1;
+          }
+        };
+        const { data } = await supabase
+          .from('passages')
+          .select('page_start, text, metadata')
+          .eq('document_id', documentId)
+          .eq('summary_level', 0)
+          .ilike('text', likePattern(q))
+          .order('page_start', { ascending: true })
+          .limit(2000);
+        type Row = { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null };
+        for (const row of (data ?? []) as Row[]) {
+          if (!row.text) continue;
+          // A transcript's passages are filed under the printed page; the
+          // page to go to is the physical one, metadata.pdf_page (four
+          // printed pages sit on one sheet of a condensed transcript).
+          const physical = Number(row.metadata?.pdf_page);
+          const page = Number.isFinite(physical) && physical > 0 ? physical : row.page_start;
+          if (!page) continue;
+          countIn(row.text, page);
         }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [loadState, fileKind, id]);
-
-  // The clips attached to this document. A failure is an empty list (the
-  // table may not exist yet), so the book always opens.
-  useEffect(() => {
-    if (!id) return;
-    let cancelled = false;
-    void listAnimations(id).then((rows) => { if (!cancelled) setAnimations(rows); });
-    return () => { cancelled = true; };
-  }, [id]);
-
-  // Esc gives up on drawing the rectangle.
-  useEffect(() => {
-    if (!attaching) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setAttaching(false);
+        return found;
+      },
     };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [attaching]);
+  }, [fileKind, id, docId, storagePath, fileSize, reloadKey]);
 
-  // The chosen area of the page, cropped and turned — the attach dialog's
-  // preview, drawn by the same renderer the page grid uses for its images.
-  const makeAnimationPreview = useCallback(async (p: number, rect: FractionalRect, turn: Turn) => {
-    const pdf = pdfDocRef.current as PDFDocumentProxy | null;
-    if (!pdf) return null;
-    try {
-      const canvas = await renderPageCanvas(pdf, p, { width: 1000, maxEdge: 2000 });
-      const blob = await canvasToBlob(rotateCanvas(cropCanvas(canvas, rect), turn), 'image/jpeg', 0.85);
-      return URL.createObjectURL(blob);
-    } catch (e) {
-      console.warn('[animation preview] failed:', e instanceof Error ? e.message : e);
-      return null;
-    }
-  }, []);
-
-  const removeAnimation = useCallback(async (animationId: string) => {
-    const err = await deleteAnimation(animationId);
-    if (err) { setErrorMsg(err); return; }
-    setAnimations((prev) => prev.filter((a) => a.id !== animationId));
-  }, []);
-
-  // The Workshop bench for this document. A failure is an empty bench.
-  useEffect(() => {
+  // Cross-references: notes in OTHER documents whose links point here. The
+  // book's rails draw them; they are read with the marks and refreshed with
+  // them (the marks store's subscription below).
+  const refreshIncoming = useCallback(async () => {
     if (!id) return;
-    let cancelled = false;
-    void listWorkshopItems(id).then((rows) => { if (!cancelled) setWorkshopItems(rows); });
-    return () => { cancelled = true; };
+    const incoming = await listIncomingLinks(id);
+    setIncomingLinks(incoming);
   }, [id]);
   useEffect(() => {
-    if (!workshopNotice) return;
-    const t = window.setTimeout(() => setWorkshopNotice(null), 6000);
-    return () => window.clearTimeout(t);
-  }, [workshopNotice]);
-  // Esc gives up on the snip rectangle too.
-  useEffect(() => {
-    if (!snipping) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setSnipping(false);
-      setResnip(null);
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [snipping]);
+    if (fileKind !== 'pdf' || loadState !== 'ready') return;
+    void refreshIncoming();
+  }, [fileKind, loadState, refreshIncoming]);
 
-  const workshopFail = useCallback((e: unknown, fallback: string) => {
-    setWorkshopNotice(e instanceof Error ? e.message : fallback);
+  // The reader's highlights: document_annotations (020/048), kept live —
+  // margin notes are collaborative, so a teammate's note should appear
+  // without a reload (the matter_comments realtime pattern; RLS filters
+  // what each subscriber may see).
+  const marksStore = useMemo<MarksStore | null>(() => {
+    if (!id) return null;
+    const documentId = id;
+    return {
+      list: () => listAnnotations(documentId),
+      create: ({ page, color, rects, anchorText }) =>
+        createAnnotation({ documentId, page, color, rects, anchorText, textAnchor: null }),
+      update: (annId, patch) => updateAnnotation(annId, patch),
+      remove: (annId) => deleteAnnotation(annId),
+      subscribe: (onChange) => {
+        const channel = supabase
+          .channel(`doc-annotations-${documentId}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'document_annotations', filter: `document_id=eq.${documentId}` },
+            () => { onChange(); void refreshIncoming(); },
+          )
+          .subscribe();
+        return () => { void supabase.removeChannel(channel); };
+      },
+    };
+  }, [id, refreshIncoming]);
+
+  // The Workshop bench (migration 106): snips and snippets on the bench, a
+  // clip or a still brought back filed in the matter (store-only, never
+  // transcribed), the decision laid on the page as a living illustration
+  // (062). A document outside any matter has no bench.
+  const matterId = doc?.matterspace_id ?? null;
+  const canWrite = !!user;
+  const benchStore = useMemo<BenchStore | null>(() => {
+    if (!docId || !matterId) return null;
+    const documentId = docId;
+    return {
+      canWrite,
+      list: () => listWorkshopItems(documentId),
+      createSnip: ({ page, rect }) => createSnip({ documentId, page, rect }),
+      createSnippet: ({ page, text, rect }) => createSnippet({ documentId, page, text, rect }),
+      update: (itemId, patch) => updateWorkshopItem(itemId, patch),
+      remove: async (itemId) => {
+        const err = await deleteWorkshopItem(itemId);
+        if (err) throw new Error(err);
+      },
+      bringIn: async (parent, file, page) => {
+        const matter = await resolveVaultMatter(matterId);
+        if (!matter) throw new Error("This document's matter could not be read.");
+        const { documentId: mediaDocumentId } = await persistVaultFile(matter, file, { storeOnly: true, ingestDeclaration: null });
+        const item = await addMedia({
+          documentId, page, parentId: parent?.id ?? null,
+          mediaDocumentId, label: file.name.replace(/\.[^.]+$/, ''),
+        });
+        return { item, notice: `"${file.name}" is on the bench and filed in the matter (not transcribed).` };
+      },
+      lay: async (media, source) => {
+        if (!source.rect || !media.media_document_id) throw new Error('It could not be laid on the page.');
+        const { animation, error } = await createAnimation({
+          documentId, mediaDocumentId: media.media_document_id,
+          page: source.page, rect: source.rect, turn: source.turn, loops: true,
+          label: media.label ?? source.label ?? null,
+        });
+        if (error || !animation) throw new Error(error ?? 'It could not be laid on the page.');
+        return animation;
+      },
+    };
+  }, [docId, matterId, canWrite]);
+
+  // "Add a clip" from the sidebar: the rectangle is the book's; which clip
+  // plays there is the matter's (AnimationAttach offers the matter's clips).
+  const renderAttach = useCallback((a: AttachArgs) => (docId ? (
+    <AnimationAttach
+      documentId={docId}
+      matterId={matterId}
+      page={a.page}
+      rect={a.rect}
+      makePreview={a.makePreview}
+      onSaved={a.onSaved}
+      onClose={a.onClose}
+    />
+  ) : null), [docId, matterId]);
+
+  // What the book shows, mirrored here for the companion and the toolbar;
+  // the open file, for the whole-document copy and the page texts.
+  const onBookView = useCallback((v: PdfBookView) => {
+    setLoadState(v.state);
+    setPage(v.page);
+    setTotalPages(v.totalPages);
+    setVisiblePages(v.visiblePages);
+  }, []);
+  const onBookOpened = useCallback((pdf: PDFDocumentProxy) => { pdfDocRef.current = pdf; }, []);
+  // The file refused: a sealed matter's file asked for on a session that has
+  // not confirmed a second factor (S4a: /api/document-url refuses it), or a
+  // plain failure.
+  const onBookError = useCallback((err: unknown) => {
+    if (isStepUpRequired(err)) {
+      setStepUp({ mode: err.mode, matterId: err.matterId ?? matterId, retry: 'load' });
+    } else {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to open the document.');
+    }
+  }, [matterId]);
+  const bookMeta = useMemo(
+    () => ({ title: doc?.title ?? null, pageCount: doc?.page_count ?? null }),
+    [doc?.title, doc?.page_count],
+  );
+  // ?page= belongs to the route's own Reader. An embedded one (a canvas
+  // card, the desk's pane) shares the URL with its host and is steered by
+  // the `goto` prop instead.
+  const linked = embedded ? NaN : parseInt(searchParams.get('page') ?? '', 10);
+  const pageLink = useMemo<PageLink | null>(
+    () => (embedded ? null : { page: linked, key: searchParams.toString() }),
+    [embedded, linked, searchParams],
+  );
+  // The selection menu's Note, on the book: the composer opens over the words.
+  const openNoteComposer = useCallback((sel: BookSelection) => {
+    setNoteComposer({ x: sel.x, y: sel.y, page: sel.page, rects: sel.rects, anchorText: sel.anchorText });
   }, []);
 
-  // A rectangle drawn in snip mode: a new snip, the redrawn rectangle of an
-  // existing one (crop), or where a passage's clip should play (a snippet
-  // being placed on the page).
-  const landSnip = useCallback(async (p: number, rect: FractionalRect) => {
-    if (!doc) return;
-    try {
-      if (resnip) {
-        const updated = await updateWorkshopItem(resnip.id, { page: p, rect });
-        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
-      } else {
-        const made = await createSnip({ documentId: doc.id, page: p, rect });
-        setWorkshopItems((prev) => [...prev, made]);
-      }
-    } catch (e) {
-      workshopFail(e, 'The snip was not kept.');
-    } finally {
-      setResnip(null);
-    }
-  }, [doc, resnip, workshopFail]);
-
-  // The snip as a PNG at the chosen size, for Flow or Midjourney.
-  const downloadSnip = useCallback(async (item: WorkshopItem, scale: 1 | 2 | 3) => {
-    const pdf = pdfDocRef.current as PDFDocumentProxy | null;
-    if (!pdf || !item.rect) return;
-    try {
-      const canvas = await renderPageCanvas(pdf, item.page, { width: 1200 * scale, maxEdge: 1600 * scale });
-      const blob = await canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect), item.turn), 'image/png');
-      const base = (doc?.title || 'plate').replace(/[^\w\- ]+/g, '').trim().slice(0, 60) || 'plate';
-      downloadBlob(blob, `${base} p${item.page} snip.png`);
-    } catch (e) {
-      workshopFail(e, 'The snip could not be drawn.');
-    }
-  }, [doc?.title, workshopFail]);
-
-  // The snip onto the clipboard as a PNG (2×), so it can be pasted straight
-  // into a generator's prompt box — none of them take a file from another
-  // site, all of them take a paste. Safari wants the blob as a promise made
-  // inside the gesture; Chrome takes either.
-  const copySnip = useCallback(async (item: WorkshopItem) => {
-    const pdf = pdfDocRef.current as PDFDocumentProxy | null;
-    if (!pdf || !item.rect) return;
-    if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
-      setWorkshopNotice('This browser cannot copy pictures; use Download instead.');
-      return;
-    }
-    try {
-      const png = (async () => {
-        const canvas = await renderPageCanvas(pdf, item.page, { width: 2400, maxEdge: 3200 });
-        return canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect!), item.turn), 'image/png');
-      })();
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-      setWorkshopNotice('Copied. Paste it into Flow, Midjourney, Runway, Grok or ChatGPT (Ctrl/⌘-V).');
-    } catch (e) {
-      workshopFail(e, 'The snip could not be copied; use Download instead.');
-    }
-  }, [workshopFail]);
-
-  // A clip or a still brought back: filed in the matter, stored without a
-  // transcript, and set on the bench under its source.
-  const bringIn = useCallback(async (parent: WorkshopItem | null, file: File) => {
-    if (!doc?.matterspace_id) return;
-    try {
-      const matter = await resolveVaultMatter(doc.matterspace_id);
-      if (!matter) throw new Error("This document's matter could not be read.");
-      const { documentId } = await persistVaultFile(matter, file, { storeOnly: true, ingestDeclaration: null });
-      const made = await addMedia({
-        documentId: doc.id, page: parent?.page ?? page, parentId: parent?.id ?? null,
-        mediaDocumentId: documentId, label: file.name.replace(/\.[^.]+$/, ''),
-      });
-      setWorkshopItems((prev) => [...prev, made]);
-      setWorkshopNotice(`"${file.name}" is on the bench and filed in the matter (not transcribed).`);
-    } catch (e) {
-      workshopFail(e, 'The file could not be brought in.');
-    }
-  }, [doc, page, workshopFail]);
-
-  // The decision: the media item laid on the page where its plate sits
-  // (062), upright per the snip's turn.
-  const layOnPage = useCallback(async (media: WorkshopItem, source: WorkshopItem) => {
-    if (!doc || !source.rect || !media.media_document_id) return;
-    try {
-      const { animation, error } = await createAnimation({
-        documentId: doc.id, mediaDocumentId: media.media_document_id,
-        page: source.page, rect: source.rect, turn: source.turn, loops: true,
-        label: media.label ?? source.label ?? null,
-      });
-      if (error || !animation) throw new Error(error ?? 'It could not be laid on the page.');
-      setAnimations((prev) => [...prev, animation]);
-      setWorkshopNotice(`Laid on page ${source.page}. A reader taps the plate and it plays.`);
-    } catch (e) {
-      workshopFail(e, 'It could not be laid on the page.');
-    }
-  }, [doc, workshopFail]);
-
-  const workshop = doc?.matterspace_id ? {
-    page,
-    items: workshopItems,
-    snipping,
-    selection: selectionMenu?.anchorText?.trim()
-      ? { text: selectionMenu.anchorText.trim(), page: selectionMenu.page, rect: unionRect(selectionMenu.rects) }
-      : null,
-    canWrite: !!user,
-    notice: workshopNotice,
-    onSnip: () => { setResnip(null); setAttaching(false); setSnipping(true); },
-    onCancelSnip: () => { setSnipping(false); setResnip(null); },
-    onSnippet: async (text: string, at: { page: number; rect: FractionalRect | null } | null) => {
-      if (!doc) return;
-      try {
-        const made = await createSnippet({ documentId: doc.id, page: at?.page ?? page, text, rect: at?.rect ?? null });
-        setWorkshopItems((prev) => [...prev, made]);
-      } catch (e) { workshopFail(e, 'The snippet was not kept.'); }
-    },
-    makePreview: makeAnimationPreview,
-    onDownload: downloadSnip,
-    onCopy: copySnip,
-    onTurn: async (item: WorkshopItem) => {
-      try {
-        const updated = await updateWorkshopItem(item.id, { turn: nextTurn(item.turn) });
-        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
-      } catch (e) { workshopFail(e, 'The turn was not kept.'); }
-    },
-    onRetext: async (item: WorkshopItem, text: string) => {
-      try {
-        const updated = await updateWorkshopItem(item.id, { text });
-        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
-      } catch (e) { workshopFail(e, 'The passage was not kept.'); }
-    },
-    onResnip: (item: WorkshopItem) => { setResnip(item); setAttaching(false); setSnipping(true); gotoPage(item.page); },
-    onAdopt: async (media: WorkshopItem, source: WorkshopItem) => {
-      try {
-        const updated = await updateWorkshopItem(media.id, { parent_id: source.id, page: source.page });
-        setWorkshopItems((prev) => prev.map((it) => (it.id === updated.id ? updated : it)));
-      } catch (e) { workshopFail(e, 'The clip was not moved.'); }
-    },
-    onDelete: async (item: WorkshopItem) => {
-      const err = await deleteWorkshopItem(item.id);
-      if (err) { setWorkshopNotice(err); return; }
-      setWorkshopItems((prev) => prev.filter((it) => it.id !== item.id && it.parent_id !== item.id));
-    },
-    onBringIn: bringIn,
-    onLayOnPage: layOnPage,
-    onJumpPage: (p: number) => gotoPage(p),
-  } : null;
-
-  // Load annotations + incoming cross-references once per document, and
-  // keep them live: margin notes are collaborative, so a teammate's note
-  // should appear without a reload (the matter_comments realtime pattern;
-  // RLS filters what each subscriber may see).
+  // A rendered document's marks (a PDF's are the book's, through the marks
+  // store above), loaded once per document and kept live the same way:
+  // margin notes are collaborative, so a teammate's note should appear
+  // without a reload (the matter_comments realtime pattern; RLS filters
+  // what each subscriber may see).
   // Documents without pages load the same rows; theirs carry text_anchor.
   useEffect(() => {
-    if (!id || loadState !== 'ready') return;
+    if (!id || loadState !== 'ready' || fileKind === 'pdf') return;
     let cancelled = false;
     const refresh = async () => {
-      const [rows, incoming] = await Promise.all([
-        listAnnotations(id),
-        listIncomingLinks(id),
-      ]);
+      const rows = await listAnnotations(id);
       if (!cancelled) {
         setAnnotations(rows);
-        setIncomingLinks(incoming);
         setTextMarksOn(textAnchorsAvailable());
       }
     };
@@ -2132,208 +1543,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       void supabase.removeChannel(channel);
     };
   }, [id, loadState, fileKind]);
-
-  // Watch text-layer selections — when the user releases the mouse after
-  // selecting text inside the current page, capture the rectangles in
-  // page-fractional coordinates so we can persist a highlight that scales
-  // cleanly to any zoom level.
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') return;
-
-    function captureSelection() {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) {
-        setSelectionMenu(null);
-        return;
-      }
-
-      // Only act on selections that actually touch a page's text layer,
-      // and remember WHICH page — annotations anchor to a page number.
-      //
-      // Testing sel.anchorNode alone was wrong, and silently broke both
-      // highlighting and margin notes: a drag that begins a few pixels off a
-      // glyph — i.e. almost every real drag — anchors in whichever sibling
-      // element sits under the cursor at mousedown, usually the annotations
-      // overlay (`absolute inset-0`, same box as the text layer), and only
-      // *ends* inside the text layer. Range.intersectsNode covers every
-      // direction the user can drag, including selections that start above
-      // the page and end below it.
-      if (sel.rangeCount === 0) {
-        setSelectionMenu(null);
-        return;
-      }
-      const range = sel.getRangeAt(0);
-      let layer: HTMLDivElement | null = null;
-      let layerPage = 0;
-      for (let i = 0; i < textLayerRefs.current.length; i++) {
-        const el = textLayerRefs.current[i];
-        if (!el || el.childNodes.length === 0) continue;
-        if (
-          el.contains(sel.anchorNode) ||
-          el.contains(sel.focusNode) ||
-          range.intersectsNode(el)
-        ) {
-          layer = el;
-          layerPage = i + 1;
-          break;
-        }
-      }
-      if (!layer) {
-        setSelectionMenu(null);
-        return;
-      }
-
-      const layerRect = layer.getBoundingClientRect();
-      // A drag that crosses into the next page still anchors to the first
-      // page it touched; keep only the rectangles on that page.
-      const clientRects = Array.from(range.getClientRects()).filter(
-        (r) =>
-          r.width > 0 && r.height > 0 &&
-          r.bottom > layerRect.top - 1 && r.top < layerRect.bottom + 1,
-      );
-      if (clientRects.length === 0) {
-        setSelectionMenu(null);
-        return;
-      }
-
-      const fractRects: FractionalRect[] = clientRects.map((r) => ({
-        x: (r.left - layerRect.left) / layerRect.width,
-        y: (r.top - layerRect.top) / layerRect.height,
-        w: r.width / layerRect.width,
-        h: r.height / layerRect.height,
-      }));
-
-      const union = range.getBoundingClientRect();
-      setSelectionMenu({
-        x: union.left + union.width / 2,
-        y: union.top - 8,
-        page: layerPage,
-        rects: fractRects,
-        anchorText: sel.toString().trim().slice(0, 1000),
-      });
-    }
-
-    // Double-click that lands in a gap: snap to the nearest word.
-    //
-    // On scanned exhibits the OCR text layer is sparse and its spans often
-    // overlap, so a double-click aimed at a word frequently falls between
-    // spans. The browser then "selects" an empty line break — a live
-    // selection with no visible rectangles — and captureSelection correctly
-    // declines it, which reads to the user as a dead double-click on a word
-    // they can plainly see. Rather than loosen the rect test (an empty
-    // selection must never open the popover), find the nearest span and
-    // select the word within it closest to the click.
-    //
-    // Deliberately double-click only: snapping a single click would select a
-    // word every time the user clicked anywhere on the page, and clicking
-    // empty space has to stay a way to dismiss.
-    function handleDoubleClick(e: MouseEvent) {
-      let layer: HTMLDivElement | null = null;
-      for (const el of textLayerRefs.current) {
-        if (!el || el.childNodes.length === 0) continue;
-        const box = el.getBoundingClientRect();
-        if (
-          e.clientX >= box.left && e.clientX <= box.right &&
-          e.clientY >= box.top && e.clientY <= box.bottom
-        ) {
-          layer = el;
-          break;
-        }
-      }
-      if (!layer) return;
-
-      // If the double-click already produced something selectable, the
-      // mouseup handler has it — don't second-guess the browser.
-      const sel = window.getSelection();
-      const alreadyUsable =
-        sel != null &&
-        sel.rangeCount > 0 &&
-        Array.from(sel.getRangeAt(0).getClientRects()).some(
-          (r) => r.width > 0 && r.height > 0,
-        );
-      if (alreadyUsable) return;
-
-      if (selectWordNearPoint(layer, e.clientX, e.clientY)) captureSelection();
-    }
-
-    document.addEventListener('mouseup', captureSelection);
-    document.addEventListener('dblclick', handleDoubleClick);
-    return () => {
-      document.removeEventListener('mouseup', captureSelection);
-      document.removeEventListener('dblclick', handleDoubleClick);
-    };
-  }, [loadState, fileKind]);
-
-  // A click on one of the reader's own highlights opens a small menu on it:
-  // recolour, or take it back. This is how an old highlight is removed —
-  // the × drawn on the box never showed on hover, because the text layer
-  // (which must stay on top for selection) sits over the box and takes the
-  // hover itself. A click is a press and release within a few pixels; a
-  // drag is a selection and belongs to the effect above. Where highlights
-  // overlap, the newest is the one meant.
-  const [markMenu, setMarkMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const annotationsRef = useRef<Annotation[]>([]);
-  annotationsRef.current = annotations;
-  useEffect(() => {
-    if (loadState !== 'ready' || fileKind !== 'pdf') return;
-    const uid = user?.id ?? null;
-    let downAt: { x: number; y: number } | null = null;
-    function onDown(e: MouseEvent) {
-      downAt = { x: e.clientX, y: e.clientY };
-    }
-    function onUp(e: MouseEvent) {
-      const target = e.target as HTMLElement | null;
-      if (target?.closest?.('[data-mark-menu]')) return;
-      const start = downAt;
-      downAt = null;
-      if (!start || Math.abs(e.clientX - start.x) > 4 || Math.abs(e.clientY - start.y) > 4) {
-        setMarkMenu(null);
-        return;
-      }
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed) { setMarkMenu(null); return; }
-      let hit: { id: string; top: number } | null = null;
-      for (let i = 0; i < textLayerRefs.current.length; i++) {
-        const el = textLayerRefs.current[i];
-        if (!el) continue;
-        const box = el.getBoundingClientRect();
-        if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) continue;
-        const fx = (e.clientX - box.left) / box.width;
-        const fy = (e.clientY - box.top) / box.height;
-        const onPage = annotationsRef.current.filter(
-          (a) => a.page === i + 1 && !annotationIsNote(a) && (uid == null || a.user_id === uid),
-        );
-        for (let k = onPage.length - 1; k >= 0 && !hit; k--) {
-          const a = onPage[k];
-          const r = a.rects.find((q) => fx >= q.x && fx <= q.x + q.w && fy >= q.y && fy <= q.y + q.h);
-          if (r) hit = { id: a.id, top: box.top + Math.min(...a.rects.map((q) => q.y)) * box.height };
-        }
-        break;
-      }
-      setMarkMenu(hit ? { id: hit.id, x: e.clientX, y: hit.top } : null);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') setMarkMenu(null);
-    }
-    const scroller = contentRef.current;
-    const onScroll = () => setMarkMenu(null);
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('mouseup', onUp);
-    document.addEventListener('keydown', onKey);
-    scroller?.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('mouseup', onUp);
-      document.removeEventListener('keydown', onKey);
-      scroller?.removeEventListener('scroll', onScroll);
-    };
-  }, [loadState, fileKind, user?.id]);
-
-  const recolorAnnotation = useCallback(async (annId: string, color: AnnotationColor) => {
-    const ok = await updateAnnotation(annId, { color });
-    if (ok) setAnnotations((prev) => prev.map((a) => (a.id === annId ? { ...a, color } : a)));
-    setMarkMenu(null);
-  }, []);
 
   // The same selection menu for a rendered document (Word, text, markdown,
   // slides, screenplay). There is no page and no text layer: the selection
@@ -2428,6 +1637,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   );
 
   const removeAnnotation = useCallback(async (annId: string) => {
+    // A PDF's marks are the book's: it removes, and reports the list back.
+    if (fileKind === 'pdf') { await bookRef.current?.removeMark(annId); return; }
     const ok = await deleteAnnotation(annId);
     if (ok) {
       setAnnotations((prev) => prev.filter((a) => a.id !== annId));
@@ -2435,7 +1646,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       setUndoDepth(createdRef.current.length);
       setUndoable((u) => (u?.id === annId ? null : u));
     }
-  }, []);
+  }, [fileKind]);
 
   // Undo: the last highlight made in this sitting. The toast offers it for
   // eight seconds after each highlight — too short to be found by someone
@@ -2504,15 +1715,30 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   const removeAnnotationCb = useCallback((annId: string) => {
     void removeAnnotation(annId);
   }, [removeAnnotation]);
-  const setCanvasEl = useCallback((p: number, el: HTMLCanvasElement | null) => {
-    canvasRefs.current[p - 1] = el;
-  }, []);
-  const setHitLayerEl = useCallback((p: number, el: HTMLDivElement | null) => {
-    hitLayerRefs.current[p - 1] = el;
-  }, []);
-  const setTextLayerEl = useCallback((p: number, el: HTMLDivElement | null) => {
-    textLayerRefs.current[p - 1] = el;
-  }, []);
+  // What flanks each page of the book: cross-references on the left, the
+  // margin notes on the right — the matter's parts, drawn by the book's
+  // page slots. Memoized with the slots' other props so a scroll does not
+  // rebuild them.
+  const pageSides = useMemo<PageSides>(() => ({
+    width: isMobile ? NOTE_RAIL_W_MOBILE : NOTE_RAIL_W,
+    render: (p, marks) => ({
+      before: (
+        <CrossRefRail
+          refs={incomingLinks.filter((r) => r.target_page === p)}
+          isMobile={isMobile}
+          onOpen={openRefAt}
+        />
+      ),
+      after: (
+        <NotesRail
+          notes={marks.filter((a) => a.page === p && annotationIsNote(a))}
+          currentUserId={user?.id ?? null}
+          isMobile={isMobile}
+          onOpen={openNoteAt}
+        />
+      ),
+    }),
+  }), [isMobile, incomingLinks, openRefAt, openNoteAt, user?.id]);
 
   // Save a margin note: derive page:line deterministically from the ingested
   // passages (transcripts get real line numbers; everything else stays
@@ -2549,44 +1775,32 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           });
           if (link) savedLinks.push(link);
         }
-        setAnnotations((prev) => [...prev, { ...ann, links: savedLinks }]);
+        if (fileKind === 'pdf') await bookRef.current?.reloadMarks();
+        else setAnnotations((prev) => [...prev, { ...ann, links: savedLinks }]);
       }
       setNoteComposer(null);
     },
-    [id, noteComposer],
+    [id, noteComposer, fileKind],
   );
 
   const editNote = useCallback(
     async (annId: string, body: string, visibility: AnnotationVisibility) => {
       const ok = await updateAnnotation(annId, { note: body, visibility });
       if (ok) {
+        if (fileKind === 'pdf') { await bookRef.current?.reloadMarks(); return; }
         setAnnotations((prev) =>
           prev.map((a) => (a.id === annId ? { ...a, note: body, visibility } : a)),
         );
       }
     },
-    [],
+    [fileKind],
   );
 
-  const jumpDest = useCallback(async (dest: unknown) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdf = pdfDocRef.current as any;
-    if (!pdf || !dest) return;
-    let destArr: unknown[] | null = null;
-    if (typeof dest === 'string') {
-      try { destArr = await pdf.getDestination(dest); } catch { return; }
-    } else if (Array.isArray(dest)) {
-      destArr = dest as unknown[];
-    }
-    if (!destArr) return;
-    try {
-      const pageIdx = await pdf.getPageIndex(destArr[0]);
-      gotoPage(pageIdx + 1);
-    } catch { /* dest resolution can fail on malformed PDFs */ }
-  }, [gotoPage]);
-
-  // Arrow-key navigation.
+  // The keys of a rendered document (a PDF's, the arrows among them, are the
+  // book's): F for full screen, Ctrl-Z for the last highlight. The arrows
+  // stay the reader's — one page, nothing to turn to — as they always were.
   useEffect(() => {
+    if (fileKind === 'pdf') return;
     function onKey(e: KeyboardEvent) {
       const tgt = e.target as HTMLElement | null;
       if (
@@ -2594,8 +1808,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         tgt instanceof HTMLTextAreaElement ||
         tgt?.isContentEditable
       ) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
-      else if (e.key === 'ArrowRight') { e.preventDefault(); goNext(); }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); }
       else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); }
       else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
         if (createdRef.current.length) { e.preventDefault(); undoLastHighlight(); }
@@ -2603,12 +1816,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goPrev, goNext, toggleFullscreen, undoLastHighlight]);
+  }, [fileKind, toggleFullscreen, undoLastHighlight]);
 
   // ────────────────────────────────────────────────────────────────────
-  // Search. For a PDF: on submit, scan every page's text content for the
-  // query (caching results per page), collect matches, navigate to the
-  // first hit, and highlight matching tokens in the text layer.
+  // Search, for a rendered document (a PDF's is the book's).
   // ────────────────────────────────────────────────────────────────────
   // Light the matches of a rendered (non-PDF) document and bring the
   // current one to the middle of the pane. Without the Highlight API the
@@ -2715,13 +1926,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   }, []);
   const [marksOpen, setMarksOpen] = useState(!isMobile);
 
-  // The query the current `matches` answer, and a counter so a slow PDF
-  // search that a newer keystroke has overtaken drops its answer.
+  // The query the current `matches` answer.
   const searchedQueryRef = useRef('');
-  const searchSeqRef = useRef(0);
-  const runSearch = useCallback(async (query: string) => {
+  const runSearch = useCallback((query: string) => {
     const q = query.trim();
-    const seq = ++searchSeqRef.current;
     searchedQueryRef.current = q;
     if (!q) {
       setSearching(false);
@@ -2731,124 +1939,43 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       clearTextMatches();
       return;
     }
-    if (fileKind !== 'pdf') {
-      // The rendered document is the text. Every non-PDF page carries
-      // .print-root, whatever wrapper sits inside it.
-      const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
-      const ranges = root ? findInRendered(root, q) : [];
-      textRangesRef.current = ranges;
-      setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
-      setMatchIdx(0);
-      setSearched(true);
-      showTextMatch(ranges, 0);
-      return;
-    }
-    const pdf = pdfDocRef.current as
-      | { numPages: number; getPage(n: number): Promise<unknown> }
-      | null;
-    if (!pdf) return;
-
-    setSearching(true);
-    // A phrase matches across any whitespace: a transcript's text is broken
-    // by line ("individual\nstudents"), and the brief quotes it in one line.
-    const re = phraseRegex(q);
-    const found: Match[] = [];
-    const countIn = (text: string, page: number) => {
-      re.lastIndex = 0;
-      for (let m = re.exec(text); m; m = re.exec(text)) {
-        found.push({ page, index: m.index });
-        if (!m[0].length) re.lastIndex += 1;
-      }
-    };
-
-    try {
-      // The indexed text first. It is what search reads everywhere else in
-      // the app, it is one query, and for most OCR'd books it is the only
-      // place the words exist: the scan's PDF carries no text layer at all
-      // (Brandeis's Other People's Money found nothing for "money"). Hits
-      // name the page; the boxes over the words come from the text layer
-      // when the page has one.
-      if (id) {
-        const { data } = await supabase
-          .from('passages')
-          .select('page_start, text, metadata')
-          .eq('document_id', id)
-          .eq('summary_level', 0)
-          .ilike('text', likePattern(q))
-          .order('page_start', { ascending: true })
-          .limit(2000);
-        type Row = { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null };
-        for (const row of (data ?? []) as Row[]) {
-          if (!row.text) continue;
-          // A transcript's passages are filed under the printed page; the
-          // page to go to is the physical one, metadata.pdf_page (four
-          // printed pages sit on one sheet of a condensed transcript).
-          const physical = Number(row.metadata?.pdf_page);
-          const page = Number.isFinite(physical) && physical > 0 ? physical : row.page_start;
-          if (!page) continue;
-          countIn(row.text, page);
-        }
-      }
-
-      // Nothing indexed — an edited copy, say — so read the PDF's own text
-      // layer, page by page.
-      if (!found.length) {
-        for (let p = 1; p <= pdf.numPages; p++) {
-          let pageText = pageTextCacheRef.current[p - 1];
-          if (!pageText) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const pdfPage = (await pdf.getPage(p)) as any;
-            const content = await pdfPage.getTextContent();
-            pageText = (content.items as Array<{ str?: string }>)
-              .map((i) => i.str || '')
-              .join(' ');
-            pageTextCacheRef.current[p - 1] = pageText;
-          }
-          countIn(pageText, p);
-        }
-      }
-    } catch (e) {
-      console.warn('[reader] find failed', e);
-    }
-    if (seq !== searchSeqRef.current) return; // overtaken by a newer query
-    found.sort((a, b) => a.page - b.page || a.index - b.index);
-
-    setMatches(found);
+    // The rendered document is the text. Every non-PDF page carries
+    // .print-root, whatever wrapper sits inside it.
+    const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
+    const ranges = root ? findInRendered(root, q) : [];
+    textRangesRef.current = ranges;
+    setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
     setMatchIdx(0);
-    setSearching(false);
     setSearched(true);
-    if (found.length > 0) gotoPage(found[0].page);
-  }, [fileKind, gotoPage, id, clearTextMatches, showTextMatch]);
+    showTextMatch(ranges, 0);
+  }, [clearTextMatches, showTextMatch]);
 
   // A query typed but not yet searched is searched first: the arrows (and
   // Enter) never sit dead beside words in the box (Eden, 10-01: typed a word,
   // clicked the arrow, nothing happened).
   const unsearched = () => searchQuery.trim() !== searchedQueryRef.current;
   const goNextMatch = useCallback(() => {
-    if (searchQuery.trim() !== searchedQueryRef.current) { void runSearch(searchQuery); return; }
+    if (searchQuery.trim() !== searchedQueryRef.current) { runSearch(searchQuery); return; }
     if (matches.length === 0) return;
     const next = (matchIdx + 1) % matches.length;
     setMatchIdx(next);
-    if (fileKind === 'pdf') gotoPage(matches[next].page);
-    else showTextMatch(textRangesRef.current, next);
-  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch, searchQuery, runSearch]);
+    showTextMatch(textRangesRef.current, next);
+  }, [matchIdx, matches, showTextMatch, searchQuery, runSearch]);
   const goPrevMatch = useCallback(() => {
-    if (searchQuery.trim() !== searchedQueryRef.current) { void runSearch(searchQuery); return; }
+    if (searchQuery.trim() !== searchedQueryRef.current) { runSearch(searchQuery); return; }
     if (matches.length === 0) return;
     const next = (matchIdx - 1 + matches.length) % matches.length;
     setMatchIdx(next);
-    if (fileKind === 'pdf') gotoPage(matches[next].page);
-    else showTextMatch(textRangesRef.current, next);
-  }, [matchIdx, matches, gotoPage, fileKind, showTextMatch, searchQuery, runSearch]);
+    showTextMatch(textRangesRef.current, next);
+  }, [matchIdx, matches, showTextMatch, searchQuery, runSearch]);
   // Search as you type, once the typing pauses.
   useEffect(() => {
     if (!searchOpen) return;
     if (searchQuery.trim() === searchedQueryRef.current) return;
-    const t = setTimeout(() => { void runSearch(searchQuery); }, 450);
+    const t = setTimeout(() => { runSearch(searchQuery); }, 450);
     return () => clearTimeout(t);
   }, [searchOpen, searchQuery, runSearch]);
   const closeSearch = useCallback(() => {
-    searchSeqRef.current++;
     searchedQueryRef.current = '';
     setSearching(false);
     setSearchOpen(false);
@@ -2859,18 +1986,15 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     clearTextMatches();
   }, [clearTextMatches]);
 
-  // The host's `goto` (see ReaderGoto). Declared after the restore effect,
-  // so on first load the goto wins over the remembered page. Applied once per
-  // nonce, as soon as the document can be navigated: a PDF once its page
-  // stack is measured, anything else once it is rendered.
-  const appliedGotoRef = useRef<number | null>(null);
+  // The host's `goto` (see ReaderGoto) for a PDF: the passage is looked up
+  // here — its page, and its opening words to light — and handed to the
+  // book, which applies it once its page stack is measured (and, on first
+  // load, ahead of the remembered page).
+  const [bookGoto, setBookGoto] = useState<PdfBookGoto | null>(null);
   useEffect(() => {
-    if (!goto || appliedGotoRef.current === goto.nonce || loadState !== 'ready') return;
-    const pdf = fileKind === 'pdf';
-    if (pdf ? !slotTops || totalPages === 0 : !docHtml) return;
-    appliedGotoRef.current = goto.nonce;
+    if (!goto || fileKind !== 'pdf') return;
+    let live = true;
     const nonce = goto.nonce;
-    const firstWords = (t: string, n: number) => t.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
     void (async () => {
       let target = goto.page ?? null;
       let phrase: string | null = null;
@@ -2889,20 +2013,32 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           phrase = row.text ? firstWords(row.text, 12) : null;
         }
       }
-      if (appliedGotoRef.current !== nonce) return; // a newer goto arrived meanwhile
-      if (pdf) {
-        if (target) gotoPage(target);
-        // The passage's opening words, lit through the find path. The page is
-        // the promise; the boxes are a bonus — a PDF's text layer is split by
-        // line, and the paint finds a phrase only within one line.
-        if (phrase && target) {
-          setSearchOpen(true);
-          setSearchQuery(phrase);
-          setMatches([{ page: target, index: 0 }]);
-          setMatchIdx(0);
-        }
-        return;
+      if (!live) return; // a newer goto arrived meanwhile
+      setBookGoto({ page: target, phrase, nonce });
+    })();
+    return () => { live = false; };
+  }, [goto, fileKind]);
+
+  // The same `goto` for a rendered document, applied once per nonce, as
+  // soon as it is rendered.
+  const appliedGotoRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!goto || appliedGotoRef.current === goto.nonce || loadState !== 'ready') return;
+    if (fileKind === 'pdf' || !docHtml) return;
+    appliedGotoRef.current = goto.nonce;
+    const nonce = goto.nonce;
+    void (async () => {
+      let phrase: string | null = null;
+      if (goto.passageId) {
+        const { data } = await supabase
+          .from('passages')
+          .select('text')
+          .eq('id', goto.passageId)
+          .maybeSingle();
+        const row = data as { text: string | null } | null;
+        if (row) phrase = row.text ? firstWords(row.text, 12) : null;
       }
+      if (appliedGotoRef.current !== nonce) return; // a newer goto arrived meanwhile
       const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
       if (!root) return;
       let ranges: Range[] = [];
@@ -2935,420 +2071,204 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       setMatchIdx(0);
       showTextMatch(ranges, 0);
     })();
-  }, [goto, loadState, fileKind, slotTops, totalPages, docHtml, gotoPage, showTextMatch]);
+  }, [goto, loadState, fileKind, docHtml, showTextMatch]);
 
   // ────────────────────────────────────────────────────────────────────
   // Render
   // ────────────────────────────────────────────────────────────────────
   const rootBg = theme === 'dark' ? '#000000' : '#f3ecd9';
-  const showBottomNav = loadState === 'ready' && fileKind === 'pdf' && totalPages > 0;
 
-  return (
-    <div
-      ref={rootRef}
-      className="flex flex-col h-full"
-      style={{ backgroundColor: rootBg }}
-    >
-      <ReaderStyle theme={theme} />
+  // Back, or close. A host that opened this reader in place (a canvas card,
+  // or the Vault's overlay over its file list) closes it itself — there is
+  // no history to walk back through, and walking it would drop the user
+  // outside the surface they were in.
+  const closeReader = () => {
+    if (onClose) { onClose(); return; }
+    if (embedded) return;
+    // In a fresh tab (opened from the Bucketizer or a shared link)
+    // there is no history to go back to — land on the document's
+    // matter instead of silently doing nothing.
+    if (window.history.length > 1) navigate(-1);
+    else if (doc?.matterspace_id) navigate(`/app/matterspace/${doc.matterspace_id}`);
+    else navigate('/app');
+  };
 
-      {/* Cover image — same component Pages/Lists/Tables use. When no cover
-          is set, this is a discoverable "Add cover" bar (subtle until hover);
-          when set, a 180px banner; when expanded, becomes the page background
-          via CSS variable so the reader chrome stays in front. */}
-      {loadState === 'ready' && !hideCover && (
-        <CoverImage
-          coverUrl={doc?.cover_url ?? null}
-          onCoverChange={handleCoverChange}
-          editable={!!doc}
+  // The title, editable in place, with the pencil making it visible.
+  const titleNode = (
+    <>
+      <span
+        ref={docTitleRef}
+        contentEditable={!!doc}
+        suppressContentEditableWarning
+        spellCheck={false}
+        onBlur={() => void handleTitleBlur()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
+          if (e.key === 'Escape') {
+            if (docTitleRef.current) docTitleRef.current.textContent = doc?.title ?? '';
+            (e.target as HTMLElement).blur();
+          }
+        }}
+        title="Click to rename this document"
+        className="text-sm text-[var(--color-text-bright)] truncate outline-none rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.08)] focus:overflow-visible focus:text-clip transition-colors empty:before:content-['Document'] empty:before:text-white/30"
+      />
+      {doc && !isMobile && (
+        <button
+          onClick={startDocRename}
+          className="p-1 rounded-md text-white/35 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.06)] transition-colors shrink-0"
+          title="Rename this document"
+          aria-label="Rename this document"
+        >
+          <Pencil size={13} strokeWidth={1.75} />
+        </button>
+      )}
+    </>
+  );
+
+  // The matter's own actions on the toolbar, in the places they have always
+  // had: after the find box, and after full screen (desktop) or in the
+  // phone's "more" menu. The same nodes serve the book and a rendered
+  // document.
+  const toolbarStart = (
+    <>
+      {doc && inLibrary && !isMobile && (
+        <button
+          onClick={() => setFiling((f) => (f ? null : { step: 'confirm' }))}
+          className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
+          title="File to Office Library — put this book on the public Office shelf"
+          aria-label="File to Office Library"
+        >
+          <BookMarked size={15} />
+        </button>
+      )}
+      {doc && (
+        <button
+          onClick={() => askAbout()}
+          className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
+          title="Ask about this document — the Assistant, with this page in front of it"
+          aria-label="Ask about this document"
+        >
+          <MessageCircle size={15} />
+        </button>
+      )}
+    </>
+  );
+  const toolbarEnd = (
+    <>
+      {fileKind === 'pdf' && !hidePageEditor && (
+        <button
+          onClick={() => setPageEditorOpen(true)}
+          disabled={loadState !== 'ready' || !doc?.storage_path}
+          className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Edit pages — cut, rotate, reorder, or put in pages from another copy; saved as a new PDF"
+        >
+          <Scissors size={15} />
+        </button>
+      )}
+      {!hideCover && (
+        <CoverModeToggle
+          hasCover={!!doc?.cover_url}
           expanded={coverExpanded}
-          onExpandChange={setCoverExpanded}
-          persistKey={id ? `cs.doc.cover.${id}` : undefined}
+          onToggle={() => setCoverExpanded(!coverExpanded)}
         />
       )}
+      {!embedded && id && (doc?.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(doc?.source_filename ?? '')) && (
+        <button
+          onClick={() => navigate(`/app/brief/${id}`)}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white"
+          title="Open it in the Brief Desk: edit it as text and check its cites. A filed document is copied in; the original stays as filed."
+        >
+          <PenLine size={14} /> <span className="hidden md:inline">Open in the Brief Desk</span>
+        </button>
+      )}
+      {!embedded && (
+        <CanvasPinToggle kind="document" id={id} title={doc?.title || 'Document'} />
+      )}
+      <div className="w-px h-5 bg-white/10 mx-1" />
+      <button
+        // Prevent the mousedown default so the text the user selected is
+        // still selected when the click copies it.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => void handleCopyText()}
+        disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl)}
+        className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${copyState === 'failed' ? 'text-red-400' : copyState === 'done' ? 'text-emerald-400' : 'text-white/70'}`}
+        title={
+          copyState === 'done'
+            ? 'Copied — paste into Word or anywhere'
+            : copyState === 'failed'
+              ? (copyNote ?? 'The copy did not go through — click again')
+              : copyState === 'busy'
+                ? 'Copying…'
+                : fileKind === 'image'
+                  ? 'Copy the picture — paste it into Word, a slide, or a chat'
+                  : 'Copy the selected text — or the whole document as clean text when nothing is selected'
+        }
+      >
+        {copyState === 'done' ? <Check size={15} /> : copyState === 'failed' ? <X size={15} /> : <Copy size={15} />}
+      </button>
+      <button
+        onClick={() => void handlePrint()}
+        disabled={printing || loadState !== 'ready'}
+        className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+        title={printing ? 'Printing…' : 'Print the document'}
+      >
+        <Printer size={15} />
+      </button>
+      <button
+        onClick={handleDownload}
+        disabled={downloading || !doc?.storage_path}
+        className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+        title={downloading ? 'Downloading…' : 'Download original file'}
+      >
+        <Download size={15} />
+      </button>
+      <DriveExportControl
+        connected={connectedDrives}
+        busy={driveExporting}
+        disabled={!doc?.storage_path}
+        onExport={(kind) => runDriveExport(kind)}
+        onConnect={() => navigate('/app/connections')}
+      />
+      <button
+        onClick={() => setDelegateOpen(true)}
+        disabled={!doc?.matterspace_id}
+        className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+        title={doc?.matterspace_id
+          ? 'Delegate… — hand this document to an agent that can see its matter'
+          : 'Delegate… is available once this document is filed under a matter.'}
+        aria-label="Delegate…"
+      >
+        <Send size={15} />
+      </button>
+    </>
+  );
+  // On a phone the toolbar keeps only what a thumb needs — close, the
+  // sidebar, find, zoom — and the rest waits behind one "more" button.
+  const moreItems: MoreItem[] = [
+    ...(fileKind === 'pdf' && !hidePageEditor ? [
+      { icon: <Scissors size={14} />, label: 'Edit pages', run: () => setPageEditorOpen(true), disabled: loadState !== 'ready' || !doc?.storage_path },
+    ] : []),
+    { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },
+    { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
+    { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
+    ...(connectedDrives.length
+      ? connectedDrives.map((kind) => ({
+          icon: <HardDrive size={14} />,
+          label: `Save to ${DRIVE_LABEL[kind]}`,
+          run: () => runDriveExport(kind),
+          disabled: driveExporting || !doc?.storage_path,
+        }))
+      : [
+          // Never nothing: a reader with no drive connected is
+          // told the feature exists and where to switch it on.
+          { icon: <HardDrive size={14} />, label: 'Connect a drive to export…', run: () => navigate('/app/connections') },
+        ]),
+    { icon: <Send size={14} />, label: 'Delegate…', run: () => setDelegateOpen(true), disabled: !doc?.matterspace_id },
+  ];
 
-      <div className="flex items-center justify-between gap-2 px-3 h-12 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
-        {/* On a phone the find box takes the row. The title's node stays —
-            its text is set by hand, not by React — and is only hidden. */}
-        <div className={`flex items-center gap-2 min-w-0 flex-1 ${isMobile && searchOpen ? 'hidden' : ''}`}>
-          <button
-            onClick={() => {
-              // A host that opened this reader in place (a canvas card, or
-              // the Vault's overlay over its file list) closes it itself —
-              // there is no history to walk back through, and walking it
-              // would drop the user outside the surface they were in.
-              if (onClose) { onClose(); return; }
-              if (embedded) return;
-              // In a fresh tab (opened from the Bucketizer or a shared link)
-              // there is no history to go back to — land on the document's
-              // matter instead of silently doing nothing.
-              if (window.history.length > 1) navigate(-1);
-              else if (doc?.matterspace_id) navigate(`/app/matterspace/${doc.matterspace_id}`);
-              else navigate('/app');
-            }}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-            title="Close"
-          >
-            <X size={15} />
-          </button>
-          {fileKind === 'pdf' && !hideSidebarToggle && (
-            <button
-              onClick={() => setSidebarOpen((v) => !v)}
-              className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
-                sidebarOpen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
-              }`}
-              title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar (pages, contents)'}
-            >
-              <PanelLeft size={15} />
-            </button>
-          )}
-          {/* The bench lives in the sidebar's fourth tab, where nobody found
-              it. This opens the sidebar straight onto it — in a pane too,
-              where the sidebar otherwise stays shut, since the bench is the
-              reason to open it there. Not on a phone: the 360px bench would
-              leave no page beside it. */}
-          {workshop && fileKind === 'pdf' && loadState === 'ready' && !isMobile && (
-            <button
-              onClick={() => {
-                if (sidebarOpen && sidebarTab === 'workshop') { setSidebarOpen(false); return; }
-                setSidebarTab('workshop');
-                setSidebarOpen(true);
-              }}
-              className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-xs shrink-0 ${
-                sidebarOpen && sidebarTab === 'workshop' ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
-              }`}
-              title="Workshop: snip, snippets, bring in, lay on page"
-            >
-              <Hammer size={15} />
-              <span>Workshop</span>
-            </button>
-          )}
-          {/* Takes back the last highlight made in this sitting, newest
-              first; appears with the first one and goes when none is left. */}
-          {undoDepth > 0 && (
-            <button
-              onClick={undoLastHighlight}
-              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-xs shrink-0 text-white/70 hover:text-white"
-              title={`Undo the last highlight (${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}Z)`}
-              aria-label="Undo the last highlight"
-            >
-              <Undo2 size={15} />
-              {!isMobile && <span>Undo</span>}
-            </button>
-          )}
-          <span
-            ref={docTitleRef}
-            contentEditable={!!doc}
-            suppressContentEditableWarning
-            spellCheck={false}
-            onBlur={() => void handleTitleBlur()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLElement).blur(); }
-              if (e.key === 'Escape') {
-                if (docTitleRef.current) docTitleRef.current.textContent = doc?.title ?? '';
-                (e.target as HTMLElement).blur();
-              }
-            }}
-            title="Click to rename this document"
-            className="text-sm text-[var(--color-text-bright)] truncate outline-none rounded px-1 -mx-1 hover:bg-[rgba(255,255,255,0.04)] focus:bg-[rgba(255,255,255,0.08)] focus:overflow-visible focus:text-clip transition-colors empty:before:content-['Document'] empty:before:text-white/30"
-          />
-          {doc && !isMobile && (
-            <button
-              onClick={startDocRename}
-              className="p-1 rounded-md text-white/35 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.06)] transition-colors shrink-0"
-              title="Rename this document"
-              aria-label="Rename this document"
-            >
-              <Pencil size={13} strokeWidth={1.75} />
-            </button>
-          )}
-        </div>
-        <div className={`flex items-center gap-1 ${isMobile && searchOpen ? 'flex-1 min-w-0' : 'shrink-0'}`}>
-          {(fileKind === 'pdf' || (loadState === 'ready' && !!docHtml)) && (
-            <>
-              {searchOpen ? (
-                <div className="flex items-center gap-1 flex-1 min-w-0">
-                  <input
-                    autoFocus
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { if (e.shiftKey) goPrevMatch(); else goNextMatch(); }
-                      else if (e.key === 'Escape') closeSearch();
-                    }}
-                    placeholder="Find in document…"
-                    className={`h-8 ${isMobile ? 'flex-1 min-w-0' : 'w-44'} rounded-md bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-2 text-xs text-[var(--color-text-bright)] placeholder:text-white/30 focus:outline-none focus:border-[var(--color-primary)]`}
-                    // 16px on a phone, so iOS Safari doesn't zoom the page on focus.
-                    style={isMobile ? { fontSize: 16 } : undefined}
-                  />
-                  {searching ? (
-                    <span className="text-[11px] text-white/55 px-1 whitespace-nowrap">Searching…</span>
-                  ) : matches.length > 0 ? (
-                    <span className="text-[11px] text-white/70 tabular-nums px-1 whitespace-nowrap">
-                      {matchIdx + 1}/{matches.length}
-                    </span>
-                  ) : searchQuery && searched ? (
-                    <span className="text-[11px] text-amber-300/80 px-1 whitespace-nowrap">Not found</span>
-                  ) : null}
-                  <button
-                    onClick={goPrevMatch}
-                    disabled={matches.length === 0 && !unsearched()}
-                    className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
-                    title="Previous match"
-                  >
-                    <ChevronLeft size={13} />
-                  </button>
-                  <button
-                    onClick={goNextMatch}
-                    disabled={matches.length === 0 && !unsearched()}
-                    className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
-                    title="Next match"
-                  >
-                    <ChevronRight size={13} />
-                  </button>
-                  <button
-                    onClick={closeSearch}
-                    className="h-7 w-7 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-                    title="Close search"
-                  >
-                    <X size={13} />
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setSearchOpen(true)}
-                  className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-                  title="Find in document"
-                >
-                  <Search size={15} />
-                </button>
-              )}
-              <div className="w-px h-5 bg-white/10 mx-1" />
-            </>
-          )}
-          {!(isMobile && searchOpen) && (
-          <>
-          {doc && inLibrary && !isMobile && (
-            <button
-              onClick={() => setFiling((f) => (f ? null : { step: 'confirm' }))}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
-              title="File to Office Library — put this book on the public Office shelf"
-              aria-label="File to Office Library"
-            >
-              <BookMarked size={15} />
-            </button>
-          )}
-          {doc && (
-            <button
-              onClick={() => askAbout()}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
-              title="Ask about this document — the Assistant, with this page in front of it"
-              aria-label="Ask about this document"
-            >
-              <MessageCircle size={15} />
-            </button>
-          )}
-          <button
-            onClick={() => {
-              const base = fitPage ? renderedScale : zoom;
-              setFitPage(false);
-              setZoom(Math.max(0.5, +(base - 0.25).toFixed(2)));
-            }}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-            title="Zoom out"
-          >
-            <ZoomOut size={15} />
-          </button>
-          <span className="text-xs text-white/55 tabular-nums w-12 text-center">
-            {fileKind === 'pdf' && fitPage
-              ? 'Fit'
-              // An image fills the pane at the default zoom; say 100% for
-              // that, not the 150% the text formats' type size is scaled from.
-              : fileKind === 'image'
-                ? `${Math.round((zoom / 1.5) * 100)}%`
-                : `${Math.round(zoom * 100)}%`}
-          </span>
-          <button
-            onClick={() => {
-              const base = fitPage ? renderedScale : zoom;
-              setFitPage(false);
-              setZoom(Math.min(4, +(base + 0.25).toFixed(2)));
-            }}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-            title="Zoom in"
-          >
-            <ZoomIn size={15} />
-          </button>
-          {!isMobile && (
-          <>
-          {fileKind === 'pdf' && (
-            <button
-              onClick={() => setFitPage((v) => !v)}
-              className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
-                fitPage ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
-              }`}
-              title={fitPage ? 'Fit page is on — whole page visible' : 'Fit whole page to screen'}
-            >
-              <Scan size={15} />
-            </button>
-          )}
-          <button
-            onClick={toggleFullscreen}
-            className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
-              isFullscreen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
-            }`}
-            title={isFullscreen ? 'Exit full screen (F)' : 'Full screen (F)'}
-          >
-            {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
-          </button>
-          {fileKind === 'pdf' && !hidePageEditor && (
-            <button
-              onClick={() => setPageEditorOpen(true)}
-              disabled={loadState !== 'ready' || !doc?.storage_path}
-              className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Edit pages — cut, rotate, reorder, or put in pages from another copy; saved as a new PDF"
-            >
-              <Scissors size={15} />
-            </button>
-          )}
-          {!hideCover && (
-            <CoverModeToggle
-              hasCover={!!doc?.cover_url}
-              expanded={coverExpanded}
-              onToggle={() => setCoverExpanded(!coverExpanded)}
-            />
-          )}
-          {!embedded && id && (doc?.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(doc?.source_filename ?? '')) && (
-            <button
-              onClick={() => navigate(`/app/brief/${id}`)}
-              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-[12px] text-white/70 hover:text-white"
-              title="Open it in the Brief Desk: edit it as text and check its cites. A filed document is copied in; the original stays as filed."
-            >
-              <PenLine size={14} /> <span className="hidden md:inline">Open in the Brief Desk</span>
-            </button>
-          )}
-          {!embedded && (
-            <CanvasPinToggle kind="document" id={id} title={doc?.title || 'Document'} />
-          )}
-          <div className="w-px h-5 bg-white/10 mx-1" />
-          <button
-            // Prevent the mousedown default so the text the user selected is
-            // still selected when the click copies it.
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void handleCopyText()}
-            disabled={copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl)}
-            className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed ${copyState === 'failed' ? 'text-red-400' : copyState === 'done' ? 'text-emerald-400' : 'text-white/70'}`}
-            title={
-              copyState === 'done'
-                ? 'Copied — paste into Word or anywhere'
-                : copyState === 'failed'
-                  ? (copyNote ?? 'The copy did not go through — click again')
-                  : copyState === 'busy'
-                    ? 'Copying…'
-                    : fileKind === 'image'
-                      ? 'Copy the picture — paste it into Word, a slide, or a chat'
-                      : 'Copy the selected text — or the whole document as clean text when nothing is selected'
-            }
-          >
-            {copyState === 'done' ? <Check size={15} /> : copyState === 'failed' ? <X size={15} /> : <Copy size={15} />}
-          </button>
-          <button
-            onClick={() => void handlePrint()}
-            disabled={printing || loadState !== 'ready'}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-            title={printing ? 'Printing…' : 'Print the document'}
-          >
-            <Printer size={15} />
-          </button>
-          <button
-            onClick={handleDownload}
-            disabled={downloading || !doc?.storage_path}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-            title={downloading ? 'Downloading…' : 'Download original file'}
-          >
-            <Download size={15} />
-          </button>
-          <DriveExportControl
-            connected={connectedDrives}
-            busy={driveExporting}
-            disabled={!doc?.storage_path}
-            onExport={(kind) => runDriveExport(kind)}
-            onConnect={() => navigate('/app/connections')}
-          />
-          <button
-            onClick={() => setDelegateOpen(true)}
-            disabled={!doc?.matterspace_id}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-            title={doc?.matterspace_id
-              ? 'Delegate… — hand this document to an agent that can see its matter'
-              : 'Delegate… is available once this document is filed under a matter.'}
-            aria-label="Delegate…"
-          >
-            <Send size={15} />
-          </button>
-
-          <button
-            onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-            title={theme === 'parchment' ? 'Dark mode' : 'Light mode'}
-          >
-            {theme === 'parchment' ? <Moon size={15} /> : <Sun size={15} />}
-          </button>
-          </>
-          )}
-          {isMobile && (
-            <div className="relative">
-              <button
-                ref={moreBtnRef}
-                onClick={() => setMoreOpen((v) => !v)}
-                className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
-                  moreOpen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
-                }`}
-                title="More"
-                aria-label="More actions"
-                aria-expanded={moreOpen}
-              >
-                <MoreHorizontal size={15} />
-              </button>
-              {moreOpen && (
-                <ReaderMoreMenu
-                  anchor={moreBtnRef.current}
-                  onClose={() => setMoreOpen(false)}
-                  items={[
-                    ...(fileKind === 'pdf' ? [
-                      { icon: <Scan size={14} />, label: fitPage ? '✓ Fit the whole page' : 'Fit the whole page', run: () => setFitPage((v) => !v) },
-                    ] : []),
-                    { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
-                    ...(fileKind === 'pdf' && !hidePageEditor ? [
-                      { icon: <Scissors size={14} />, label: 'Edit pages', run: () => setPageEditorOpen(true), disabled: loadState !== 'ready' || !doc?.storage_path },
-                    ] : []),
-                    { icon: <FileText size={14} />, label: fileKind === 'image' ? 'Copy the picture' : 'Copy the whole document', run: () => void handleCopyText(), disabled: copyState === 'busy' || loadState !== 'ready' || (fileKind !== 'pdf' && !docHtml && !imageUrl) },
-                    { icon: <Printer size={14} />, label: printing ? 'Printing…' : 'Print', run: () => void handlePrint(), disabled: printing || loadState !== 'ready' },
-                    { icon: <Download size={14} />, label: 'Download the original', run: () => void handleDownload(), disabled: downloading || !doc?.storage_path },
-                    ...(connectedDrives.length
-                      ? connectedDrives.map((kind) => ({
-                          icon: <HardDrive size={14} />,
-                          label: `Save to ${DRIVE_LABEL[kind]}`,
-                          run: () => runDriveExport(kind),
-                          disabled: driveExporting || !doc?.storage_path,
-                        }))
-                      : [
-                          // Never nothing: a reader with no drive connected is
-                          // told the feature exists and where to switch it on.
-                          { icon: <HardDrive size={14} />, label: 'Connect a drive to export…', run: () => navigate('/app/connections') },
-                        ]),
-                    { icon: <Send size={14} />, label: 'Delegate…', run: () => setDelegateOpen(true), disabled: !doc?.matterspace_id },
-                    { icon: theme === 'parchment' ? <Moon size={14} /> : <Sun size={14} />, label: theme === 'parchment' ? 'Dark mode' : 'Light mode', run: () => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment')) },
-                  ]}
-                />
-              )}
-            </div>
-          )}
-          </>
-          )}
-        </div>
-      </div>
-
+  // Between the toolbar and the page: what a copy, a save or an export said.
+  const banners = (
+    <>
       {copyState === 'failed' && copyNote && (
         <div className="flex items-center gap-3 px-3 py-2 text-xs border-b border-[var(--color-border)] bg-red-400/10 text-red-300" role="status">
           <span className="flex-1 min-w-0">{copyNote}</span>
@@ -3421,66 +2341,379 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           }}
         />
       )}
+    </>
+  );
 
-      <div className="flex-1 flex flex-row min-h-0">
-        {sidebarOpen && fileKind === 'pdf' && loadState === 'ready' && (
-          <ReaderSidebar
-            totalPages={totalPages}
-            currentPage={page}
-            thumbnails={thumbnails}
-            outline={outline}
-            onJumpPage={(p) => gotoPage(p)}
-            onJumpDest={(d) => void jumpDest(d)}
-            animations={animations}
-            onAddAnimation={doc?.matterspace_id ? () => { setSnipping(false); setAttaching(true); } : null}
-            onRemoveAnimation={(animationId) => void removeAnimation(animationId)}
-            addingAnimation={attaching}
-            workshop={workshop}
-            tab={sidebarTab}
-            onTabChange={setSidebarTab}
+  // Filing to the Office Library: the question, then the progress, at the
+  // foot of the page area.
+  const filingNode = filing && (
+    <div
+      role={filing.step === 'confirm' ? 'dialog' : 'status'}
+      className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl text-[13px] text-white/85 max-w-[min(92vw,640px)]"
+    >
+      {filing.step === 'confirm' ? (
+        <>
+          <span>
+            File <span className="text-white">"{doc?.title}"</span> to the Office Library, on the{' '}
+            <span className="text-white">{matterName}</span> shelf? It will be public in the Reading Room.
+          </span>
+          <button
+            onClick={() => void fileToOfficeLibrary()}
+            className="font-semibold text-[#e8b84a] hover:underline whitespace-nowrap"
+          >
+            File it
+          </button>
+          <button onClick={() => setFiling(null)} className="text-white/45 hover:text-white">
+            Cancel
+          </button>
+        </>
+      ) : (
+        <>
+          {filing.step === 'working' && <Loader2 size={13} className="animate-spin shrink-0 text-[#e8b84a]" />}
+          <span>{filing.text}</span>
+          {filing.step === 'done' && (
+            <button onClick={() => setFiling(null)} className="text-white/45 hover:text-white" aria-label="Dismiss">
+              <X size={13} />
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+
+  // The matter's dialogs and cards, drawn over the page.
+  const dialogs = (
+    <>
+      {delegateOpen && doc?.matterspace_id && (
+        <DelegateCard
+          matterId={doc.matterspace_id}
+          attachment={{ kind: 'document', id: doc.id, label: doc.title || doc.source_filename || 'Document' }}
+          defaultTitle={doc.title || doc.source_filename || 'Document'}
+          onClose={() => setDelegateOpen(false)}
+        />
+      )}
+      {pageEditorOpen && doc && (
+        <PdfPageEditor
+          doc={doc}
+          onClose={() => setPageEditorOpen(false)}
+          onSaved={({ filename, downloadUrl, documentId }) => setSavedCopy({ filename, downloadUrl, documentId })}
+        />
+      )}
+      {ctxMenu && (
+        <ReaderMenu
+          at={ctxMenu}
+          hasSelection={ctxMenu.hasSelection}
+          onAskSel={() => {
+            const sel = window.getSelection();
+            askAbout(sel?.toString() ?? '', pageOfNode(sel?.anchorNode));
+          }}
+          canDownload={!downloading && !!doc?.storage_path}
+          canDrive={hasDriveConnection && !driveExporting && !!doc?.storage_path}
+          printing={printing}
+          onCopySel={() => void copySelection()}
+          onCopyDoc={() => void handleCopyText()}
+          onPrint={() => void handlePrint()}
+          onDownload={() => void handleDownload()}
+          onDrive={() => void handleDriveExport()}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+    </>
+  );
+  const noteCards = (
+    <>
+      {noteComposer && id && (
+        <NoteComposer
+          anchor={{ x: noteComposer.x, y: noteComposer.y }}
+          quote={noteComposer.anchorText}
+          matterId={doc?.matterspace_id ?? null}
+          currentDocumentId={id}
+          isMobile={isMobile}
+          onSave={(args) => void saveNote(args)}
+          onCancel={() => setNoteComposer(null)}
+        />
+      )}
+      {openNote && (() => {
+        const ann = annotations.find((a) => a.id === openNote.id);
+        if (!ann) return null;
+        return (
+          <NoteCard
+            note={ann}
+            anchor={{ x: openNote.x, y: openNote.y }}
+            isMobile={isMobile}
+            isAuthor={ann.user_id === user?.id}
+            onClose={() => setOpenNote(null)}
+            onDelete={() => {
+              void removeAnnotation(ann.id);
+              setOpenNote(null);
+            }}
+            onSaveEdit={(body, visibility) => void editNote(ann.id, body, visibility)}
+            onOpenLink={(l) =>
+              navigate(
+                `/app/document/${l.target_document_id}${l.target_page ? `?page=${l.target_page}` : ''}`,
+              )
+            }
           />
-        )}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
-          {/* While a rectangle is being drawn the page is a crosshair canvas
-              and text cannot be selected; say so on the page itself, with a
-              way out, rather than only in the sidebar (which may be closed,
-              or not where the eye is). */}
-          {(snipping || attaching) && (
-            <div
-              role="status"
-              className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-[#e8b84a]/60 shadow-2xl text-[12px] text-white/85"
+        );
+      })()}
+      {openRef && (
+        <RefCard
+          refLink={openRef.link}
+          anchor={{ x: openRef.x, y: openRef.y }}
+          isMobile={isMobile}
+          onClose={() => setOpenRef(null)}
+          onOpenSource={() => {
+            const a = openRef.link.annotation;
+            if (a) navigate(`/app/document/${a.document_id}?page=${a.page}`);
+            setOpenRef(null);
+          }}
+        />
+      )}
+    </>
+  );
+
+  // A PDF is the book, with the matter's parts in its slots. The second
+  // factor's prompt and an error are drawn in its reading pane; confirming
+  // re-runs whatever was refused.
+  if (fileKind === 'pdf') {
+    return (
+      <PdfBook
+        ref={bookRef}
+        source={pdfSource}
+        marks={marksStore}
+        bench={benchStore}
+        currentUserId={user?.id ?? null}
+        pane={pane}
+        hideSidebarToggle={hideSidebarToggle}
+        meta={bookMeta}
+        pageMemoryKey={id ? `ctx_reader_page_${id}` : null}
+        pageLink={pageLink}
+        goto={bookGoto}
+        onClose={closeReader}
+        header={!hideCover ? (
+          /* Cover image — same component Pages/Lists/Tables use. When no cover
+             is set, this is a discoverable "Add cover" bar (subtle until hover);
+             when set, a 180px banner; when expanded, becomes the page background
+             via CSS variable so the reader chrome stays in front. */
+          <CoverImage
+            coverUrl={doc?.cover_url ?? null}
+            onCoverChange={handleCoverChange}
+            editable={!!doc}
+            expanded={coverExpanded}
+            onExpandChange={setCoverExpanded}
+            persistKey={id ? `cs.doc.cover.${id}` : undefined}
+          />
+        ) : undefined}
+        title={titleNode}
+        toolbarStart={toolbarStart}
+        toolbarEnd={toolbarEnd}
+        moreItems={moreItems}
+        banners={banners}
+        notice={(stepUp || loadState === 'error') ? (
+          <>
+            {stepUp && (
+              <div className="mt-10">
+                <StepUpPrompt
+                  mode={stepUp.mode}
+                  matterId={stepUp.matterId ?? undefined}
+                  onConfirmed={() => {
+                    const retry = stepUp.retry;
+                    setStepUp(null);
+                    if (retry === 'load') setReloadKey((k) => k + 1);
+                    else void handleDownload();
+                  }}
+                />
+              </div>
+            )}
+            {loadState === 'error' && !stepUp && (
+              <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
+            )}
+          </>
+        ) : null}
+        paneChildren={filingNode}
+        pageSides={pageSides}
+        renderAttach={doc?.matterspace_id ? renderAttach : null}
+        onAsk={askAbout}
+        onNote={openNoteComposer}
+        onCopySelection={() => void copySelection()}
+        onContextMenu={openContextMenu}
+        onOpened={onBookOpened}
+        onError={onBookError}
+        onView={onBookView}
+        onMarks={setAnnotations}
+      >
+        {dialogs}
+        {noteCards}
+      </PdfBook>
+    );
+  }
+
+  // A rendered document — Word, text, slides, a screenplay, a picture — in
+  // the same chrome.
+  return (
+    <div
+      ref={rootRef}
+      className="flex flex-col h-full"
+      style={{ backgroundColor: rootBg }}
+    >
+      <RenderedDocStyle theme={theme} />
+
+      {/* Cover image — same component Pages/Lists/Tables use. When no cover
+          is set, this is a discoverable "Add cover" bar (subtle until hover);
+          when set, a 180px banner; when expanded, becomes the page background
+          via CSS variable so the reader chrome stays in front. */}
+      {loadState === 'ready' && !hideCover && (
+        <CoverImage
+          coverUrl={doc?.cover_url ?? null}
+          onCoverChange={handleCoverChange}
+          editable={!!doc}
+          expanded={coverExpanded}
+          onExpandChange={setCoverExpanded}
+          persistKey={id ? `cs.doc.cover.${id}` : undefined}
+        />
+      )}
+
+      <div className="flex items-center justify-between gap-2 px-3 h-12 overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
+        {/* On a phone the find box takes the row. The title's node stays —
+            its text is set by hand, not by React — and is only hidden. */}
+        <div className={`flex items-center gap-2 min-w-0 flex-1 ${isMobile && searchOpen ? 'hidden' : ''}`}>
+          <button
+            onClick={closeReader}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
+            title="Close"
+          >
+            <X size={15} />
+          </button>
+          {/* Takes back the last highlight made in this sitting, newest
+              first; appears with the first one and goes when none is left. */}
+          {undoDepth > 0 && (
+            <button
+              onClick={undoLastHighlight}
+              className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-white/5 text-xs shrink-0 text-white/70 hover:text-white"
+              title={`Undo the last highlight (${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}Z)`}
+              aria-label="Undo the last highlight"
             >
-              <Scan size={14} className="text-[#e8b84a] shrink-0" />
-              <span>
-                {attaching
-                  ? 'Drag a rectangle round the picture — the clip will play there.'
-                  : resnip?.kind === 'snippet'
-                    ? 'Drag a rectangle round the passage — its clip will play there.'
-                    : resnip
-                      ? 'Drag the rectangle again round the plate.'
-                      : 'Drag a rectangle round the plate to snip it.'}
-                {' '}Text cannot be selected meanwhile.
-              </span>
+              <Undo2 size={15} />
+              {!isMobile && <span>Undo</span>}
+            </button>
+          )}
+          {titleNode}
+        </div>
+        <div className={`flex items-center gap-1 ${isMobile && searchOpen ? 'flex-1 min-w-0' : 'shrink-0'}`}>
+          {loadState === 'ready' && !!docHtml && (
+            <>
+              {searchOpen ? (
+                <FindBox
+                  query={searchQuery}
+                  onQuery={setSearchQuery}
+                  searching={searching}
+                  matchCount={matches.length}
+                  matchIdx={matchIdx}
+                  searched={searched}
+                  stepDisabled={matches.length === 0 && !unsearched()}
+                  onPrev={goPrevMatch}
+                  onNext={goNextMatch}
+                  onClose={closeSearch}
+                  isMobile={isMobile}
+                />
+              ) : (
+                <button
+                  onClick={() => setSearchOpen(true)}
+                  className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
+                  title="Find in document"
+                >
+                  <Search size={15} />
+                </button>
+              )}
+              <div className="w-px h-5 bg-white/10 mx-1" />
+            </>
+          )}
+          {!(isMobile && searchOpen) && (
+          <>
+          {toolbarStart}
+          <button
+            onClick={() => setZoom(Math.max(0.5, +(zoom - 0.25).toFixed(2)))}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
+            title="Zoom out"
+          >
+            <ZoomOut size={15} />
+          </button>
+          <span className="text-xs text-white/55 tabular-nums w-12 text-center">
+            {/* An image fills the pane at the default zoom; say 100% for
+                that, not the 150% the text formats' type size is scaled from. */}
+            {fileKind === 'image'
+              ? `${Math.round((zoom / 1.5) * 100)}%`
+              : `${Math.round(zoom * 100)}%`}
+          </span>
+          <button
+            onClick={() => setZoom(Math.min(4, +(zoom + 0.25).toFixed(2)))}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
+            title="Zoom in"
+          >
+            <ZoomIn size={15} />
+          </button>
+          {!isMobile && (
+          <>
+          <button
+            onClick={toggleFullscreen}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+              isFullscreen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+            }`}
+            title={isFullscreen ? 'Exit full screen (F)' : 'Full screen (F)'}
+          >
+            {isFullscreen ? <Minimize size={15} /> : <Maximize size={15} />}
+          </button>
+          {toolbarEnd}
+          <button
+            onClick={() => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment'))}
+            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
+            title={theme === 'parchment' ? 'Dark mode' : 'Light mode'}
+          >
+            {theme === 'parchment' ? <Moon size={15} /> : <Sun size={15} />}
+          </button>
+          </>
+          )}
+          {isMobile && (
+            <div className="relative">
               <button
-                onClick={() => { setSnipping(false); setResnip(null); setAttaching(false); }}
-                className="font-semibold text-[#e8b84a] hover:underline shrink-0"
-                title="Stop drawing (Esc)"
+                ref={moreBtnRef}
+                onClick={() => setMoreOpen((v) => !v)}
+                className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${
+                  moreOpen ? 'text-[var(--color-primary)]' : 'text-white/70 hover:text-white'
+                }`}
+                title="More"
+                aria-label="More actions"
+                aria-expanded={moreOpen}
               >
-                Stop
+                <MoreHorizontal size={15} />
               </button>
+              {moreOpen && (
+                <ReaderMoreMenu
+                  anchor={moreBtnRef.current}
+                  onClose={() => setMoreOpen(false)}
+                  items={[
+                    { icon: isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />, label: isFullscreen ? 'Exit full screen' : 'Full screen', run: toggleFullscreen },
+                    ...moreItems,
+                    { icon: theme === 'parchment' ? <Moon size={14} /> : <Sun size={14} />, label: theme === 'parchment' ? 'Dark mode' : 'Light mode', run: () => setTheme((t) => (t === 'parchment' ? 'dark' : 'parchment')) },
+                  ]}
+                />
+              )}
             </div>
           )}
+          </>
+          )}
+        </div>
+      </div>
+
+      {banners}
+
+      <div className="flex-1 flex flex-row min-h-0">
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="relative flex-1 min-h-0 flex" onContextMenu={openContextMenu}>
           <div
             ref={contentRef}
             className={`reader-scroll flex-1 overflow-auto flex justify-center items-start ${paneChrome ? 'py-2 px-[6px]' : 'py-6 px-4'}`}
             style={{ backgroundColor: rootBg }}
-            // A selection copied off the PDF text layer would otherwise carry
-            // the layer's own paint — transformed spans, transparent ink,
-            // search-highlight color — into Word. Hand the clipboard the text.
-            onCopy={(e) => {
-              if (fileKind === 'pdf') interceptStyledCopy(e, stackRef.current);
-            }}
           >
             {loadState === 'loading' && (
               <LoadingCard title={doc?.title ?? null} progress={loadProgress} pageCount={doc?.page_count ?? null} />
@@ -3501,41 +2734,6 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             )}
             {loadState === 'error' && !stepUp && (
               <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
-            )}
-            {loadState === 'ready' && fileKind === 'pdf' && pageDims && (
-              <div ref={stackRef} className="flex flex-col items-center">
-                {pageDims.map((d, i) => (
-                  <PageSlot
-                    key={i + 1}
-                    p={i + 1}
-                    w={d.w * renderedScale}
-                    h={d.h * renderedScale}
-                    pending={visibleSet.has(i + 1)}
-                    annotations={annotations}
-                    animations={animations}
-                    attachMode={attaching || snipping}
-                    onAreaChosen={(chosenPage, rect) => {
-                      if (snipping) {
-                        setSnipping(false);
-                        void landSnip(chosenPage, rect);
-                        return;
-                      }
-                      setAttaching(false);
-                      setPendingArea({ page: chosenPage, rect });
-                    }}
-                    incomingLinks={incomingLinks}
-                    isMobile={isMobile}
-                    currentUserId={user?.id ?? null}
-                    setCanvasEl={setCanvasEl}
-                    setTextLayerEl={setTextLayerEl}
-                    setHitLayerEl={setHitLayerEl}
-                    onRemove={removeAnnotationCb}
-                    onOpenNote={openNoteAt}
-                    onOpenRef={openRefAt}
-                    bare={paneChrome}
-                  />
-                ))}
-              </div>
             )}
             {loadState === 'ready' && fileKind === 'docx' && docHtml && (
               <div
@@ -3649,7 +2847,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               </div>
             )}
           </div>
-          {fileKind !== 'pdf' && loadState === 'ready' && textMarks.length > 0 && (
+          {loadState === 'ready' && textMarks.length > 0 && (
             <TextMarksPanel
               marks={textMarks}
               unplaced={unplacedMarks}
@@ -3664,49 +2862,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               onRemove={removeAnnotationCb}
             />
           )}
-          {fileKind === 'pdf' && loadState === 'ready' && totalPages > 1 && (
-            <PageRail
-              page={page}
-              total={totalPages}
-              scroller={contentRef}
-              theme={theme}
-              onSeek={seekTo}
-            />
-          )}
-          {filing && (
-            <div
-              role={filing.step === 'confirm' ? 'dialog' : 'status'}
-              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-3 px-3 py-2 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl text-[13px] text-white/85 max-w-[min(92vw,640px)]"
-            >
-              {filing.step === 'confirm' ? (
-                <>
-                  <span>
-                    File <span className="text-white">"{doc?.title}"</span> to the Office Library, on the{' '}
-                    <span className="text-white">{matterName}</span> shelf? It will be public in the Reading Room.
-                  </span>
-                  <button
-                    onClick={() => void fileToOfficeLibrary()}
-                    className="font-semibold text-[#e8b84a] hover:underline whitespace-nowrap"
-                  >
-                    File it
-                  </button>
-                  <button onClick={() => setFiling(null)} className="text-white/45 hover:text-white">
-                    Cancel
-                  </button>
-                </>
-              ) : (
-                <>
-                  {filing.step === 'working' && <Loader2 size={13} className="animate-spin shrink-0 text-[#e8b84a]" />}
-                  <span>{filing.text}</span>
-                  {filing.step === 'done' && (
-                    <button onClick={() => setFiling(null)} className="text-white/45 hover:text-white" aria-label="Dismiss">
-                      <X size={13} />
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+          {filingNode}
           {undoable && (
             <div
               role="status"
@@ -3729,106 +2885,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             </div>
           )}
           </div>
-
-          {showBottomNav && (
-            <div className="flex items-center justify-center gap-3 h-12 border-t border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md shrink-0">
-
-
-          <button
-            onClick={goPrev}
-            disabled={page <= 1}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
-            title="Previous page"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <span className="text-xs text-white/65 tabular-nums">
-            {page} / {totalPages}
-          </span>
-          {totalPages > 1 && (
-            <input
-              type="range"
-              min={1}
-              max={totalPages}
-              value={page}
-              onChange={(e) => gotoPage(parseInt(e.target.value, 10))}
-              className="w-56"
-              aria-label="Page slider"
-            />
-          )}
-          <button
-            onClick={goNext}
-            disabled={page >= totalPages}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white disabled:opacity-30"
-            title="Next page"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
         </div>
       </div>
-      {pendingArea && doc && (
-        <AnimationAttach
-          documentId={doc.id}
-          matterId={doc.matterspace_id ?? null}
-          page={pendingArea.page}
-          rect={pendingArea.rect}
-          makePreview={makeAnimationPreview}
-          onSaved={(animation) => {
-            setAnimations((prev) => [...prev, animation]);
-            setPendingArea(null);
-          }}
-          onClose={() => setPendingArea(null)}
-        />
-      )}
-
-      {delegateOpen && doc?.matterspace_id && (
-        <DelegateCard
-          matterId={doc.matterspace_id}
-          attachment={{ kind: 'document', id: doc.id, label: doc.title || doc.source_filename || 'Document' }}
-          defaultTitle={doc.title || doc.source_filename || 'Document'}
-          onClose={() => setDelegateOpen(false)}
-        />
-      )}
-      {pageEditorOpen && doc && (
-        <PdfPageEditor
-          doc={doc}
-          onClose={() => setPageEditorOpen(false)}
-          onSaved={({ filename, downloadUrl, documentId }) => setSavedCopy({ filename, downloadUrl, documentId })}
-        />
-      )}
-      {ctxMenu && (
-        <ReaderMenu
-          at={ctxMenu}
-          hasSelection={ctxMenu.hasSelection}
-          onAskSel={() => {
-            const sel = window.getSelection();
-            askAbout(sel?.toString() ?? '', pageOfNode(sel?.anchorNode));
-          }}
-          canDownload={!downloading && !!doc?.storage_path}
-          canDrive={hasDriveConnection && !driveExporting && !!doc?.storage_path}
-          printing={printing}
-          onCopySel={() => void copySelection()}
-          onCopyDoc={() => void handleCopyText()}
-          onPrint={() => void handlePrint()}
-          onDownload={() => void handleDownload()}
-          onDrive={() => void handleDriveExport()}
-          onClose={() => setCtxMenu(null)}
-        />
-      )}
-      {markMenu && !selectionMenu && (() => {
-        const mark = annotations.find((a) => a.id === markMenu.id);
-        return mark ? (
-          <MarkMenu
-            x={markMenu.x}
-            y={markMenu.y}
-            color={mark.color}
-            onPick={(c) => void recolorAnnotation(mark.id, c)}
-            onRemove={() => { setMarkMenu(null); void removeAnnotation(mark.id); }}
-          />
-        ) : null;
-      })()}
+      {dialogs}
       {selectionMenu && (
         <SelectionMenu
           x={selectionMenu.x}
@@ -3858,468 +2917,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           }}
         />
       )}
-      {noteComposer && id && (
-        <NoteComposer
-          anchor={{ x: noteComposer.x, y: noteComposer.y }}
-          quote={noteComposer.anchorText}
-          matterId={doc?.matterspace_id ?? null}
-          currentDocumentId={id}
-          isMobile={isMobile}
-          onSave={(args) => void saveNote(args)}
-          onCancel={() => setNoteComposer(null)}
-        />
-      )}
-      {openNote && (() => {
-        const ann = annotations.find((a) => a.id === openNote.id);
-        if (!ann) return null;
-        return (
-          <NoteCard
-            note={ann}
-            anchor={{ x: openNote.x, y: openNote.y }}
-            isMobile={isMobile}
-            isAuthor={ann.user_id === user?.id}
-            onClose={() => setOpenNote(null)}
-            onDelete={() => {
-              void removeAnnotation(ann.id);
-              setOpenNote(null);
-            }}
-            onSaveEdit={(body, visibility) => void editNote(ann.id, body, visibility)}
-            onOpenLink={(l) =>
-              navigate(
-                `/app/document/${l.target_document_id}${l.target_page ? `?page=${l.target_page}` : ''}`,
-              )
-            }
-          />
-        );
-      })()}
-      {openRef && (
-        <RefCard
-          refLink={openRef.link}
-          anchor={{ x: openRef.x, y: openRef.y }}
-          isMobile={isMobile}
-          onClose={() => setOpenRef(null)}
-          onOpenSource={() => {
-            const a = openRef.link.annotation;
-            if (a) navigate(`/app/document/${a.document_id}?page=${a.page}`);
-            setOpenRef(null);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-// Distance from a point to a rectangle; 0 when the point is inside it.
-function distanceToRect(x: number, y: number, r: DOMRect): number {
-  const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
-  const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
-  return Math.hypot(dx, dy);
-}
-
-// Select the word nearest (x, y) in the text layer, and report whether one
-// was found. Used to rescue double-clicks that land between the sparse,
-// overlapping spans of an OCR'd page.
-//
-// The search radius is derived from the matched span's own height rather
-// than being a fixed pixel count, so it scales with zoom and with the
-// document's type size: a word roughly a line-and-a-half away is fair game,
-// anything further is treated as a click on blank paper.
-function selectWordNearPoint(layer: HTMLElement, x: number, y: number): boolean {
-  let bestNode: Text | null = null;
-  let bestDist = Infinity;
-  let bestHeight = 0;
-
-  for (const span of layer.querySelectorAll('span')) {
-    const node = span.firstChild;
-    // Leaf spans only — pdfjs wraps marked content in spans of spans, and
-    // emits <br> for line breaks.
-    if (!node || node.nodeType !== Node.TEXT_NODE) continue;
-    const text = (node as Text).data;
-    if (!/\S/.test(text)) continue;
-    const rect = span.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) continue;
-    const dist = distanceToRect(x, y, rect);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestNode = node as Text;
-      bestHeight = rect.height;
-    }
-  }
-
-  if (!bestNode || bestDist > Math.max(12, bestHeight * 1.5)) return false;
-
-  // A pdfjs span can hold a whole run of text, so pick the word inside it
-  // closest to the click rather than selecting the entire run.
-  const text = bestNode.data;
-  const range = document.createRange();
-  let start = -1;
-  let end = -1;
-  let wordDist = Infinity;
-  for (const m of text.matchAll(/\S+/g)) {
-    const s = m.index;
-    const e = s + m[0].length;
-    range.setStart(bestNode, s);
-    range.setEnd(bestNode, e);
-    const d = distanceToRect(x, y, range.getBoundingClientRect());
-    if (d < wordDist) {
-      wordDist = d;
-      start = s;
-      end = e;
-    }
-  }
-  if (start < 0) return false;
-
-  range.setStart(bestNode, start);
-  range.setEnd(bestNode, end);
-  const sel = window.getSelection();
-  if (!sel) return false;
-  sel.removeAllRanges();
-  sel.addRange(range);
-  return true;
-}
-
-
-// One page's slot in the continuous stack: margin rails flanking a
-// fixed-size page box holding the canvas, the annotation overlay, and the
-// text layer. The box keeps its full size whether or not the page is
-// painted — the stack's scroll geometry must never depend on what happens
-// to be rendered — and an unpainted slot reads as white paper with a faint
-// page number. Memoized because the stack re-renders on every derived-page
-// change while scrolling; without this, a 600-page record rebuilds 600
-// slots per page crossed.
-// The card shown while a document opens. A spinner says work is happening;
-// the line under it says which work, and how far along when bytes are
-// countable. The blank page it replaced read as a failed import — Eden
-// waited forty seconds on a scanned book and took it for broken. After a
-// while the card says so in words: not failed, just large.
-const SLOW_AFTER_MS = 8000;
-
-function fmtMB(bytes: number): string {
-  const mb = bytes / (1024 * 1024);
-  return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
-}
-
-function LoadingCard({ title, progress, pageCount }: {
-  title: string | null;
-  progress: PdfOpenProgress | null;
-  pageCount: number | null;
-}) {
-  const [slow, setSlow] = useState(false);
-  useEffect(() => {
-    const t = window.setTimeout(() => setSlow(true), SLOW_AFTER_MS);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  let line = 'Finding the file…';
-  let fraction: number | null = null;
-  if (progress?.stage === 'signing') line = 'Reaching the file…';
-  else if (progress?.stage === 'fetching') {
-    line = `Opening the first pages of a ${fmtMB(progress.total)} file…`;
-  } else if (progress?.stage === 'downloading') {
-    if (progress.total) {
-      fraction = Math.min(1, progress.loaded / progress.total);
-      line = `Downloading ${fmtMB(progress.loaded)} of ${fmtMB(progress.total)}…`;
-    } else line = `Downloading… ${fmtMB(progress.loaded)} so far`;
-  } else if (progress?.stage === 'opening') {
-    line = pageCount ? `Laying out ${pageCount} pages…` : 'Laying out the pages…';
-  }
-
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="mt-16 w-[min(360px,90%)] rounded-xl border border-white/10 bg-black/30 px-6 py-5 text-center shadow-xl backdrop-blur"
-    >
-      <Loader2 size={28} className="mx-auto animate-spin text-[var(--color-primary)]" aria-hidden="true" />
-      <p className="mt-3 text-[14px] font-medium text-white/90 truncate">{title ? `Opening ${title}` : 'Opening document'}</p>
-      <p className="mt-1 text-[12.5px] text-white/60">{line}</p>
-      {fraction !== null && (
-        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-          <div className="h-full rounded-full bg-[var(--color-primary)] transition-[width] duration-300" style={{ width: `${Math.round(fraction * 100)}%` }} />
-        </div>
-      )}
-      {slow && (
-        <p className="mt-3 text-[12px] text-white/50">
-          Still working — a large scan can take a minute. It has not failed.
-        </p>
-      )}
-    </div>
-  );
-}
-
-const PageSlot = memo(function PageSlot({
-  p,
-  w,
-  h,
-  pending,
-  annotations,
-  animations,
-  attachMode,
-  onAreaChosen,
-  incomingLinks,
-  isMobile,
-  currentUserId,
-  setCanvasEl,
-  setTextLayerEl,
-  setHitLayerEl,
-  onRemove,
-  onOpenNote,
-  onOpenRef,
-  bare,
-}: {
-  p: number;
-  w: number;
-  h: number;
-  /** In view: show a spinner on the blank paper until the page paints. */
-  pending: boolean;
-  annotations: Annotation[];
-  animations: DocumentAnimation[];
-  /** Drawing a rectangle round a picture, to attach a clip to it. */
-  attachMode: boolean;
-  onAreaChosen: (page: number, rect: FractionalRect) => void;
-  incomingLinks: IncomingLink[];
-  isMobile: boolean;
-  currentUserId: string | null;
-  setCanvasEl: (p: number, el: HTMLCanvasElement | null) => void;
-  setTextLayerEl: (p: number, el: HTMLDivElement | null) => void;
-  setHitLayerEl: (p: number, el: HTMLDivElement | null) => void;
-  onRemove: (id: string) => void;
-  onOpenNote: (n: Annotation, a: { x: number; y: number }) => void;
-  onOpenRef: (link: IncomingLink, a: { x: number; y: number }) => void;
-  /** A pane: the page alone, without the margin rails. */
-  bare?: boolean;
-}) {
-  return (
-    <div className="flex flex-row items-stretch" style={{ marginBottom: PAGE_GAP }}>
-      {!bare && <CrossRefRail
-        refs={incomingLinks.filter((r) => r.target_page === p)}
-        isMobile={isMobile}
-        onOpen={onOpenRef}
-      />}
-      <div
-        className="relative shadow-2xl"
-        style={{ width: w, height: h, backgroundColor: '#ffffff' }}
-      >
-        <div className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] text-black/25 select-none">
-          {pending && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
-          {p}
-        </div>
-        <canvas
-          ref={(el) => setCanvasEl(p, el)}
-          width={0}
-          height={0}
-          className="absolute left-0 top-0 block"
-        />
-        <AnnotationsOverlay
-          annotations={annotations.filter((a) => a.page === p)}
-          onRemove={onRemove}
-        />
-        <div
-          ref={(el) => setTextLayerEl(p, el)}
-          className="textLayer absolute inset-0"
-        />
-        <div
-          ref={(el) => setHitLayerEl(p, el)}
-          className="search-hits absolute inset-0 pointer-events-none"
-          aria-hidden="true"
-        />
-        {/* Last, so a play badge sits above the text layer's own hit area. */}
-        <AnimationLayer
-          page={p}
-          animations={animations}
-          attachMode={attachMode}
-          onAreaChosen={onAreaChosen}
-        />
-      </div>
-      {!bare && <NotesRail
-        notes={annotations.filter((a) => a.page === p && annotationIsNote(a))}
-        currentUserId={currentUserId}
-        isMobile={isMobile}
-        onOpen={onOpenNote}
-      />}
-    </div>
-  );
-});
-
-// Inline colored boxes for each annotation rect on the current page.
-// Positioned inside the same parent as the canvas + text layer; sits
-// between them in z-order so highlights show through the (transparent)
-// text layer but selection still works on top.
-const ANNOTATION_FILL: Record<AnnotationColor, string> = {
-  gold: 'rgba(245, 207, 96, 0.45)',
-  green: 'rgba(134, 239, 172, 0.4)',
-  pink: 'rgba(244, 114, 182, 0.4)',
-  blue: 'rgba(96, 165, 250, 0.4)',
-};
-const ANNOTATION_DOT: Record<AnnotationColor, string> = {
-  gold: '#f5cf60',
-  green: '#86efac',
-  pink: '#f472b6',
-  blue: '#60a5fa',
-};
-
-// The right-edge page rail: a scrollbar-shaped thumb mapped over the whole
-// document. Drag it, or click anywhere on the track, to move through the
-// pages — the vertical companion to the bottom slider, present even in
-// fit-page mode where no native scrollbar can exist. It owns a permanent
-// flex lane at the pane's right edge, so it never moves and never shares
-// ground with the native bar; its ink follows the reader's theme, so it
-// reads on parchment as plainly as by lamplight. Exported for the harness
-// probes; the reader is its only product surface.
-// The rail is a scrollbar for the whole document — the one a finger can
-// find. Its thumb is the scroll position, and dragging it moves through
-// pages and through a page alike; it used to snap to page tops, so on a
-// phone with the page taller than the screen the bottom of every page
-// was out of reach. The page number is derived from the scroll, as ever.
-export function PageRail({ page, total, scroller, theme, onSeek }: {
-  page: number;
-  total: number;
-  /** The scrolling page stack; the thumb follows its scroll position. */
-  scroller: React.RefObject<HTMLDivElement | null>;
-  theme: Theme;
-  onSeek: (fraction: number) => void;
-}) {
-  const railRef = useRef<HTMLDivElement | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const [hover, setHover] = useState(false);
-  const THUMB = 56;
-  const dark = theme === 'dark';
-
-  // The scroll position as a fraction of the scroll range, read here so only
-  // the rail re-renders as the document moves.
-  const [fraction, setFraction] = useState(0);
-  useEffect(() => {
-    const el = scroller.current;
-    if (!el) return;
-    let raf = 0;
-    const read = () => {
-      raf = 0;
-      const range = el.scrollHeight - el.clientHeight;
-      const f = range > 0 ? el.scrollTop / range : 0;
-      setFraction((prev) => (Math.abs(prev - f) < 0.002 ? prev : f));
-    };
-    const onScroll = () => { if (!raf) raf = requestAnimationFrame(read); };
-    read();
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => { el.removeEventListener('scroll', onScroll); if (raf) cancelAnimationFrame(raf); };
-  }, [scroller]);
-
-  // A drag seeks at most once a frame: pointer events can outrun the screen.
-  const pendingSeek = useRef<number | null>(null);
-  const seekRaf = useRef(0);
-  const seek = (f: number) => {
-    pendingSeek.current = f;
-    if (seekRaf.current) return;
-    seekRaf.current = requestAnimationFrame(() => {
-      seekRaf.current = 0;
-      if (pendingSeek.current !== null) onSeek(pendingSeek.current);
-      pendingSeek.current = null;
-    });
-  };
-  useEffect(() => () => { if (seekRaf.current) cancelAnimationFrame(seekRaf.current); }, []);
-
-  const fractionAt = (clientY: number): number => {
-    const el = railRef.current;
-    if (!el) return fraction;
-    const r = el.getBoundingClientRect();
-    const usable = r.height - THUMB;
-    if (usable <= 0) return fraction;
-    return Math.min(1, Math.max(0, (clientY - r.top - THUMB / 2) / usable));
-  };
-
-  return (
-    <div
-      ref={railRef}
-      className="reader-rail w-[15px] shrink-0 relative cursor-pointer touch-none select-none"
-      style={{ background: dark ? 'rgba(255,255,255,0.07)' : 'rgba(42,30,16,0.10)' }}
-      onPointerDown={(e) => {
-        (e.currentTarget as Element).setPointerCapture(e.pointerId);
-        setDragging(true);
-        seek(fractionAt(e.clientY));
-      }}
-      onPointerMove={(e) => { if (dragging) seek(fractionAt(e.clientY)); }}
-      onPointerUp={() => setDragging(false)}
-      onPointerCancel={() => setDragging(false)}
-      onPointerEnter={() => setHover(true)}
-      onPointerLeave={() => setHover(false)}
-      role="slider"
-      aria-label="Scroll through the pages"
-      aria-valuemin={1}
-      aria-valuemax={total}
-      aria-valuenow={page}
-      title={`Page ${page} of ${total} — drag to move through the document`}
-    >
-      <div
-        className="absolute left-[2px] right-[2px] rounded-full"
-        style={{
-          height: THUMB,
-          top: `calc(${Math.min(1, Math.max(0, fraction))} * (100% - ${THUMB}px))`,
-          background: dragging
-            ? '#e8b84a'
-            : hover
-              ? (dark ? 'rgba(232, 184, 74, 0.85)' : 'rgba(160, 109, 31, 0.9)')
-              : (dark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(42, 30, 16, 0.55)'),
-          transition: dragging ? 'none' : 'top 120ms ease, background 120ms ease',
-        }}
-      />
+      {noteCards}
     </div>
   );
 }
 
 // The reader's context menu — its own verbs where the browser's menu stood.
-// The phone toolbar's "more": the actions that do not fit beside the page,
-// dropped under the button that opened them. Portalled to <body> and placed
-// from the button's rectangle — the toolbar clips its overflow and, with
-// its backdrop blur, would contain a fixed child too. Closes on a tap
-// anywhere else or on Escape.
-function ReaderMoreMenu({ anchor, items, onClose }: {
-  anchor: HTMLElement | null;
-  items: { icon: React.ReactNode; label: string; run: () => void; disabled?: boolean }[];
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const away = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (ref.current?.contains(t) || anchor?.contains(t)) return;
-      onClose();
-    };
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('pointerdown', away);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('pointerdown', away);
-      document.removeEventListener('keydown', key);
-    };
-  }, [anchor, onClose]);
-  const rect = anchor?.getBoundingClientRect();
-  const top = rect ? rect.bottom + 4 : 56;
-  const right = rect ? Math.max(8, window.innerWidth - rect.right) : 8;
-  return (
-    <ModalPortal>
-    <div
-      ref={ref}
-      role="menu"
-      className="fixed z-[80] w-60 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
-      style={{ top, right }}
-    >
-      {items.map((it) => (
-        <button
-          key={it.label}
-          role="menuitem"
-          disabled={it.disabled}
-          onClick={() => { it.run(); onClose(); }}
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-[13px] text-white/80 hover:text-white hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          <span className="shrink-0 opacity-80">{it.icon}</span>
-          <span className="flex-1">{it.label}</span>
-        </button>
-      ))}
-    </div>
-    </ModalPortal>
-  );
-}
-
 function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onAskSel, onCopySel, onCopyDoc, onPrint, onDownload, onDrive, onClose }: {
   at: { x: number; y: number };
   hasSelection: boolean;
@@ -4369,52 +2972,6 @@ function ReaderMenu({ at, hasSelection, canDownload, canDrive, printing, onAskSe
           <span className="flex-1">{it.label}</span>
         </button>
       ))}
-    </div>
-  );
-}
-
-function AnnotationsOverlay({
-  annotations,
-  onRemove,
-}: {
-  annotations: Annotation[];
-  onRemove: (id: string) => void;
-}) {
-  return (
-    <div className="absolute inset-0 pointer-events-none">
-      {annotations.map((ann) => {
-        // Margin notes anchor with a quiet dotted underline, not a color
-        // fill — the margin mark is the affordance; the page stays calm.
-        // They're managed from the note card, so no inline remove button.
-        const isNote = ann.note != null && ann.note.trim().length > 0;
-        return ann.rects.map((rect, i) => (
-          <div
-            key={`${ann.id}-${i}`}
-            className="absolute group"
-            style={{
-              left: `${rect.x * 100}%`,
-              top: `${rect.y * 100}%`,
-              width: `${rect.w * 100}%`,
-              height: `${rect.h * 100}%`,
-              backgroundColor: isNote ? 'transparent' : ANNOTATION_FILL[ann.color],
-              borderBottom: isNote ? '1.5px dotted rgba(212,160,84,0.6)' : undefined,
-              borderRadius: '2px',
-              pointerEvents: 'auto',
-            }}
-            title={isNote ? ann.note ?? undefined : ann.anchor_text || undefined}
-          >
-            {i === 0 && !isNote && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onRemove(ann.id); }}
-                className="ann-remove absolute -top-2 -right-2 w-4 h-4 rounded-full bg-black/70 text-white text-[10px] leading-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-                title="Remove highlight"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        ));
-      })}
     </div>
   );
 }
@@ -4532,221 +3089,15 @@ function TextMarksPanel({
   );
 }
 
-// On a highlight that already exists: the same four colours, the one it
-// has ringed, and a way to take it back. Opens on a click on the mark.
-function MarkMenu({
-  x,
-  y,
-  color,
-  onPick,
-  onRemove,
-}: {
-  x: number;
-  y: number;
-  color: AnnotationColor;
-  onPick: (color: AnnotationColor) => void;
-  onRemove: () => void;
-}) {
-  const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
-  const top = Math.max(8, y - 44);
-  return (
-    <div
-      data-mark-menu
-      role="menu"
-      aria-label="This highlight"
-      className="fixed z-[60] flex items-center gap-1 px-1.5 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
-      style={{ left: x, top, transform: 'translateX(-50%)' }}
-      onMouseDown={(e) => e.preventDefault()}
-    >
-      {colors.map((c) => (
-        <button
-          key={c}
-          onClick={() => { if (c !== color) onPick(c); }}
-          className={`w-5 h-5 rounded-full transition ${c === color ? 'ring-2 ring-white ring-offset-1 ring-offset-[#1a1a22]' : 'hover:scale-110'}`}
-          style={{ backgroundColor: ANNOTATION_DOT[c] }}
-          title={c === color ? `Highlighted ${c}` : `Change to ${c}`}
-          aria-label={c === color ? `Highlighted ${c}` : `Change to ${c}`}
-        />
-      ))}
-      <div className="w-px h-4 bg-white/15 mx-0.5" />
-      <button
-        onClick={onRemove}
-        className="h-5 px-1.5 inline-flex items-center gap-1 rounded text-white/70 hover:text-[#e8b84a] transition text-[11px] font-medium"
-        title="Remove this highlight"
-      >
-        <X size={13} />
-        Remove
-      </button>
-    </div>
-  );
-}
-
-function SelectionMenu({
-  x,
-  y,
-  onAsk,
-  onPick,
-  onCopy,
-  onNote,
-  onCancel,
-}: {
-  x: number;
-  y: number;
-  onAsk: () => void;
-  onPick: (color: AnnotationColor) => void;
-  onCopy: () => void;
-  onNote: () => void;
-  onCancel: () => void;
-}) {
-  const colors: AnnotationColor[] = ['gold', 'green', 'pink', 'blue'];
-  // Clamp to viewport so the popover doesn't get clipped off the top.
-  const top = Math.max(8, y - 44);
-  return (
-    <div
-      className="fixed z-[60] flex items-center gap-1 px-1.5 py-1 rounded-lg bg-[#1a1a22] border border-white/15 shadow-2xl"
-      style={{ left: x, top, transform: 'translateX(-50%)' }}
-      onMouseDown={(e) => e.preventDefault()} // don't drop the selection on click
-    >
-      {colors.map((c) => (
-        <button
-          key={c}
-          onClick={() => onPick(c)}
-          className="w-5 h-5 rounded-full hover:scale-110 transition"
-          style={{ backgroundColor: ANNOTATION_DOT[c] }}
-          title={`Highlight ${c}`}
-        />
-      ))}
-      <div className="w-px h-4 bg-white/15 mx-0.5" />
-      <button
-        onClick={onCopy}
-        className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
-        title="Copy the selected text"
-      >
-        <Copy size={14} />
-      </button>
-      <button
-        onClick={onNote}
-        className="h-5 px-1 inline-flex items-center justify-center rounded text-white/70 hover:text-[#e8b84a] transition"
-        title="Add a margin note"
-      >
-        <StickyNote size={14} />
-      </button>
-      <button
-        onClick={onAsk}
-        className="h-5 px-1 inline-flex items-center gap-1 rounded text-[#e8b84a]/85 hover:text-[#e8b84a] transition text-[11px] font-medium"
-        title="Ask the Assistant about this passage"
-      >
-        <MessageCircle size={14} />
-        Ask
-      </button>
-      <div className="w-px h-4 bg-white/15 mx-0.5" />
-      <button
-        onClick={onCancel}
-        className="w-5 h-5 rounded-full flex items-center justify-center text-white/55 hover:text-white text-[12px] leading-none"
-        title="Cancel"
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
-function ReaderStyle({ theme }: { theme: Theme }) {
-  // The words being chosen, at the strength a gold highlight will have once
-  // the color is picked: what is seen is what is made.
-  const selectionBg =
-    theme === 'dark'
-      ? 'rgba(245, 207, 96, 0.5)'
-      : 'rgba(212, 160, 84, 0.45)';
-  const dark = theme === 'dark';
-  const sbTrack = dark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(42, 30, 16, 0.08)';
-  const sbThumb = dark ? 'rgba(255, 255, 255, 0.45)' : 'rgba(42, 30, 16, 0.5)';
-  const sbBtnHover = dark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(42, 30, 16, 0.16)';
-  const sbInk = dark ? 'rgba(255,255,255,0.65)' : 'rgba(42,30,16,0.75)';
+// The styles of a rendered document: a Word file's notes, the find and the
+// marks painted by the Custom Highlight API, the themed scrollbar, print,
+// and the three page dialects. (A PDF's styles are the book's.)
+function RenderedDocStyle({ theme }: { theme: ReaderTheme }) {
   return (
     <style>{`
       /* A Word file's notes, labelled (src/lib/reader-notes.ts). */
       .reader-notes-heading { margin-top: 2.5em; padding-top: 0.8em; border-top: 1px solid currentColor; font-size: 0.95em; opacity: 0.85; }
-      .textLayer {
-        position: absolute;
-        left: 0;
-        top: 0;
-        overflow: hidden;
-        /* Full strength, as pdf.js 5 has it: the glyphs are transparent
-           anyway, and a dimmed layer dimmed the selection with it (a 0.55
-           gold at 0.25 opacity was a 14% wash nobody could see). */
-        opacity: 1;
-        line-height: 1.0;
-        user-select: text;
-        pointer-events: auto;
-        --min-font-size: 1;
-        --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-        --min-font-size-inv: calc(1 / var(--min-font-size));
-      }
-      /* Mirrors pdfjs-dist's own pdf_viewer.css text-layer contract —
-         spans carry --font-height/--scale-x/--rotate inline; these rules
-         turn them into real geometry. Keep selector shapes identical to
-         upstream (marked-content PDFs nest their spans). */
-      .textLayer :is(span, br) {
-        color: transparent;
-        position: absolute;
-        white-space: pre;
-        cursor: text;
-        transform-origin: 0% 0%;
-      }
-      .textLayer > :not(.markedContent),
-      .textLayer .markedContent span:not(.markedContent) {
-        z-index: 1;
-        --font-height: 0;
-        font-size: calc(var(--text-scale-factor) * var(--font-height));
-        --scale-x: 1;
-        --rotate: 0deg;
-        transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
-      }
-      .textLayer .markedContent { display: contents; }
-      /* The selection guard (src/lib/pdf-text-selection.ts): an empty,
-         unselectable div under the spans that covers the layer while a
-         drag is in progress, so a gap between spans ends the selection
-         where the mouse is instead of at the next span on the page. */
-      .textLayer .endOfContent {
-        display: block;
-        position: absolute;
-        inset: 100% 0 0;
-        z-index: 0;
-        cursor: default;
-        user-select: none;
-      }
-      .textLayer.selecting .endOfContent { top: 0; }
-      .textLayer ::selection { background: ${selectionBg}; color: transparent; }
-      .textLayer br::selection { background: transparent; }
-      /* Search hits: the words themselves, lit at full strength over the
-         page; the current match stronger, with a ring. Multiply keeps the
-         ink readable through the color. */
-      /* On a touch screen nothing hovers: the × that takes a highlight back
-         is always shown, and big enough for a finger; so is the rail. */
-      @media (hover: none) {
-        .reader-rail { width: 24px !important; }
-        .ann-remove {
-          opacity: 1 !important;
-          width: 22px !important;
-          height: 22px !important;
-          font-size: 13px !important;
-          top: -11px !important;
-          right: -11px !important;
-        }
-      }
-      .search-hits { z-index: 2; }
-      .search-hit {
-        position: absolute;
-        background: rgba(255, 214, 0, 0.6);
-        border-radius: 2px;
-        mix-blend-mode: multiply;
-      }
-      .search-hit.current {
-        background: rgba(255, 150, 0, 0.8);
-        box-shadow: 0 0 0 2px rgba(255, 120, 0, 0.95);
-      }
-      /* The same two colors for a rendered document (docx, text, slides,
+      /* The find's two colors for a rendered document (docx, text, slides,
          screenplay), painted by the Custom Highlight API over the words. */
       ::highlight(${FIND_HL}) { background-color: rgba(255, 214, 0, 0.6); }
       ::highlight(${FIND_HL_CURRENT}) { background-color: rgba(255, 150, 0, 0.85); }
@@ -4763,55 +3114,8 @@ function ReaderStyle({ theme }: { theme: Theme }) {
         text-decoration-color: rgba(212, 160, 84, 0.8);
         text-decoration-thickness: 1.5px;
       }
-      /* The reading pane's scrollbar wears the reader's theme — the app-wide
-         white-on-dark bar washes out on parchment. The thumb rides the whole
-         case; the step arrows move it a line at a time (hold to crawl). */
-      .reader-scroll::-webkit-scrollbar-track { background: ${sbTrack}; }
-      .reader-scroll::-webkit-scrollbar-thumb {
-        background: ${sbThumb};
-        border-radius: 8px;
-        border: 3px solid transparent;
-        background-clip: padding-box;
-        min-height: 48px;
-      }
-      .reader-scroll::-webkit-scrollbar-thumb:hover { background: rgba(232, 184, 74, 0.9); background-clip: padding-box; }
-      .reader-scroll::-webkit-scrollbar-thumb:active { background: #e8b84a; background-clip: padding-box; }
-      .reader-scroll::-webkit-scrollbar-button {
-        width: 15px;
-        height: 15px;
-        background-color: ${sbTrack};
-        background-repeat: no-repeat;
-        background-position: center;
-      }
-      .reader-scroll::-webkit-scrollbar-button:hover { background-color: ${sbBtnHover}; }
-      .reader-scroll::-webkit-scrollbar-button:vertical:start:increment,
-      .reader-scroll::-webkit-scrollbar-button:vertical:end:decrement,
-      .reader-scroll::-webkit-scrollbar-button:horizontal:start:increment,
-      .reader-scroll::-webkit-scrollbar-button:horizontal:end:decrement { display: none; }
-      .reader-scroll::-webkit-scrollbar-button:vertical:decrement { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
-      .reader-scroll::-webkit-scrollbar-button:vertical:decrement:hover { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 1.5 L8 7 L1 7 Z' fill='%23e8b84a'/%3E%3C/svg%3E"); }
-      .reader-scroll::-webkit-scrollbar-button:vertical:increment { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
-      .reader-scroll::-webkit-scrollbar-button:vertical:increment:hover { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M4.5 7.5 L8 2 L1 2 Z' fill='%23e8b84a'/%3E%3C/svg%3E"); }
-      .reader-scroll::-webkit-scrollbar-button:horizontal:decrement { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M1.5 4.5 L7 8 L7 1 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
-      .reader-scroll::-webkit-scrollbar-button:horizontal:increment { background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='9' height='9'%3E%3Cpath d='M7.5 4.5 L2 8 L2 1 Z' fill='${sbInk}'/%3E%3C/svg%3E"); }
-      /* Printing a rendered document (docx, slides, script): only the
-         document itself reaches the paper — no app chrome, no dark ground.
-         PDFs never come this way; they print as their original file. */
-      @media print {
-        body * { visibility: hidden !important; }
-        .print-root, .print-root * { visibility: visible !important; }
-        .print-root {
-          position: absolute !important;
-          left: 0 !important;
-          top: 0 !important;
-          width: 100% !important;
-          max-width: none !important;
-          margin: 0 !important;
-          box-shadow: none !important;
-        }
-      }
-      .textLayer ::-moz-selection { background: ${selectionBg}; color: transparent; }
-      .textLayer br::-moz-selection { background: transparent; }
+      ${scrollbarCss(theme)}
+      ${printCss}
 
       .docx-page :is(h1,h2,h3,h4) { font-weight: 700; margin: 1em 0 0.4em; line-height: 1.25; }
       .docx-page h1 { font-size: 1.8em; }
