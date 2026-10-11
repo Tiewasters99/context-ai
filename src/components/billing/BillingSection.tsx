@@ -39,6 +39,23 @@ interface Pack {
   sort_order: number;
 }
 
+interface OcrPack {
+  pack_key: string;
+  display_name: string;
+  price_cents: number;
+  pages: number;
+  sort_order: number;
+}
+
+/** public.volume_status() — migration 107. Null until that migration is applied. */
+interface VolumeStatus {
+  monthly_ocr_pages: number | null;
+  ocr_pages_used: number;
+  ocr_pack_pages: number;
+  storage_bytes_limit: number | null;
+  storage_bytes_used: number;
+}
+
 interface Account {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
@@ -103,6 +120,13 @@ const money = (cents: number | null | undefined) =>
 
 const monthKey = () => new Date().toISOString().slice(0, 7);
 
+const count = (n: number) => n.toLocaleString('en-US');
+
+const gb = (bytes: number) => {
+  const g = bytes / 1073741824;
+  return g >= 10 ? `${Math.round(g)} GB` : g >= 0.1 ? `${g.toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1048576))} MB`;
+};
+
 const longDate = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) : null;
 
@@ -153,6 +177,8 @@ export default function BillingSection() {
   const [creditCents, setCreditCents] = useState(0);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [matters, setMatters] = useState<MatterOption[]>([]);
+  const [ocrPacks, setOcrPacks] = useState<OcrPack[]>([]);
+  const [volume, setVolume] = useState<VolumeStatus | null>(null);
 
   const [selectedPack, setSelectedPack] = useState<string>('');
   const [selectedMatter, setSelectedMatter] = useState<string>('');
@@ -190,7 +216,7 @@ export default function BillingSection() {
         if (!cancelled) setConfigured(false);
       }
 
-      const [profileRes, planRes, packRes, acctRes, creditRes, purchaseRes, matterRes] = await Promise.all([
+      const [profileRes, planRes, packRes, acctRes, creditRes, purchaseRes, matterRes, ocrPackRes, volumeRes] = await Promise.all([
         supabase.from('profiles').select('pricing_tier').eq('id', user.id).maybeSingle(),
         supabase.from('billing_plans').select('*').order('sort_order'),
         supabase.from('billing_credit_packs').select('*').eq('active', true).order('sort_order'),
@@ -198,6 +224,10 @@ export default function BillingSection() {
         supabase.from('usage_credit_balance').select('cents_available').eq('user_id', user.id).maybeSingle(),
         supabase.from('usage_credit_purchases').select('*').order('created_at', { ascending: false }).limit(10),
         supabase.from('matterspaces').select('id,name,ai_tier,parent_matterspace_id').order('name'),
+        // Migration 107. Either read failing (not yet applied) just hides the
+        // scanned-page line and the OCR pack button.
+        supabase.from('billing_ocr_packs').select('*').eq('active', true).order('sort_order'),
+        supabase.rpc('volume_status'),
       ]);
       if (cancelled) return;
 
@@ -209,6 +239,8 @@ export default function BillingSection() {
       setCreditCents(Number(creditRes.data?.cents_available ?? 0));
       setPurchases((purchaseRes.data as Purchase[] | null) ?? []);
       setMatters(taggableMatters((matterRes.data as MatterTierRow[] | null) ?? []));
+      setOcrPacks(ocrPackRes.error ? [] : ((ocrPackRes.data as OcrPack[] | null) ?? []));
+      setVolume(volumeRes.error ? null : ((volumeRes.data as VolumeStatus | null) ?? null));
 
       // This month against the allowance. Both rows are the account's own, so
       // migration 063's read policies already allow them.
@@ -375,6 +407,27 @@ export default function BillingSection() {
             {money(creditCents)}
             <span className="text-[var(--color-text-muted)]"> · credits do not expire</span>
           </div>
+          {volume && (
+            <>
+              {/* Scanned pages only: documents with a text layer (Word, e-filed
+                  PDFs, Westlaw, email) are never counted (migration 107). */}
+              <div className="mt-3 text-[11px] text-[var(--color-text-muted)]">Scanned pages read (OCR) this month</div>
+              <div className="text-sm text-[var(--color-text)]">
+                {count(volume.ocr_pages_used)}
+                {volume.monthly_ocr_pages === null
+                  ? <span className="text-[var(--color-text-muted)]"> · no limit on this plan</span>
+                  : <span className="text-[var(--color-text-muted)]"> of {count(volume.monthly_ocr_pages)} included</span>}
+                {volume.ocr_pack_pages > 0 && (
+                  <span className="text-[var(--color-text-muted)]"> · {count(volume.ocr_pack_pages)} OCR pack pages left</span>
+                )}
+              </div>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                Documents that already contain text are not counted.
+                {' '}Storage: {gb(volume.storage_bytes_used)} used
+                {volume.storage_bytes_limit !== null && ` of ${gb(volume.storage_bytes_limit)}`}.
+              </div>
+            </>
+          )}
         </div>
 
         {/* ── dormant, or the buttons ──────────────────────────────── */}
@@ -437,6 +490,43 @@ export default function BillingSection() {
                 </div>
                 <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
                   Billed monthly. Cancel at any time from Manage billing.
+                </p>
+              </div>
+            )}
+
+            {ocrPacks.length > 0 && (
+              <div className="px-4 py-4">
+                <div className="text-[11px] text-[var(--color-text-muted)]">Buy OCR pages</div>
+                <div className="mt-2 space-y-1.5">
+                  {ocrPacks.map((p) => (
+                    <div
+                      key={p.pack_key}
+                      className="flex items-center justify-between gap-3 rounded-md border
+                                 border-[var(--color-border)] px-3 py-2"
+                    >
+                      <div className="min-w-0 text-sm text-[var(--color-text)]">
+                        {p.display_name}
+                        <span className="text-[var(--color-text-muted)]">{' · '}{money(p.price_cents)}</span>
+                      </div>
+                      <button
+                        onClick={() => go('/api/billing-credits-checkout',
+                          { pack_type: 'ocr', pack_key: p.pack_key }, `ocr:${p.pack_key}`)}
+                        disabled={busy !== null}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-[var(--color-primary)]
+                                   px-3 py-1.5 text-[12px] font-medium text-black
+                                   hover:bg-[var(--color-primary-hover)] transition-colors disabled:opacity-50"
+                      >
+                        {busy === `ocr:${p.pack_key}`
+                          ? <Loader2 size={13} className="animate-spin" />
+                          : <CreditCard size={13} />}
+                        Buy
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">
+                  For large scanned productions. Pack pages do not expire, are used only after the
+                  monthly allowance, and any scans waiting for the allowance are read as soon as you buy.
                 </p>
               </div>
             )}

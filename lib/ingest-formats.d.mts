@@ -51,6 +51,10 @@ export interface OcrPending {
   next_retry_at?: string | null;
   held?: boolean;
   exhausted?: boolean;
+  /** The scanned-page allowance ran out (migration 107); woken by an OCR pack or the next month. */
+  over_allowance?: boolean;
+  /** 'YYYY-MM' (UTC) the allowance ran out in. */
+  month?: string;
 }
 /** documents.metadata.ocr_route — which route read the scanned pages, and roughly what it cost (Phase 4). */
 export interface OcrRoute {

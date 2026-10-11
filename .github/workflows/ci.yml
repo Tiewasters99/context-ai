@@ -402,6 +402,12 @@ jobs:
       - name: Credit packs — a sealed matter is never named on a receipt
         if: ${{ !cancelled() }}
         run: node scripts/_verify-credit-pack-sealed.mjs
+      # Migration 107: the fair-use meter on SCANNED pages, OCR packs and the
+      # storage ceiling — the pipeline asks before OCR and waits honestly when
+      # refused (fake Supabase), and the migration itself on PGlite.
+      - name: Migration 107 — scanned-page allowance, OCR packs, storage ceiling (pipeline + PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-volume-limits.mjs
       - name: Migration 064 — the matter Record is append-only (PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ledger.mjs

@@ -32,10 +32,16 @@
 // Credits are ONE balance per account today. The tag is for the receipt and for
 // reporting, not a lock — see the header of migration 067 for how to make it a
 // lock later without a rewrite.
+//
+// OCR packs (migration 107) come through here too, with `pack_type: 'ocr'`: a
+// one-time purchase of scanned pages past the monthly fair-use allowance. Same
+// customer, same invoice, same webhook — only the metadata `kind` differs
+// ('ocr_pages'), and the grant lands in ocr_pack_balance instead. No matter
+// tag: scanned pages are an account resource, and the receipt says so.
 
 import {
   json, notConfigured, corsPreflight, isConfigured, readJsonBody, verifyUser, bearerFrom,
-  loadPack, loadSettings, ensureStripeCustomer, matterNameForBuyer, originFor,
+  loadPack, loadOcrPack, loadSettings, ensureStripeCustomer, matterNameForBuyer, originFor,
   creditLineDescription, LOG,
 } from '../lib/billing.mjs';
 import { stripeRequest, stripeConfigured } from '../lib/stripe-core.mjs';
@@ -56,6 +62,9 @@ export default async function handler(req, res, deps = {}) {
   if (!user) return json(res, 401, { error: 'invalid_session' });
 
   const body = await readJsonBody(req);
+  if (String(body.pack_type || '').toLowerCase() === 'ocr') {
+    return ocrPackCheckout(req, res, user, body, fetchImpl);
+  }
   const packKey = String(body.pack_key || '').trim().toLowerCase();
   const matterId = body.matter_id ? String(body.matter_id).trim() : null;
   if (!packKey) return json(res, 400, { error: 'missing_pack_key' });
@@ -162,5 +171,74 @@ export default async function handler(req, res, deps = {}) {
       credit_cents: pack.credit_cents,
     },
     matter: matterId ? { id: matterId, name: matterName } : null,
+  });
+}
+
+// An OCR pack: scanned pages that do not expire, drawn after the month's
+// fair-use allowance (migration 107).
+async function ocrPackCheckout(req, res, user, body, fetchImpl) {
+  const packKey = String(body.pack_key || '').trim().toLowerCase();
+  if (!packKey) return json(res, 400, { error: 'missing_pack_key' });
+  const pack = await loadOcrPack(packKey, { fetchImpl });
+  if (!pack || pack.active !== true) {
+    return json(res, 404, { error: 'unknown_pack', message: 'That OCR pack is not available.' });
+  }
+
+  const settings = await loadSettings({ fetchImpl });
+  const origin = originFor(req);
+  const currency = String(settings.currency || 'usd').toLowerCase();
+  const description = `Contextspaces OCR pack — ${Number(pack.pages).toLocaleString('en-US')} scanned pages`;
+  const lineItem = pack.stripe_price_id
+    ? { price: pack.stripe_price_id, quantity: 1 }
+    : {
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: pack.price_cents,
+          product_data: { name: pack.display_name, description },
+        },
+      };
+
+  const customerId = await ensureStripeCustomer(user, { fetchImpl });
+  if (!customerId) {
+    return json(res, 502, { error: 'stripe_error', message: 'Could not start checkout.' });
+  }
+
+  const metadata = {
+    kind: 'ocr_pages',
+    user_id: user.id,
+    pack_key: pack.pack_key,
+    pages: String(pack.pages),
+  };
+  const session = await stripeRequest('/v1/checkout/sessions', {
+    body: {
+      mode: 'payment',
+      customer: customerId,
+      client_reference_id: user.id,
+      line_items: [lineItem],
+      invoice_creation: settings.pack_invoice_creation === false
+        ? undefined
+        : { enabled: true, invoice_data: { description, metadata } },
+      success_url: `${origin}${settings.checkout_success_path}`,
+      cancel_url: `${origin}${settings.checkout_cancel_path}`,
+      metadata,
+    },
+    fetchImpl,
+  });
+
+  if (!session.ok || !session.data?.url) {
+    console.error(`${LOG} OCR pack checkout failed: ${session.error}`);
+    return json(res, 502, { error: 'stripe_error', message: session.error || 'Could not start checkout.' });
+  }
+
+  return json(res, 200, {
+    url: session.data.url,
+    session_id: session.data.id,
+    pack: {
+      pack_key: pack.pack_key,
+      display_name: pack.display_name,
+      price_cents: pack.price_cents,
+      pages: pack.pages,
+    },
   });
 }

@@ -453,9 +453,16 @@ async function requeueOcrPendingIfDue() {
     .limit(500);
   if (error) { log(`ocr_pending sweep failed: ${error.message}`); return; }
   const now = Date.now();
+  // A document waiting on the scanned-page allowance (migration 107) has no
+  // timer: it is due once its month is over, or once an OCR pack purchase
+  // set next_retry_at (ocr_pack_grant). If the allowance is still gone, the
+  // re-run records it as waiting again and charges nothing.
+  const thisMonth = new Date(now).toISOString().slice(0, 7);
   const due = (data || []).filter((d) => {
     const p = d.ocr_pending;
-    if (!p || typeof p !== 'object' || p.held || p.exhausted || !p.next_retry_at) return false;
+    if (!p || typeof p !== 'object' || p.held || p.exhausted) return false;
+    if (p.over_allowance && !p.next_retry_at) return Boolean(p.month) && p.month < thisMonth;
+    if (!p.next_retry_at) return false;
     return new Date(p.next_retry_at).getTime() <= now;
   });
   if (!due.length) return;
