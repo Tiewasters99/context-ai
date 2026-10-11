@@ -449,6 +449,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-ingest-day-one.mjs
 
+      - name: Legacy Excel (.xls) extraction (BIFF8, HTML/TSV exports, renamed .xlsx, fill-down tail)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-xls-extract.mjs
+
       - name: Westlaw star pages (reporter pincites; decoy cites, footnotes, restarts)
         if: ${{ !cancelled() }}
         run: node scripts/_test-westlaw-pages.mjs
