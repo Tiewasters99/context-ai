@@ -26,7 +26,7 @@ for (const e of BINARY_ASSET_EXTENSIONS) assert(ACCEPTED_EXTENSIONS.includes(e),
 for (const e of PLAIN_TEXT_EXTENSIONS) assert(ACCEPTED_EXTENSIONS.includes(e), `${e} accepted`);
 assert(ACCEPTED_EXTENSIONS.includes('.zip'));
 for (const e of ['.obj', '.fbx', '.glb', '.gltf', '.stl', '.3ds', '.blend']) assert(BINARY_ASSET_EXTENSIONS.includes(e), `${e} is a 3D asset`);
-for (const e of ['.exe', '.lnk', '.sys', '.download', '.xls']) assert(!ACCEPTED_EXTENSIONS.includes(e), `${e} refused`);
+for (const e of ['.exe', '.lnk', '.sys', '.download']) assert(!ACCEPTED_EXTENSIONS.includes(e), `${e} refused`);
 // Legacy Word is read since 2026-09-23 (lib/doc-extract.mjs).
 assert(ACCEPTED_EXTENSIONS.includes('.doc') && SUPPORTED_EXTENSIONS.includes('.doc'), '.doc accepted and extracted');
 assert(SUPPORTED_EXTENSIONS.includes('.rtf'), '.rtf is read (lib/rtf-text.mjs, 2026-09-07)');
@@ -69,10 +69,11 @@ assert.strictEqual(exe.code, 'unsupported');
 assert.match(exe.message, /"setup\.exe" is a \.exe file, which the Vault can't read/);
 assert.match(exe.message, /Supported: PDF, Word \(\.docx, \.doc, \.rtf\)/);
 assert.strictEqual(checkUpload({ name: 'Westlaw opinion.DOC', size: 10 }), null, 'a .doc is accepted');
-const xls = checkUpload({ name: 'model.XLS', size: 10 });
-assert.strictEqual(xls.code, 'unsupported');
-assert.match(xls.message, /Save the legacy Excel workbook as \.xlsx/);
-ok('unsupported: names the extension, lists the supported types, hints for .xls; .doc is accepted');
+assert.strictEqual(checkUpload({ name: 'model.XLS', size: 10 }), null, 'a legacy .xls is accepted (2026-10-10)');
+const ppt = checkUpload({ name: 'Opening.PPT', size: 10 });
+assert.strictEqual(ppt.code, 'unsupported');
+assert.match(ppt.message, /Save the legacy PowerPoint file as \.pptx/);
+ok('unsupported: names the extension, lists the supported types, hints for .ppt; .doc and .xls are accepted');
 
 const lock = checkUpload({ name: '~$tersburg Timeline.docx', size: 162 });
 assert.strictEqual(lock.code, 'lock_file');

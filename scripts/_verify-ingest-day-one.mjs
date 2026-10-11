@@ -52,7 +52,6 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
     ['IMG_4021.HEIC', /Most Compatible/i, 'iPhone photo (High Efficiency)'],
     ['IMG_4021.heic', /JPEG/i, 'iPhone photo, lower case'],
     ['scan.heif', /JPEG or PNG/i, 'HEIF image'],
-    ['Damages model.xls', /\.xlsx/i, 'pre-2007 Excel'],
     ['Opening.ppt', /\.pptx/i, 'pre-2007 PowerPoint'],
     ['RE Discovery schedule.msg', /\.eml/i, 'Outlook message'],
     ['RE Discovery schedule.msg', /print it to PDF/i, 'Outlook message — the PDF route'],
@@ -70,11 +69,11 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
     assert(/which the Vault can't read\./.test(r.message), `${what}: refusal lost its opening sentence`);
     assert(/Supported: PDF/.test(r.message), `${what}: refusal lost the supported list`);
   }
-  ok(`${REFUSED.length} day-one formats are refused at selection, each naming what to do instead (HEIC → Most Compatible/JPEG, .xls/.ppt → Save As, .msg/.pst → .eml or PDF)`);
+  ok(`${REFUSED.length} day-one formats are refused at selection, each naming what to do instead (HEIC → Most Compatible/JPEG, .ppt → Save As, .msg/.pst → .eml or PDF)`);
 
   // None of them may be quietly accepted: a half-accepted type that ingests
   // to zero passages is worse than a refusal, because nothing says so.
-  for (const ext of ['.heic', '.heif', '.msg', '.pst', '.xls', '.ppt']) {
+  for (const ext of ['.heic', '.heif', '.msg', '.pst', '.ppt']) {
     assert(!ACCEPTED_EXTENSIONS.includes(ext), `${ext} is refused by message but present in ACCEPTED_EXTENSIONS`);
     assert(!SUPPORTED_EXTENSIONS.includes(ext), `${ext} claims a text extractor it does not have`);
     assert(unsupportedHint(ext).length > 20, `${ext} has no named alternative`);
@@ -93,7 +92,7 @@ console.log('\n[1] file types: accepted, or refused with the alternative named')
 
   // What still works, unchanged. A refusal table is only safe if it cannot
   // creep over the formats people upload every day.
-  for (const name of ['Brief.docx', 'scan.pdf', 'page.jpg', 'page.JPEG', 'production.tif', 'notes.md', 'book.epub', 'thread.eml', 'memo.rtf', 'Westlaw opinion.doc', 'workbook.xlsx', 'deck.pptx', 'hearing.mp4', 'exhibits.zip', 'model.obj', 'index.csv']) {
+  for (const name of ['Brief.docx', 'scan.pdf', 'page.jpg', 'page.JPEG', 'production.tif', 'notes.md', 'book.epub', 'thread.eml', 'memo.rtf', 'Westlaw opinion.doc', 'workbook.xlsx', 'Damages model.xls', 'deck.pptx', 'hearing.mp4', 'exhibits.zip', 'model.obj', 'index.csv']) {
     assert.strictEqual(checkUpload({ name, size: 1_000 }), null, `${name} must still be accepted`);
   }
   assert.strictEqual(checkUpload({ name: 'no-extension-attachment', size: 1_000 }), null);
