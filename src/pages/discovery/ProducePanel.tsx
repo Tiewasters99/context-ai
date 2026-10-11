@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Stamp, Package, Download, Send, CheckCircle2 } from 'lucide-react';
 import {
-  maxBatesSeq, updateProduction, enqueueJob, getDiscoverySignedUrl,
+  nextBatesSeq, updateProduction, enqueueJob, getDiscoverySignedUrl,
   listDeliveries, createDelivery, formatBates, BATES_POSITIONS,
   type ProcessingJob, type Production, type ProductionItem, type BatesPosition, type Delivery,
 } from '@/lib/discovery';
@@ -132,21 +132,28 @@ function BatesStep({
   const [pad, setPad] = useState(production.bates_pad || 7);
   const [start, setStart] = useState<number>(production.bates_start ?? 1);
   const [position, setPosition] = useState<BatesPosition>(production.bates_position || 'lower_right');
-  const [highWater, setHighWater] = useState<number | null>(null);
+  const [series, setSeries] = useState<{ prefix: string; next: number; perPrefix: boolean } | null>(null);
+  // Once the user types their own start number, the suggestion stops
+  // overwriting it.
+  const [startTouched, setStartTouched] = useState(production.bates_start != null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Default start = matter high-water mark + 1 (supplemental productions
-  // continue the matter's numbering); 1 when nothing was ever stamped.
+  // Suggested start = the next free number in THIS prefix's series (108): a
+  // new prefix starts at 1, a repeated prefix continues where it left off.
+  // Re-asked as the prefix is typed, after a short pause.
   useEffect(() => {
     let cancelled = false;
-    maxBatesSeq(production.matterspace_id).then((max) => {
-      if (cancelled) return;
-      setHighWater(max);
-      if (production.bates_start == null) setStart(max + 1);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [production.matterspace_id, production.bates_start]);
+    const typed = prefix.trim();
+    const t = setTimeout(() => {
+      nextBatesSeq(production.matterspace_id, typed).then((r) => {
+        if (cancelled) return;
+        setSeries({ prefix: typed, ...r });
+        if (!startTouched) setStart(r.next);
+      }).catch(() => {});
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [production.matterspace_id, prefix, startTouched]);
 
   const preview = formatBates(prefix || 'PREFIX_', Math.max(1, Math.min(12, pad)), Math.max(1, start));
 
@@ -208,15 +215,26 @@ function BatesStep({
             type="number"
             min={1}
             value={start}
-            onChange={(e) => setStart(parseInt(e.target.value, 10) || 1)}
+            onChange={(e) => { setStartTouched(true); setStart(parseInt(e.target.value, 10) || 1); }}
             className={`${inputCls} w-full tabular-nums`}
           />
         </div>
       </div>
-      {highWater !== null && highWater > 0 && (
+      {series && (
         <p className="text-[10.5px] text-white/40 -mt-1.5">
-          Matter high-water mark: <span className="text-white/65 tabular-nums">{highWater}</span> — numbering
-          continues from there. Assigned Bates numbers are immutable.
+          {!series.perPrefix ? (
+            series.next > 1 ? (
+              <>Matter high-water mark: <span className="text-white/65 tabular-nums">{series.next - 1}</span> — numbering
+              continues from there. </>
+            ) : null
+          ) : series.next > 1 ? (
+            <><span className="text-white/65">{series.prefix || '(no prefix)'}</span> has been used up to{' '}
+            <span className="text-white/65 tabular-nums">{series.next - 1}</span> in this matter — this production
+            continues from <span className="text-white/65 tabular-nums">{series.next}</span>. </>
+          ) : series.prefix ? (
+            <>New prefix in this matter — numbering starts at 1. </>
+          ) : null}
+          Assigned Bates numbers are immutable.
         </p>
       )}
 

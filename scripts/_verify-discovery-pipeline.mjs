@@ -223,17 +223,24 @@ for (const f of [
   '059_ready_but_empty.sql',
   '060_held_sealed_status.sql',
   '071_discovery_production_integrity.sql',
+  '108_bates_series_per_prefix.sql',
 ]) {
   await db.exec(migration(f));
 }
 await db.exec('grant all on all tables in schema public to authenticated, service_role');
-check(true, '030 + 032 + 044 + 045 + 055 + 057 + 058 + 059 + 060 + 071 all execute against a real Postgres');
+check(true, '030 + 032 + 044 + 045 + 055 + 057 + 058 + 059 + 060 + 071 + 108 all execute against a real Postgres');
 
 // 071 is idempotent: pasting it twice into the SQL editor, which is exactly
 // how it will be applied, must be a no-op rather than an error.
 let rerun071Err = null;
 try { await db.exec(migration('071_discovery_production_integrity.sql')); } catch (e) { rerun071Err = e; }
 check(!rerun071Err, '071 is idempotent — a second paste changes nothing and raises nothing', rerun071Err?.message);
+// 108 replaces 071's allocate_production_bates, so a re-paste of 071 (just
+// above) put the matter-wide version back. Re-apply 108 — which is also its
+// own second-paste check — so everything below runs on the current schema.
+let rerun108Err = null;
+try { await db.exec(migration('108_bates_series_per_prefix.sql')); } catch (e) { rerun108Err = e; }
+check(!rerun108Err, '108 is idempotent — a second paste changes nothing and raises nothing', rerun108Err?.message);
 
 // The SQL twin of formatBates(). lpad() TRUNCATES when the number is already
 // longer than the pad width and padStart() does not, so they have to be
@@ -1089,6 +1096,44 @@ check(await refuses(
   `insert into public.bates_registry (matterspace_id, bates_number, bates_seq, production_id, production_item_id, page_number)
    values ($1,'ACME_0000001',1,$2,$3,1)`, [matter.id, prod.id, byName['001_Supply_Agreement.pdf'].id]),
 'unique(matterspace_id, bates_number) makes reuse a database error');
+
+// 108: a Bates series is (matter, prefix). A NEW prefix starts at 1 even
+// though ACME_ has used 1..14 in this matter; a repeated prefix continues;
+// prefixes compare case- and whitespace-insensitively; a collision is still
+// refused inside the same series.
+async function oneDocProduction(name, pages) {
+  const pr = await one(
+    `insert into public.productions (matterspace_id, direction, name, bates_position, created_by)
+     values ($1,'outgoing',$2,'lower_right',$3) returning *`, [matter.id, name, prof.id]);
+  const buf = await buildPdf(name.toUpperCase(), pages);
+  await q(`insert into public.production_items (production_id, matterspace_id, sort_order, original_filename, sha256,
+             file_size_bytes, kind, page_count, display_storage_path, status)
+           values ($1,$2,1,$3,$4,$5,'display_pdf',$6,$7,'ready')`,
+  [pr.id, matter.id, `${name}.pdf`, sha256(buf), buf.length, pages,
+    putObject(`${matter.id}/${pr.id}/x/display.pdf`, buf, 'application/pdf')]);
+  return pr;
+}
+const acmeNext = Number((await one(`select public.bates_next_seq($1,'ACME_') n`, [matter.id])).n);
+const pltfNext = Number((await one(`select public.bates_next_seq($1,'PLTF_') n`, [matter.id])).n);
+check(acmeNext > 1 && pltfNext === 1,
+  'bates_next_seq: a used prefix suggests its own next number; a new prefix suggests 1',
+  `ACME_ ${acmeNext}, PLTF_ ${pltfNext}`);
+const pl1 = await stampProduction((await oneDocProduction('Plaintiff Vol 1', 2)).id, { prefix: 'PLTF_', pad: 7 });
+check(pl1.startSeq === 1 && pl1.endSeq === 2,
+  'a new prefix in a matter that has already used 1..N under another prefix starts at 1',
+  `${pl1.startSeq}-${pl1.endSeq}`);
+const pl2 = await stampProduction((await oneDocProduction('Plaintiff Vol 2', 3)).id, { prefix: ' pltf_', pad: 7 });
+check(pl2.startSeq === 3 && pl2.endSeq === 5,
+  'the same prefix (case/space-insensitive) continues gaplessly where it left off',
+  `${pl2.startSeq}-${pl2.endSeq}`);
+const acme2 = await stampProduction((await oneDocProduction('Acme Vol 9', 1)).id, { prefix: 'ACME_', pad: 7 });
+check(acme2.startSeq === acmeNext,
+  'the original prefix is unaffected by the new series and continues from its own high-water mark',
+  `${acme2.startSeq} vs ${acmeNext}`);
+let pltfClash = null;
+try { await stampProduction((await oneDocProduction('Plaintiff Clash', 1)).id, { prefix: 'PLTF_', pad: 7, start: 2 }); } catch (e) { pltfClash = e; }
+check(/Bates collision/.test(pltfClash?.message ?? ''),
+  'a start inside a range already used by the SAME prefix is still refused', pltfClash?.message);
 
 // ---------------------------------------------------------------------------
 // 7. Packaging — transcribed from packageProduction():885-990, real emitters
