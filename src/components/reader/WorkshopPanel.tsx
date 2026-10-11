@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight,
+  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight, Copy,
 } from 'lucide-react';
 import type { Turn } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -35,6 +35,8 @@ export type WorkshopPanelProps = {
   onSnippet: (text: string, at: { page: number; rect: FractionalRect | null } | null) => Promise<void>;
   makePreview: (page: number, rect: FractionalRect, turn: Turn) => Promise<string | null>;
   onDownload: (item: WorkshopItem, scale: 1 | 2 | 3) => Promise<void>;
+  /** The snip onto the clipboard as a picture, to paste into a generator. */
+  onCopy: (item: WorkshopItem) => Promise<void>;
   onTurn: (item: WorkshopItem) => Promise<void>;
   /** A snippet's words, corrected or completed by hand. */
   onRetext: (item: WorkshopItem, text: string) => Promise<void>;
@@ -257,6 +259,7 @@ function SectionLabel({ children }: { children: string }) {
 function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: WorkshopItem[]; p: WorkshopPanelProps }) {
   const [preview, setPreview] = useState<{ key: string; url: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const key = `${item.page}:${JSON.stringify(item.rect)}:${item.turn}`;
 
   useEffect(() => {
@@ -304,6 +307,7 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
           <>
             <IconBtn title="Turn a quarter clockwise" busy={busy === 'turn'} onClick={() => run('turn', () => p.onTurn(item))}><RotateCw size={12} /></IconBtn>
             <IconBtn title="Draw the rectangle again (crop)" onClick={() => p.onResnip(item)}><Scissors size={12} /></IconBtn>
+            <IconBtn title="Copy as a picture — then paste it into Flow, Midjourney, Runway, Grok or ChatGPT" busy={busy === 'copy'} onClick={() => run('copy', () => p.onCopy(item))}><Copy size={12} /></IconBtn>
             <DownloadMenu busy={busy === 'dl'} onPick={(scale) => run('dl', () => p.onDownload(item, scale))} />
           </>
         )}
@@ -317,21 +321,32 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
             <Scan size={12} /> {item.rect ? 'Place again' : 'Place on page'}
           </button>
         )}
-        <label title="Bring in what you made from this" className={`p-1 rounded text-white/55 hover:text-white hover:bg-white/5 cursor-pointer ${p.canWrite ? '' : 'opacity-40 pointer-events-none'}`}>
-          {busy === 'in' ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
-          <input
-            type="file"
-            accept="video/*,image/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              e.target.value = '';
-              if (f) void run('in', () => p.onBringIn(item, f));
-            }}
-          />
-        </label>
+        <IconBtn title="Bring in what you made from this (a clip or a still)" busy={busy === 'in' || !p.canWrite} onClick={() => fileRef.current?.click()}><Upload size={12} /></IconBtn>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="video/*,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = '';
+            if (f) void run('in', () => p.onBringIn(item, f));
+          }}
+        />
         <IconBtn title="Take this off the bench (and what sits under it)" danger busy={busy === 'del'} onClick={() => run('del', () => p.onDelete(item))}><Trash2 size={12} /></IconBtn>
       </div>
+
+      {item.kind === 'snip' && (
+        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 px-1.5 pb-1 text-[10px] text-white/40">
+          <span>Copy, then paste into</span>
+          {MAKERS.map((m, i) => (
+            <span key={m.name}>
+              <a href={m.url} target="_blank" rel="noopener noreferrer" className="text-white/60 underline decoration-white/25 underline-offset-2 hover:text-[#e8b84a]">{m.name}</a>
+              {i < MAKERS.length - 1 ? ' ·' : ''}
+            </span>
+          ))}
+        </div>
+      )}
 
       {derived.length > 0 && (
         <div className="border-t border-[var(--color-border)] bg-black/15">
@@ -446,7 +461,10 @@ function IconBtn({ title, onClick, children, danger = false, busy = false }: { t
   );
 }
 
-/** Download at 1×, 2× or 3× (resize): the one choice a plate needs before Flow. */
+/** Download at 1×, 2× or 3× (resize): the one choice a plate needs before Flow.
+ *  The sizes show in the row itself, not in a dropdown: the card clips its
+ *  overflow (rounded corners over the preview), which swallowed a menu that
+ *  hung below it. */
 function DownloadMenu({ onPick, busy }: { onPick: (scale: 1 | 2 | 3) => void; busy: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -457,21 +475,33 @@ function DownloadMenu({ onPick, busy }: { onPick: (scale: 1 | 2 | 3) => void; bu
     return () => document.removeEventListener('mousedown', onDoc);
   }, [open]);
   return (
-    <div ref={ref} className="relative">
-      <IconBtn title="Download as PNG (choose the size)" busy={busy} onClick={() => setOpen((v) => !v)}><Download size={12} /></IconBtn>
+    <div ref={ref} className="flex items-center gap-0.5">
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 rounded-md border border-white/15 bg-[#1a1a22] shadow-xl py-1 min-w-[150px]">
+        <span className="inline-flex items-center gap-0.5 rounded-md border border-white/15 bg-[#1a1a22] px-0.5 text-[10px]">
           {([1, 2, 3] as const).map((s) => (
             <button
               key={s}
               onClick={() => { setOpen(false); onPick(s); }}
-              className="block w-full text-left px-3 py-1 text-[11px] text-white/80 hover:bg-white/5 hover:text-white"
+              title={s === 1 ? 'Small (1200px wide)' : s === 2 ? 'Medium (2400px wide)' : 'Large (3600px wide)'}
+              className="rounded px-1 py-0.5 text-white/75 hover:bg-white/10 hover:text-white"
             >
-              {s === 1 ? 'Small (1×)' : s === 2 ? 'Medium (2×)' : 'Large (3×)'}
+              {s}×
             </button>
           ))}
-        </div>
+        </span>
       )}
+      <IconBtn title="Download as PNG (choose the size)" busy={busy} onClick={() => setOpen((v) => !v)}><Download size={12} /></IconBtn>
     </div>
   );
 }
+
+/** Where a plate goes to be made into something. None of these take a file
+ *  from another site, but every one takes a pasted image in its prompt box —
+ *  so the path is Copy, then paste there. */
+const MAKERS: { name: string; url: string }[] = [
+  { name: 'Midjourney', url: 'https://www.midjourney.com/imagine' },
+  { name: 'Flow', url: 'https://labs.google/fx/tools/flow' },
+  { name: 'Runway', url: 'https://app.runwayml.com/' },
+  { name: 'Grok', url: 'https://grok.com/imagine' },
+  { name: 'ChatGPT', url: 'https://chatgpt.com/' },
+];

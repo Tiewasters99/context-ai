@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Stamp, X, FolderInput, FileArchive, Terminal, RefreshCw, ChevronRight, UploadCloud,
+  Stamp, X, FolderInput, FileArchive, RefreshCw, ChevronRight, UploadCloud,
   ArrowDownToLine, ArrowUpFromLine,
 } from 'lucide-react';
 import PinToggle from '@/components/ui/PinToggle';
@@ -14,6 +14,7 @@ import {
   type ProductionListEntry, type ProductionDirection, type ProcessingJob, type Production,
 } from '@/lib/discovery';
 import { DirectionBadge, StatusBadge, JobProgress, batesRangeLabel } from './bits';
+import ProductionFailure from './ProductionFailure';
 import FloatingPanel from './FloatingPanel';
 
 // Discovery home for a matter: the production ledger. Reached at
@@ -236,6 +237,7 @@ export default function DiscoveryHome() {
                     )}
                     {p.request_refs && <span className="truncate max-w-[200px] italic">{p.request_refs}</span>}
                   </div>
+                  <ProductionFailure production={p} />
                   {pJobs.length > 0 && (
                     <div className="mt-2 pl-1 space-y-1" onClick={(e) => e.stopPropagation()}>
                       {pJobs.map((j) => <JobProgress key={j.id} job={j} />)}
@@ -247,20 +249,10 @@ export default function DiscoveryHome() {
           </div>
         )}
 
-        {/* Big-volume escape hatch — the browser is the wrong pipe for a
-            40 GB production; the worker can intake straight from disk. */}
         {matter && (
-          <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-[rgba(255,255,255,0.07)] bg-[rgba(255,255,255,0.025)] px-4 py-3">
-            <Terminal size={13} className="text-white/35 mt-0.5 shrink-0" />
-            <p className="text-[11px] text-white/45 leading-relaxed">
-              Very large productions can be intaken directly from a local folder, skipping the
-              browser upload:{' '}
-              <code className="text-[10.5px] text-[#d4a054]/90 bg-[#d4a054]/8 px-1.5 py-0.5 rounded">
-                node worker/discovery-worker.mjs --intake &lt;folder&gt; --production &lt;id&gt;
-              </code>{' '}
-              — create the production here first, then use its id.
-            </p>
-          </div>
+          <p className="mt-5 text-[11px] text-white/45 leading-relaxed">
+            Start with &ldquo;New production&rdquo;, then add its documents.
+          </p>
         )}
       </div>
 
@@ -513,13 +505,9 @@ function NewProductionPanel({
           )}
 
           <p className="text-[10.5px] text-white/40 leading-relaxed">
-            Files upload to this production’s intake folder, then the discovery worker{' '}
-            {singleZip ? 'unpacks the ZIP and ' : ''}normalizes each document (display PDF + native +
-            metadata) and ingests it into the matter. For very large volumes, intake from a local
-            folder instead:{' '}
-            <code className="text-[#d4a054]/90 bg-[#d4a054]/8 px-1 py-0.5 rounded">
-              node worker/discovery-worker.mjs --intake &lt;folder&gt; --production {created.id.slice(0, 8)}…
-            </code>
+            Add documents to this production using the upload above.
+            {singleZip ? ' The ZIP will be unpacked automatically.' : ''} Each document will be
+            prepared for review and added to the matter.
           </p>
 
           {error && <p className="text-[11px] text-red-300">{error}</p>}

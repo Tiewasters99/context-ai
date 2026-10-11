@@ -59,7 +59,7 @@ import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mj
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { makeDescribeHook } from '../lib/describe-image-anthropic.mjs';
 import {
-  sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv,
+  sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
 } from '../lib/discovery/util.mjs';
 import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
@@ -524,19 +524,22 @@ async function intakeZip(job) {
     await fs.writeFile(tmp, zipBuf);
 
     try {
-      const zip = new StreamZip.async({ file: tmp });
+      // Names are validated by zipEntryPath, which also accepts Windows
+      // backslash separators; node-stream-zip's own check would reject those.
+      const zip = new StreamZip.async({ file: tmp, skipEntryNameValidation: true });
       const entries = Object.values(await zip.entries())
+        .map((e) => ({ raw: e.name, name: zipEntryPath(e.name), isDirectory: e.isDirectory }))
         .filter((e) => !e.isDirectory && !isJunkPath(e.name));
 
       // Pass 1: load files. Opposing counsel's own Bates numbers and document
       // breaks are trusted over filename guessing.
       let datLookup = new Map();
       for (const e of entries.filter((e) => /\.dat$/i.test(e.name))) {
-        const { records } = parseDat(await zip.entryData(e.name));
+        const { records } = parseDat(await zip.entryData(e.raw));
         datLookup = new Map([...datLookup, ...datLookupByFilename(records)]);
         await uploadToStorage(
           `${prod.matterspace_id}/${prod.id}/loadfiles/${sanitizeStorageName(path.basename(e.name))}`,
-          await zip.entryData(e.name), 'application/octet-stream',
+          await zip.entryData(e.raw), 'application/octet-stream',
         );
       }
 
@@ -547,7 +550,7 @@ async function intakeZip(job) {
       for (const e of contentEntries) {
         fileIndex += 1;
         await progress(job, (fileIndex / contentEntries.length) * 100, e.name);
-        const buf = await zip.entryData(e.name);
+        const buf = await zip.entryData(e.raw);
         await intakeOneFile(prod, job, {
           buf, originalPath: e.name, sortOrder: fileIndex, datLookup,
         });

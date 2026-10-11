@@ -579,6 +579,19 @@ export async function listJobsForMatter(matterspaceId: string): Promise<Processi
   return (data ?? []) as ProcessingJob[];
 }
 
+export async function getLatestFailedJob(productionId: string): Promise<ProcessingJob | null> {
+  const { data, error } = await supabase
+    .from('processing_jobs')
+    .select('*')
+    .eq('production_id', productionId)
+    .eq('status', 'error')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`load failed job: ${error.message}`);
+  return data as ProcessingJob | null;
+}
+
 export async function listJobsForProduction(productionId: string): Promise<ProcessingJob[]> {
   const { data, error } = await supabase
     .from('processing_jobs')

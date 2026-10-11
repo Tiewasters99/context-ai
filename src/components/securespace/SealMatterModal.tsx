@@ -83,7 +83,15 @@ export default function SealMatterModal({ target, onClose, onDone }: Props) {
     if (updErr) {
       // 098: unsealing takes everything in the matter out of the seal, so it
       // asks for this session's second factor first.
-      if (/step_up_required/.test(updErr.message ?? '')) {
+      //
+      // Sealing needs it too, by a different route: 094/096's SELECT policy
+      // hides a sealed matter from a session that has not confirmed its
+      // factor, and Postgres requires the UPDATED row to pass the SELECT
+      // policy — so sealing from an unconfirmed session fails as "new row
+      // violates row-level security policy" (42501). Same answer: confirm,
+      // then the retry below runs the same update.
+      const rlsOnSeal = sealing && (updErr.code === '42501' || /row-level security/i.test(updErr.message ?? ''));
+      if (rlsOnSeal || /step_up_required/.test(updErr.message ?? '')) {
         // No factor to confirm with → the prompt says how to add one.
         setStepUp((await verifiedFactors()).length > 0 ? 'stepup' : 'enrol');
         return;
