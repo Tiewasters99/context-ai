@@ -66,6 +66,7 @@ import {
   parseDat, datLookupByFilename, emitDat, emitOpt,
 } from '../lib/discovery/loadfile.mjs';
 import { packageDocument, passagesToPages } from '../lib/discovery/package-docs.mjs';
+import { rasterizerAvailable } from '../lib/discovery/tiff.mjs';
 import {
   stampPdf, makeSlipSheet, makeProductionLetter, makePrivilegeLogPdf, undrawableChars,
 } from '../lib/discovery/bates-stamp.mjs';
@@ -1308,6 +1309,18 @@ async function packageProduction(job) {
   const produced = included.filter((i) => i.bates_first);
   if (produced.length === 0) throw new Error('Nothing stamped to package');
 
+  // Image format: 'pdf' (one stamped PDF per document) or 'tiff' (one image
+  // per page: Group IV TIFF, colour pages JPEG, page-level OPT). Asked-for
+  // TIFF that this machine cannot render is refused, never swapped for PDF.
+  const imageFormat = job.payload?.image_format ?? 'pdf';
+  if (imageFormat !== 'pdf' && imageFormat !== 'tiff') {
+    throw new Error(`Unknown image format "${imageFormat}"; choose PDF or TIFF. Nothing was packaged.`);
+  }
+  if (imageFormat === 'tiff' && !rasterizerAvailable()) {
+    throw new Error('TIFF images were requested, but this worker cannot render pages (pdftoppm is not '
+      + 'installed). Nothing was packaged. Package as PDF, or deploy the current worker image.');
+  }
+
   // ---- The arithmetic, BEFORE a byte of the package is written (F7).
   //
   //   received = produced + privileged-withheld + duplicates + exceptions
@@ -1372,6 +1385,7 @@ async function packageProduction(job) {
       read: readInProduction,
       append: (buf, name) => archive.append(buf, { name }),
       corpusPages: corpusPagesFor,
+      imageFormat,
     });
     totalPages += doc.pages;
     if (!doc.textChars) textless.push(item.bates_first);
@@ -1411,6 +1425,7 @@ async function packageProduction(job) {
     batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
     dateStr: new Date().toISOString().slice(0, 10),
     textless,
+    imageFormat,
   }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
 
   if (job.payload?.include_privilege_log) {

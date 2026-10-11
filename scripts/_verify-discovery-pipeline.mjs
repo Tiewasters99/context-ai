@@ -1692,6 +1692,14 @@ check(/requires_worker: WORKER_ID/.test(workerSrc),
   'directFolderIntake still pins its job to the machine that owns the folder (F2)');
 check(/EXCEPTIONS\.csv/.test(workerSrc) && /reconcile\(counts\)/.test(workerSrc),
   'packaging still builds the exceptions report and refuses to finalize unless the counts reconcile (F7)');
+{
+  const pkgBlock = workerSrc.slice(
+    workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('const archiver = (await import'));
+  check(/imageFormat === 'tiff' && !rasterizerAvailable\(\)/.test(pkgBlock) && /throw new Error\('TIFF images were requested/.test(pkgBlock),
+    'a TIFF package on a machine that cannot render pages is refused before the ZIP is started, never swapped for PDF');
+  check(/packageDocument\(\{[\s\S]*?imageFormat,[\s\S]*?\}\)/.test(workerSrc),
+    'the worker passes the chosen image format to the shared packageDocument');
+}
 
 // The 2026-09-20 KNOWN GAP (F2's heartbeat half). Kept as a real check now
 // that it is closed — a WARN was right while it was someone's open defect.
