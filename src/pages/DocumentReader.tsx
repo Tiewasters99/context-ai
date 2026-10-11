@@ -1989,6 +1989,29 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }
   }, [doc?.title, workshopFail]);
 
+  // The snip onto the clipboard as a PNG (2×), so it can be pasted straight
+  // into a generator's prompt box — none of them take a file from another
+  // site, all of them take a paste. Safari wants the blob as a promise made
+  // inside the gesture; Chrome takes either.
+  const copySnip = useCallback(async (item: WorkshopItem) => {
+    const pdf = pdfDocRef.current as PDFDocumentProxy | null;
+    if (!pdf || !item.rect) return;
+    if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+      setWorkshopNotice('This browser cannot copy pictures; use Download instead.');
+      return;
+    }
+    try {
+      const png = (async () => {
+        const canvas = await renderPageCanvas(pdf, item.page, { width: 2400, maxEdge: 3200 });
+        return canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect!), item.turn), 'image/png');
+      })();
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+      setWorkshopNotice('Copied. Paste it into Flow, Midjourney, Runway, Grok or ChatGPT (Ctrl/⌘-V).');
+    } catch (e) {
+      workshopFail(e, 'The snip could not be copied; use Download instead.');
+    }
+  }, [workshopFail]);
+
   // A clip or a still brought back: filed in the matter, stored without a
   // transcript, and set on the bench under its source.
   const bringIn = useCallback(async (parent: WorkshopItem | null, file: File) => {
@@ -2046,6 +2069,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     },
     makePreview: makeAnimationPreview,
     onDownload: downloadSnip,
+    onCopy: copySnip,
     onTurn: async (item: WorkshopItem) => {
       try {
         const updated = await updateWorkshopItem(item.id, { turn: nextTurn(item.turn) });
