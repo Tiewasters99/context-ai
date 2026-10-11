@@ -95,6 +95,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-no-fallback.mjs
 
+      - name: Discovery — production ZIPs made on Windows (backslash paths)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-discovery-zip-paths.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs
