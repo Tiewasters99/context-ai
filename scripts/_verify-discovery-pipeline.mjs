@@ -52,6 +52,10 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import {
   sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf,
 } from '../lib/discovery/util.mjs';
+// Word/email imaging needs LibreOffice, which only the worker image has. Pin it
+// off so this harness sees the same fixtures the same way on every machine
+// (scripts/_test-production-imaging.mjs covers imaging itself).
+process.env.DISCOVERY_OFFICE_IMAGING ??= 'off';
 import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import { parseDat, parseOpt, datLookupByFilename, emitDat, emitOpt, canonicalizeDatRecord } from '../lib/discovery/loadfile.mjs';
 import {
