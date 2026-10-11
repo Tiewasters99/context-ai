@@ -17,6 +17,7 @@ import FloatingPanel from './FloatingPanel';
 import TagPickerPanel from './TagPickerPanel';
 import PrivilegeLogPanel from './PrivilegeLogPanel';
 import ProducePanel from './ProducePanel';
+import ProductionFailure from './ProductionFailure';
 import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
 // pdfjs worker URL — same build-time resolution pattern as DocumentReader.
@@ -40,6 +41,7 @@ export default function ReviewRoom() {
   // the first N documents of a court-ordered production is the bug.
   const [itemsTruncated, setItemsTruncated] = useState<string | null>(null);
   const [defs, setDefs] = useState<DocumentTagDef[]>([]);
+  const [jobRevision, setJobRevision] = useState(0);
   const [jobs, setJobs] = useState<ProcessingJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,16 +62,17 @@ export default function ReviewRoom() {
 
   // ── Loading ────────────────────────────────────────────────────────────
 
-  const refreshProduction = useCallback(async () => {
+  const refreshProduction = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!id) return;
     const p = await getProduction(id);
-    if (p) setProduction(p);
+    if (p && isCurrent()) setProduction(p);
     return p;
   }, [id]);
 
-  const refreshItems = useCallback(async () => {
+  const refreshItems = useCallback(async (isCurrent: () => boolean = () => true) => {
     if (!id) return;
     const page = await listProductionItems(id);
+    if (!isCurrent()) return;
     setItems(page.rows);
     setItemsTruncated(showingOf(page, 'documents'));
   }, [id]);
@@ -105,26 +108,30 @@ export default function ReviewRoom() {
     return () => { cancelled = true; };
   }, [id]);
 
-  // Poll worker jobs while any is active so stamping/packaging progress and
-  // the resulting status flips show up without a manual reload.
-  const hasActiveJobs = jobs.some((j) => j.status === 'queued' || j.status === 'running');
+  // Poll on entry and immediately after enqueueing, including jobs that finish
+  // before the first read. Read jobs BEFORE refreshing the production/items.
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       try {
         const js = await listJobsForProduction(id);
         if (cancelled) return;
+        await Promise.all([refreshProduction(() => !cancelled), refreshItems(() => !cancelled)]);
+        if (cancelled) return;
         setJobs(js);
-      } catch { /* transient */ }
+        if (js.some((job) => job.status === 'queued' || job.status === 'running')) {
+          timer = setTimeout(() => void tick(), 2500);
+        }
+      } catch {
+        // Retry transient read failures without overlapping requests.
+        if (!cancelled) timer = setTimeout(() => void tick(), 2500);
+      }
     };
     void tick();
-    const t = setInterval(() => {
-      void tick();
-      if (hasActiveJobs) { void refreshProduction(); void refreshItems(); }
-    }, 4000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, [id, hasActiveJobs, refreshProduction, refreshItems]);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [id, jobRevision, refreshProduction, refreshItems]);
 
   // ── Filtering + selection ──────────────────────────────────────────────
 
@@ -473,9 +480,9 @@ export default function ReviewRoom() {
               )
             ) : (
               <div className="h-full flex items-center justify-center">
-                <p className="text-[12.5px] text-white/40">
-                  {loading ? '' : 'Select a document to begin review.'}
-                </p>
+                <div className="text-[12.5px] text-white/40 px-6 max-w-lg">
+                  {production?.status === 'error' ? <ProductionFailure production={production} /> : loading ? '' : 'Select a document to begin review.'}
+                </div>
               </div>
             )}
           </div>
@@ -541,7 +548,11 @@ export default function ReviewRoom() {
           production={production}
           items={items}
           onClose={() => setShowProduce(false)}
-          onChanged={() => { void refreshProduction(); }}
+          jobs={jobs}
+          onQueued={(job) => {
+            setJobs((previous) => [job, ...previous]);
+            setJobRevision((revision) => revision + 1);
+          }}
         />
       )}
     </div>

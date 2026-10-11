@@ -14,6 +14,7 @@ import {
   type ProductionListEntry, type ProductionDirection, type ProcessingJob, type Production,
 } from '@/lib/discovery';
 import { DirectionBadge, StatusBadge, JobProgress, batesRangeLabel } from './bits';
+import ProductionFailure from './ProductionFailure';
 import FloatingPanel from './FloatingPanel';
 
 // Discovery home for a matter: the production ledger. Reached at
@@ -236,6 +237,7 @@ export default function DiscoveryHome() {
                     )}
                     {p.request_refs && <span className="truncate max-w-[200px] italic">{p.request_refs}</span>}
                   </div>
+                  <ProductionFailure production={p} />
                   {pJobs.length > 0 && (
                     <div className="mt-2 pl-1 space-y-1" onClick={(e) => e.stopPropagation()}>
                       {pJobs.map((j) => <JobProgress key={j.id} job={j} />)}

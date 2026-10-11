@@ -29,11 +29,12 @@ export default function AmbientControls() {
   // Brief Desk it sat on the reading pane's scroll arrow, and "the most
   // important thing is for the page to scroll easily"). Music plays on while
   // folded. An open brief folds it on entry, as it folds the sidebar; the
-  // choice elsewhere is remembered.
+  // choice elsewhere is remembered; new sessions default to collapsed.
+  // Keep controls at z-10, below route cards (12) and floating panels (45).
   const location = useLocation();
   const onBrief = /^\/app\/brief\/[^/]+/.test(location.pathname);
   const [hiddenPref, setHiddenPref] = useState<boolean>(() => {
-    try { return localStorage.getItem(HIDE_KEY) === '1'; } catch { return false; }
+    try { return localStorage.getItem(HIDE_KEY) !== '0'; } catch { return true; }
   });
   const [briefShown, setBriefShown] = useState(false);
   const [wasOnBrief, setWasOnBrief] = useState(onBrief);
@@ -200,7 +201,7 @@ export default function AmbientControls() {
       {hidden && (
         <button
           onClick={() => setHidden(false)}
-          className={`fixed bottom-[4.5rem] right-1 md:bottom-1 md:right-6 z-50 h-5 w-5 rounded-full flex items-center justify-center transition-colors ${
+          className={`fixed bottom-[4.5rem] right-1 md:bottom-1 md:right-6 z-10 h-5 w-5 rounded-full flex items-center justify-center transition-colors ${
             musicPlaying ? 'bg-[#e8b84a]/70 hover:bg-[#e8b84a]' : 'bg-white/15 hover:bg-white/35'
           }`}
           title={musicPlaying ? 'Music is playing. Show the music and backdrop controls' : 'Show the music and backdrop controls'}
@@ -210,7 +211,7 @@ export default function AmbientControls() {
         </button>
       )}
       <div
-        className={`fixed bottom-[4.5rem] right-3 md:bottom-5 md:right-5 flex items-center gap-1.5 z-50 ${hidden ? 'hidden' : ''}`}
+        className={`fixed bottom-[4.5rem] right-3 md:bottom-20 md:right-5 flex items-center gap-1.5 z-10 ${hidden ? 'hidden' : ''}`}
         style={{ filter: 'drop-shadow(0 1px 4px rgba(0,0,0,0.55))' }}
       >
         {hasBackdrop && (
@@ -292,10 +293,10 @@ export default function AmbientControls() {
           src={youtubeEmbedUrl(loadedTrack.youtubeId)}
           allow="autoplay; encrypted-media"
           title={loadedTrack.name}
-          className="fixed z-40 rounded-lg border border-[rgba(255,255,255,0.08)] shadow-2xl"
+          className="fixed z-10 rounded-lg border border-[rgba(255,255,255,0.08)] shadow-2xl"
           style={{
             right: '20px',
-            bottom: '74px',
+            bottom: '134px',
             width: '180px',
             height: '102px',
             backgroundColor: 'rgba(0,0,0,0.6)',
@@ -306,7 +307,7 @@ export default function AmbientControls() {
       {uploadError && (
         <button
           onClick={() => setUploadError(null)}
-          className="fixed bottom-20 right-5 z-50 px-3 py-2 rounded-md bg-red-500/90 text-white text-[11px] shadow-lg max-w-xs text-left"
+          className="fixed bottom-20 right-5 z-10 px-3 py-2 rounded-md bg-red-500/90 text-white text-[11px] shadow-lg max-w-xs text-left"
         >
           {uploadError} · dismiss
         </button>
