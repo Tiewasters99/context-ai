@@ -99,6 +99,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-discovery-zip-paths.mjs
 
+      - name: Discovery — Word and email produced as images (LibreOffice plumbing)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-imaging.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs
