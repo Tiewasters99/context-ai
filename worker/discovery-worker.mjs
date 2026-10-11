@@ -1463,20 +1463,33 @@ async function packageProduction(job) {
 // this document (ingestDisplayPdf files it with metadata.production_item_id).
 // Read only, never a new OCR call: packaging spends nothing and sends nothing.
 async function corpusPagesFor(item) {
-  const { data: docs, error } = await supabase.from('documents')
-    .select('id')
-    .eq('matterspace_id', item.matterspace_id)
-    .eq('metadata->>production_item_id', item.id)
-    .limit(1);
-  if (error || !docs?.length) return null;
-  const { data: rows, error: pErr } = await supabase.from('passages')
-    .select('text, page_start, sequence_number')
-    .eq('document_id', docs[0].id)
-    .eq('summary_level', 0)
-    .order('sequence_number')
-    .limit(20000);
-  if (pErr || !rows?.length) return null;
-  return passagesToPages(rows);
+  let documentId = item.document_id ?? null;
+  if (!documentId) {
+    const { data: docs, error } = await supabase.from('documents')
+      .select('id')
+      .eq('matterspace_id', item.matterspace_id)
+      .eq('metadata->>production_item_id', item.id)
+      .limit(1);
+    if (error || !docs?.length) return null;
+    documentId = docs[0].id;
+  }
+  // Paged: PostgREST returns at most max-rows (1,000) per request whatever
+  // .limit() asks for, and a 2,000-page scan has more passages than that.
+  // A single request would silently drop the OCR for every later page.
+  const PAGE = 1000;
+  const rows = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from('passages')
+      .select('text, page_start, sequence_number')
+      .eq('document_id', documentId)
+      .eq('summary_level', 0)
+      .order('sequence_number')
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`reading the corpus text for ${item.original_filename}: ${error.message}`);
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  return rows.length ? passagesToPages(rows) : null;
 }
 
 // ---------------------------------------------------------------------------

@@ -69,6 +69,13 @@ ok('fitPages pads short text and folds extra pages into the last, so N pages -> 
   assert.equal(r.text.split(FF)[1], 'OCR TEXT of the handwritten intake form');
   ok("a scanned page with no text layer takes the corpus's existing OCR for that page (looked up once)");
 
+  await assert.rejects(documentText({
+    item: { kind: 'display_pdf', original_filename: 'scan.pdf' }, pages: 2,
+    readDisplay: reader(buf), readNative: fail,
+    corpusPages: async () => { throw new Error('reading the corpus text for scan.pdf: timeout'); },
+  }), /reading the corpus text/);
+  ok('a failed corpus read fails the package instead of shipping a text file with pages missing');
+
   const none = await documentText({
     item: { kind: 'display_pdf', original_filename: 'photo.pdf' }, pages: 1,
     readDisplay: reader(await pdf([''])), readNative: fail, corpusPages: async () => null,
