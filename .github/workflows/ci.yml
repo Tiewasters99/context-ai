@@ -103,6 +103,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs
 
+      - name: SecureSpace — the in-app assistant outside the seal cannot reach a sealed matter
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-seal-outside-pen.mjs
+
       - name: SecureSpace — a sealed meeting's transcript stays inside the seal
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-meetings.mjs
