@@ -337,13 +337,16 @@ const grant = async (user, pages, o = {}) => (await one(
   check(Number((await one(`select pages_available from public.ocr_pack_balance where user_id = $1`, [u])).pages_available) === 0, 'balance 0, not negative');
   check(await refused(db, `update public.ocr_page_ledger set delta_pages = 0 where user_id = $1`, [u]) === '42501', 'the ledger is append-only');
 
-  // Unknown tier → free; workshop → unlimited.
-  const odd = await makeUser('free');
-  await db.exec(`alter table public.profiles disable trigger user;`);
-  await db.query(`update public.profiles set pricing_tier = 'mystery' where id = $1`, [odd]).catch(() => {});
-  await db.exec(`alter table public.profiles enable trigger user;`);
+  // A tier with no volume_limits row (e.g. Eden deletes one) → free, never
+  // unlimited. 062/067's CHECK constraint keeps pricing_tier in the known
+  // vocabulary, so the row is what goes missing here.
+  const odd = await makeUser('pro');
+  const proRow = await one(`select * from public.volume_limits where pricing_tier = 'pro'`);
+  await db.exec(`delete from public.volume_limits where pricing_tier = 'pro';`);
   const oddR = await reserve(await newDoc(odd), 600);
-  check(oddR.allowed && Number(oddR.from_allowance) === 500 && Number(oddR.over) === 100, 'an unknown tier is metered as free, never unlimited');
+  await db.query(`insert into public.volume_limits (pricing_tier, monthly_ocr_pages, storage_bytes, note) values ($1, $2, $3, $4)`,
+    [proRow.pricing_tier, proRow.monthly_ocr_pages, proRow.storage_bytes, proRow.note]);
+  check(oddR.allowed && Number(oddR.from_allowance) === 500 && Number(oddR.over) === 100, 'a tier with no limits row is metered as free, never unlimited');
   const w = await makeUser('workshop');
   const wr = await reserve(await newDoc(w), 1000000);
   check(wr.allowed && Number(wr.from_allowance) === 1000000, 'workshop is unlimited');
