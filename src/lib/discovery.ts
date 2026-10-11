@@ -620,6 +620,29 @@ export async function maxBatesSeq(matterspaceId: string): Promise<number> {
   return (data as Pick<BatesRegistryRow, 'bates_seq'> | null)?.bates_seq ?? 0;
 }
 
+/**
+ * The next free Bates number in a series — this prefix, in this matter
+ * (migration 108: a new prefix starts at 1, a repeated one continues).
+ * Until 108 is applied the RPC does not exist and the server still numbers
+ * matter-wide, so the suggestion falls back to the matter's high-water mark
+ * and says so (`perPrefix: false`) rather than suggesting a number the
+ * server would refuse.
+ */
+export async function nextBatesSeq(
+  matterspaceId: string,
+  prefix: string,
+): Promise<{ next: number; perPrefix: boolean }> {
+  const { data, error } = await supabase.rpc('bates_next_seq', {
+    p_matter: matterspaceId,
+    p_prefix: prefix.trim(),
+  });
+  if (!error && data != null) return { next: Number(data), perPrefix: true };
+  const notDeployed = !!error && (error.code === 'PGRST202' || error.code === '42883'
+    || /bates_next_seq/.test(error.message ?? ''));
+  if (error && !notDeployed) throw new Error(`next Bates number: ${error.message}`);
+  return { next: (await maxBatesSeq(matterspaceId)) + 1, perPrefix: false };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Deliveries
 // ─────────────────────────────────────────────────────────────────────────────
