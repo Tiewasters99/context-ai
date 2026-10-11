@@ -12,11 +12,14 @@
 # Cambria, Liberation with Arial/Times/Courier, so a Word file paginates as
 # it did in Word and each Bates number lands on the page it should. DejaVu
 # covers accented and non-Latin text in email.
+#
+# poppler-utils (pdftoppm) renders stamped pages for the TIFF image option
+# (lib/discovery/tiff.mjs).
 FROM node:22-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
-     libreoffice-writer-nogui \
+     libreoffice-writer-nogui poppler-utils \
      fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
 

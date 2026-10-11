@@ -310,6 +310,7 @@ function BatesStep({
 
 function PackageStep({ production, onQueued }: { production: Production; onQueued: (job: ProcessingJob) => void }) {
   const [includePrivLog, setIncludePrivLog] = useState(true);
+  const [imageFormat, setImageFormat] = useState<'pdf' | 'tiff'>('pdf');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -322,7 +323,7 @@ function PackageStep({ production, onQueued }: { production: Production; onQueue
         matterspace_id: production.matterspace_id,
         production_id: production.id,
         job_type: 'package_production',
-        payload: { include_privilege_log: includePrivLog },
+        payload: { include_privilege_log: includePrivLog, image_format: imageFormat },
       });
       onQueued(job);
     } catch (e) {
@@ -338,6 +339,34 @@ function PackageStep({ production, onQueued }: { production: Production; onQueue
         Stamped <span className="font-mono text-[#d4a054]">{batesRangeLabel(production) ?? ''}</span>.
         Packaging builds one ZIP with a sha256, in the four standard parts: IMAGES (the stamped pages), NATIVES (spreadsheets, audio and video, as produced), TEXT (each document's text) and DATA (the load files).
       </p>
+      <div className="space-y-1.5">
+        <p className="text-[10.5px] uppercase tracking-wider text-white/40">Images</p>
+        <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Image format">
+          {([
+            ['pdf', 'PDF', 'One stamped PDF per document'],
+            ['tiff', 'TIFF', 'One image per page (B&W TIFF, colour JPEG)'],
+          ] as const).map(([value, label, hint]) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={imageFormat === value}
+              onClick={() => setImageFormat(value)}
+              className={`text-left px-2.5 py-1.5 rounded-lg border transition-colors ${
+                imageFormat === value
+                  ? 'border-[#e8b84a]/50 bg-[#e8b84a]/10 text-[#e8b84a]'
+                  : 'border-white/10 text-white/60 hover:border-white/20'
+              }`}
+            >
+              <span className="block text-[12px] font-medium">{label}</span>
+              <span className="block text-[10px] leading-snug opacity-70">{hint}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-white/35 leading-relaxed">
+          Choose TIFF when the ESI protocol or the other side asks for it. The load files follow the choice.
+        </p>
+      </div>
       <label className="flex items-center gap-2 text-[11.5px] text-white/70 cursor-pointer">
         <input
           type="checkbox"
