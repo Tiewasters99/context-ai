@@ -25,8 +25,9 @@
 -- Produce panel's suggested "Start at" (RLS decides what the caller can see).
 --
 -- Idempotent: safe to paste twice. ORDER MATTERS: 108 replaces 071's
--- allocate_production_bates, so re-pasting 071 after 108 would silently put
--- matter-wide numbering back. If 071 is ever re-pasted, paste 108 again after it.
+-- allocate_production_bates and register_bates_pages, so re-pasting 071 after
+-- 108 would silently put matter-wide numbering back. If 071 is ever
+-- re-pasted, paste 108 again after it.
 
 create or replace function public._bates_series_key(p_prefix text)
 returns text
@@ -201,6 +202,105 @@ end $$;
 
 revoke execute on function public.allocate_production_bates(uuid, jsonb) from public, anon, authenticated;
 grant  execute on function public.allocate_production_bates(uuid, jsonb) to service_role;
+
+create or replace function public.register_bates_pages(
+  p_production uuid,
+  p_item       uuid,
+  p_start_seq  bigint,
+  p_pages      int
+) returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_alloc   public.production_bates_allocations%rowtype;
+  v_ok      boolean;
+  v_ins     int := 0;
+  v_foreign int;
+  v_inrange int;
+  v_mine    int;
+  v_last    bigint;
+begin
+  if p_pages is null or p_pages < 1 then
+    raise exception 'register_bates_pages: % page(s) is not a document', coalesce(p_pages::text, 'null');
+  end if;
+  v_last := p_start_seq + p_pages - 1;
+
+  select * into v_alloc from public.production_bates_allocations where production_id = p_production;
+  if not found then
+    raise exception 'register_bates_pages: production % has no Bates allocation — allocate first', p_production;
+  end if;
+
+  -- The range must be exactly the one this document was allocated. A caller
+  -- that has drifted from the plan is refused before it can write anything.
+  select true into v_ok
+    from jsonb_array_elements(v_alloc.item_plan) e
+   where e->>'item_id' = p_item::text
+     and (e->>'start_seq')::bigint = p_start_seq
+     and (e->>'pages')::int = p_pages
+   limit 1;
+  if not coalesce(v_ok, false) then
+    raise exception 'register_bates_pages: %-% is not the range allocated to document % in this production',
+      p_start_seq, v_last, p_item;
+  end if;
+
+  insert into public.bates_registry
+    (matterspace_id, bates_number, bates_seq, production_id, production_item_id, page_number)
+  select v_alloc.matterspace_id,
+         public._bates_number(v_alloc.bates_prefix, v_alloc.bates_pad, p_start_seq + g),
+         p_start_seq + g, p_production, p_item, g + 1
+    from generate_series(0, p_pages - 1) g
+  on conflict (matterspace_id, bates_number) do nothing;
+  get diagnostics v_ins = row_count;
+
+  -- Whatever was already there has to be OURS. ON CONFLICT DO NOTHING makes a
+  -- re-run free; it must never make a genuine collision quiet.
+  -- 108: only numbers in the same series (matter + prefix) can collide.
+  select count(*) into v_foreign
+    from public.bates_registry r
+    join public.productions p on p.id = r.production_id
+   where r.matterspace_id = v_alloc.matterspace_id
+     and public._bates_series_key(p.bates_prefix) = public._bates_series_key(v_alloc.bates_prefix)
+     and r.bates_seq between p_start_seq and v_last
+     and (r.production_item_id is distinct from p_item
+          or r.production_id is distinct from p_production);
+  if v_foreign > 0 then
+    raise exception 'Bates collision: % number(s) in %-% belong to another document; nothing was re-used',
+      v_foreign,
+      public._bates_number(v_alloc.bates_prefix, v_alloc.bates_pad, p_start_seq),
+      public._bates_number(v_alloc.bates_prefix, v_alloc.bates_pad, v_last);
+  end if;
+
+  -- ...and there must be exactly as many of them as the document has pages.
+  -- Catches the one case the ownership test cannot see: the same document
+  -- registered twice under two different prefixes.
+  select count(*) into v_inrange
+    from public.bates_registry r
+    join public.productions p on p.id = r.production_id
+   where r.matterspace_id = v_alloc.matterspace_id
+     and public._bates_series_key(p.bates_prefix) = public._bates_series_key(v_alloc.bates_prefix)
+     and r.bates_seq between p_start_seq and v_last;
+  if v_inrange <> p_pages then
+    raise exception 'Bates registry holds % row(s) for the % page(s) allocated at %-%',
+      v_inrange, p_pages, p_start_seq, v_last;
+  end if;
+  -- 071's range count also caught one document registered under two
+  -- prefixes; scoped to a series it no longer can, so count the document.
+  select count(*) into v_mine from public.bates_registry r where r.production_item_id = p_item;
+  if v_mine <> p_pages then
+    raise exception 'Bates registry holds % row(s) for document % but it has % page(s); it must not be numbered twice',
+      v_mine, p_item, p_pages;
+  end if;
+
+  return jsonb_build_object(
+    'inserted', v_ins, 'pages', p_pages,
+    'bates_first', public._bates_number(v_alloc.bates_prefix, v_alloc.bates_pad, p_start_seq),
+    'bates_last',  public._bates_number(v_alloc.bates_prefix, v_alloc.bates_pad, v_last));
+end $$;
+
+revoke execute on function public.register_bates_pages(uuid, uuid, bigint, int) from public, anon, authenticated;
+grant  execute on function public.register_bates_pages(uuid, uuid, bigint, int) to service_role;
 
 -- The next free number in a series, for the UI's suggestion. INVOKER: the
 -- caller's own RLS on bates_registry / production_bates_allocations decides
