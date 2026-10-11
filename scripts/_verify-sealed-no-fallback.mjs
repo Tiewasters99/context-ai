@@ -255,6 +255,114 @@ try {
   else fail('a Silo matter contacted something', hosts());
 } finally { restore(); }
 
+// ── 6b. a broad question that uses up every search round ────────────────
+// The 2026-10-11 Patel walkthrough: "the three most important things Iyer
+// said, with cites" ran out of rounds, the last searches' results were never
+// read, the user got "(I reached the step limit…)" and no answer — and saw
+// the model's "Let me search…" narration. Now: the sealed budget is larger,
+// one more round with tool use switched off writes the answer, and the
+// narration from search rounds never reaches the user or the record.
+console.log('\nTier B, a broad question that spends the whole search budget');
+{
+  const toolRound = (n) => sse([
+    { choices: [{ index: 0, delta: { role: 'assistant', content: `Let me search for Iyer (${n})… ` } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: `call_${n}`, type: 'function', function: { name: 'list_matters', arguments: '{}' } }] } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+  ]);
+  const FINAL = 'Iyer said three things that matter (16:1-11).';
+  const finalAnswer = sse([
+    { choices: [{ index: 0, delta: { role: 'assistant', content: FINAL } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+    { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+  ]);
+  const bodies = [];
+  // The model keeps asking for tools until it is told it cannot.
+  witness(async (u, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    return new Response(body.tool_choice === 'none' ? finalAnswer : toolRound(bodies.length), { status: 200 });
+  });
+  try {
+    const { events, result, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
+    const finals = bodies.filter((b) => b.tool_choice === 'none');
+    if (!ev('error') && !result.withheld) pass('the turn completes — no error, nothing withheld');
+    else fail('turn failed', { error: ev('error'), result });
+    if (bodies.length === 13 && finals.length === 1 && bodies[12].tool_choice === 'none') {
+      pass('12 search rounds, then exactly one final round with tool use switched off');
+    } else fail('round count', { requests: bodies.length, finals: finals.length });
+    if (finals[0] && /SEARCH BUDGET USED/.test(finals[0].messages[0].content) && Array.isArray(finals[0].tools) && finals[0].tools.length) {
+      pass('the final round is told why, and still declares the tools its history refers to');
+    } else fail('final round request shape', finals[0] && { system: finals[0].messages[0].content.slice(-200), tools: finals[0].tools?.length });
+    if (finals[0] && finals[0].messages.filter((m) => m.role === 'tool').length === 12) {
+      pass('the final round sees all 12 rounds of search results');
+    } else fail('final round history', finals[0]?.messages.map((m) => m.role));
+    if (shown === FINAL) pass('the user sees the answer and only the answer');
+    else fail('text shown to the user', shown);
+    if (!/Let me search/.test(shown) && !/step limit/.test(shown)) pass('no search narration, no step-limit dead end');
+    else fail('narration or step-limit text leaked', shown);
+    if (nonBedrock().length === 0) pass('egress witness: only bedrock-mantle across all 13 rounds');
+    else fail('unexpected egress hosts', hosts());
+  } finally { restore(); }
+
+  // The final round still asks for a tool anyway (or says nothing): the tool
+  // is not run, and the user gets a plain sentence instead of silence.
+  bodies.length = 0;
+  witness(async (u, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    return new Response(toolRound(bodies.length), { status: 200 });
+  });
+  try {
+    const { events, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
+    if (bodies.length === 13) pass('a tool call on the final round is not run — no 14th request');
+    else fail('request count when the final round ignores tool_choice', bodies.length);
+    if (!ev('error') && /ran out of search steps/.test(shown) && !/Let me search/.test(shown)) {
+      pass('the user is told plainly the steps ran out, without the earlier narration');
+    } else fail('fallback text', { shown, error: ev('error') });
+  } finally { restore(); }
+
+  // Slow rounds: the clock, not the round count, ends the search. Each
+  // request advances a fake clock 40 s; past SEARCH_DEADLINE_MS (210 s) the
+  // next round must be the final one, well inside the 300 s function limit.
+  bodies.length = 0;
+  const realNow = Date.now;
+  let fakeNow = realNow();
+  Date.now = () => fakeNow;
+  witness(async (u, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    fakeNow += 40_000;
+    return new Response(body.tool_choice === 'none' ? finalAnswer : toolRound(bodies.length), { status: 200 });
+  });
+  try {
+    const { events, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
+    const last = bodies[bodies.length - 1];
+    if (!ev('error') && shown === FINAL && last?.tool_choice === 'none' && bodies.length < 13) {
+      pass(`slow rounds: the clock ends the search after ${bodies.length - 1} rounds and the answer is still written`);
+    } else fail('deadline', { requests: bodies.length, shown, lastToolChoice: last?.tool_choice });
+  } finally { restore(); Date.now = realNow; }
+
+  // The provider rejects the final round outright: a finished search is not
+  // turned into a sealed-pen refusal.
+  bodies.length = 0;
+  witness(async (u, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (body.tool_choice === 'none') return new Response('{"message":"tool_choice not supported"}', { status: 400 });
+    return new Response(toolRound(bodies.length), { status: 200 });
+  });
+  try {
+    const { events, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
+    if (!ev('error') && /ran out of search steps/.test(shown)) pass('a rejected final round ends in the plain sentence, not a refusal');
+    else fail('rejected final round', { shown, error: ev('error') });
+  } finally { restore(); }
+}
+
 // ── 7. the policy table and the /api/llm gate, offline ──────────────────
 console.log('\nTier policy + the /api/llm gate');
 for (const p of ['fireworks', 'anthropic', 'openai', 'google', 'xai', 'moonshot']) {
