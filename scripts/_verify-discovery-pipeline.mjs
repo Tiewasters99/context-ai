@@ -60,6 +60,7 @@ import {
 import {
   exceptionsCsv, exceptionReason, duplicatesCsv, reconcile, reconciliationText,
 } from '../lib/discovery/manifest.mjs';
+import { packageDocument } from '../lib/discovery/package-docs.mjs';
 
 let PGlite;
 try {
@@ -1177,27 +1178,27 @@ async function packageProduction(productionId, { includePrivilegeLog = true } = 
   const done = new Promise((res, rej) => { out.on('close', res); archive.on('error', rej); });
   archive.pipe(out);
 
+  // The per-document part is the worker's own code (lib/discovery/
+  // package-docs.mjs), not a transcription: IMAGES/, NATIVES/, TEXT/ and the
+  // DAT row come out of the same function in both places.
   const datRows = [];
+  const textless = [];
+  const textSources = new Map();
   let totalPages = 0;
   for (const item of produced) {
     const base = `${p.matterspace_id}/${p.id}/${item.id}`;
-    archive.append(getObject(`${base}/stamped.pdf`), { name: `${volumeName}/IMAGES/${item.bates_first}.pdf` });
-    let nativeLink = '';
-    if (item.kind === 'native') {
-      const ext = extOf(item.original_filename);
-      nativeLink = `NATIVES/${item.bates_first}${ext}`;
-      archive.append(getObject(item.native_storage_path), { name: `${volumeName}/${nativeLink}` });
-    }
-    const m = item.source_metadata ?? {};
-    const pages = item.kind === 'native' ? 1 : (item.page_count ?? 1);
-    totalPages += pages;
-    datRows.push({
-      bates_first: item.bates_first, bates_last: item.bates_last, pages,
-      custodian: m.custodian ?? '', author: m.author ?? '', to: m.to ?? '', cc: m.cc ?? '',
-      subject: m.subject ?? '', date: m.date ?? '', filename: item.original_filename,
-      native_link: nativeLink, confidentiality: confidentialIds.has(item.id) ? 'CONFIDENTIAL' : '',
-      image_path: `IMAGES/${item.bates_first}.pdf`,
+    const doc = await packageDocument({
+      item, volumeName,
+      confidential: confidentialIds.has(item.id),
+      stampedPath: `${base}/stamped.pdf`,
+      read: async (sp) => getObject(sp),
+      append: (buf, name) => archive.append(buf, { name }),
+      corpusPages: null,
     });
+    totalPages += doc.pages;
+    if (!doc.textChars) textless.push(item.bates_first);
+    textSources.set(item.original_filename, doc.textSource);
+    datRows.push(doc.datRow);
   }
   if (totalPages !== producedPages) {
     throw new Error(`The package holds ${totalPages} page(s) but the production reconciled at ${producedPages}`);
@@ -1218,6 +1219,7 @@ async function packageProduction(productionId, { includePrivilegeLog = true } = 
     batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
     batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
     dateStr: new Date().toISOString().slice(0, 10),
+    textless,
   }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
 
   if (includePrivilegeLog) {
@@ -1246,7 +1248,7 @@ async function packageProduction(productionId, { includePrivilegeLog = true } = 
   await q(`update public.productions set package_storage_path=$1, package_sha256=$2, status='packaged' where id=$3`,
     [pkgPath, pkgSha, p.id]);
   await fsp.unlink(tmpZip).catch(() => {});
-  return { pkgPath, pkgSha, produced, totalPages, counts, exceptions, duplicates };
+  return { pkgPath, pkgSha, produced, totalPages, counts, exceptions, duplicates, textless, textSources };
 }
 
 const pkg = await packageProduction(prod.id, { includePrivilegeLog: true });
@@ -1282,6 +1284,32 @@ check(datNames.includes('001_Supply_Agreement.pdf') && !datNames.includes('007_S
   + 'the same bytes twice under two Bates numbers');
 const confRec = datOut.map(canonicalizeDatRecord).find((r) => r.filename === '002_Board_Minutes.pdf');
 check(confRec?.dat?.confidentiality === 'CONFIDENTIAL', 'the CONFIDENTIAL designation reached the DAT');
+// ---- The four parts: IMAGES, NATIVES, TEXT, DATA.
+const texts = names.filter((n) => /\/TEXT\//.test(n));
+check(texts.length === 6 && datOut.every((r) => texts.some((n) => n.endsWith(`TEXT/${r.begbates}.txt`))),
+  'TEXT/ holds one text file per produced document, named by its first Bates number', `${texts.length}`);
+check(datOut.every((r) => r.textlink === `TEXT/${r.begbates}.txt`),
+  "every DAT row's TEXTLINK points at its text file");
+const supplyRec = datOut.find((r) => r.filename === '001_Supply_Agreement.pdf');
+const supplyTxt = (await azip.entryData(names.find((n) => n.endsWith(supplyRec.textlink)))).toString('utf8');
+check(/WIDGET SUPPLY AGREEMENT/.test(supplyTxt) && supplyTxt.split('\f').length === 3,
+  "a text-layer PDF's text file carries its words, with a form feed between each of its 3 pages",
+  `${supplyTxt.split('\f').length} page(s)`);
+check(pkg.textSources.get('001_Supply_Agreement.pdf') === 'text-layer'
+  && pkg.textSources.get('004_Warehouse_Photo.png') === 'none'
+  && pkg.textSources.get('005_Damages_Model.docx') === 'none',
+'text sources: the PDF reads from its text layer; a photo and an unreadable docx have none',
+JSON.stringify(Object.fromEntries(pkg.textSources)));
+check(datOut.every((r) => (r.nativelink ? r.producedas === 'NATIVE' : r.producedas === 'IMAGE')),
+  'PRODUCEDAS distinguishes documents produced as images from documents produced natively');
+check(datOut.find((r) => r.filename === '004_Warehouse_Photo.png')?.producedas === 'IMAGE'
+  && datOut.find((r) => r.filename === '005_Damages_Model.docx')?.producedas === 'NATIVE',
+'a photo is produced as an IMAGE; the docx (no imaging on this machine) as a NATIVE');
+check(datOut.every((r) => /^[0-9a-f]{64}$/.test(r.sha256) && r.prodvol && r.fileext !== undefined && r.filesize !== ''),
+  'every DAT row carries SHA256, PRODVOL, FILEEXT and FILESIZE');
+check(supplyRec.sha256 === byName['001_Supply_Agreement.pdf'].sha256,
+  'the DAT SHA256 is the hash of the original file as received');
+
 const optRows = parseOpt(await azip.entryData(names.find((n) => n.endsWith('loadfile.opt'))));
 check(optRows.length === 6, 'the OPT cross-reference has one line per produced document', `${optRows.length}`);
 check(optRows.every((r) => images.some((n) => n.endsWith(r.path.split('/').pop()))),
@@ -1324,6 +1352,10 @@ check(pkg.counts.produced + pkg.counts.withheld + pkg.counts.duplicates + pkg.co
 'F7: received = produced + privileged-withheld + duplicates + exceptions, and the Bates registry holds '
   + 'exactly the pages the package claims',
 `${pkg.counts.registeredPages} registry rows for ${pkg.counts.producedPages} produced pages`);
+check(/with no extractable text .+ 4/.test(reconTxt)
+  && pkg.textless.every((b) => reconTxt.includes(b)),
+'RECONCILIATION.txt says which produced documents have empty text files, by Bates number',
+pkg.textless.join(', '));
 await azip.close();
 
 // ---- and the refusal. A production that does not add up must not become a

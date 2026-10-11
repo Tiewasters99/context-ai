@@ -65,6 +65,7 @@ import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
   parseDat, datLookupByFilename, emitDat, emitOpt,
 } from '../lib/discovery/loadfile.mjs';
+import { packageDocument, passagesToPages } from '../lib/discovery/package-docs.mjs';
 import {
   stampPdf, makeSlipSheet, makeProductionLetter, makePrivilegeLogPdf, undrawableChars,
 } from '../lib/discovery/bates-stamp.mjs';
@@ -1350,42 +1351,31 @@ async function packageProduction(job) {
   });
   archive.pipe(out);
 
+  // Every read is confined to this production's own storage prefix (097):
+  // display and native paths are member-writable while the production is a
+  // draft, and this runs with the service role.
+  const readInProduction = (storagePath) => {
+    assertPathInProduction(storagePath, prod.matterspace_id, prod.id);
+    return downloadFromStorage(storagePath);
+  };
   const datRows = [];
+  const textless = [];
   let totalPages = 0;
   for (const [i, item] of produced.entries()) {
     await progress(job, (i / produced.length) * 80, `Packaging ${item.bates_first}`);
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
-    const stamped = await downloadFromStorage(`${base}/stamped.pdf`);
-    const imagePath = `IMAGES/${item.bates_first}.pdf`;
-    archive.append(stamped, { name: `${volumeName}/${imagePath}` });
-
-    let nativeLink = '';
-    if (item.kind === 'native') {
-      const ext = extOf(item.original_filename);
-      assertPathInProduction(item.native_storage_path, prod.matterspace_id, prod.id);
-      const nativeBuf = await downloadFromStorage(item.native_storage_path);
-      nativeLink = `NATIVES/${item.bates_first}${ext}`;
-      archive.append(nativeBuf, { name: `${volumeName}/${nativeLink}` });
-    }
-
-    const m = item.source_metadata ?? {};
-    const pages = item.kind === 'native' ? 1 : (item.page_count ?? 1);
-    totalPages += pages;
-    datRows.push({
-      bates_first: item.bates_first,
-      bates_last: item.bates_last,
-      pages,
-      custodian: m.custodian ?? '',
-      author: m.author ?? '',
-      to: m.to ?? '',
-      cc: m.cc ?? '',
-      subject: m.subject ?? '',
-      date: m.date ?? '',
-      filename: item.original_filename,
-      native_link: nativeLink,
-      confidentiality: confidentialIds.has(item.id) ? 'CONFIDENTIAL' : '',
-      image_path: imagePath,
+    const doc = await packageDocument({
+      item,
+      volumeName,
+      confidential: confidentialIds.has(item.id),
+      stampedPath: `${base}/stamped.pdf`,
+      read: readInProduction,
+      append: (buf, name) => archive.append(buf, { name }),
+      corpusPages: corpusPagesFor,
     });
+    totalPages += doc.pages;
+    if (!doc.textChars) textless.push(item.bates_first);
+    datRows.push(doc.datRow);
   }
 
   if (totalPages !== producedPages) {
@@ -1420,6 +1410,7 @@ async function packageProduction(job) {
     batesFirst: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_start),
     batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
     dateStr: new Date().toISOString().slice(0, 10),
+    textless,
   }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
 
   if (job.payload?.include_privilege_log) {
@@ -1466,6 +1457,26 @@ async function packageProduction(job) {
   log(`  packaged ${produced.length} docs / ${producedPages} pages -> ${pkgStoragePath} `
     + `(sha256 ${pkgSha.slice(0, 12)}…); ${counts.withheld} withheld, ${counts.duplicates} duplicate(s), `
     + `${counts.exceptions} exception(s) — received ${counts.received}, reconciled`);
+}
+
+// TEXT/ for a scanned page: the OCR the matter's corpus already holds for
+// this document (ingestDisplayPdf files it with metadata.production_item_id).
+// Read only, never a new OCR call: packaging spends nothing and sends nothing.
+async function corpusPagesFor(item) {
+  const { data: docs, error } = await supabase.from('documents')
+    .select('id')
+    .eq('matterspace_id', item.matterspace_id)
+    .eq('metadata->>production_item_id', item.id)
+    .limit(1);
+  if (error || !docs?.length) return null;
+  const { data: rows, error: pErr } = await supabase.from('passages')
+    .select('text, page_start, sequence_number')
+    .eq('document_id', docs[0].id)
+    .eq('summary_level', 0)
+    .order('sequence_number')
+    .limit(20000);
+  if (pErr || !rows?.length) return null;
+  return passagesToPages(rows);
 }
 
 // ---------------------------------------------------------------------------
