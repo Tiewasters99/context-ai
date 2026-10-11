@@ -136,6 +136,34 @@ async function onCheckoutCompleted(event, session, created, fetchImpl) {
   const md = session.metadata || {};
   const userId = md.user_id || session.client_reference_id || null;
 
+  if (md.kind === 'ocr_pages') {
+    // An OCR pack (migration 107). Same paid-only rule as a credit pack.
+    if (session.payment_status && session.payment_status !== 'paid') {
+      return { ok: false, reason: `payment_status_${session.payment_status}` };
+    }
+    const invoiceId = idOf(session.invoice);
+    let invoiceUrl = null;
+    if (invoiceId) {
+      const inv = await stripeRequest(`/v1/invoices/${invoiceId}`, { method: 'GET', fetchImpl });
+      invoiceUrl = inv.ok ? (inv.data?.hosted_invoice_url || inv.data?.invoice_pdf || null) : null;
+    }
+    const { ok, data, error } = await pgRpc('ocr_pack_grant', {
+      p_event_id: event.id,
+      p_user: userId,
+      p_pages: Number(md.pages || 0),
+      p_pack_key: md.pack_key || null,
+      p_session_id: session.id || null,
+      p_payment_intent: idOf(session.payment_intent),
+      p_invoice_id: invoiceId,
+      p_receipt_url: session.receipt_url || null,
+      p_invoice_url: invoiceUrl,
+      p_event_type: event.type,
+      p_event_created: created,
+    }, { fetchImpl });
+    if (!ok) return { transport_error: error };
+    return data;
+  }
+
   if (session.mode === 'payment' || md.kind === 'usage_credits') {
     // A credit pack. Do not grant on an unpaid session: with certain payment
     // methods a Session completes before the money has actually arrived.

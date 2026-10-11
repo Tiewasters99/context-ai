@@ -382,7 +382,9 @@ export async function persistVaultFile(
     })
     .select('id')
     .single();
-  if (insErr) throw new Error(`create document: ${insErr.message}`);
+  // 53400: the account's storage ceiling (migration 107). Its message is
+  // written for the person, so it is shown as it is.
+  if (insErr) throw new Error(insErr.code === '53400' ? insErr.message : `create document: ${insErr.message}`);
 
   // 2. Upload to vault-documents storage. A large file (50 MB and up) goes
   //    up in resumable 6 MB chunks: a dropped connection continues from the
