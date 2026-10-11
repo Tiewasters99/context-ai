@@ -24,7 +24,9 @@
 -- Also: bates_next_seq(matter, prefix), SECURITY INVOKER, for the Bates &
 -- Produce panel's suggested "Start at" (RLS decides what the caller can see).
 --
--- Idempotent: safe to paste twice.
+-- Idempotent: safe to paste twice. ORDER MATTERS: 108 replaces 071's
+-- allocate_production_bates, so re-pasting 071 after 108 would silently put
+-- matter-wide numbering back. If 071 is ever re-pasted, paste 108 again after it.
 
 create or replace function public._bates_series_key(p_prefix text)
 returns text

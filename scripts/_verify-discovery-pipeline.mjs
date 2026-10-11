@@ -229,15 +229,18 @@ for (const f of [
 }
 await db.exec('grant all on all tables in schema public to authenticated, service_role');
 check(true, '030 + 032 + 044 + 045 + 055 + 057 + 058 + 059 + 060 + 071 + 108 all execute against a real Postgres');
-let rerun108Err = null;
-try { await db.exec(migration('108_bates_series_per_prefix.sql')); } catch (e) { rerun108Err = e; }
-check(!rerun108Err, '108 is idempotent — a second paste changes nothing and raises nothing', rerun108Err?.message);
 
 // 071 is idempotent: pasting it twice into the SQL editor, which is exactly
 // how it will be applied, must be a no-op rather than an error.
 let rerun071Err = null;
 try { await db.exec(migration('071_discovery_production_integrity.sql')); } catch (e) { rerun071Err = e; }
 check(!rerun071Err, '071 is idempotent — a second paste changes nothing and raises nothing', rerun071Err?.message);
+// 108 replaces 071's allocate_production_bates, so a re-paste of 071 (just
+// above) put the matter-wide version back. Re-apply 108 — which is also its
+// own second-paste check — so everything below runs on the current schema.
+let rerun108Err = null;
+try { await db.exec(migration('108_bates_series_per_prefix.sql')); } catch (e) { rerun108Err = e; }
+check(!rerun108Err, '108 is idempotent — a second paste changes nothing and raises nothing', rerun108Err?.message);
 
 // The SQL twin of formatBates(). lpad() TRUNCATES when the number is already
 // longer than the pad width and padStart() does not, so they have to be
