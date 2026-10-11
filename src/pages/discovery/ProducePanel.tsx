@@ -336,7 +336,7 @@ function PackageStep({ production, onQueued }: { production: Production; onQueue
     <div className="space-y-3">
       <p className="text-[11.5px] text-white/55 leading-relaxed">
         Stamped <span className="font-mono text-[#d4a054]">{batesRangeLabel(production) ?? ''}</span>.
-        Packaging bundles the endorsed PDFs, natives, and a load file into one ZIP with a sha256.
+        Packaging builds one ZIP with a sha256, in the four standard parts: IMAGES (the stamped pages), NATIVES (spreadsheets, audio and video, as produced), TEXT (each document's text) and DATA (the load files).
       </p>
       <label className="flex items-center gap-2 text-[11.5px] text-white/70 cursor-pointer">
         <input

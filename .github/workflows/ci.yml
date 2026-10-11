@@ -99,6 +99,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-discovery-zip-paths.mjs
 
+      - name: Discovery — production volume TEXT/ files and the full load file
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-text.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs
