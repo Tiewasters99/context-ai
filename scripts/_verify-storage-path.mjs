@@ -432,8 +432,14 @@ check(pathInMatter(null, OPEN), 'pathInMatter: no stored file is nothing to refu
     'worker: a job whose matter is not its production\'s matter is refused');
   const stamp = w.slice(w.indexOf('async function stampProduction'), w.indexOf('async function packageProduction'));
   const pkg = w.slice(w.indexOf('async function packageProduction'), w.indexOf('async function packageProduction') + 6000);
+  // Packaging reads every file (stamped, display, native) through one helper
+  // that asserts the path first, and hands only that helper to
+  // lib/discovery/package-docs.mjs, so no read there skips the check.
+  const pkgGuarded = /const readInProduction = \(storagePath\) => \{\s*assertPathInProduction\(storagePath, prod\.matterspace_id, prod\.id\);\s*return downloadFromStorage\(storagePath\);/.test(pkg)
+    && /read: readInProduction,/.test(pkg)
+    && !/downloadFromStorage\(item\./.test(pkg);
   check((stamp.match(/assertPathInProduction\(item\.display_storage_path/g) || []).length >= 2
-    && /assertPathInProduction\(item\.native_storage_path/.test(pkg),
+    && pkgGuarded,
   'worker: every production_items path is checked before the service role reads it (stamp, preflight, package)');
   check(/case 'intake_folder': return refuseQueuedFolderIntake\(job\)/.test(w) && /never from the queue/.test(w),
     'worker: a QUEUED intake_folder job (a member-writable row naming a local path) is refused');
