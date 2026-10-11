@@ -3,10 +3,11 @@ import { Stamp, Package, Download, Send, CheckCircle2 } from 'lucide-react';
 import {
   maxBatesSeq, updateProduction, enqueueJob, getDiscoverySignedUrl,
   listDeliveries, createDelivery, formatBates, BATES_POSITIONS,
-  type Production, type ProductionItem, type BatesPosition, type Delivery,
+  type ProcessingJob, type Production, type ProductionItem, type BatesPosition, type Delivery,
 } from '@/lib/discovery';
-import { batesRangeLabel } from './bits';
+import { batesRangeLabel, JobProgress } from './bits';
 import FloatingPanel from './FloatingPanel';
+import ProductionFailure from './ProductionFailure';
 
 // "Bates & Produce" — the outgoing-production pipeline panel. Its face
 // changes with the production's status:
@@ -16,13 +17,15 @@ import FloatingPanel from './FloatingPanel';
 export default function ProducePanel({
   production,
   items,
+  jobs,
   onClose,
-  onChanged,
+  onQueued,
 }: {
   production: Production;
   items: ProductionItem[];
+  jobs: ProcessingJob[];
   onClose: () => void;
-  onChanged: () => void;
+  onQueued: (job: ProcessingJob) => void;
 }) {
   // Documents excluded from production: anything tagged with a def whose
   // behavior is 'privileged' or 'non_responsive'.
@@ -34,6 +37,8 @@ export default function ProducePanel({
     return { included: items.length - ex, excluded: ex };
   }, [items]);
 
+  const activeJobs = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
+
   return (
     <FloatingPanel
       title="Bates & Produce"
@@ -44,8 +49,9 @@ export default function ProducePanel({
     >
       <div className="px-4 py-4 cursor-default">
         <StatusRail status={production.status} />
-        {production.status === 'review' && (
-          <BatesStep production={production} included={included} excluded={excluded} onChanged={onChanged} />
+        {activeJobs.map((job) => <JobProgress key={job.id} job={job} />)}
+        {activeJobs.length === 0 && production.status === 'review' && (
+          <BatesStep production={production} included={included} excluded={excluded} onQueued={onQueued} />
         )}
         {(production.status === 'processing' || production.status === 'intake') && (
           <p className="text-[11.5px] text-white/45 leading-relaxed">
@@ -53,8 +59,8 @@ export default function ProducePanel({
             production reaches <span className="text-[#7dd3fc]">review</span>.
           </p>
         )}
-        {production.status === 'stamped' && (
-          <PackageStep production={production} onChanged={onChanged} />
+        {activeJobs.length === 0 && production.status === 'stamped' && (
+          <PackageStep production={production} onQueued={onQueued} />
         )}
         {(production.status === 'packaged' || production.status === 'delivered') && (
           <DeliveryStep production={production} />
@@ -68,19 +74,7 @@ export default function ProducePanel({
               ?? 'This production is held. Nothing was lost — releasing the hold puts it back in the queue.'}
           </p>
         )}
-        {production.status === 'error' && (
-          <>
-            <p className="text-[11.5px] text-red-300">
-              The last worker job failed — check the job log on the Discovery home, fix the cause,
-              and re-run.
-            </p>
-            {production.status_reason && (
-              <p className="text-[11.5px] text-red-300/80 leading-relaxed mt-1.5">
-                {production.status_reason}
-              </p>
-            )}
-          </>
-        )}
+        <ProductionFailure production={production} />
       </div>
     </FloatingPanel>
   );
@@ -127,12 +121,12 @@ function BatesStep({
   production,
   included,
   excluded,
-  onChanged,
+  onQueued,
 }: {
   production: Production;
   included: number;
   excluded: number;
-  onChanged: () => void;
+  onQueued: (job: ProcessingJob) => void;
 }) {
   const [prefix, setPrefix] = useState(production.bates_prefix ?? '');
   const [pad, setPad] = useState(production.bates_pad || 7);
@@ -167,15 +161,16 @@ function BatesStep({
         bates_start: Math.max(1, start),
         bates_position: position,
       });
-      await enqueueJob({
+      const job = await enqueueJob({
         matterspace_id: production.matterspace_id,
         production_id: production.id,
         job_type: 'stamp_production',
         payload: {},
       });
-      onChanged();
+      onQueued(job);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start stamping');
+    } finally {
       setBusy(false);
     }
   };
@@ -295,7 +290,7 @@ function BatesStep({
 
 // ── Step 2: Package ─────────────────────────────────────────────────────────
 
-function PackageStep({ production, onChanged }: { production: Production; onChanged: () => void }) {
+function PackageStep({ production, onQueued }: { production: Production; onQueued: (job: ProcessingJob) => void }) {
   const [includePrivLog, setIncludePrivLog] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -305,15 +300,16 @@ function PackageStep({ production, onChanged }: { production: Production; onChan
     setBusy(true);
     setError(null);
     try {
-      await enqueueJob({
+      const job = await enqueueJob({
         matterspace_id: production.matterspace_id,
         production_id: production.id,
         job_type: 'package_production',
         payload: { include_privilege_log: includePrivLog },
       });
-      onChanged();
+      onQueued(job);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to queue packaging');
+    } finally {
       setBusy(false);
     }
   };

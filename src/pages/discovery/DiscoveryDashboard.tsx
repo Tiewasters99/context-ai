@@ -6,6 +6,7 @@ import {
   type AllProductionsEntry, type MatterOption,
 } from '@/lib/discovery';
 import { DirectionBadge, StatusBadge, batesRangeLabel } from './bits';
+import ProductionFailure from './ProductionFailure';
 
 // Standalone Discovery home: every production across every case the user can
 // see, in one ledger — the product-level overview the per-matter tab can't
@@ -165,6 +166,7 @@ export default function DiscoveryDashboard() {
                         {bates && <span className="text-[#d4a054]/70 tabular-nums">{bates}</span>}
                         <span>{fmtDate(p.production_date)}</span>
                       </div>
+                      <ProductionFailure production={p} />
                     </div>
                     <ChevronRight size={15} className="text-white/25 shrink-0" />
                   </button>

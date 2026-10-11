@@ -21,12 +21,14 @@ import type { EvidenceEstimate } from '@/lib/bucketizer/evidence';
 
 export default function BucketizerEvidenceRunDialog({
   estimate,
+  sealed,
   failed,
   onCancel,
   onConfirm,
   onRetryFailed,
 }: {
   estimate: EvidenceEstimate;
+  sealed: boolean;
   /** Pairings a previous pass could not use. */
   failed: number;
   onCancel: () => void;
@@ -59,7 +61,9 @@ export default function BucketizerEvidenceRunDialog({
         <Row
           label="Estimated cost"
           value={formatCents(estimate.cents)}
-          hint={`at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
+          hint={sealed
+            ? 'Upper bound — this run uses the sealed model. You are charged for what it actually uses.'
+            : `at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
         />
       </dl>
 
@@ -89,12 +93,6 @@ export default function BucketizerEvidenceRunDialog({
           charged again. You can stop at any time; closing the tab does not lose what is done.
         </p>
       )}
-
-      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-        If this matter is sealed, it is served by the sealed pen inside our own AWS account,
-        which costs less than the figure above — you are metered at the price of the model that
-        actually answers.
-      </p>
 
       <div className="mt-5 flex items-center justify-end gap-2">
         {failed > 0 && (

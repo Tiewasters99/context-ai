@@ -21,12 +21,16 @@
 // and while covers are off each banner is a slim strip that turns them on.
 
 import { useEffect, useState, useRef } from 'react';
-import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical, LayoutGrid } from 'lucide-react';
+import { X, Palette, Image as ImageIcon, Maximize2, Minimize2, LinkIcon, Upload, MoveVertical, LayoutGrid, Move } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import TemplateLibrary from '@/components/vault/TemplateLibrary';
 import { useCoverLibrary } from '@/hooks/useCoverLibrary';
 import { useMatterCover } from '@/hooks/useMatterCover';
 import { setCoversOff, setDefaultCover, useCoversOff, useDefaultCover } from '@/lib/default-cover';
+import {
+  parseCover, withPosition, coverImageStyle, normalizePosition, DEFAULT_POSITION, MAX_ZOOM,
+  type CoverPosition,
+} from '@/lib/cover-position';
 
 interface CoverImageProps {
   coverUrl?: string | null;
@@ -80,16 +84,6 @@ export default function CoverImage({
   // Vertical position of the expanded cover (0 = top, 50 = center, 100 = bottom).
   // Hydrate from localStorage when a persistKey is provided.
   const [bgY, setBgY] = useState<number>(50);
-  useEffect(() => {
-    if (!persistKey) { setBgY(50); return; }
-    try {
-      const raw = localStorage.getItem(`${persistKey}.bgY`);
-      if (raw !== null) {
-        const n = parseFloat(raw);
-        if (!Number.isNaN(n)) setBgY(Math.max(0, Math.min(100, n)));
-      }
-    } catch {}
-  }, [persistKey]);
   const defaultCover = useDefaultCover();
   const coversOff = useCoversOff();
   const matterCover = useMatterCover(inherit && !coverUrl ? matterId : null);
@@ -105,6 +99,95 @@ export default function CoverImage({
   const isGradient = cover.startsWith('linear-gradient');
   const hasImage = cover && !isGradient;
   const hasCover = !!cover;
+  // The image address and where it sits in the banner (lib/cover-position).
+  const { src: coverSrc, position: savedPos } = parseCover(cover);
+
+  // Expanded view's vertical position: this browser's saved choice for the
+  // surface if there is one, else where the banner itself is focused.
+  useEffect(() => {
+    let y = savedPos.y;
+    if (persistKey) {
+      try {
+        const raw = localStorage.getItem(`${persistKey}.bgY`);
+        if (raw !== null) {
+          const n = parseFloat(raw);
+          if (!Number.isNaN(n)) y = Math.max(0, Math.min(100, n));
+        }
+      } catch {}
+    }
+    setBgY(y);
+  }, [persistKey, savedPos.y]);
+
+  // Banner reposition (Notion-style): a draft position while the user drags
+  // and zooms; Save writes it into the cover URL, Cancel drops it. Only a
+  // cover this surface owns (or the default, on the welcome page) can be
+  // repositioned — moving a borrowed cover would move it everywhere.
+  const [draftPos, setDraftPos] = useState<CoverPosition | null>(null);
+  const repositioning = draftPos !== null;
+  const canReposition = editable && !!hasImage && !inherited;
+  const shownPos = draftPos ?? savedPos;
+  const imgRef = useRef<HTMLImageElement>(null);
+  const panRef = useRef<{ x: number; y: number; start: CoverPosition } | null>(null);
+  const startBannerReposition = () => setDraftPos(savedPos);
+  const saveBannerReposition = () => {
+    if (draftPos && own) changeOwn(withPosition(own, draftPos));
+    setDraftPos(null);
+  };
+  // How many percentage points one pixel of drag is worth on each axis: the
+  // image's overflow beyond the banner at the current zoom (at least a
+  // quarter of the banner, so a cover that barely overflows still moves).
+  const pctPerPx = (pos: CoverPosition) => {
+    const box = bannerRef.current?.getBoundingClientRect();
+    const img = imgRef.current;
+    if (!box || !img || !img.naturalWidth || !img.naturalHeight) return { x: 0.2, y: 0.2 };
+    const base = Math.max(box.width / img.naturalWidth, box.height / img.naturalHeight);
+    const overX = img.naturalWidth * base * pos.zoom - box.width;
+    const overY = img.naturalHeight * base * pos.zoom - box.height;
+    return {
+      x: 100 / Math.max(overX, box.width * 0.25),
+      y: 100 / Math.max(overY, box.height * 0.25),
+    };
+  };
+  const onBannerPointerDown = (e: React.PointerEvent) => {
+    if (!draftPos || (e.target as HTMLElement).closest('button, input')) return;
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    panRef.current = { x: e.clientX, y: e.clientY, start: draftPos };
+  };
+  const onBannerPointerMove = (e: React.PointerEvent) => {
+    const pan = panRef.current;
+    if (!pan) return;
+    const k = pctPerPx(pan.start);
+    // Dragging the picture down brings its top into view: focus moves up.
+    setDraftPos(normalizePosition({
+      ...pan.start,
+      x: pan.start.x - (e.clientX - pan.x) * k.x,
+      y: pan.start.y - (e.clientY - pan.y) * k.y,
+    }));
+  };
+  const onBannerPointerUp = () => { panRef.current = null; };
+  // Scroll to zoom while repositioning. A native, non-passive listener so
+  // the page itself does not scroll underneath.
+  useEffect(() => {
+    const el = bannerRef.current;
+    if (!el || !repositioning) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      // Proportional to how far the wheel or trackpad moved: one mouse-wheel
+      // notch (deltaY ~100) is about 16%, a trackpad glide many small steps.
+      const k = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0017));
+      setDraftPos((p) => (p ? normalizePosition({ ...p, zoom: p.zoom * k }) : p));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [repositioning]);
+  // Esc cancels a reposition.
+  useEffect(() => {
+    if (!repositioning) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setDraftPos(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [repositioning]);
 
   // Expanded mode: write the cover into a CSS variable on the root, so
   // MainLayout's <main> background-image picks it up and the cover
@@ -114,14 +197,14 @@ export default function CoverImage({
   // users can drag the bg up/down via the reposition pill.
   useEffect(() => {
     if (!expanded || !hasCover) return;
-    const value = isGradient ? cover : `url("${cover.replace(/"/g, '\\"')}")`;
+    const value = isGradient ? cover : `url("${coverSrc.replace(/"/g, '\\"')}")`;
     document.documentElement.style.setProperty('--page-cover', value);
     document.documentElement.style.setProperty('--page-cover-position', `center ${bgY}%`);
     return () => {
       document.documentElement.style.removeProperty('--page-cover');
       document.documentElement.style.removeProperty('--page-cover-position');
     };
-  }, [expanded, cover, isGradient, hasCover, bgY]);
+  }, [expanded, cover, coverSrc, isGradient, hasCover, bgY]);
 
   // Drag-to-reposition for the expanded cover. The pill button starts a
   // pointer capture; document-level move/up handlers update bgY until
@@ -256,11 +339,15 @@ export default function CoverImage({
       {!expanded && <div className="relative w-full">
         <div
           ref={bannerRef}
-          className="relative w-full h-[180px] overflow-hidden cursor-pointer"
+          className={`relative w-full h-[180px] overflow-hidden ${repositioning ? 'cursor-grab active:cursor-grabbing touch-none select-none' : 'cursor-pointer'}`}
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
-          onPointerDown={(e) => { lastPointerType.current = e.pointerType; }}
+          onPointerDown={(e) => { lastPointerType.current = e.pointerType; onBannerPointerDown(e); }}
+          onPointerMove={onBannerPointerMove}
+          onPointerUp={onBannerPointerUp}
+          onPointerCancel={onBannerPointerUp}
           onClick={(e) => {
+            if (repositioning) return;
             if ((e.target as HTMLElement).closest('button')) return;
             // Touch: the first tap summons the controls, a second tap on the
             // cover puts them away. Expansion is the Expand button's job.
@@ -270,10 +357,17 @@ export default function CoverImage({
             }
             setExpanded(true);
           }}
-          title="Click to expand to background"
+          title={repositioning ? 'Drag to move the image; scroll to zoom' : 'Click to expand to background'}
         >
           {hasImage ? (
-            <img src={cover} alt="" className="w-full h-full object-cover" />
+            <img
+              ref={imgRef}
+              src={coverSrc}
+              alt=""
+              draggable={false}
+              className="w-full h-full object-cover pointer-events-none"
+              style={coverImageStyle(shownPos)}
+            />
           ) : (
             <div className="w-full h-full" style={{ background: cover }} />
           )}
@@ -281,7 +375,45 @@ export default function CoverImage({
           {/* Overlay controls — hover on desktop, tap-toggled on touch.
               pointer-events-none while hidden, so invisible buttons never
               swallow taps. */}
-          {editable && (
+          {repositioning && draftPos && (
+            <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-end gap-2 p-3" style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.55), transparent)' }}>
+              <span className="mr-auto px-2 py-1 text-[11px] text-white/85 bg-black/40 rounded-md">
+                Drag to move · scroll to zoom
+              </span>
+              <label className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-white/85 bg-black/40 rounded-md">
+                Zoom
+                <input
+                  type="range" min={1} max={MAX_ZOOM} step={0.05}
+                  value={draftPos.zoom}
+                  onChange={(e) => setDraftPos(normalizePosition({ ...draftPos, zoom: parseFloat(e.target.value) }))}
+                  className="w-24 accent-[#e8b84a]"
+                  aria-label="Zoom the cover"
+                />
+              </label>
+              <button
+                onClick={(e) => { e.stopPropagation(); setDraftPos(DEFAULT_POSITION); }}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
+                title="Back to the centre, no zoom"
+              >
+                Reset
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setDraftPos(null); }}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors"
+                title="Leave the cover where it was (Esc)"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); saveBannerReposition(); }}
+                className="px-3 py-1.5 text-xs font-semibold text-[#0e0e12] bg-[#e8b84a] rounded-md hover:bg-[#f5d565] transition-colors"
+              >
+                Save position
+              </button>
+            </div>
+          )}
+
+          {editable && !repositioning && (
             <div
               className={`absolute inset-0 flex items-end justify-end p-3 transition-opacity duration-200 ${
                 isHovered || touchControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
@@ -296,6 +428,15 @@ export default function CoverImage({
                 >
                   <Maximize2 size={12} /> Expand
                 </button>
+                {canReposition && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setTouchControls(false); startBannerReposition(); }}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-black/40 backdrop-blur-sm rounded-md hover:bg-black/60 transition-colors flex items-center gap-1.5"
+                    title="Choose which part of the image the banner shows: drag it, zoom in"
+                  >
+                    <Move size={12} /> Reposition
+                  </button>
+                )}
                 {!inherited && (
                   <button
                     onClick={(e) => { e.stopPropagation(); setTouchControls(false); handleRemove(); }}
@@ -360,7 +501,7 @@ export default function CoverImage({
       {expanded && hasImage && (
         <button
           onPointerDown={startReposition}
-          className="fixed top-[60px] right-44 z-30 p-2 rounded-md bg-black/50 backdrop-blur-sm text-white/80 hover:text-white hover:bg-black/70 transition-colors flex items-center gap-1.5 text-xs cursor-ns-resize select-none"
+          className="fixed top-[60px] right-44 z-30 p-2 rounded-md bg-black/50 backdrop-blur-sm text-white/80 hover:text-white hover:bg-black/70 transition-colors flex items-center gap-1.5 text-xs cursor-ns-resize select-none touch-none"
           title="Hold and drag up/down to reposition cover"
         >
           <MoveVertical size={14} /> Reposition
