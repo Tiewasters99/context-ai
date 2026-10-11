@@ -492,7 +492,8 @@ const downSearch = await handleSearch(supabase, { matter: SEALED, q: 'Ormsby' },
   { openaiApiKey: 'sk-test' });
 check(downSearch.result_count > 0, 'endpoint DOWN: search still answers on full text',
   `n=${downSearch.result_count}`);
-check(/embedding step failed/.test(downSearch.note ?? ''), 'and the note says why',
+check(/Search by meaning is temporarily unavailable/.test(downSearch.note ?? '')
+  && !/voyage-4|SageMaker|InService/.test(downSearch.note ?? ''), 'and the note explains the outage without infrastructure details',
   (downSearch.note ?? '').slice(0, 60));
 check(!calls.includes('api.openai.com'), 'no fallback to another provider while down');
 
