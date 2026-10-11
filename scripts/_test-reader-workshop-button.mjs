@@ -11,10 +11,11 @@
 //      WorkshopPanel): told to show the Workshop tab, it shows the bench at
 //      its 360px width; its tabs report a choice to the Reader instead of
 //      keeping it; a document with no bench (no matter) falls back to Pages.
-//   2. THE BUTTON, as source: DocumentReader imports Supabase, pdfjs, the
-//      router and the rest of the app, so the toolbar button is held to its
-//      wiring by its source — when it shows, what a click does, and that the
-//      sidebar's tab is the Reader's to set.
+//   2. THE BUTTON, as source: the book (src/components/reader/PdfBook.tsx,
+//      where the toolbar lives since the extraction) needs pdfjs and a PDF to
+//      mount, so the toolbar button is held to its wiring by its source —
+//      when it shows, what a click does, and that the sidebar's tab is the
+//      book's to set.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -215,14 +216,19 @@ test('a remembered Workshop tab on a document with no bench falls back to Pages'
 // 2. The button, as source
 // ---------------------------------------------------------------------------
 
-const READER = readFileSync(new URL('../src/pages/DocumentReader.tsx', import.meta.url), 'utf8')
+// The book: a PDF's toolbar, sidebar and bench, extracted from DocumentReader
+// (the document view now renders PdfBook for a PDF and keeps the matter's
+// parts around it).
+const READER = readFileSync(new URL('../src/components/reader/PdfBook.tsx', import.meta.url), 'utf8')
   .replace(/\r\n/g, '\n');
 
 test('the toolbar has a Workshop button, shown where the bench exists and not on a phone', () => {
   const at = READER.indexOf('title="Workshop: snip, snippets, bring in, lay on page"');
   assert.ok(at > 0, 'the button and its tooltip');
   const block = READER.slice(READER.lastIndexOf('{workshop && ', at), at + 200);
-  assert.match(block, /^\{workshop && fileKind === 'pdf' && loadState === 'ready' && !isMobile && \(/);
+  // The book is always a PDF, so the old `fileKind === 'pdf'` gate is gone
+  // with the file kind; a bench and a ready book remain the conditions.
+  assert.match(block, /^\{workshop && loadState === 'ready' && !isMobile && \(/);
   // Not hidden in a pane: the sidebar toggle is, the bench button is not.
   assert.doesNotMatch(block, /hideSidebarToggle/);
   assert.match(block, /<Hammer size=\{15\} \/>\s*<span>Workshop<\/span>/);
@@ -238,7 +244,7 @@ test('a click opens the sidebar on the bench; a click while it shows closes it',
   assert.match(block, /sidebarOpen && sidebarTab === 'workshop' \? 'text-\[var\(--color-primary\)\]'/);
 });
 
-test('the Reader holds the sidebar tab and hands it down', () => {
+test('the book holds the sidebar tab and hands it down', () => {
   assert.match(READER, /const \[sidebarTab, setSidebarTab\] = useState<SidebarTabId>\('pages'\);/);
   assert.match(READER, /<ReaderSidebar[\s\S]*?tab=\{sidebarTab\}\s*onTabChange=\{setSidebarTab\}/);
   // The pane's sidebar state is still never saved as the reader's preference.

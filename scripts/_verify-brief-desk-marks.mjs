@@ -310,7 +310,13 @@ console.log('\n--- F. the wiring, read from source -----------------------------
   check(/recordEvent\('cite\.checked'/.test(code), 'Confirm records cite.checked');
   const reader = read('src/pages/DocumentReader.tsx');
   check(/const linked = embedded \? NaN : parseInt\(searchParams\.get\('page'\)/.test(reader), 'the embedded Reader skips the ?page= restore; the route keeps it');
-  check(/if \(embedded\) return;\s*\n\s*if \(!restoredRef\.current\) return;/.test(reader), 'the embedded Reader skips the ?page= follow; the route keeps it');
+  // Since the PdfBook extraction the host hands the book a ?page= link only
+  // on the route (null when embedded), and the book's follow effect declines
+  // a missing link before the restore has run.
+  const book = read('src/components/reader/PdfBook.tsx');
+  check(/\(embedded \? null : \{ page: linked, key: searchParams\.toString\(\) \}\)/.test(reader)
+    && /if \(!pageLink\) return;\s*\n\s*if \(!restoredRef\.current\) return;/.test(book),
+    'the embedded Reader skips the ?page= follow; the route keeps it');
   check(/goto\?: ReaderGoto; chrome\?: ReaderChrome/.test(reader) && !/goto/.test(read('src/lib/canvas.ts')), 'goto and chrome are the Reader\'s own props, not the shared canvas props');
   for (const f of fs.readdirSync(path.join(root, 'src/lib/cite-check'))) {
     const s = read(`src/lib/cite-check/${f}`);
