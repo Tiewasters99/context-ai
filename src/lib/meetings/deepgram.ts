@@ -105,6 +105,7 @@ export class DeepgramLiveClient {
   private handlers: Handlers;
   private meetingId: string | null;
 
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   /** Start was pressed and Stop has not been. The one thing recovery serves. */
   private running = false;
   private status: LiveStatus = "idle";
@@ -140,26 +141,34 @@ export class DeepgramLiveClient {
     this.startedAt = Date.now();
     this.setStatus("starting");
 
-    // The wake lock first, while we are still inside the Start tap and before
-    // any network round trip. It is what keeps the phone from locking, and a
-    // locked phone stops the microphone no matter what else we do.
-    await this.acquireWakeLock();
-    this.attachLifecycleHandlers();
+    this.startupTimer = setTimeout(() => {
+      void this.fail(new Error("Live transcription did not start within 30 seconds. Check microphone permission and your connection, then try Start mic again."));
+    }, 30_000);
 
     try {
-      await this.startMic();
-      await this.openSocket();
-      // Once more, now that the permission sheet is gone: if the browser let
-      // the lock go while it was up, this is where it is taken back.
       await this.acquireWakeLock();
+      if (!this.running) return;
+      this.attachLifecycleHandlers();
+      await this.startMic();
+      if (!this.running) return;
+      await this.openSocket();
+      if (!this.running) return;
+      await this.acquireWakeLock();
+      if (!this.running) return;
       this.startPulse();
     } catch (err) {
-      await this.fail(err instanceof Error ? err : new Error(String(err)));
-      throw err;
+      if (!this.running) return; // stopped or timed out while awaiting a browser/provider
+      void this.fail(err instanceof Error ? err : new Error(String(err)));
     }
   }
 
+  private clearStartupTimer() {
+    if (this.startupTimer) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+  }
+
   async stop() {
+    this.clearStartupTimer();
     this.running = false;
     this.stopPulse();
     this.clearReconnectTimer();
@@ -187,6 +196,7 @@ export class DeepgramLiveClient {
     if (c && Date.now() < c.expiresAt - CREDENTIAL_MARGIN_MS) return c;
 
     const session = (await supabase.auth.getSession()).data.session;
+    if (!this.running) throw new Error("Transcription startup was cancelled.");
     const accessToken = session?.access_token;
     if (!accessToken) throw new Error("not authenticated");
 
@@ -233,6 +243,7 @@ export class DeepgramLiveClient {
 
   private async openSocket() {
     const cred = await this.getCredential();
+    if (!this.running) return;
 
     const params = new URLSearchParams({
       model: "nova-3",
@@ -276,6 +287,7 @@ export class DeepgramLiveClient {
     ws.addEventListener("open", () => {
       if (this.ws !== ws) return;
       opened = true;
+      this.clearStartupTimer();
       this.event(`socket open${this.held.length ? `, sending ${Math.round(this.heldBytes / PCM_BYTES_PER_SECOND)} s held` : ""}`);
       this.flushHeld(ws);
       this.keepalive = setInterval(() => {
@@ -332,7 +344,11 @@ export class DeepgramLiveClient {
       // Reusing that credential would loop forever at the backoff cap; one
       // fresh credential (and its charge) is the lesser cost.
       if (!opened) this.credential = null;
-      if (this.running) this.scheduleReconnect("the transcriber's connection closed");
+      if (this.running && this.status === "starting") {
+        void this.fail(new Error("Live transcription could not connect. Check your connection, then try Start mic again."));
+      } else if (this.running) {
+        this.scheduleReconnect("the transcriber's connection closed");
+      }
     });
   }
 
@@ -541,18 +557,21 @@ export class DeepgramLiveClient {
   }
 
   private async fail(err: Error) {
+    if (!this.running) return;
     this.running = false;
+    this.clearStartupTimer();
     this.stopPulse();
     this.clearReconnectTimer();
     this.detachLifecycleHandlers();
-    await this.releaseWakeLock();
     this.closeSocket(false);
-    await this.teardownMic();
+    // Report immediately: browser cleanup can itself wait indefinitely.
+    const cleanup = this.teardownMic();
     this.held = [];
     this.heldBytes = 0;
     this.setStatus("error", err.message);
     this.handlers.onStream?.(null);
     this.handlers.onError(err);
+    await Promise.all([cleanup, this.releaseWakeLock()]);
   }
 
   // ── Lifecycle (visibility, wake lock) ──────────────────────────────────────
@@ -601,6 +620,10 @@ export class DeepgramLiveClient {
     this.wakeLockRequesting = true;
     try {
       const lock = await nav.wakeLock.request("screen");
+      if (!this.running) {
+        void lock.release().catch(() => {});
+        return;
+      }
       this.wakeLock = lock;
       this.event("wake lock held");
       this.handlers.onWakeLock?.(true);
@@ -657,6 +680,10 @@ export class DeepgramLiveClient {
         autoGainControl: true,
       },
     });
+    if (!this.running) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
     this.stream = stream;
     this.handlers.onStream?.(stream);
 
@@ -717,6 +744,7 @@ export class DeepgramLiveClient {
     });
 
     await audioCtx.audioWorklet.addModule("/pcm-worklet.js");
+    if (!this.running || this.audioCtx !== audioCtx) return;
 
     const source = audioCtx.createMediaStreamSource(stream);
     this.source = source;
