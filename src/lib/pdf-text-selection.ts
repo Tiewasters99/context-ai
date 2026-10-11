@@ -13,7 +13,7 @@
 // that mechanism, lifted for a text layer rendered with pdfjs.TextLayer
 // directly, which never gets a builder.
 //
-// CSS this relies on (DocumentReader's ReaderStyle):
+// CSS this relies on (PdfBook's PdfBookStyle, src/components/reader/PdfBook.tsx):
 //   .textLayer .endOfContent { display:block; position:absolute; inset:100% 0 0; z-index:0; cursor:default; user-select:none; }
 //   .textLayer.selecting .endOfContent { top:0; }
 
