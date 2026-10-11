@@ -460,6 +460,9 @@ jobs:
       - name: Discovery — intake → stamp → package → deliver (PGlite, stubbed storage)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-discovery-pipeline.mjs
+      - name: Discovery — Word and email produced as images (LibreOffice plumbing)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-imaging.mjs
       # Day one for a new paying user: which file types are accepted or
       # refused (and whether the refusal names an alternative), whether a
       # mid-size document may run on the 60 s serverless budget, that the

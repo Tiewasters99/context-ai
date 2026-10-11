@@ -5,10 +5,19 @@
 #
 # ffmpeg is required: .wma/.m4a evidence recordings transcode to mp3 before
 # Gemini transcription.
+#
+# LibreOffice (Writer only, no GUI) images Word files and email for Discovery
+# productions (lib/discovery/office-image.mjs). The fonts matter as much as
+# the program: Carlito and Caladea are metric-compatible with Calibri and
+# Cambria, Liberation with Arial/Times/Courier, so a Word file paginates as
+# it did in Word and each Bates number lands on the page it should. DejaVu
+# covers accented and non-Latin text in email.
 FROM node:22-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+     libreoffice-writer-nogui \
+     fonts-liberation fonts-crosextra-carlito fonts-crosextra-caladea fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
