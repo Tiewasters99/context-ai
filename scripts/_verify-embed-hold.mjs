@@ -58,8 +58,15 @@ const { embedOne } = await import('../lib/mcp-core.mjs');
 const sage = ROUTES['voyage-4-sagemaker'];
 
 const reason = sage.unavailable(400, PARKED_BODY, { env: { SAGEMAKER_VOYAGE_ENDPOINT: 'voyage-4-embed', AWS_REGION: 'us-east-1' } });
-check(typeof reason === 'string' && /not in service/.test(reason) && /voyage-4-embed/.test(reason),
-  'NO_SUCH_ENDPOINT → a reason in words', reason);
+check(typeof reason === 'string' && /searched by exact words/.test(reason)
+  && /Search by meaning isn't available inside the seal yet/.test(reason)
+  && !/SageMaker|voyage-4-embed|us-east-1|AWS/.test(reason),
+  'NO_SUCH_ENDPOINT → plain-language search status without infrastructure details', reason);
+const { describeEmbeddingPending } = await import('../lib/ingest-formats.mjs');
+const pendingStatus = describeEmbeddingPending({ passages: 3, reason: 'SageMaker voyage-4-embed us-east-1 is not in service' });
+check(/3 passages/.test(pendingStatus.label) && /Search by meaning isn't available/.test(pendingStatus.detail)
+  && !/SageMaker|voyage-4-embed|us-east-1|scripts\//.test(JSON.stringify(pendingStatus)),
+  'legacy pending records show plain language and preserve the passage count');
 check(sage.unavailable(400, OTHER_400) === null, 'a different 400 is not "parked"');
 check(sage.unavailable(500, PARKED_BODY) === null, 'a 5xx is never "parked" (that is an outage, retried as before)');
 check(sage.unavailable(403, PARKED_BODY) === null, 'a 403 is never "parked" (that is a key problem)');
@@ -214,7 +221,7 @@ try {
     check(n > 0 && passages.every((p) => p.embedding_model === 'voyage-4'), 'rows are stamped with the space they will join (voyage-4)');
     check(pending && pending.route === 'voyage-4-sagemaker' && pending.model === 'voyage-4' && Number(pending.passages) === n,
       'metadata.embedding_pending names the route, the model and the passages owed', JSON.stringify(pending)?.slice(0, 160));
-    check(pending && /not in service/.test(String(pending.reason)), 'and the reason is the endpoint\'s answer, in words');
+    check(pending && /searched by exact words/.test(String(pending.reason)), 'and the reason explains word search plainly');
     if (mode === 'live') {
       check(result && result.embedded === false && result.embeddingPending?.route === 'voyage-4-sagemaker',
         'processDocument reports embedded:false + embeddingPending');
@@ -227,8 +234,8 @@ try {
 
     // The MCP status says it in words.
     const st = await handleCheckIngestStatus(supabase, { document_id: docId });
-    check(st?.embedding_pending && st.searchable === true && st.semantic_search === false && /awaiting sealed embeddings/.test(st.note || ''),
-      'check_ingest_status: searchable by words, semantic_search:false, note says vectors are owed', (st?.note || '').slice(0, 120));
+    check(st?.embedding_pending && st.searchable === true && st.semantic_search === false && /Search by meaning isn't available/.test(st.note || ''),
+      'check_ingest_status: searchable by words, semantic_search:false, plain-language note', (st?.note || '').slice(0, 120));
 
     // Search still finds it, on words, with the endpoint's note.
     // The search half always runs HERE, in-process. With the route configured
@@ -242,7 +249,7 @@ try {
     const noteText = String(found?.note ?? '');
     check(hit, 'sealed search finds the passage by its words', `${hits.length} hit(s)`);
     if (routeReady(sage, process.env)) {
-      check(/not in service/.test(noteText), 'and the search note says the endpoint is not in service', noteText.slice(0, 140));
+      check(/Search by meaning isn't available/.test(noteText), 'and the search note explains meaning search is unavailable', noteText.slice(0, 140));
     } else {
       check(/not sent to an outside embedding provider|full-text/i.test(noteText),
         'and the search note says the query stayed inside the seal (route not configured in this checkout — the worker\'s note was proved above)', noteText.slice(0, 120));

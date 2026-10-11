@@ -34,6 +34,8 @@ import {
   type ServerRunState,
 } from '@/lib/bucketizer/server-run';
 import { showingOf } from '@/lib/paged';
+import { useMatterAiState } from '@/components/ai/useMatterAiState';
+import { isSealedTier } from '@/components/ai/assistant-scope';
 
 // The Bucketizer: the matter's living case-theory tree (claims → elements →
 // subissues, plus cross-cutting themes) with documents classified into it —
@@ -56,6 +58,8 @@ const CHILD_KIND: Record<NodeKind, NodeKind> = {
 
 export default function BucketizerSurface({ matterId }: { matterId: string }) {
   const navigate = useNavigate();
+  const ai = useMatterAiState(matterId);
+  const sealed = isSealedTier(ai.tier);
   const [nodes, setNodes] = useState<BucketNode[] | null>(null);
   const [counts, setCounts] = useState<Map<string, { proposed: number; confirmed: number }>>(new Map());
   const [error, setError] = useState<string | null>(null);
@@ -204,6 +208,7 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
 
   useEffect(() => {
     setNodes(null);
+    setRunReport(null);
     setSelectedId(null);
     setNodeDocs(null);
     setEvidenceReport(null);
@@ -427,9 +432,8 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
         signal: controller.signal,
         onProgress: setClassifying,
       });
-      // Kept on screen after the spinner goes: a pause, or a window that could
-      // not be used, is something the attorney has to know about.
-      if (final.pausedMessage || final.notes.length || final.errors) setRunReport(final);
+      // Keep the outcome visible after the spinner goes, including success.
+      setRunReport(final);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Classification failed.');
     } finally {
@@ -497,9 +501,8 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
         signal: controller.signal,
         onProgress: setEvidenceRun,
       });
-      // A pause, a dropped quotation or a pairing that could not be read is
-      // something the attorney has to know about, so it stays on screen.
-      if (final.pausedMessage || final.notes.length || final.failed) setEvidenceReport(final);
+      // Keep the outcome visible after the spinner goes, including success.
+      setEvidenceReport(final);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The evidence pass failed.');
     } finally {
@@ -889,6 +892,7 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
 
       {pending && (
         <RunEstimateDialog
+          sealed={sealed}
           estimate={pending.estimate}
           notices={pending.notices}
           groups={pending.groups}
@@ -899,6 +903,7 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
 
       {pendingEvidence && (
         <BucketizerEvidenceRunDialog
+          sealed={sealed}
           estimate={pendingEvidence.estimate}
           failed={pendingEvidence.inventory.failed}
           onCancel={() => setPendingEvidence(null)}
@@ -950,9 +955,10 @@ export default function BucketizerSurface({ matterId }: { matterId: string }) {
  * is biased high in the same direction the server's is.
  */
 function RunEstimateDialog({
-  estimate, notices, groups, onCancel, onConfirm,
+  estimate, sealed, notices, groups, onCancel, onConfirm,
 }: {
   estimate: RunEstimate;
+  sealed: boolean;
   /** What a re-run owes the person before it starts. Empty on a first pass. */
   notices: string[];
   /** The documents about to be read, BY NAME, grouped by their matter. */
@@ -1006,7 +1012,9 @@ function RunEstimateDialog({
         <Row
           label="Estimated cost"
           value={formatCents(estimate.cents)}
-          hint={`at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
+          hint={sealed
+            ? 'Upper bound — this run uses the sealed model. You are charged for what it actually uses.'
+            : `at ${estimate.modelId} list rates — the estimate is deliberately high, and you are charged what the calls actually use`}
         />
       </dl>
 
@@ -1028,12 +1036,6 @@ function RunEstimateDialog({
           {notices.map((n, i) => <li key={i}>{n}</li>)}
         </ul>
       )}
-
-      <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-        If this matter is sealed, it is served by the sealed pen inside our own AWS account,
-        which costs less than the figure above — you are metered at the price of the model that
-        actually answers.
-      </p>
 
       <div className="mt-5 flex justify-end gap-2">
         <button
@@ -1216,9 +1218,11 @@ function stalledOrStopped(state: ServerRunState): boolean {
 function RunReport({ report, onDismiss }: { report: ClassifyProgress; onDismiss: () => void }) {
   const paused = Boolean(report.pausedMessage);
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${paused
+    <div role="status" className={`rounded-lg border px-3 py-2 text-sm ${paused || report.done < report.total
       ? 'border-[#d4a054]/40 bg-[#d4a054]/10 text-[#d4a054]'
-      : 'border-orange-500/30 bg-orange-500/10 text-orange-200'}`}
+      : report.errors > 0 || report.notes.length > 0
+        ? 'border-orange-500/30 bg-orange-500/10 text-orange-200'
+        : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -1236,6 +1240,12 @@ function RunReport({ report, onDismiss }: { report: ClassifyProgress; onDismiss:
                 Nothing already read is lost, and none of it will be charged again.
               </p>
             </>
+          )}
+          {!paused && (
+            <p className="font-medium">
+              {report.done < report.total ? 'Classification stopped' : 'Classification finished'} — {report.done} of {report.total} document{report.total === 1 ? '' : 's'} processed;
+              {' '}{report.proposed} bucket proposal{report.proposed === 1 ? '' : 's'} recorded.
+            </p>
           )}
           {!paused && report.errors > 0 && (
             <p className="font-medium">
@@ -1271,9 +1281,11 @@ function EvidenceReport({
 }: { report: EvidenceProgress; onDismiss: () => void }) {
   const paused = Boolean(report.pausedMessage);
   return (
-    <div className={`rounded-lg border px-3 py-2 text-sm ${paused
+    <div role="status" className={`rounded-lg border px-3 py-2 text-sm ${paused || report.done < report.total
       ? 'border-[#d4a054]/40 bg-[#d4a054]/10 text-[#d4a054]'
-      : 'border-orange-500/30 bg-orange-500/10 text-orange-200'}`}
+      : report.failed > 0 || report.notes.length > 0
+        ? 'border-orange-500/30 bg-orange-500/10 text-orange-200'
+        : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -1294,7 +1306,9 @@ function EvidenceReport({
           )}
           {!paused && (
             <p className="font-medium">
-              {report.items} quotation{report.items === 1 ? '' : 's'} recorded
+              {report.done < report.total ? 'Evidence search stopped' : 'Evidence search finished'} — {report.done} of {report.total} pairing{report.total === 1 ? '' : 's'} processed;
+              {' '}{report.items} quotation{report.items === 1 ? '' : 's'} recorded
+              {report.empty > 0 && <> · {report.empty} with no supporting quotations</>}
               {report.dropped > 0 && (
                 <> · {report.dropped} discarded for not matching the stored text word for word</>
               )}
