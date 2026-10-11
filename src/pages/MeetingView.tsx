@@ -842,7 +842,7 @@ function RecordingCover({ onUncover }: { onUncover: () => void }) {
       aria-label="Screen covered while recording. Press and hold to uncover."
       className="fixed inset-0 z-[200] select-none bg-black bg-cover bg-center"
       style={{
-        backgroundImage: "var(--ambient-cover, var(--page-cover, none))",
+        backgroundImage: "var(--page-cover, var(--ambient-cover, none))",
         touchAction: "none",
         WebkitTouchCallout: "none",
       }}

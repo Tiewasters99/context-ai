@@ -111,6 +111,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-meetings.mjs
 
+      - name: Covers — banner position saved in the cover URL
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-cover-position.mjs
+
       - name: Meetings — Start mic never hangs on "Starting…"
         if: ${{ !cancelled() }}
         run: node scripts/_verify-meeting-startup.mjs
