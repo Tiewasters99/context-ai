@@ -173,7 +173,10 @@ export default function CoverImage({
     if (!el || !repositioning) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      setDraftPos((p) => (p ? normalizePosition({ ...p, zoom: p.zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08) }) : p));
+      // Proportional to how far the wheel or trackpad moved: one mouse-wheel
+      // notch (deltaY ~100) is about 16%, a trackpad glide many small steps.
+      const k = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0017));
+      setDraftPos((p) => (p ? normalizePosition({ ...p, zoom: p.zoom * k }) : p));
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);

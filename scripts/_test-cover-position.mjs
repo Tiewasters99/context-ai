@@ -55,4 +55,7 @@ same(coverImageStyle({ x: 10, y: 20, zoom: 2 }),
   { objectPosition: '10% 20%', transform: 'scale(2)', transformOrigin: '10% 20%' });
 ok('the <img> style: object-position, plus a scale about the same point when zoomed');
 
+same(parseCover(withPosition(URL0, { zoom: 1.013 })).position, { x: 50, y: 50, zoom: 1.01 });
+ok('a small zoom step (trackpad) survives rounding');
+
 console.log(`\nALL ${n} CHECKS PASSED`);

@@ -27,7 +27,8 @@ export function normalizePosition(p: Partial<CoverPosition>): CoverPosition {
   return {
     x: round(clamp(num(p.x, 50), 0, 100)),
     y: round(clamp(num(p.y, 50), 0, 100)),
-    zoom: round(clamp(num(p.zoom, 1), 1, MAX_ZOOM) * 10) / 10,
+    // Two decimals: a trackpad's small scroll steps must not round away.
+    zoom: Math.round(clamp(num(p.zoom, 1), 1, MAX_ZOOM) * 100) / 100,
   };
 }
 
