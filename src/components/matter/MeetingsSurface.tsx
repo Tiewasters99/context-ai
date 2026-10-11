@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useMeetingSeal } from '@/hooks/useMeetingSeal';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Mic, ChevronRight } from 'lucide-react';
 import {
@@ -11,6 +12,7 @@ type Props = { matterId: string };
 
 export default function MeetingsSurface({ matterId }: Props) {
   const navigate = useNavigate();
+  const { liveAllowed, notice } = useMeetingSeal(matterId);
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +52,7 @@ export default function MeetingsSurface({ matterId }: Props) {
 
   return (
     <div>
+      {notice && <p role="status" className="mb-4 rounded-lg border border-[rgba(251,191,36,0.2)] bg-[rgba(251,191,36,0.08)] px-4 py-2 text-xs text-[var(--color-warning)]">{notice}</p>}
       <div className="flex justify-end mb-4">
         <button
           onClick={handleCreate}
@@ -71,7 +74,7 @@ export default function MeetingsSurface({ matterId }: Props) {
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <Mic size={28} className="text-white/20 mb-3" strokeWidth={1.5} />
           <p className="text-[13px] text-white/50 max-w-xs">
-            No meetings yet. Click <span className="text-[#e8b84a]">New meeting</span> to start a live transcription tied to this matter.
+            No meetings yet. Click <span className="text-[#e8b84a]">New meeting</span> to {liveAllowed ? "start a live transcription tied to this matter." : "keep notes in a meeting tied to this matter."}
           </p>
         </div>
       )}

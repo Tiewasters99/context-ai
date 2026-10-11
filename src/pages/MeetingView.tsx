@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useMeetingSeal } from "@/hooks/useMeetingSeal";
 import { useAuth } from "@/contexts/AuthContext";
 import { parseServerRefusal } from "@/lib/llm/refusals";
 import { WaveformBanner } from "@/components/meetings/WaveformBanner";
@@ -50,6 +51,8 @@ export default function MeetingView() {
   const [meetingState, setMeetingState] = useState<
     "loading" | "ready" | "not_found"
   >("loading");
+
+  const { sealed, notice: sealNotice, liveAllowed } = useMeetingSeal(meeting?.matterspace_id);
 
   const [transcript, setTranscript] = useState<TranscriptState>(emptyTranscript);
   const [status, setStatus] = useState<LiveStatus>("idle");
@@ -189,7 +192,7 @@ export default function MeetingView() {
 
   // Proactive flagging: scan transcript every FLAG_INTERVAL_MS.
   useEffect(() => {
-    if (meetingState !== "ready" || !watchEnabled) return;
+    if (meetingState !== "ready" || !watchEnabled || !liveAllowed) return;
     let cancelled = false;
     let lastScannedLength = 0;
 
@@ -216,8 +219,17 @@ export default function MeetingView() {
             alreadyFlagged: flagsRef.current.map((f) => f.text),
           }),
         });
-        if (!res.ok) return;
-        const data = (await res.json()) as { flags?: FlagItem[] };
+        if (!res.ok) {
+          const refusal = await parseServerRefusal(res);
+          if (!cancelled) setErrorMsg(refusal.message);
+          return;
+        }
+        const data = (await res.json()) as { flags?: FlagItem[]; sealed?: boolean; message?: string };
+        if (!cancelled && data.sealed) {
+          setWatchEnabled(false);
+          if (data.message) setErrorMsg(data.message);
+          return;
+        }
         if (cancelled || !data.flags || data.flags.length === 0) return;
         const seen = new Set(flagsRef.current.map((f) => f.text.toLowerCase()));
         const fresh = data.flags
@@ -249,7 +261,7 @@ export default function MeetingView() {
       clearInterval(interval);
       clearTimeout(warmup);
     };
-  }, [meetingId, meetingState, watchEnabled, session]);
+  }, [meetingId, meetingState, watchEnabled, session, liveAllowed]);
 
   const logEvent = useCallback((line: string) => {
     const t = new Date();
@@ -261,6 +273,10 @@ export default function MeetingView() {
 
   const start = useCallback(async () => {
     if (clientRef.current) return;
+    if (!liveAllowed) {
+      setErrorMsg(sealNotice);
+      return;
+    }
     setStatus("starting");
     setStatusNote(null);
     setErrorMsg(null);
@@ -316,7 +332,7 @@ export default function MeetingView() {
       setStatus("error");
       clientRef.current = null;
     }
-  }, [meetingId, logEvent]);
+  }, [meetingId, logEvent, liveAllowed, sealNotice]);
 
   const stop = useCallback(async () => {
     const c = clientRef.current;
@@ -517,21 +533,22 @@ export default function MeetingView() {
           )}
           <button
             onClick={() => setWatchEnabled((w) => !w)}
+            disabled={!liveAllowed}
             className={`text-xs inline-flex items-center gap-1.5 ${
-              watchEnabled
+              watchEnabled && liveAllowed
                 ? "text-[var(--color-primary)]"
                 : "text-[var(--color-text-muted)]"
             }`}
-            title={watchEnabled ? "Watching for flags" : "Flagging paused"}
+            title={sealNotice ?? (watchEnabled ? "Watching for flags" : "Flagging paused")}
           >
             <span
               className={`inline-block w-1.5 h-1.5 rounded-full ${
-                watchEnabled
+                watchEnabled && liveAllowed
                   ? "bg-[var(--color-primary)] animate-pulse"
                   : "bg-[var(--color-text-muted)]"
               }`}
             />
-            {watchEnabled ? "Watching" : "Watch off"}
+            {watchEnabled && liveAllowed ? "Watching" : "Watch off"}
           </button>
           {meeting && !meeting.matterspace_id && (
             <span className="text-[10px] uppercase tracking-[0.18em] text-[var(--color-text-muted)] border border-[var(--color-border)] rounded px-2 py-0.5">
@@ -575,7 +592,8 @@ export default function MeetingView() {
           ) : (
             <button
               onClick={start}
-              disabled={status === "starting"}
+              disabled={!liveAllowed || status === "starting"}
+              aria-describedby={sealNotice ? "meeting-seal-notice" : undefined}
               className="h-8 px-4 rounded-lg bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-[#1a1408] text-xs font-semibold disabled:opacity-50 transition"
             >
               {status === "starting" ? "Starting…" : "Start mic"}
@@ -583,6 +601,12 @@ export default function MeetingView() {
           )}
         </div>
       </div>
+
+      {sealNotice && (
+        <div id="meeting-seal-notice" role="status" className="px-4 py-2 text-xs bg-[rgba(251,191,36,0.08)] text-[var(--color-warning)] border-b border-[rgba(251,191,36,0.2)]">
+          {sealNotice}
+        </div>
+      )}
 
       {errorMsg && (
         <div className="px-4 py-2 text-xs bg-[rgba(248,113,113,0.08)] text-[var(--color-danger)] border-b border-[rgba(248,113,113,0.2)]">
@@ -655,7 +679,9 @@ export default function MeetingView() {
           >
             {transcriptLines.length === 0 && !transcript.interim && (
               <p className="text-[var(--color-text-bright)] text-center mt-6 px-4 text-base">
-                {status === "live"
+                {!liveAllowed
+                  ? "Live transcription is off here. You can still use Notes."
+                  : status === "live"
                   ? "Listening…"
                   : status === "reconnecting"
                     ? "Reconnecting…"
@@ -693,7 +719,9 @@ export default function MeetingView() {
           <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-4 text-sm leading-relaxed">
             {chatRows.length === 0 && !streamingReply && (
               <p className="text-[var(--color-text-bright)] text-base mt-2">
-                Ask anything, or let {ASSISTANT_THE} flag what to watch. The transcript is sent automatically.
+                {sealed === false
+                  ? <>Ask anything, or let {ASSISTANT_THE} flag what to watch. The transcript is sent automatically.</>
+                  : "You can keep notes and ask the meeting assistant a question. Automatic flagging is off."}
               </p>
             )}
             {chatRows.map((row, i) => {
