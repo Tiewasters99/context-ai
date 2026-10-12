@@ -298,6 +298,24 @@ begin
   );
 end $$;
 
+-- Does the caller own the edition: an unrefunded purchase. Read under the
+-- caller's own RLS on edition_purchases (owner-only), so it never sees
+-- anyone else's rows.
+create or replace function public._edition_owned(p_edition uuid)
+returns boolean
+language plpgsql
+security invoker
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null or p_edition is null then return false; end if;
+  return exists (
+    select 1 from public.edition_purchases p
+    where p.edition_id = p_edition and p.user_id = v_uid and p.refunded_at is null
+  );
+end $$;
+
 -- May the caller read the edition's book: its publisher; or, once it is
 -- published, anyone signed in when it is free, and an owner (an unrefunded
 -- purchase) when it is not. A withdrawn edition stays readable to its owners.
@@ -350,6 +368,7 @@ begin
 end $$;
 
 grant execute on function public._edition_is_publisher(uuid) to authenticated, service_role;
+grant execute on function public._edition_owned(uuid) to authenticated, service_role;
 grant execute on function public._edition_can_read(uuid) to authenticated, service_role;
 grant execute on function public._edition_folder_is_mine(text) to authenticated, service_role;
 
@@ -440,11 +459,17 @@ alter table public.edition_marks enable row level security;
 alter table public.edition_progress enable row level security;
 alter table public.publisher_accounts enable row level security;
 
--- editions: public when published; the publisher's always.
+-- editions: public when published; the publisher's always; an owner's even
+-- after withdrawal (owners keep what they bought — My Library still lists it).
 drop policy if exists "Editions readable when published or mine" on public.editions;
-create policy "Editions readable when published or mine"
+drop policy if exists "Editions readable when published, mine or owned" on public.editions;
+create policy "Editions readable when published, mine or owned"
   on public.editions for select
-  using (status = 'published' or publisher_user_id = auth.uid());
+  using (
+    status = 'published'
+    or publisher_user_id = auth.uid()
+    or (status = 'withdrawn' and public._edition_owned(id))
+  );
 
 drop policy if exists "Anyone signed in can start an edition" on public.editions;
 create policy "Anyone signed in can start an edition"
