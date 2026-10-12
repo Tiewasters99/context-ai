@@ -9,7 +9,8 @@
 // asked is which matter it belongs to, remembered from last time.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { Upload, FolderOpen, FilePlus2, Loader2, Lock, Stamp, AlertTriangle } from 'lucide-react';
 import { useMatterOptions } from '@/hooks/useMatterOptions';
 import MatterTreePick from '@/components/matters/MatterTreePick';
@@ -47,10 +48,17 @@ const MATTER_KEY = 'cs.brief.matter';
 
 export default function BriefDeskHome() {
   const navigate = useNavigate();
+  // A matter card links here with ?matter=<id>, so the desk opens already
+  // inside that case (Eden, 10-11, on the phone: the Brief Desk should be
+  // "right there in your matter").
+  const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile();
   const { options, loading } = useMatterOptions();
   const names = useMemo(() => new Map(options.map((o) => [o.id, o.label])), [options]);
 
   const [matterId, setMatterId] = useState<string>(() => {
+    const fromLink = searchParams.get('matter');
+    if (fromLink) return fromLink;
     try { return localStorage.getItem(MATTER_KEY) ?? ''; } catch { return ''; }
   });
   // The remembered matter must still be one this person can open.
@@ -78,6 +86,12 @@ export default function BriefDeskHome() {
   const land = useCallback((id: string, from: string, losses: string[]) => {
     navigate(`/app/brief/${id}`, { state: { imported: { from, losses } } });
   }, [navigate]);
+
+  const openPicker = () => {
+    if (!chosen) { setErr('Choose the case this brief belongs to first; the brief is filed there, whichever way it comes in.'); return; }
+    setErr(null);
+    setPicking(true);
+  };
 
   const importFile = useCallback(async (file: File | undefined) => {
     if (!file || busy) return;
@@ -148,7 +162,7 @@ export default function BriefDeskHome() {
         <button
           type="button"
           disabled={!!busy}
-          onClick={() => fileRef.current?.click()}
+          onClick={() => (isMobile ? openPicker() : fileRef.current?.click())}
           className={`w-full rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors disabled:opacity-60 ${
             dragging ? 'border-[#e8b84a] bg-[#e8b84a]/[0.08]' : 'border-white/[0.14] hover:border-[#e8b84a]/60 hover:bg-white/[0.02]'
           }`}
@@ -156,12 +170,21 @@ export default function BriefDeskHome() {
           {busy ? (
             <span className="inline-flex items-center gap-2 text-[14px] text-[#e8b84a]"><Loader2 size={16} className="animate-spin" /> {busy}</span>
           ) : (
+            isMobile ? (
+            <>
+              <FolderOpen size={22} className="mx-auto text-[#e8b84a] mb-2" />
+              <div className="text-[15px] text-white/90">Open a brief from Contextspaces</div>
+              <div className="text-[12px] text-white/45 mt-1">{chosen ? `The briefs filed in ${chosen.label}, or any document by name.` : 'Choose the case above first.'}</div>
+              <div className="text-[11px] text-white/30 mt-1">Word (.docx), Markdown or text.</div>
+            </>
+            ) : (
             <>
               <Upload size={22} className="mx-auto text-[#e8b84a] mb-2" />
               <div className="text-[15px] text-white/90">Import a brief</div>
               <div className="text-[12px] text-white/45 mt-1">Drop it here, or click to choose — from Downloads, OneDrive, anywhere on this computer.</div>
               <div className="text-[11px] text-white/30 mt-1">Word (.docx), Markdown or text. Footnotes come with it.</div>
             </>
+            )
           )}
         </button>
         <input
@@ -173,14 +196,25 @@ export default function BriefDeskHome() {
         />
 
         <div className="flex flex-wrap gap-2 mt-3">
-          <button
-            type="button"
-            disabled={!!busy}
-            onClick={() => { if (!chosen) { setErr('Choose the case this brief belongs to first; the brief is filed there, whichever way it comes in.'); return; } setErr(null); setPicking(true); }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/[0.1] text-[12px] text-white/80 hover:bg-white/[0.05] disabled:opacity-40"
-          >
-            <FolderOpen size={13} /> From Contextspaces
-          </button>
+          {isMobile ? (
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={() => fileRef.current?.click()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/[0.1] text-[12px] text-white/80 hover:bg-white/[0.05] disabled:opacity-40"
+            >
+              <Upload size={13} /> A file on this phone
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={openPicker}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/[0.1] text-[12px] text-white/80 hover:bg-white/[0.05] disabled:opacity-40"
+            >
+              <FolderOpen size={13} /> From Contextspaces
+            </button>
+          )}
           <button
             type="button"
             disabled={!!busy}
@@ -195,25 +229,53 @@ export default function BriefDeskHome() {
           <p className="mt-3 text-[12px] text-red-300 inline-flex items-start gap-1.5"><AlertTriangle size={13} className="mt-0.5 shrink-0" />{err}</p>
         )}
 
-        <h2 className="mt-10 mb-2 text-[11px] uppercase tracking-[0.14em] text-white/40">Your briefs</h2>
-        {recentErr && <p className="text-[12px] text-red-300">{recentErr}</p>}
-        {!recent && !recentErr && <p className="text-[12px] text-white/40">Loading…</p>}
-        {recent && recent.length === 0 && <p className="text-[12px] text-white/40">None yet. Import one above.</p>}
-        {recent && recent.length > 0 && (
-          <div className="rounded-lg border border-white/[0.08] divide-y divide-white/[0.06] overflow-hidden">
-            {recent.map((b) => (
-              <button
-                key={b.id}
-                onClick={() => navigate(`/app/brief/${b.id}`)}
-                className="w-full text-left px-4 py-2.5 hover:bg-white/[0.03] flex items-baseline gap-3"
-              >
-                <span className="flex-1 min-w-0 truncate text-[13px] text-white/90">{b.title}</span>
-                <span className="hidden sm:inline max-w-[45%] truncate text-[11px] text-white/40">{names.get(b.matterspace_id) ?? ''}</span>
-                <span className="shrink-0 text-[11px] text-white/35">{new Date(b.updated_at).toLocaleDateString()}</span>
-              </button>
-            ))}
-          </div>
+        {recentErr && <p className="mt-10 text-[12px] text-red-300">{recentErr}</p>}
+        {!recent && !recentErr && <p className="mt-10 text-[12px] text-white/40">Loading…</p>}
+        {recent && recent.length === 0 && (
+          <>
+            <h2 className="mt-10 mb-2 text-[11px] uppercase tracking-[0.14em] text-white/40">Your briefs</h2>
+            <p className="text-[12px] text-white/40">None yet. Import one above.</p>
+          </>
         )}
+        {recent && recent.length > 0 && (() => {
+          // The chosen case's briefs first, under its own heading; the rest
+          // under theirs. Every row says which matter it is in, on a phone too.
+          const here = chosen ? recent.filter((b) => b.matterspace_id === chosen.id) : [];
+          const elsewhere = chosen ? recent.filter((b) => b.matterspace_id !== chosen.id) : recent;
+          const rows = (list: RecentBrief[]) => (
+            <div className="rounded-lg border border-white/[0.08] divide-y divide-white/[0.06] overflow-hidden">
+              {list.map((b) => (
+                <button
+                  key={b.id}
+                  onClick={() => navigate(`/app/brief/${b.id}`)}
+                  className="w-full text-left px-4 py-2.5 hover:bg-white/[0.03] flex items-baseline gap-3"
+                >
+                  <span className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-baseline sm:gap-3">
+                    <span className="truncate text-[13px] text-white/90">{b.title}</span>
+                    <span className="truncate text-[11px] text-white/40 sm:max-w-[45%]">{names.get(b.matterspace_id) ?? 'Another matter'}</span>
+                  </span>
+                  <span className="shrink-0 text-[11px] text-white/35">{new Date(b.updated_at).toLocaleDateString()}</span>
+                </button>
+              ))}
+            </div>
+          );
+          return (
+            <>
+              {chosen && (
+                <>
+                  <h2 className="mt-10 mb-2 text-[11px] uppercase tracking-[0.14em] text-white/40">Your briefs in {chosen.label}</h2>
+                  {here.length > 0 ? rows(here) : <p className="text-[12px] text-white/40">None yet in this case. Import one above.</p>}
+                </>
+              )}
+              {elsewhere.length > 0 && (
+                <>
+                  <h2 className={`${chosen ? 'mt-8' : 'mt-10'} mb-2 text-[11px] uppercase tracking-[0.14em] text-white/40`}>{chosen ? 'Your briefs in other matters' : 'Your briefs'}</h2>
+                  {rows(elsewhere)}
+                </>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {picking && (
