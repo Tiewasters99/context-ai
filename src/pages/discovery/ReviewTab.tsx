@@ -224,7 +224,7 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
   if (loading) return <p className="text-center text-[12px] text-white/40 py-10">Loading the matter&rsquo;s documents…</p>;
   if (loadError) return <p className="text-sm text-red-300">{loadError}</p>;
 
-  const inputCls = 'bg-white/[0.04] border border-white/10 rounded-md px-2 py-1 text-[12px] text-white/85 outline-none focus:border-[#e8b84a]/50';
+  const inputCls = '[color-scheme:dark] [&_option]:bg-[#16161e] [&_option]:text-white bg-white/[0.04] border border-white/10 rounded-md px-2 py-1 text-[12px] text-white/85 outline-none focus:border-[#e8b84a]/50';
 
   return (
     <div>
