@@ -1764,6 +1764,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         lineEnd: derived?.lineEnd ?? null,
         textAnchor: noteComposer.textAnchor ?? null,
       });
+      // The titles of links that did not save. The composer shows them
+      // rather than closing, so a lost link is never silent.
+      const failed: string[] = [];
       if (ann) {
         const savedLinks: AnnotationLink[] = [];
         for (const l of args.links) {
@@ -1771,13 +1774,16 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
             annotationId: ann.id,
             targetDocumentId: l.documentId,
             targetPage: l.page,
-            label: l.title,
+            targetLine: l.line,
+            label: l.label,
           });
           if (link) savedLinks.push(link);
+          else failed.push(l.title);
         }
         if (fileKind === 'pdf') await bookRef.current?.reloadMarks();
         else setAnnotations((prev) => [...prev, { ...ann, links: savedLinks }]);
       }
+      if (failed.length > 0) return failed;
       setNoteComposer(null);
     },
     [id, noteComposer, fileKind],
@@ -2429,7 +2435,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           matterId={doc?.matterspace_id ?? null}
           currentDocumentId={id}
           isMobile={isMobile}
-          onSave={(args) => void saveNote(args)}
+          onSave={saveNote}
           onCancel={() => setNoteComposer(null)}
         />
       )}
