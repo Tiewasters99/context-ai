@@ -1,6 +1,6 @@
 # Discovery: review across the matter, production sets
 
-**Status:** DRAFT for Eden's approval. Nothing here is built yet.
+**Status:** APPROVED by Eden 2026-10-12 (all four questions as recommended). Nothing here is built yet; R1 is next.
 **Date:** 2026-10-12. **Author:** Claude Code (Opus), from Eden's notes after the 10-11 live check.
 
 ## 1. What Eden described
@@ -66,12 +66,12 @@ Documents tagged Privileged anywhere in the matter draft a privilege-log entry o
 
 R1 and R2 need no AI and work the same in sealed matters. Producing documents is deterministic, so a sealed matter loses nothing here.
 
-## 5. Questions for Eden
+## 5. Questions for Eden (decided 2026-10-12: all as recommended)
 
-1. **Should review tags show outside Discovery?** For example, filtering the Vault or search to "Hot Doc". *Recommendation: yes, read-only chips in the Vault in R3; tagging stays in Discovery.*
-2. **One tag list or two?** Some firms keep "issue codes" (subject tags such as "Damages" or "Notice") separate from "designations" (privilege and confidentiality). *Recommendation: one list now, with a "kind" label (designation, exclusion, issue, note) so the review table can group them.*
-3. **Can a production still be made the current way** (upload or pick, then tag inside the production)? *Recommendation: yes. Sets are the main path, and the current path stays for one-off productions and incoming volumes.*
-4. **Who may tag?** Today any member of the matter. *Recommendation: unchanged for now. A "reviewer" role can come later.*
+1. **Should review tags show outside Discovery?** For example, filtering the Vault or search to "Hot Doc". **Decided:** *yes, read-only chips in the Vault in R3; tagging stays in Discovery.*
+2. **One tag list or two?** Some firms keep "issue codes" (subject tags such as "Damages" or "Notice") separate from "designations" (privilege and confidentiality). **Decided:** *one list now, with a "kind" label (designation, exclusion, issue, note) so the review table can group them.*
+3. **Can a production still be made the current way** (upload or pick, then tag inside the production)? **Decided:** *yes. Sets are the main path, and the current path stays for one-off productions and incoming volumes.*
+4. **Who may tag?** Today any member of the matter. **Decided:** *unchanged for now. A "reviewer" role can come later.*
 
 ## 6. Not in scope
 
