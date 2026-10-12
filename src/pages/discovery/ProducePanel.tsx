@@ -55,7 +55,7 @@ export default function ProducePanel({
         )}
         {(production.status === 'processing' || production.status === 'intake') && (
           <p className="text-[11.5px] text-white/45 leading-relaxed">
-            Documents are still being intaken/normalized. Bates stamping unlocks when the
+            Documents are still being added and prepared for review. Bates stamping unlocks when the
             production reaches <span className="text-[#7dd3fc]">review</span>.
           </p>
         )}

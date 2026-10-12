@@ -231,6 +231,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-storage-path.mjs
 
+      # Migration 110. A production drawn from the matter's own Vault: the job
+      # names document ids the worker reads with the service role, so 110's
+      # trigger and lib/job-scope.mjs both hold every id to the job matter's
+      # subtree, and the worker refuses a more tightly sealed sub-matter's
+      # document. Here, with the PGlite steps.
+      - name: Migration 110 — produce documents already in the matter (PGlite + worker source)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-intake-documents.mjs
+
       # Migration 095 (S2). "Disconnect everything": one press revokes every
       # OAuth grant, connector token and agent of the presser, switches their
       # charters off and pauses AI on every root matter of the serverspaces

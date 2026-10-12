@@ -59,6 +59,7 @@ export type BatesPosition =
 export type DiscoveryJobType =
   | 'intake_zip'
   | 'intake_files'
+  | 'intake_documents'
   | 'intake_folder'
   | 'normalize_item'
   | 'stamp_production'
@@ -567,6 +568,83 @@ export async function enqueueJob(args: {
     .single();
   if (error) throw new Error(`enqueue job: ${error.message}`);
   return data as ProcessingJob;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Documents already in the matter — produced without a download/re-upload
+// (intake_documents, migration 110). The worker reads each file server-side.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The same limit the worker holds (MAX_VAULT_PICK_BYTES). */
+export const MAX_MATTER_PICK_BYTES = 500 * 1024 * 1024;
+/** The same limit 110 and lib/job-scope.mjs hold. */
+export const MAX_MATTER_PICK_COUNT = 5000;
+
+export interface MatterDocumentChoice {
+  id: string;
+  title: string;
+  source_filename: string | null;
+  file_size_bytes: number | null;
+  matterspace_id: string;
+  /** The folder or sub-matter it is filed in, when not the matter itself. */
+  folder: string | null;
+  /** Why it cannot be added, or null when it can. */
+  blocked: string | null;
+}
+
+interface MatterDocumentRow {
+  id: string;
+  title: string | null;
+  source_filename: string | null;
+  file_size_bytes: number | null;
+  matterspace_id: string;
+  storage_path: string | null;
+  production_item_id: string | null;
+}
+
+/**
+ * Every document filed in this matter and its folders/sub-matters, for the
+ * "From this matter" picker. Copies a production made of its own documents
+ * (metadata.production_item_id) are left out: they are the production, not
+ * the client's documents. Every other document is listed, with the reason
+ * when it cannot be chosen, so nothing seems to be missing.
+ */
+export async function listMatterDocumentsForProduction(matterId: string): Promise<{
+  docs: MatterDocumentChoice[]; truncated: boolean;
+}> {
+  const { data: tree } = await supabase.rpc('matterspace_descendants', { p_root: matterId });
+  const ids = ((tree ?? []) as { id: string }[]).map((r) => r.id);
+  if (!ids.includes(matterId)) ids.push(matterId);
+  const { data: names } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+  const nameOf = new Map(((names ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+
+  const { rows, truncated } = await fetchPaged<MatterDocumentRow>(
+    (from, to) => supabase
+      .from('documents')
+      .select('id, title, source_filename, file_size_bytes, matterspace_id, storage_path, production_item_id:metadata->>production_item_id')
+      .in('matterspace_id', ids)
+      .order('title')
+      .range(from, to),
+    { label: 'matter documents', ceiling: 20_000 },
+  );
+
+  const docs = rows
+    .filter((d) => !d.production_item_id)
+    .map((d): MatterDocumentChoice => ({
+      id: d.id,
+      title: d.title || d.source_filename || 'Untitled',
+      source_filename: d.source_filename,
+      file_size_bytes: d.file_size_bytes,
+      matterspace_id: d.matterspace_id,
+      folder: d.matterspace_id === matterId ? null : (nameOf.get(d.matterspace_id) ?? 'Sub-matter'),
+      // storage_path is set only once the bytes have landed, so a document
+      // still uploading has none. Indexing need not be finished: the worker
+      // reads the stored file, not the index.
+      blocked: !d.storage_path ? 'Still uploading, or no stored file'
+        : (d.file_size_bytes ?? 0) > MAX_MATTER_PICK_BYTES ? `Over ${MAX_MATTER_PICK_BYTES / 1048576} MB`
+          : null,
+    }));
+  return { docs, truncated };
 }
 
 export async function listJobsForMatter(matterspaceId: string): Promise<ProcessingJob[]> {

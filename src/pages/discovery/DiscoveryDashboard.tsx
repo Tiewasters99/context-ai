@@ -116,7 +116,7 @@ export default function DiscoveryDashboard() {
           <Inbox size={28} className="text-white/25 mb-3" />
           <div className="text-[14px] text-white/70 mb-1">No productions yet</div>
           <div className="text-[12px] text-white/40 mb-5 max-w-sm">
-            Start a production to intake documents from opposing counsel, or to package and Bates-stamp your own for outgoing production.
+            Start a production to receive documents from opposing counsel, or to Bates-stamp and package your own for an outgoing production.
           </div>
           <button
             onClick={() => setPicking(true)}

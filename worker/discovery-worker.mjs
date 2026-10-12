@@ -30,8 +30,8 @@
 // (FOR UPDATE SKIP LOCKED), so two workers never take one job; the idle
 // sweeps are jittered per process so they do not fire in lockstep.
 //
-// Job types: intake_zip | intake_files | intake_folder | stamp_production |
-//            package_production | ingest_document
+// Job types: intake_zip | intake_files | intake_documents | intake_folder |
+//            stamp_production | package_production | ingest_document
 //
 // ingest_document makes this the shared always-on worker for the whole app:
 // /api/ingest enqueues documents too big for the serverless budget (large
@@ -55,7 +55,8 @@ import { pathInMatter, assertPathInProduction } from '../lib/storage-path.mjs';
 import { assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree } from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
-import { HELD_STATUS, heldReason, isSealedPipeError } from '../lib/seal-pipes.mjs';
+import { HELD_STATUS, heldReason, isSealedPipeError, tierMap } from '../lib/seal-pipes.mjs';
+import { crossingRefusal } from '../lib/seal-crossing.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { makeDescribeHook } from '../lib/describe-image-anthropic.mjs';
 import {
@@ -216,6 +217,8 @@ log('Queue drained; exiting.');
 // FIRST, before any handler reads anything (097 round 3, lib/job-scope.mjs):
 //
 //   intake_zip, intake_files      job.production_id, payload.storage_paths[]
+//   intake_documents              job.production_id, payload.document_ids[]
+//                                 (each in the job matter's subtree)
 //   stamp_production,
 //   package_production            job.production_id
 //   ingest_document               payload.document_id
@@ -231,6 +234,8 @@ async function assertJobScope(job) {
     case 'intake_zip':
     case 'intake_files':
       return assertJobBelongsToMatter(supabase, job, { productionId: job.production_id, storagePaths: p.storage_paths ?? [] });
+    case 'intake_documents':
+      return assertJobBelongsToMatter(supabase, job, { productionId: job.production_id, documentIds: p.document_ids ?? [] });
     case 'stamp_production':
     case 'package_production':
       return assertJobBelongsToMatter(supabase, job, { productionId: job.production_id });
@@ -252,6 +257,7 @@ async function dispatch(job) {
   switch (job.job_type) {
     case 'intake_zip': return intakeZip(job);
     case 'intake_files': return intakeFiles(job);
+    case 'intake_documents': return intakeDocuments(job);
     // A folder on THIS machine's disk. It exists for the operator's CLI
     // (`--intake`, which calls intakeFolder directly and never comes through
     // here). From the queue it is refused: processing_jobs rows are
@@ -584,6 +590,109 @@ async function intakeFiles(job) {
   await setProductionStatus(prod.id, 'review');
 }
 
+// A Vault document is read whole into memory, as an uploaded file is. Past
+// this size it is refused with a reason instead (a 1.2 GB video read this way
+// killed the machine on 2026-10-04); the picker shows the same limit.
+const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
+
+/**
+ * Produce documents already filed in the matter (the Vault), without the
+ * person downloading them to upload them again. The bytes never leave the
+ * worker: each is read from vault-documents, normalized like an upload, and
+ * linked to its existing document row, so nothing is indexed twice and the
+ * TEXT folder uses the OCR the matter already holds.
+ *
+ * assertJobScope has already held every id to the job matter's subtree. Two
+ * more rules here, before anything is written:
+ *   * the seal: a document from a sub-matter sealed more tightly than the
+ *     production's matter would leave its seal in the package — refused whole;
+ *   * a stamped production is locked (late additions are a supplemental one).
+ */
+async function intakeDocuments(job) {
+  const prod = await getProduction(job.production_id);
+  assertJobPaths(job, prod, [], 'intake_documents');
+  if (['stamped', 'packaged', 'delivered'].includes(prod.status)) {
+    throw new Error('This production is already stamped, so documents can no longer be added. Start a supplemental production for them.');
+  }
+  const ids = [...new Set(job.payload?.document_ids ?? [])];
+  const docs = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('documents')
+      .select('id, matterspace_id, title, source_filename, storage_path, file_size_bytes')
+      .in('id', ids.slice(i, i + 200));
+    if (error) throw new Error(`document lookup: ${error.message}`);
+    for (const d of data ?? []) docs.set(d.id, d);
+  }
+  const tiers = await tierMap(supabase, [prod.matterspace_id, ...new Set([...docs.values()].map((d) => d.matterspace_id))]);
+  for (const d of docs.values()) {
+    if (crossingRefusal(tiers.get(d.matterspace_id), tiers.get(prod.matterspace_id), 'copy')) {
+      throw new Error(`${d.source_filename ?? d.title} is in a sub-matter sealed more tightly than this production's matter, so it cannot be produced from here. Nothing was added.`);
+    }
+  }
+
+  await setProductionStatus(prod.id, 'processing');
+  const { data: last } = await supabase.from('production_items')
+    .select('sort_order').eq('production_id', prod.id).order('sort_order', { ascending: false }).limit(1);
+  const base = last?.[0]?.sort_order ?? 0;
+
+  for (const [i, id] of ids.entries()) {
+    const doc = docs.get(id);
+    const filename = vaultFilename(doc, id);
+    const originalPath = `${id}/${filename}`;
+    await progress(job, ((i + 1) / ids.length) * 100, filename);
+    const fail = (why) => recordIntakeFailure(prod, { filename, originalPath, sortOrder: base + i + 1, documentId: doc ? id : null, error: why });
+    if (!doc) { await fail('The document was deleted from the matter before it could be added.'); continue; }
+    if (!doc.storage_path) { await fail('The document has no stored file to produce.'); continue; }
+    // 097: the worker reads with the service role; a row pointing at another
+    // matter's object is refused before the read (lib/storage-path.mjs).
+    if (!pathInMatter(doc.storage_path, doc.matterspace_id)) { await fail('The stored file is filed under a different matter; not read.'); continue; }
+    if ((doc.file_size_bytes ?? 0) > MAX_VAULT_PICK_BYTES) {
+      await fail(`At ${(doc.file_size_bytes / 1048576).toFixed(0)} MB this file is over the ${MAX_VAULT_PICK_BYTES / 1048576} MB limit for adding from the matter.`);
+      continue;
+    }
+    let buf;
+    try {
+      buf = await downloadFromBucket('vault-documents', doc.storage_path);
+    } catch (err) {
+      await fail(`Could not read the stored file: ${err.message}`);
+      continue;
+    }
+    await intakeOneFile(prod, job, {
+      buf, originalPath, sortOrder: base + i + 1, datLookup: new Map(), documentId: id,
+    });
+  }
+  await setProductionStatus(prod.id, 'review');
+}
+
+// The name a Vault document is produced under: its original filename, else
+// the stored object's, else its title. The extension decides how it is
+// normalized, so the stored name is preferred over a title that has none.
+function vaultFilename(doc, id) {
+  const name = doc?.source_filename || (doc?.storage_path ? path.basename(doc.storage_path) : '') || doc?.title || id;
+  return name.replace(/[\\/]/g, '_');
+}
+
+// One row, status error, for a document that could not even be read — so the
+// reconciliation lists it as an exception instead of it silently vanishing.
+async function recordIntakeFailure(prod, { filename, originalPath, sortOrder, documentId, error }) {
+  const { data: existing } = await supabase.from('production_items')
+    .select('id').eq('production_id', prod.id).eq('original_path', originalPath).limit(1);
+  if (existing?.length) return;
+  const { error: insErr } = await supabase.from('production_items').insert({
+    production_id: prod.id,
+    matterspace_id: prod.matterspace_id,
+    document_id: documentId,
+    sort_order: sortOrder,
+    original_filename: filename,
+    original_path: originalPath,
+    kind: 'native',
+    status: 'error',
+    error,
+  });
+  if (insErr) throw new Error(`record failed document (${filename}): ${insErr.message}`);
+  log(`  ${filename}: not added — ${error}`);
+}
+
 async function intakeFolder(job) {
   const prod = await getProduction(job.production_id);
   await setProductionStatus(prod.id, 'processing');
@@ -628,9 +737,11 @@ async function intakeFolder(job) {
 /**
  * Normalize one file into the image/native/metadata triplet, store it,
  * record the production_items row, and (optionally) ingest the display PDF
- * into the matter's searchable corpus.
+ * into the matter's searchable corpus. `documentId` is set when the file IS
+ * a document already in the matter (intake_documents): the row links to it
+ * and nothing is ingested a second time.
  */
-async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLookup }) {
+async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLookup, documentId = null }) {
   const filename = path.basename(originalPath);
   const hash = sha256(buf);
 
@@ -683,6 +794,7 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
     original_path: originalPath,
     sha256: hash,
     file_size_bytes: buf.length,
+    ...(documentId ? { document_id: documentId } : {}),
   };
   const writeItem = async (fields) => {
     if (resumeId) {
@@ -734,7 +846,7 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
 
   // Attach load-file metadata when the production's DAT references this file.
   const datRec = datLookup.get(filename.toLowerCase());
-  const metadata = { ...norm.metadata, ...(datRec ?? {}) };
+  const metadata = { ...norm.metadata, ...(datRec ?? {}), ...(documentId ? { vault_document_id: documentId } : {}) };
 
   const item = await writeItem({
     kind: norm.kind,
@@ -775,7 +887,7 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
 
     // Full-text ingestion into the matter corpus (per-page extraction, OCR
     // fallback, embeddings) — the production becomes searchable matter-wide.
-    if (norm.kind === 'display_pdf' && OPENAI_API_KEY && job.payload?.ingest !== false) {
+    if (norm.kind === 'display_pdf' && OPENAI_API_KEY && job.payload?.ingest !== false && !documentId) {
       await ingestDisplayPdf(prod, item, norm.displayPdf, filename);
     }
   } catch (err) {

@@ -424,7 +424,7 @@ export default function ReviewRoom() {
               {loading && <p className="text-[11px] text-white/40 text-center py-6">Loading documents…</p>}
               {!loading && filtered.length === 0 && (
                 <p className="text-[11px] text-white/40 text-center py-6 px-4">
-                  {items.length === 0 ? 'No documents yet — intake is empty or still processing.' : 'Nothing matches the filter.'}
+                  {items.length === 0 ? 'No documents yet — none were added, or they are still being prepared.' : 'Nothing matches the filter.'}
                 </p>
               )}
               {filtered.map((it) => {
