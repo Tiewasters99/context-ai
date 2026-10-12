@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { Folder, FileText, List, Table, DoorOpen, Stamp, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight, Pencil, FileSpreadsheet } from 'lucide-react';
+import { Folder, FileText, List, Table, DoorOpen, Stamp, Scale, Plus, X, Lock, ChevronRight, CheckSquare, Square, MoveRight, Pencil, FileSpreadsheet } from 'lucide-react';
 import { SPREADSHEET_ACCEPT } from '@/lib/table-sheets';
 import { importSpreadsheetAsTables } from '@/lib/table-import';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
@@ -393,6 +393,17 @@ export default function MatterspaceView() {
               >
                 <Stamp size={15} strokeWidth={1.75} />
                 Discovery
+              </button>
+              {/* The Brief Desk, from inside the case (Eden, 10-11, on the
+                  phone: "feels counterintuitive it is not right there in your
+                  matter"). It opens with this matter already chosen. */}
+              <button
+                onClick={() => navigate(`/app/brief?matter=${matter.id}`)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#e8b84a]/10 hover:bg-[#e8b84a]/20 border border-[#e8b84a]/30 text-[#e8b84a] text-[13px] font-medium transition-colors"
+                title="Open the Brief Desk in this matter — import a brief, edit it, check every cite"
+              >
+                <Scale size={15} strokeWidth={1.75} />
+                Brief Desk
               </button>
               {/* Every stored file of this matter as one .zip (09-28: the
                   appendix, for filing, without twelve separate downloads). */}
