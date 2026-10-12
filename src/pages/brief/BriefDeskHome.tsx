@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useServerspaces } from '@/hooks/useServerspaces';
 import { Upload, FolderOpen, FilePlus2, Loader2, Lock, Stamp, AlertTriangle } from 'lucide-react';
 import { useMatterOptions } from '@/hooks/useMatterOptions';
 import MatterTreePick from '@/components/matters/MatterTreePick';
@@ -55,17 +56,61 @@ export default function BriefDeskHome() {
   const isMobile = useIsMobile();
   const { options, loading } = useMatterOptions();
   const names = useMemo(() => new Map(options.map((o) => [o.id, o.label])), [options]);
+  // The matter tree itself, for two things the flat options cannot say: which
+  // case a folder belongs to, and which folders belong to a case.
+  const { data: spaces = [] } = useServerspaces();
+  const tree = useMemo(() => {
+    const byId = new Map<string, { id: string; parent_matterspace_id: string | null }>();
+    const children = new Map<string, string[]>();
+    for (const s of spaces) {
+      for (const m of s.matterspaces) {
+        byId.set(m.id, m);
+        if (m.parent_matterspace_id) {
+          const list = children.get(m.parent_matterspace_id) ?? [];
+          list.push(m.id);
+          children.set(m.parent_matterspace_id, list);
+        }
+      }
+    }
+    return { byId, children };
+  }, [spaces]);
+  // The case a matter belongs to: walk up until there is no parent.
+  const caseOf = useCallback((id: string): string => {
+    let cur = tree.byId.get(id);
+    let guard = 0;
+    while (cur?.parent_matterspace_id && tree.byId.has(cur.parent_matterspace_id) && guard++ < 100) {
+      cur = tree.byId.get(cur.parent_matterspace_id);
+    }
+    return cur?.id ?? id;
+  }, [tree]);
+  // A case and every folder beneath it.
+  const subtreeOf = useCallback((id: string): Set<string> => {
+    const out = new Set<string>([id]);
+    const stack = [id];
+    while (stack.length) {
+      for (const c of tree.children.get(stack.pop()!) ?? []) {
+        if (!out.has(c)) { out.add(c); stack.push(c); }
+      }
+    }
+    return out;
+  }, [tree]);
 
   const [matterId, setMatterId] = useState<string>(() => {
     const fromLink = searchParams.get('matter');
     if (fromLink) return fromLink;
     try { return localStorage.getItem(MATTER_KEY) ?? ''; } catch { return ''; }
   });
+  // A link that names a folder (the Brief Desk button on a sub-matter's card)
+  // is read as its case: a brief filed in a narrow folder cannot see its own
+  // record (the rule written under the chooser). Derived, not stored, so a
+  // folder the person then picks by hand is left alone.
+  const linked = searchParams.get('matter');
+  const effectiveMatterId = linked && matterId === linked && tree.byId.has(linked) ? caseOf(linked) : matterId;
   // The remembered matter must still be one this person can open.
-  const chosen = options.find((o) => o.id === matterId) ?? null;
+  const chosen = options.find((o) => o.id === effectiveMatterId) ?? null;
   useEffect(() => {
-    try { if (matterId) localStorage.setItem(MATTER_KEY, matterId); } catch { /* private window */ }
-  }, [matterId]);
+    try { if (effectiveMatterId) localStorage.setItem(MATTER_KEY, effectiveMatterId); } catch { /* private window */ }
+  }, [effectiveMatterId]);
 
   const [recent, setRecent] = useState<RecentBrief[] | null>(null);
   const [recentErr, setRecentErr] = useState<string | null>(null);
@@ -240,8 +285,10 @@ export default function BriefDeskHome() {
         {recent && recent.length > 0 && (() => {
           // The chosen case's briefs first, under its own heading; the rest
           // under theirs. Every row says which matter it is in, on a phone too.
-          const here = chosen ? recent.filter((b) => b.matterspace_id === chosen.id) : [];
-          const elsewhere = chosen ? recent.filter((b) => b.matterspace_id !== chosen.id) : recent;
+          // "In this case" means the case and its folders.
+          const inCase = chosen ? subtreeOf(chosen.id) : new Set<string>();
+          const here = chosen ? recent.filter((b) => inCase.has(b.matterspace_id)) : [];
+          const elsewhere = chosen ? recent.filter((b) => !inCase.has(b.matterspace_id)) : recent;
           const rows = (list: RecentBrief[]) => (
             <div className="rounded-lg border border-white/[0.08] divide-y divide-white/[0.06] overflow-hidden">
               {list.map((b) => (
