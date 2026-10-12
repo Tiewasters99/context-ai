@@ -622,6 +622,12 @@ export const MAX_MATTER_PICK_BYTES = 500 * 1024 * 1024;
 /** The same limit 110 and lib/job-scope.mjs hold. */
 export const MAX_MATTER_PICK_COUNT = 5000;
 
+/** Documents may be added only before stamping (030's lock refuses after),
+ *  and not while another intake is still running. */
+export function canAddDocuments(status: ProductionStatus): boolean {
+  return status === 'intake' || status === 'review' || status === 'error';
+}
+
 export interface MatterDocumentChoice {
   id: string;
   title: string;

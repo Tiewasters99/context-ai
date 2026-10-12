@@ -120,6 +120,13 @@ const RECOVER_IDLE_MINUTES = 15;
 // promptly a due retry is noticed.
 const OCR_RETRY_SWEEP_MS = 5 * 60_000;
 
+// A Vault document is read whole into memory, as an uploaded file is. Past
+// this size it is refused with a reason instead (a 1.2 GB video read this way
+// killed the machine on 2026-10-04); the picker shows the same limit.
+// Declared up here because the poll loop below never returns: a const placed
+// after it is never initialised (TDZ: "Cannot access ... before initialization").
+const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
+
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -535,7 +542,7 @@ async function intakeZip(job) {
   await setProductionStatus(prod.id, 'processing');
 
   const StreamZip = (await import('node-stream-zip')).default;
-  let fileIndex = 0;
+  let fileIndex = await nextSortBase(prod.id);
 
   for (const storagePath of paths) {
     await progress(job, 1, `Downloading ${path.basename(storagePath)}…`);
@@ -567,9 +574,9 @@ async function intakeZip(job) {
         .filter((e) => !/\.(dat|opt|lfp)$/i.test(e.name))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      for (const e of contentEntries) {
+      for (const [n, e] of contentEntries.entries()) {
         fileIndex += 1;
-        await progress(job, (fileIndex / contentEntries.length) * 100, e.name);
+        await progress(job, ((n + 1) / contentEntries.length) * 100, e.name);
         const buf = await zip.entryData(e.raw);
         await intakeOneFile(prod, job, {
           buf, originalPath: e.name, sortOrder: fileIndex, datLookup,
@@ -590,22 +597,30 @@ async function intakeFiles(job) {
   if (paths.length === 0) throw new Error('intake_files: payload.storage_paths is empty');
   assertJobPaths(job, prod, paths, 'intake_files');
   await setProductionStatus(prod.id, 'processing');
+  const base = await nextSortBase(prod.id);
 
   for (const [i, storagePath] of paths.entries()) {
     const filename = path.basename(storagePath);
     await progress(job, ((i + 1) / paths.length) * 100, filename);
     const buf = await downloadFromStorage(storagePath);
     await intakeOneFile(prod, job, {
-      buf, originalPath: filename, sortOrder: i + 1, datLookup: new Map(),
+      buf, originalPath: filename, sortOrder: base + i + 1, datLookup: new Map(),
     });
   }
   await setProductionStatus(prod.id, 'review');
 }
 
-// A Vault document is read whole into memory, as an uploaded file is. Past
-// this size it is refused with a reason instead (a 1.2 GB video read this way
-// killed the machine on 2026-10-04); the picker shows the same limit.
-const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
+// Documents added to a production that already has some (Review Room → Add
+// documents) go AFTER them: Bates numbers follow sort_order, and starting
+// again at 1 would interleave the new documents with the old. A re-run of a
+// crashed job skips the rows it already wrote (by original_path); the rest land
+// after them, in order — the offset can leave gaps, never a reordering.
+async function nextSortBase(productionId) {
+  const { data, error } = await supabase.from('production_items')
+    .select('sort_order').eq('production_id', productionId).order('sort_order', { ascending: false }).limit(1);
+  if (error) throw new Error(`production order lookup: ${error.message}`);
+  return data?.[0]?.sort_order ?? 0;
+}
 
 /**
  * Produce documents already filed in the matter (the Vault), without the
@@ -643,9 +658,7 @@ async function intakeDocuments(job) {
   }
 
   await setProductionStatus(prod.id, 'processing');
-  const { data: last } = await supabase.from('production_items')
-    .select('sort_order').eq('production_id', prod.id).order('sort_order', { ascending: false }).limit(1);
-  const base = last?.[0]?.sort_order ?? 0;
+  const base = await nextSortBase(prod.id);
 
   for (const [i, id] of ids.entries()) {
     const doc = docs.get(id);

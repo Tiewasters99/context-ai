@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, PanelLeft, ChevronLeft, ChevronRight, ChevronUp, ChevronDown,
-  Info, Tags, ShieldAlert, Stamp, FileText, FileWarning, Download, Search,
+  Info, Tags, ShieldAlert, Stamp, FileText, FileWarning, Download, Search, FilePlus,
 } from 'lucide-react';
 import { resolveMatter, type MatterRef } from '@/lib/vault-persist';
 import {
   getProduction, listProductionItems, ensurePresetTagDefs,
   applyTag, removeTag, ensurePrivilegeDraft, getDiscoverySignedUrl,
-  listJobsForProduction, setItemStampPosition, BATES_POSITIONS, BATES_POSITION_LABEL,
+  listJobsForProduction, setItemStampPosition, canAddDocuments, BATES_POSITIONS, BATES_POSITION_LABEL,
   type Production, type ProductionItem, type DocumentTagDef, type ProcessingJob, type BatesPosition,
 } from '@/lib/discovery';
 import { showingOf } from '@/lib/paged';
@@ -17,6 +17,7 @@ import FloatingPanel from './FloatingPanel';
 import TagPickerPanel from './TagPickerPanel';
 import PrivilegeLogPanel from './PrivilegeLogPanel';
 import ProducePanel from './ProducePanel';
+import { AddDocumentsPanel } from './AddDocuments';
 import ProductionFailure from './ProductionFailure';
 import { PDFJS_DOC_PARAMS } from '@/lib/pdfjs';
 
@@ -57,6 +58,7 @@ export default function ReviewRoom() {
   const [showTags, setShowTags] = useState(false);
   const [showPrivLog, setShowPrivLog] = useState(false);
   const [showProduce, setShowProduce] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
   const [privLogRefresh, setPrivLogRefresh] = useState(0);
   const [tagError, setTagError] = useState<string | null>(null);
 
@@ -374,6 +376,16 @@ export default function ReviewRoom() {
         <div className="w-px h-5 bg-white/10" />
 
         {/* Panel toggles */}
+        {production && matter && canAddDocuments(production.status) && (
+          <button
+            onClick={() => setShowAdd((v) => !v)}
+            className={`h-8 px-2 inline-flex items-center gap-1.5 justify-center rounded-md hover:bg-white/5 text-[11.5px] ${showAdd ? 'text-[#d4a054]' : 'text-white/70 hover:text-white'}`}
+            title="Add documents to this production (before it is stamped)"
+          >
+            <FilePlus size={14} />
+            <span className="hidden lg:inline">Add documents</span>
+          </button>
+        )}
         <button
           onClick={() => setShowMeta((v) => !v)}
           className={`h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 ${showMeta ? 'text-[#d4a054]' : 'text-white/70 hover:text-white'}`}
@@ -588,6 +600,20 @@ export default function ReviewRoom() {
           onJump={(itemId) => setSelectedId(itemId)}
         />
       )}
+      {showAdd && production && matter && (
+        <AddDocumentsPanel
+          matter={matter}
+          production={production}
+          onClose={() => setShowAdd(false)}
+          onDone={() => {
+            setShowAdd(false);
+            // The worker flips the production to processing and back; a new
+            // revision reloads the production, its items and its jobs.
+            setJobRevision((revision) => revision + 1);
+          }}
+        />
+      )}
+
       {showProduce && production && (
         <ProducePanel
           production={production}
