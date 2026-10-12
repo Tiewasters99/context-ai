@@ -38,7 +38,6 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cursor, setCursor] = useState<string | null>(null);
-  const [bulkTag, setBulkTag] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -211,8 +210,14 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [cursor, visible, presetByKey, toggleOnCursor]);
 
-  const bulkDef = bulkTag ? defById.get(bulkTag) ?? null : null;
-  const selectedIds = [...selected];
+  // The tag bar acts on the ticked documents, or else on the highlighted one.
+  const targets = selected.size > 0 ? [...selected] : cursor ? [cursor] : [];
+  const targetState = (defId: string): 'all' | 'some' | 'none' => {
+    let n = 0;
+    for (const id of targets) if (tagsByDoc.get(id)?.has(defId)) n++;
+    return n === 0 ? 'none' : n === targets.length ? 'all' : 'some';
+  };
+  const cursorTitle = cursor ? docs.find((d) => d.id === cursor)?.title ?? '' : '';
   const fmtDay = (iso: string) =>
     new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 
@@ -267,6 +272,9 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
 
       {/* Tag filter: click once = has the tag, twice = does not, third = off */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-3">
+        <span className="text-[11px] text-white/55" title="Click a tag once to show only documents with it, twice for documents without it, a third time to stop">
+          Show only:
+        </span>
         {defsByKind.map(({ kind, defs: group }) => (
           <div key={kind} className="flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] uppercase tracking-wider text-white/35">{TAG_KIND_LABEL[kind]}</span>
@@ -292,38 +300,55 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
         )}
       </div>
 
-      {/* Bulk tagging */}
-      <div className="flex flex-wrap items-center gap-2 mb-2 min-h-[30px] text-[12px]">
-        <span className="text-white/55 tabular-nums">
-          {filtered.length} of {docs.length} {docs.length === 1 ? 'document' : 'documents'}
-          {selected.size > 0 && <> · <span className="text-[#e8b84a]">{selected.size} ticked</span></>}
-        </span>
-        {selected.size > 0 && (
-          <>
-            <select value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} className={inputCls}>
-              <option value="">Choose a tag…</option>
-              {defsByKind.map(({ kind, defs: group }) => (
-                <optgroup key={kind} label={TAG_KIND_LABEL[kind]}>
-                  {group.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </optgroup>
-              ))}
-            </select>
-            <button
-              disabled={!bulkDef || busy || needsSql}
-              onClick={() => bulkDef && void setTag(bulkDef, selectedIds, true)}
-              className="px-2.5 py-1 rounded-md border border-[#e8b84a]/35 text-[#e8b84a] hover:bg-[#e8b84a]/10 disabled:opacity-35"
-            >
-              Tag {selected.size}
-            </button>
-            <button
-              disabled={!bulkDef || busy || needsSql}
-              onClick={() => bulkDef && void setTag(bulkDef, selectedIds, false)}
-              className="px-2.5 py-1 rounded-md border border-white/15 text-white/70 hover:bg-white/5 disabled:opacity-35"
-            >
-              Remove from {selected.size}
-            </button>
+      {/* Tagging: click a pill to tag the highlighted document, or every
+          ticked one; click it again to take the tag off. */}
+      <div className="mb-2 rounded-lg border border-[#e8b84a]/25 bg-[#e8b84a]/[0.04] px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 text-[12px] mb-1.5">
+          <span className="text-[#e8b84a] font-medium">
+            {selected.size > 0
+              ? `Tag the ${selected.size} ticked ${selected.size === 1 ? 'document' : 'documents'}:`
+              : cursor ? 'Tag this document:' : 'Tagging'}
+          </span>
+          {selected.size === 0 && cursor && (
+            <span className="text-white/60 truncate max-w-[50%]" title={cursorTitle}>{cursorTitle}</span>
+          )}
+          {targets.length === 0 && (
+            <span className="text-white/45">Click a document below to tag it, or tick several to tag them together.</span>
+          )}
+          <span className="ml-auto text-white/45 tabular-nums">
+            {filtered.length} of {docs.length} {docs.length === 1 ? 'document' : 'documents'}
+          </span>
+          {selected.size > 0 && (
             <button onClick={() => setSelected(new Set())} className="text-white/45 hover:text-white">Untick all</button>
-          </>
+          )}
+        </div>
+        {targets.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {defs.map((d) => {
+              const state = targetState(d.id);
+              const on = state === 'all';
+              return (
+                <button
+                  key={d.id}
+                  disabled={busy || needsSql}
+                  onClick={() => void setTag(d, targets, !on)}
+                  title={on
+                    ? `Take ${d.name} off ${targets.length === 1 ? 'this document' : `these ${targets.length} documents`}`
+                    : `Tag ${targets.length === 1 ? 'this document' : `these ${targets.length} documents`} ${d.name}`}
+                  className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium transition-colors disabled:opacity-40"
+                  style={{
+                    color: on ? '#0b0b10' : d.color,
+                    backgroundColor: on ? d.color : `${d.color}10`,
+                    borderColor: on ? d.color : `${d.color}66`,
+                    borderStyle: state === 'some' ? 'dashed' : 'solid',
+                  }}
+                >
+                  {on ? '✓' : '+'} {d.name}
+                  {state === 'some' && <span className="opacity-70">(some)</span>}
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
       {actionError && <p className="text-[12px] text-red-300 mb-2">{actionError}</p>}
@@ -406,7 +431,7 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
         </div>
       )}
       <p className="mt-2 text-[10.5px] text-white/35">
-        Keys: j / k move · space ticks · Enter opens · P privileged · C confidential · H hot · N non-responsive.
+        Click a row, then a tag above to tag it. Keys: j / k move · space ticks · Enter opens · P privileged · C confidential · H hot · N non-responsive.
         Tags here are on the document itself and are seen in every production.
       </p>
     </div>
