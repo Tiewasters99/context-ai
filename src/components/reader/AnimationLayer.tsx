@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { IMAGE_FILE_RE } from '@/lib/document-workshop';
-import { Play, X, Loader2, GripHorizontal } from 'lucide-react';
+import { ArrowLeft, Play, X, Loader2, GripHorizontal } from 'lucide-react';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { clipUrl, type DocumentAnimation } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
 
@@ -28,6 +29,7 @@ import type { FractionalRect } from '@/lib/document-annotations';
 
 const MIN_RECT = 0.02;   // a stray click is not a rectangle
 const RIBBON = 22;       // px, the panel's drag strip
+const FOOTER = 40;       // px, the phone's "Back to the page" bar
 const MIN_W = 160;       // px, how small the panel may be dragged
 const MIN_H = 90 + RIBBON;
 
@@ -204,6 +206,9 @@ function Player({ animation, boxRef, onClose }: {
   onClose: () => void;
 }) {
   const path = animation.media?.storage_path ?? null;
+  // A phone has no Esc, no double-click and a thumb too wide for the ribbon's
+  // X, so the panel carries its own way back.
+  const isMobile = useIsMobile();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
@@ -244,7 +249,7 @@ function Player({ animation, boxRef, onClose }: {
       left: f.x * r.width,
       top: f.y * r.height - RIBBON,
       width: Math.max(MIN_W, f.w * r.width),
-      height: Math.max(MIN_H, f.h * r.height + RIBBON),
+      height: Math.max(MIN_H, f.h * r.height + RIBBON) + (isMobile ? FOOTER : 0),
     };
   };
   useLayoutEffect(() => {
@@ -346,6 +351,16 @@ function Player({ animation, boxRef, onClose }: {
           style={{ background: 'linear-gradient(135deg, transparent 55%, rgba(255,255,255,0.45) 55%, rgba(255,255,255,0.45) 65%, transparent 65%, transparent 80%, rgba(255,255,255,0.45) 80%, rgba(255,255,255,0.45) 90%, transparent 90%)' }}
         />
       </div>
+      {isMobile && (
+        <button
+          onClick={onClose}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="flex shrink-0 items-center justify-center gap-1.5 bg-white/10 text-[13px] text-white/90 active:bg-white/20"
+          style={{ height: FOOTER }}
+        >
+          <ArrowLeft size={15} /> Back to the page
+        </button>
+      )}
     </div>
   );
 }

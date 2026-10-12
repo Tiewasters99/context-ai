@@ -7,6 +7,7 @@ import {
   Sun,
   Moon,
   X,
+  ArrowLeft,
   Search,
   PanelLeft,
   Hammer,
@@ -1648,12 +1649,15 @@ export default function PdfBook({
         {/* On a phone the find box takes the row. The title's node stays —
             its text is set by hand, not by React — and is only hidden. */}
         <div className={`flex items-center gap-2 min-w-0 flex-1 ${isMobile && searchOpen ? 'hidden' : ''}`}>
+          {/* On a phone this is the only way out, so it reads as one: an
+              arrow, named Back. On a laptop, the X it has always been. */}
           <button
             onClick={onClose}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white"
-            title="Close"
+            className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/70 hover:text-white`}
+            title={isMobile ? 'Back' : 'Close'}
+            aria-label={isMobile ? 'Back' : 'Close'}
           >
-            <X size={15} />
+            {isMobile ? <ArrowLeft size={19} /> : <X size={15} />}
           </button>
           {!hideSidebarToggle && (
             <button
