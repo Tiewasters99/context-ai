@@ -36,7 +36,7 @@ export default function DiscoveryHome() {
   // Which direction the New Production panel opens with; null = closed.
   const [showNew, setShowNew] = useState<ProductionDirection | null>(null);
 
-  // Resolve ?matter= (short_code or uuid) and seed the four preset tag defs
+  // Resolve ?matter= (short_code or uuid) and seed the preset tag defs
   // on first open of Discovery for this matter.
   useEffect(() => {
     if (!matterKey) {

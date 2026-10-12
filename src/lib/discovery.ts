@@ -138,6 +138,9 @@ export interface ProductionItem {
   page_count: number | null;
   bates_first: string | null;
   bates_last: string | null;
+  /** Where this document's Bates number goes, when it differs from the
+   *  production's (migration 111); null = the production's position. */
+  stamp_position?: BatesPosition | null;
   source_metadata: Record<string, unknown>;
   status: string; // pending | ready | error
   error: string | null;
@@ -217,6 +220,23 @@ export const BATES_POSITIONS: BatesPosition[] = [
   'upper_left', 'upper_center', 'upper_right',
   'lower_left', 'lower_center', 'lower_right',
 ];
+
+export const BATES_POSITION_LABEL: Record<BatesPosition, string> = {
+  upper_left: 'Upper left', upper_center: 'Upper center', upper_right: 'Upper right',
+  lower_left: 'Lower left', lower_center: 'Lower center', lower_right: 'Lower right',
+};
+
+/** Move one document's Bates stamp (null = back to the production's). Only
+ *  before stamping: the production lock (030) refuses it afterwards. */
+export async function setItemStampPosition(itemId: string, position: BatesPosition | null): Promise<void> {
+  const { error } = await supabase.from('production_items').update({ stamp_position: position }).eq('id', itemId);
+  if (error) {
+    if (/stamp_position/.test(error.message) && /column|schema cache/i.test(error.message)) {
+      throw new Error('Per-document stamp position arrives with migration 111 — ask Eden to apply it.');
+    }
+    throw new Error(`stamp position: ${error.message}`);
+  }
+}
 
 // Render a Bates number from a config — the same arithmetic the worker
 // applies, so the live preview matches what gets stamped.
@@ -389,8 +409,14 @@ export async function deleteTagDef(id: string): Promise<void> {
   if (error) throw new Error(`delete tag: ${error.message}`);
 }
 
-// The four preset tags every matter starts with. Seeded app-side on first
-// open of Discovery for a matter (the migration leaves seeding to us).
+// The preset tags every matter starts with. Seeded app-side on first open of
+// Discovery for a matter (the migration leaves seeding to us); a matter that
+// already has some gets the missing ones, by name, the next time it opens.
+//   * Privileged, Non-Responsive, Irrelevant keep a document OUT of the
+//     produced set (behavior), and Privileged sends it to the privilege log;
+//   * Confidential and Attorneys' Eyes Only are DESIGNATIONS: burned on every
+//     page (is_endorsement) and recorded in the load file's CONFIDENTIALITY;
+//   * Hot Doc is for review only and never prints.
 export const PRESET_TAGS: Omit<CreateTagDefInput, 'matterspace_id'>[] = [
   {
     name: 'Privileged',
@@ -424,9 +450,25 @@ export const PRESET_TAGS: Omit<CreateTagDefInput, 'matterspace_id'>[] = [
     is_preset: true,
     behavior: 'non_responsive',
   },
+  {
+    name: "Attorneys' Eyes Only",
+    color: '#c084fc',
+    is_endorsement: true,
+    endorsement_text: "HIGHLY CONFIDENTIAL - ATTORNEYS' EYES ONLY",
+    is_preset: true,
+    behavior: null,
+  },
+  {
+    name: 'Irrelevant',
+    color: '#78716c',
+    is_endorsement: false,
+    endorsement_text: null,
+    is_preset: true,
+    behavior: 'non_responsive',
+  },
 ];
 
-// Idempotent: inserts whichever of the four presets the matter is missing
+// Idempotent: inserts whichever of the presets the matter is missing
 // (by name) and returns the full def list afterwards.
 export async function ensurePresetTagDefs(matterspaceId: string): Promise<DocumentTagDef[]> {
   const existing = await listTagDefs(matterspaceId);

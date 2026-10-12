@@ -36,6 +36,7 @@ export default function ProducePanel({
     }
     return { included: items.length - ex, excluded: ex };
   }, [items]);
+  const movedStamps = items.filter((it) => it.stamp_position).length;
 
   const activeJobs = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
 
@@ -51,7 +52,7 @@ export default function ProducePanel({
         <StatusRail status={production.status} />
         {activeJobs.map((job) => <JobProgress key={job.id} job={job} />)}
         {activeJobs.length === 0 && production.status === 'review' && (
-          <BatesStep production={production} included={included} excluded={excluded} onQueued={onQueued} />
+          <BatesStep production={production} included={included} excluded={excluded} movedStamps={movedStamps} onQueued={onQueued} />
         )}
         {(production.status === 'processing' || production.status === 'intake') && (
           <p className="text-[11.5px] text-white/45 leading-relaxed">
@@ -121,11 +122,13 @@ function BatesStep({
   production,
   included,
   excluded,
+  movedStamps,
   onQueued,
 }: {
   production: Production;
   included: number;
   excluded: number;
+  movedStamps: number;
   onQueued: (job: ProcessingJob) => void;
 }) {
   const [prefix, setPrefix] = useState(production.bates_prefix ?? '');
@@ -300,6 +303,9 @@ function BatesStep({
         {busy ? 'Queuing…' : `Stamp ${included} document${included === 1 ? '' : 's'}`}
       </button>
       <p className="text-[10px] text-white/35 leading-relaxed -mt-1">
+        {movedStamps > 0
+          ? `${movedStamps} document${movedStamps === 1 ? ' keeps its' : 's keep their'} own stamp position, set in the Review Room. `
+          : 'To move the stamp on one document only, use the stamp menu in the Review Room toolbar. '}
         Stamping locks the production — late additions go in a supplemental production.
       </p>
     </div>

@@ -103,6 +103,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-production-text.mjs
 
+      - name: Discovery — designations (AEO) in the load file, per-document stamp position (migration 111, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-designations.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs

@@ -8,8 +8,8 @@ import { resolveMatter, type MatterRef } from '@/lib/vault-persist';
 import {
   getProduction, listProductionItems, ensurePresetTagDefs,
   applyTag, removeTag, ensurePrivilegeDraft, getDiscoverySignedUrl,
-  listJobsForProduction,
-  type Production, type ProductionItem, type DocumentTagDef, type ProcessingJob,
+  listJobsForProduction, setItemStampPosition, BATES_POSITIONS, BATES_POSITION_LABEL,
+  type Production, type ProductionItem, type DocumentTagDef, type ProcessingJob, type BatesPosition,
 } from '@/lib/discovery';
 import { showingOf } from '@/lib/paged';
 import { DirectionBadge, StatusBadge, TagChip, JobProgress } from './bits';
@@ -213,6 +213,24 @@ export default function ReviewRoom() {
     }
   }, [selected, production, refreshItems]);
 
+  // One document's Bates stamp, moved off a corner its own text occupies
+  // (migration 111). '' = back to the production's position. Only while the
+  // production is in review; the lock refuses it once stamped.
+  const changeStampPosition = useCallback(async (value: string) => {
+    if (!selected) return;
+    const next = value === '' ? null : (value as BatesPosition);
+    const before = selected.stamp_position ?? null;
+    setTagError(null);
+    setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, stamp_position: next } : it)));
+    try {
+      await setItemStampPosition(selected.id, next);
+    } catch (e) {
+      setItems((prev) => prev.map((it) => (it.id === selected.id ? { ...it, stamp_position: before } : it)));
+      setTagError(e instanceof Error ? e.message : 'Could not move the stamp');
+    }
+  }, [selected]);
+  const canMoveStamp = production?.direction === 'outgoing' && production.status === 'review';
+
   const presetByKey = useMemo(() => {
     const find = (pred: (d: DocumentTagDef) => boolean) => defs.find(pred) ?? null;
     return {
@@ -325,6 +343,33 @@ export default function ReviewRoom() {
             <ChevronDown size={15} />
           </button>
         </div>
+
+        {/* This document's Bates position (outgoing only). Editable in review;
+            afterwards it shows where the stamp went. */}
+        {production?.direction === 'outgoing' && selected && (
+          <label
+            className="hidden md:flex items-center gap-1.5 mr-1 text-[10.5px] text-white/45"
+            title={canMoveStamp
+              ? 'Where this document\u2019s Bates number goes. Move it when the production\u2019s position would cover text on this document.'
+              : 'Where this document\u2019s Bates number was stamped'}
+          >
+            <Stamp size={12} className="text-white/35" />
+            <select
+              value={selected.stamp_position ?? ''}
+              onChange={(e) => void changeStampPosition(e.target.value)}
+              disabled={!canMoveStamp}
+              aria-label="Bates position for this document"
+              className="h-7 rounded-md bg-[rgba(18,18,28,0.78)] border border-[rgba(255,255,255,0.1)] px-1.5 text-[11px] text-[#f0ebe3] focus:outline-none focus:border-[#d4a054]/60 disabled:opacity-60"
+            >
+              <option value="">
+                {`Production default (${BATES_POSITION_LABEL[(production.bates_position ?? 'lower_right') as BatesPosition] ?? 'Lower right'})`}
+              </option>
+              {BATES_POSITIONS.map((pos) => (
+                <option key={pos} value={pos}>{BATES_POSITION_LABEL[pos]}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <div className="w-px h-5 bg-white/10" />
 

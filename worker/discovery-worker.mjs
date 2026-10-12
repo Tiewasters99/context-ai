@@ -69,9 +69,10 @@ import {
   parseDat, datLookupByFilename, emitDat, emitOpt,
 } from '../lib/discovery/loadfile.mjs';
 import { packageDocument, passagesToPages } from '../lib/discovery/package-docs.mjs';
+import { confidentialityOf } from '../lib/discovery/designations.mjs';
 import { rasterizerAvailable } from '../lib/discovery/tiff.mjs';
 import {
-  stampPdf, makeSlipSheet, makeProductionLetter, makePrivilegeLogPdf, undrawableChars,
+  stampPdf, makeSlipSheet, makeProductionLetter, makePrivilegeLogPdf, undrawableChars, BATES_POSITIONS,
 } from '../lib/discovery/bates-stamp.mjs';
 import {
   exceptionsCsv, exceptionReason, duplicatesCsv, reconcile, reconciliationText,
@@ -1228,7 +1229,7 @@ async function stampProduction(job) {
     if (item.kind === 'native') {
       const sheet = await makeSlipSheet({
         batesNumber: slot.bates_first, filename: item.original_filename,
-        endorsements, position: prod.bates_position,
+        endorsements, position: stampPositionOf(item, prod),
       });
       await uploadToStorage(`${base}/stamped.pdf`, sheet, 'application/pdf');
     } else {
@@ -1237,7 +1238,7 @@ async function stampProduction(job) {
       assertPathInProduction(item.display_storage_path, prod.matterspace_id, prod.id);
       const pdfBuf = await downloadFromStorage(item.display_storage_path);
       const out = await stampPdf(pdfBuf, {
-        prefix, pad, startSeq: seq, position: prod.bates_position, endorsements,
+        prefix, pad, startSeq: seq, position: stampPositionOf(item, prod), endorsements,
       });
       // The burned-on numbers and the registry are the same representation.
       // If they could ever disagree, stop before either is written.
@@ -1358,6 +1359,13 @@ async function registeredPagesForProduction(productionId) {
 // Ordered by (sort_order, id), not sort_order alone: two intake passes into
 // one production can hand out the same sort_order, and Bates numbers are
 // derived from this order.
+// Where one document's Bates number goes: its own position when one was set
+// in the Review Room (migration 111), else the production's. A value the
+// stamper does not know falls back rather than failing the production.
+function stampPositionOf(item, prod) {
+  return BATES_POSITIONS.includes(item.stamp_position) ? item.stamp_position : prod.bates_position;
+}
+
 async function partitionItems(prod) {
   const { data: items, error: itemsErr } = await supabase.from('production_items')
     .select('*').eq('production_id', prod.id)
@@ -1372,7 +1380,6 @@ async function partitionItems(prod) {
 
   const excludedIds = new Set();
   const endorsementsByItem = new Map();
-  const confidentialIds = new Set();
   for (const t of tags ?? []) {
     const def = t.document_tag_defs;
     if (!def) continue;
@@ -1383,8 +1390,17 @@ async function partitionItems(prod) {
       const list = endorsementsByItem.get(t.production_item_id) ?? [];
       list.push(def.endorsement_text);
       endorsementsByItem.set(t.production_item_id, list);
-      if (/confidential/i.test(def.endorsement_text)) confidentialIds.add(t.production_item_id);
     }
+  }
+  // The load file's CONFIDENTIALITY: the words of the most restrictive
+  // designation each document carries ("HIGHLY CONFIDENTIAL - ATTORNEYS' EYES
+  // ONLY" over "CONFIDENTIAL"). It used to match only the word
+  // "confidential", so an "ATTORNEYS' EYES ONLY" page went out marked in ink
+  // and unmarked in the DAT.
+  const confidentialityByItem = new Map();
+  for (const [id, list] of endorsementsByItem) {
+    const c = confidentialityOf(list);
+    if (c) confidentialityByItem.set(id, c);
   }
 
   const included = [];
@@ -1406,7 +1422,7 @@ async function partitionItems(prod) {
     duplicates,
     exceptions,
     endorsementsByItem,
-    confidentialIds,
+    confidentialityByItem,
   };
 }
 
@@ -1427,7 +1443,7 @@ async function packageProduction(job) {
   }
 
   const {
-    items, byId, included, excluded, duplicates, exceptions, confidentialIds,
+    items, byId, included, excluded, duplicates, exceptions, confidentialityByItem,
   } = await partitionItems(prod);
   const produced = included.filter((i) => i.bates_first);
   if (produced.length === 0) throw new Error('Nothing stamped to package');
@@ -1503,7 +1519,7 @@ async function packageProduction(job) {
     const doc = await packageDocument({
       item,
       volumeName,
-      confidential: confidentialIds.has(item.id),
+      confidential: confidentialityByItem.get(item.id) ?? '',
       stampedPath: `${base}/stamped.pdf`,
       read: readInProduction,
       append: (buf, name) => archive.append(buf, { name }),
@@ -1569,7 +1585,7 @@ async function packageProduction(job) {
     docCount: produced.length,
     pageCount: totalPages,
     nativeCount: produced.filter((i) => i.kind === 'native').length,
-    confidentialCount: confidentialIds.size,
+    confidentialCount: produced.filter((i) => confidentialityByItem.has(i.id)).length,
     requestRefs: prod.request_refs,
     dateStr: new Date().toISOString().slice(0, 10),
   });
