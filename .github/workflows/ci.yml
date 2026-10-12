@@ -757,6 +757,21 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-connector-meter.mjs
 
+      # Migration 112: the Grapheon Reader's editions. Executes 112 in PGlite
+      # (twice) with the Supabase stubs and drives the policies as the
+      # publisher, a stranger, a buyer, anon and the service role: a draft is
+      # the publisher's alone, the bucket folder is theirs to write and
+      # nobody's to read, publishing needs an active publisher account + a
+      # rights attestation + a book and stamps version_from, a paid edition
+      # opens on purchase and closes on refund, a withdrawn one leaves the
+      # store but stays with its owners. Re-installs PGlite (after the jsdom
+      # steps).
+      - name: Migration 112 — Grapheon editions (PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-editions-migration.mjs
+
       # Migration 087: an OAuth sign-in can connect AS AN AGENT (Grok is
       # OAuth-only). Executes 001…022 + 065 + 085 + 087 (twice) in PGlite with
       # real RLS and drives the real consent POST, token endpoint and
