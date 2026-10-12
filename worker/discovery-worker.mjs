@@ -52,7 +52,9 @@ import { fileURLToPath } from 'node:url';
 import { processDocument } from '../lib/ingest-core.mjs';
 import { MEDIA_EXTENSIONS } from '../lib/ingest-formats.mjs';
 import { pathInMatter, assertPathInProduction } from '../lib/storage-path.mjs';
-import { assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree } from '../lib/job-scope.mjs';
+import {
+  assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree, JobRefusedError, isJobRefusedError,
+} from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError, tierMap } from '../lib/seal-pipes.mjs';
@@ -191,6 +193,15 @@ for (;;) {
     // A job that named something outside its own matter (lib/job-scope.mjs).
     // The job row takes the sentence and NOTHING else is touched: the document
     // or production it named is not this job's to mark failed or pending.
+    // A job the worker declined on its own rules (JobRefusedError): the same —
+    // only the job row. Its production may be finished, and is not touched.
+    if (isJobRefusedError(err)) {
+      log(`[job ${job.id}] REFUSED: ${err.message}`);
+      await supabase.from('processing_jobs')
+        .update({ status: 'error', error: String(err.message), finished_at: new Date().toISOString() })
+        .eq('id', job.id);
+      continue;
+    }
     if (isJobScopeError(err)) {
       log(`[job ${job.id}] REFUSED (scope): ${err.message}`);
       await supabase.from('processing_jobs')
@@ -612,7 +623,7 @@ async function intakeDocuments(job) {
   const prod = await getProduction(job.production_id);
   assertJobPaths(job, prod, [], 'intake_documents');
   if (['stamped', 'packaged', 'delivered'].includes(prod.status)) {
-    throw new Error('This production is already stamped, so documents can no longer be added. Start a supplemental production for them.');
+    throw new JobRefusedError('This production is already stamped, so documents can no longer be added. Start a supplemental production for them.');
   }
   const ids = [...new Set(job.payload?.document_ids ?? [])];
   const docs = new Map();
@@ -626,7 +637,7 @@ async function intakeDocuments(job) {
   const tiers = await tierMap(supabase, [prod.matterspace_id, ...new Set([...docs.values()].map((d) => d.matterspace_id))]);
   for (const d of docs.values()) {
     if (crossingRefusal(tiers.get(d.matterspace_id), tiers.get(prod.matterspace_id), 'copy')) {
-      throw new Error(`${d.source_filename ?? d.title} is in a sub-matter sealed more tightly than this production's matter, so it cannot be produced from here. Nothing was added.`);
+      throw new JobRefusedError(`${d.source_filename ?? d.title} is in a sub-matter sealed more tightly than this production's matter, so it cannot be produced from here. Nothing was added.`);
     }
   }
 

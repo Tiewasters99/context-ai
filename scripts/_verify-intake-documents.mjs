@@ -214,6 +214,26 @@ console.log('\n--- D. the worker, held to its source ---------------------------
     'a stamped production is refused before anything is written');
   check(at('crossingRefusal(') > -1 && at('crossingRefusal(') < at("setProductionStatus(prod.id, 'processing')") && at('crossingRefusal(') < at('downloadFromBucket('),
     'the seal is judged for every document before any status changes or any file is read');
+  // The lock and the seal refuse with JobRefusedError, which the catch treats
+  // like a scope refusal: only the job row is marked. A plain Error would hit
+  // the intake branch that flips the production to 'error' — and the
+  // production a refused job names may be finished (packaged, delivered).
+  check(/throw new JobRefusedError\('This production is already stamped/.test(fn)
+    && /throw new JobRefusedError\(`\$\{d\.source_filename \?\? d\.title\} is in a sub-matter sealed more tightly/.test(fn),
+    'the lock and the seal refuse with JobRefusedError, not a plain Error');
+  const refusedAt = w.indexOf('if (isJobRefusedError(err))');
+  const branch = refusedAt === -1 ? '' : w.slice(refusedAt, w.indexOf('continue;', refusedAt) + 'continue;'.length);
+  check(branch.length > 0 && refusedAt + branch.length < w.indexOf("job.job_type.startsWith('intake')")
+    && refusedAt + branch.length < w.indexOf('await recordDocumentFailure(job, err)')
+    && branch.includes(".from('processing_jobs')")
+    && !/recordDocumentFailure|from\('productions'\)/.test(branch),
+    'a refused job marks only itself: it continues before recordDocumentFailure and before the production is flipped to error');
+  {
+    const { JobRefusedError, isJobRefusedError, isJobScopeError } = await import('../lib/job-scope.mjs');
+    const e = new JobRefusedError('x');
+    check(isJobRefusedError(e) && !isJobScopeError(e) && !isJobRefusedError(new Error('x')),
+      'JobRefusedError is its own kind (not a scope error, not a plain error)');
+  }
   check(at('pathInMatter(doc.storage_path, doc.matterspace_id)') > -1 && at('pathInMatter(doc.storage_path, doc.matterspace_id)') < at("downloadFromBucket('vault-documents', doc.storage_path)"),
     'each stored path is held to its own matter before it is read');
   check(at('MAX_VAULT_PICK_BYTES') > -1 && at('MAX_VAULT_PICK_BYTES') < at('downloadFromBucket('),
