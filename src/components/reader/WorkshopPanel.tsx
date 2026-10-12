@@ -5,7 +5,7 @@ import {
 import type { Turn } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
 import { isImageMedia, type WorkshopItem } from '@/lib/document-workshop';
-import { clipUrl } from '@/lib/document-animations';
+import { useMediaUrl } from '@/lib/media-url';
 
 // The Workshop beside a book (migration 106): a bench in the Reader's
 // sidebar where a plate is snipped off the page, taken away to be made into
@@ -367,6 +367,7 @@ function sourceName(s: WorkshopItem): string {
 }
 
 function MediaRow({ item, source, sources = [], p }: { item: WorkshopItem; source: WorkshopItem | null; sources?: WorkshopItem[]; p: WorkshopPanelProps }) {
+  const mediaUrl = useMediaUrl();
   const [url, setUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const path = item.media?.storage_path ?? null;
@@ -375,9 +376,9 @@ function MediaRow({ item, source, sources = [], p }: { item: WorkshopItem; sourc
   useEffect(() => {
     if (!path) return;
     let live = true;
-    void clipUrl(path).then((u) => { if (live) setUrl(u); });
+    void mediaUrl(path).then((u) => { if (live) setUrl(u); });
     return () => { live = false; };
-  }, [path]);
+  }, [path, mediaUrl]);
 
   // A plate, or a placed passage: anything with a box on the page.
   const canLay = !!source && !!source.rect;

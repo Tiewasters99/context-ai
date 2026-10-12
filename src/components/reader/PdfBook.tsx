@@ -23,6 +23,7 @@ import type { PdfOpenProgress, PdfOpenProgressFn } from '@/lib/pdf-source';
 import { guardTextLayerSelection, releaseTextLayerGuards } from '@/lib/pdf-text-selection';
 import ReaderSidebar, { type OutlineNode, type SidebarTabId } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
+import { MediaUrlProvider, useMediaUrl, type MediaUrlResolver } from '@/lib/media-url';
 import type { WorkshopPanelProps } from '@/components/reader/WorkshopPanel';
 import type { DocumentAnimation, Turn } from '@/lib/document-animations';
 import { nextTurn, unionRect, type WorkshopItem } from '@/lib/document-workshop';
@@ -75,6 +76,8 @@ export type PdfSource = {
   removeIllustration?(id: string): Promise<void>;
   /** Hits from the indexed text, tried before the pages' own text layers (a scan's words live only there). */
   findInIndex?(query: string): Promise<Match[]>;
+  /** Where a clip's bytes come from, by its storage path. Absent = the vault bucket (clipUrl). */
+  mediaUrl?: MediaUrlResolver;
 };
 
 /** The reader's own highlights: document_annotations in Contextspaces, edition_marks in the Reader. */
@@ -1635,7 +1638,13 @@ export default function PdfBook({
   const showBottomNav = loadState === 'ready' && totalPages > 0;
   const sides = paneChrome ? null : pageSides;
 
+  // The clips' bytes: the source's own door when it has one (an edition),
+  // the vault's otherwise — for the page's players and the bench's rows alike.
+  const vaultMediaUrl = useMediaUrl();
+  const mediaUrl = source?.mediaUrl ?? vaultMediaUrl;
+
   return (
+    <MediaUrlProvider value={mediaUrl}>
     <div
       ref={rootRef}
       className="flex flex-col h-full"
@@ -2016,6 +2025,7 @@ export default function PdfBook({
       )}
       {children}
     </div>
+    </MediaUrlProvider>
   );
 }
 

@@ -66,14 +66,23 @@
     },
     "api/oauth-client-mint.mjs": {
       "maxDuration": 15
+    },
+    "api/editions.mjs": {
+      "maxDuration": 15
     }
   },
   "headers": [
     {
       "source": "/version.json",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store, must-revalidate" },
-        { "key": "CDN-Cache-Control", "value": "no-store" }
+        {
+          "key": "Cache-Control",
+          "value": "no-store, must-revalidate"
+        },
+        {
+          "key": "CDN-Cache-Control",
+          "value": "no-store"
+        }
       ]
     }
   ],
@@ -101,6 +110,24 @@
     {
       "source": "/.well-known/oauth-protected-resource/api/mcp",
       "destination": "/api/oauth-metadata?wk=pr"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "read.grapheon.ai"
+        }
+      ],
+      "destination": "/edition.html"
+    },
+    {
+      "source": "/reader",
+      "destination": "/edition.html"
+    },
+    {
+      "source": "/reader/(.*)",
+      "destination": "/edition.html"
     },
     {
       "source": "/read/:id",
