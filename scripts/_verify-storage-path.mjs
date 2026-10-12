@@ -702,7 +702,7 @@ console.log('\n--- D. jobs: the database trigger and the worker assert ---------
   check(/^\s*async function dispatch\(job\) \{\s*await assertJobScope\(job\);/m.test(dispatchSrc),
     'worker: dispatch() asks assertJobScope(job) before any handler runs');
   const scopeSrc = w.slice(w.indexOf('async function assertJobScope'), w.indexOf('async function dispatch(job)'));
-  check(['intake_zip', 'intake_files', 'stamp_production', 'package_production', 'ingest_document', 'BUCKETIZER_JOB_TYPE'].every((t) => scopeSrc.includes(t)),
+  check(['intake_zip', 'intake_files', 'intake_documents', 'stamp_production', 'package_production', 'ingest_document', 'BUCKETIZER_JOB_TYPE'].every((t) => scopeSrc.includes(t)),
     'worker: assertJobScope covers every job type that names something');
   const catchSrc = w.slice(w.indexOf('if (isJobScopeError(err))'), w.indexOf('if (isJobScopeError(err))') + 600);
   check(catchSrc.includes('continue;') && catchSrc.indexOf('continue;') < (catchSrc.indexOf('recordDocumentFailure') === -1 ? Infinity : catchSrc.indexOf('recordDocumentFailure')),
