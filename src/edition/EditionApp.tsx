@@ -305,6 +305,9 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
 /** The books already in Contextspaces, to pick one as the edition's book. */
 function LibraryPicker({ chosen, onChoose }: { chosen: LibraryBook | null; onChoose: (b: LibraryBook) => void }) {
   const [q, setQ] = useState('');
+  // null = a search is running: the list is EMPTY meanwhile, so a tap cannot
+  // land on a row from the previous search (the first phone test chose the
+  // newest book on the shelf that way, while "Innocents" was still loading).
   const [books, setBooks] = useState<LibraryBook[] | null>(null);
   const [trouble, setTrouble] = useState<string | null>(null);
 
@@ -317,6 +320,8 @@ function LibraryPicker({ chosen, onChoose }: { chosen: LibraryBook | null; onCho
     }, q ? 250 : 0);
     return () => { live = false; clearTimeout(t); };
   }, [q]);
+  // Typing starts a new search: clear the rows at once, not after the debounce.
+  const onType = (value: string) => { setQ(value); setBooks(null); };
 
   return (
     <div className="rounded-lg border border-[#c9b98f] bg-[#fbf6ea]">
@@ -326,13 +331,20 @@ function LibraryPicker({ chosen, onChoose }: { chosen: LibraryBook | null; onCho
           className="w-full bg-transparent text-[14px] outline-none placeholder:text-[#a08f6a]"
           placeholder="Find a book by its title"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => onType(e.target.value)}
         />
       </div>
+      {chosen && (
+        <div className="border-b border-[#e3d4ad] bg-[#f1e6c9] px-3 py-2 text-[13px]">
+          <span className="opacity-60">Chosen: </span>
+          <span style={{ fontFamily: SERIF, fontSize: 15, fontWeight: 600 }}>{chosen.title}</span>
+          {chosen.matter && <span className="opacity-60"> · {chosen.matter}</span>}
+        </div>
+      )}
       <Trouble text={trouble} />
       <div className="max-h-64 overflow-y-auto">
         {books === null ? (
-          <p className="px-3 py-3 text-[13px] opacity-60">Looking on the shelves…</p>
+          <p className="px-3 py-3 text-[13px] opacity-60">{q ? `Looking for "${q}"…` : 'Looking on the shelves…'}</p>
         ) : books.length === 0 ? (
           <p className="px-3 py-3 text-[13px] opacity-60">{q ? 'No PDF by that title.' : 'No PDFs in your Contextspaces yet.'}</p>
         ) : books.map((b) => (
@@ -659,7 +671,7 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
   const publishItem: MoreItem[] = mine ? [{ icon: <Sparkles size={14} />, label: edition.version > 0 ? 'Publish update' : 'Publish', run: () => setPublishing(true) }] : [];
 
   return (
-    <div className="h-full">
+    <div className="fixed inset-0 overflow-hidden">
       <PdfBook
         source={source}
         marks={marks}
