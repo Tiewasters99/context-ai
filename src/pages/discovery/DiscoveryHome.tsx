@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Stamp, X, FolderInput, RefreshCw, ChevronRight,
-  ArrowDownToLine, ArrowUpFromLine,
+  ArrowDownToLine, ArrowUpFromLine, Trash2,
 } from 'lucide-react';
 import PinToggle from '@/components/ui/PinToggle';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
@@ -10,7 +10,7 @@ import { useDraggableResizable } from '@/hooks/useDraggableResizable';
 import { resolveMatter, type MatterRef } from '@/lib/vault-persist';
 import {
   listProductions, createProduction, ensurePresetTagDefs,
-  listJobsForMatter,
+  listJobsForMatter, canDeleteProduction, deleteProduction,
   type ProductionListEntry, type ProductionDirection, type ProcessingJob, type Production,
 } from '@/lib/discovery';
 import { DirectionBadge, StatusBadge, JobProgress, batesRangeLabel } from './bits';
@@ -83,6 +83,24 @@ export default function DiscoveryHome() {
   }, [matter]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // Row delete: the bin asks once, inline (no browser dialog), then deletes.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<{ id: string; message: string } | null>(null);
+  const removeProduction = async (id: string) => {
+    setDeleting(id);
+    setDeleteError(null);
+    try {
+      await deleteProduction(id);
+      setConfirmDelete(null);
+      await refresh();
+    } catch (e) {
+      setDeleteError({ id, message: e instanceof Error ? e.message : 'Delete failed' });
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   // Poll processing jobs every few seconds while any is queued/running, so
   // intake progress (and the status flips the worker makes) appear live.
@@ -207,6 +225,10 @@ export default function DiscoveryHome() {
                   || (j.status === 'error' && !j.finished_at),
               );
               const bates = batesRangeLabel(p);
+              const deletable = canDeleteProduction(
+                p.status,
+                (jobsByProduction.get(p.id) ?? []).some((j) => j.status === 'queued' || j.status === 'running'),
+              );
               const party = p.direction === 'incoming' ? p.producing_party : p.receiving_party;
               return (
                 <div
@@ -220,6 +242,16 @@ export default function DiscoveryHome() {
                       {p.name}
                     </span>
                     <StatusBadge status={p.status} />
+                    {deletable && confirmDelete !== p.id && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setDeleteError(null); setConfirmDelete(p.id); }}
+                        className="h-6 w-6 inline-flex items-center justify-center rounded text-white/30 hover:text-[#e07a6a] hover:bg-white/5 transition-colors shrink-0"
+                        title="Delete this production (only before it is stamped)"
+                        aria-label={`Delete ${p.name}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                     <ChevronRight size={13} className="text-white/30 group-hover:text-[#e8b84a] transition-colors shrink-0" strokeWidth={2} />
                   </div>
                   <div className="flex items-center gap-4 mt-1.5 pl-1 text-[11px] text-white/45 flex-wrap">
@@ -238,6 +270,32 @@ export default function DiscoveryHome() {
                     )}
                     {p.request_refs && <span className="truncate max-w-[200px] italic">{p.request_refs}</span>}
                   </div>
+                  {confirmDelete === p.id && (
+                    <div
+                      className="mt-2 pl-1 flex items-center gap-2 flex-wrap text-[11.5px]"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-white/75">
+                        Delete this production and its {p.item_count} {p.item_count === 1 ? 'document' : 'documents'}?
+                        {p.item_count > 0 && <span className="text-white/45"> Copies already filed in the Vault stay there.</span>}
+                      </span>
+                      <button
+                        onClick={() => void removeProduction(p.id)}
+                        disabled={deleting === p.id}
+                        className="h-6 px-2 rounded bg-[#e07a6a]/15 text-[#e07a6a] hover:bg-[#e07a6a]/25 disabled:opacity-50"
+                      >
+                        {deleting === p.id ? 'Deleting…' : 'Delete'}
+                      </button>
+                      <button
+                        onClick={() => { setConfirmDelete(null); setDeleteError(null); }}
+                        disabled={deleting === p.id}
+                        className="h-6 px-2 rounded text-white/60 hover:text-white hover:bg-white/5"
+                      >
+                        Cancel
+                      </button>
+                      {deleteError?.id === p.id && <span className="text-[#e07a6a]">{deleteError.message}</span>}
+                    </div>
+                  )}
                   <ProductionFailure production={p} />
                   {pJobs.length > 0 && (
                     <div className="mt-2 pl-1 space-y-1" onClick={(e) => e.stopPropagation()}>
