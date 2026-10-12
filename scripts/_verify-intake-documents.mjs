@@ -245,5 +245,28 @@ console.log('\n--- D. the worker, held to its source ---------------------------
     'the production item points at the existing document, so the TEXT folder uses the matter\'s own OCR');
 }
 
+// ---------------------------------------------------------------------------
+console.log('\n--- E. adding documents later (Review Room → Add documents) -------------');
+{
+  const w = fs.readFileSync(path.join(ROOT, 'worker', 'discovery-worker.mjs'), 'utf8');
+  const body = (name, next) => w.slice(w.indexOf(`async function ${name}(job)`), w.indexOf(next));
+  check(/let fileIndex = await nextSortBase\(prod\.id\);/.test(body('intakeZip', 'async function intakeFiles(job)')),
+    'a ZIP added to a production that already has documents is numbered after them');
+  check(/const base = await nextSortBase\(prod\.id\);[\s\S]*sortOrder: base \+ i \+ 1/.test(body('intakeFiles', 'const MAX_VAULT_PICK_BYTES')),
+    'uploaded files added later are numbered after the existing documents');
+  check(/const base = await nextSortBase\(prod\.id\);[\s\S]*sortOrder: base \+ i \+ 1/.test(body('intakeDocuments', 'function vaultFilename(')),
+    'documents added later from the matter are numbered after the existing documents');
+  const fn = w.slice(w.indexOf('async function nextSortBase('), w.indexOf('// A Vault document is read whole into memory'));
+  check(/\.order\('sort_order', \{ ascending: false \}\)\.limit\(1\)/.test(fn) && /if \(error\) throw/.test(fn),
+    'the offset is the production\'s highest sort_order, and a failed read stops the job instead of guessing 0');
+
+  const rr = fs.readFileSync(path.join(ROOT, 'src', 'pages', 'discovery', 'ReviewRoom.tsx'), 'utf8');
+  const lib = fs.readFileSync(path.join(ROOT, 'src', 'lib', 'discovery.ts'), 'utf8');
+  check(/canAddDocuments\(production\.status\)/.test(rr) && /<AddDocumentsPanel/.test(rr),
+    'the Review Room offers Add documents, only while the production may still change');
+  check(/return status === 'intake' \|\| status === 'review' \|\| status === 'error';/.test(lib),
+    'documents can be added in intake, review or after a failed intake; never once stamped, packaged or delivered');
+}
+
 console.log(`\n${failures === 0 ? 'ALL PASS' : `${failures} FAILURE(S)`}`);
 process.exit(failures === 0 ? 0 : 1);
