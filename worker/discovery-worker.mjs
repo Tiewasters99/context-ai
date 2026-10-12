@@ -120,6 +120,13 @@ const RECOVER_IDLE_MINUTES = 15;
 // promptly a due retry is noticed.
 const OCR_RETRY_SWEEP_MS = 5 * 60_000;
 
+// A Vault document is read whole into memory, as an uploaded file is. Past
+// this size it is refused with a reason instead (a 1.2 GB video read this way
+// killed the machine on 2026-10-04); the picker shows the same limit.
+// Declared up here because the poll loop below never returns: a const placed
+// after it is never initialised (TDZ: "Cannot access ... before initialization").
+const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
+
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
@@ -614,11 +621,6 @@ async function nextSortBase(productionId) {
   if (error) throw new Error(`production order lookup: ${error.message}`);
   return data?.[0]?.sort_order ?? 0;
 }
-
-// A Vault document is read whole into memory, as an uploaded file is. Past
-// this size it is refused with a reason instead (a 1.2 GB video read this way
-// killed the machine on 2026-10-04); the picker shows the same limit.
-const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
 
 /**
  * Produce documents already filed in the matter (the Vault), without the
