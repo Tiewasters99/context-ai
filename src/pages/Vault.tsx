@@ -973,11 +973,45 @@ export default function Vault() {
           </div>
         </div>
       )}
+      {/* Phone strip. The Vault is a fixed overlay, so the shell's header and
+          tab bar are under it; once a tool is chosen the full-width menu
+          collapses and, without this, nothing on screen leads anywhere. The
+          same three things as the shell's own top bar, in the same order:
+          the menu, Back, and where you are. (Eden, 10-12: "no back button".) */}
+      {isMobile && illuminated && !menuOpen && (
+        <div
+          className="flex items-center gap-1 h-12 px-2 shrink-0 border-b border-[rgba(255,255,255,0.08)]"
+          style={{ backgroundColor: 'rgba(8,8,14,0.95)' }}
+        >
+          <button
+            onClick={() => setMenuOpen(true)}
+            className="p-2 rounded-md text-white/80 active:bg-[rgba(255,255,255,0.08)] transition-colors"
+            aria-label="Open menu"
+            title="Open menu"
+          >
+            <Menu size={20} strokeWidth={1.75} />
+          </button>
+          <button
+            onClick={() => navigate('/app')}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-white/70 active:bg-[rgba(255,255,255,0.08)] transition-colors"
+            aria-label="Back to Contextspace"
+          >
+            <ArrowLeft size={18} strokeWidth={2} />
+            <span className="text-[13px] font-medium">Back</span>
+          </button>
+          <span className="ml-auto min-w-0 truncate pr-1 text-[12px] text-white/60">
+            {matter ? matter.name : 'The Vault'}
+          </span>
+        </div>
+      )}
       <div className="flex-1 flex min-h-0">
-      {/* Menu panel */}
+      {/* Menu panel. On a phone the collapsed rail takes no width at all: the
+          56px it kept on a laptop came out of a 390px screen, and the file
+          list was clipped on the right (Eden, 10-12). The strip above holds
+          the menu button instead. */}
       <div
         className={`h-full flex flex-col border-r border-[rgba(255,255,255,0.08)] transition-all duration-700 ease-in-out overflow-hidden shrink-0 ${
-          !illuminated ? 'w-0 border-r-0' : menuOpen ? (isMobile ? 'w-full' : 'w-80') : 'w-14'
+          !illuminated ? 'w-0 border-r-0' : menuOpen ? (isMobile ? 'w-full' : 'w-80') : isMobile ? 'w-0 border-r-0' : 'w-14'
         }`}
         style={{ backgroundColor: 'rgba(8,8,14,0.95)' }}
       >
