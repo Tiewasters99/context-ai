@@ -628,6 +628,34 @@ export function canAddDocuments(status: ProductionStatus): boolean {
   return status === 'intake' || status === 'review' || status === 'error';
 }
 
+/** A production may be deleted only before any Bates number is assigned
+ *  (stamping writes bates_registry, which refuses the delete anyway) and
+ *  never while the worker is still busy with it. */
+export function canDeleteProduction(status: ProductionStatus, jobRunning: boolean): boolean {
+  if (jobRunning) return false;
+  return status === 'intake' || status === 'review' || status === 'error' || status === 'held';
+}
+
+/** Delete a production and, by cascade, its items, tags, privilege-log
+ *  drafts and jobs. Copies it already filed in the Vault stay there. */
+export async function deleteProduction(id: string): Promise<void> {
+  const { data, error } = await supabase
+    .from('productions')
+    .delete()
+    .eq('id', id)
+    .select('id');
+  if (error) {
+    if (/bates_registry|foreign key/i.test(error.message)) {
+      throw new Error('This production already has Bates numbers, so it cannot be deleted.');
+    }
+    if (/locked/i.test(error.message)) {
+      throw new Error('This production is stamped and locked, so it cannot be deleted.');
+    }
+    throw new Error(`delete production: ${error.message}`);
+  }
+  if (!data || data.length === 0) throw new Error('Not deleted: you may not have access to this matter.');
+}
+
 export interface MatterDocumentChoice {
   id: string;
   title: string;
