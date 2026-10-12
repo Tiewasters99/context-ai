@@ -197,7 +197,7 @@ console.log('\n--- B. the app, held to its source ------------------------------
   const room = read('src', 'pages', 'discovery', 'ReviewRoom.tsx');
   const tab = read('src', 'pages', 'discovery', 'ReviewTab.tsx');
 
-  check(/import ReviewTab from '\.\/ReviewTab'/.test(home) && /<ReviewTab matterId=\{matter\.id\} \/>/.test(home),
+  check(/import ReviewTab from '\.\/ReviewTab'/.test(home) && /<ReviewTab matterId=\{matter\.id\}[ />]/.test(home),
     'Discovery renders the Review tab for the matter');
   check(/from\('document_review_tags'\)[\s\S]{0,80}\.upsert\(/.test(lib) && /onConflict: 'tag_def_id,document_id'/.test(lib),
     'bulk tagging upserts into document_review_tags, skipping existing tags');

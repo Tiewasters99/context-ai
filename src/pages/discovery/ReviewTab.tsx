@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Search, X } from 'lucide-react';
 import {
   ensurePresetTagDefs, listReviewDocuments, listReviewTags, applyReviewTag, removeReviewTag,
-  isReviewTagsMissing, tagKindOf, TAG_KIND_LABEL,
-  type DocumentTagDef, type ReviewDocument, type TagKind,
+  isReviewTagsMissing, tagKindOf, TAG_KIND_LABEL, matchesRule,
+  type DocumentTagDef, type ReviewDocument, type TagKind, type FilterRule, type DiscoverySet,
 } from '@/lib/discovery';
 import { TagChip } from './bits';
+import SetsBar from './SetsBar';
 
 // Discovery R1 (spec DISCOVERY-REVIEW-SETS-2026-10-12): review across the
 // whole matter. One row per document filed in the matter and its folders;
@@ -16,7 +17,7 @@ type TagFilter = 'has' | 'not';
 const KIND_ORDER: TagKind[] = ['exclusion', 'designation', 'note', 'issue'];
 const PAGE = 300;
 
-export default function ReviewTab({ matterId }: { matterId: string }) {
+export default function ReviewTab({ matterId, onProduced }: { matterId: string; onProduced: () => void }) {
   const [defs, setDefs] = useState<DocumentTagDef[]>([]);
   const [docs, setDocs] = useState<ReviewDocument[]>([]);
   const [truncated, setTruncated] = useState(false);
@@ -38,6 +39,9 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [cursor, setCursor] = useState<string | null>(null);
+  // The set in use (R2). A saved filter fills in the filters; a hand-picked
+  // list narrows the table to its documents.
+  const [activeSet, setActiveSet] = useState<DiscoverySet | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,24 +91,32 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
   );
   const exts = useMemo(() => [...new Set(docs.map((d) => d.ext).filter(Boolean))].sort(), [docs]);
 
-  const filtered = useMemo(() => {
-    const q = text.trim().toLowerCase();
-    return docs.filter((d) => {
-      if (q && !d.title.toLowerCase().includes(q) && !(d.source_filename ?? '').toLowerCase().includes(q)) return false;
-      if (folder && (d.folder ?? '') !== (folder === '(matter)' ? '' : folder)) return false;
-      if (ext && d.ext !== ext) return false;
-      const day = d.created_at.slice(0, 10);
-      if (fromDate && day < fromDate) return false;
-      if (toDate && day > toDate) return false;
-      const tags = tagsByDoc.get(d.id);
-      for (const [defId, mode] of tagFilters) {
-        const has = !!tags?.has(defId);
-        if (mode === 'has' && !has) return false;
-        if (mode === 'not' && has) return false;
-      }
-      return true;
-    });
-  }, [docs, text, folder, ext, fromDate, toDate, tagFilters, tagsByDoc]);
+  const currentFilter = useMemo((): FilterRule => ({
+    kind: 'filter',
+    tags_has: [...tagFilters].filter(([, m]) => m === 'has').map(([id]) => id),
+    tags_not: [...tagFilters].filter(([, m]) => m === 'not').map(([id]) => id),
+    folder, ext, text, from: fromDate, to: toDate,
+  }), [tagFilters, folder, ext, text, fromDate, toDate]);
+
+  const filtered = useMemo(() => docs.filter((d) => {
+    const tags = tagsByDoc.get(d.id);
+    if (!matchesRule(d, tags, currentFilter)) return false;
+    return activeSet?.rule.kind === 'list' ? matchesRule(d, tags, activeSet.rule) : true;
+  }), [docs, tagsByDoc, currentFilter, activeSet]);
+
+  const activate = (set: DiscoverySet | null) => {
+    setActiveSet(set);
+    const r = set?.rule.kind === 'filter' ? set.rule : null;
+    setText(r?.text ?? '');
+    setFolder(r?.folder ?? '');
+    setExt(r?.ext ?? '');
+    setFromDate(r?.from ?? '');
+    setToDate(r?.to ?? '');
+    const m = new Map<string, TagFilter>();
+    for (const id of r?.tags_has ?? []) m.set(id, 'has');
+    for (const id of r?.tags_not ?? []) m.set(id, 'not');
+    setTagFilters(m);
+  };
 
   useEffect(() => { setShown(PAGE); }, [text, folder, ext, fromDate, toDate, tagFilters]);
   const visible = filtered.slice(0, shown);
@@ -234,6 +246,19 @@ export default function ReviewTab({ matterId }: { matterId: string }) {
           You can look through the documents; tags cannot be saved until it is.
         </div>
       )}
+
+      <SetsBar
+        matterId={matterId}
+        defs={defs}
+        docs={docs}
+        tagsByDoc={tagsByDoc}
+        currentFilter={currentFilter}
+        selectedIds={[...selected]}
+        activeSetId={activeSet?.id ?? null}
+        onActivate={activate}
+        onProduced={onProduced}
+        tagsReady={!needsSql}
+      />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 mb-3">

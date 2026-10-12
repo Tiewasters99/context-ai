@@ -618,6 +618,8 @@ export interface ReviewDocument {
   folder: string | null;
   /** The production it arrived in, when it was filed from one. */
   production_id: string | null;
+  /** Why it cannot go into a production, or null when it can. */
+  blocked: string | null;
 }
 
 interface ReviewDocumentRow {
@@ -628,6 +630,8 @@ interface ReviewDocumentRow {
   created_at: string;
   matterspace_id: string;
   production_id: string | null;
+  storage_path: string | null;
+  file_size_bytes: number | null;
 }
 
 /**
@@ -647,7 +651,7 @@ export async function listReviewDocuments(matterId: string): Promise<{
   const { rows, truncated } = await fetchPaged<ReviewDocumentRow>(
     (from, to) => supabase
       .from('documents')
-      .select('id, title, source_filename, page_count, created_at, matterspace_id, production_id:metadata->>production_id', { count: 'exact' })
+      .select('id, title, source_filename, page_count, created_at, matterspace_id, storage_path, file_size_bytes, production_id:metadata->>production_id', { count: 'exact' })
       .in('matterspace_id', ids)
       .order('title')
       .order('id')
@@ -668,9 +672,176 @@ export async function listReviewDocuments(matterId: string): Promise<{
       matterspace_id: d.matterspace_id,
       folder: d.matterspace_id === matterId ? null : (nameOf.get(d.matterspace_id) ?? 'Sub-matter'),
       production_id: d.production_id,
+      blocked: !d.storage_path ? 'Still uploading, or no stored file'
+        : (d.file_size_bytes ?? 0) > MAX_MATTER_PICK_BYTES ? `Over ${MAX_MATTER_PICK_BYTES / 1048576} MB`
+          : null,
     };
   });
   return { docs, truncated };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sets (migration 114, spec R2): a saved question about the matter's
+// documents, or a hand-picked list; productions are built from them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FilterRule {
+  kind: 'filter';
+  tags_has: string[];
+  tags_not: string[];
+  folder: string;   // '' = any; '(matter)' = the matter itself
+  ext: string;      // '' = any
+  text: string;
+  from: string;     // yyyy-mm-dd filed on or after, '' = any
+  to: string;       // yyyy-mm-dd filed on or before, '' = any
+}
+export interface ListRule { kind: 'list'; document_ids: string[] }
+export type SetRule = FilterRule | ListRule;
+
+export interface DiscoverySet {
+  id: string;
+  matterspace_id: string;
+  name: string;
+  rule: SetRule;
+  created_by: string | null;
+  created_at: string;
+}
+
+export const EMPTY_FILTER: FilterRule = {
+  kind: 'filter', tags_has: [], tags_not: [], folder: '', ext: '', text: '', from: '', to: '',
+};
+
+/** One rule, two uses: the Review tab's filters and a saved set. */
+export function matchesRule(doc: ReviewDocument, tags: Set<string> | undefined, rule: SetRule): boolean {
+  if (rule.kind === 'list') return rule.document_ids.includes(doc.id);
+  const q = rule.text.trim().toLowerCase();
+  if (q && !doc.title.toLowerCase().includes(q) && !(doc.source_filename ?? '').toLowerCase().includes(q)) return false;
+  if (rule.folder && (doc.folder ?? '') !== (rule.folder === '(matter)' ? '' : rule.folder)) return false;
+  if (rule.ext && doc.ext !== rule.ext) return false;
+  const day = doc.created_at.slice(0, 10);
+  if (rule.from && day < rule.from) return false;
+  if (rule.to && day > rule.to) return false;
+  for (const id of rule.tags_has) if (!tags?.has(id)) return false;
+  for (const id of rule.tags_not) if (tags?.has(id)) return false;
+  return true;
+}
+
+export function isFilterEmpty(rule: FilterRule): boolean {
+  return !rule.tags_has.length && !rule.tags_not.length && !rule.folder && !rule.ext
+    && !rule.text.trim() && !rule.from && !rule.to;
+}
+
+/** True when 114 has not been pasted yet. */
+export function isSetsMissing(message: string): boolean {
+  return /discovery_sets|source_set/.test(message) && /schema cache|does not exist|not find/i.test(message);
+}
+
+export async function listSets(matterspaceId: string): Promise<DiscoverySet[]> {
+  const { data, error } = await supabase
+    .from('discovery_sets')
+    .select('*')
+    .eq('matterspace_id', matterspaceId)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(`list sets: ${error.message}`);
+  return (data ?? []) as DiscoverySet[];
+}
+
+export async function createSet(matterspaceId: string, name: string, rule: SetRule): Promise<DiscoverySet> {
+  const { data, error } = await supabase
+    .from('discovery_sets')
+    .insert({ matterspace_id: matterspaceId, name: name.trim(), rule, created_by: await currentUserId() })
+    .select('*')
+    .single();
+  if (error) {
+    if (/duplicate|unique/i.test(error.message)) throw new Error(`There is already a set called "${name.trim()}".`);
+    throw new Error(`save set: ${error.message}`);
+  }
+  return data as DiscoverySet;
+}
+
+export async function deleteSet(id: string): Promise<void> {
+  const { error } = await supabase.from('discovery_sets').delete().eq('id', id);
+  if (error) throw new Error(`delete set: ${error.message}`);
+}
+
+export interface SetSplit {
+  /** Go into the production and are stamped. */
+  produce: ReviewDocument[];
+  /** Tagged Privileged: go into the production, are withheld at stamping and
+   *  listed on its privilege log (the tag is copied onto the item, 114). */
+  privileged: ReviewDocument[];
+  /** Tagged Non-Responsive or Irrelevant (any tag that keeps a document out
+   *  other than Privileged): never sent to the production. */
+  heldBack: ReviewDocument[];
+  /** Cannot be read from the matter (no stored file, too large). */
+  blocked: ReviewDocument[];
+}
+
+/** Sort a set's documents the way a production built from it treats them.
+ *  Exclusion tags win over everything the rule says (spec 3.3). */
+export function splitForProduction(
+  docs: ReviewDocument[],
+  tagsByDoc: Map<string, Set<string>>,
+  defs: DocumentTagDef[],
+): SetSplit {
+  const privileged = new Set(defs.filter((d) => d.behavior === 'privileged').map((d) => d.id));
+  const keepOut = new Set(defs.filter((d) => d.behavior && d.behavior !== 'privileged').map((d) => d.id));
+  const out: SetSplit = { produce: [], privileged: [], heldBack: [], blocked: [] };
+  for (const d of docs) {
+    const tags = tagsByDoc.get(d.id);
+    const has = (ids: Set<string>) => !!tags && [...ids].some((id) => tags.has(id));
+    if (has(keepOut)) out.heldBack.push(d);
+    else if (d.blocked) out.blocked.push(d);
+    else if (has(privileged)) out.privileged.push(d);
+    else out.produce.push(d);
+  }
+  return out;
+}
+
+/**
+ * Build an outgoing production from a set: create the production (recording
+ * the set and its rule as they stand now), then queue the documents with the
+ * same server-side job as "From this matter" (intake_documents, 110). Each
+ * document's review tags follow it onto its item (114's trigger).
+ */
+export async function produceFromSet(args: {
+  matterspaceId: string;
+  set: Pick<DiscoverySet, 'id' | 'name'> | null;
+  rule: SetRule;
+  documentIds: string[];
+  name: string;
+  receivingParty: string | null;
+  productionDate: string | null;
+  requestRefs: string | null;
+}): Promise<Production> {
+  if (args.documentIds.length === 0) throw new Error('There is nothing in this set to produce.');
+  if (args.documentIds.length > MAX_MATTER_PICK_COUNT) {
+    throw new Error(`A production can take ${MAX_MATTER_PICK_COUNT.toLocaleString()} documents at a time; this set has ${args.documentIds.length.toLocaleString()}. Narrow the set and produce it in parts.`);
+  }
+  const prod = await createProduction({
+    matterspace_id: args.matterspaceId,
+    direction: 'outgoing',
+    name: args.name.trim(),
+    receiving_party: args.receivingParty,
+    production_date: args.productionDate,
+    request_refs: args.requestRefs,
+    notes: args.set ? `Built from the set "${args.set.name}".` : 'Built from the Review tab.',
+  });
+  const { error } = await supabase
+    .from('productions')
+    .update({
+      source_set_id: args.set?.id ?? null,
+      source_set_rule: { ...args.rule, set_name: args.set?.name ?? null, frozen_at: new Date().toISOString() },
+    })
+    .eq('id', prod.id);
+  if (error && !isSetsMissing(error.message)) throw new Error(`record the set on the production: ${error.message}`);
+  await enqueueJob({
+    matterspace_id: args.matterspaceId,
+    production_id: prod.id,
+    job_type: 'intake_documents',
+    payload: { document_ids: args.documentIds, ingest: false },
+  });
+  return prod;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

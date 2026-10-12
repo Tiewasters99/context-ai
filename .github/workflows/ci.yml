@@ -111,6 +111,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-review-tags.mjs
 
+      - name: Discovery — sets, and tags that follow a document into a production (migration 114, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-discovery-sets.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs

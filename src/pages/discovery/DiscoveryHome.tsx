@@ -231,7 +231,7 @@ export default function DiscoveryHome() {
           </div>
         )}
 
-        {matter && tab === 'review' && <ReviewTab matterId={matter.id} />}
+        {matter && tab === 'review' && <ReviewTab matterId={matter.id} onProduced={() => { setTab('productions'); void refresh(); }} />}
 
         {tab === 'productions' && (<>
         {loadError && <p className="text-sm text-red-300 mb-3">{loadError}</p>}
