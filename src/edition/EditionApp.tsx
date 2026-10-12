@@ -376,6 +376,11 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
         <button className={primary} type="submit" disabled={!file || !title.trim() || !!busy}>
           <ChevronRight size={15} /> Open in the Reader
         </button>
+        {!busy && (!file || !title.trim()) && (
+          <p className="text-[12px] opacity-60">
+            {!file ? 'Choose the PDF first: tap the box above and pick it from your files.' : 'Give it a title.'}
+          </p>
+        )}
       </form>
     </Shell>
   );
