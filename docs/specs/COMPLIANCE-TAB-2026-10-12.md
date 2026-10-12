@@ -56,9 +56,9 @@ Seed cards, in this order:
 - **Where:** a tab on the matter page beside Record (the matter is the unit the questions attach to), and the same page under Settings → AI for the account-wide view with no matter facts. Phone: panes stack; pane C collapses to one use per card.
 - **Name:** Eden asked for "Compliance". Strategy 005's UI rule says the interface stays discreet ("the matter's Record", never "audit log" or "compliance"). Eden decides; alternatives that say what the page does: **Terms**, **Before it leaves**.
 
-## 5. Decisions Eden owes (one line each)
+## 5. Decisions (adopted as defaults 2026-10-12; Eden overrides any line by saying so)
 
-| # | Decision | Recommended |
+| # | Decision | Adopted |
 | --- | --- | --- |
 | 1 | Tab name: Compliance, Terms, or Before it leaves | Terms |
 | 2 | Contextspaces' own card lists our sub-processors by name | Yes; 005 already says we build on Supabase, Vercel, Fly, AWS |
