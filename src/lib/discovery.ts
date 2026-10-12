@@ -521,6 +521,159 @@ export async function removeTag(tagDefId: string, productionItemId: string): Pro
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Review tags — tags on the matter's DOCUMENTS (migration 113, spec R1).
+// One tag, one document, seen in every production built later. Productions
+// keep their own document_tags; nothing here is stamped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DocumentReviewTag {
+  id: string;
+  tag_def_id: string;
+  document_id: string;
+  matterspace_id: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export type TagKind = 'exclusion' | 'designation' | 'note' | 'issue';
+
+/** What a tag does, for grouping (spec Q2: one list, labelled by kind).
+ *  Exclusions keep a document out of a production; designations are burned
+ *  on; notes never print; everything else the firm adds is an issue code. */
+export function tagKindOf(def: Pick<DocumentTagDef, 'behavior' | 'is_endorsement' | 'name'>): TagKind {
+  if (def.behavior) return 'exclusion';
+  if (def.is_endorsement) return 'designation';
+  if (def.name === 'Hot Doc') return 'note';
+  return 'issue';
+}
+
+export const TAG_KIND_LABEL: Record<TagKind, string> = {
+  exclusion: 'Keeps it out',
+  designation: 'Designations',
+  note: 'Notes',
+  issue: 'Issues',
+};
+
+/** True when 113 has not been pasted yet (PostgREST cannot find the table). */
+export function isReviewTagsMissing(message: string): boolean {
+  return /document_review_tags/.test(message) && /schema cache|does not exist|not find/i.test(message);
+}
+
+export async function listReviewTags(matterspaceId: string): Promise<DocumentReviewTag[]> {
+  const { rows } = await fetchPaged<DocumentReviewTag>(
+    (from, to) => supabase
+      .from('document_review_tags')
+      .select('*', { count: 'exact' })
+      .eq('matterspace_id', matterspaceId)
+      .order('id')
+      .range(from, to),
+    { label: 'review tags', ceiling: 200_000 },
+  );
+  return rows;
+}
+
+const REVIEW_TAG_CHUNK = 200;
+
+/** Tag every listed document (already-tagged ones are left as they are). */
+export async function applyReviewTag(
+  tagDefId: string,
+  documentIds: string[],
+  matterspaceId: string,
+): Promise<void> {
+  const uid = await currentUserId();
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) {
+    const { error } = await supabase
+      .from('document_review_tags')
+      .upsert(
+        documentIds.slice(i, i + REVIEW_TAG_CHUNK).map((document_id) => ({
+          tag_def_id: tagDefId, document_id, matterspace_id: matterspaceId, created_by: uid,
+        })),
+        { onConflict: 'tag_def_id,document_id', ignoreDuplicates: true },
+      );
+    if (error) throw new Error(`tag documents: ${error.message}`);
+  }
+}
+
+export async function removeReviewTag(tagDefId: string, documentIds: string[]): Promise<void> {
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) {
+    const { error } = await supabase
+      .from('document_review_tags')
+      .delete()
+      .eq('tag_def_id', tagDefId)
+      .in('document_id', documentIds.slice(i, i + REVIEW_TAG_CHUNK));
+    if (error) throw new Error(`untag documents: ${error.message}`);
+  }
+}
+
+export interface ReviewDocument {
+  id: string;
+  title: string;
+  source_filename: string | null;
+  /** Lower-case extension of the original file, '' when unknown. */
+  ext: string;
+  page_count: number | null;
+  created_at: string;
+  matterspace_id: string;
+  /** The folder or sub-matter it is filed in, when not the matter itself. */
+  folder: string | null;
+  /** The production it arrived in, when it was filed from one. */
+  production_id: string | null;
+}
+
+interface ReviewDocumentRow {
+  id: string;
+  title: string | null;
+  source_filename: string | null;
+  page_count: number | null;
+  created_at: string;
+  matterspace_id: string;
+  production_id: string | null;
+}
+
+/**
+ * Every document filed in this matter and its folders/sub-matters, for the
+ * Review tab. Unlike the "From this matter" picker, documents filed from a
+ * production are kept: an incoming volume is reviewed here too.
+ */
+export async function listReviewDocuments(matterId: string): Promise<{
+  docs: ReviewDocument[]; truncated: boolean;
+}> {
+  const { data: tree } = await supabase.rpc('matterspace_descendants', { p_root: matterId });
+  const ids = ((tree ?? []) as { id: string }[]).map((r) => r.id);
+  if (!ids.includes(matterId)) ids.push(matterId);
+  const { data: names } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+  const nameOf = new Map(((names ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+
+  const { rows, truncated } = await fetchPaged<ReviewDocumentRow>(
+    (from, to) => supabase
+      .from('documents')
+      .select('id, title, source_filename, page_count, created_at, matterspace_id, production_id:metadata->>production_id', { count: 'exact' })
+      .in('matterspace_id', ids)
+      .order('title')
+      .order('id')
+      .range(from, to),
+    { label: 'review documents', ceiling: 20_000 },
+  );
+
+  const docs = rows.map((d): ReviewDocument => {
+    const name = d.source_filename || d.title || '';
+    const dot = name.lastIndexOf('.');
+    return {
+      id: d.id,
+      title: d.title || d.source_filename || 'Untitled',
+      source_filename: d.source_filename,
+      ext: dot > 0 && dot > name.length - 7 ? name.slice(dot + 1).toLowerCase() : '',
+      page_count: d.page_count,
+      created_at: d.created_at,
+      matterspace_id: d.matterspace_id,
+      folder: d.matterspace_id === matterId ? null : (nameOf.get(d.matterspace_id) ?? 'Sub-matter'),
+      production_id: d.production_id,
+    };
+  });
+  return { docs, truncated };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Privilege log
 // ─────────────────────────────────────────────────────────────────────────────
 
