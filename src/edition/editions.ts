@@ -320,22 +320,28 @@ function mediaOfAsset(a: { id: string; storage_path: string | null } | null): Me
   return { id: a.id, title: name ?? a.id, storage_path: a.storage_path, source_filename: name };
 }
 
-/** The file, and what is laid on its pages. `reloadKey` reopens the book. */
-export function editionSource(edition: Edition, reloadKey = 0): PdfSource {
+/** The file, and what is laid on its pages. `reloadKey` reopens the book.
+ *  Taking a clip off the page is offered only to the edition's maker
+ *  (112's delete policy is the publisher's; a reader is not offered what
+ *  would silently do nothing). */
+export function editionSource(edition: Edition, reloadKey = 0, opts: { canEdit?: boolean } = {}): PdfSource {
   const editionId = edition.id;
-  return {
+  const source: PdfSource = {
     key: `${editionId}:${reloadKey}`,
     openPdf: (onProgress) => openStoredPdf(`${editionId}/book`, { onProgress, mint: () => mintBook(editionId) }),
     listIllustrations: async () => {
       const r = await door<{ illustrations: DocumentAnimation[] }>({ edition_id: editionId, action: 'illustrations' });
       return r.illustrations;
     },
-    removeIllustration: async (id) => {
-      const { error } = await supabase.from('edition_illustrations').delete().eq('id', id);
-      if (error) throw new Error(error.message);
-    },
     mediaUrl: mediaUrlIn(editionId),
   };
+  if (opts.canEdit) {
+    source.removeIllustration = async (id) => {
+      const { error } = await supabase.from('edition_illustrations').delete().eq('id', id);
+      if (error) throw new Error(error.message);
+    };
+  }
+  return source;
 }
 
 type MarkRow = {

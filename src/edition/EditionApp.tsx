@@ -391,9 +391,20 @@ const RIGHTS: { value: EditionRights; label: string; hint: string }[] = [
   { value: 'licensed', label: 'Licensed', hint: 'Name the licensor.' },
 ];
 
-function PublishDialog({ edition, pdf, onClose, onPublished }: {
+/** The guard's sentence when the account has no active publisher row (112). */
+const NO_PUBLISHER_ROW = 'This account cannot publish to the store yet.';
+
+/** The one line that opens publishing for an account (D5: Eden makes these
+ *  rows until Phase 4). Shown with the user's own id in it, ready to paste
+ *  into the Supabase SQL editor — one trip, nothing to look up. */
+function publisherRowSql(userId: string): string {
+  return `insert into public.publisher_accounts (user_id, status)\nvalues ('${userId}', 'active')\non conflict (user_id) do update set status = 'active';`;
+}
+
+function PublishDialog({ edition, pdf, userId, onClose, onPublished }: {
   edition: Edition;
   pdf: PDFDocumentProxy | null;
+  userId: string;
   onClose: () => void;
   onPublished: (e: Edition) => void;
 }) {
@@ -473,6 +484,18 @@ function PublishDialog({ edition, pdf, onClose, onPublished }: {
         </div>
 
         <Trouble text={trouble} />
+        {trouble === NO_PUBLISHER_ROW && (
+          <div className="mt-2 rounded-md border border-[#c9b98f] bg-[#fbf6ea] p-3 text-[12px]">
+            <p className="opacity-80">Publishing is opened per account for now. Paste this in the Supabase SQL editor (Database → SQL Editor → New query → Run), then press Publish again:</p>
+            <pre className="mt-2 overflow-x-auto whitespace-pre rounded bg-[#2b2315] p-2 text-[11px] text-[#f4ecd8]">{publisherRowSql(userId)}</pre>
+            <button
+              className={`${quiet} mt-2`}
+              onClick={() => { void navigator.clipboard?.writeText(publisherRowSql(userId)); }}
+            >
+              Copy the SQL
+            </button>
+          </div>
+        )}
         {busy && <p className="mt-3 text-[13px] opacity-70">{busy}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button className={quiet} onClick={onClose} disabled={!!busy}>Not now</button>
@@ -518,7 +541,7 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
 
   const mine = !!edition && edition.publisher_user_id === session.user.id;
 
-  const source = useMemo<PdfSource | null>(() => (edition ? editionSource(edition, reloadKey) : null), [edition, reloadKey]);
+  const source = useMemo<PdfSource | null>(() => (edition ? editionSource(edition, reloadKey, { canEdit: mine }) : null), [edition, reloadKey, mine]);
   const marks = useMemo<MarksStore | null>(() => (edition ? editionMarks(edition) : null), [edition]);
   const bench = useMemo<BenchStore | null>(() => (edition && mine ? editionBench(edition, true) : null), [edition, mine]);
 
@@ -580,6 +603,7 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
         <PublishDialog
           edition={edition}
           pdf={pdf}
+          userId={session.user.id}
           onClose={() => setPublishing(false)}
           onPublished={(fresh) => {
             setEdition(fresh);
