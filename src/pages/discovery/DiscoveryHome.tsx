@@ -17,14 +17,22 @@ import { DirectionBadge, StatusBadge, JobProgress, batesRangeLabel } from './bit
 import ProductionFailure from './ProductionFailure';
 import FloatingPanel from './FloatingPanel';
 import { AddDocumentsStep } from './AddDocuments';
+import ReviewTab from './ReviewTab';
 
 // Discovery home for a matter: the production ledger. Reached at
 // /app/discovery?matter=<short_code|uuid> — same matter-context convention
 // as the Vault.
 export default function DiscoveryHome() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const matterKey = searchParams.get('matter');
+  // Productions (the ledger) or Review (every document in the matter, R1).
+  const tab = searchParams.get('tab') === 'review' ? 'review' : 'productions';
+  const setTab = (t: 'productions' | 'review') => {
+    const next = new URLSearchParams(searchParams);
+    if (t === 'review') next.set('tab', 'review'); else next.delete('tab');
+    setSearchParams(next, { replace: true });
+  };
 
   const { cardRef, toggleFullscreen, pinned, togglePin } = useDraggableResizable('cs.discovery.card');
 
@@ -201,6 +209,31 @@ export default function DiscoveryHome() {
         </div>
 
         {matterError && <p className="text-sm text-red-300">{matterError}</p>}
+
+        {matter && (
+          <div className="flex items-center gap-1 mb-4 border-b border-white/[0.08]">
+            {(['productions', 'review'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-3 py-1.5 -mb-px text-[13px] border-b-2 transition-colors ${
+                  tab === t
+                    ? 'border-[#e8b84a] text-[#e8b84a]'
+                    : 'border-transparent text-white/50 hover:text-white/80'
+                }`}
+              >
+                {t === 'productions' ? 'Productions' : 'Review'}
+              </button>
+            ))}
+            <span className="ml-auto text-[11px] text-white/35 pb-1">
+              {tab === 'review' ? 'Every document in the matter. Tags here stay with the document.' : ''}
+            </span>
+          </div>
+        )}
+
+        {matter && tab === 'review' && <ReviewTab matterId={matter.id} />}
+
+        {tab === 'productions' && (<>
         {loadError && <p className="text-sm text-red-300 mb-3">{loadError}</p>}
         {loading && !matterError && (
           <p className="text-center text-[12px] text-white/40 py-10">Loading productions…</p>
@@ -313,6 +346,7 @@ export default function DiscoveryHome() {
             Start with &ldquo;New production&rdquo;, then add its documents.
           </p>
         )}
+        </>)}
       </div>
 
       {showNew && matter && (

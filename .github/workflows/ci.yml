@@ -107,6 +107,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-production-designations.mjs
 
+      - name: Discovery — review tags on matter documents (migration 113, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-review-tags.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs
