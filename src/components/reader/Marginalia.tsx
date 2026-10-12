@@ -161,7 +161,9 @@ function cardPosition(
   estHeight = 340,
 ): React.CSSProperties {
   if (isMobile) {
-    return { position: 'fixed', left: 8, right: 8, bottom: 60, zIndex: 70 };
+    // Capped so the card cannot run off the top of a phone with the keyboard
+    // up (the composer with its picker open is the tall case); it scrolls.
+    return { position: 'fixed', left: 8, right: 8, bottom: 60, zIndex: 70, maxHeight: '70vh', overflowY: 'auto' };
   }
   const left = Math.min(Math.max(anchor.x + 10, 8), window.innerWidth - width - 8);
   const top = Math.min(Math.max(anchor.y - 40, 8), window.innerHeight - estHeight - 8);
