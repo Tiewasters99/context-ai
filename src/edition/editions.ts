@@ -83,6 +83,9 @@ async function door<T>(body: Record<string, unknown>): Promise<T> {
     const why = data?.error ?? `http_${res.status}`;
     throw new Error(
       why === 'not_readable' ? 'This edition is not yours to read.'
+        : why === 'not_publisher' ? 'Only the edition\'s maker can do that.'
+          : why === 'sealed' ? 'That book is in a sealed matter; nothing leaves a sealed matter.'
+            : why === 'copy_failed' ? `The book could not be copied (${data?.detail ?? 'storage'}).`
         : why === 'not_found' ? 'That file is not in the edition.'
           : why === 'missing_bearer' || why === 'invalid_session' ? 'Sign in to open this edition.'
             : `The edition could not be opened (${why}).`,
@@ -276,6 +279,41 @@ export async function uploadAsset(
     throw new Error(error?.message ?? 'The file was not recorded.');
   }
   return data as EditionAsset;
+}
+
+/** A book already in Contextspaces, as the picker lists it. */
+export type LibraryBook = {
+  id: string;
+  title: string;
+  matter: string | null;
+  bytes: number | null;
+  updated_at: string | null;
+};
+
+/** PDFs the signed-in person can open in Contextspaces, newest first; `q`
+ *  narrows by title. RLS decides what is listed. */
+export async function listLibraryPdfs(q: string): Promise<LibraryBook[]> {
+  let query = supabase
+    .from('documents')
+    .select('id, title, file_size_bytes, updated_at, matterspace_id, matter:matterspaces(name)')
+    .ilike('storage_path', '%.pdf')
+    .order('updated_at', { ascending: false })
+    .limit(40);
+  const needle = q.trim();
+  if (needle) query = query.ilike('title', `%${needle.replace(/[%_]/g, (m) => `\\${m}`)}%`);
+  const { data, error } = await query;
+  if (error) throw new Error(error.message);
+  type Row = { id: string; title: string | null; file_size_bytes: number | null; updated_at: string | null; matter: { name: string | null } | { name: string | null }[] | null };
+  return ((data ?? []) as unknown as Row[]).map((r) => {
+    const m = Array.isArray(r.matter) ? r.matter[0] : r.matter;
+    return { id: r.id, title: r.title ?? 'Untitled', matter: m?.name ?? null, bytes: r.file_size_bytes, updated_at: r.updated_at };
+  });
+}
+
+/** The bridge: a Contextspaces PDF copied server-side into the edition as its book. */
+export async function copyBookFromDocument(edition: Edition, documentId: string): Promise<EditionAsset> {
+  const r = await door<{ asset: EditionAsset; title: string | null }>({ edition_id: edition.id, action: 'copy_book', document_id: documentId });
+  return r.asset;
 }
 
 /** The publisher's view of the edition's files (readers go through the door). */

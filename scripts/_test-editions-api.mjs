@@ -33,6 +33,12 @@ const BOOK_PATH = `${EDITION}/book/abc-innocents.pdf`;
 const CLIP_PATH = `${EDITION}/media/xyz-plate.mp4`;
 
 /** A Supabase that answers from fixtures and remembers every call. */
+const DOC = '77777777-8888-4999-8aaa-bbbbbbbbbbbb';
+const DOC_SEALED = '66666666-8888-4999-8aaa-bbbbbbbbbbbb';
+const DOC_WORD = '55555555-8888-4999-8aaa-bbbbbbbbbbbb';
+const MATTER_OPEN = '12121212-3434-4565-8787-989898989898';
+const MATTER_SEALED = '21212121-4343-4656-8878-898989898989';
+
 function fakeSupabase({ canRead = () => false, version = 1 } = {}) {
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
@@ -54,6 +60,35 @@ function fakeSupabase({ canRead = () => false, version = 1 } = {}) {
       return respond(200, canRead(id, JSON.parse(init.body).p_edition));
     }
     const isService = auth === 'Bearer service-key' && apikey === 'service-key';
+    if (u.pathname === '/rest/v1/documents') {
+      // AS THE USER: RLS. Every token here can see the three fixtures.
+      const tok = auth.replace(/^Bearer /, '');
+      if (!TOKENS[tok] || apikey !== 'anon-key') return respond(401, { message: 'not as the user' });
+      const id = u.searchParams.get('id')?.replace(/^eq\./, '');
+      const docs = {
+        [DOC]: { id: DOC, title: 'The Innocents Abroad, Vol. I', storage_path: `${MATTER_OPEN}/${DOC}/innocents-vol-1.pdf`, file_size_bytes: 98765, matterspace_id: MATTER_OPEN, source_filename: 'innocents-vol-1.pdf' },
+        [DOC_SEALED]: { id: DOC_SEALED, title: 'Sealed exhibit', storage_path: `${MATTER_SEALED}/${DOC_SEALED}/exhibit.pdf`, file_size_bytes: 10, matterspace_id: MATTER_SEALED, source_filename: 'exhibit.pdf' },
+        [DOC_WORD]: { id: DOC_WORD, title: 'A brief', storage_path: `${MATTER_OPEN}/${DOC_WORD}/brief.docx`, file_size_bytes: 10, matterspace_id: MATTER_OPEN, source_filename: 'brief.docx' },
+      };
+      return respond(200, docs[id] ? [docs[id]] : []);
+    }
+    if (u.pathname === '/rest/v1/rpc/effective_tier_is_sealed') {
+      if (!isService) return respond(401, { message: 'service only' });
+      return respond(200, JSON.parse(init.body).p_matter === MATTER_SEALED);
+    }
+    if (u.pathname === '/storage/v1/object/copy') {
+      if (!isService) return respond(401, { message: 'service only' });
+      return respond(200, { Key: `editions/${JSON.parse(init.body).destinationKey}` });
+    }
+    if (u.pathname === '/rest/v1/edition_assets' && init.method === 'POST') {
+      if (!isService) return respond(401, { message: 'service only' });
+      const body = JSON.parse(init.body);
+      return respond(201, [{ id: 'asset-copied', ...body, created_at: 't' }]);
+    }
+    if (u.pathname === '/rest/v1/editions' && init.method === 'PATCH') {
+      if (!isService) return respond(401, { message: 'service only' });
+      return respond(200, [{ id: EDITION, ...JSON.parse(init.body) }]);
+    }
     if (u.pathname === '/rest/v1/edition_assets') {
       if (!isService) return respond(401, { message: 'service only' });
       const p = u.searchParams;
@@ -213,4 +248,47 @@ test('illustrations: the publisher sees the draft, a reader what shipped; each w
   assert.equal(r.illustrations.length, 1, 'only what shipped in version 1');
   const rdQuery = fake.calls.filter((c) => c.path === '/rest/v1/edition_illustrations').at(-1).search;
   assert.ok(rdQuery.includes('version_from=lte.1'), rdQuery);
+});
+
+test('copy_book: the publisher copies a Vault PDF server-side; the asset row and the bridge pointer follow', async () => {
+  const fake = fakeSupabase({ canRead: (uid) => uid === PUBLISHER });
+  const res = await call(request({ bearer: 'tok-publisher', body: { edition_id: EDITION, action: 'copy_book', document_id: DOC } }), fake);
+  assert.equal(res.statusCode, 200, res.body);
+  const out = res.json();
+  assert.equal(out.title, 'The Innocents Abroad, Vol. I');
+  assert.equal(out.asset.kind, 'book');
+  assert.ok(out.asset.storage_path.startsWith(`${EDITION}/book/`), out.asset.storage_path);
+  assert.ok(out.asset.storage_path.endsWith('-innocents-vol-1.pdf'));
+  assert.equal(out.asset.bytes, 98765);
+  const docRead = fake.calls.find((c) => c.path === '/rest/v1/documents');
+  assert.equal(docRead.apikey, 'anon-key', 'the document is read as the user');
+  assert.equal(docRead.auth, 'Bearer tok-publisher');
+  const copy = fake.calls.find((c) => c.path === '/storage/v1/object/copy');
+  assert.equal(copy.auth, 'Bearer service-key');
+  assert.deepEqual(copy.body, { bucketId: 'vault-documents', sourceKey: `${MATTER_OPEN}/${DOC}/innocents-vol-1.pdf`, destinationBucket: 'editions', destinationKey: out.asset.storage_path });
+  const seal = fake.calls.find((c) => c.path === '/rest/v1/rpc/effective_tier_is_sealed');
+  assert.equal(seal.body.p_matter, MATTER_OPEN, 'the seal was asked before the copy');
+  assert.ok(fake.calls.indexOf(seal) < fake.calls.indexOf(copy));
+  const patch = fake.calls.find((c) => c.path === '/rest/v1/editions' && c.method === 'PATCH');
+  assert.equal(patch.body.source_document_id, DOC);
+});
+
+test('copy_book: a reader of the edition is not its publisher → 403, nothing copied', async () => {
+  const fake = fakeSupabase({ canRead: () => true });
+  const res = await call(request({ bearer: 'tok-reader', body: { edition_id: EDITION, action: 'copy_book', document_id: DOC } }), fake);
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.json().error, 'not_publisher');
+  assert.ok(!fake.calls.some((c) => c.path === '/storage/v1/object/copy'));
+});
+
+test('copy_book: a sealed matter keeps its file; a Word file is not a book', async () => {
+  const fake = fakeSupabase({ canRead: (uid) => uid === PUBLISHER });
+  const sealed = await call(request({ bearer: 'tok-publisher', body: { edition_id: EDITION, action: 'copy_book', document_id: DOC_SEALED } }), fake);
+  assert.equal(sealed.statusCode, 403);
+  assert.equal(sealed.json().error, 'sealed');
+  const word = await call(request({ bearer: 'tok-publisher', body: { edition_id: EDITION, action: 'copy_book', document_id: DOC_WORD } }), fake);
+  assert.equal(word.statusCode, 400);
+  const missing = await call(request({ bearer: 'tok-publisher', body: { edition_id: EDITION, action: 'copy_book', document_id: '00000000-0000-4000-8000-000000000000' } }), fake);
+  assert.equal(missing.statusCode, 404);
+  assert.ok(!fake.calls.some((c) => c.path === '/storage/v1/object/copy'), 'nothing copied');
 });

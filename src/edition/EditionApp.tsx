@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight } from 'lucide-react';
+import { BookOpen, Plus, Upload, LogOut, Trash2, Sparkles, ChevronRight, Library as LibraryIcon, Search } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import PdfBook, { type PdfSource, type MarksStore, type BenchStore } from '@/components/reader/PdfBook';
 import { renderPageCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import type { MoreItem } from '@/components/reader/reader-chrome';
 import {
   type Edition, type EditionRights,
+  type LibraryBook,
   listMyEditions, listOwnedEditions, getEdition, createEdition, updateEdition, deleteEdition,
   uploadAsset, listAssets, coverUrl, publishEdition, editionSource, editionMarks, editionBench,
+  listLibraryPdfs, copyBookFromDocument,
 } from './editions';
 
 // The Grapheon Reader (docs/specs/GRAPHEON-READER-2026-10-10.md). Phase 1,
@@ -300,7 +302,61 @@ function Library({ session, navigate }: { session: Session; navigate: (to: strin
 // New edition: a PDF, a title, an author
 // ---------------------------------------------------------------------------
 
+/** The books already in Contextspaces, to pick one as the edition's book. */
+function LibraryPicker({ chosen, onChoose }: { chosen: LibraryBook | null; onChoose: (b: LibraryBook) => void }) {
+  const [q, setQ] = useState('');
+  const [books, setBooks] = useState<LibraryBook[] | null>(null);
+  const [trouble, setTrouble] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    const t = setTimeout(() => {
+      listLibraryPdfs(q)
+        .then((b) => { if (live) { setBooks(b); setTrouble(null); } })
+        .catch((e: unknown) => { if (live) { setBooks([]); setTrouble(e instanceof Error ? e.message : 'The library could not be read.'); } });
+    }, q ? 250 : 0);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
+
+  return (
+    <div className="rounded-lg border border-[#c9b98f] bg-[#fbf6ea]">
+      <div className="flex items-center gap-2 border-b border-[#e3d4ad] px-3 py-2">
+        <Search size={14} className="opacity-50" />
+        <input
+          className="w-full bg-transparent text-[14px] outline-none placeholder:text-[#a08f6a]"
+          placeholder="Find a book by its title"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+      <Trouble text={trouble} />
+      <div className="max-h-64 overflow-y-auto">
+        {books === null ? (
+          <p className="px-3 py-3 text-[13px] opacity-60">Looking on the shelves…</p>
+        ) : books.length === 0 ? (
+          <p className="px-3 py-3 text-[13px] opacity-60">{q ? 'No PDF by that title.' : 'No PDFs in your Contextspaces yet.'}</p>
+        ) : books.map((b) => (
+          <button
+            key={b.id}
+            type="button"
+            onClick={() => onChoose(b)}
+            className={`flex w-full items-baseline justify-between gap-3 px-3 py-2 text-left hover:bg-[#f1e6c9] ${chosen?.id === b.id ? 'bg-[#f1e6c9]' : ''}`}
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-[14px]" style={{ fontFamily: SERIF, fontSize: 16 }}>{b.title}</span>
+              {b.matter && <span className="block truncate text-[11px] opacity-60">{b.matter}</span>}
+            </span>
+            {b.bytes != null && <span className="shrink-0 text-[11px] opacity-50">{(b.bytes / 1048576).toFixed(1)} MB</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function NewEdition({ navigate }: { navigate: (to: string) => void }) {
+  const [door, setDoor] = useState<'library' | 'upload'>('library');
+  const [book, setBook] = useState<LibraryBook | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
@@ -313,20 +369,34 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
     setFile(f);
     if (f && !title.trim()) setTitle(f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim());
   };
+  // A title the picker set is replaced by the next pick; one typed by hand is kept.
+  const pickedTitles = useRef(new Set<string>());
+  const choose = (b: LibraryBook) => {
+    setBook(b);
+    if (!title.trim() || pickedTitles.current.has(title)) setTitle(b.title);
+    pickedTitles.current.add(b.title);
+  };
+
+  const ready = door === 'library' ? !!book : !!file;
 
   const make = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file) return;
+    if (!ready) return;
     setTrouble(null);
     let edition: Edition | null = null;
     try {
       setBusy('Making the edition…');
       edition = await createEdition({ title, author: author || null });
-      setBusy('Uploading the book…');
-      setProgress(0);
-      await uploadAsset(edition, 'book', file, {
-        onProgress: ({ loaded, total }) => setProgress(total ? loaded / total : null),
-      });
+      if (door === 'library' && book) {
+        setBusy('Copying the book from Contextspaces…');
+        await copyBookFromDocument(edition, book.id);
+      } else if (file) {
+        setBusy('Uploading the book…');
+        setProgress(0);
+        await uploadAsset(edition, 'book', file, {
+          onProgress: ({ loaded, total }) => setProgress(total ? loaded / total : null),
+        });
+      }
       navigate(`/read/${edition.id}`);
     } catch (err) {
       setTrouble(err instanceof Error ? err.message : 'The edition could not be made.');
@@ -348,18 +418,33 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
       </p>
 
       <form onSubmit={make} className="mt-6 space-y-4">
-        <input ref={inputRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className="flex w-full items-center gap-3 rounded-lg border border-dashed border-[#a08f6a] bg-[#fbf6ea] px-4 py-5 text-left hover:bg-[#f7efdb]"
-        >
-          <Upload size={20} className="opacity-60" />
-          <div className="min-w-0">
-            <div className="text-[15px] font-medium truncate">{file ? file.name : 'Choose a PDF'}</div>
-            <div className="text-[12px] opacity-60">{file ? `${(file.size / 1048576).toFixed(1)} MB` : 'Large scans upload in pieces and resume if the connection drops.'}</div>
-          </div>
-        </button>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setDoor('library')} className={`${quiet} flex-1 justify-center ${door === 'library' ? 'bg-[#f1e6c9] border-[#8a6d2f]' : ''}`}>
+            <LibraryIcon size={14} /> From my Contextspaces
+          </button>
+          <button type="button" onClick={() => setDoor('upload')} className={`${quiet} flex-1 justify-center ${door === 'upload' ? 'bg-[#f1e6c9] border-[#8a6d2f]' : ''}`}>
+            <Upload size={14} /> Upload a PDF
+          </button>
+        </div>
+
+        {door === 'library' ? (
+          <LibraryPicker chosen={book} onChoose={choose} />
+        ) : (
+          <>
+            <input ref={inputRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={(e) => pick(e.target.files?.[0] ?? null)} />
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              className="flex w-full items-center gap-3 rounded-lg border border-dashed border-[#a08f6a] bg-[#fbf6ea] px-4 py-5 text-left hover:bg-[#f7efdb]"
+            >
+              <Upload size={20} className="opacity-60" />
+              <div className="min-w-0">
+                <div className="text-[15px] font-medium truncate">{file ? file.name : 'Choose a PDF'}</div>
+                <div className="text-[12px] opacity-60">{file ? `${(file.size / 1048576).toFixed(1)} MB` : 'Large scans upload in pieces and resume if the connection drops.'}</div>
+              </div>
+            </button>
+          </>
+        )}
         <input className={field} placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
         <input className={field} placeholder="Author (as printed)" value={author} onChange={(e) => setAuthor(e.target.value)} />
         <Trouble text={trouble} />
@@ -373,12 +458,14 @@ function NewEdition({ navigate }: { navigate: (to: string) => void }) {
             )}
           </div>
         )}
-        <button className={primary} type="submit" disabled={!file || !title.trim() || !!busy}>
+        <button className={primary} type="submit" disabled={!ready || !title.trim() || !!busy}>
           <ChevronRight size={15} /> Open in the Reader
         </button>
-        {!busy && (!file || !title.trim()) && (
+        {!busy && (!ready || !title.trim()) && (
           <p className="text-[12px] opacity-60">
-            {!file ? 'Choose the PDF first: tap the box above and pick it from your files.' : 'Give it a title.'}
+            {!ready
+              ? (door === 'library' ? 'Pick a book from the list first.' : 'Choose the PDF first: tap the box above and pick it from your files.')
+              : 'Give it a title.'}
           </p>
         )}
       </form>
