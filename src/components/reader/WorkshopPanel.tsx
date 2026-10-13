@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight, Copy,
+  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight, Copy, Shirt,
 } from 'lucide-react';
 import type { Turn } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -37,6 +37,8 @@ export type WorkshopPanelProps = {
   onDownload: (item: WorkshopItem, scale: 1 | 2 | 3) => Promise<void>;
   /** The snip onto the clipboard as a picture, to paste into a generator. */
   onCopy: (item: WorkshopItem) => Promise<void>;
+  /** A snip or a still to the Grapheon store's designer, for a tee or a tote; absent = not offered (not a Library book). */
+  onMerch?: ((item: WorkshopItem) => Promise<void>) | null;
   onTurn: (item: WorkshopItem) => Promise<void>;
   /** A snippet's words, corrected or completed by hand. */
   onRetext: (item: WorkshopItem, text: string) => Promise<void>;
@@ -309,6 +311,9 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
             <IconBtn title="Draw the rectangle again (crop)" onClick={() => p.onResnip(item)}><Scissors size={12} /></IconBtn>
             <IconBtn title="Copy as a picture — then paste it into Flow, Midjourney, Runway, Grok or ChatGPT" busy={busy === 'copy'} onClick={() => run('copy', () => p.onCopy(item))}><Copy size={12} /></IconBtn>
             <DownloadMenu busy={busy === 'dl'} onPick={(scale) => run('dl', () => p.onDownload(item, scale))} />
+            {p.onMerch && (
+              <IconBtn title="Tee or tote — the plate goes to the Grapheon store's designer (new tab)" busy={busy === 'merch'} onClick={() => run('merch', () => p.onMerch!(item))}><Shirt size={12} /></IconBtn>
+            )}
           </>
         )}
         {item.kind === 'snippet' && (
@@ -440,6 +445,9 @@ function MediaRow({ item, source, sources = [], p }: { item: WorkshopItem; sourc
               {sources.map((s) => <option key={s.id} value={s.id}>{sourceName(s)}</option>)}
             </select>
           )
+        )}
+        {still && p.onMerch && (
+          <IconBtn title="Tee or tote — the still goes to the Grapheon store's designer (new tab)" busy={busy === 'merch'} onClick={() => run('merch', () => p.onMerch!(item))}><Shirt size={12} /></IconBtn>
         )}
         <IconBtn title="Take this off the bench (the file stays in the Vault)" danger busy={busy === 'del'} onClick={() => run('del', () => p.onDelete(item))}><Trash2 size={12} /></IconBtn>
       </div>

@@ -2540,6 +2540,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         paneChildren={filingNode}
         pageSides={pageSides}
         renderAttach={doc?.matterspace_id ? renderAttach : null}
+        merch={inLibrary}
         onAsk={askAbout}
         onNote={openNoteComposer}
         onCopySelection={() => void copySelection()}
