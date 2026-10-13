@@ -198,6 +198,45 @@ console.log('\n--- B. the app, held to its source ------------------------------
     'no set can be produced before 114 (sets bar hidden) or 113 (button disabled)');
   check(/job_type: 'intake_documents'/.test(lib.slice(lib.indexOf('export async function produceFromSet'))),
     'producing a set uses the server-side intake_documents job (nothing downloaded)');
+
+  // 2026-10-13: a set saved while the filters had been cleared (a set clicked,
+  // "Stop using it") was an empty filter, and producing it took in the whole
+  // matter. Saving now reads a copy taken at the click; an empty rule is refused.
+  check(/const save = async \(\) => \{[\s\S]*?createSet\(matterId, saveName, pending\)/.test(bar)
+    && !/createSet\(matterId, saveName, (rule|currentFilter)\)/.test(bar),
+    'saving a set saves the copy taken when Save was clicked, never the live filters');
+  check(/if \(isRuleEmpty\(pending\)\)/.test(bar)
+    && /export async function createSet[\s\S]{0,200}if \(isRuleEmpty\(rule\)\)/.test(lib),
+    'an empty rule (the whole matter) is refused in the bar and again in createSet');
+  check(/disabled=\{busy \|\| sending\.length === 0 \|\| !name\.trim\(\) \|\| \(needsConfirm && !confirmed\)\}/.test(bar)
+    && /const wholeMatter = docs\.length > 0 && docs\.length === matterTotal/.test(bar)
+    && /sending\.length > LARGE_SET/.test(bar),
+    'producing the whole matter, or over 1,000 documents, needs one more click');
+
+  // The rule helpers themselves, run: the functions are lifted out of
+  // discovery.ts and transpiled, so the test runs what the app runs.
+  const ts = (await import('typescript')).default;
+  const grab = (name) => {
+    const at = lib.indexOf(`export function ${name}(`);
+    let i = lib.indexOf('{', lib.indexOf(')', at)); let depth = 0;
+    for (; i < lib.length; i++) { if (lib[i] === '{') depth++; else if (lib[i] === '}' && --depth === 0) break; }
+    return lib.slice(at, i + 1).replace(/^export /, '');
+  };
+  const src = ['isFilterEmpty', 'isRuleEmpty', 'describeRule'].map(grab).join('\n')
+    + '\nreturn { isFilterEmpty, isRuleEmpty, describeRule };';
+  const js = ts.transpileModule(src, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const { isRuleEmpty, describeRule } = new Function(js)();
+  const EMPTY = { kind: 'filter', tags_has: [], tags_not: [], folder: '', ext: '', text: '', from: '', to: '' };
+  const defs = [{ id: 'c', name: 'Confidential' }];
+  check(isRuleEmpty(EMPTY) && isRuleEmpty({ ...EMPTY, text: '   ' }) && isRuleEmpty({ kind: 'list', document_ids: [] }),
+    'the exact rule saved on 10-13 (and a blank name, and an empty list) counts as empty');
+  check(!isRuleEmpty({ ...EMPTY, text: 'VOL-' }) && !isRuleEmpty({ ...EMPTY, tags_has: ['c'] }) && !isRuleEmpty({ kind: 'list', document_ids: ['x'] }),
+    'a name, a tag or one ticked document is not empty');
+  const words = describeRule({ ...EMPTY, text: 'VOL-', tags_has: ['c'], folder: 'Emails' }, defs);
+  check(words === 'name contains "VOL-" · tagged Confidential · folder Emails', 'a filter is said in plain words', words);
+  check(describeRule({ kind: 'list', document_ids: ['a', 'b'] }, defs) === '2 ticked documents'
+    && describeRule(EMPTY, defs) === 'no filter (the whole matter)',
+    'a list and an empty filter are said in plain words');
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASS');
