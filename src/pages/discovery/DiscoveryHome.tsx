@@ -18,6 +18,7 @@ import ProductionFailure from './ProductionFailure';
 import FloatingPanel from './FloatingPanel';
 import { AddDocumentsStep } from './AddDocuments';
 import ReviewTab from './ReviewTab';
+import PrivilegeLogTab from './PrivilegeLogTab';
 
 // Discovery home for a matter: the production ledger. Reached at
 // /app/discovery?matter=<short_code|uuid> — same matter-context convention
@@ -26,11 +27,13 @@ export default function DiscoveryHome() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const matterKey = searchParams.get('matter');
-  // Productions (the ledger) or Review (every document in the matter, R1).
-  const tab = searchParams.get('tab') === 'review' ? 'review' : 'productions';
-  const setTab = (t: 'productions' | 'review') => {
+  // Productions (the ledger), Review (every document in the matter, R1) or
+  // the matter's privilege log (R3).
+  const tabParam = searchParams.get('tab');
+  const tab = tabParam === 'review' ? 'review' : tabParam === 'privlog' ? 'privlog' : 'productions';
+  const setTab = (t: 'productions' | 'review' | 'privlog') => {
     const next = new URLSearchParams(searchParams);
-    if (t === 'review') next.set('tab', 'review'); else next.delete('tab');
+    if (t === 'productions') next.delete('tab'); else next.set('tab', t);
     setSearchParams(next, { replace: true });
   };
 
@@ -212,7 +215,7 @@ export default function DiscoveryHome() {
 
         {matter && (
           <div className="flex items-center gap-1 mb-4 border-b border-white/[0.08]">
-            {(['productions', 'review'] as const).map((t) => (
+            {(['productions', 'review', 'privlog'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -222,16 +225,18 @@ export default function DiscoveryHome() {
                     : 'border-transparent text-white/50 hover:text-white/80'
                 }`}
               >
-                {t === 'productions' ? 'Productions' : 'Review'}
+                {t === 'productions' ? 'Productions' : t === 'review' ? 'Review' : 'Privilege log'}
               </button>
             ))}
             <span className="ml-auto text-[11px] text-white/35 pb-1">
-              {tab === 'review' ? 'Every document in the matter. Tags here stay with the document.' : ''}
+              {tab === 'review' ? 'Every document in the matter. Tags here stay with the document.'
+                : tab === 'privlog' ? 'One entry per document tagged Privileged, used by every production.' : ''}
             </span>
           </div>
         )}
 
         {matter && tab === 'review' && <ReviewTab matterId={matter.id} onProduced={() => { setTab('productions'); void refresh(); }} />}
+        {matter && tab === 'privlog' && <PrivilegeLogTab matterId={matter.id} matterName={matter.name} />}
 
         {tab === 'productions' && (<>
         {loadError && <p className="text-sm text-red-300 mb-3">{loadError}</p>}

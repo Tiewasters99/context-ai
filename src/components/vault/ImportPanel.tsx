@@ -4,6 +4,7 @@ import type { VaultFile } from '@/lib/vault-types';
 import { thumbUrl, isThumbable } from '@/lib/vault-thumbs';
 import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-formats.mjs';
 import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
+import { listVaultReviewChips } from '@/lib/discovery';
 import ContentSearch from './ContentSearch';
 import { isVaultDrag, readVaultDrag, writeVaultDrag, type VaultDragItem } from '@/lib/vault-drag';
 import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
@@ -259,6 +260,23 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   const [categoryMenu, setCategoryMenu] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+
+  // Discovery review tags, shown read-only (spec R3, Q1: tagging stays in
+  // Discovery). Re-read only when the set of listed documents changes, not on
+  // every status poll; chunks of the list go out together.
+  const [reviewChips, setReviewChips] = useState<Map<string, { name: string; color: string }[]>>(new Map());
+  const chipIdsKey = useMemo(
+    () => (matterId ? files.filter((f) => f.matterspace_id && f.storagePath).map((f) => f.id).sort().join(',') : ''),
+    [files, matterId],
+  );
+  useEffect(() => {
+    if (!chipIdsKey) { setReviewChips(new Map()); return; }
+    let cancelled = false;
+    listVaultReviewChips(chipIdsKey.split(','))
+      .then((m) => { if (!cancelled) setReviewChips(m); })
+      .catch(() => { /* chips are a convenience; the list never fails over them */ });
+    return () => { cancelled = true; };
+  }, [chipIdsKey]);
 
   const readDirectory = useCallback(async (entry: FileSystemDirectoryEntry): Promise<File[]> => {
     const files: File[] = [];
@@ -728,6 +746,20 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
         : statusIcon[file.status]}
       <div className="flex-1 min-w-0">
         <p className={`text-[13px] truncate ${canOpen ? 'text-white group-hover:text-[#e8b84a] transition-colors' : 'text-white'}`}>{file.name}</p>
+        {reviewChips.get(file.id) && (
+          <div className="flex flex-wrap gap-1 my-0.5" title="Discovery review tags (change them on the Discovery Review tab)">
+            {reviewChips.get(file.id)!.map((c) => (
+              <span
+                key={c.name}
+                className="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[9px] font-medium"
+                style={{ color: c.color, borderColor: `${c.color}55`, backgroundColor: `${c.color}14` }}
+              >
+                <span className="w-1 h-1 rounded-full" style={{ backgroundColor: c.color }} />
+                {c.name}
+              </span>
+            ))}
+          </div>
+        )}
         <p
           className="text-[10px] text-white/50"
           title={file.status === 'indexed' ? (file.ocrPending ? describeOcrPending(file.ocrPending)?.detail : file.textStatus ? describeTextStatus(file.textStatus).detail : undefined) : undefined}
