@@ -28,13 +28,17 @@ export default function ProducePanel({
   onQueued: (job: ProcessingJob) => void;
 }) {
   // Documents excluded from production: anything tagged with a def whose
-  // behavior is 'privileged' or 'non_responsive'.
+  // behavior is 'privileged' or 'non_responsive', and the attachments of an
+  // email so excluded (the worker withholds the family, lib/discovery/families.mjs).
   const { included, excluded } = useMemo(() => {
-    let ex = 0;
+    const ex = new Set(items
+      .filter((it) => it.tags.some((t) => t.tag_def?.behavior === 'privileged' || t.tag_def?.behavior === 'non_responsive'))
+      .map((it) => it.id));
     for (const it of items) {
-      if (it.tags.some((t) => t.tag_def?.behavior === 'privileged' || t.tag_def?.behavior === 'non_responsive')) ex++;
+      const parent = it.source_metadata?.parent_item_id;
+      if (typeof parent === 'string' && ex.has(parent)) ex.add(it.id);
     }
-    return { included: items.length - ex, excluded: ex };
+    return { included: items.length - ex.size, excluded: ex.size };
   }, [items]);
   const movedStamps = items.filter((it) => it.stamp_position).length;
 

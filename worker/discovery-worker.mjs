@@ -62,8 +62,9 @@ import { crossingRefusal } from '../lib/seal-crossing.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { makeDescribeHook } from '../lib/describe-image-anthropic.mjs';
 import {
-  sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
+  sha256, md5, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
 } from '../lib/discovery/util.mjs';
+import { withholdFamilies, familyRanges, privilegeEntriesWithFamilies } from '../lib/discovery/families.mjs';
 import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
   parseDat, datLookupByFilename, emitDat, emitOpt,
@@ -575,11 +576,10 @@ async function intakeZip(job) {
         .sort((a, b) => a.name.localeCompare(b.name));
 
       for (const [n, e] of contentEntries.entries()) {
-        fileIndex += 1;
         await progress(job, ((n + 1) / contentEntries.length) * 100, e.name);
         const buf = await zip.entryData(e.raw);
-        await intakeOneFile(prod, job, {
-          buf, originalPath: e.name, sortOrder: fileIndex, datLookup,
+        fileIndex += await intakeOneFile(prod, job, {
+          buf, originalPath: e.name, sortOrder: fileIndex + 1, datLookup,
         });
       }
       await zip.close();
@@ -597,14 +597,14 @@ async function intakeFiles(job) {
   if (paths.length === 0) throw new Error('intake_files: payload.storage_paths is empty');
   assertJobPaths(job, prod, paths, 'intake_files');
   await setProductionStatus(prod.id, 'processing');
-  const base = await nextSortBase(prod.id);
+  let next = await nextSortBase(prod.id);
 
   for (const [i, storagePath] of paths.entries()) {
     const filename = path.basename(storagePath);
     await progress(job, ((i + 1) / paths.length) * 100, filename);
     const buf = await downloadFromStorage(storagePath);
-    await intakeOneFile(prod, job, {
-      buf, originalPath: filename, sortOrder: base + i + 1, datLookup: new Map(),
+    next += await intakeOneFile(prod, job, {
+      buf, originalPath: filename, sortOrder: next + 1, datLookup: new Map(),
     });
   }
   await setProductionStatus(prod.id, 'review');
@@ -658,14 +658,17 @@ async function intakeDocuments(job) {
   }
 
   await setProductionStatus(prod.id, 'processing');
-  const base = await nextSortBase(prod.id);
+  let next = await nextSortBase(prod.id);
 
   for (const [i, id] of ids.entries()) {
     const doc = docs.get(id);
     const filename = vaultFilename(doc, id);
     const originalPath = `${id}/${filename}`;
     await progress(job, ((i + 1) / ids.length) * 100, filename);
-    const fail = (why) => recordIntakeFailure(prod, { filename, originalPath, sortOrder: base + i + 1, documentId: doc ? id : null, error: why });
+    const fail = async (why) => {
+      await recordIntakeFailure(prod, { filename, originalPath, sortOrder: next + 1, documentId: doc ? id : null, error: why });
+      next += 1;
+    };
     if (!doc) { await fail('The document was deleted from the matter before it could be added.'); continue; }
     if (!doc.storage_path) { await fail('The document has no stored file to produce.'); continue; }
     // 097: the worker reads with the service role; a row pointing at another
@@ -682,8 +685,8 @@ async function intakeDocuments(job) {
       await fail(`Could not read the stored file: ${err.message}`);
       continue;
     }
-    await intakeOneFile(prod, job, {
-      buf, originalPath, sortOrder: base + i + 1, datLookup: new Map(), documentId: id,
+    next += await intakeOneFile(prod, job, {
+      buf, originalPath, sortOrder: next + 1, datLookup: new Map(), documentId: id,
     });
   }
   await setProductionStatus(prod.id, 'review');
@@ -749,11 +752,12 @@ async function intakeFolder(job) {
   }
 
   const content = files.filter((f) => !/\.(dat|opt|lfp)$/i.test(f.rel));
+  let next = 0;
   for (const [i, f] of content.entries()) {
     await progress(job, ((i + 1) / content.length) * 100, f.rel);
     const buf = await fs.readFile(f.full);
-    await intakeOneFile(prod, job, {
-      buf, originalPath: f.rel, sortOrder: i + 1, datLookup,
+    next += await intakeOneFile(prod, job, {
+      buf, originalPath: f.rel, sortOrder: next + 1, datLookup,
     });
   }
   await setProductionStatus(prod.id, 'review');
@@ -765,10 +769,29 @@ async function intakeFolder(job) {
  * into the matter's searchable corpus. `documentId` is set when the file IS
  * a document already in the matter (intake_documents): the row links to it
  * and nothing is ingested a second time.
+ *
+ * An email's attachments are taken in as their own items right behind it
+ * (lib/discovery/families.mjs), at sortOrder+1, +2, … `parent` is set on
+ * those calls. Returns how many sort positions the file used (1 + its
+ * attachments), the same on every run of the same bytes, so a retried job
+ * puts the next file where the first attempt did.
  */
-async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLookup, documentId = null }) {
+async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLookup, documentId = null, parent = null }) {
   const filename = path.basename(originalPath);
   const hash = sha256(buf);
+  const attachments = parent ? [] : await emailAttachmentsOf(buf, filename);
+  const slots = 1 + attachments.length;
+  const takeInAttachments = async (parentItem) => {
+    for (const [k, a] of attachments.entries()) {
+      await intakeOneFile(prod, job, {
+        buf: a.bytes,
+        originalPath: `${originalPath}/attachments/${a.filename}`,
+        sortOrder: sortOrder + k + 1,
+        datLookup,
+        parent: { id: parentItem.id, filename, index: k + 1 },
+      });
+    }
+  };
 
   // F6 (2026-09-20 re-verification). idx_production_items_sha
   // (matterspace_id, sha256) has existed since 030:122 and was never once
@@ -780,7 +803,7 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   // different (and wrong) decision.
   const { data: sameBytes, error: dupLookupErr } = await supabase.from('production_items')
     .select('id, original_path, original_filename, sort_order, status, kind, page_count, '
-      + 'native_storage_path, display_storage_path, duplicate_of_item_id')
+      + 'native_storage_path, display_storage_path, duplicate_of_item_id, source_metadata')
     .eq('matterspace_id', prod.matterspace_id)
     .eq('sha256', hash)
     .eq('production_id', prod.id)
@@ -804,7 +827,10 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   const already = twins.find((t) => (t.original_path ?? t.original_filename) === originalPath);
   if (already && already.status !== 'pending') {
     log(`  ${filename}: already intaken in this production (${already.status}) — skipping`);
-    return;
+    // An attempt that died between an email and its attachments: each
+    // attachment skips or resumes itself in turn.
+    if (already.status === 'ready' && already.source_metadata?.family) await takeInAttachments(already);
+    return slots;
   }
   const resumeId = already?.id ?? null;
   if (resumeId) log(`  ${filename}: resuming the row a previous attempt left mid-flight`);
@@ -837,8 +863,13 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   // zero-byte file in existence shares one sha256, so de-duplicating them
   // would collapse a blank .pdf and a blank .txt into the same document. They
   // each get their own row and their own slip sheet.
-  const first = buf.length === 0 ? null
-    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
+  //
+  // Nor is an attachment: a family is produced whole, so the same PDF attached
+  // to two emails is produced twice, once in each family, and a loose file is
+  // never recorded as a duplicate of an attachment (whose email may be withheld).
+  const first = buf.length === 0 || parent ? null
+    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id
+      && !t.source_metadata?.parent_item_id) ?? null;
   if (first) {
     // The ZIP really did contain this file twice, and that is part of the
     // record, so the row stays. It points at the first instance's stored
@@ -855,7 +886,8 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
       error: null,
     });
     log(`  ${filename}: byte-identical to ${first.original_filename} — produced once, listed as a duplicate`);
-    return;
+    // Its attachments were taken in with the first copy.
+    return slots;
   }
 
   let norm;
@@ -866,12 +898,19 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
       kind: 'native', duplicate_of_item_id: null,
       status: 'error', error: `normalize: ${err.message}`,
     });
-    return;
+    return slots;
   }
 
   // Attach load-file metadata when the production's DAT references this file.
   const datRec = datLookup.get(filename.toLowerCase());
-  const metadata = { ...norm.metadata, ...(datRec ?? {}), ...(documentId ? { vault_document_id: documentId } : {}) };
+  const metadata = {
+    ...norm.metadata,
+    ...(datRec ?? {}),
+    ...(documentId ? { vault_document_id: documentId } : {}),
+    md5: md5(buf),
+    ...(attachments.length ? { family: true, attachment_count: attachments.length } : {}),
+    ...(parent ? { parent_item_id: parent.id, attachment_of: parent.filename, attachment_index: parent.index } : {}),
+  };
 
   const item = await writeItem({
     kind: norm.kind,
@@ -919,6 +958,25 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
     await supabase.from('production_items')
       .update({ status: 'error', error: err.message })
       .eq('id', item.id);
+    // An email that could not be stored is an exception; its attachments are
+    // not produced loose without it.
+    return slots;
+  }
+  await takeInAttachments(item);
+  return slots;
+}
+
+// The attachments of a top-level email, as lib/eml-attachments.mjs reads them
+// for the corpus (inline images skipped). An email whose attachments cannot be
+// read is still produced, as one document; the reason is logged.
+async function emailAttachmentsOf(buf, filename) {
+  if (extOf(filename) !== '.eml' || buf.length === 0) return [];
+  try {
+    const { extractEmlAttachments } = await import('../lib/eml-attachments.mjs');
+    return (await extractEmlAttachments(buf)).attachments;
+  } catch (err) {
+    log(`  ${filename}: attachments not read (${err.message}) — produced as one document`);
+    return [];
   }
 }
 
@@ -1416,13 +1474,16 @@ async function partitionItems(prod) {
     if (c) confidentialityByItem.set(id, c);
   }
 
+  // A withheld email takes its attachments with it (lib/discovery/families.mjs).
+  const family = withholdFamilies(items, excludedIds);
+
   const included = [];
   const withheld = [];
   const duplicates = [];
   const exceptions = [];
   for (const it of items) {
     if (it.status !== 'ready') { exceptions.push(it); continue; }
-    if (excludedIds.has(it.id)) { withheld.push(it); continue; }
+    if (family.excludedIds.has(it.id)) { withheld.push(it); continue; }
     if (it.duplicate_of_item_id) { duplicates.push(it); continue; }
     included.push(it);
   }
@@ -1432,6 +1493,9 @@ async function partitionItems(prod) {
     byId: new Map(items.map((i) => [i.id, i])),
     included,
     excluded: withheld,
+    // Attachments withheld only because their email was (and still ready, so
+    // actually in the withheld bucket).
+    withheldWithParent: family.withParent.filter((w) => w.item.status === 'ready'),
     duplicates,
     exceptions,
     endorsementsByItem,
@@ -1456,7 +1520,7 @@ async function packageProduction(job) {
   }
 
   const {
-    items, byId, included, excluded, duplicates, exceptions, confidentialityByItem,
+    items, byId, included, excluded, withheldWithParent, duplicates, exceptions, confidentialityByItem,
   } = await partitionItems(prod);
   const produced = included.filter((i) => i.bates_first);
   if (produced.length === 0) throw new Error('Nothing stamped to package');
@@ -1526,6 +1590,7 @@ async function packageProduction(job) {
   const datRows = [];
   const textless = [];
   let totalPages = 0;
+  const families = familyRanges(produced);
   for (const [i, item] of produced.entries()) {
     await progress(job, (i / produced.length) * 80, `Packaging ${item.bates_first}`);
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
@@ -1541,7 +1606,7 @@ async function packageProduction(job) {
     });
     totalPages += doc.pages;
     if (!doc.textChars) textless.push(item.bates_first);
-    datRows.push(doc.datRow);
+    datRows.push({ ...doc.datRow, ...(families.get(item.id) ?? {}) });
   }
 
   if (totalPages !== producedPages) {
@@ -1578,13 +1643,18 @@ async function packageProduction(job) {
     dateStr: new Date().toISOString().slice(0, 10),
     textless,
     imageFormat,
+    withheldWithParent: withheldWithParent.map((w) => ({
+      filename: w.item.original_filename, parentFilename: byId.get(w.parentId)?.original_filename ?? '',
+    })),
   }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
 
   if (job.payload?.include_privilege_log) {
     const { data: entries } = await supabase.from('privilege_log_entries')
       .select('*').eq('production_id', prod.id).order('doc_date', { ascending: true, nullsFirst: false });
     if (entries?.length) {
-      const privLog = await makePrivilegeLogPdf({ matterName, productionName: prod.name, entries });
+      const privLog = await makePrivilegeLogPdf({
+        matterName, productionName: prod.name, entries: privilegeEntriesWithFamilies(entries, withheldWithParent),
+      });
       archive.append(privLog, { name: `${volumeName}/PrivilegeLog.pdf` });
     }
   }
