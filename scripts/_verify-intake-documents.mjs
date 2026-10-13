@@ -252,9 +252,11 @@ console.log('\n--- E. adding documents later (Review Room → Add documents) ---
   const body = (name, next) => w.slice(w.indexOf(`async function ${name}(job)`), w.indexOf(next));
   check(/let fileIndex = await nextSortBase\(prod\.id\);/.test(body('intakeZip', 'async function intakeFiles(job)')),
     'a ZIP added to a production that already has documents is numbered after them');
-  check(/const base = await nextSortBase\(prod\.id\);[\s\S]*sortOrder: base \+ i \+ 1/.test(body('intakeFiles', 'async function nextSortBase(')),
+  // A running counter, advanced by the positions each file used (an email's
+  // attachments follow it, lib/discovery/families.mjs).
+  check(/let next = await nextSortBase\(prod\.id\);[\s\S]*next \+= await intakeOneFile\([\s\S]*sortOrder: next \+ 1/.test(body('intakeFiles', 'async function nextSortBase(')),
     'uploaded files added later are numbered after the existing documents');
-  check(/const base = await nextSortBase\(prod\.id\);[\s\S]*sortOrder: base \+ i \+ 1/.test(body('intakeDocuments', 'function vaultFilename(')),
+  check(/let next = await nextSortBase\(prod\.id\);[\s\S]*next \+= await intakeOneFile\([\s\S]*sortOrder: next \+ 1/.test(body('intakeDocuments', 'function vaultFilename(')),
     'documents added later from the matter are numbered after the existing documents');
   const fn = w.slice(w.indexOf('async function nextSortBase('), w.indexOf('async function intakeDocuments(job)'));
   check(/\.order\('sort_order', \{ ascending: false \}\)\.limit\(1\)/.test(fn) && /if \(error\) throw/.test(fn),

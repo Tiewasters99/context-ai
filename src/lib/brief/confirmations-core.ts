@@ -46,40 +46,162 @@ export function latestFor(rows: CiteConfirmation[], raw: string, context: string
 
 const flat = (s: string) => s.replace(/\s+/g, ' ').trim();
 
+/**
+ * Text as the carry compares it: whitespace collapsed, curly quotes made
+ * straight, every dash a hyphen, no-break spaces plain. Each replacement is
+ * one character for one, so an index found in the result is an index in the
+ * (collapsed) original. Word swaps "--" and "–" between drafts; a reading is
+ * of the words, not of the typography (Bushell, 10-13).
+ */
+export function matchText(s: string): string {
+  return flat(s)
+    .replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, '-')
+    .replace(/[\u00A0\u2007\u202F]/g, ' ');
+}
+
+/** A numbered paragraph's own number ("90. ", "¶ 90. ") at its start: renumbering is not rewording. */
+const LEAD_NUMBER = /^(?:\u00B6\s?)?\d{1,4}\.\s/;
+const sentenceKey = (s: string) => matchText(s).replace(LEAD_NUMBER, '');
+
+type PmNode = { type: string; text?: string; content?: PmNode[] };
+
+/**
+ * Every paragraph of a brief the way the desk names a cite's sentence when it
+ * is pressed (BriefDesk paragraphContextAt): the text of one paragraph,
+ * heading or footnote, a footnote's words left out of the paragraph it sits
+ * in, whitespace collapsed. Carried rows are written in these words so the
+ * cite turns green in the new version.
+ */
+export function briefParagraphs(doc: unknown): string[] {
+  const out: string[] = [];
+  const textOf = (n: PmNode): string => (n.type === 'text' ? n.text ?? '' : (n.content ?? []).map(textOf).join(''));
+  const walk = (n: PmNode) => {
+    const kids = n.content ?? [];
+    if (n.type === 'paragraph' || n.type === 'heading' || kids.some((k) => k.type === 'text')) {
+      const t = flat(kids.filter((k) => k.type !== 'footnote').map(textOf).join(''));
+      if (t) out.push(t);
+    }
+    for (const k of kids) if (k.type !== 'text') walk(k);
+  };
+  if (doc && typeof doc === 'object') walk(doc as PmNode);
+  return out;
+}
+
+/** A reading moved onto the new version, in the new version's words. */
+export interface CarriedReading {
+  row: CiteConfirmation;
+  /** The cite as the new version spells it. */
+  cite_raw: string;
+  /** The new version's paragraph it sits in ('' for an old row logged without one). */
+  context: string;
+  /** How the new paragraph differs, for the note: nothing, its number, or quote marks and dashes. */
+  differs: 'none' | 'number' | 'typography';
+}
+
+/** A reading whose words are in the new version but whose sentence was reworded. */
+export interface ChangedReading {
+  row: CiteConfirmation;
+  /** The new paragraph most like the old one, and the cite as it is spelled there. */
+  paragraph: string;
+  cite_raw: string;
+}
+
 export interface CarryPlan {
-  /** Same words, same sentence in the new text: carried, as a new row that says so. */
-  carry: CiteConfirmation[];
-  /** The cite's words are in the new text but its sentence changed: read again. */
-  changed: CiteConfirmation[];
-  /** The cite is no longer in the new text. */
+  /** Same words, same sentence in the new version: carried, as a new row that says so. */
+  carry: CarriedReading[];
+  /** The cite's words are in the new version but its sentence was reworded: for the lawyer to look at. */
+  changed: ChangedReading[];
+  /** The cite is no longer in the new version. */
   gone: CiteConfirmation[];
+  /** Problems nobody answered whose sentence did not survive: they go across open, to be resolved with a note. */
+  openFlags: CiteConfirmation[];
+  /** Readings the new version already has: left alone. */
+  already: number;
+}
+
+const wordSet = (s: string) => new Set(s.toLowerCase().match(/[a-z0-9§¶]+/g) ?? []);
+function likeness(a: string, b: string): number {
+  const x = wordSet(a), y = wordSet(b);
+  let n = 0;
+  for (const w of x) if (y.has(w)) n++;
+  return n / Math.max(1, x.size, y.size);
 }
 
 /**
- * Which of an earlier brief's latest readings hold for a new text (v8 → v9,
+ * Which of an earlier version's latest readings hold for a new one (v8 → v9,
  * Eden 09-28: "a cite green in v.8 should stay green in v.9"). A reading is
  * of WORDS IN A SENTENCE, so it carries only when both appear unchanged; a
- * changed sentence can change the proposition, so that cite is read again.
- * Deterministic: text matching on collapsed whitespace, nothing else.
+ * reworded sentence can change the proposition, so that cite is listed for a
+ * fresh look. "Unchanged" ignores the paragraph's own number, whitespace,
+ * quote marks and dashes, and nothing else (10-13: 40 of Bushell's readings
+ * failed on those alone). Readings already on the new version are skipped,
+ * so running it twice adds nothing. A problem nobody answered always goes
+ * across, open.
+ *
+ * `newText` is the new version's paragraphs (briefParagraphs); a single
+ * string is taken as one paragraph.
  */
-export function carryPlan(oldRows: CiteConfirmation[], newText: string): CarryPlan {
-  const text = flat(newText);
-  const plan: CarryPlan = { carry: [], changed: [], gone: [] };
-  // one reading per occurrence, on collapsed whitespace, the newest
+export function carryPlan(oldRows: CiteConfirmation[], newText: string | string[], targetRows: CiteConfirmation[] = []): CarryPlan {
+  const paras = (typeof newText === 'string' ? [newText] : newText).map(flat).filter(Boolean);
+  const norm = paras.map(matchText);
+  const keys = paras.map(sentenceKey);
+  const plan: CarryPlan = { carry: [], changed: [], gone: [], openFlags: [], already: 0 };
+  const have = new Set(latestByCite(targetRows).map((r) => `${matchText(r.cite_raw)}\u0000${sentenceKey(r.context)}`));
+
+  // one reading per occurrence, the newest
   const newest = new Map<string, CiteConfirmation>();
   for (const row of latestByCite(oldRows)) {
-    const k = `${flat(row.cite_raw)}\u0000${flat(row.context)}`;
+    const k = `${matchText(row.cite_raw)}\u0000${sentenceKey(row.context)}`;
     const prev = newest.get(k);
     if (!prev || row.created_at > prev.created_at) newest.set(k, row);
   }
   for (const row of newest.values()) {
-    const raw = flat(row.cite_raw);
-    if (!raw || !text.includes(raw)) { plan.gone.push(row); continue; }
-    const ctx = flat(row.context);
-    if (ctx && text.includes(ctx)) plan.carry.push(row);
-    else if (!ctx) plan.carry.push(row);           // logged without a sentence (an older row): the words are enough
-    else plan.changed.push(row);
+    const raw = matchText(row.cite_raw);
+    const open = row.status === 'problem' && openProblemForWords(oldRows, row.cite_raw)?.id === row.id;
+    // a flag answered by a later reading of the same words elsewhere is not carried red
+    if (row.status === 'problem' && !open) continue;
+    if (!raw || !norm.some((p) => p.includes(raw))) {
+      plan.gone.push(row);
+      if (open) plan.openFlags.push(row);
+      continue;
+    }
+    const ctx = sentenceKey(row.context);
+    // the same sentence in the new version, still with the cite (an old row logged without a sentence: the words are enough)
+    // (a row logged with one sentence of a longer paragraph: that sentence, unchanged, in a paragraph with the cite)
+    let same = ctx ? keys.findIndex((k, i) => k === ctx && norm[i].includes(raw)) : norm.findIndex((p) => p.includes(raw));
+    if (same < 0 && ctx) same = keys.findIndex((k, i) => k.includes(ctx) && norm[i].includes(raw));
+    if (same >= 0) {
+      const p = paras[same];
+      const at = norm[same].indexOf(raw);
+      const k = `${raw}\u0000${ctx ? keys[same] : ''}`;
+      if (have.has(k)) { plan.already++; continue; }
+      have.add(k);
+      plan.carry.push({
+        row,
+        cite_raw: p.slice(at, at + raw.length),
+        context: ctx ? p : '',
+        differs: !ctx || flat(row.context) === p ? 'none' : matchText(row.context) === norm[same] ? 'typography' : 'number',
+      });
+      continue;
+    }
+    // reworded: the paragraph with the cite most like the old sentence
+    let best = -1;
+    let score = -1;
+    norm.forEach((p, i) => {
+      if (!p.includes(raw)) return;
+      const s = likeness(ctx, keys[i]);
+      if (s > score) { score = s; best = i; }
+    });
+    const at = norm[best].indexOf(raw);
+    if (have.has(`${raw}\u0000${keys[best]}`)) plan.already++;
+    else plan.changed.push({ row, paragraph: paras[best], cite_raw: paras[best].slice(at, at + raw.length) });
+    if (open) plan.openFlags.push(row);
   }
+  // a flag already carried (or answered) on the new version does not go twice
+  const flagged = new Set(targetRows.map((r) => `${matchText(r.cite_raw)}\u0000${sentenceKey(r.context)}`));
+  plan.openFlags = plan.openFlags.filter((r) => !flagged.has(`${matchText(r.cite_raw)}\u0000${sentenceKey(r.context)}`));
   return plan;
 }
 
@@ -121,11 +243,38 @@ export function openProblems(rows: CiteConfirmation[], briefText: string): { row
 /** Longest note the log takes (migration 103: char_length(note) <= 400). */
 export const NOTE_MAX = 400;
 
-/** The note a carried row carries: where it came from, who read it, when. */
-export function carryNote(row: CiteConfirmation, fromTitle: string): string {
-  const when = new Date(row.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const base = `carried from “${fromTitle}” — ${row.status === 'confirmed' ? 'confirmed' : 'problem noted'} by ${row.initials} ${when}; same words, same sentence`;
+const stamp = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+/** The note a carried row carries: where it came from, who read it, when, and what (if anything) differs. */
+export function carryNote(row: CiteConfirmation, fromTitle: string, differs: CarriedReading['differs'] = 'none'): string {
+  const same = differs === 'number' ? 'same words, same sentence; paragraph renumbered'
+    : differs === 'typography' ? 'same words, same sentence; quote marks or dashes differ'
+    : 'same words, same sentence';
+  const base = `carried from “${fromTitle}” — ${row.status === 'confirmed' ? 'confirmed' : 'problem noted'} by ${row.initials} ${stamp(row.created_at)}; ${same}`;
   return row.note ? `${base}. ${row.note}` : base;
+}
+
+/** The note on a problem carried across open: the flag, who raised it, and that nobody has answered it. */
+export function openFlagNote(row: CiteConfirmation, fromTitle: string): string {
+  return `carried open from “${fromTitle}” — problem noted by ${row.initials} ${stamp(row.created_at)}, not yet resolved${row.note ? `. ${row.note}` : ''}`;
+}
+
+/**
+ * The note on a reading recorded after its sentence was reworded: the earlier
+ * reading, and that the change was reviewed against it. The row's own
+ * initials and time say who reviewed it and when (Eden, 10-13: the record
+ * must show that he reviewed it, not that it was done for him).
+ */
+export function rewordedNote(row: CiteConfirmation, fromTitle: string): string {
+  const where = row.authority_title || row.authority_page ? ` (${whereRead(row)})` : '';
+  return `read on “${fromTitle}” by ${row.initials} ${stamp(row.created_at)}${where}; the sentence was reworded since, and the change was reviewed against that reading`;
+}
+
+/** A confirmed row answers a problem when an earlier row on the same words was one (the Log labels its note "Resolved"). */
+export function answersProblem(rows: CiteConfirmation[], row: CiteConfirmation): boolean {
+  if (row.status !== 'confirmed' || /^(carried |read on “)/.test(row.note)) return false;
+  const w = matchText(row.cite_raw);
+  return rows.some((r) => r.status === 'problem' && r.created_at < row.created_at && matchText(r.cite_raw) === w);
 }
 
 /** Latest status per occurrence (cite, sentence, place): what the brief's highlights and the count show. */

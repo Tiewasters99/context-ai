@@ -4,7 +4,10 @@
 // The pure rules live in confirmations-core.ts (harness-loadable).
 
 import { supabase } from '@/lib/supabase';
-import { carryPlan, carryNote, type CarryPlan, type CiteConfirmation, type ConfirmationStatus } from './confirmations-core';
+import {
+  carryPlan, carryNote, openFlagNote, rewordedNote, NOTE_MAX,
+  type CarryPlan, type ChangedReading, type CiteConfirmation, type ConfirmationStatus,
+} from './confirmations-core';
 
 export * from './confirmations-core';
 
@@ -67,37 +70,80 @@ export async function addConfirmation(row: {
   return data as CiteConfirmation;
 }
 
+async function insertRows(rows: Omit<CiteConfirmation, 'id' | 'created_at'>[]): Promise<number> {
+  let n = 0;
+  for (let i = 0; i < rows.length; i += 50) {
+    const batch = rows.slice(i, i + 50);
+    const { error } = await supabase.from('cite_confirmations').insert(batch);
+    if (error) throw new Error(error.message);
+    n += batch.length;
+  }
+  return n;
+}
+
 /**
- * Carry an earlier brief's readings onto this one: one new row per reading
- * whose words and sentence are unchanged in `newText`, each saying where it
- * came from and who read it. Returns the plan (carried, changed, gone).
+ * Carry an earlier version's readings onto this one: one new row per reading
+ * whose words and sentence are unchanged in the new version (`paragraphs`,
+ * from briefParagraphs), written in the new version's words and saying where
+ * it came from and who read it; then every problem nobody answered, carried
+ * open. Readings already here are skipped. Returns the plan and the counts.
  */
-export async function carryConfirmations(fromDocumentId: string, fromTitle: string, toDocumentId: string, newText: string): Promise<CarryPlan & { inserted: number }> {
+export async function carryConfirmations(fromDocumentId: string, fromTitle: string, toDocumentId: string, paragraphs: string[]): Promise<CarryPlan & { inserted: number; flagsInserted: number }> {
   const { data: u } = await supabase.auth.getUser();
   const me = u.user?.id;
   if (!me) throw new Error('You are signed out.');
-  const old = await loadConfirmations(fromDocumentId);
-  const plan = carryPlan(old, newText);
-  let inserted = 0;
-  for (let i = 0; i < plan.carry.length; i += 50) {
-    const batch = plan.carry.slice(i, i + 50).map((row) => ({
-      document_id: toDocumentId,
-      cite_raw: row.cite_raw,
-      context: row.context,
-      pm_from: null,
-      authority_document_id: row.authority_document_id,
-      authority_title: row.authority_title,
-      authority_page: row.authority_page,
-      status: row.status,
-      note: carryNote(row, fromTitle).slice(0, 400),
-      initials: row.initials,
-      user_id: me,
-    }));
-    const { error } = await supabase.from('cite_confirmations').insert(batch);
-    if (error) throw new Error(error.message);
-    inserted += batch.length;
-  }
-  return { ...plan, inserted };
+  const [old, here] = await Promise.all([loadConfirmations(fromDocumentId), loadConfirmations(toDocumentId)]);
+  const plan = carryPlan(old, paragraphs, here);
+  const inserted = await insertRows(plan.carry.map(({ row, cite_raw, context, differs }) => ({
+    document_id: toDocumentId,
+    cite_raw,
+    context: context.slice(0, 2000),
+    pm_from: null,
+    authority_document_id: row.authority_document_id,
+    authority_title: row.authority_title,
+    authority_page: row.authority_page,
+    status: row.status,
+    note: carryNote(row, fromTitle, differs).slice(0, NOTE_MAX),
+    initials: row.initials,
+    user_id: me,
+  })));
+  // Open flags go in a second insert, so they are later than anything above
+  // and nothing carried green can be taken for their answer.
+  const flagsInserted = await insertRows(plan.openFlags.map((row) => ({
+    document_id: toDocumentId,
+    cite_raw: row.cite_raw,
+    context: row.context,
+    pm_from: null,
+    authority_document_id: row.authority_document_id,
+    authority_title: row.authority_title,
+    authority_page: row.authority_page,
+    status: 'problem' as const,
+    note: openFlagNote(row, fromTitle).slice(0, NOTE_MAX),
+    initials: row.initials,
+    user_id: me,
+  })));
+  return { ...plan, inserted, flagsInserted };
+}
+
+/**
+ * Record the person's own review of a reading whose sentence was reworded
+ * since it was read: one confirmed row, in the new sentence, signed with
+ * THEIR initials and the time they pressed, its note naming the earlier
+ * reading. Only ever one reading per press (Eden, 10-13).
+ */
+export async function recordRewordedReview(toDocumentId: string, c: ChangedReading, fromTitle: string, initials: string, pmFrom: number | null): Promise<CiteConfirmation> {
+  return addConfirmation({
+    document_id: toDocumentId,
+    cite_raw: c.cite_raw,
+    context: c.paragraph,
+    pm_from: pmFrom,
+    authority_document_id: c.row.authority_document_id,
+    authority_title: c.row.authority_title,
+    authority_page: c.row.authority_page,
+    status: 'confirmed',
+    note: rewordedNote(c.row, fromTitle).slice(0, NOTE_MAX),
+    initials,
+  });
 }
 
 const INITIALS_KEY = 'cs.brief.initials';

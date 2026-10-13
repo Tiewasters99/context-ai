@@ -14,6 +14,7 @@ import ListView from '@/pages/ListView';
 import TableView from '@/pages/TableView';
 import CalendarView from '@/pages/CalendarView';
 import NotFound from '@/pages/NotFound';
+import SharedProduction from '@/pages/SharedProduction';
 import Vault from '@/pages/Vault';
 import DocumentBuilder from '@/pages/DocumentBuilder';
 import ProductivitySuite from '@/pages/ProductivitySuite';
@@ -164,6 +165,8 @@ export default function App() {
             {/* Public: a client on a phone, and the privacy page the GPT builder requires. */}
             <Route path="/gpt-connect" element={<GptConnect />} />
             <Route path="/privacy" element={<Privacy />} />
+            {/* Public: a production sent by link (migration 115); the link is the key. */}
+            <Route path="/p/:token" element={<SharedProduction />} />
             <Route
               path="/app"
               element={

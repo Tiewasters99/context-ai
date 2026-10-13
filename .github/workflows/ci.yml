@@ -107,6 +107,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-production-designations.mjs
 
+      - name: Discovery — email families (BEGATTACH/ENDATTACH, withheld with the email) and MD5 on the load file
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-families.mjs
+
       - name: Discovery — review tags on matter documents (migration 113, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-review-tags.mjs
@@ -118,6 +122,14 @@ jobs:
       - name: Discovery — the matter's privilege log, one entry per document (migration 116, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-privilege-entries.mjs
+
+      - name: Discovery — production links, the table and its rules (migration 115, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-share-links-115.mjs
+
+      - name: Discovery — production links, making and opening them (api/production-share)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-share-links.mjs
 
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}

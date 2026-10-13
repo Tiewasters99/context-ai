@@ -46,7 +46,7 @@ import { briefExtensions, type FlagKind } from '@/lib/brief/schema';
 import type { BriefDoc } from '@/lib/brief/md';
 import {
   loadBrief, saveBody, takeSnapshot, listSnapshots, loadSnapshot, restoreSnapshot,
-  importBriefFromDocument, exportBrief, listRecentBriefs, type BriefMeta, type SnapshotRow, type ImportResult, type RecentBrief,
+  importBriefFromDocument, exportBrief, listVersionCandidates, type BriefMeta, type SnapshotRow, type ImportResult, type RecentBrief,
 } from '@/lib/brief/draft-store';
 import {
   applyRunMarks, citeSpans, stalePairsOf, tableRows, type TableRow, type DeskEntry, type StoredResolution,
@@ -67,9 +67,10 @@ const storedOf = (r: Resolution): StoredResolution => ({
     : null,
 });
 import {
-  loadConfirmations, addConfirmation, carryConfirmations, latestFor, latestByCite, openProblemForWords, rememberedInitials, rememberInitials, guessInitials,
-  confirmationsCsv, whereRead, openProblems, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus,
+  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemForWords, rememberedInitials, rememberInitials, guessInitials,
+  confirmationsCsv, whereRead, openProblems, answersProblem, briefParagraphs, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus, type ChangedReading,
 } from '@/lib/brief/confirmations';
+import { diffWordsWithSpace } from 'diff';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
 import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
@@ -89,7 +90,7 @@ import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
 import { SaveAsVersionCard, CompareCard } from './VersionCards';
-import { nextVersionTitle, nextVersionLabel } from '@/lib/brief/versions';
+import { nextVersionTitle, nextVersionLabel, versionNumber } from '@/lib/brief/versions';
 import { noteNumberOf } from '@/lib/brief/note-pin';
 import { useBriefEditLease, type LeaseState } from '@/lib/brief/edit-lease';
 import AddCaseCard from './AddCaseCard';
@@ -348,19 +349,68 @@ function DeskEditor(p: DeskProps) {
   const [showCompare, setShowCompare] = useState(false);
   const goTo = useNavigate();
   // Earlier briefs a reading can be carried from (the Log's "Carry the check
-  // from an earlier version"): every other brief the person has, newest first.
+  // from an earlier version"): the other briefs in THIS matter only, highest
+  // version first (10-13: the list showed every matter's briefs, and another
+  // client's titles ended up in a screenshot).
   const [carryCandidates, setCarryCandidates] = useState<RecentBrief[]>([]);
   useEffect(() => {
-    if (!showLog) return;
     let live = true;
-    listRecentBriefs(40).then((bs) => { if (live) setCarryCandidates(bs.filter((b) => b.id !== meta.id)); }).catch(() => {});
+    listVersionCandidates(meta).then((bs) => {
+      if (!live) return;
+      const n = (b: RecentBrief) => versionNumber(b.title) ?? -1;
+      setCarryCandidates(bs.filter((b) => b.matterspace_id === meta.matterspace_id)
+        .sort((a, b) => n(b) - n(a) || b.updated_at.localeCompare(a.updated_at)));
+    }).catch(() => {});
     return () => { live = false; };
-  }, [showLog, meta.id]);
+  }, [meta]);
+  // A reworded sentence's earlier reading, listed for the person to review one
+  // at a time (10-13); filled by a Carry, emptied as each is recorded.
+  const [review, setReview] = useState<{ fromTitle: string; items: ChangedReading[] } | null>(null);
+  const [confsLoaded, setConfsLoaded] = useState(false);
+  // A brief with an empty log whose matter holds an earlier version with one
+  // (a Word draft brought back in; a version saved before Save as carried the
+  // log): offer the carry instead of leaving the readings behind (10-13:
+  // Bushell's v18 log never reached the filed petition).
+  const offerKey = `cs.brief.carry-offer.dismissed.${meta.id}`;
+  const [carryOffer, setCarryOffer] = useState<{ id: string; title: string; n: number } | null>(null);
+  useEffect(() => {
+    setCarryOffer(null);
+    if (!confsLoaded || confs.length || !carryCandidates.length) return;
+    try { if (localStorage.getItem(offerKey)) return; } catch { /* private window */ }
+    let live = true;
+    (async () => {
+      for (const c of carryCandidates.slice(0, 8)) {
+        const { count } = await supabase.from('cite_confirmations').select('id', { count: 'exact', head: true }).eq('document_id', c.id);
+        if (count) { if (live) setCarryOffer({ id: c.id, title: c.title, n: count }); return; }
+      }
+    })().catch(() => {});
+    return () => { live = false; };
+  }, [confsLoaded, confs.length, carryCandidates, offerKey]);
+  const dismissCarryOffer = () => {
+    setCarryOffer(null);
+    try { localStorage.setItem(offerKey, '1'); } catch { /* private window */ }
+  };
+  /** Carry an earlier version's log onto this brief; the reworded ones go to the review list. */
+  const runCarry = async (fromId: string, fromTitle: string): Promise<string> => {
+    const doc = editorRef.current?.getJSON();
+    if (!doc) throw new Error('The brief is not loaded yet.');
+    const r = await carryConfirmations(fromId, fromTitle, meta.id, briefParagraphs(doc));
+    setConfs(await loadConfirmations(meta.id));
+    setReview(r.changed.length ? { fromTitle, items: r.changed } : null);
+    return `Carried ${r.inserted}: same words, same sentence${r.already ? ` (${r.already} already here)` : ''}.`
+      + (r.flagsInserted ? `\n${r.flagsInserted} open ${r.flagsInserted === 1 ? 'problem' : 'problems'} carried as open; resolve with a note.` : '')
+      + (r.changed.length ? `\n${r.changed.length} in reworded sentences: listed below, one at a time, for you to review.` : '')
+      + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '');
+  };
+  // An Export or Save as with problems still open says so first (10-13).
+  const openFlagCount = () => openProblems(confs, editorRef.current?.state.doc.textContent ?? '').length;
+  const [exportHold, setExportHold] = useState<'md' | 'docx' | null>(null);
   const [initials, setInitialsState] = useState<string>(() => rememberedInitials() ?? '');
   const setInitials = (v: string) => { setInitialsState(v); rememberInitials(v); };
   useEffect(() => {
     let live = true;
-    loadConfirmations(meta.id).then((rows) => { if (live) setConfs(rows); }).catch((e) => p.setNotice(`The confirmation log could not be read: ${(e as Error).message}`));
+    setConfsLoaded(false);
+    loadConfirmations(meta.id).then((rows) => { if (live) { setConfs(rows); setConfsLoaded(true); } }).catch((e) => p.setNotice(`The confirmation log could not be read: ${(e as Error).message}`));
     if (!rememberedInitials()) {
       supabase.auth.getUser().then(async ({ data }) => {
         const u = data.user; if (!u || !live) return;
@@ -1470,8 +1520,10 @@ function DeskEditor(p: DeskProps) {
     }
   };
 
-  const doExport = async (dest: 'md' | 'docx') => {
+  const doExport = async (dest: 'md' | 'docx', anyway = false) => {
     if (!editor) return;
+    if (!anyway && openFlagCount() > 0) { setExportHold(dest); return; }
+    setExportHold(null);
     await flush();
     p.setBusy(dest === 'md' ? 'Exporting Markdown…' : 'Building the Word file…');
     try {
@@ -1696,6 +1748,29 @@ function DeskEditor(p: DeskProps) {
         )}
         <ExportMenu onPick={(d) => void doExport(d)} disabled={!!p.busy} losses={importLosses(meta)} />
       </header>
+      {carryOffer && (
+        <div className="px-4 py-2 border-b border-emerald-400/20 bg-emerald-400/[0.05] flex flex-wrap items-center gap-2 text-[12px]" data-testid="carry-offer">
+          <span className="text-white/80">
+            This brief’s Log is empty. “{carryOffer.title}” has {carryOffer.n} {carryOffer.n === 1 ? 'reading' : 'readings'}: carry the ones whose sentence is unchanged here?
+          </span>
+          <button
+            onClick={() => {
+              const o = carryOffer;
+              setCarryOffer(null);
+              p.setBusy('Carrying the Log…');
+              runCarry(o.id, o.title)
+                .then((msg) => { p.setNotice(msg.split('\n').join(' ')); setShowLog(true); })
+                .catch((e) => p.setNotice(`Not carried: ${(e as Error).message}`))
+                .finally(() => p.setBusy(null));
+            }}
+            className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20"
+          >
+            Carry from “{carryOffer.title}”
+          </button>
+          <button onClick={() => { setCarryOffer(null); setShowLog(true); }} className="h-7 px-2 text-white/60 hover:text-white">Another version…</button>
+          <button onClick={dismissCarryOffer} className="ml-auto h-7 px-2 text-white/45 hover:text-white" aria-label="Not for this brief">Not for this brief</button>
+        </div>
+      )}
 
       {narrow && topBlock}
 
@@ -1896,15 +1971,44 @@ function DeskEditor(p: DeskProps) {
           suggested={nextVersionTitle(meta.title ?? '')}
           getBody={() => (editorRef.current ? (editorRef.current.getJSON() as BriefDoc) : null)}
           flush={flush}
+          openFlags={openFlagCount()}
+          readings={confs.length}
+          // The log goes with the version (10-13: Save as left Bushell's 131
+          // readings on v18 and nothing said so).
+          carryLog={async (id, body) => {
+            const r = await carryConfirmations(meta.id, meta.title ?? 'the earlier version', id, briefParagraphs(body));
+            return r.inserted + r.flagsInserted;
+          }}
           onClose={() => setShowSaveAs(false)}
-          onSaved={(id, title) => {
+          onSaved={(id, title, carried) => {
             setShowSaveAs(false);
             // Say WHERE (10-02: v19 was saved in "Bushell" and looked for in
             // "Article 78 Petition Exhibits", where the original Word file is).
-            p.setNotice(`Saved as “${title}” in ${matterName(meta.matterspace_id) ?? 'this matter'} (Vault). “${meta.title}” is unchanged.`);
+            p.setNotice(`Saved as “${title}” in ${matterName(meta.matterspace_id) ?? 'this matter'} (Vault). “${meta.title}” is unchanged.`
+              + (carried === null ? ' The Log could not be carried: open the Log in the new version and use “Carry the check from an earlier version”.'
+                : carried ? ` The Log came with it: ${carried} ${carried === 1 ? 'reading' : 'readings'}.` : ''));
             goTo(`/app/brief/${id}`);
           }}
         />
+      )}
+      {exportHold && (
+        <CardDialog
+          storageKey="cs.brief.export-open-flags"
+          title="Problems still open"
+          subtitle={`${openFlagCount()} ${openFlagCount() === 1 ? 'problem in the Log has' : 'problems in the Log have'} not been resolved.`}
+          onClose={() => setExportHold(null)}
+          maxWidth={480}
+          footer={(
+            <>
+              <button onClick={() => { setExportHold(null); setShowLog(true); }} className="h-8 px-3 rounded-md border border-red-400/40 text-[12px] text-red-200 hover:bg-red-400/10">Open the Log</button>
+              <button onClick={() => void doExport(exportHold, true)} className="h-8 px-3 text-[12px] text-white/60 hover:text-white">Export anyway</button>
+            </>
+          )}
+        >
+          <p className="text-[12.5px] text-white/75 leading-relaxed">
+            A flag stays open until a later reading confirms the cite or you resolve it with a note. Resolve them in the Log, or export now and resolve them later.
+          </p>
+        </CardDialog>
       )}
       {showCompare && (
         <CompareCard
@@ -1937,18 +2041,16 @@ function DeskEditor(p: DeskProps) {
               });
               setConfs((cur) => [...cur, row]);
             }}
-            carry={{
-              candidates: carryCandidates,
-              matterName,
-              run: async (fromId, fromTitle) => {
-                const text = editorRef.current?.state.doc.textContent ?? '';
-                const r = await carryConfirmations(fromId, fromTitle, meta.id, text);
-                setConfs(await loadConfirmations(meta.id));
-                const changed = r.changed.slice(0, 12).map((x) => `  • ${x.cite_raw}`).join('\n');
-                return `Carried ${r.inserted} of ${r.carry.length + r.changed.length + r.gone.length}: same words, same sentence.`
-                  + (r.changed.length ? `\n${r.changed.length} to read again (the sentence changed):\n${changed}${r.changed.length > 12 ? '\n  …' : ''}` : '')
-                  + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '');
-              },
+            carry={{ candidates: carryCandidates, matterName, run: runCarry }}
+            review={review}
+            onReviewed={async (c, fromTitle) => {
+              const row = await recordRewordedReview(meta.id, c, fromTitle, initials, null);
+              setConfs((cur) => [...cur, row]);
+              setReview((cur) => {
+                if (!cur) return cur;
+                const items = cur.items.filter((x) => x !== c);
+                return items.length ? { ...cur, items } : null;
+              });
             }}
           />
         </CardDialog>
@@ -2676,7 +2778,70 @@ function Versions({ meta, appendix, onChangeAppendix, record, onChangeRecord, on
 }
 
 // The log: every Confirm / Problem press, newest first, with a CSV for the file.
-function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, briefText, onResolve }: {
+/**
+ * A cite read on an earlier version whose sentence was reworded since: the
+ * redline of the sentence, the earlier reading, and one button that records
+ * the person's own review of that one change, with their initials and the
+ * time they pressed. One at a time and never in bulk (Eden, 10-13: "a record
+ * that I allowed you to do it for me defeats the purpose").
+ */
+function RewordedReview({ review, initials, onReviewed }: {
+  review: { fromTitle: string; items: ChangedReading[] };
+  initials: string;
+  onReviewed: (c: ChangedReading, fromTitle: string) => Promise<void>;
+}) {
+  const [at, setAt] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const n = review.items.length;
+  const k = Math.min(at, n - 1);
+  const c = review.items[k];
+  const pieces = useMemo(() => diffWordsWithSpace(c.row.context.replace(/\s+/g, ' ').trim(), c.paragraph), [c]);
+  const record = async () => {
+    if (busy || !initials.trim()) return;
+    setBusy(true); setErr(null);
+    try { await onReviewed(c, review.fromTitle); }
+    catch (e) { setErr((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-lg border border-amber-300/25 bg-amber-300/[0.04] px-3 py-2 text-[12px]" data-testid="reworded-review">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <span className="text-amber-100/90">Read on “{review.fromTitle}”, sentence reworded since: {k + 1} of {n}</span>
+        <span className="ml-auto inline-flex items-center gap-1">
+          <button onClick={() => setAt((k - 1 + n) % n)} className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-white/10 text-white/60" aria-label="Previous"><ChevronUp size={13} /></button>
+          <button onClick={() => setAt((k + 1) % n)} className="h-6 w-6 inline-flex items-center justify-center rounded hover:bg-white/10 text-white/60" aria-label="Next"><ChevronDown size={13} /></button>
+        </span>
+      </div>
+      <div className="mt-1 text-white/85 font-medium">{c.cite_raw}</div>
+      <div className="mt-1 text-white/45">
+        Earlier reading: {c.row.status === 'confirmed' ? 'confirmed' : 'problem'} by {c.row.initials}, {new Date(c.row.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · {whereRead(c.row)}
+        {c.row.note ? ` · ${c.row.note}` : ''}
+      </div>
+      <p className="mt-1.5 leading-relaxed text-white/75 max-h-[160px] overflow-y-auto">
+        {pieces.map((pc, i) => (
+          <span key={i} className={pc.added ? 'text-sky-300 underline' : pc.removed ? 'text-red-300 line-through' : ''}>{pc.value}</span>
+        ))}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button onClick={() => void record()} disabled={busy || !initials.trim() || c.row.status !== 'confirmed'} className="h-7 px-2.5 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-40">
+          {busy ? 'Logging…' : `I reviewed the change; the reading holds · ${initials.trim() || 'initials?'}`}
+        </button>
+        <button onClick={() => setAt((k + 1) % n)} className="h-7 px-2 text-[12px] text-white/55 hover:text-white">Not this one: read it again</button>
+      </div>
+      {c.row.status !== 'confirmed' && <p className="mt-1 text-[11px] text-red-200/80">The earlier reading was a problem: it is carried open, to be resolved with a note.</p>}
+      {err && <p className="mt-1 text-[11px] text-red-300">{err}</p>}
+      <p className="mt-1 text-[11px] text-white/40 leading-snug">
+        Struck red: the words the earlier version had; underlined blue: the words here now. Pressing records your own review, with your initials and today’s time, and names the earlier reading. Nothing is recorded for the ones you leave. Carry again to bring this list back.
+      </p>
+    </div>
+  );
+}
+
+function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, briefText, onResolve, review, onReviewed }: {
+  /** Readings in sentences reworded since, from the last Carry: each recorded only by the person's own press. */
+  review: { fromTitle: string; items: ChangedReading[] } | null;
+  onReviewed: (c: ChangedReading, fromTitle: string) => Promise<void>;
   rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
   initials: string; onInitials: (v: string) => void;
   /** The brief's words now, to say which open flags no longer have their text in it. */
@@ -2805,10 +2970,13 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, bri
             ))}
           </div>
           <p className="mt-1 text-[11px] text-white/40 leading-snug">
-            A reading carries only when the cite's words AND its sentence are unchanged here; each carried line says where it came from and who read it. A cite whose sentence changed is listed for a fresh look.
+            Lists the other briefs in this matter. A reading carries only when the cite's words AND its sentence are unchanged here (a new paragraph number, quote marks or dashes do not count as a change); each carried line says where it came from and who read it. A problem nobody resolved comes across open. A cite whose sentence was reworded is listed for you to review; readings already here are not carried twice.
           </p>
           {carryResult && <p className="mt-1 text-[12px] text-white/80 whitespace-pre-line">{carryResult}</p>}
         </div>
+      )}
+      {review && review.items.length > 0 && (
+        <RewordedReview review={review} initials={initials} onReviewed={onReviewed} />
       )}
       {sorted.length === 0 ? (
         <p className="text-[12px] text-white/45">Nothing read yet.</p>
@@ -2822,7 +2990,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, bri
                 <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
               </div>
               <div className="text-white/45 truncate">{whereRead(r)}</div>
-              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{r.status === 'confirmed' ? 'Resolved: ' : ''}{r.note}</div>}
+              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{answersProblem(rows, r) ? 'Resolved: ' : ''}{r.note}</div>}
               {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
             </div>
           ))}
