@@ -731,6 +731,31 @@ export function isFilterEmpty(rule: FilterRule): boolean {
     && !rule.text.trim() && !rule.from && !rule.to;
 }
 
+/** True when a rule would mean "every document in the matter" (a filter with
+ *  nothing set) or nothing at all (an empty list). Such a set is never saved:
+ *  on 2026-10-13 an empty filter saved as a set produced all 2,660 documents
+ *  of the Patel matter instead of the 269 the reviewer had filtered to. */
+export function isRuleEmpty(rule: SetRule): boolean {
+  return rule.kind === 'list' ? rule.document_ids.length === 0 : isFilterEmpty(rule);
+}
+
+/** A rule in plain words, for the line that says what is about to be saved. */
+export function describeRule(rule: SetRule, defs: DocumentTagDef[]): string {
+  if (rule.kind === 'list') {
+    return `${rule.document_ids.length} ticked ${rule.document_ids.length === 1 ? 'document' : 'documents'}`;
+  }
+  const tagName = (id: string) => defs.find((d) => d.id === id)?.name ?? 'a deleted tag';
+  const parts: string[] = [];
+  if (rule.text.trim()) parts.push(`name contains "${rule.text.trim()}"`);
+  for (const id of rule.tags_has) parts.push(`tagged ${tagName(id)}`);
+  for (const id of rule.tags_not) parts.push(`not tagged ${tagName(id)}`);
+  if (rule.folder) parts.push(rule.folder === '(matter)' ? 'filed in the matter itself' : `folder ${rule.folder}`);
+  if (rule.ext) parts.push(`.${rule.ext.replace(/^\./, '')} files`);
+  if (rule.from) parts.push(`filed on or after ${rule.from}`);
+  if (rule.to) parts.push(`filed on or before ${rule.to}`);
+  return parts.length ? parts.join(' · ') : 'no filter (the whole matter)';
+}
+
 /** True when 114 has not been pasted yet. */
 export function isSetsMissing(message: string): boolean {
   return /discovery_sets|source_set/.test(message) && /schema cache|does not exist|not find/i.test(message);
@@ -747,6 +772,11 @@ export async function listSets(matterspaceId: string): Promise<DiscoverySet[]> {
 }
 
 export async function createSet(matterspaceId: string, name: string, rule: SetRule): Promise<DiscoverySet> {
+  if (isRuleEmpty(rule)) {
+    throw new Error(rule.kind === 'list'
+      ? 'No documents are ticked, so there is nothing to save. Nothing was saved.'
+      : 'A set needs at least one filter (a name, a tag, a folder...). Without one it would be the whole matter. Nothing was saved.');
+  }
   const { data, error } = await supabase
     .from('discovery_sets')
     .insert({ matterspace_id: matterspaceId, name: name.trim(), rule, created_by: await currentUserId() })

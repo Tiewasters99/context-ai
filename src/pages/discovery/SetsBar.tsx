@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Layers, Plus, Trash2, X, Send } from 'lucide-react';
 import {
-  listSets, createSet, deleteSet, isSetsMissing, matchesRule, isFilterEmpty, splitForProduction,
+  listSets, createSet, deleteSet, isSetsMissing, matchesRule, isFilterEmpty, isRuleEmpty, describeRule, splitForProduction,
   produceFromSet,
   type DiscoverySet, type DocumentTagDef, type FilterRule, type ReviewDocument, type SetRule,
 } from '@/lib/discovery';
@@ -34,7 +34,12 @@ export default function SetsBar({
   const [sets, setSets] = useState<DiscoverySet[]>([]);
   const [needsSql, setNeedsSql] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState<null | 'filter' | 'list'>(null);
+  // The rule being saved, copied at the moment "Save these filters" or "Save
+  // the N ticked" is clicked. Saving reads this copy, never the live filters:
+  // clicking a set or "Stop using it" while the name box is open clears the
+  // filters below, and saving the live filter then saved an empty rule (the
+  // whole matter, 2026-10-13). The copy stays put and the row says so.
+  const [pending, setPending] = useState<SetRule | null>(null);
   const [saveName, setSaveName] = useState('');
   const [producing, setProducing] = useState(false);
 
@@ -58,16 +63,21 @@ export default function SetsBar({
   );
   const active = sets.find((s) => s.id === activeSetId) ?? null;
 
+  const startSaving = (rule: SetRule) => {
+    setError(null);
+    setPending(rule.kind === 'list'
+      ? { kind: 'list', document_ids: [...rule.document_ids] }
+      : { ...rule, tags_has: [...rule.tags_has], tags_not: [...rule.tags_not] });
+  };
+
   const save = async () => {
-    if (!saving || !saveName.trim()) return;
+    if (!pending || !saveName.trim()) return;
+    if (isRuleEmpty(pending)) { setError('Nothing to save: set a filter or tick documents first.'); return; }
     setError(null);
     try {
-      const rule: SetRule = saving === 'list'
-        ? { kind: 'list', document_ids: selectedIds }
-        : currentFilter;
-      const created = await createSet(matterId, saveName, rule);
+      const created = await createSet(matterId, saveName, pending);
       setSets((prev) => [...prev, created]);
-      setSaving(null);
+      setPending(null);
       setSaveName('');
       onActivate(created);
     } catch (e) {
@@ -102,7 +112,7 @@ export default function SetsBar({
         <span className="text-[11px] text-white/55 inline-flex items-center gap-1 mr-1">
           <Layers size={12} /> Sets:
         </span>
-        {sets.length === 0 && !saving && (
+        {sets.length === 0 && !pending && (
           <span className="text-[11px] text-white/40">none yet. Filter or tick documents, then save them as a set.</span>
         )}
         {sets.map((s) => {
@@ -121,10 +131,10 @@ export default function SetsBar({
             </button>
           );
         })}
-        {!saving && (
+        {!pending && (
           <>
             <button
-              onClick={() => { setError(null); setSaving('filter'); }}
+              onClick={() => startSaving(currentFilter)}
               disabled={filterEmpty}
               title={filterEmpty ? 'Set a filter first (a tag, a folder, a name...)' : 'Save the current filters as a set'}
               className="inline-flex items-center gap-1 rounded-md border border-dashed border-white/20 px-2 py-0.5 text-[12px] text-white/60 hover:text-white hover:border-white/40 disabled:opacity-35"
@@ -133,7 +143,7 @@ export default function SetsBar({
             </button>
             {selectedIds.length > 0 && (
               <button
-                onClick={() => { setError(null); setSaving('list'); }}
+                onClick={() => startSaving({ kind: 'list', document_ids: selectedIds })}
                 className="inline-flex items-center gap-1 rounded-md border border-dashed border-white/20 px-2 py-0.5 text-[12px] text-white/60 hover:text-white hover:border-white/40"
               >
                 <Plus size={11} /> Save the {selectedIds.length} ticked
@@ -141,14 +151,14 @@ export default function SetsBar({
             )}
           </>
         )}
-        {saving && (
+        {pending && (
           <span className="inline-flex items-center gap-1.5">
             <input
               autoFocus
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setSaving(null); }}
-              placeholder={saving === 'list' ? `Name for the ${selectedIds.length} ticked documents` : 'Name for this set, e.g. RFP 1-12 responsive'}
+              onKeyDown={(e) => { if (e.key === 'Enter') void save(); if (e.key === 'Escape') setPending(null); }}
+              placeholder={pending.kind === 'list' ? `Name for the ${pending.document_ids.length} ticked documents` : 'Name for this set, e.g. RFP 1-12 responsive'}
               className={`${inputCls} w-[260px]`}
             />
             <button
@@ -158,10 +168,19 @@ export default function SetsBar({
             >
               Save
             </button>
-            <button onClick={() => setSaving(null)} className="text-[12px] text-white/45 hover:text-white">Cancel</button>
+            <button onClick={() => setPending(null)} className="text-[12px] text-white/45 hover:text-white">Cancel</button>
           </span>
         )}
       </div>
+      {pending && (
+        <p className="mt-1.5 text-[12px] text-white/60">
+          Saving: <span className="text-[#e8b84a]">{describeRule(pending, defs)}</span>
+          {' · '}<span className="tabular-nums">{docsOf(pending).length}</span> {docsOf(pending).length === 1 ? 'document' : 'documents'} now
+          <span className="text-white/40">
+            {' '}(taken when you clicked Save; changing the filters below does not change it{pending.kind === 'filter' ? ', but documents tagged later will join it' : ''})
+          </span>
+        </p>
+      )}
 
       {active && (
         <div className="mt-2 flex flex-wrap items-center gap-3 text-[12px]">
@@ -192,6 +211,7 @@ export default function SetsBar({
           matterId={matterId}
           set={active}
           docs={docsOf(active.rule)}
+          matterTotal={docs.length}
           tagsByDoc={tagsByDoc}
           defs={defs}
           onClose={() => setProducing(false)}
@@ -202,12 +222,17 @@ export default function SetsBar({
   );
 }
 
+// Above this many documents the Produce box asks for one more click.
+const LARGE_SET = 1000;
+
 function ProducePanel({
-  matterId, set, docs, tagsByDoc, defs, onClose, onDone,
+  matterId, set, docs, matterTotal, tagsByDoc, defs, onClose, onDone,
 }: {
   matterId: string;
   set: DiscoverySet;
   docs: ReviewDocument[];
+  /** Every document on the Review tab, to tell a whole-matter set apart. */
+  matterTotal: number;
   tagsByDoc: Map<string, Set<string>>;
   defs: DocumentTagDef[];
   onClose: () => void;
@@ -221,6 +246,12 @@ function ProducePanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sending = [...split.produce, ...split.privileged];
+  // A set that is the whole matter, or a very large one, takes one more
+  // deliberate click: on 2026-10-13 a set that had lost its filter took in the
+  // whole matter (2,660 documents) behind an ordinary-looking button.
+  const wholeMatter = docs.length > 0 && docs.length === matterTotal;
+  const needsConfirm = wholeMatter || sending.length > LARGE_SET;
+  const [confirmed, setConfirmed] = useState(false);
 
   const go = async () => {
     setBusy(true);
@@ -249,6 +280,23 @@ function ProducePanel({
         <span className="text-[#f5f1e8] font-medium">Produce the set &ldquo;{set.name}&rdquo;</span>
         <button onClick={onClose} className="text-white/45 hover:text-white"><X size={14} /></button>
       </div>
+      {needsConfirm && (
+        <div className="mb-3 rounded-md border border-[#e8b84a]/60 bg-[#e8b84a]/12 px-3 py-2 text-[#e8b84a]">
+          <p className="text-[13px] font-medium">
+            {wholeMatter
+              ? <>This set is the whole matter: <span className="tabular-nums">{docs.length}</span> documents.</>
+              : <>This is a large production: <span className="tabular-nums">{sending.length}</span> documents.</>}
+          </p>
+          <p className="text-[11.5px] text-[#e8b84a]/80 mt-0.5">
+            {set.rule.kind === 'filter' ? <>The set's filter: {describeRule(set.rule, defs)}. </> : null}
+            Taking this many documents in can take a long time. Check this is what you meant.
+          </p>
+          <label className="mt-1.5 flex items-center gap-2 text-[12px] cursor-pointer">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+            Yes, produce all <span className="tabular-nums">{sending.length}</span> documents
+          </label>
+        </div>
+      )}
       <ul className="space-y-1 mb-3 text-white/75">
         <li><span className="tabular-nums text-[#e8b84a]">{split.produce.length}</span> {split.produce.length === 1 ? 'document' : 'documents'} will be produced (Bates-stamped).</li>
         {split.privileged.length > 0 && (
@@ -292,7 +340,7 @@ function ProducePanel({
       <div className="flex items-center gap-2">
         <button
           onClick={() => void go()}
-          disabled={busy || sending.length === 0 || !name.trim()}
+          disabled={busy || sending.length === 0 || !name.trim() || (needsConfirm && !confirmed)}
           className="px-3 py-1.5 rounded-md bg-[#e8b84a]/15 border border-[#e8b84a]/40 text-[#e8b84a] hover:bg-[#e8b84a]/25 disabled:opacity-35"
         >
           {busy ? 'Starting…' : `Create the production with ${sending.length} ${sending.length === 1 ? 'document' : 'documents'}`}
