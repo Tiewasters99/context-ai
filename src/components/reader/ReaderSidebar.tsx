@@ -58,11 +58,16 @@ export default function ReaderSidebar({
       : requestedTab;
   // The bench needs room for a plate and what was made from it, side by
   // side with the page; the other tabs are lists and keep the narrow column.
+  // Four tab labels (Pages, Contents, Animations, Workshop) need about 300px
+  // in the app's font; in the 240px column the fourth ran past the edge and
+  // the page beside it painted over the word. With a bench the narrow column
+  // is just wide enough for its labels; without one, three fit in 240px.
   const wide = tab === 'workshop';
+  const narrow = workshop ? 'w-[310px]' : 'w-60';
 
   return (
     <aside
-      className={`${wide ? 'w-[360px]' : 'w-60'} shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md`}
+      className={`${wide ? 'w-[360px]' : narrow} shrink-0 flex flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] backdrop-blur-md`}
     >
       <div className="flex items-center gap-1 px-2 h-9 border-b border-[var(--color-border)] shrink-0">
         <SidebarTab
@@ -226,7 +231,7 @@ function SidebarTab({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`flex-1 flex items-center justify-center gap-1.5 h-7 rounded-md text-[11px] font-medium transition ${
+      className={`flex-1 flex items-center justify-center gap-1.5 h-7 rounded-md text-[11px] font-medium whitespace-nowrap transition ${
         disabled
           ? 'text-white/25 cursor-default'
           : active

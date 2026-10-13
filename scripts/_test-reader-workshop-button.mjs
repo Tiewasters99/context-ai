@@ -195,11 +195,13 @@ test('the tabs report a choice to the Reader instead of keeping it', async () =>
   } finally { await m.unmount(); }
 });
 
-test('Pages shows the pages, not the bench', async () => {
+test('Pages shows the pages, not the bench; with a bench the narrow column fits its four tab labels', async () => {
   const m = await mount(sidebar({ tab: 'pages' }));
   try {
     assert.doesNotMatch(m.container.textContent, /Nothing on the bench/);
-    assert.ok(m.container.querySelector('aside').className.includes('w-60'));
+    const cls = m.container.querySelector('aside').className;
+    assert.ok(cls.includes('w-[310px]'), 'four labels need ~300px; 240px hid the Workshop tab under the page');
+    assert.ok(!cls.includes('w-60') && !cls.includes('w-[360px]'));
   } finally { await m.unmount(); }
 });
 
