@@ -66,6 +66,9 @@
     },
     "api/oauth-client-mint.mjs": {
       "maxDuration": 15
+    },
+    "api/production-share.mjs": {
+      "maxDuration": 30
     }
   },
   "headers": [
