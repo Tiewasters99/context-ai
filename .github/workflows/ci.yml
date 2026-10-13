@@ -707,6 +707,14 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-reader-workshop-button.mjs
+      # Grapheon Reader merch (Phase 2b, migration 117): api/merch.mjs and
+      # api/grapheon-webhook.mjs driven with no network — the rights gate
+      # (Library only, own stills, no in-copyright plates, own prints folder),
+      # D9 pricing, Checkout's shipping and metadata, the webhook's one-time
+      # Printify order and released claim on failure.
+      - name: Grapheon Reader — a picture from the bench on a tee (api/merch + the Grapheon webhook)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-merch-api.mjs
       # What the Assistant panel SAYS on a sealed matter before the first
       # message: the scope strip, the pen named in advance (and corrected when
       # the server names another), the word-search note, the pause, the
