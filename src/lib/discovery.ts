@@ -142,6 +142,9 @@ export interface ProductionItem {
    *  production's (migration 111); null = the production's position. */
   stamp_position?: BatesPosition | null;
   source_metadata: Record<string, unknown>;
+  /** An exact duplicate of another item in this production (071), or a filed
+   *  copy set aside by "Remove duplicates of email attachments". */
+  duplicate_of_item_id?: string | null;
   status: string; // pending | ready | error
   error: string | null;
   created_at: string;

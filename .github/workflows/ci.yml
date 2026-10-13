@@ -107,6 +107,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-production-designations.mjs
 
+      - name: Discovery — email families (BEGATTACH/ENDATTACH, withheld with the email) and MD5 on the load file
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-families.mjs
+
       - name: Discovery — review tags on matter documents (migration 113, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-review-tags.mjs
