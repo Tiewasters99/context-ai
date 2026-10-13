@@ -24,9 +24,10 @@ import { guardTextLayerSelection, releaseTextLayerGuards } from '@/lib/pdf-text-
 import ReaderSidebar, { type OutlineNode, type SidebarTabId } from '@/components/reader/ReaderSidebar';
 import AnimationLayer from '@/components/reader/AnimationLayer';
 import type { WorkshopPanelProps } from '@/components/reader/WorkshopPanel';
-import type { DocumentAnimation, Turn } from '@/lib/document-animations';
+import { clipUrl, type DocumentAnimation, type Turn } from '@/lib/document-animations';
 import { nextTurn, unionRect, type WorkshopItem } from '@/lib/document-workshop';
 import { downloadBlob } from '@/lib/export-page';
+import { merchDesignerUrl } from '@/lib/grapheon-merch';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
@@ -184,6 +185,8 @@ export type PdfBookProps = {
   pageSides?: PageSides | null;
   /** Offered in the sidebar as "add a clip"; absent = not offered. */
   renderAttach?: ((a: AttachArgs) => React.ReactNode) | null;
+  /** Offers "Tee or tote" on the bench's pictures: the picture is set out in a public bucket and the Grapheon store's designer opens on it. Only for a Library or public-domain book, or the reader's own edition; absent = not offered. */
+  merch?: boolean;
   /** The selection menu's Ask; absent = no Ask button. */
   onAsk?: (text: string, page: number) => void;
   /** The selection menu's Note; absent = no Note button. */
@@ -222,6 +225,7 @@ export default function PdfBook({
   paneChildren,
   pageSides = null,
   renderAttach = null,
+  merch = false,
   onAsk,
   onNote,
   onCopySelection,
@@ -1063,6 +1067,40 @@ export default function PdfBook({
     }
   }, [workshopFail]);
 
+  // The picture to the Grapheon store's designer, for a tee or a tote. The
+  // tab is opened first, inside the click, or the browser would block it
+  // after the upload; a snip is drawn at the bench's largest size, upright
+  // per its turn; a still is fetched as it is.
+  const makeMerch = useCallback(async (item: WorkshopItem) => {
+    if (!currentUserId) { setWorkshopNotice('Sign in to make a tee or tote.'); return; }
+    const win = window.open('', '_blank');
+    if (!win) { setWorkshopNotice('The browser blocked the new tab; allow pop-ups for this site and try again.'); return; }
+    try {
+      let blob: Blob;
+      if (item.kind === 'snip') {
+        const pdf = pdfDocRef.current as PDFDocumentProxy | null;
+        if (!pdf || !item.rect) throw new Error('The snip has no rectangle.');
+        const canvas = await renderPageCanvas(pdf, item.page, { width: 3600, maxEdge: 4800 });
+        // A scanned plate has no transparency to lose; JPEG keeps the upload
+        // to a few MB where the PNG would be twenty.
+        blob = await canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect), item.turn), 'image/jpeg', 0.92);
+      } else {
+        const path = item.media?.storage_path;
+        if (!path) throw new Error('The still has no file.');
+        const url = await clipUrl(path);
+        if (!url) throw new Error('The still could not be reached.');
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`The still could not be read (${res.status}).`);
+        blob = await res.blob();
+      }
+      win.location.href = await merchDesignerUrl({ userId: currentUserId, itemId: item.id, blob, title: meta?.title ?? null });
+      setWorkshopNotice('The Grapheon designer has the picture (new tab).');
+    } catch (e) {
+      win.close();
+      workshopFail(e, 'The picture could not be sent to the store.');
+    }
+  }, [currentUserId, meta?.title, workshopFail]);
+
   // A clip or a still brought back: kept by the store (filed in the matter,
   // or in the editions bucket), and set on the bench under its source.
   const bringIn = useCallback(async (parent: WorkshopItem | null, file: File) => {
@@ -1109,6 +1147,7 @@ export default function PdfBook({
     makePreview: makeAnimationPreview,
     onDownload: downloadSnip,
     onCopy: copySnip,
+    onMerch: merch ? makeMerch : null,
     onTurn: async (item: WorkshopItem) => {
       try {
         const updated = await bench.update(item.id, { turn: nextTurn(item.turn) });
