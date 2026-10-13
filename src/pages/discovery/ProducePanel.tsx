@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Stamp, Package, Download, Send, CheckCircle2 } from 'lucide-react';
 import {
   nextBatesSeq, updateProduction, enqueueJob, getDiscoverySignedUrl,
-  listDeliveries, createDelivery, formatBates, BATES_POSITIONS,
-  type ProcessingJob, type Production, type ProductionItem, type BatesPosition, type Delivery,
+  listDeliveries, createDelivery, formatBates, BATES_POSITIONS, getPackageVolumes, isVolumeList,
+  type ProcessingJob, type Production, type ProductionItem, type BatesPosition, type Delivery, type PackageVolume,
 } from '@/lib/discovery';
 import { batesRangeLabel, JobProgress } from './bits';
 import FloatingPanel from './FloatingPanel';
@@ -356,8 +356,15 @@ function BatesStep({
 function PackageStep({ production, onQueued }: { production: Production; onQueued: (job: ProcessingJob) => void }) {
   const [includePrivLog, setIncludePrivLog] = useState(true);
   const [imageFormat, setImageFormat] = useState<'pdf' | 'tiff'>('pdf');
+  // "Split into volumes of about N pages" (worker lib/discovery/volumes.mjs).
+  // Off: one ZIP, unless the size would pass the storage limit.
+  const [splitVolumes, setSplitVolumes] = useState(false);
+  const [volumePages, setVolumePages] = useState(2500);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const totalPages = production.bates_start != null && production.bates_end != null
+    ? production.bates_end - production.bates_start + 1 : null;
+  const pagesPerVolume = Math.min(Math.max(Math.round(volumePages) || 2500, 100), 100_000);
 
   const handlePackage = async () => {
     if (busy) return;
@@ -368,7 +375,11 @@ function PackageStep({ production, onQueued }: { production: Production; onQueue
         matterspace_id: production.matterspace_id,
         production_id: production.id,
         job_type: 'package_production',
-        payload: { include_privilege_log: includePrivLog, image_format: imageFormat },
+        payload: {
+          include_privilege_log: includePrivLog,
+          image_format: imageFormat,
+          ...(splitVolumes ? { volume_pages: pagesPerVolume } : {}),
+        },
       });
       onQueued(job);
     } catch (e) {
@@ -382,7 +393,7 @@ function PackageStep({ production, onQueued }: { production: Production; onQueue
     <div className="space-y-3">
       <p className="text-[11.5px] text-white/55 leading-relaxed">
         Stamped <span className="font-mono text-[#d4a054]">{batesRangeLabel(production) ?? ''}</span>.
-        Packaging builds one ZIP with a sha256, in the four standard parts: IMAGES (the stamped pages), NATIVES (spreadsheets, audio and video, as produced), TEXT (each document's text) and DATA (the load files).
+        Packaging builds a ZIP with a sha256 (or one per volume), in the four standard parts: IMAGES (the stamped pages), NATIVES (spreadsheets, audio and video, as produced), TEXT (each document's text) and DATA (the load files).
       </p>
       <div className="space-y-1.5">
         <p className="text-[10.5px] uppercase tracking-wider text-white/40">Images</p>
@@ -421,6 +432,34 @@ function PackageStep({ production, onQueued }: { production: Production; onQueue
         />
         Include the privilege log in the package
       </label>
+      <div className="space-y-1">
+        <label className="flex items-center gap-2 text-[11.5px] text-white/70 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={splitVolumes}
+            onChange={(e) => setSplitVolumes(e.target.checked)}
+            className="accent-[#d4a054]"
+          />
+          Split into volumes of about
+          <input
+            type="number"
+            min={100}
+            step={100}
+            value={volumePages}
+            onChange={(e) => setVolumePages(Number(e.target.value))}
+            disabled={!splitVolumes}
+            aria-label="Pages per volume"
+            className="w-[72px] rounded-md bg-[rgba(18,18,28,0.78)] border border-[rgba(255,255,255,0.1)] px-1.5 py-0.5 text-[11.5px] text-[#f0ebe3] disabled:opacity-40"
+          />
+          pages
+        </label>
+        <p className="text-[10px] text-white/35 leading-relaxed pl-6">
+          {splitVolumes
+            ? `Each volume is its own ZIP (NAME_VOL001, NAME_VOL002…) with its own load files; Bates numbers run on across them, and no document or email family is split.${
+              totalPages ? ` About ${Math.max(1, Math.ceil(totalPages / pagesPerVolume))} volume(s) for ${totalPages.toLocaleString()} pages.` : ''}`
+            : 'One ZIP. A production too large for one is split into volumes anyway, and the panel says so.'}
+        </p>
+      </div>
       {error && <p className="text-[11px] text-red-300">{error}</p>}
       <button
         onClick={() => void handlePackage()}
@@ -443,6 +482,9 @@ function DeliveryStep({ production }: { production: Production }) {
   const [method, setMethod] = useState<'download' | 'email_link'>('download');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const split = isVolumeList(production.package_storage_path);
+  const [volumes, setVolumes] = useState<PackageVolume[] | null>(null);
+  const [autoSplit, setAutoSplit] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -450,15 +492,27 @@ function DeliveryStep({ production }: { production: Production }) {
     return () => { cancelled = true; };
   }, [production.id]);
 
-  const handleDownload = async () => {
-    if (!production.package_storage_path) return;
+  useEffect(() => {
+    if (!split) return;
+    let cancelled = false;
+    getPackageVolumes(production).then((r) => {
+      if (cancelled || !r) return;
+      setVolumes(r.volumes);
+      setAutoSplit(r.autoSplit);
+    }).catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not read the volume list'); });
+    return () => { cancelled = true; };
+  }, [split, production]);
+
+  const handleDownload = async (storagePath = production.package_storage_path) => {
+    if (!storagePath) return;
     try {
-      const url = await getDiscoverySignedUrl(production.package_storage_path, 600, 'download');
+      const url = await getDiscoverySignedUrl(storagePath, 600, 'download');
       window.open(url, '_blank', 'noopener');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to sign download URL');
     }
   };
+  const mb = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.max(0.1, n / 1e6).toFixed(1)} MB`);
 
   const handleRecord = async () => {
     if (!recipientName.trim() || busy) return;
@@ -496,18 +550,45 @@ function DeliveryStep({ production }: { production: Production }) {
           <span className="text-[12px] text-[#4ade80] font-medium">
             Package ready{production.bates_prefix ? ` — ${batesRangeLabel(production)}` : ''}
           </span>
-          <button
-            onClick={() => void handleDownload()}
-            disabled={!production.package_storage_path}
-            className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#4ade80]/12 hover:bg-[#4ade80]/22 border border-[#4ade80]/30 text-[#4ade80] text-[11px] font-medium transition-colors disabled:opacity-40 shrink-0"
-          >
-            <Download size={11} strokeWidth={2} />
-            Download
-          </button>
+          {!split && (
+            <button
+              onClick={() => void handleDownload()}
+              disabled={!production.package_storage_path}
+              className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#4ade80]/12 hover:bg-[#4ade80]/22 border border-[#4ade80]/30 text-[#4ade80] text-[11px] font-medium transition-colors disabled:opacity-40 shrink-0"
+            >
+              <Download size={11} strokeWidth={2} />
+              Download
+            </button>
+          )}
         </div>
+        {split && (
+          <div className="mt-2 space-y-1">
+            <p className="text-[11px] text-white/60">
+              {volumes ? `${volumes.length} volumes` : 'Reading the volumes…'}
+              {autoSplit ? ' — split because one ZIP would have passed the storage limit (2 GB).' : '.'}
+              {' '}Download each; the production&rsquo;s letter, privilege log and reconciliation are in the last.
+            </p>
+            {(volumes ?? []).map((v) => (
+              <div key={v.name} className="flex items-center gap-2 rounded-md border border-white/8 px-2 py-1">
+                <span className="text-[11px] text-[#f5f1e8] font-mono truncate" title={`sha256 ${v.sha256}`}>{v.name}</span>
+                <span className="text-[10px] text-white/40 truncate">
+                  {v.bates_first}–{v.bates_last} · {v.docs.toLocaleString()} doc(s) · {v.pages.toLocaleString()} p · {mb(v.bytes)}
+                </span>
+                <button
+                  onClick={() => void handleDownload(v.storage_path)}
+                  className="ml-auto flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#4ade80]/12 hover:bg-[#4ade80]/22 border border-[#4ade80]/30 text-[#4ade80] text-[10.5px] font-medium shrink-0"
+                >
+                  <Download size={10} strokeWidth={2} />
+                  Download
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {production.package_sha256 && (
-          <p className="mt-1.5 text-[9.5px] font-mono text-white/40 break-all" title="sha256 of the package">
-            sha256 {production.package_sha256}
+          <p className="mt-1.5 text-[9.5px] font-mono text-white/40 break-all"
+            title={split ? 'sha256 of the volume list, which records each volume\'s own sha256' : 'sha256 of the package'}>
+            sha256 {production.package_sha256}{split ? ' (volume list)' : ''}
           </p>
         )}
       </div>

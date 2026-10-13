@@ -1168,6 +1168,38 @@ const DISCOVERY_BUCKET = 'discovery-files' as const;
 // `purpose: 'download'` (a native, a package), `file.exported` — in the
 // matter's Record and lasts 900 s. Unsealed matters sign here, as before.
 // A step-up refusal is thrown as StepUpRequired (vault-object.ts).
+/** One volume of a production packaged in volumes (worker lib/discovery/volumes.mjs). */
+export interface PackageVolume {
+  name: string;
+  storage_path: string;
+  sha256: string;
+  bytes: number;
+  docs: number;
+  pages: number;
+  bates_first: string;
+  bates_last: string;
+}
+
+/** A split production's package is its volume list, package/volumes.json. */
+export function isVolumeList(packagePath: string | null | undefined): boolean {
+  return !!packagePath && packagePath.endsWith('/package/volumes.json');
+}
+
+/**
+ * The volumes of a production packaged in more than one, or null for a
+ * production packaged as one ZIP. `autoSplit`: split for size, not asked.
+ */
+export async function getPackageVolumes(
+  production: Pick<Production, 'package_storage_path'>,
+): Promise<{ volumes: PackageVolume[]; autoSplit: boolean } | null> {
+  if (!isVolumeList(production.package_storage_path)) return null;
+  const url = await getDiscoverySignedUrl(production.package_storage_path as string, 120, 'read');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`volume list: HTTP ${res.status}`);
+  const m = await res.json() as { volumes?: PackageVolume[]; auto_split?: boolean };
+  return { volumes: m.volumes ?? [], autoSplit: !!m.auto_split };
+}
+
 export async function getDiscoverySignedUrl(
   storagePath: string,
   expiresInSeconds = 3600,
