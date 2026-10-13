@@ -44,15 +44,18 @@ export type PdfOpenProgress =
   | { stage: 'opening'; total: number | null };
 export type PdfOpenProgressFn = (p: PdfOpenProgress) => void;
 
-async function rangeSource(pdfjsLib: PdfjsModule, storagePath: string, sizeBytes: number | null, report: PdfOpenProgressFn) {
+/** Who signs the URL for the file. The vault by default; an edition's source brings its own (api/editions.mjs). */
+export type PdfUrlMinter = () => Promise<MintedUrl>;
+
+async function rangeSource(pdfjsLib: PdfjsModule, mint: PdfUrlMinter, sizeBytes: number | null, report: PdfOpenProgressFn) {
   report({ stage: 'signing' });
-  let minted: MintedUrl = await storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS });
+  let minted: MintedUrl = await mint();
   const url = minted.url;
   // A lapsed URL is signed again, once per lapse, shared by every range in flight.
   let renewing: Promise<MintedUrl> | null = null;
   const currentUrl = async (): Promise<string> => {
     if (Date.now() < minted.expiresAt - 30_000) return minted.url;
-    renewing ??= storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS })
+    renewing ??= mint()
       .then((m) => { minted = m; return m; })
       .finally(() => { renewing = null; });
     return (await renewing).url;
@@ -106,9 +109,9 @@ async function rangeSource(pdfjsLib: PdfjsModule, storagePath: string, sizeBytes
 /** The whole file, read as it arrives so the caller can show how far
  *  along it is — the fallback when ranges are not honoured. A count of
  *  bytes is what turns "is it broken?" into "it's a third of the way". */
-async function downloadWhole(storagePath: string, sizeBytes: number | null, report: PdfOpenProgressFn): Promise<Uint8Array> {
+async function downloadWhole(mint: PdfUrlMinter, sizeBytes: number | null, report: PdfOpenProgressFn): Promise<Uint8Array> {
   report({ stage: 'signing' });
-  const { url } = await storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS });
+  const { url } = await mint();
   const res = await fetch(url);
   if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
   const total = sizeBytes ?? (Number(res.headers.get('content-length')) || null);
@@ -140,13 +143,16 @@ async function downloadWhole(storagePath: string, sizeBytes: number | null, repo
  *  the reader can show that something is happening. */
 export async function openStoredPdf(
   storagePath: string,
-  opts: { sizeBytes?: number | null; onProgress?: PdfOpenProgressFn } = {},
+  opts: { sizeBytes?: number | null; onProgress?: PdfOpenProgressFn; mint?: PdfUrlMinter } = {},
 ): Promise<PDFDocumentProxy> {
   const report: PdfOpenProgressFn = opts.onProgress ?? (() => {});
   const sizeBytes = opts.sizeBytes ?? null;
+  // `mint` is who signs the file's URL: the vault bucket unless the caller
+  // (an edition) says otherwise. Asked again whenever a URL lapses.
+  const mint: PdfUrlMinter = opts.mint ?? (() => storageObjectUrl(storagePath, { ttlSeconds: URL_TTL_SECONDS }));
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = WORKER_URL;
-  const byRange = await rangeSource(pdfjsLib, storagePath, sizeBytes, report).catch((e: unknown) => {
+  const byRange = await rangeSource(pdfjsLib, mint, sizeBytes, report).catch((e: unknown) => {
     // The seal's refusal is not a transport problem: a whole download would
     // be refused the same way. The Reader draws the prompt and asks again.
     if (isStepUpRequired(e)) throw e;
@@ -163,7 +169,7 @@ export async function openStoredPdf(
     return pdfjsLib.getDocument({ ...byRange, ...PDFJS_DOC_PARAMS }).promise;
   }
 
-  const bytes = await downloadWhole(storagePath, sizeBytes, report);
+  const bytes = await downloadWhole(mint, sizeBytes, report);
   report({ stage: 'opening', total: bytes.byteLength });
   return pdfjsLib.getDocument({ data: bytes, ...PDFJS_DOC_PARAMS }).promise;
 }

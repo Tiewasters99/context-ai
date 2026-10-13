@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4ecd8" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Grapheon Reader" />
+    <title>Grapheon Reader</title>
+    <!-- The Grapheon Reader on its own: My Library, the Reader, the Workshop.
+         Served at read.grapheon.ai (a host rewrite in vercel.json) and, until
+         that record exists, under /reader on contextspaces.ai. -->
+    <style>
+      html, body { margin: 0; height: 100%; background: #f4ecd8; overscroll-behavior: none; }
+      #root { height: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/edition/main.tsx"></script>
+  </body>
+</html>
