@@ -119,6 +119,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-discovery-sets.mjs
 
+      - name: Discovery — production links, the table and its rules (migration 115, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-share-links-115.mjs
+
+      - name: Discovery — production links, making and opening them (api/production-share)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-share-links.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs

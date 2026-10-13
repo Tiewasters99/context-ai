@@ -8,13 +8,14 @@ import {
 import { batesRangeLabel, JobProgress } from './bits';
 import FloatingPanel from './FloatingPanel';
 import ProductionFailure from './ProductionFailure';
+import ShareLinkSection from './ShareLinkSection';
 import { withholdFamilies, duplicatesToSetAside } from '../../../lib/discovery/families.mjs';
 
 // "Bates & Produce" — the outgoing-production pipeline panel. Its face
 // changes with the production's status:
 //   review   → Bates config + stamp
 //   stamped  → package (with/without privilege log)
-//   packaged → download + record delivery + past deliveries
+//   packaged → download + send a link (115) + record a delivery + past deliveries
 export default function ProducePanel({
   production,
   items,
@@ -440,7 +441,7 @@ function DeliveryStep({ production }: { production: Production }) {
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [recipientName, setRecipientName] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
-  const [method, setMethod] = useState<'download' | 'email_link'>('download');
+  const [showRecord, setShowRecord] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -449,6 +450,10 @@ function DeliveryStep({ production }: { production: Production }) {
     listDeliveries(production.id).then((d) => { if (!cancelled) setDeliveries(d); }).catch(() => {});
     return () => { cancelled = true; };
   }, [production.id]);
+
+  const reloadDeliveries = () => {
+    listDeliveries(production.id).then(setDeliveries).catch(() => {});
+  };
 
   const handleDownload = async () => {
     if (!production.package_storage_path) return;
@@ -470,7 +475,7 @@ function DeliveryStep({ production }: { production: Production }) {
         production_id: production.id,
         recipient_name: recipientName.trim(),
         recipient_email: recipientEmail.trim() || null,
-        method,
+        method: 'download',
         package_storage_path: production.package_storage_path,
         package_sha256: production.package_sha256,
         bates_range: batesRangeLabel(production),
@@ -513,46 +518,44 @@ function DeliveryStep({ production }: { production: Production }) {
       </div>
 
       <div>
-        <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wider mb-2">Record delivery</p>
-        <div className="space-y-2">
-          <input
-            value={recipientName}
-            onChange={(e) => setRecipientName(e.target.value)}
-            placeholder="Recipient name"
-            className={inputCls}
-          />
-          <input
-            value={recipientEmail}
-            onChange={(e) => setRecipientEmail(e.target.value)}
-            placeholder="Recipient email (optional)"
-            type="email"
-            className={inputCls}
-          />
-          <div className="flex rounded-md border border-[rgba(255,255,255,0.1)] overflow-hidden">
-            {(['download', 'email_link'] as const).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMethod(m)}
-                className={`flex-1 py-1.5 text-[11px] font-medium transition-colors ${
-                  method === m
-                    ? 'bg-[#d4a054]/20 text-[#e8b84a]'
-                    : 'text-white/55 hover:text-white hover:bg-[rgba(255,255,255,0.04)]'
-                }`}
-              >
-                {m === 'download' ? 'Direct download' : 'Email link'}
-              </button>
-            ))}
+        <p className="text-[10px] font-semibold text-white/45 uppercase tracking-wider mb-2">Send a link</p>
+        <ShareLinkSection production={production} onSent={reloadDeliveries} />
+      </div>
+
+      <div>
+        <button
+          onClick={() => setShowRecord((v) => !v)}
+          className="text-[10px] font-semibold text-white/45 hover:text-white/70 uppercase tracking-wider"
+        >
+          {showRecord ? '▾' : '▸'} Or record a delivery made another way
+        </button>
+        {showRecord && (
+          <div className="space-y-2 mt-2">
+            <p className="text-[10.5px] text-white/45">For a package you downloaded and handed over yourself (a drive, your own email). This only writes the delivery log; it sends nothing.</p>
+            <input
+              value={recipientName}
+              onChange={(e) => setRecipientName(e.target.value)}
+              placeholder="Recipient name"
+              className={inputCls}
+            />
+            <input
+              value={recipientEmail}
+              onChange={(e) => setRecipientEmail(e.target.value)}
+              placeholder="Recipient email (optional)"
+              type="email"
+              className={inputCls}
+            />
+            {error && <p className="text-[11px] text-red-300">{error}</p>}
+            <button
+              onClick={() => void handleRecord()}
+              disabled={!recipientName.trim() || busy}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#e8b84a]/15 hover:bg-[#e8b84a]/25 border border-[#e8b84a]/35 text-[#e8b84a] text-[12px] font-medium transition-colors disabled:opacity-40"
+            >
+              <Send size={12} strokeWidth={1.75} />
+              {busy ? 'Recording…' : 'Record delivery'}
+            </button>
           </div>
-          {error && <p className="text-[11px] text-red-300">{error}</p>}
-          <button
-            onClick={() => void handleRecord()}
-            disabled={!recipientName.trim() || busy}
-            className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#e8b84a]/15 hover:bg-[#e8b84a]/25 border border-[#e8b84a]/35 text-[#e8b84a] text-[12px] font-medium transition-colors disabled:opacity-40"
-          >
-            <Send size={12} strokeWidth={1.75} />
-            {busy ? 'Recording…' : 'Record delivery'}
-          </button>
-        </div>
+        )}
       </div>
 
       {deliveries.length > 0 && (
