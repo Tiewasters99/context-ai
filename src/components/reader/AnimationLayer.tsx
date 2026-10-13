@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { IMAGE_FILE_RE } from '@/lib/document-workshop';
-import { ArrowLeft, Play, X, Loader2, GripHorizontal } from 'lucide-react';
+import { ArrowLeft, Play, X, Loader2, GripHorizontal, Maximize2, Minimize2, Expand } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { clipUrl, type DocumentAnimation } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -32,6 +32,13 @@ const RIBBON = 22;       // px, the panel's drag strip
 const FOOTER = 40;       // px, the phone's "Back to the page" bar
 const MIN_W = 160;       // px, how small the panel may be dragged
 const MIN_H = 90 + RIBBON;
+// The badge sits in the page's right margin, level with the end of its
+// passage or the foot of its plate, so it never sits on the words.
+const MARGIN_X = 0.955;
+// A panel never opens smaller than this share of the page: a map laid over
+// a three-line passage is still a map.
+const OPEN_MIN_W = 0.6;
+const OPEN_MIN_H = 0.45;
 
 export default function AnimationLayer({
   page,
@@ -135,6 +142,7 @@ export default function AnimationLayer({
           return <Player key={a.id} animation={a} boxRef={boxRef} onClose={() => setPlaying(null)} />;
         }
         const end = ends[a.id] ?? { x: a.rect.x + a.rect.w, y: a.rect.y + a.rect.h };
+        const badge = { x: Math.min(0.985, Math.max(end.x, MARGIN_X)), y: end.y };
         return (
           <div key={a.id}>
             {hot === a.id && (
@@ -151,7 +159,7 @@ export default function AnimationLayer({
               title={a.label ? `Play: ${a.label}` : 'Play this illustration'}
               aria-label={a.label ? `Play ${a.label}` : `Play the illustration on page ${page}`}
               className="absolute z-[2] pointer-events-auto flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/55 text-white/90 opacity-80 shadow-md backdrop-blur-[2px] transition-all hover:scale-110 hover:bg-black/75 hover:opacity-100"
-              style={{ left: `${end.x * 100}%`, top: `${end.y * 100}%` }}
+              style={{ left: `${badge.x * 100}%`, top: `${badge.y * 100}%` }}
             >
               <Play size={11} className="ml-px" fill="currentColor" />
             </button>
@@ -215,6 +223,13 @@ function Player({ animation, boxRef, onClose }: {
   // The panel in page pixels, so dragging and resizing are plain arithmetic.
   const [box, setBox] = useState<Box | null>(null);
   const dragRef = useRef<{ mode: 'move' | 'size'; px: number; py: number; from: Box } | null>(null);
+  // Larger: the panel fills the page; again puts it back over its source.
+  const [big, setBig] = useState(false);
+  // Full screen, where the browser allows it (not the iPhone, which only
+  // takes a video full screen).
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const canFullscreen = typeof document !== 'undefined' && !!document.fullscreenEnabled;
   // A clip with no stored file needs no lookup — that is a fact about the
   // row, not something to discover.
   const trouble = failed ?? (path ? null : 'That clip has no stored file.');
@@ -245,17 +260,42 @@ function Player({ animation, boxRef, onClose }: {
     const f = animation.turn !== 0
       ? { x: 0.04, y: 0.04, w: 0.92, h: 0.92 }
       : animation.rect;
+    // No smaller than a good share of the page, and kept on the page.
+    const width = Math.max(MIN_W, f.w * r.width, OPEN_MIN_W * r.width);
+    const height = Math.max(MIN_H, f.h * r.height + RIBBON, OPEN_MIN_H * r.height) + (isMobile ? FOOTER : 0);
     return {
-      left: f.x * r.width,
-      top: f.y * r.height - RIBBON,
-      width: Math.max(MIN_W, f.w * r.width),
-      height: Math.max(MIN_H, f.h * r.height + RIBBON) + (isMobile ? FOOTER : 0),
+      left: Math.max(0, Math.min(f.x * r.width, r.width - width)),
+      top: Math.max(0, Math.min(f.y * r.height - RIBBON, r.height - height)),
+      width,
+      height,
     };
+  };
+  // The page, near enough: Larger.
+  const large = (): Box | null => {
+    const r = boxRef.current?.getBoundingClientRect();
+    if (!r || r.width === 0) return null;
+    return { left: 0.02 * r.width, top: 0.02 * r.height, width: 0.96 * r.width, height: 0.96 * r.height };
   };
   useLayoutEffect(() => {
     setBox(home());
+    setBig(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [animation.id]);
+
+  const toggleBig = () => {
+    const next = !big;
+    setBig(next);
+    setBox(next ? large() : home());
+  };
+  useEffect(() => {
+    const onChange = () => setFullscreen(!!panelRef.current && document.fullscreenElement === panelRef.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) { void document.exitFullscreen?.(); return; }
+    void panelRef.current?.requestFullscreen?.().catch(() => setFailed('Full screen is not available here.'));
+  };
 
   const start = (mode: 'move' | 'size') => (e: React.PointerEvent) => {
     if (!box || e.button !== 0) return;
@@ -274,9 +314,10 @@ function Player({ animation, boxRef, onClose }: {
   };
   const stop = () => { dragRef.current = null; };
 
-  // Esc closes, as it does everywhere else in the reader.
+  // Esc closes, as it does everywhere else in the reader - unless the panel
+  // is full screen, where Esc is the browser's way out of that first.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.fullscreenElement) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
@@ -288,6 +329,7 @@ function Player({ animation, boxRef, onClose }: {
 
   return (
     <div
+      ref={panelRef}
       className="absolute pointer-events-auto z-10 flex flex-col overflow-hidden rounded-sm bg-black/90 shadow-2xl transition-[opacity,transform] duration-300"
       style={{ ...style, opacity: shown ? 1 : 0, transform: shown ? 'scale(1)' : 'scale(0.96)' }}
     >
@@ -303,6 +345,28 @@ function Player({ animation, boxRef, onClose }: {
       >
         <GripHorizontal size={13} className="shrink-0 text-white/50" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{title}</span>
+        {!fullscreen && (
+          <button
+            onClick={toggleBig}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={big ? 'Put it back over its place' : 'Larger'}
+            title={big ? 'Back to its place' : 'Larger: fill the page'}
+            className="rounded-full p-0.5 text-white/70 hover:bg-white/15 hover:text-white"
+          >
+            {big ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+        )}
+        {canFullscreen && (
+          <button
+            onClick={toggleFullscreen}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={fullscreen ? 'Leave full screen' : 'Full screen'}
+            title={fullscreen ? 'Leave full screen (Esc)' : 'Full screen'}
+            className="rounded-full p-0.5 text-white/70 hover:bg-white/15 hover:text-white"
+          >
+            <Expand size={13} />
+          </button>
+        )}
         <button
           onClick={onClose}
           onPointerDown={(e) => e.stopPropagation()}
@@ -321,7 +385,7 @@ function Player({ animation, boxRef, onClose }: {
             <img
               src={url}
               alt={animation.label ?? 'The plate, redrawn'}
-              className="max-h-full max-w-full"
+              className="h-full w-full object-contain"
               onError={() => setFailed('That picture could not be shown.')}
             />
           ) : (
@@ -331,7 +395,7 @@ function Player({ animation, boxRef, onClose }: {
             controls
             playsInline
             loop={animation.loops}
-            className="max-h-full max-w-full"
+            className="h-full w-full object-contain"
             onError={() => setFailed('That clip could not be played.')}
           />
           )
