@@ -16,7 +16,7 @@ import type { BriefDoc } from '@/lib/brief/md';
 
 // ── Save as the next version ─────────────────────────────────────────
 
-export function SaveAsVersionCard({ meta, matterLabel, suggested, getBody, flush, onSaved, onClose }: {
+export function SaveAsVersionCard({ meta, matterLabel, suggested, getBody, flush, openFlags, readings, carryLog, onSaved, onClose }: {
   meta: BriefMeta;
   /** The matter it is saved in, by name, so the card says where it will be. */
   matterLabel: string | null;
@@ -25,7 +25,14 @@ export function SaveAsVersionCard({ meta, matterLabel, suggested, getBody, flush
   getBody: () => BriefDoc | null;
   /** Save pending edits to THIS version first (a no-op when there are none or it was changed elsewhere). */
   flush: () => Promise<void>;
-  onSaved: (id: string, title: string) => void;
+  /** Problems in this version's Log nobody has resolved: they go across open. */
+  openFlags: number;
+  /** Entries in this version's Log. */
+  readings: number;
+  /** Carry this version's Log onto the new one; the number of rows written. */
+  carryLog: (newId: string, body: BriefDoc) => Promise<number>;
+  /** `carried` is null when the Log could not be carried (the version is saved either way). */
+  onSaved: (id: string, title: string, carried: number | null) => void;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(suggested);
@@ -56,7 +63,8 @@ export function SaveAsVersionCard({ meta, matterLabel, suggested, getBody, flush
         return;
       }
       const id = await saveAsNewVersion(meta, body, clean);
-      onSaved(id, clean);
+      const carried = readings ? await carryLog(id, body).catch(() => null) : 0;
+      onSaved(id, clean, carried);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -95,8 +103,15 @@ export function SaveAsVersionCard({ meta, matterLabel, suggested, getBody, flush
       />
       {taken && <p className="mt-2 text-[12px] text-amber-200/90">“{taken.title}” already exists in this matter. Change the name to save a new version.</p>}
       {err && <p className="mt-2 text-[12px] text-red-300">{err}</p>}
+      {openFlags > 0 && (
+        <p className="mt-3 text-[12px] text-red-200/90 leading-relaxed">
+          {openFlags} {openFlags === 1 ? 'problem in the Log is' : 'problems in the Log are'} still open. {openFlags === 1 ? 'It goes' : 'They go'} to the new version open, until resolved there with a note.
+        </p>
+      )}
       <p className="mt-3 text-[11.5px] text-white/45 leading-relaxed">
-        The cites you confirmed stay in this version’s Log. To bring them across, open the Log in the new version and use “Carry the check from an earlier version”.
+        {readings
+          ? 'The Log comes with it: each confirmed cite is carried into the new version, saying where it was read and by whom. This version’s Log stays as it is.'
+          : 'Nothing is in this version’s Log yet.'}
       </p>
     </CardDialog>
   );
