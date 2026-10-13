@@ -8,7 +8,7 @@ import {
 import { batesRangeLabel, JobProgress } from './bits';
 import FloatingPanel from './FloatingPanel';
 import ProductionFailure from './ProductionFailure';
-import { withholdFamilies, attachmentDuplicates } from '../../../lib/discovery/families.mjs';
+import { withholdFamilies, duplicatesToSetAside } from '../../../lib/discovery/families.mjs';
 
 // "Bates & Produce" — the outgoing-production pipeline panel. Its face
 // changes with the production's status:
@@ -31,19 +31,19 @@ export default function ProducePanel({
   // Documents excluded from production: anything tagged with a def whose
   // behavior is 'privileged' or 'non_responsive', and the attachments of an
   // email so excluded (the worker withholds the family, lib/discovery/families.mjs).
-  // attachmentDupes: the filed copies "Remove duplicates of email attachments"
-  // would set aside, counted the way the worker decides them.
-  const { included, excluded, attachmentDupes } = useMemo(() => {
+  // duplicates: the identical copies "Remove duplicates" would set aside,
+  // counted the way the worker decides them (it first clears any earlier
+  // marks, old automatic intake duplicates included, then decides afresh).
+  const { included, excluded, duplicates } = useMemo(() => {
     const own = new Set(items
       .filter((it) => it.tags.some((t) => t.tag_def?.behavior === 'privileged' || t.tag_def?.behavior === 'non_responsive'))
       .map((it) => it.id));
     const ex = withholdFamilies(items, own).excludedIds;
-    const candidates = items.filter((it) => !ex.has(it.id) && it.status === 'ready'
-      && !(it.duplicate_of_item_id && !it.source_metadata?.set_aside_duplicate));
+    const candidates = items.filter((it) => !ex.has(it.id) && it.status === 'ready');
     return {
       included: items.length - ex.size,
       excluded: ex.size,
-      attachmentDupes: attachmentDuplicates(candidates).length,
+      duplicates: duplicatesToSetAside(candidates).length,
     };
   }, [items]);
   const movedStamps = items.filter((it) => it.stamp_position).length;
@@ -62,7 +62,7 @@ export default function ProducePanel({
         <StatusRail status={production.status} />
         {activeJobs.map((job) => <JobProgress key={job.id} job={job} />)}
         {activeJobs.length === 0 && production.status === 'review' && (
-          <BatesStep production={production} included={included} excluded={excluded} attachmentDupes={attachmentDupes} movedStamps={movedStamps} onQueued={onQueued} />
+          <BatesStep production={production} included={included} excluded={excluded} duplicates={duplicates} movedStamps={movedStamps} onQueued={onQueued} />
         )}
         {(production.status === 'processing' || production.status === 'intake') && (
           <p className="text-[11.5px] text-white/45 leading-relaxed">
@@ -132,14 +132,14 @@ function BatesStep({
   production,
   included: includedAll,
   excluded,
-  attachmentDupes,
+  duplicates,
   movedStamps,
   onQueued,
 }: {
   production: Production;
   included: number;
   excluded: number;
-  attachmentDupes: number;
+  duplicates: number;
   movedStamps: number;
   onQueued: (job: ProcessingJob) => void;
 }) {
@@ -153,10 +153,10 @@ function BatesStep({
   const [startTouched, setStartTouched] = useState(production.bates_start != null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // "Remove duplicates of email attachments" — off unless chosen; sent with
-  // the stamp job, which records it on each copy it sets aside.
+  // "Remove duplicates" — off unless chosen; sent with the stamp job, which
+  // records it on each copy it sets aside.
   const [removeDupes, setRemoveDupes] = useState(false);
-  const setAside = removeDupes ? attachmentDupes : 0;
+  const setAside = removeDupes ? duplicates : 0;
   const included = includedAll - setAside;
 
   // Suggested start = the next free number in THIS prefix's series (108): a
@@ -192,7 +192,7 @@ function BatesStep({
         matterspace_id: production.matterspace_id,
         production_id: production.id,
         job_type: 'stamp_production',
-        payload: { remove_attachment_duplicates: removeDupes },
+        payload: { remove_duplicates: removeDupes },
       });
       onQueued(job);
     } catch (e) {
@@ -324,10 +324,10 @@ function BatesStep({
           className="mt-0.5 accent-[#e8b84a]"
         />
         <span className="text-[11.5px] text-[#f0ebe3] leading-snug">
-          Remove duplicates of email attachments
-          {attachmentDupes > 0 && <span className="text-white/45 tabular-nums"> ({attachmentDupes} found)</span>}
+          Remove duplicates
+          {duplicates > 0 && <span className="text-white/45 tabular-nums"> ({duplicates} found)</span>}
           <span className="block text-[10.5px] text-white/45 mt-0.5">
-            A filed copy identical to an attachment is not produced again; the load file names where it was found.
+            Identical copies are produced once; the load file names every custodian and location where a copy was found.
           </span>
         </span>
       </label>

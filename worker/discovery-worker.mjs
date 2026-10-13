@@ -65,7 +65,7 @@ import {
   sha256, md5, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
 } from '../lib/discovery/util.mjs';
 import {
-  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, attachmentDuplicates, duplicateColumns, setAsideLines,
+  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, duplicatesToSetAside, duplicateColumns, setAsideLines,
 } from '../lib/discovery/families.mjs';
 import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
@@ -129,6 +129,9 @@ const OCR_RETRY_SWEEP_MS = 5 * 60_000;
 // Declared up here because the poll loop below never returns: a const placed
 // after it is never initialised (TDZ: "Cannot access ... before initialization").
 const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
+// The parts of a twin's source_metadata that come from its bytes alone, and
+// so are true of an identical copy too (normalize.mjs; intakeOneFile).
+const TWIN_SHARED_KEYS = new Set(['author', 'to', 'cc', 'bcc', 'subject', 'date', 'imaged_from', 'imaging_error', 'media']);
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -249,7 +252,7 @@ log('Queue drained; exiting.');
 //   intake_folder                 refused from the queue outright (below)
 //
 // The payload keys read after this point — ingest, force, ocr_retry,
-// include_privilege_log, remove_attachment_duplicates — are flags, not references.
+// include_privilege_log, remove_duplicates — are flags, not references.
 async function assertJobScope(job) {
   const p = job.payload ?? {};
   switch (job.job_type) {
@@ -805,7 +808,7 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   // different (and wrong) decision.
   const { data: sameBytes, error: dupLookupErr } = await supabase.from('production_items')
     .select('id, original_path, original_filename, sort_order, status, kind, page_count, '
-      + 'native_storage_path, display_storage_path, duplicate_of_item_id, source_metadata')
+      + 'native_storage_path, display_storage_path, duplicate_of_item_id, source_metadata, document_id')
     .eq('matterspace_id', prod.matterspace_id)
     .eq('sha256', hash)
     .eq('production_id', prod.id)
@@ -861,34 +864,47 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
     return data;
   };
 
-  // An empty file is not a document that can be "produced once": every
-  // zero-byte file in existence shares one sha256, so de-duplicating them
-  // would collapse a blank .pdf and a blank .txt into the same document. They
-  // each get their own row and their own slip sheet.
+  // Byte-identical files used to be collapsed here, always: the second copy
+  // became a "duplicate", never stamped (F6). Since 2026-10-13 that is a
+  // choice made at stamping, "Remove duplicates" (lib/discovery/families.mjs),
+  // OFF unless chosen, because a copy carries its own custodian and location.
+  // So every copy is its own normal, stampable item. It reuses its twin's
+  // stored objects (identical bytes, same production), so a copy costs a row,
+  // not a second conversion, and records the twin in source_metadata.
   //
-  // Nor is an attachment: a family is produced whole, so the same PDF attached
-  // to two emails is produced twice, once in each family, and a loose file is
-  // never recorded as a duplicate of an attachment (whose email may be withheld).
-  const first = buf.length === 0 || parent ? null
-    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id
-      && !t.source_metadata?.parent_item_id) ?? null;
-  if (first) {
-    // The ZIP really did contain this file twice, and that is part of the
-    // record, so the row stays. It points at the first instance's stored
-    // objects — identical bytes by definition — is never stamped, and is
-    // listed in DATA/DUPLICATES.csv under the Bates number it WAS produced at.
-    await writeItem({
-      kind: first.kind,
-      page_count: first.page_count,
-      native_storage_path: first.native_storage_path,
-      display_storage_path: first.display_storage_path,
-      duplicate_of_item_id: first.id,
-      source_metadata: { duplicate_of: first.original_filename },
+  // An empty file has no twin: every zero-byte file shares one sha256, and a
+  // blank .txt is not a copy of a blank .pdf.
+  const twin = buf.length === 0 ? null
+    : twins.find((t) => t.id !== resumeId && t.status === 'ready' && t.native_storage_path) ?? null;
+  if (twin) {
+    const datRec = datLookup.get(filename.toLowerCase());
+    // What normalizing the same bytes would have said (email headers, how it
+    // was imaged); never the twin's custodian or other load-file provenance.
+    const fromBytes = Object.fromEntries(Object.entries(twin.source_metadata ?? {})
+      .filter(([k]) => TWIN_SHARED_KEYS.has(k)));
+    const item = await writeItem({
+      kind: twin.kind,
+      page_count: twin.page_count,
+      bates_first: datRec?.bates_first ?? null,
+      bates_last: datRec?.bates_last ?? null,
+      native_storage_path: twin.native_storage_path,
+      display_storage_path: twin.display_storage_path,
+      source_metadata: {
+        ...fromBytes,
+        ...(datRec ?? {}),
+        ...(documentId ? { vault_document_id: documentId } : {}),
+        md5: md5(buf),
+        twin_of_item_id: twin.id,
+        ...(attachments.length ? { family: true, attachment_count: attachments.length } : {}),
+        ...(parent ? { parent_item_id: parent.id, attachment_of: parent.filename, attachment_index: parent.index } : {}),
+      },
+      duplicate_of_item_id: null,
       status: 'ready',
       error: null,
     });
-    log(`  ${filename}: byte-identical to ${first.original_filename} — produced once, listed as a duplicate`);
-    // Its attachments were taken in with the first copy.
+    log(`  ${filename}: byte-identical to ${twin.original_filename}; its own item, stored objects shared`);
+    // An email copy is its own family: its attachments follow it.
+    await takeInAttachments(item);
     return slots;
   }
 
@@ -1246,10 +1262,11 @@ async function stampProduction(job) {
   // error — and must certainly not renumber anything.
   const locked = prod.status === 'stamped';
 
-  // "Remove duplicates of email attachments" (payload.remove_attachment_duplicates,
-  // lib/discovery/families.mjs). Decided here, before any number is spent, and
-  // recorded on each copy set aside, so packaging reads the same decision.
-  if (!locked) await setAsideAttachmentDuplicates(prod, job.payload?.remove_attachment_duplicates === true);
+  // "Remove duplicates" (payload.remove_duplicates, lib/discovery/families.mjs).
+  // Decided here, before any number is spent, and recorded on each copy set
+  // aside, so packaging reads the same decision. A stamped production keeps
+  // whatever it was stamped with, old-style intake duplicates included.
+  if (!locked) await setAsideDuplicates(prod, job.payload?.remove_duplicates === true);
 
   const { included, excluded, exceptions, duplicates, endorsementsByItem } = await partitionItems(prod);
   if (included.length === 0) throw new Error('No documents to stamp (all excluded?)');
@@ -1358,28 +1375,44 @@ async function stampProduction(job) {
     + `${duplicates.length} duplicate(s), ${exceptions.length} exception(s)`);
 }
 
-// Record the switch's decision on the items: a loose copy set aside points at
-// the family member it copies (duplicate_of_item_id, so it is accounted as a
-// duplicate everywhere) and carries source_metadata.set_aside_duplicate. A
-// re-run of an unstamped production first clears an earlier run's marks, so
-// turning the switch off really does produce every copy again.
-async function setAsideAttachmentDuplicates(prod, on) {
-  const write = async (item, duplicateOf, flag) => {
-    const sm = { ...(item.source_metadata ?? {}) };
-    if (flag) sm.set_aside_duplicate = true; else delete sm.set_aside_duplicate;
+// Record the switch's decision on the items: a copy set aside points at the
+// copy produced in its place (duplicate_of_item_id, so it is accounted as a
+// duplicate everywhere) and carries source_metadata.set_aside_duplicate.
+//
+// Every earlier mark is cleared first, on an unstamped production, so the box
+// as ticked NOW is what counts: turning it off produces every copy again. That
+// includes rows the old intake marked as duplicates automatically (before
+// 2026-10-13, no set_aside_duplicate flag). They point at their twin's stored
+// objects, so they are stampable as they stand; they get the twin's
+// bytes-derived metadata and a twin_of_item_id, and are produced unless the
+// switch sets them aside again.
+async function setAsideDuplicates(prod, on) {
+  const write = async (item, duplicateOf, sm) => {
     const { error } = await supabase.from('production_items')
       .update({ duplicate_of_item_id: duplicateOf, source_metadata: sm }).eq('id', item.id);
     if (error) throw new Error(`duplicate switch (${item.original_filename}): ${error.message}`);
   };
-  const { items } = await partitionItems(prod);
+  const { items, byId } = await partitionItems(prod);
   for (const it of items) {
-    if (it.source_metadata?.set_aside_duplicate) await write(it, null, false);
+    if (!it.duplicate_of_item_id) continue;
+    const sm = { ...(it.source_metadata ?? {}) };
+    if (!sm.set_aside_duplicate) {
+      const twin = byId.get(it.duplicate_of_item_id);
+      for (const [k, v] of Object.entries(twin?.source_metadata ?? {})) {
+        if (TWIN_SHARED_KEYS.has(k) && sm[k] === undefined) sm[k] = v;
+      }
+      sm.twin_of_item_id = it.duplicate_of_item_id;
+    }
+    delete sm.set_aside_duplicate;
+    await write(it, null, sm);
   }
   if (!on) return;
   const { included } = await partitionItems(prod);
-  const setAside = attachmentDuplicates(included);
-  for (const { item, of } of setAside) await write(item, of.id, true);
-  if (setAside.length) log(`  ${setAside.length} filed cop(ies) of email attachments set aside as duplicates`);
+  const setAside = duplicatesToSetAside(included);
+  for (const { item, of } of setAside) {
+    await write(item, of.id, { ...(item.source_metadata ?? {}), set_aside_duplicate: true });
+  }
+  if (setAside.length) log(`  ${setAside.length} identical cop(ies) set aside as duplicates`);
 }
 
 // Prove every page of every document is stampable before a single number is
@@ -1622,10 +1655,11 @@ async function packageProduction(job) {
   const textless = [];
   let totalPages = 0;
   const families = familyRanges(produced);
-  // Copies set aside by the duplicates switch at stamp time, with the family
-  // member each copies (now carrying its Bates number).
+  // Copies set aside as duplicates, with the copy produced in their place (now
+  // carrying its Bates number): by the "Remove duplicates" switch, or by the
+  // old automatic intake in a production stamped before it was a choice.
   const setAside = duplicates
-    .filter((d) => d.source_metadata?.set_aside_duplicate && byId.get(d.duplicate_of_item_id))
+    .filter((d) => byId.get(d.duplicate_of_item_id))
     .map((d) => ({ item: d, of: byId.get(d.duplicate_of_item_id) }));
   const dupColumns = duplicateColumns(setAside);
   for (const [i, item] of produced.entries()) {
@@ -1740,10 +1774,12 @@ async function packageProduction(job) {
 async function corpusPagesFor(item) {
   let documentId = item.document_id ?? null;
   if (!documentId) {
+    // A copy shares its twin's stored objects and so its twin's indexed text.
+    const twinId = item.source_metadata?.twin_of_item_id;
     const { data: docs, error } = await supabase.from('documents')
       .select('id')
       .eq('matterspace_id', item.matterspace_id)
-      .eq('metadata->>production_item_id', item.id)
+      .in('metadata->>production_item_id', twinId ? [item.id, twinId] : [item.id])
       .limit(1);
     if (error || !docs?.length) return null;
     documentId = docs[0].id;

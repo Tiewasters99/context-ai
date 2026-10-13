@@ -11,13 +11,13 @@
 //   * an attachment withheld on its own leaves its email produced, and the
 //     range spans what was produced.
 // The DAT gains BEGATTACH, ENDATTACH and MD5HASH, and ALLCUSTODIANS and
-// DUPLICATEPATHS for "Remove duplicates of email attachments" (24 columns):
-//   * off (the default): every document is produced, a loose copy of an
-//     attachment included;
-//   * on: a loose copy byte-identical to a produced family member is set
-//     aside, and the DAT and RECONCILIATION.txt say where it was found;
-//   * a loose copy of a WITHHELD member, or one with a different hash, is
-//     produced as usual.
+// DUPLICATEPATHS for the one "Remove duplicates" switch (24 columns):
+//   * off (the default): every copy is produced under its own Bates number;
+//   * on: identical loose copies are produced once (the first wins), and a
+//     loose copy of a family member is set aside for it; the DAT and
+//     RECONCILIATION.txt say whose and where each copy was;
+//   * a copy of a WITHHELD twin, a different hash, a family member and an
+//     empty file are never set aside.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -26,7 +26,7 @@ import { extractEmlAttachments } from '../lib/eml-attachments.mjs';
 import { extractEmlPages } from '../lib/eml-extract.mjs';
 import { normalizeFile } from '../lib/discovery/normalize.mjs';
 import {
-  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, attachmentDuplicates, duplicateColumns, setAsideLines,
+  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, duplicatesToSetAside, duplicateColumns, setAsideLines,
 } from '../lib/discovery/families.mjs';
 import { emitDat, parseDat } from '../lib/discovery/loadfile.mjs';
 import { packageDocument } from '../lib/discovery/package-docs.mjs';
@@ -201,7 +201,7 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
     + 'ALLCUSTODIANS/DUPLICATEPATHS last and empty when nothing was set aside');
 }
 
-// ---- "Remove duplicates of email attachments".
+// ---- "Remove duplicates".
 {
   const H = (c) => c.repeat(64);
   const mail = { id: 'E', original_filename: 'mail.eml', sha256: H('e'), bates_first: 'P_001', bates_last: 'P_002',
@@ -217,11 +217,12 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
   // What the worker does at stamp time: decide over what would be produced.
   const decide = (list, on, withheldIds = new Set()) => {
     const ex = withholdFamilies(list, withheldIds).excludedIds;
-    return on ? attachmentDuplicates(list.filter((i) => !ex.has(i.id))) : [];
+    return on ? duplicatesToSetAside(list.filter((i) => !ex.has(i.id))) : [];
   };
 
   assert.equal(decide(items, false).length, 0);
-  ok('switch off (the default): the filed copy of an attachment is produced like any document');
+  assert.equal(decide([filed, twin], false).length, 0);
+  ok('switch off (the default): every copy is produced, a filed copy of an attachment and loose twins alike');
 
   const on = decide(items, true);
   assert.deepEqual(on.map((d) => [d.item.id, d.of.id]), [['F', 'A']]);
@@ -244,7 +245,7 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
     { matterName: 'M', productionName: 'P', setAside: lines },
   ).toString('utf8');
   assert.match(rec, /These figures reconcile\./);
-  assert.match(rec, /Filed copies of email attachments, set aside \.+ 1/);
+  assert.match(rec, /Copies set aside as duplicates \.+ 1/);
   assert.match(rec, /TermSheet\.pdf \(filed copy\): not produced; identical to P_003, produced as an attachment to P_001/);
   ok('RECONCILIATION.txt lists the copy set aside, the Bates number it duplicates and the email number');
 
@@ -254,11 +255,42 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
   assert.equal(decide(items, true, new Set(['A'])).length, 0);
   ok('a filed copy of a WITHHELD attachment is produced, never set aside');
 
-  // Never a family member set aside; two identical loose copies both produced.
-  assert.deepEqual(decide([filed, twin], true), []);
+  // Loose twins: produced once, the first in Bates order wins, and the kept
+  // copy names both custodians and the other copy's location.
+  const looseA = { id: 'LA', original_filename: 'Budget.xlsx', original_path: 'Finance/Budget.xlsx', sha256: H('c'),
+    bates_first: 'P_010', source_metadata: { custodian: 'Patel' } };
+  const looseB = { id: 'LB', original_filename: 'Budget.xlsx', original_path: 'Iyer/Desktop/Budget.xlsx', sha256: H('c'),
+    source_metadata: { custodian: 'Iyer' } };
+  const looseC = { id: 'LC', original_filename: 'Budget (1).xlsx', original_path: 'Iyer/Downloads/Budget (1).xlsx', sha256: H('c'),
+    source_metadata: { custodian: 'Iyer' } };
+  const loose = decide([looseA, looseB, looseC], true);
+  assert.deepEqual(loose.map((d) => [d.item.id, d.of.id]), [['LB', 'LA'], ['LC', 'LA']]);
+  assert.deepEqual(duplicateColumns(loose).get('LA'), {
+    all_custodians: 'Patel; Iyer', duplicate_paths: 'Iyer/Desktop/Budget.xlsx; Iyer/Downloads/Budget (1).xlsx',
+  });
+  assert.deepEqual(setAsideLines(loose, new Map()), [
+    'Budget.xlsx (copy): not produced; identical to P_010, produced once',
+    'Budget (1).xlsx (copy): not produced; identical to P_010, produced once',
+  ]);
+  ok('switch on: identical loose copies are produced once (the first wins); the kept copy names every custodian and location');
+
+  // The first copy is withheld: it is absent from what would be produced, so
+  // the next copy is produced on its own tags.
+  assert.deepEqual(decide([looseA, looseB, looseC], true, new Set(['LA'])).map((d) => [d.item.id, d.of.id]), [['LC', 'LB']]);
+  // All withheld: nothing to set aside.
+  assert.deepEqual(decide([looseA, looseB], true, new Set(['LA', 'LB'])), []);
+  ok('a copy whose twin is withheld is decided on its own tags; if all are withheld, none is a duplicate');
+
+  // Never a family member set aside, even as an identical attachment in two families.
   const twoFamilies = decide([mail, att, { ...att, id: 'A2', source_metadata: { parent_item_id: 'E2' } }], true);
   assert.deepEqual(twoFamilies, []);
-  ok('two identical loose documents are both produced, and a family member is never set aside');
+  ok('a family member is never set aside (two identical attachments in two families are both produced)');
+
+  // Empty files share one hash and are nobody's copy.
+  const blank1 = { id: 'B1', original_filename: 'a.txt', sha256: H('0'), file_size_bytes: 0, source_metadata: {} };
+  const blank2 = { id: 'B2', original_filename: 'b.pdf', sha256: H('0'), file_size_bytes: 0, source_metadata: {} };
+  assert.deepEqual(decide([blank1, blank2], true), []);
+  ok('zero-byte files are never treated as duplicates');
 }
 
 // ---- The worker: attachments follow their email in Bates order.
@@ -286,12 +318,19 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
 
   // The switch: read from the stamp job, decided before any number is spent,
   // recorded on each copy (no migration), cleared on an unstamped re-run.
-  assert.match(src, /if \(!locked\) await setAsideAttachmentDuplicates\(prod, job\.payload\?\.remove_attachment_duplicates === true\);/);
-  const fn2 = src.slice(src.indexOf('async function setAsideAttachmentDuplicates('));
-  assert.match(fn2, /if \(it\.source_metadata\?\.set_aside_duplicate\) await write\(it, null, false\);[\s\S]*if \(!on\) return;/);
+  assert.match(src, /if \(!locked\) await setAsideDuplicates\(prod, job\.payload\?\.remove_duplicates === true\);/);
+  const fn2 = src.slice(src.indexOf('async function setAsideDuplicates('));
+  assert.match(fn2, /if \(!it\.duplicate_of_item_id\) continue;[\s\S]*await write\(it, null, sm\);[\s\S]*if \(!on\) return;/);
   assert.match(src, /dupColumns\.get\(item\.id\)/);
   assert.match(src, /setAside: setAsideLines\(setAside, byId\)/);
-  ok('the worker sets copies aside only when the stamp job asks, and clears the choice of an earlier run');
+  ok('the worker sets copies aside only when the stamp job asks, and clears every earlier mark first (old intake ones too)');
+
+  // Intake no longer collapses identical files: a copy is its own normal item.
+  assert.ok(!/duplicate_of_item_id: first\.id/.test(src), 'intake never marks a duplicate');
+  assert.match(body, /twin_of_item_id: twin\.id/);
+  assert.match(body, /native_storage_path: twin\.native_storage_path/);
+  assert.match(body, /const twin = buf\.length === 0 \? null/);
+  ok('intake keeps every identical copy as its own stampable item, sharing the twin\'s stored files');
 }
 
 console.log(`\nEmail families and MD5 verified offline: ${n} checks passed.`);
