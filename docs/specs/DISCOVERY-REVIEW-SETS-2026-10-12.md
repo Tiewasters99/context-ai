@@ -1,6 +1,6 @@
 # Discovery: review across the matter, production sets
 
-**Status:** APPROVED by Eden 2026-10-12 (all four questions as recommended). Nothing here is built yet; R1 is next.
+**Status:** APPROVED by Eden 2026-10-12 (all four questions as recommended). R1 (#411) and R2 (#414) are live; R3 is migration 116. Amended 2026-10-13: Privileged documents go into a set's production and are withheld at stamping (see §3.3).
 **Date:** 2026-10-12. **Author:** Claude Code (Opus), from Eden's notes after the 10-11 live check.
 
 ## 1. What Eden described
@@ -48,12 +48,13 @@ A **set** is a saved, named question: "everything tagged Responsive in Custodian
 
 - Stored as a rule (`discovery_sets (id, matterspace_id, name, rule jsonb, created_by, …)`), so it stays current as review continues. The count is shown live.
 - Building a production from a set **freezes the list at that moment** and starts a normal outgoing production with those documents (the #400 job). From then on it is an ordinary production: stamp position, designations, PDF or TIFF, delivery.
-- **Privileged, Non-Responsive and Irrelevant are always excluded** from a production built from a set, whatever the rule says, and the screen says how many were held back and why. This makes the exclusion hard to get wrong.
+- **Non-Responsive and Irrelevant are always left out** of a production built from a set, whatever the rule says. **Privileged documents go into the production, are withheld when it is stamped, and appear on its privilege log.** The screen says how many of each before the production is made. This keeps the exclusion hard to get wrong and keeps every privileged document accounted for in the production that withheld it.
+  - *Decision, 2026-10-13 (Eden): "keep it, privileged in and withheld at stamp."* The 10-12 text said Privileged was excluded at the set; R2 (#414) shipped the behavior above instead, live check 4 passed on it, and Eden confirmed it.
 - A set can also be built by hand: tick documents in the review table and "Save as set".
 
 ### 3.4 Privilege log across the matter
 
-Documents tagged Privileged anywhere in the matter draft a privilege-log entry once, at the document. A production's privilege log is drawn from those entries for the documents its set held back. Today's per-production log stays as it is for existing productions.
+Documents tagged Privileged anywhere in the matter draft a privilege-log entry once, at the document (`document_privilege_entries`, migration 116), listed and edited on Discovery's **Privilege log** tab and exported as CSV. When a Privileged document goes into an outgoing production (and is withheld there at stamping, §3.3), the production's entry is **copied** from the document's entry and linked to it. Until the production is stamped the two stay in step: an edit on either side reaches the other (and the other unstamped productions). Once stamped, the production keeps its own copy, because it records what was logged when the production was made. Removing the Privileged tag keeps the entry (it is listed again if the document is re-tagged). Today's per-production log keeps working for existing productions; their entries are linked to the document's entry where the item came from the matter.
 
 ## 4. Order of work (each a separate PR)
 
@@ -61,7 +62,7 @@ Documents tagged Privileged anywhere in the matter draft a privilege-log entry o
 |---|---|---|
 | **R1** | Tags on documents (`document_review_tags`); the Review tab with filters and bulk tagging; Review Room tagging writes through to the document | yes (112+) |
 | **R2** | Sets (rule + frozen list); "Produce this set" (uses #400's job; copies tags onto items) | yes |
-| **R3** | Matter-wide privilege log; tag filters in the Vault and in search (if Eden wants, see Q1) | maybe |
+| **R3** | Matter-wide privilege log (Privilege log tab, CSV export); read-only review-tag chips in the Vault (Q1) | yes (116) |
 | **R4** | Optional AI suggestions ("looks privileged", "possible hot document") as suggestions only, never applied without a person; works in sealed matters through the sealed route | no |
 
 R1 and R2 need no AI and work the same in sealed matters. Producing documents is deterministic, so a sealed matter loses nothing here.

@@ -119,6 +119,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-discovery-sets.mjs
 
+      - name: Discovery — the matter's privilege log, one entry per document (migration 116, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-privilege-entries.mjs
+
       - name: Discovery — production links, the table and its rules (migration 115, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-share-links-115.mjs
