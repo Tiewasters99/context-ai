@@ -8,6 +8,7 @@ import {
 import { batesRangeLabel, JobProgress } from './bits';
 import FloatingPanel from './FloatingPanel';
 import ProductionFailure from './ProductionFailure';
+import { withholdFamilies, attachmentDuplicates } from '../../../lib/discovery/families.mjs';
 
 // "Bates & Produce" — the outgoing-production pipeline panel. Its face
 // changes with the production's status:
@@ -30,15 +31,20 @@ export default function ProducePanel({
   // Documents excluded from production: anything tagged with a def whose
   // behavior is 'privileged' or 'non_responsive', and the attachments of an
   // email so excluded (the worker withholds the family, lib/discovery/families.mjs).
-  const { included, excluded } = useMemo(() => {
-    const ex = new Set(items
+  // attachmentDupes: the filed copies "Remove duplicates of email attachments"
+  // would set aside, counted the way the worker decides them.
+  const { included, excluded, attachmentDupes } = useMemo(() => {
+    const own = new Set(items
       .filter((it) => it.tags.some((t) => t.tag_def?.behavior === 'privileged' || t.tag_def?.behavior === 'non_responsive'))
       .map((it) => it.id));
-    for (const it of items) {
-      const parent = it.source_metadata?.parent_item_id;
-      if (typeof parent === 'string' && ex.has(parent)) ex.add(it.id);
-    }
-    return { included: items.length - ex.size, excluded: ex.size };
+    const ex = withholdFamilies(items, own).excludedIds;
+    const candidates = items.filter((it) => !ex.has(it.id) && it.status === 'ready'
+      && !(it.duplicate_of_item_id && !it.source_metadata?.set_aside_duplicate));
+    return {
+      included: items.length - ex.size,
+      excluded: ex.size,
+      attachmentDupes: attachmentDuplicates(candidates).length,
+    };
   }, [items]);
   const movedStamps = items.filter((it) => it.stamp_position).length;
 
@@ -56,7 +62,7 @@ export default function ProducePanel({
         <StatusRail status={production.status} />
         {activeJobs.map((job) => <JobProgress key={job.id} job={job} />)}
         {activeJobs.length === 0 && production.status === 'review' && (
-          <BatesStep production={production} included={included} excluded={excluded} movedStamps={movedStamps} onQueued={onQueued} />
+          <BatesStep production={production} included={included} excluded={excluded} attachmentDupes={attachmentDupes} movedStamps={movedStamps} onQueued={onQueued} />
         )}
         {(production.status === 'processing' || production.status === 'intake') && (
           <p className="text-[11.5px] text-white/45 leading-relaxed">
@@ -124,14 +130,16 @@ const POSITION_LABEL: Record<BatesPosition, string> = {
 
 function BatesStep({
   production,
-  included,
+  included: includedAll,
   excluded,
+  attachmentDupes,
   movedStamps,
   onQueued,
 }: {
   production: Production;
   included: number;
   excluded: number;
+  attachmentDupes: number;
   movedStamps: number;
   onQueued: (job: ProcessingJob) => void;
 }) {
@@ -145,6 +153,11 @@ function BatesStep({
   const [startTouched, setStartTouched] = useState(production.bates_start != null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "Remove duplicates of email attachments" — off unless chosen; sent with
+  // the stamp job, which records it on each copy it sets aside.
+  const [removeDupes, setRemoveDupes] = useState(false);
+  const setAside = removeDupes ? attachmentDupes : 0;
+  const included = includedAll - setAside;
 
   // Suggested start = the next free number in THIS prefix's series (108): a
   // new prefix starts at 1, a repeated prefix continues where it left off.
@@ -179,7 +192,7 @@ function BatesStep({
         matterspace_id: production.matterspace_id,
         production_id: production.id,
         job_type: 'stamp_production',
-        payload: {},
+        payload: { remove_attachment_duplicates: removeDupes },
       });
       onQueued(job);
     } catch (e) {
@@ -293,9 +306,31 @@ function BatesStep({
             {' · '}
             <span className="text-[#f87171]/90 tabular-nums font-medium">{excluded}</span> excluded
             <span className="text-white/35"> (privileged / non-responsive)</span>
+            {setAside > 0 && (
+              <>
+                {' · '}
+                <span className="text-[#e8b84a] tabular-nums font-medium">{setAside}</span> set aside as duplicates
+              </>
+            )}
           </p>
         </div>
       </div>
+
+      <label className="flex items-start gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={removeDupes}
+          onChange={(e) => setRemoveDupes(e.target.checked)}
+          className="mt-0.5 accent-[#e8b84a]"
+        />
+        <span className="text-[11.5px] text-[#f0ebe3] leading-snug">
+          Remove duplicates of email attachments
+          {attachmentDupes > 0 && <span className="text-white/45 tabular-nums"> ({attachmentDupes} found)</span>}
+          <span className="block text-[10.5px] text-white/45 mt-0.5">
+            A filed copy identical to an attachment is not produced again; the load file names where it was found.
+          </span>
+        </span>
+      </label>
 
       {error && <p className="text-[11px] text-red-300">{error}</p>}
       <button

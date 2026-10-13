@@ -10,7 +10,14 @@
 //     RECONCILIATION.txt both say so;
 //   * an attachment withheld on its own leaves its email produced, and the
 //     range spans what was produced.
-// The DAT gains BEGATTACH, ENDATTACH and MD5HASH (22 columns).
+// The DAT gains BEGATTACH, ENDATTACH and MD5HASH, and ALLCUSTODIANS and
+// DUPLICATEPATHS for "Remove duplicates of email attachments" (24 columns):
+//   * off (the default): every document is produced, a loose copy of an
+//     attachment included;
+//   * on: a loose copy byte-identical to a produced family member is set
+//     aside, and the DAT and RECONCILIATION.txt say where it was found;
+//   * a loose copy of a WITHHELD member, or one with a different hash, is
+//     produced as usual.
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -18,7 +25,9 @@ import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { extractEmlAttachments } from '../lib/eml-attachments.mjs';
 import { extractEmlPages } from '../lib/eml-extract.mjs';
 import { normalizeFile } from '../lib/discovery/normalize.mjs';
-import { withholdFamilies, familyRanges, privilegeEntriesWithFamilies } from '../lib/discovery/families.mjs';
+import {
+  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, attachmentDuplicates, duplicateColumns, setAsideLines,
+} from '../lib/discovery/families.mjs';
 import { emitDat, parseDat } from '../lib/discovery/loadfile.mjs';
 import { packageDocument } from '../lib/discovery/package-docs.mjs';
 import { reconciliationText } from '../lib/discovery/manifest.mjs';
@@ -178,14 +187,78 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
     older.datRow,
   ]);
   const { fields, records } = parseDat(dat);
-  assert.equal(fields.length, 22);
+  assert.equal(fields.length, 24);
+  assert.deepEqual(fields.slice(-2), ['allcustodians', 'duplicatepaths']);
+  assert.equal(records[0].allcustodians, '');
+  assert.equal(records[0].duplicatepaths, '');
   assert.deepEqual(fields.slice(0, 4), ['begbates', 'endbates', 'begattach', 'endattach']);
   assert.equal(fields[fields.indexOf('sha256') - 1], 'md5hash');
   assert.equal(records[0].begattach, 'P_001');
   assert.equal(records[0].endattach, 'P_005');
   assert.equal(records[1].begattach, '');
   assert.equal(records[1].md5hash, md5(docxBytes));
-  ok('the DAT carries 22 columns: BEGATTACH/ENDATTACH after the Bates range, MD5HASH beside SHA256');
+  ok('the DAT carries 24 columns: BEGATTACH/ENDATTACH after the Bates range, MD5HASH beside SHA256, '
+    + 'ALLCUSTODIANS/DUPLICATEPATHS last and empty when nothing was set aside');
+}
+
+// ---- "Remove duplicates of email attachments".
+{
+  const H = (c) => c.repeat(64);
+  const mail = { id: 'E', original_filename: 'mail.eml', sha256: H('e'), bates_first: 'P_001', bates_last: 'P_002',
+    source_metadata: { family: true, attachment_count: 1, custodian: 'Patel' } };
+  const att = { id: 'A', original_filename: 'TermSheet.pdf', sha256: H('a'), bates_first: 'P_003', bates_last: 'P_004',
+    source_metadata: { parent_item_id: 'E', attachment_index: 1, custodian: 'Patel' } };
+  const filed = { id: 'F', original_filename: 'TermSheet.pdf', original_path: 'Deals/2024/TermSheet.pdf', sha256: H('a'),
+    source_metadata: { custodian: 'Iyer' } };
+  const other = { id: 'O', original_filename: 'TermSheet-v2.pdf', original_path: 'Deals/TermSheet-v2.pdf', sha256: H('b'),
+    source_metadata: { custodian: 'Iyer' } };
+  const twin = { id: 'T', original_filename: 'copy.pdf', sha256: H('a'), source_metadata: { custodian: 'Patel' } };
+  const items = [mail, att, filed, other];
+  // What the worker does at stamp time: decide over what would be produced.
+  const decide = (list, on, withheldIds = new Set()) => {
+    const ex = withholdFamilies(list, withheldIds).excludedIds;
+    return on ? attachmentDuplicates(list.filter((i) => !ex.has(i.id))) : [];
+  };
+
+  assert.equal(decide(items, false).length, 0);
+  ok('switch off (the default): the filed copy of an attachment is produced like any document');
+
+  const on = decide(items, true);
+  assert.deepEqual(on.map((d) => [d.item.id, d.of.id]), [['F', 'A']]);
+  ok('switch on: a filed copy byte-identical to a produced attachment is set aside; the family stays whole');
+  ok('a copy with a different hash is produced (TermSheet-v2.pdf is not set aside)');
+
+  const cols = duplicateColumns(on);
+  assert.deepEqual(cols.get('A'), { all_custodians: 'Patel; Iyer', duplicate_paths: 'Deals/2024/TermSheet.pdf' });
+  assert.equal(cols.has('E'), false);
+  const { records } = parseDat(emitDat([{ bates_first: 'P_003', ...cols.get('A') }, { bates_first: 'P_005' }]));
+  assert.equal(records[0].allcustodians, 'Patel; Iyer');
+  assert.equal(records[0].duplicatepaths, 'Deals/2024/TermSheet.pdf');
+  assert.equal(records[1].allcustodians, '');
+  ok('the attachment DAT row names both custodians (ALLCUSTODIANS) and where the copy was filed (DUPLICATEPATHS)');
+
+  const lines = setAsideLines(on, new Map(items.map((i) => [i.id, i])));
+  assert.deepEqual(lines, ['TermSheet.pdf (filed copy): not produced; identical to P_003, produced as an attachment to P_001']);
+  const rec = reconciliationText(
+    { received: 4, produced: 3, withheld: 0, duplicates: 1, exceptions: 0, unnumbered: 0, producedPages: 5, registeredPages: 5 },
+    { matterName: 'M', productionName: 'P', setAside: lines },
+  ).toString('utf8');
+  assert.match(rec, /These figures reconcile\./);
+  assert.match(rec, /Filed copies of email attachments, set aside \.+ 1/);
+  assert.match(rec, /TermSheet\.pdf \(filed copy\): not produced; identical to P_003, produced as an attachment to P_001/);
+  ok('RECONCILIATION.txt lists the copy set aside, the Bates number it duplicates and the email number');
+
+  // The email is withheld, so its attachment is too: the filed copy stands on
+  // its own tags and is produced.
+  assert.equal(decide(items, true, new Set(['E'])).length, 0);
+  assert.equal(decide(items, true, new Set(['A'])).length, 0);
+  ok('a filed copy of a WITHHELD attachment is produced, never set aside');
+
+  // Never a family member set aside; two identical loose copies both produced.
+  assert.deepEqual(decide([filed, twin], true), []);
+  const twoFamilies = decide([mail, att, { ...att, id: 'A2', source_metadata: { parent_item_id: 'E2' } }], true);
+  assert.deepEqual(twoFamilies, []);
+  ok('two identical loose documents are both produced, and a family member is never set aside');
 }
 
 // ---- The worker: attachments follow their email in Bates order.
@@ -210,6 +283,15 @@ const lonely = { id: 'Q', original_filename: 'plain.eml', bates_first: 'P_007', 
   assert.match(src, /privilegeEntriesWithFamilies\(entries, withheldWithParent\)/);
   assert.match(src, /families\.get\(item\.id\)/);
   ok('stamping and packaging withhold whole families and write the family range');
+
+  // The switch: read from the stamp job, decided before any number is spent,
+  // recorded on each copy (no migration), cleared on an unstamped re-run.
+  assert.match(src, /if \(!locked\) await setAsideAttachmentDuplicates\(prod, job\.payload\?\.remove_attachment_duplicates === true\);/);
+  const fn2 = src.slice(src.indexOf('async function setAsideAttachmentDuplicates('));
+  assert.match(fn2, /if \(it\.source_metadata\?\.set_aside_duplicate\) await write\(it, null, false\);[\s\S]*if \(!on\) return;/);
+  assert.match(src, /dupColumns\.get\(item\.id\)/);
+  assert.match(src, /setAside: setAsideLines\(setAside, byId\)/);
+  ok('the worker sets copies aside only when the stamp job asks, and clears the choice of an earlier run');
 }
 
 console.log(`\nEmail families and MD5 verified offline: ${n} checks passed.`);

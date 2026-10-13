@@ -64,7 +64,9 @@ import { makeDescribeHook } from '../lib/describe-image-anthropic.mjs';
 import {
   sha256, md5, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
 } from '../lib/discovery/util.mjs';
-import { withholdFamilies, familyRanges, privilegeEntriesWithFamilies } from '../lib/discovery/families.mjs';
+import {
+  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, attachmentDuplicates, duplicateColumns, setAsideLines,
+} from '../lib/discovery/families.mjs';
 import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
   parseDat, datLookupByFilename, emitDat, emitOpt,
@@ -247,7 +249,7 @@ log('Queue drained; exiting.');
 //   intake_folder                 refused from the queue outright (below)
 //
 // The payload keys read after this point — ingest, force, ocr_retry,
-// include_privilege_log — are flags, not references.
+// include_privilege_log, remove_attachment_duplicates — are flags, not references.
 async function assertJobScope(job) {
   const p = job.payload ?? {};
   switch (job.job_type) {
@@ -1244,6 +1246,11 @@ async function stampProduction(job) {
   // error — and must certainly not renumber anything.
   const locked = prod.status === 'stamped';
 
+  // "Remove duplicates of email attachments" (payload.remove_attachment_duplicates,
+  // lib/discovery/families.mjs). Decided here, before any number is spent, and
+  // recorded on each copy set aside, so packaging reads the same decision.
+  if (!locked) await setAsideAttachmentDuplicates(prod, job.payload?.remove_attachment_duplicates === true);
+
   const { included, excluded, exceptions, duplicates, endorsementsByItem } = await partitionItems(prod);
   if (included.length === 0) throw new Error('No documents to stamp (all excluded?)');
 
@@ -1349,6 +1356,30 @@ async function stampProduction(job) {
     + ` / ${alloc.total_pages} pages (${formatBates(prefix, pad, Number(alloc.start_seq))}–`
     + `${formatBates(prefix, pad, Number(alloc.end_seq))}); ${excluded.length} withheld, `
     + `${duplicates.length} duplicate(s), ${exceptions.length} exception(s)`);
+}
+
+// Record the switch's decision on the items: a loose copy set aside points at
+// the family member it copies (duplicate_of_item_id, so it is accounted as a
+// duplicate everywhere) and carries source_metadata.set_aside_duplicate. A
+// re-run of an unstamped production first clears an earlier run's marks, so
+// turning the switch off really does produce every copy again.
+async function setAsideAttachmentDuplicates(prod, on) {
+  const write = async (item, duplicateOf, flag) => {
+    const sm = { ...(item.source_metadata ?? {}) };
+    if (flag) sm.set_aside_duplicate = true; else delete sm.set_aside_duplicate;
+    const { error } = await supabase.from('production_items')
+      .update({ duplicate_of_item_id: duplicateOf, source_metadata: sm }).eq('id', item.id);
+    if (error) throw new Error(`duplicate switch (${item.original_filename}): ${error.message}`);
+  };
+  const { items } = await partitionItems(prod);
+  for (const it of items) {
+    if (it.source_metadata?.set_aside_duplicate) await write(it, null, false);
+  }
+  if (!on) return;
+  const { included } = await partitionItems(prod);
+  const setAside = attachmentDuplicates(included);
+  for (const { item, of } of setAside) await write(item, of.id, true);
+  if (setAside.length) log(`  ${setAside.length} filed cop(ies) of email attachments set aside as duplicates`);
 }
 
 // Prove every page of every document is stampable before a single number is
@@ -1591,6 +1622,12 @@ async function packageProduction(job) {
   const textless = [];
   let totalPages = 0;
   const families = familyRanges(produced);
+  // Copies set aside by the duplicates switch at stamp time, with the family
+  // member each copies (now carrying its Bates number).
+  const setAside = duplicates
+    .filter((d) => d.source_metadata?.set_aside_duplicate && byId.get(d.duplicate_of_item_id))
+    .map((d) => ({ item: d, of: byId.get(d.duplicate_of_item_id) }));
+  const dupColumns = duplicateColumns(setAside);
   for (const [i, item] of produced.entries()) {
     await progress(job, (i / produced.length) * 80, `Packaging ${item.bates_first}`);
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
@@ -1606,7 +1643,7 @@ async function packageProduction(job) {
     });
     totalPages += doc.pages;
     if (!doc.textChars) textless.push(item.bates_first);
-    datRows.push({ ...doc.datRow, ...(families.get(item.id) ?? {}) });
+    datRows.push({ ...doc.datRow, ...(families.get(item.id) ?? {}), ...(dupColumns.get(item.id) ?? {}) });
   }
 
   if (totalPages !== producedPages) {
@@ -1646,6 +1683,7 @@ async function packageProduction(job) {
     withheldWithParent: withheldWithParent.map((w) => ({
       filename: w.item.original_filename, parentFilename: byId.get(w.parentId)?.original_filename ?? '',
     })),
+    setAside: setAsideLines(setAside, byId),
   }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
 
   if (job.payload?.include_privilege_log) {
