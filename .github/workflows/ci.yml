@@ -115,6 +115,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-discovery-sets.mjs
 
+      - name: Discovery — the matter's privilege log, one entry per document (migration 116, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-privilege-entries.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs

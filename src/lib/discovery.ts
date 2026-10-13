@@ -912,6 +912,118 @@ export async function updatePrivilegeLogEntry(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The matter's privilege log (migration 116, spec R3): one entry per document,
+// drafted when it is tagged Privileged on the Review tab. Outgoing productions
+// copy it; the copy follows it until the production is stamped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DocumentPrivilegeEntry {
+  id: string;
+  matterspace_id: string;
+  document_id: string;
+  doc_date: string | null;
+  author: string | null;
+  addressee: string | null;
+  cc: string | null;
+  subject_matter: string | null;
+  basis: PrivilegeBasis;
+  basis_custom: string | null;
+  description: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DocumentPrivilegePatch = Partial<Pick<DocumentPrivilegeEntry,
+  'doc_date' | 'author' | 'addressee' | 'cc' | 'subject_matter' | 'basis' | 'basis_custom' | 'description'>>;
+
+/** True when 116 has not been pasted yet (PostgREST cannot find the table). */
+export function isPrivilegeEntriesMissing(message: string): boolean {
+  return /document_privilege_entries/.test(message) && /schema cache|does not exist|not find/i.test(message);
+}
+
+export async function listDocumentPrivilegeEntries(matterspaceId: string): Promise<DocumentPrivilegeEntry[]> {
+  const { rows } = await fetchPaged<DocumentPrivilegeEntry>(
+    (from, to) => supabase
+      .from('document_privilege_entries')
+      .select('*', { count: 'exact' })
+      .eq('matterspace_id', matterspaceId)
+      .order('id')
+      .range(from, to),
+    { label: 'privilege log', ceiling: 50_000 },
+  );
+  return rows;
+}
+
+export async function updateDocumentPrivilegeEntry(id: string, patch: DocumentPrivilegePatch): Promise<void> {
+  const { error } = await supabase
+    .from('document_privilege_entries')
+    .update(patch)
+    .eq('id', id);
+  if (error) throw new Error(`update privilege log entry: ${error.message}`);
+}
+
+/** Titles of the listed documents (the log names each document). */
+export async function documentTitles(documentIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) chunks.push(documentIds.slice(i, i + REVIEW_TAG_CHUNK));
+  const results = await Promise.all(chunks.map((ids) => supabase
+    .from('documents').select('id, title, source_filename').in('id', ids)));
+  for (const { data, error } of results) {
+    if (error) throw new Error(`document names: ${error.message}`);
+    for (const d of (data ?? []) as { id: string; title: string | null; source_filename: string | null }[]) {
+      out.set(d.id, d.title || d.source_filename || 'Untitled');
+    }
+  }
+  return out;
+}
+
+/** The matter's privilege log as CSV (Excel opens it). */
+export function privilegeLogCsv(rows: { document: string; entry: DocumentPrivilegeEntry }[]): string {
+  const cell = (v: string | null | undefined) => {
+    const t = v ?? '';
+    return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const basisOf = (e: DocumentPrivilegeEntry) =>
+    e.basis === 'custom' ? (e.basis_custom ?? '') : PRIVILEGE_BASIS_LABELS[e.basis];
+  const head = ['No.', 'Document', 'Date', 'Author', 'Recipients', 'Cc', 'Subject matter', 'Basis', 'Description'];
+  const lines = rows.map(({ document, entry: e }, i) => [
+    String(i + 1), document, e.doc_date ?? '', e.author ?? '', e.addressee ?? '', e.cc ?? '',
+    e.subject_matter ?? '', basisOf(e), e.description ?? '',
+  ].map(cell).join(','));
+  return [head.join(','), ...lines].join('\r\n') + '\r\n';
+}
+
+/** Read-only review-tag chips for documents listed in the Vault (spec Q1:
+ *  tagging stays in Discovery). One query per chunk of the listed documents;
+ *  an empty map when 113 is not in yet, so the Vault never fails over it. */
+export async function listVaultReviewChips(documentIds: string[]): Promise<Map<string, Pick<DocumentTagDef, 'name' | 'color'>[]>> {
+  const out = new Map<string, Pick<DocumentTagDef, 'name' | 'color'>[]>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) chunks.push(documentIds.slice(i, i + REVIEW_TAG_CHUNK));
+  // Six at a time: a 20,000-document matter must not open 100 requests at once.
+  const results: { data: unknown[] | null; error: unknown }[] = [];
+  for (let i = 0; i < chunks.length; i += 6) {
+    results.push(...await Promise.all(chunks.slice(i, i + 6).map((ids) => supabase
+      .from('document_review_tags')
+      .select('document_id, def:document_tag_defs(name, color)')
+      .in('document_id', ids))));
+  }
+  for (const { data, error } of results) {
+    if (error) return new Map();
+    for (const r of (data ?? []) as unknown as { document_id: string; def: { name: string; color: string } | null }[]) {
+      if (!r.def) continue;
+      const list = out.get(r.document_id) ?? [];
+      // A document tagged in its matter's list and in a folder's: one chip a name.
+      if (!list.some((c) => c.name === r.def!.name)) list.push(r.def);
+      out.set(r.document_id, list);
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Processing jobs — enqueue + poll
 // ─────────────────────────────────────────────────────────────────────────────
 
