@@ -146,6 +146,9 @@ jobs:
       - name: Covers — banner position saved in the cover URL
         if: ${{ !cancelled() }}
         run: node scripts/_test-cover-position.mjs
+      - name: Illustration player zoom arithmetic (picture-zoom)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-picture-zoom.mjs
 
       - name: Meetings — Start mic never hangs on "Starting…"
         if: ${{ !cancelled() }}
