@@ -1041,7 +1041,7 @@ function MatterNode({
         {...attributes}
         {...listeners}
         onContextMenu={openPasteMenu}
-        className={`group flex items-center gap-1 rounded-md transition-colors ${
+        className={`group relative flex items-center gap-1 rounded-md transition-colors ${
           isActive(path)
             ? 'bg-[#16161d] text-white'
             : 'text-white/70 hover:bg-[rgba(255,255,255,0.04)]'
@@ -1080,10 +1080,10 @@ function MatterNode({
         <Link
           to={path}
           onDoubleClick={(e) => { e.preventDefault(); setDraft(matter.name); setRenaming(true); }}
-          className={`flex-1 truncate py-1.5 text-[12px] ${
+          className={`flex-1 min-w-0 break-words leading-snug py-1.5 pr-1 text-[12px] ${
             isActive(path) ? 'font-medium text-white' : 'hover:text-white'
           }`}
-          title={sealed ? `${matter.name} — sealed` : undefined}
+          title={sealed ? `${matter.name} — sealed` : matter.name}
         >
           {sealed && (
             <Lock
@@ -1096,55 +1096,59 @@ function MatterNode({
           {matter.name}
         </Link>
         )}
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setDraft(matter.name);
-            setRenaming(true);
-          }}
-          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
-          aria-label="Rename matter"
-          title="Rename"
-        >
-          <Pencil size={11} strokeWidth={2} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onAddChild(serverspaceId, matter.id, myLabel);
-          }}
-          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
-          aria-label="Add sub-matter"
-          title="Add sub-matter"
-        >
-          <Plus size={11} strokeWidth={2} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onShare(matter.id, matter.name);
-          }}
-          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
-          aria-label="Share matter"
-          title="Share matter"
-        >
-          <UserPlus size={11} strokeWidth={2} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete(matter.id, matter.name);
-          }}
-          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
-          aria-label="Delete matter"
-          title="Delete matter"
-        >
-          <Trash2 size={11} strokeWidth={2} />
-        </button>
+        {/* Actions float over the row's right end on hover, so they never
+            take width from the name (hidden, they used to reserve ~80px). */}
+        <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex group-focus-within:flex items-center rounded-md bg-[#1b1b23] shadow-md">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDraft(matter.name);
+              setRenaming(true);
+            }}
+            className="p-1 rounded text-white/30 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+            aria-label="Rename matter"
+            title="Rename"
+          >
+            <Pencil size={11} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onAddChild(serverspaceId, matter.id, myLabel);
+            }}
+            className="p-1 rounded text-white/30 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+            aria-label="Add sub-matter"
+            title="Add sub-matter"
+          >
+            <Plus size={11} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onShare(matter.id, matter.name);
+            }}
+            className="p-1 rounded text-white/30 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+            aria-label="Share matter"
+            title="Share matter"
+          >
+            <UserPlus size={11} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDelete(matter.id, matter.name);
+            }}
+            className="p-1 rounded text-white/30 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
+            aria-label="Delete matter"
+            title="Delete matter"
+          >
+            <Trash2 size={11} strokeWidth={2} />
+          </button>
+        </div>
       </div>
       {renameErr && <p className="px-2 py-1 text-[11px] text-red-300">{renameErr}</p>}
       {pasteNote && <p className={`px-2 py-1 text-[11px] ${pasteNote.ok ? 'text-white/60' : 'text-red-300'}`}>{pasteNote.text}</p>}
