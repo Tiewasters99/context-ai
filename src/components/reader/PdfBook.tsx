@@ -2081,6 +2081,7 @@ export default function PdfBook({
       {children}
       {merch && merchSheet && currentUserId && (
         <MerchSheet
+          key={merchSheet.kind === 'product' ? merchSheet.itemId : 'orders'}
           open={merchSheet}
           userId={currentUserId}
           returnPath={`${window.location.pathname}${window.location.search}`}

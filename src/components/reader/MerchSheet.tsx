@@ -112,14 +112,15 @@ export default function MerchSheet({ open, userId, returnPath, onClose, deps }: 
             <div className="text-[11.5px] text-white/50 mt-0.5 truncate">{title}</div>
           </div>
           <div className="flex items-center gap-1 shrink-0" data-card-inert="">
-            <button
-              onClick={() => setView((v) => (v === 'product' ? 'orders' : 'product'))}
-              className="rounded px-1.5 py-1 text-[11px] text-white/60 hover:bg-white/[0.08] hover:text-white"
-              disabled={open.kind === 'orders' && view === 'orders'}
-              title={view === 'product' ? 'What you have ordered' : 'Back to the picture'}
-            >
-              {view === 'product' ? 'Orders' : open.kind === 'product' ? 'Picture' : ''}
-            </button>
+            {open.kind === 'product' && (
+              <button
+                onClick={() => setView((v) => (v === 'product' ? 'orders' : 'product'))}
+                className="rounded px-1.5 py-1 text-[11px] text-white/60 hover:bg-white/[0.08] hover:text-white"
+                title={view === 'product' ? 'What you have ordered' : 'Back to the picture'}
+              >
+                {view === 'product' ? 'Orders' : 'Picture'}
+              </button>
+            )}
             {!isMobile && <PinToggle pinned={pinned} onToggle={togglePin} />}
             <button onClick={onClose} className="p-1.5 rounded-md hover:bg-white/[0.08] text-white/60 hover:text-white" title="Close (Esc)" aria-label="Close">
               <X size={16} />
@@ -162,8 +163,9 @@ function ProductView({ open, userId, returnPath, api, upload, mine, go, pollMs }
   const [trouble, setTrouble] = useState<string | null>(null);
   const [buying, setBuying] = useState(false);
   const making = useRef(new Set<string>());
+  // StrictMode mounts, unmounts and mounts again: set on the way in, not only cleared on the way out.
   const live = useRef(true);
-  useEffect(() => () => { live.current = false; }, []);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
 
   const bp = blueprints?.find((b) => b.key === key) ?? null;
   const product = key ? products.get(key) ?? null : null;
@@ -212,7 +214,11 @@ function ProductView({ open, userId, returnPath, api, upload, mine, go, pollMs }
         if (r.configured === false) { setLine(null); return; }
         const had = reusableByKey(await mine(open.itemId), open.itemUpdatedAt);
         if (cancelled) return;
-        if (had.size > 0) setProducts(new Map(had));
+        if (had.size > 0) {
+          setProducts(new Map(had));
+          const shown = had.get(first ?? '') ?? [...had.values()][0];
+          if (shown?.placement?.fill != null) setFill(shown.placement.fill === true);
+        }
         let url = [...had.values()][0]?.image_url ?? null;
         if (!url) {
           const blob = await open.getBlob();
