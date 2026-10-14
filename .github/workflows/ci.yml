@@ -718,6 +718,9 @@ jobs:
       - name: Grapheon Reader — a picture from the bench on a tee (api/merch + the Grapheon webhook)
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-merch-api.mjs
+      - name: Grapheon Reader — the product sheet's arithmetic (merch-sheet)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-merch-sheet.mjs
       # What the Assistant panel SAYS on a sealed matter before the first
       # message: the scope strip, the pen named in advance (and corrected when
       # the server names another), the word-search note, the pause, the
