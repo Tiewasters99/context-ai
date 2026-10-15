@@ -251,6 +251,8 @@ function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, 
   );
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory, folders, onMoveFiles, onNewFolder, onOpenFolder, matterName, onPasteResult }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(RENDER_WINDOW);
@@ -266,14 +268,17 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
   // every status poll; chunks of the list go out together.
   const [reviewChips, setReviewChips] = useState<Map<string, { name: string; color: string }[]>>(new Map());
   const chipIdsKey = useMemo(
-    () => (matterId ? files.filter((f) => f.matterspace_id && f.storagePath).map((f) => f.id).sort().join(',') : ''),
+    // Every stored document row (a real uuid). Not gated on storagePath: on
+    // some matters the list rows carry none, which silently meant no chips.
+    () => (matterId ? files.filter((f) => UUID_RE.test(f.id)).map((f) => f.id).sort().join(',') : ''),
     [files, matterId],
   );
   useEffect(() => {
-    if (!chipIdsKey) { setReviewChips(new Map()); return; }
+    if (!chipIdsKey) { if (matterId && files.length) console.info(`[vault chips] none asked: 0 of ${files.length} rows have a document id`); setReviewChips(new Map()); return; }
     let cancelled = false;
-    listVaultReviewChips(chipIdsKey.split(','))
-      .then((m) => { if (!cancelled) setReviewChips(m); })
+    const ids = chipIdsKey.split(',');
+    listVaultReviewChips(ids)
+      .then((m) => { console.info(`[vault chips] ${m.size} of ${ids.length} documents tagged`); if (!cancelled) setReviewChips(m); })
       .catch((e) => { console.warn('[vault chips]', e); /* chips are a convenience; the list never fails over them */ });
     return () => { cancelled = true; };
   }, [chipIdsKey]);
