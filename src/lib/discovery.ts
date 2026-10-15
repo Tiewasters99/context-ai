@@ -1033,24 +1033,41 @@ export function privilegeLogCsv(rows: { document: string; entry: DocumentPrivile
  *  an empty map when 113 is not in yet, so the Vault never fails over it. */
 export async function listVaultReviewChips(documentIds: string[]): Promise<Map<string, Pick<DocumentTagDef, 'name' | 'color'>[]>> {
   const out = new Map<string, Pick<DocumentTagDef, 'name' | 'color'>[]>();
+  // 100 ids a request keeps each URL well under gateway limits (36-char ids).
+  const VAULT_CHIP_CHUNK = 100;
   const chunks: string[][] = [];
-  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) chunks.push(documentIds.slice(i, i + REVIEW_TAG_CHUNK));
-  // Six at a time: a 20,000-document matter must not open 100 requests at once.
-  const results: { data: unknown[] | null; error: unknown }[] = [];
+  for (let i = 0; i < documentIds.length; i += VAULT_CHIP_CHUNK) chunks.push(documentIds.slice(i, i + VAULT_CHIP_CHUNK));
+  // One chunk, tried twice. A chunk that still fails is skipped and logged:
+  // it costs only its own chips, never every chip in the list (which is what
+  // a single failed request used to do, silently).
+  const readChunk = async (ids: string[]): Promise<unknown[]> => {
+    let last: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { data, error } = await supabase
+          .from('document_review_tags')
+          .select('document_id, def:document_tag_defs(name, color)')
+          .in('document_id', ids);
+        if (!error) return data ?? [];
+        last = error;
+      } catch (e) {
+        last = e;
+      }
+    }
+    console.warn('[vault chips] review tags not read for', ids.length, 'documents:', last);
+    return [];
+  };
+  // Six at a time: a 20,000-document matter must not open 200 requests at once.
   for (let i = 0; i < chunks.length; i += 6) {
-    results.push(...await Promise.all(chunks.slice(i, i + 6).map((ids) => supabase
-      .from('document_review_tags')
-      .select('document_id, def:document_tag_defs(name, color)')
-      .in('document_id', ids))));
-  }
-  for (const { data, error } of results) {
-    if (error) return new Map();
-    for (const r of (data ?? []) as unknown as { document_id: string; def: { name: string; color: string } | null }[]) {
-      if (!r.def) continue;
-      const list = out.get(r.document_id) ?? [];
-      // A document tagged in its matter's list and in a folder's: one chip a name.
-      if (!list.some((c) => c.name === r.def!.name)) list.push(r.def);
-      out.set(r.document_id, list);
+    const pages = await Promise.all(chunks.slice(i, i + 6).map(readChunk));
+    for (const data of pages) {
+      for (const r of data as { document_id: string; def: { name: string; color: string } | null }[]) {
+        if (!r.def) continue;
+        const list = out.get(r.document_id) ?? [];
+        // A document tagged in its matter's list and in a folder's: one chip a name.
+        if (!list.some((c) => c.name === r.def!.name)) list.push(r.def);
+        out.set(r.document_id, list);
+      }
     }
   }
   return out;
