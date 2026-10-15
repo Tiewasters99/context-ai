@@ -35,7 +35,7 @@ import { userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 // (api/gpt/[op].mjs). Re-exported here so the harnesses that import them from
 // this file keep working.
 import {
-  AuthError, adminClient, authenticate, callToolOptsFor, userScopedClient,
+  AuthError, adminClient, authenticate, callToolOptsFor, userScopedClient, withToolAuthMeta,
   SUPABASE_URL, SUPABASE_ANON_KEY, SERVICE_KEY,
 } from '../lib/oauth-bearer.mjs';
 export { AuthError, authenticate, callToolOptsFor };
@@ -46,6 +46,17 @@ export { AuthError, authenticate, callToolOptsFor };
 // -----------------------------------------------------------------------------
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+
+// What every connection reads first. Hosts may cut server instructions short,
+// so the four rules a connected assistant must not miss come first.
+export const SERVER_INSTRUCTIONS_LEAD =
+  'Call list_matters first to see the matters in this workspace, then work in ' +
+  'one. Cite every statement from a document by its title ' +
+  'and page (page:line where given); never quote what you have not retrieved. ' +
+  'Sealed matters do not answer here: they are not listed and a call naming one ' +
+  'is refused; say so, never guess at them. Writes ask first: before any tool ' +
+  'that files, moves, copies, creates or updates anything, tell the user what ' +
+  'will change and wait for a yes (an agent acts within a task it has claimed). ';
 
 const AGENT_INSTRUCTIONS =
   ' THIS IS AN AGENT CONNECTION. It sees only the matters it has been granted ' +
@@ -137,13 +148,18 @@ export default async function handler(req, res) {
       },
       {
         capabilities: { tools: {} },
+        // The first 512 characters carry the weight (PLUGIN-DIRECTORY §2.5):
+        // list_matters first, cite document and page, sealed matters do not
+        // answer, writes ask first. SERVER_INSTRUCTIONS_LEAD is checked by
+        // scripts/_verify-mcp-plugin-ready.mjs.
         instructions:
-          'Contextspaces stores both searchable text (passages with page:line ' +
+          SERVER_INSTRUCTIONS_LEAD +
+          'This workspace stores both searchable text (passages with page:line ' +
           'citations) and the original files behind every document. Media ' +
           'originals — video, audio, images, as-filed PDFs — are accessible: ' +
           'call get_media with a document UUID to receive a short-lived ' +
           'streaming URL (supports HTTP Range). When a user asks you to watch ' +
-          'or analyze a video stored in Contextspaces, use get_media and fetch ' +
+          'or analyze a video stored here, use get_media and fetch ' +
           'the URL yourself before asking for a local file path. If your ' +
           'environment blocks the fetch (sandboxed agents may get 403 ' +
           'host_not_allowed from an egress proxy), the URL is still valid: ' +
@@ -181,6 +197,11 @@ export default async function handler(req, res) {
       // every call, a charge through usage_consume on the costed ones, and a
       // plain-sentence refusal. The result and error shapes are unchanged —
       // runMeteredToolCall returns exactly what this handler used to.
+      //
+      // A call refused for AUTHENTICATION inside the tool (an AuthError) also
+      // carries the sign-in challenge in _meta (lib/oauth-bearer.mjs
+      // withToolAuthMeta). Seal, pause and agent-scope refusals are untouched.
+      let authRefusal = null;
       return runMeteredToolCall({
         identity,
         name,
@@ -194,8 +215,11 @@ export default async function handler(req, res) {
           // Used by move_document only, to carry a moved document's queued
           // ingest job along (097 round 4); nothing else reads it.
           ...(name === 'move_document' ? { jobClient: adminClient() } : {}),
+        }).catch((err) => {
+          if (err instanceof AuthError) authRefusal = err;
+          throw err;
         }),
-      });
+      }).then((result) => (authRefusal ? withToolAuthMeta(result, req, authRefusal) : result));
     });
 
     // Stateless: one transport per request. For Phase 1 this is simpler
