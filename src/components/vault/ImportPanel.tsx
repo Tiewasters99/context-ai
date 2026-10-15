@@ -274,7 +274,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     let cancelled = false;
     listVaultReviewChips(chipIdsKey.split(','))
       .then((m) => { if (!cancelled) setReviewChips(m); })
-      .catch(() => { /* chips are a convenience; the list never fails over them */ });
+      .catch((e) => { console.warn('[vault chips]', e); /* chips are a convenience; the list never fails over them */ });
     return () => { cancelled = true; };
   }, [chipIdsKey]);
 
