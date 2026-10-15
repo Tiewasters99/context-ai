@@ -58,8 +58,8 @@ import { getVaultClip, pasteVaultClip, VAULT_CHANGED_EVENT } from '@/lib/vault-c
 type VaultView = 'home' | 'import' | 'workbench' | 'sandbox' | 'citecheck' | 'files' | 'generated';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
-  { icon: FolderOpen, label: 'Documents', description: 'The matter’s documents, with search', view: 'files' },
-  { icon: Upload, label: 'Import documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
+  { icon: Upload, label: 'Import/Display Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
+  { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
   { icon: FlaskConical, label: 'Sandbox', description: 'Stage working copies, combine exhibits into one PDF', view: 'sandbox' },
   { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
@@ -72,22 +72,9 @@ export default function Vault() {
   // opens `uploadEstimateDialog` only for one big enough to be worth saying
   // something about first.
   const { gate: gateUpload, dialog: uploadEstimateDialog } = useUploadEstimateGate();
-  // Matter context: when /app/vault?matter=<short_code|uuid>, the Vault
-  // operates in persistent mode — files go through Supabase Storage +
-  // documents/passages, and the file list reflects the matter's vault
-  // across sessions. Without ?matter=, the Vault is the original ephemeral
-  // single-session workspace.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const matterKey = searchParams.get('matter');
-  // Opening a matter's Vault lands on its document list, lit, with the menu
-  // open beside it (closed on a phone, where it would cover the list).
-  // Before 10-15 it opened dark, then on a welcome screen, and the list sat
-  // behind "Import/Display Documents" — two clicks to see what is in the
-  // matter (Eden: "your documents should just display"). Importing is its
-  // own button now. The ephemeral Vault (no ?matter=) keeps the dot.
-  const [illuminated, setIlluminated] = useState(() => !!matterKey);
-  const [menuOpen, setMenuOpen] = useState(() => !!matterKey && !isMobile);
-  const [activeView, setActiveView] = useState<VaultView>(() => (matterKey ? 'files' : 'home'));
+  const [illuminated, setIlluminated] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [activeView, setActiveView] = useState<VaultView>('home');
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [loadedTrack, setLoadedTrack] = useState<MusicTrack | null>(null);
   const [showMusicLibrary, setShowMusicLibrary] = useState(false);
@@ -100,7 +87,7 @@ export default function Vault() {
   const [vaultFiles, setVaultFiles] = useState<VaultFile[]>([]);
   // What the server says this matter tree holds, alongside what we hold. The
   // two differ only when the paged read stopped at its ceiling — and when they
-  // differ the Documents list says so rather than showing a short list as if it
+  // differ the File Browser says so rather than showing a short list as if it
   // were the whole matter.
   const [vaultListing, setVaultListing] = useState<{ total: number; truncated: boolean } | null>(null);
   // User-visible notice for operations that previously failed silently
@@ -114,6 +101,13 @@ export default function Vault() {
   const [generatedDocs, setGeneratedDocs] = useState<VaultFile[]>([]);
   const [openFile, setOpenFile] = useState<VaultFile | null>(null);
 
+  // Matter context: when /app/vault?matter=<short_code|uuid>, the Vault
+  // operates in persistent mode — files go through Supabase Storage +
+  // documents/passages, and the file list reflects the matter's vault
+  // across sessions. Without ?matter=, the Vault is the original ephemeral
+  // single-session workspace.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const matterKey = searchParams.get('matter');
   const [matter, setMatter] = useState<MatterRef | null>(null);
   const [matterError, setMatterError] = useState<string | null>(null);
   // A document open in the reader OVER the Vault. Until 2026-09-08 a PDF
@@ -226,11 +220,6 @@ export default function Vault() {
       } else {
         setMatter(m);
         setMatterError(null);
-        // A matter picked from inside the Vault (the rail, a folder chip)
-        // also lands on its list — unless a tool is already open, which
-        // stays open.
-        setIlluminated(true);
-        setActiveView((v) => (v === 'home' ? 'files' : v));
       }
     }).catch((err) => {
       // Transient failure (session refresh, network) — say so instead of
@@ -885,7 +874,7 @@ export default function Vault() {
     switch (activeView) {
       case 'import':
       case 'files':
-        return <ImportPanel showImport={activeView === 'import' || !matter} onShowImport={matter ? (open) => setActiveView(open ? 'import' : 'files') : undefined} loading={!!matterKey && !matterError && vaultListing === null && vaultNotice?.kind !== 'err'} files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} folders={matter ? folders : undefined} onMoveFiles={matter ? moveFiles : undefined} onNewFolder={matter ? () => openNewMatter(matter.serverspace_id, matter.id, matter.name) : undefined} onOpenFolder={(id) => switchToMatter(folders.find((f) => f.id === id)?.shortCode ?? id)} matterName={matter?.name} onPasteResult={(r) => setVaultNotice({ kind: r.ok ? 'ok' : 'err', text: r.text })} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
+        return <ImportPanel files={vaultFiles} matterId={matter?.id} ingestService={ingestService} totalCount={vaultListing?.total} listNotice={vaultListing ? showingOf({ rows: vaultFiles, total: vaultListing.total, truncated: vaultListing.truncated }, 'documents') : null} grouping={grouping} onGroupingChange={matter ? chooseGrouping : undefined} onOrganize={matter ? organizeMatter : undefined} onSetCategory={matter ? changeCategory : undefined} folders={matter ? folders : undefined} onMoveFiles={matter ? moveFiles : undefined} onNewFolder={matter ? () => openNewMatter(matter.serverspace_id, matter.id, matter.name) : undefined} onOpenFolder={(id) => switchToMatter(folders.find((f) => f.id === id)?.shortCode ?? id)} matterName={matter?.name} onPasteResult={(r) => setVaultNotice({ kind: r.ok ? 'ok' : 'err', text: r.text })} onAddFiles={addVaultFiles} onRemoveFile={removeVaultFile} onRetryFile={matter ? retryVaultFile : undefined} onOpenDocument={setReaderDocId} onOpenFile={(file) => {
           // Routing rule: any matter-persisted PDF, DOCX, deck or image
           // opens in the full-screen DocumentReader (pages, search,
           // annotations; a picture is drawn as itself), laid over this list
