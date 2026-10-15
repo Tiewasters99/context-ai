@@ -71,6 +71,16 @@ interface ImportPanelProps {
   matterName?: string;
   /** What a paste did, in a sentence, for the page's notice line. */
   onPasteResult?: (r: { ok: boolean; text: string }) => void;
+  /**
+   * Whether the import area (drop zone, Select Files / Select Folder) is
+   * shown above the list. A matter's Vault opens on its list with this off;
+   * the "Import documents" button turns it on. Left unset, it is shown, as it
+   * always was.
+   */
+  showImport?: boolean;
+  onShowImport?: (open: boolean) => void;
+  /** The matter's list has not arrived yet — say so instead of an empty Vault. */
+  loading?: boolean;
 }
 
 /**
@@ -251,7 +261,7 @@ function PictureTile({ file, onOpen, selected = false, onSelectClick, onToggle, 
   );
 }
 
-export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory, folders, onMoveFiles, onNewFolder, onOpenFolder, matterName, onPasteResult }: ImportPanelProps) {
+export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFile, onOpenFile, onOpenDocument, matterId, ingestService = null, totalCount, listNotice, grouping = 'date', onGroupingChange, onOrganize, onSetCategory, folders, onMoveFiles, onNewFolder, onOpenFolder, matterName, onPasteResult, showImport = true, onShowImport, loading = false }: ImportPanelProps) {
   const [search, setSearch] = useState('');
   const [shown, setShown] = useState(RENDER_WINDOW);
   const [dragOver, setDragOver] = useState(false);
@@ -869,16 +879,96 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     );
   };
 
+  // A matter's Vault opens on its list. The import area shows when asked
+  // for, and on its own when the matter has nothing in it yet — an empty list
+  // with the drop zone hidden is a dead end.
+  const importOpen = showImport || (!loading && files.length === 0);
+
+  // Folders: this matter's own sub-folders, each a place to drop files, and
+  // the way to make a new one. Drawn above the list, and on its own when the
+  // open matter holds only folders.
+  const foldersRow = canMove && (onNewFolder || (folders && folders.length > 0)) && (
+    <div className="flex items-center gap-2 flex-wrap mb-3">
+      <span className="text-[10px] uppercase tracking-wider text-white/40">Folders</span>
+      {folders?.map((f) => (
+        <button
+          key={f.id}
+          type="button"
+          onClick={() => onOpenFolder?.(f.id)}
+          title={`Open ${f.name} — or drop files here to move them in`}
+          {...dropProps(f.id, f.name)}
+          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition-colors ${
+            dropFolder === f.id
+              ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.18)] text-[#e8b84a]'
+              : 'border-[rgba(255,255,255,0.12)] text-white/80 hover:border-[#e8b84a]/50 hover:text-white'
+          }`}
+        >
+          <Folder size={12} className="text-[#d4a054]" strokeWidth={1.75} />
+          {f.name}
+          <span className="text-white/35">{(folderCount.get(f.id) ?? 0).toLocaleString()}</span>
+        </button>
+      ))}
+      {onNewFolder && (
+        <button
+          type="button"
+          onClick={onNewFolder}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-dashed border-[rgba(255,255,255,0.2)] text-[11px] text-white/70 hover:border-[#e8b84a]/60 hover:text-[#e8b84a] transition-colors"
+        >
+          <FolderPlus size={12} strokeWidth={1.75} /> New folder
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
-      <div className="px-6 py-5 border-b border-[rgba(255,255,255,0.08)]">
-        <h2 className="text-[18px] font-semibold text-white mb-1">Import/Display Documents</h2>
-        <p className="text-[13px] text-white/80">
-          Add files and folders. Text is extracted automatically for AI analysis.
-        </p>
+      <div className="px-6 py-5 border-b border-[rgba(255,255,255,0.08)] flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-[18px] font-semibold text-white mb-1">{importOpen ? 'Import documents' : 'Documents'}</h2>
+          <p className="text-[13px] text-white/80">
+            {importOpen
+              ? 'Add files and folders. Text is extracted automatically for AI analysis.'
+              : 'Everything in this matter. Search by name below, or search inside the documents.'}
+          </p>
+        </div>
+        {onShowImport && (importOpen ? (
+          files.length > 0 && (
+            <button
+              onClick={() => onShowImport(false)}
+              className="shrink-0 flex items-center gap-2 px-3 py-2 rounded-lg border border-[rgba(255,255,255,0.15)] hover:border-[#e8b84a]/50 text-white text-[12px] font-medium transition-colors"
+            >
+              <X size={14} /> Close import
+            </button>
+          )
+        ) : (
+          <button
+            onClick={() => onShowImport(true)}
+            className="shrink-0 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#f0c850] hover:bg-[#e8b84a] text-black text-[12px] font-bold transition-colors"
+          >
+            <Upload size={14} /> Import documents
+          </button>
+        ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5">
+      <div
+        className={`flex-1 overflow-y-auto px-6 py-5 ${!importOpen && dragOver ? 'ring-2 ring-inset ring-[#e8b84a]/60' : ''}`}
+        // With the import area closed, a file dragged in from the desktop
+        // still imports: the list itself takes the drop. Drags between
+        // folders (vault drags) are left to the folder targets.
+        onDragOver={importOpen ? undefined : (e) => {
+          if (isVaultDrag(e.dataTransfer) || !Array.from(e.dataTransfer.types).includes('Files')) return;
+          e.preventDefault();
+          if (!dragOver) setDragOver(true);
+        }}
+        onDragLeave={importOpen ? undefined : (e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false);
+        }}
+        onDrop={importOpen ? undefined : (e) => {
+          if (isVaultDrag(e.dataTransfer) || !Array.from(e.dataTransfer.types).includes('Files')) return;
+          void handleDrop(e);
+        }}
+      >
+        {importOpen && (<>
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
@@ -908,10 +998,19 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
         <input ref={fileInputRef} type="file" multiple onChange={handleFileUpload} className="hidden" />
         {/* @ts-expect-error webkitdirectory is non-standard */}
         <input ref={folderInputRef} type="file" webkitdirectory="" multiple onChange={handleFileUpload} className="hidden" />
+        </>)}
+
+        {loading && files.length === 0 && (
+          <p className="mb-4 flex items-center gap-2 text-[12px] text-white/60">
+            <Loader2 size={13} className="animate-spin text-[#e8b84a]" /> Loading documents…
+          </p>
+        )}
 
         {/* Real content search (hybrid semantic+keyword over the corpus) —
             distinct from the filename filter below the file-list header. */}
         <ContentSearch matterId={matterId} onOpen={onOpenDocument} />
+
+        {files.length === 0 && foldersRow && <div className="mt-6">{foldersRow}</div>}
 
         {files.length > 0 && (
           <div className="mt-6">
@@ -1015,40 +1114,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
               </div>
             )}
 
-            {/* Folders: this matter's own sub-folders, each a place to drop
-                files, and the way to make a new one. */}
-            {canMove && (onNewFolder || (folders && folders.length > 0)) && (
-              <div className="flex items-center gap-2 flex-wrap mb-3">
-                <span className="text-[10px] uppercase tracking-wider text-white/40">Folders</span>
-                {folders?.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => onOpenFolder?.(f.id)}
-                    title={`Open ${f.name} — or drop files here to move them in`}
-                    {...dropProps(f.id, f.name)}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] transition-colors ${
-                      dropFolder === f.id
-                        ? 'border-[#e8b84a] bg-[rgba(232,184,74,0.18)] text-[#e8b84a]'
-                        : 'border-[rgba(255,255,255,0.12)] text-white/80 hover:border-[#e8b84a]/50 hover:text-white'
-                    }`}
-                  >
-                    <Folder size={12} className="text-[#d4a054]" strokeWidth={1.75} />
-                    {f.name}
-                    <span className="text-white/35">{(folderCount.get(f.id) ?? 0).toLocaleString()}</span>
-                  </button>
-                ))}
-                {onNewFolder && (
-                  <button
-                    type="button"
-                    onClick={onNewFolder}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-dashed border-[rgba(255,255,255,0.2)] text-[11px] text-white/70 hover:border-[#e8b84a]/60 hover:text-[#e8b84a] transition-colors"
-                  >
-                    <FolderPlus size={12} strokeWidth={1.75} /> New folder
-                  </button>
-                )}
-              </div>
-            )}
+            {foldersRow}
 
             {selected.size > 0 && (
               <div className="flex items-center gap-3 flex-wrap mb-3 px-3 py-2 rounded-lg border border-[#e8b84a]/40 bg-[rgba(232,184,74,0.08)] text-[11px] text-[#f0dfa8]">
