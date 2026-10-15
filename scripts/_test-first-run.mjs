@@ -523,11 +523,10 @@ test('the accepted-types sentence matches what the Vault actually accepts', () =
   for (const kind of ['PDF', 'Word', 'text', 'spreadsheets', 'slides', 'email', '.zip']) {
     assert.ok(detail.includes(kind), `${kind} is missing from the accepted-types sentence`);
   }
-  // And it names the click the Vault really needs — a matter's Vault opens
-  // on its document list, and importing is its own button there.
-  assert.ok(detail.includes('Import documents'));
-  assert.match(src('src/pages/Vault.tsx'), /label: 'Import documents'/);
-  assert.match(src('src/components/vault/ImportPanel.tsx'), /Import documents/);
+  // And it names the click the Vault really needs — its home screen has no
+  // drop zone, and there is no ?view= parameter to open one.
+  assert.ok(detail.includes('Import/Display Documents'));
+  assert.match(src('src/pages/Vault.tsx'), /Import\/Display Documents/);
 });
 
 test('the quote before a big upload is a thing that exists', () => {

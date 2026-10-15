@@ -90,7 +90,7 @@ export const FIRST_RUN_COPY = {
     documents: {
       title: 'Put documents in its Vault',
       detail:
-        'Open the matter’s Vault and choose Import documents. It accepts PDF, Word, ' +
+        'Open the matter’s Vault and choose Import/Display Documents. It accepts PDF, Word, ' +
         'text, spreadsheets, slides, email, e-books, images, audio and video, and .zip archives ' +
         'of those, up to 2 GB a file. A large upload is quoted before it runs.',
       action: 'Open the Vault',
