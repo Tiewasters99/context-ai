@@ -65,6 +65,7 @@ import {
   exceptionsCsv, exceptionReason, duplicatesCsv, reconcile, reconciliationText,
 } from '../lib/discovery/manifest.mjs';
 import { packageDocument } from '../lib/discovery/package-docs.mjs';
+import { packageVolumes, openZipArchive } from '../lib/discovery/volumes.mjs';
 import { duplicatesToSetAside, duplicateColumns, setAsideLines } from '../lib/discovery/families.mjs';
 
 let PGlite;
@@ -119,6 +120,7 @@ const getObject = (p) => {
   if (!o) throw new Error(`storage download ${p}: Object not found`);
   return o.buf;
 };
+const objectExists = (p) => storage.has(p);
 
 // ---------------------------------------------------------------------------
 // 1. Schema + the real migration chain
@@ -1183,7 +1185,7 @@ check(/Bates collision/.test(pltfClash?.message ?? ''),
 // ---------------------------------------------------------------------------
 section('packaging (real emitDat/emitOpt/letter/privilege log + archiver)');
 
-async function packageProduction(productionId, { includePrivilegeLog = true } = {}) {
+async function packageProduction(productionId, { includePrivilegeLog = true, volumePages = null, concurrency = 4 } = {}) {
   const p = await one(`select * from public.productions where id=$1`, [productionId]);
   if (p.status !== 'stamped' && p.status !== 'packaged') {
     throw new Error(`package_production: production must be stamped first (status: ${p.status})`);
@@ -1213,88 +1215,96 @@ async function packageProduction(productionId, { includePrivilegeLog = true } = 
 
   const matterName = (await one(`select name from public.matterspaces where id=$1`, [p.matterspace_id]))?.name ?? '';
   const volumeName = sanitizeStorageName(p.name.replace(/\s+/g, '_')) || 'PRODUCTION';
-  const archiver = (await import('archiver')).default;
-  const tmpZip = path.join(tmp, `pkg-${crypto.randomUUID().slice(0, 8)}.zip`);
-  const out = fs.createWriteStream(tmpZip);
-  const archive = archiver('zip', { zlib: { level: 6 } });
-  const done = new Promise((res, rej) => { out.on('close', res); archive.on('error', rej); });
-  archive.pipe(out);
-
-  // The per-document part is the worker's own code (lib/discovery/
-  // package-docs.mjs), not a transcription: IMAGES/, NATIVES/, TEXT/ and the
-  // DAT row come out of the same function in both places.
-  const datRows = [];
-  const textless = [];
-  const textSources = new Map();
-  let totalPages = 0;
+  // The packaging loop is the worker's own (lib/discovery/volumes.mjs
+  // packageVolumes), not a transcription, and so is the per-document part
+  // (lib/discovery/package-docs.mjs): IMAGES/, NATIVES/, TEXT/, the DAT rows,
+  // the volumes and their order come out of the same functions in both places.
   const setAside = duplicates.filter((d) => byId.get(d.duplicate_of_item_id))
     .map((d) => ({ item: d, of: byId.get(d.duplicate_of_item_id) }));
   const dupColumns = duplicateColumns(setAside);
-  for (const item of produced) {
-    const base = `${p.matterspace_id}/${p.id}/${item.id}`;
-    const doc = await packageDocument({
-      item, volumeName,
-      confidential: confidentialIds.has(item.id),
-      stampedPath: `${base}/stamped.pdf`,
-      read: async (sp) => getObject(sp),
-      append: (buf, name) => archive.append(buf, { name }),
-      corpusPages: null,
-    });
-    totalPages += doc.pages;
-    if (!doc.textChars) textless.push(item.bates_first);
-    textSources.set(item.original_filename, doc.textSource);
-    datRows.push({ ...doc.datRow, ...(dupColumns.get(item.id) ?? {}) });
-  }
-  if (totalPages !== producedPages) {
-    throw new Error(`The package holds ${totalPages} page(s) but the production reconciled at ${producedPages}`);
-  }
-  archive.append(emitDat(datRows), { name: `${volumeName}/DATA/loadfile.dat` });
-  archive.append(emitOpt(datRows, volumeName), { name: `${volumeName}/DATA/loadfile.opt` });
-  archive.append(exceptionsCsv(exceptions), { name: `${volumeName}/DATA/EXCEPTIONS.csv` });
-  archive.append(duplicatesCsv(duplicates.map((d) => {
-    const f = byId.get(d.duplicate_of_item_id);
-    return {
-      original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
-      firstFilename: f?.original_filename ?? '',
-      firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
-    };
-  })), { name: `${volumeName}/DATA/DUPLICATES.csv` });
-  archive.append(reconciliationText(counts, {
-    matterName, productionName: p.name,
-    batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
-    batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
-    dateStr: new Date().toISOString().slice(0, 10),
-    textless,
-    setAside: setAsideLines(setAside, byId),
-  }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
-
-  if (includePrivilegeLog) {
-    const entries = await q(`select * from public.privilege_log_entries where production_id=$1 order by doc_date nulls last`, [productionId]);
-    if (entries.length) {
-      archive.append(await makePrivilegeLogPdf({ matterName, productionName: p.name, entries }),
-        { name: `${volumeName}/PrivilegeLog.pdf` });
-    }
-  }
-  archive.append(await makeProductionLetter({
-    productionName: p.name, matterName, receivingParty: p.receiving_party,
-    batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
-    batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
-    docCount: produced.length, pageCount: totalPages,
-    nativeCount: produced.filter((i) => i.kind === 'native').length,
-    confidentialCount: confidentialIds.size, requestRefs: p.request_refs,
-    dateStr: new Date().toISOString().slice(0, 10),
-  }), { name: `${volumeName}/ProductionLetter.pdf` });
-
-  await archive.finalize();
-  await done;
-
-  const bytes = await fsp.readFile(tmpZip);
-  const pkgSha = crypto.createHash('sha256').update(bytes).digest('hex');
-  const pkgPath = putObject(`${p.matterspace_id}/${p.id}/package/${volumeName}.zip`, bytes, 'application/zip');
+  const textSources = new Map();
+  const pkgDir = `${p.matterspace_id}/${p.id}/package`;
+  const result = await packageVolumes({
+    produced,
+    imageFormat: 'pdf',
+    baseName: volumeName,
+    maxPages: volumePages,
+    includePrivilegeLog,
+    concurrency,
+    packageOne: async (item) => {
+      const files = [];
+      const base = `${p.matterspace_id}/${p.id}/${item.id}`;
+      const doc = await packageDocument({
+        item, volumeName: '',
+        confidential: confidentialIds.has(item.id),
+        stampedPath: `${base}/stamped.pdf`,
+        read: async (sp) => getObject(sp),
+        append: (buf, name) => files.push({ buf, name }),
+        corpusPages: null,
+      });
+      textSources.set(item.original_filename, doc.textSource);
+      return { files, datRow: doc.datRow, pages: doc.pages, textChars: doc.textChars, textSource: doc.textSource };
+    },
+    rowFor: (item, row) => ({ ...row, ...(dupColumns.get(item.id) ?? {}) }),
+    productionFiles: async ({ append, volumes, textless: tl, totalPages: tp }) => {
+      if (tp !== producedPages) {
+        throw new Error(`The package holds ${tp} page(s) but the production reconciled at ${producedPages}`);
+      }
+      append(exceptionsCsv(exceptions), 'DATA/EXCEPTIONS.csv');
+      append(duplicatesCsv(duplicates.map((d) => {
+        const f = byId.get(d.duplicate_of_item_id);
+        return {
+          original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
+          firstFilename: f?.original_filename ?? '',
+          firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
+        };
+      })), 'DATA/DUPLICATES.csv');
+      append(reconciliationText(counts, {
+        matterName, productionName: p.name,
+        batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
+        batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
+        dateStr: new Date().toISOString().slice(0, 10),
+        textless: tl,
+        setAside: setAsideLines(setAside, byId),
+        volumes,
+      }), 'DATA/RECONCILIATION.txt');
+      if (includePrivilegeLog) {
+        const entries = await q(`select * from public.privilege_log_entries where production_id=$1 order by doc_date nulls last`, [productionId]);
+        if (entries.length) append(await makePrivilegeLogPdf({ matterName, productionName: p.name, entries }), 'PrivilegeLog.pdf');
+      }
+      append(await makeProductionLetter({
+        productionName: p.name, matterName, receivingParty: p.receiving_party,
+        batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
+        batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
+        docCount: produced.length, pageCount: tp,
+        nativeCount: produced.filter((i) => i.kind === 'native').length,
+        confidentialCount: confidentialIds.size, requestRefs: p.request_refs,
+        dateStr: new Date().toISOString().slice(0, 10),
+      }), 'ProductionLetter.pdf');
+    },
+    storeVolume: async ({ name, file }) => {
+      const bytes = await fsp.readFile(file);
+      return {
+        storage_path: putObject(`${pkgDir}/${name}.zip`, bytes, 'application/zip'),
+        sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+      };
+    },
+    exists: async (sp) => objectExists(sp),
+    checkpoint: {
+      load: async () => (objectExists(`${pkgDir}/volumes.json`) ? JSON.parse(getObject(`${pkgDir}/volumes.json`).toString('utf8')) : null),
+      save: async (m) => { putObject(`${pkgDir}/volumes.json`, Buffer.from(JSON.stringify(m, null, 2)), 'application/json'); },
+    },
+    openArchive: () => openZipArchive({ dir: tmp }),
+  });
+  const single = !result.split && result.volumes.length === 1;
+  const pkgPath = single ? result.volumes[0].storage_path : `${pkgDir}/volumes.json`;
+  const pkgSha = single ? result.volumes[0].sha256
+    : crypto.createHash('sha256').update(getObject(pkgPath)).digest('hex');
   await q(`update public.productions set package_storage_path=$1, package_sha256=$2, status='packaged' where id=$3`,
     [pkgPath, pkgSha, p.id]);
-  await fsp.unlink(tmpZip).catch(() => {});
-  return { pkgPath, pkgSha, produced, totalPages, counts, exceptions, duplicates, textless, textSources };
+  const totalPages = result.totalPages;
+  const textless = result.textless;
+  return { pkgPath, pkgSha, produced, totalPages, counts, exceptions, duplicates, textless, textSources, result };
 }
 
 const pkg = await packageProduction(prod.id, { includePrivilegeLog: true });
@@ -1827,12 +1837,26 @@ check(/EXCEPTIONS\.csv/.test(workerSrc) && /reconcile\(counts\)/.test(workerSrc)
   'packaging still builds the exceptions report and refuses to finalize unless the counts reconcile (F7)');
 {
   const pkgBlock = workerSrc.slice(
-    workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('const archiver = (await import'));
+    workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('await packageVolumes('));
   check(/imageFormat === 'tiff' && !rasterizerAvailable\(\)/.test(pkgBlock) && /throw new Error\('TIFF images were requested/.test(pkgBlock),
     'a TIFF package on a machine that cannot render pages is refused before the ZIP is started, never swapped for PDF');
   check(/packageDocument\(\{[\s\S]*?imageFormat,[\s\S]*?\}\)/.test(workerSrc),
     'the worker passes the chosen image format to the shared packageDocument');
+  // 2026-10-13 (Discovery at volume): the loop section 7 drives is the
+  // worker's own, and the worker no longer writes or uploads a ZIP itself.
+  const pkgFn = workerSrc.slice(workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('async function storeFile'));
+  check(/await packageVolumes\(\{/.test(pkgFn) && !/archiver/.test(pkgFn) && !/fs\.readFile\(tmpZip\)/.test(workerSrc),
+    'the worker packages through the shared packageVolumes (the loop this harness drives), never a ZIP of its own');
+  check(/maxPages: volumePages/.test(pkgFn) && /payload\?\.volume_pages/.test(pkgFn),
+    'the volume size the panel asks for reaches packageVolumes');
+  check(/bytes <= LARGE_UPLOAD_BYTES/.test(workerSrc) && /uploadFileResumable\(\{/.test(workerSrc),
+    'a large volume is streamed to storage in chunks, never read whole into memory');
 }
+check(/await mapLimit\(plan, DISCOVERY_CONCURRENCY/.test(stampBlock)
+  && stampBlock.indexOf("rpc('allocate_production_bates'") < stampBlock.indexOf('await mapLimit(plan'),
+'documents stamp several at a time, but only AFTER the whole range is allocated');
+check(/idle >= JOB_TIMEOUT_MS/.test(workerSrc) && /lastProgressAt\.set\(job\.id, now\)/.test(workerSrc),
+  'the watchdog stops a job that has stopped reporting progress, not one that is still working');
 
 // The 2026-09-20 KNOWN GAP (F2's heartbeat half). Kept as a real check now
 // that it is closed — a WARN was right while it was someone's open defect.

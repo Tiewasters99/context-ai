@@ -58,7 +58,7 @@ import {
   normalizeEmail, validateLinkRequest, linkState, linkNeeds, emailAllowed, judgeCode,
   packageFilename, batesRange, REFUSAL_WORDS,
   CODE_TTL_MS, CODES_PER_HOUR, FAILS_PER_WINDOW, FAIL_WINDOW_MS, LINKS_PER_DAY,
-  DOWNLOAD_URL_TTL_SECONDS, CODE_MAX_ATTEMPTS,
+  DOWNLOAD_URL_TTL_SECONDS, CODE_MAX_ATTEMPTS, VOLUME_URL_TTL_SECONDS, isVolumeListPath, volumesFromManifest,
 } from '../lib/discovery/share-links.mjs';
 
 const TIMEOUT_MS = 8000;
@@ -120,13 +120,13 @@ async function isSealedMatter(matterId, doFetch) {
   return null;
 }
 
-async function mintPackageUrl(objectPath, filename, doFetch) {
+async function mintPackageUrl(objectPath, filename, doFetch, ttlSeconds = DOWNLOAD_URL_TTL_SECONDS) {
   const encoded = objectPath.split('/').map(encodeURIComponent).join('/');
   try {
     const res = await doFetch(`${base()}/storage/v1/object/sign/${BUCKET}/${encoded}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', apikey: SERVICE_KEY(), authorization: `Bearer ${SERVICE_KEY()}` },
-      body: JSON.stringify({ expiresIn: DOWNLOAD_URL_TTL_SECONDS }),
+      body: JSON.stringify({ expiresIn: ttlSeconds }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     const data = await res.json().catch(() => null);
@@ -430,14 +430,33 @@ async function openLink(ctx) {
   return link;
 }
 
+// A production packaged in volumes: the volumes its list names (null for one
+// ZIP, [] when the list cannot be read or is not finished).
+async function packageVolumesFor(prod, doFetch) {
+  if (!isVolumeListPath(prod?.package_storage_path)) return null;
+  const encoded = prod.package_storage_path.split('/').map(encodeURIComponent).join('/');
+  try {
+    const res = await doFetch(`${base()}/storage/v1/object/${BUCKET}/${encoded}`, {
+      headers: { apikey: SERVICE_KEY(), authorization: `Bearer ${SERVICE_KEY()}` },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) return [];
+    return volumesFromManifest(prod, await res.json().catch(() => null));
+  } catch {
+    return [];
+  }
+}
+
 async function linkInfo(ctx) {
   const link = await openLink(ctx);
   if (!link) return;
   const prod = await productionFor(ctx.doFetch, link);
   if (!prod) return json(ctx.res, 404, { error: 'missing', message: REFUSAL_WORDS.missing });
+  const vols = await packageVolumesFor(prod, ctx.doFetch);
   return json(ctx.res, 200, {
     name: prod.name, bates_range: batesRange(prod), package_sha256: prod.package_sha256,
-    filename: packageFilename(prod), expires_at: link.expires_at, needs: linkNeeds(link),
+    filename: vols ? `${vols.length} volume(s)` : packageFilename(prod), expires_at: link.expires_at, needs: linkNeeds(link),
+    volumes: vols ? vols.map(({ storage_path: _p, ...v }) => v) : null,
   });
 }
 
@@ -511,12 +530,31 @@ async function download(ctx) {
   if (!prod?.package_storage_path || !String(prod.package_storage_path).startsWith(`${link.matterspace_id}/`)) {
     return json(res, 404, { error: 'missing', message: REFUSAL_WORDS.missing });
   }
+  // A production in volumes hands out every volume at once: one code, one
+  // open, one recorded download of the whole production.
+  const vols = await packageVolumesFor(prod, doFetch);
+  if (vols && !vols.length) return json(res, 404, { error: 'missing', message: REFUSAL_WORDS.missing });
 
   // Record first: a sealed matter's package does not leave unrecorded.
-  const logged = await logEvent(doFetch, { link_id: link.id, matterspace_id: link.matterspace_id, kind: 'downloaded', email: email || null, ...who });
+  const logged = await logEvent(doFetch, {
+    link_id: link.id, matterspace_id: link.matterspace_id, kind: 'downloaded', email: email || null, ...who,
+    ...(vols ? { detail: `${vols.length} volumes` } : {}),
+  });
   if (!logged && link.sealed) return json(res, 503, { error: 'record_failed', message: 'The download could not be recorded just now, so it was not started. Try again in a moment.' });
 
-  const url = await mintPackageUrl(prod.package_storage_path, packageFilename(prod), doFetch);
+  let url;
+  let volumes = null;
+  if (vols) {
+    volumes = [];
+    for (const v of vols) {
+      const u = await mintPackageUrl(v.storage_path, `${v.name}.zip`, doFetch, VOLUME_URL_TTL_SECONDS);
+      if (!u) return json(res, 503, { error: 'unavailable' });
+      volumes.push({ name: v.name, filename: `${v.name}.zip`, url: u, bytes: v.bytes, sha256: v.sha256 });
+    }
+    url = volumes[0].url;
+  } else {
+    url = await mintPackageUrl(prod.package_storage_path, packageFilename(prod), doFetch);
+  }
   if (!url) return json(res, 503, { error: 'unavailable' });
 
   if (codeRow) await rest(doFetch, `production_share_codes?id=eq.${codeRow.id}`, { method: 'PATCH', body: { used_at: now.toISOString() } });
@@ -527,6 +565,7 @@ async function download(ctx) {
   });
   if (first) await tellSender(doFetch, link, prod, email);
 
+  if (volumes) return json(res, 200, { url, filename: volumes[0].filename, volumes, expires_in: VOLUME_URL_TTL_SECONDS });
   return json(res, 200, { url, filename: packageFilename(prod), expires_in: DOWNLOAD_URL_TTL_SECONDS });
 }
 

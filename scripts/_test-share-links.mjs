@@ -87,7 +87,7 @@ function makeBackend() {
   };
   const st = {
     sealed: {}, entry: 'open', ledgerOk: true, eventsFail: false, mails: [], signs: 0, ledger: [],
-    users: {},
+    users: {}, objects: {},
   };
   const reply = (status, body) => new Response(body === undefined || status === 204 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   const match = (row, params) => {
@@ -116,6 +116,12 @@ function makeBackend() {
     if (u.pathname === '/auth/v1/user') {
       const user = st.users[auth.slice(7)];
       return user ? reply(200, user) : reply(401, {});
+    }
+    if (method === 'GET' && u.pathname.startsWith('/storage/v1/object/discovery-files/')) {
+      if (!asService) return reply(403, {});
+      const objPath = u.pathname.slice('/storage/v1/object/discovery-files/'.length).split('/').map(decodeURIComponent).join('/');
+      const obj = st.objects[objPath];
+      return obj ? reply(200, obj) : reply(404, { message: 'Object not found' });
     }
     if (u.pathname.startsWith('/storage/v1/object/sign/')) {
       st.signs++;
@@ -336,6 +342,46 @@ console.log('\n--- C. opening a link -------------------------------------------
   const unlogged = await call(be, { action: 'download', token, email: 'oc@other.test', code: code2 });
   check(unlogged.status === 503 && unlogged.json.error === 'record_failed' && be.st.signs === signsBefore, 'sealed: a download that cannot be logged is not handed out', JSON.stringify(unlogged));
   be.st.eventsFail = false;
+}
+
+// ── E. a production packaged in volumes (lib/discovery/volumes.mjs) ─────────
+console.log('\n--- E. a production in volumes ----------------------------------------');
+{
+  const { be, prodO } = seed();
+  const dir = `${MATTER_O}/${prodO.id}/package`;
+  prodO.package_storage_path = `${dir}/volumes.json`;
+  const vol = (i) => ({
+    name: `OPEN_VOL00${i}`, storage_path: `${dir}/OPEN_VOL00${i}.zip`, sha256: String(i).repeat(64), bytes: 1000 * i,
+    docs: 10, pages: 25, bates_first: `TS_000000${i}`, bates_last: `TS_000000${i}`, start: 0, end: 1,
+  });
+  be.st.objects[prodO.package_storage_path] = { version: 1, split: true, complete: true, volumes: [vol(1), vol(2), vol(3)] };
+
+  const made = await call(be, { action: 'create', production_id: prodO.id, recipient_name: 'R', audience: 'anyone' }, { bearer: tokenOwner });
+  const token = tokenFrom(made.json.url);
+  const info = await call(be, { action: 'info', token });
+  check(info.status === 200 && info.json.volumes?.length === 3 && info.json.volumes.every((v) => !('storage_path' in v)),
+    'a link to a production in volumes lists its volumes (and never their storage paths)', JSON.stringify(info.json));
+
+  const signs = be.st.signs;
+  const dl = await call(be, { action: 'download', token });
+  check(dl.status === 200 && dl.json.volumes?.length === 3 && be.st.signs === signs + 3
+      && dl.json.volumes.map((v) => v.filename).join() === 'OPEN_VOL001.zip,OPEN_VOL002.zip,OPEN_VOL003.zip'
+      && dl.json.expires_in === L.VOLUME_URL_TTL_SECONDS,
+    'one open hands out every volume, each signed, for an hour', JSON.stringify(dl.json));
+  const events = be.T.production_share_events.filter((e) => e.kind === 'downloaded');
+  check(events.length === 1 && events[0].detail === '3 volumes', 'the whole production is one recorded download');
+
+  // A list that is not finished, or that names a file outside the production's
+  // own package folder, hands out nothing.
+  be.st.objects[prodO.package_storage_path] = { complete: false, volumes: [vol(1)] };
+  const half = await call(be, { action: 'download', token });
+  check(half.status === 404, 'an unfinished volume list hands out nothing');
+  be.st.objects[prodO.package_storage_path] = { complete: true, volumes: [{ ...vol(1), storage_path: `${MATTER_S}/other/package/X.zip` }] };
+  const foreign = await call(be, { action: 'download', token });
+  check(foreign.status === 404, 'a volume outside the production\'s own package folder is never signed');
+  check(L.volumesFromManifest(prodO, { complete: true, volumes: [{ ...vol(1), storage_path: `${dir}/../x.zip` }] }).length === 0
+      && L.volumesFromManifest(prodO, { complete: true, volumes: [{ ...vol(1), storage_path: `${dir}/sub/x.zip` }] }).length === 0,
+    'no ".." and no sub-folder in a volume path');
 }
 
 // ── D. the panel, held to its source ────────────────────────────────────────

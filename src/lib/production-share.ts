@@ -131,6 +131,17 @@ export interface SharedProductionInfo {
   filename: string;
   expires_at: string;
   needs: { email_code: boolean; password: boolean };
+  /** A production packaged in volumes; null for one ZIP. */
+  volumes?: Array<{ name: string; sha256: string; bytes: number; docs: number; pages: number; bates_first: string; bates_last: string }> | null;
+}
+
+/** One volume's download, handed out by a successful open of a split production. */
+export interface SharedVolumeDownload {
+  name: string;
+  filename: string;
+  url: string;
+  bytes: number;
+  sha256: string;
 }
 
 export function sharedProductionInfo(token: string): Promise<SharedProductionInfo> {
@@ -144,8 +155,8 @@ export function requestShareCode(token: string, email: string): Promise<{ ok: tr
 export function openSharedProduction(
   token: string,
   creds: { email?: string; code?: string; password?: string },
-): Promise<{ url: string; filename: string }> {
-  return call<{ url: string; filename: string }>({ action: 'download', token, ...creds }, false);
+): Promise<{ url: string; filename: string; volumes?: SharedVolumeDownload[] }> {
+  return call<{ url: string; filename: string; volumes?: SharedVolumeDownload[] }>({ action: 'download', token, ...creds }, false);
 }
 
 /** Plain words for an event row in the panel. */

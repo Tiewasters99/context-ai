@@ -238,7 +238,14 @@ console.log('\n--- D. the worker, held to its source ---------------------------
     'each stored path is held to its own matter before it is read');
   check(at('MAX_VAULT_PICK_BYTES') > -1 && at('MAX_VAULT_PICK_BYTES') < at('downloadFromBucket('),
     'an oversized file is refused with a reason before it is read into memory');
-  check(/documentId: id,\s*\}\);/.test(fn), 'each document is produced through intakeOneFile, linked to its own document row');
+  check(/documentId: id,[^}]*\}\);/.test(fn), 'each document is produced through intakeOneFile, linked to its own document row');
+  // 2026-10-13: a PDF filed under a Word or email name (a production's
+  // rendition) is never handed to LibreOffice as that kind of file.
+  check(at('vaultSourcePlan(doc, buf)') > at("downloadFromBucket('vault-documents', doc.storage_path)")
+      && at('vaultSourcePlan(doc, buf)') < at('intakeOneFile(prod, job'),
+    'the stored bytes, not the name, decide how a Vault document is produced (renditions are recognised)');
+  check(/asName = `\$\{filename\}\.pdf`/.test(fn) && /asName,\s*\}\);/.test(fn),
+    'a rendition with no original on record is produced as the PDF it is, under its own name');
   check(/job\.payload\?\.ingest !== false && !documentId\) \{/.test(w),
     'a Vault document is never ingested a second time (no duplicate documents row, no second upload)');
   check(/\.\.\.\(documentId \? \{ document_id: documentId \} : \{\}\),/.test(w),

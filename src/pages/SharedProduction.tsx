@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
-  sharedProductionInfo, requestShareCode, openSharedProduction, type SharedProductionInfo,
+  sharedProductionInfo, requestShareCode, openSharedProduction, type SharedProductionInfo, type SharedVolumeDownload,
 } from '@/lib/production-share';
 
 // /p/<token> — the page a production link opens (migration 115). No account:
@@ -20,6 +20,8 @@ export default function SharedProduction() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  // A production in volumes: every volume's link, handed out by one open.
+  const [volumeLinks, setVolumeLinks] = useState<SharedVolumeDownload[] | null>(null);
 
   useEffect(() => {
     document.title = 'A production sent to you · Contextspaces';
@@ -47,8 +49,12 @@ export default function SharedProduction() {
         ...(info?.needs.email_code ? { email, code } : {}),
         ...(info?.needs.password ? { password } : {}),
       });
-      setDone(out.filename);
-      window.location.assign(out.url);
+      if (out.volumes && out.volumes.length > 1) {
+        setVolumeLinks(out.volumes);
+      } else {
+        setDone(out.filename);
+        window.location.assign(out.url);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The download could not be started.');
     } finally {
@@ -113,6 +119,21 @@ export default function SharedProduction() {
                 {busy ? 'Starting…' : 'Download'}
               </button>
               {done && <p className="text-[14px] text-[#6e6a5e]">The download of {done} should start now. If it does not, press Download again.</p>}
+              {volumeLinks && (
+                <div className="space-y-2">
+                  <p className="text-[14px] text-[#6e6a5e]">
+                    This production comes in {volumeLinks.length} volumes. Download each one; the links work for an hour.
+                  </p>
+                  <ul className="space-y-1.5">
+                    {volumeLinks.map((v) => (
+                      <li key={v.name} className="flex items-center gap-3">
+                        <a href={v.url} download={v.filename} className="text-[15px] text-[#1f4d3a] underline">{v.filename}</a>
+                        <span className="text-[12.5px] text-[#6e6a5e]">{(v.bytes / 1e6).toFixed(1)} MB</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             <p className="mt-6 text-[12.5px] text-[#6e6a5e]">
