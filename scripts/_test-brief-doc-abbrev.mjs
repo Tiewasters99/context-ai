@@ -8,24 +8,24 @@ test('OATH Pet. at 4 → the words a name carries, and the page', () => {
   assert.ok(c.isDocument);
   assert.equal(c.words.length, 2);
   assert.equal(c.words[0][0], 'OATH');
-  assert.deepEqual(c.words[1], ['Petition', 'Petitioner', 'Pet']);
+  assert.deepEqual(c.words[1], ['Petition', 'Petitioner']);
   assert.equal(c.page, 4);
   assert.equal(c.paragraph, null);
 });
 
 test('Bushell Aff. ¶ 12 → Affidavit or Affirmation, paragraph 12', () => {
   const c = parseDocumentCite('(Bushell Aff. ¶ 12)');
-  assert.deepEqual(c.words, [['Bushell'], ['Affidavit', 'Affirmation', 'Aff']]);
+  assert.deepEqual(c.words, [['Bushell'], ['Affidavit', 'Affirmation']]);
   assert.equal(c.paragraph, 12);
   assert.equal(c.page, null);
 });
 
 test("Hr'g Tr. 33:2–5 and a dated deposition", () => {
   const c = parseDocumentCite("Hr’g Tr. 33:2–5");
-  assert.deepEqual(c.words, [['Hearing', 'Hr’g'], ['Transcript', 'Tr']]);
+  assert.deepEqual(c.words, [['Hearing', 'Hr’g'], ['Transcript']]);
   assert.equal(c.page, 33);
   const d = parseDocumentCite('De Camara Dep. (Mar. 4, 2026) at 17');
-  assert.deepEqual(d.words, [['De'], ['Camara'], ['Deposition', 'Dep']]);
+  assert.deepEqual(d.words, [['De'], ['Camara'], ['Deposition']]);
   assert.equal(d.page, 17);
 });
 
@@ -40,4 +40,26 @@ test('an agency acronym carries its long forms, so a first page can match it', (
   assert.ok(c.words[0].includes('OATH') && c.words[0].includes('Office of Administrative Trials & Hearings'));
   const d = parseDocumentCite('DCWP Compl.');
   assert.ok(d.words[0].includes('Department of Consumer and Worker Protection'));
+});
+
+test('TAC ¶ 55 → the Third Amended Complaint by its long name, never "%TAC%"', () => {
+  const c = parseDocumentCite('TAC ¶¶ 85–89');
+  assert.ok(c.isDocument);
+  assert.deepEqual(c.words, [['Third Amended Complaint', 'Thirdamendedcomplaint', 'Third Am. Compl']]);
+  assert.equal(c.paragraph, 85);
+  assert.ok(parseDocumentCite('TAC').isDocument);
+  assert.equal(parseDocumentCite('SAC ¶ 4').words[0][1], 'Secondamendedcomplaint');
+});
+
+test('a paragraph list leaves no number ranges behind as name words', () => {
+  assert.deepEqual(parseDocumentCite('TAC ¶¶ 52–53, 79–84, 89,').words, [['Third Amended Complaint', 'Thirdamendedcomplaint', 'Third Am. Compl']]);
+  assert.equal(parseDocumentCite('TAC ¶¶ 48, 79–84, 87, 89').words.length, 1);
+});
+
+test('Op. at 5 → Opinion or Order, never the letters "Op" (in "Openingbrief")', () => {
+  const c = parseDocumentCite('Op. at 5');
+  assert.ok(c.isDocument);
+  assert.deepEqual(c.words, [['Opinion', 'Order']]);
+  assert.equal(c.page, 5);
+  assert.deepEqual(parseDocumentCite('Reply Br. 3').words[0], ['Reply']);
 });

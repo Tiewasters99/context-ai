@@ -76,6 +76,7 @@ import SiteSearch from '@/components/search/SiteSearch';
 import { findQueryFor } from '@/lib/brief/find-query';
 import { parseReporterCites } from '../../../lib/bluebook.mjs';
 import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volume } from '@/lib/brief/record-cite';
+import { parseRoaCite, docketOfCaption, findRoaPages, type RoaCite } from '@/lib/brief/roa-cite';
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
 import { provisionQuery } from '@/lib/brief/provision-core';
@@ -911,6 +912,30 @@ function DeskEditor(p: DeskProps) {
     const page = h.pdf_page ?? (await pageOfStamp(supabase, v, h.a_page)).page;
     openDocument(v.id, { page, heading: label, caveat, appendix: { name: appendixName ?? map.title } });
   };
+  // "ROA.1527": the Fifth Circuit record page stamped "25-20513.1527". The
+  // docket is the cite's own, else the brief's caption ("No. 25-20513").
+  const openRoaCite = async (cite: RoaCite, label: string): Promise<void> => {
+    const docket = cite.docket ?? (editor ? docketOfCaption(project(editor.state.doc).text.slice(0, 4000)) : null);
+    p.setBusy('Finding the record page…');
+    try {
+      const hits = await findRoaPages(supabase, cite.first, docket);
+      p.setBusy(null);
+      if (!hits.length) {
+        p.setNotice(`No record on appeal in your matters carries the page stamp ${docket ?? '…'}.${cite.first}. A record is found by its title (EROA, ROA, Record on Appeal) and its pages by the clerk's stamp.`);
+        return;
+      }
+      const [h, ...rest] = hits;
+      const span = cite.last ? `${cite.first}–${cite.last}` : `${cite.first}`;
+      const caveat = [
+        `ROA.${span}: ${h.title}, stamped ${h.docket}.${cite.first}.`,
+        rest.length ? `Also stamped in ${rest.map((o) => `${o.title} (${o.docket})`).join('; ')}${docket ? '' : '; the brief names no docket'}.` : null,
+      ].filter(Boolean).join(' ');
+      openDocument(h.documentId, { page: h.page, heading: label, title: h.title, caveat });
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`The record on appeal could not be searched: ${(e as Error).message}`);
+    }
+  };
   // "change": with an A-cite open, re-ask for that number and re-open it
   // there; otherwise list every appendix and only keep the choice.
   const changeAppendix = () => {
@@ -1112,10 +1137,16 @@ function DeskEditor(p: DeskProps) {
       for (const forms of c.words) {
         q = q.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
       }
-      const { data, error } = await q.limit(20);
+      const { data, error } = await q.limit(200);   // names only; ranked below
       if (error) throw new Error(error.message);
       type Doc = { id: string; title: string | null; source_filename: string | null };
-      let docs = (data ?? []) as Doc[];
+      // The first long form first: "Op." lists every Opinion before the
+      // clerk's Orders (10-15: the Fifth Circuit Opinion sat among dozens).
+      const rank = (d: Doc) => {
+        const name = `${d.title ?? ''} ${d.source_filename ?? ''}`.toLowerCase();
+        return c.words.reduce((n, forms) => n + Math.max(0, forms.findIndex((f) => name.includes(f.toLowerCase()))), 0);
+      };
+      let docs = ((data ?? []) as Doc[]).sort((a, b) => rank(a) - rank(b) || (a.title ?? '').localeCompare(b.title ?? '')).slice(0, 20);
       let how = 'by name';
       if (!docs.length) {
         // the caption on a first page: "OFFICE OF ADMINISTRATIVE TRIALS & HEARINGS … DEPARTMENT OF
@@ -1292,6 +1323,8 @@ function DeskEditor(p: DeskProps) {
     // whatever opens next beside the brief was opened FOR this cite
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     missNote.current = null;
+    const roa = parseRoaCite(label);
+    if (roa) { await openRoaCite(roa, label); return; }
     const cite = parseRecordCite(label);
     if (!cite) {
       // "De Camara Dep. Vol. I 63:21–64:2": the appendix sheet, through its page map.
@@ -1683,6 +1716,17 @@ function DeskEditor(p: DeskProps) {
             <AlertTriangle size={13} /> Problem
           </button>
         )}
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          // Your own words, any time: the cite may name a document by a word
+          // its name does not carry ("Op." for "Fifth Circuit Opinion").
+          onClick={() => setSearch(highlighted.current?.trim() ?? '')}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title="Search your documents by your own words; a highlight fills the box"
+          data-testid="desk-search"
+        >
+          <Search size={14} /> <span className="hidden md:inline">Search</span>
+        </button>
         <button
           onClick={() => setShowAddCase(true)}
           className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
