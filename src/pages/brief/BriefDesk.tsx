@@ -38,7 +38,7 @@ import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText, Check,
   ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
-  ClipboardCheck, GitCompare, CopyPlus,
+  ClipboardCheck, GitCompare, CopyPlus, Tag,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -90,6 +90,8 @@ const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
+import DefineTermCard, { type DefineHit } from './DefineTermCard';
+import { matchDefinedTerm, parsePin, briefDefinitions, findParagraphPage, findStampedPages, termKey, type DefinedTerm } from '@/lib/brief/defined-terms';
 import { SaveAsVersionCard, CompareCard } from './VersionCards';
 import { nextVersionTitle, nextVersionLabel, versionNumber } from '@/lib/brief/versions';
 import { noteNumberOf } from '@/lib/brief/note-pin';
@@ -338,6 +340,7 @@ function DeskEditor(p: DeskProps) {
   const [showReadingNote, setShowReadingNote] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [showAddCase, setShowAddCase] = useState(false);
+  const [defineFor, setDefineFor] = useState<string | null>(null);
 
   // ── The human check (migration 103) ─────────────────────────────────────
   // Highlight a cite, Find in corpus, read the page, press Confirm with your
@@ -481,10 +484,19 @@ function DeskEditor(p: DeskProps) {
     if (!h || confirmBusy) return;
     setConfirmBusy(true);
     try {
+      // What was open beside the brief when the cite was confirmed, so the
+      // log shows the page read (10-16: every toolbar confirm logged a blank).
+      let authTitle = pane?.docId ? pane.docTitle : null;
+      if (pane?.docId && !authTitle) {
+        const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+        authTitle = (data as { title: string | null } | null)?.title ?? null;
+      }
       const row = await addConfirmation({
         document_id: meta.id,
         cite_raw: h.raw, context: h.context, pm_from: h.from,
-        authority_document_id: null, authority_title: null, authority_page: null,
+        authority_document_id: pane?.docId ?? null,
+        authority_title: authTitle,
+        authority_page: pane?.docId && pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
         status, note, initials,
       });
       setConfs((cur) => [...cur, row]);
@@ -1170,7 +1182,10 @@ function DeskEditor(p: DeskProps) {
       const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
       const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
       if (docs.length === 1) {
-        openDocument(docs[0].id, { page: c.page ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}. Check the caption.` });
+        // "TAC ¶ 55": the page where paragraph 55 begins
+        const para = !c.page && c.paragraph ? await findParagraphPage(supabase, docs[0].id, c.paragraph) : null;
+        const pinned = para ? ` — ¶ ${c.paragraph} begins on page ${para}` : pin;
+        openDocument(docs[0].id, { page: c.page ?? para ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pinned}. Check the caption.` });
         return true;
       }
       setContentHits({
@@ -1318,11 +1333,82 @@ function DeskEditor(p: DeskProps) {
     return () => { editor.off('update', onUpdate); };
   }, [editor, paintConfirmed]);
 
+  // ── Defined terms ────────────────────────────────────────────────────────
+  // The lawyer's word for a document or a record ("Op.", "ROA"), kept on the
+  // brief; else the brief's own definitions ("Third Amended Complaint (“TAC”)").
+  const definedTerms = useMemo(() => ((meta.metadata as { defined_terms?: DefinedTerm[] } | null)?.defined_terms ?? []), [meta.metadata]);
+  const saveTerms = async (list: DefinedTerm[]) => {
+    const metadata = { ...(meta.metadata ?? {}), defined_terms: list };
+    const { error } = await supabase.from('documents').update({ metadata }).eq('id', meta.id);
+    if (error) { p.setNotice(`The definition could not be saved: ${error.message}`); return; }
+    p.setMeta({ ...meta, metadata });
+  };
+  const defineSearch = useCallback(async (query: string): Promise<DefineHit[]> => {
+    const words = query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    if (!words.length) return [];
+    const folders: DefineHit[] = allMatters
+      .filter((m) => words.every((w) => (m.name ?? '').toLowerCase().includes(w)))
+      .slice(0, 8)
+      .map((m) => ({ kind: 'folder', id: m.id, title: m.name, where: matterName(m.parent_matterspace_id) }));
+    let q = supabase.from('documents').select('id, title, source_filename, matterspace_id').neq('id', meta.id);
+    for (const w of words) q = q.or(`title.ilike.%${w}%,source_filename.ilike.%${w}%`);
+    const { data, error } = await q.order('title').limit(40);
+    if (error) throw new Error(error.message);
+    const docs: DefineHit[] = ((data ?? []) as { id: string; title: string | null; source_filename: string | null; matterspace_id: string | null }[])
+      .map((d) => ({ kind: 'document', id: d.id, title: d.title || d.source_filename || 'Untitled document', where: matterName(d.matterspace_id) }));
+    return [...folders, ...docs];
+  }, [allMatters, matterName, meta.id]);
+  const openByDefinedTerm = async (label: string): Promise<boolean> => {
+    const m = matchDefinedTerm(label, definedTerms);
+    if (!m) {
+      // the brief's own definition: search by the long name it gives
+      const defs = briefDefinitions(editorRef.current?.state.doc.textContent ?? '');
+      const own = matchDefinedTerm(label, [...defs.keys()].map((k) => ({ term: k })));
+      if (!own) return false;
+      const long = defs.get(termKey(own.def.term));
+      return long ? openByDocumentName(`${long} ${own.rest}`.trim()) : false;
+    }
+    const { def, rest } = m;
+    const pin = parsePin(rest);
+    p.setBusy(`Opening ${def.title}…`);
+    try {
+      if (def.kind === 'document' && def.documentId) {
+        const para = pin.paragraph ? await findParagraphPage(supabase, def.documentId, pin.paragraph) : null;
+        p.setBusy(null);
+        const page = pin.number ?? para ?? 1;
+        const where = pin.paragraph ? (para ? `¶ ${pin.paragraph} begins on page ${para}` : `¶ ${pin.paragraph} was not found in its text; opened at page 1`) : pin.number ? `page ${pin.number}` : 'its first page';
+        openDocument(def.documentId, { page, heading: label, title: def.title, caveat: `“${def.term}” is defined on this brief as ${def.title}: ${where}.` });
+        return true;
+      }
+      // stamped: one volume, or every document in a folder and its subfolders
+      let docs: { id: string; title: string }[] = [];
+      if (def.documentId) docs = [{ id: def.documentId, title: def.title }];
+      else if (def.matterId) {
+        const ids = subtreeIds(allMatters, def.matterId);
+        const { data, error } = await supabase.from('documents').select('id, title').in('matterspace_id', ids.length ? ids : [def.matterId]).limit(1000);
+        if (error) throw new Error(error.message);
+        docs = ((data ?? []) as { id: string; title: string | null }[]).map((d) => ({ id: d.id, title: d.title ?? 'Document' }));
+      }
+      if (pin.number === null) { p.setBusy(null); p.setNotice(`“${label}” names ${def.title} but no page stamp to open.`); return true; }
+      const hits = await findStampedPages(supabase, docs, pin.number);
+      p.setBusy(null);
+      if (!hits.length) { p.setNotice(`No page in ${def.title} carries the stamp ${pin.number}. Check the number, or press Define to point “${def.term}” somewhere else.`); return true; }
+      const [h, ...more] = hits;
+      openDocument(h.documentId, { page: h.page, heading: label, title: h.title, caveat: `“${def.term}” ${pin.number}: ${h.title}, page ${h.page}, by its stamp.${more.length ? ` Also stamped ${pin.number}: ${more.slice(0, 3).map((o) => `${o.title} p. ${o.page}`).join('; ')}.` : ''}` });
+      return true;
+    } catch (e) {
+      p.setBusy(null);
+      p.setNotice(`“${def.term}” could not be opened: ${(e as Error).message}`);
+      return true;
+    }
+  };
+
   const findHighlighted = async () => {
     const label = highlighted.current ?? '';
     // whatever opens next beside the brief was opened FOR this cite
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     missNote.current = null;
+    if (await openByDefinedTerm(label)) return;
     const roa = parseRoaCite(label);
     if (roa) { await openRoaCite(roa, label); return; }
     const cite = parseRecordCite(label);
@@ -1347,7 +1433,9 @@ function DeskEditor(p: DeskProps) {
       if (await openByDocumentName(label)) return;
       if (await openByContent(label)) return;
       if (await openByAssistant(label)) return;
-      if (missNote.current) p.setNotice(missNote.current);
+      const shortForm = label.replace(/^[\s(“"']*(?:see\s+also|see|cf\.|citing|quoting)?\s*/i, '').replace(/[\s,]*(?:¶|at\b|\d).*$/s, '').trim();
+      const defineHint = shortForm && shortForm.length <= 24 ? ` If “${shortForm}” is this brief's name for a document or a record, press Define and say which; every “${shortForm}” cite then opens there.` : '';
+      if (missNote.current || defineHint) p.setNotice(`${missNote.current ?? ''}${defineHint}`.trim());
       setSearch(findQueryFor(label));
       return;
     }
@@ -1726,6 +1814,16 @@ function DeskEditor(p: DeskProps) {
           data-testid="desk-search"
         >
           <Search size={14} /> <span className="hidden md:inline">Search</span>
+        </button>
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          // "Op." means the Fifth Circuit Opinion: said once, kept on the brief
+          onClick={() => setDefineFor((highlighted.current ?? '').replace(/^[\s(“"']*(?:see\s+also|see|cf\.|citing|quoting)?\s*/i, '').replace(/[\s,]*(?:¶|at\b|\d).*$/s, '').trim())}
+          className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
+          title={definedTerms.length ? `Defined: ${definedTerms.map((d) => d.term).join(', ')}. Say what a short form in this brief means` : 'Say what a short form in this brief means (“Op.” = the Fifth Circuit Opinion); every cite with it then opens there'}
+          data-testid="desk-define"
+        >
+          <Tag size={14} /> <span className="hidden md:inline">Define{definedTerms.length ? ` ${definedTerms.length}` : ''}</span>
         </button>
         <button
           onClick={() => setShowAddCase(true)}
@@ -2125,6 +2223,16 @@ function DeskEditor(p: DeskProps) {
             maxHeight={300}
           />
         </CardDialog>
+      )}
+      {defineFor !== null && (
+        <DefineTermCard
+          initialTerm={defineFor}
+          terms={definedTerms}
+          search={defineSearch}
+          onSave={(d) => saveTerms([...definedTerms.filter((x) => termKey(x.term) !== termKey(d.term)), d])}
+          onRemove={(t) => saveTerms(definedTerms.filter((x) => termKey(x.term) !== termKey(t)))}
+          onClose={() => setDefineFor(null)}
+        />
       )}
       {problemFor !== null && (
         <CardDialog
