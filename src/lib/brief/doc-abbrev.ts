@@ -59,6 +59,18 @@ export const DOC_ABBREVIATIONS: Record<string, string[]> = {
   dec: ['Decision'],
 };
 
+/**
+ * A pleading a brief defines by initials — "TAC ¶ 55". The initials are never
+ * searched as such ("%TAC%" is in "contact"); the name carries the long form,
+ * spaced or run together as a docket pull files it ("Thirdamendedcomplaint").
+ */
+export const PLEADING_INITIALS: Record<string, string[]> = {
+  fac: ['First Amended Complaint', 'Firstamendedcomplaint', 'First Am. Compl'],
+  sac: ['Second Amended Complaint', 'Secondamendedcomplaint', 'Second Am. Compl'],
+  tac: ['Third Amended Complaint', 'Thirdamendedcomplaint', 'Third Am. Compl'],
+  '4ac': ['Fourth Amended Complaint', 'Fourthamendedcomplaint', 'Fourth Am. Compl'],
+};
+
 /** Agencies and courts a cite names by acronym; a document's name or first page may carry the long form. */
 export const ACRONYMS: Record<string, string[]> = {
   oath: ['Office of Administrative Trials and Hearings', 'Office of Administrative Trials & Hearings', 'Administrative Trials'],
@@ -103,7 +115,9 @@ export function parseDocumentCite(label: string): DocumentCite | null {
   let isDocument = false;
   for (const t of tokens) {
     const key = t.toLowerCase().replace(/[.'’]/g, '');
-    if (!key || STOP.has(key) || /^\d+$/.test(key)) continue;
+    if (!key || STOP.has(key) || /^[\d–—-]+$/.test(key)) continue;   // "79–84" left of a ¶ list
+    const initials = PLEADING_INITIALS[key];
+    if (initials) { isDocument = true; words.push(initials); continue; }
     const long = DOC_ABBREVIATIONS[key];
     if (long) { isDocument = true; words.push([...new Set([...long, t.replace(/\.$/, '')])]); continue; }
     const acro = ACRONYMS[key];
