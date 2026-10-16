@@ -75,3 +75,20 @@ test('stamp: the clerk\'s stamp outranks the same number in the court\'s header'
   ];
   assert.equal(stampedPageHits(rows, titles, 56)[0].documentId, 'v3');
 });
+
+test('stamp: a real EROA foot (court header + clerk stamp) is a page, not an index', () => {
+  const foot = 'harm. \fCase 4:22-cv-04315     Document 75     Filed on 01/27/25 in TXSD     Page 24 of 43\f25-20513.1527';
+  const rows = [{ document_id: 'v5', page_start: 24, text: 'x'.repeat(500) + foot, metadata: null }];
+  assert.deepEqual(stampedPageHits(rows, new Map([['v5', 'Vol. 5']]), 1527), [{ documentId: 'v5', title: 'Vol. 5', page: 24 }]);
+  const index = 'INDEX ' + [1500, 1510, 1527, 1530, 1600].map((x) => `25-20513.${x}`).join(' ') + ' ' + 'x'.repeat(400) + ' 25-20513.3';
+  assert.equal(stampedPageHits([{ document_id: 'v1', page_start: 3, text: index, metadata: null }], new Map([['v1', 'Vol. 1']]), 1527).length, 0);
+});
+
+test('stamp: a header-only number is not offered beside a true stamp', () => {
+  const body = 'x'.repeat(400);
+  const rows = [
+    { document_id: 'v1', page_start: 42, text: body + ' Page 3 of 9\f25-20513.56', metadata: null },
+    { document_id: 'v2', page_start: 70, text: 'Case 4:22-cv-04315 Document 56 Filed ' + body + '\f25-20513.445', metadata: null },
+  ];
+  assert.deepEqual(stampedPageHits(rows, new Map([['v1', 'Vol. 1'], ['v2', 'Vol. 2']]), 56).map((h) => h.documentId), ['v1']);
+});

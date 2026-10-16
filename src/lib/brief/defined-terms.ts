@@ -133,21 +133,30 @@ export function stampedPageHits(rows: PassageRow[], titles: Map<string, string>,
   const own = new RegExp(`(?<![0-9])0*${n}(?![0-9])`);   // Bates numbers are zero-padded
   // A stamp is glued to its prefix ("25-20513.56", "A-56", "DEF00056"); a
   // number after a space ("Document 56" in the court's header) ranks below.
-  const glued = new RegExp(`[.\\-A-Za-z]0*${n}(?![0-9])`);
+  const glued = new RegExp(`(\\d{2}-\\d{4,5}\\.|[A-Za-z]+[-.]?|[.-])0*${n}(?![0-9])`);
   const all: (StampHit & { score: number })[] = [];
   for (const r of rows) {
     const t = r.text ?? '';
     const ends = [t.slice(0, 160), t.slice(-160)];
     if (!ends.some((e) => own.test(e))) continue;
-    const many = ends.some((e) => (e.match(/(?<![0-9])\d{2,7}(?![0-9])/g) ?? []).length > 8);
-    if (many) continue;
+    const g = ends.map((e) => glued.exec(e)).find(Boolean);
+    if (g) {
+      // An index lists the stamps of many pages: the same prefix ("25-20513.",
+      // "DEF") on more than three numbers. A record page's foot also carries
+      // the court's header ("Case 4:22-cv-04315 Document 75 … Page 24 of 43"),
+      // so a plain count of numbers would throw every real page out.
+      const prefix = g[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (prefix.length > 1 && new Set(t.match(new RegExp(`${prefix}0*\\d+`, 'g')) ?? []).size > 3) continue;
+    } else if (ends.some((e) => (e.match(/(?<![0-9])\d{2,7}(?![0-9])/g) ?? []).length > 8)) continue;
     const page = pageOf(r);
     if (!Number.isFinite(page)) continue;
-    all.push({ documentId: r.document_id, title: titles.get(r.document_id) ?? 'Document', page, score: ends.some((e) => glued.test(e)) ? 0 : 1 });
+    all.push({ documentId: r.document_id, title: titles.get(r.document_id) ?? 'Document', page, score: g ? 0 : 1 });
   }
-  // the best page of each document, best documents first
+  // the best page of each document, best documents first; when a true stamp
+  // was found, a number that only stands in a header is not offered beside it
   const seen = new Set<string>();
-  return all
+  const best = all.some((h) => h.score === 0) ? all.filter((h) => h.score === 0) : all;
+  return best
     .sort((a, b) => a.score - b.score || a.title.localeCompare(b.title) || a.page - b.page)
     .filter((h) => (seen.has(h.documentId) ? false : (seen.add(h.documentId), true)))
     .map(({ documentId, title, page }) => ({ documentId, title, page }));
