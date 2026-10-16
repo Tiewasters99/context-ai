@@ -119,7 +119,10 @@ export function parseDocumentCite(label: string): DocumentCite | null {
     const initials = PLEADING_INITIALS[key];
     if (initials) { isDocument = true; words.push(initials); continue; }
     const long = DOC_ABBREVIATIONS[key];
-    if (long) { isDocument = true; words.push([...new Set([...long, t.replace(/\.$/, '')])]); continue; }
+    // The abbreviation itself only when it is a word in its own right: "%Op%"
+    // is in "Openingbrief" and "Proposed", and crowded "Fifth Circuit Opinion"
+    // out of the twenty names a search returns (10-15, Atkinson).
+    if (long) { isDocument = true; const own = t.replace(/\.$/, ''); words.push([...new Set([...long, ...(own.length >= 4 ? [own] : [])])]); continue; }
     const acro = ACRONYMS[key];
     if (acro) { words.push([t.replace(/\.$/, ''), ...acro]); continue; }
     if (/^(petition|complaint|affidavit|affirmation|declaration|transcript|deposition|exhibit|memorandum|brief|motion|opposition|stipulation|letter|opinion|order|judgment|answer|certification|subpoena|report|hearing|notice|record|appendix|decision|agreement)s?$/i.test(t)) isDocument = true;
