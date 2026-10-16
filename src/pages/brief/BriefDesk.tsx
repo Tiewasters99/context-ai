@@ -79,6 +79,7 @@ import { parseRecordCite, appendixSets, pageOfStamp, type RecordCite, type Volum
 import { parseRoaCite, docketOfCaption, findRoaPages, type RoaCite } from '@/lib/brief/roa-cite';
 import { parseDocketCite, findDocketEntry } from '@/lib/brief/docket-cite';
 import { parseDepoCite, parsePageMap, findDepoPage, type DepoCite, type PageMapRow } from '@/lib/brief/depo-cite';
+import { claimFor, type ReliedAsk } from '@/lib/brief/relied-passage';
 import { provisionQuery } from '@/lib/brief/provision-core';
 import { parseIndexCite, indexCiteFromBrief, definingText } from '@/lib/brief/index-cite';
 import { parseDocumentCite } from '@/lib/brief/doc-abbrev';
@@ -649,6 +650,9 @@ function DeskEditor(p: DeskProps) {
     if (row.from !== null && row.to !== null && editorRef.current) {
       try { raw = editorRef.current.state.doc.textBetween(row.from, row.to, ' ', ' ').trim() || raw; } catch { /* keep the entry's */ }
     }
+    const context = paragraphContextAt(row.from);
+    // The pinned page is the reporter's own (a star page): light what the brief relies on there.
+    const pinned = !!passageId && basis === 'printed' && res?.pin != null;
     setPane({
       rowKey: rowKey(row),
       entry: e,
@@ -657,12 +661,12 @@ function DeskEditor(p: DeskProps) {
       docId,
       docTitle: resolved ? res!.hits[0].title : null,
       // "at 2 n.1": a Word authority opens at its footnote 1 (10-02).
-      goto: docId ? { ...(passageId ? { passageId } : { page: 1 }), ...withNote(raw), nonce: gotoNonce.current } : null,
+      goto: docId ? { ...(passageId ? { passageId } : { page: 1 }), ...withNote(raw), ...reliedFor(pinned, raw, context), nonce: gotoNonce.current } : null,
       caveat,
       // The cite this pane is open FOR, so Confirm / Problem are there when the
       // case was opened by clicking its underline or its table row (09-28: the
       // pane had no Confirm at all on that path; only Find in corpus carried it).
-      cite: raw ? { raw, context: paragraphContextAt(row.from), from: row.from } : null,
+      cite: raw ? { raw, context, from: row.from } : null,
     });
     if (narrow) openOverlay('authority');
     // A cite the last machine pass did not find may be in the record NOW (added
@@ -679,6 +683,7 @@ function DeskEditor(p: DeskProps) {
               heading: e.raw,
               title: fresh.hits[0].title,
               caveat: 'Found in the record now — it was added after the last Locate pass. Locate every cite again to update the table.',
+              pinned: fresh.passage?.basis === 'printed' && fresh.pin != null,
             });
           } else if (fresh.status === 'two_copies') {
             // More than one copy (Pioneer ×3, 09-28): the pane offers them,
@@ -705,7 +710,12 @@ function DeskEditor(p: DeskProps) {
       ...pane,
       docId: documentId,
       docTitle: hit?.title ?? null,
-      goto: { ...(passage ? { passageId: passage.passage_id } : { page: 1 }), ...withNote(pane.heading), nonce: gotoNonce.current },
+      goto: {
+        ...(passage ? { passageId: passage.passage_id } : { page: 1 }),
+        ...withNote(pane.heading),
+        ...reliedFor(passage?.basis === 'printed' && hit?.how === 'reporter' && res?.pin != null, pane.cite?.raw ?? pane.heading, pane.cite?.context ?? ''),
+        nonce: gotoNonce.current,
+      },
       caveat: passage && passage.basis !== 'printed' ? passage.caveat ?? 'No star pages in this copy — showing page 1.' : null,
     });
   };
@@ -714,14 +724,32 @@ function DeskEditor(p: DeskProps) {
   // assistant working beside the lawyer (the 'cs:brief-open' event below).
   /** The footnote a cite pins to, for the pane's jump ("at 2 n.1" → footnote 1). */
   const withNote = (cite: string | null | undefined) => { const n = noteNumberOf(cite); return n ? { footnote: n } : {}; };
-  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null } = {}) => {
+  /**
+   * The brief's words for the Reader to light at the pin (relied-passage.ts),
+   * only when the page IS the pin — a star page, a stamp, a paragraph's page,
+   * a transcript page — never a "showing page 1" fallback, where a closest
+   * sentence would be a guess about the wrong page.
+   */
+  const reliedFor = (pinned: boolean, raw: string, context: string, depo?: DepoCite | null): { relied?: ReliedAsk } => {
+    if (!pinned) return {};
+    if (depo) return { relied: { claim: '', quotes: [], depo: { page: depo.page, line: depo.line, endPage: depo.endPage, endLine: depo.endLine } } };
+    if (!context.trim() || !raw.trim()) return {};
+    const ask = claimFor(context, raw);
+    return ask.claim.trim() ? { relied: ask } : {};
+  };
+  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null; pinned?: boolean; depo?: DepoCite | null } = {}) => {
     markPlace();
     gotoNonce.current += 1;
     const cite = citeRef.current; citeRef.current = null;      // consumed by the first document opened for it
     setPane((cur) => ({
       rowKey: null, entry: null, heading: o.heading ?? cur?.heading ?? '', stale: false,
       docId: documentId, docTitle: o.title ?? null,
-      goto: { ...(o.passageId ? { passageId: o.passageId } : { page: o.page ?? 1 }), ...withNote(o.heading ?? cite?.raw), nonce: gotoNonce.current },
+      goto: {
+        ...(o.passageId ? { passageId: o.passageId } : { page: o.page ?? 1 }),
+        ...withNote(o.heading ?? cite?.raw),
+        ...reliedFor(!!o.pinned || !!o.depo, cite?.raw ?? o.heading ?? '', cite?.context ?? '', o.depo),
+        nonce: gotoNonce.current,
+      },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
       appendix: o.appendix ?? null,
       cite: cite ?? null,
@@ -822,6 +850,7 @@ function DeskEditor(p: DeskProps) {
       heading: label,
       caveat: at.basis === 'estimate' ? `The A-${cite.first} stamp is not in this volume's text; this is where it should fall.` : null,
       appendix: { name: name ?? appendixName ?? 'the chosen appendix' },
+      pinned: true,
     });
   };
   const rememberRecord = async (matterId: string) => {
@@ -922,7 +951,8 @@ function DeskEditor(p: DeskProps) {
     if (!v) { await openRecordCite(rc, label); p.setNotice(caveat); return; }
     lastRecord.current = { cite: rc, label };
     const page = h.pdf_page ?? (await pageOfStamp(supabase, v, h.a_page)).page;
-    openDocument(v.id, { page, heading: label, caveat, appendix: { name: appendixName ?? map.title } });
+    // The cited lines are lit on the sheet (its text carries "Page 63" and "·21·").
+    openDocument(v.id, { page, heading: label, caveat, appendix: { name: appendixName ?? map.title }, depo: dp });
   };
   // "ROA.1527": the Fifth Circuit record page stamped "25-20513.1527". The
   // docket is the cite's own, else the brief's caption ("No. 25-20513").
@@ -942,7 +972,7 @@ function DeskEditor(p: DeskProps) {
         `ROA.${span}: ${h.title}, stamped ${h.docket}.${cite.first}.`,
         rest.length ? `Also stamped in ${rest.map((o) => `${o.title} (${o.docket})`).join('; ')}${docket ? '' : '; the brief names no docket'}.` : null,
       ].filter(Boolean).join(' ');
-      openDocument(h.documentId, { page: h.page, heading: label, title: h.title, caveat });
+      openDocument(h.documentId, { page: h.page, heading: label, title: h.title, caveat, pinned: true });
     } catch (e) {
       p.setBusy(null);
       p.setNotice(`The record on appeal could not be searched: ${(e as Error).message}`);
@@ -978,6 +1008,7 @@ function DeskEditor(p: DeskProps) {
         passageId: passage?.passage_id,
         heading: label,
         title: hit.doc?.title ?? null,
+        pinned: passage?.basis === 'printed' && c.pin != null,
         caveat: [
           passage && passage.basis !== 'printed' ? passage.caveat : null,
           copies > 1 ? `${copies} copies of this case are filed; this is ${hit.doc?.matterspace_id === meta.matterspace_id ? "the one in this brief's matter" : 'the first found'}.` : null,
@@ -1003,6 +1034,7 @@ function DeskEditor(p: DeskProps) {
         passageId: fresh.passage?.passage_id,
         heading: label,
         title: fresh.hits[0].title,
+        pinned: fresh.passage?.basis === 'printed' && fresh.pin != null,
         caveat: [
           fresh.hits[0].how === 'name' ? 'Matched by the case name and the year: this file opens with another of the case\'s reporter cites.' : null,
           fresh.passage && fresh.passage.basis !== 'printed' ? fresh.passage.caveat : null,
@@ -1185,7 +1217,7 @@ function DeskEditor(p: DeskProps) {
         // "TAC ¶ 55": the page where paragraph 55 begins
         const para = !c.page && c.paragraph ? await findParagraphPage(supabase, docs[0].id, c.paragraph) : null;
         const pinned = para ? ` — ¶ ${c.paragraph} begins on page ${para}` : pin;
-        openDocument(docs[0].id, { page: c.page ?? para ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pinned}. Check the caption.` });
+        openDocument(docs[0].id, { page: c.page ?? para ?? 1, heading: label, title: titleOf(docs[0]), caveat: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pinned}. Check the caption.`, pinned: !!(c.page ?? para) });
         return true;
       }
       setContentHits({
@@ -1377,7 +1409,7 @@ function DeskEditor(p: DeskProps) {
         p.setBusy(null);
         const page = pin.number ?? para ?? 1;
         const where = pin.paragraph ? (para ? `¶ ${pin.paragraph} begins on page ${para}` : `¶ ${pin.paragraph} was not found in its text; opened at page 1`) : pin.number ? `page ${pin.number}` : 'its first page';
-        openDocument(def.documentId, { page, heading: label, title: def.title, caveat: `“${def.term}” is defined on this brief as ${def.title}: ${where}.` });
+        openDocument(def.documentId, { page, heading: label, title: def.title, caveat: `“${def.term}” is defined on this brief as ${def.title}: ${where}.`, pinned: !!(pin.number ?? para) });
         return true;
       }
       // stamped: one volume, or every document in a folder and its subfolders
@@ -1394,7 +1426,7 @@ function DeskEditor(p: DeskProps) {
       p.setBusy(null);
       if (!hits.length) { p.setNotice(`No page in ${def.title} carries the stamp ${pin.number}. Check the number, or press Define to point “${def.term}” somewhere else.`); return true; }
       const [h, ...more] = hits;
-      openDocument(h.documentId, { page: h.page, heading: label, title: h.title, caveat: `“${def.term}” ${pin.number}: ${h.title}, page ${h.page}, by its stamp.${more.length ? ` Also stamped ${pin.number}: ${more.slice(0, 3).map((o) => `${o.title} p. ${o.page}`).join('; ')}.` : ''}` });
+      openDocument(h.documentId, { page: h.page, heading: label, title: h.title, pinned: true, caveat: `“${def.term}” ${pin.number}: ${h.title}, page ${h.page}, by its stamp.${more.length ? ` Also stamped ${pin.number}: ${more.slice(0, 3).map((o) => `${o.title} p. ${o.page}`).join('; ')}.` : ''}` });
       return true;
     } catch (e) {
       p.setBusy(null);

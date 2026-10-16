@@ -38,6 +38,7 @@ import {
 } from '@/lib/document-annotations';
 import { interceptStyledCopy } from '@/lib/reader-copy';
 import { phraseRegex } from '@/lib/reader-find';
+import { reliedRanges } from '@/lib/reader-relied';
 import { ANNOTATION_DOT, ANNOTATION_FILL, printCss, scrollbarCss, type ReaderTheme } from '@/lib/reader-style';
 import {
   FindBox,
@@ -107,7 +108,20 @@ export type BenchStore = {
 export type PageLink = { page: number; key: string };
 
 /** Imperative navigation from a host (the Brief Desk's authority pane): a page, and the words to light there. */
-export type PdfBookGoto = { page?: number | null; phrase?: string | null; nonce: number };
+export type PdfBookGoto = {
+  page?: number | null;
+  phrase?: string | null;
+  /**
+   * The words a brief relies on, by page (src/lib/brief/relied-passage.ts):
+   * lit on their own layer, which the find box does not clear, and scrolled
+   * to once. Each page's phrases are found in order.
+   */
+  relied?: { page: number; phrases: string[] }[] | null;
+  nonce: number;
+};
+
+/** How the relied-on words fared on screen: lit, or the page has no words to light (a scan). */
+export type PdfBookReliedPaint = { nonce: number; lit: number; wanted: number; noTextLayer: boolean };
 
 /** What the reader sees — reported to the host as it changes. */
 export type PdfBookView = {
@@ -165,6 +179,8 @@ export type PdfBookProps = {
   pageMemoryKey?: string | null;
   pageLink?: PageLink | null;
   goto?: PdfBookGoto | null;
+  /** Reported once per goto, when the first page holding relied-on words has painted. */
+  onReliedPaint?: (r: PdfBookReliedPaint) => void;
   onClose?: () => void;
   /** Above the toolbar, once the book is open (the cover). */
   header?: React.ReactNode;
@@ -214,6 +230,7 @@ export default function PdfBook({
   pageMemoryKey = null,
   pageLink = null,
   goto = null,
+  onReliedPaint,
   onClose,
   header,
   title,
@@ -703,7 +720,8 @@ export default function PdfBook({
     const layer = textLayerRefs.current[p - 1];
     const hits = hitLayerRefs.current[p - 1];
     if (!layer || !hits) return null;
-    hits.replaceChildren();
+    // Only the find box's own boxes: the relied-on words share this layer.
+    hits.querySelectorAll('.search-hit').forEach((el) => el.remove());
     const q = searchQueryRef.current.trim().toLowerCase();
     if (!q) return null;
     const re = phraseRegex(q);
@@ -740,6 +758,47 @@ export default function PdfBook({
       }
     }
     return currentEl;
+  }, []);
+  // The relied-on words (see PdfBookGoto.relied): boxes like the find box's,
+  // from one Range per phrase that may run across many spans of the text
+  // layer, so a sentence that wraps is lit whole. Repainted with the page
+  // (after a render, after zoom); scrolled to and reported once per goto.
+  const reliedRef = useRef<{ nonce: number; byPage: Map<number, string[]>; scrolled: boolean; reported: boolean } | null>(null);
+  const onReliedPaintRef = useRef(onReliedPaint);
+  useEffect(() => { onReliedPaintRef.current = onReliedPaint; }, [onReliedPaint]);
+  const paintRelied = useCallback((p: number) => {
+    const layer = textLayerRefs.current[p - 1];
+    const hits = hitLayerRefs.current[p - 1];
+    if (!layer || !hits) return;
+    hits.querySelectorAll('.relied-hit').forEach((el) => el.remove());
+    const rel = reliedRef.current;
+    const phrases = rel?.byPage.get(p);
+    if (!rel || !phrases?.length) return;
+    const box = layer.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const ranges = reliedRanges(layer, phrases);
+    let first: HTMLElement | null = null;
+    for (const range of ranges) {
+      for (const r of Array.from(range.getClientRects())) {
+        if (!r.width || !r.height) continue;
+        const el = document.createElement('div');
+        el.className = 'relied-hit';
+        el.style.left = `${((r.left - box.left) / box.width) * 100}%`;
+        el.style.top = `${((r.top - box.top) / box.height) * 100}%`;
+        el.style.width = `${(r.width / box.width) * 100}%`;
+        el.style.height = `${(r.height / box.height) * 100}%`;
+        hits.appendChild(el);
+        first = first ?? el;
+      }
+    }
+    if (first && !rel.scrolled) {
+      rel.scrolled = true;
+      first.scrollIntoView({ block: 'center' });
+    }
+    if (!rel.reported) {
+      rel.reported = true;
+      onReliedPaintRef.current?.({ nonce: rel.nonce, lit: ranges.length, wanted: phrases.length, noTextLayer: !(layer.textContent ?? '').trim() });
+    }
   }, []);
   const revealIfCurrent = useCallback((el: HTMLElement | null) => {
     if (!el || scrollToMatchRef.current < 0 || scrollToMatchRef.current !== matchIdxRef.current) return;
@@ -841,6 +900,7 @@ export default function PdfBook({
         renderTasksRef.current.delete(p);
         renderedKeyRef.current.set(p, key);
         revealIfCurrent(paintHits(p));
+        paintRelied(p);
       } catch {
         // Cancellation or a render race; a later pass repaints the slot.
         renderTasksRef.current.delete(p);
@@ -855,7 +915,7 @@ export default function PdfBook({
     }
 
     return () => { cancelled = true; };
-  }, [paintPage, totalPages, renderedScale, loadState, sourceKey, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
+  }, [paintPage, totalPages, renderedScale, loadState, sourceKey, pageDims, searchQuery, matches, paintHits, revealIfCurrent, paintRelied]);
 
   // On unmount, stop whatever pdfjs still has in flight.
   useEffect(() => () => {
@@ -1643,7 +1703,16 @@ export default function PdfBook({
     appliedGotoRef.current = goto.nonce;
     const target = goto.page ?? null;
     const phrase = goto.phrase ?? null;
+    // The relied-on words: kept by page, painted on the pages already drawn
+    // now and on the others as they render.
+    const prevPages = reliedRef.current ? Array.from(reliedRef.current.byPage.keys()) : [];
+    reliedRef.current = goto.relied?.length
+      ? { nonce: goto.nonce, byPage: new Map(goto.relied.map((r) => [r.page, r.phrases])), scrolled: false, reported: false }
+      : null;
     if (target) gotoPage(target);
+    for (const p of new Set([...prevPages, ...(goto.relied ?? []).map((r) => r.page)])) {
+      if (renderedKeyRef.current.has(p)) paintRelied(p);
+    }
     // The passage's opening words, lit through the find path. The page is
     // the promise; the boxes are a bonus — a PDF's text layer is split by
     // line, and the paint finds a phrase only within one line.
@@ -1653,7 +1722,7 @@ export default function PdfBook({
       setMatches([{ page: target, index: 0 }]);
       setMatchIdx(0);
     }
-  }, [goto, loadState, slotTops, totalPages, gotoPage]);
+  }, [goto, loadState, slotTops, totalPages, gotoPage, paintRelied]);
 
   // What the reader sees, for the host (its companion, its title bar).
   useEffect(() => {
@@ -2556,6 +2625,12 @@ function PdfBookStyle({ theme }: { theme: ReaderTheme }) {
       .search-hit {
         position: absolute;
         background: rgba(255, 214, 0, 0.6);
+        border-radius: 2px;
+        mix-blend-mode: multiply;
+      }
+      .relied-hit {
+        position: absolute;
+        background: rgba(255, 226, 64, 0.55);
         border-radius: 2px;
         mix-blend-mode: multiply;
       }

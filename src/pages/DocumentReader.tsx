@@ -47,6 +47,7 @@ import PdfBook, {
   type PageSides,
   type PdfBookGoto,
   type PdfBookHandle,
+  type PdfBookReliedPaint,
   type PdfBookView,
   type PdfSource,
 } from '@/components/reader/PdfBook';
@@ -116,6 +117,8 @@ import {
   writeClipboard,
 } from '@/lib/reader-copy';
 import { phraseRegex, likePattern } from '@/lib/reader-find';
+import { reliedRanges } from '@/lib/reader-relied';
+import { pickRelied, depoLines, type ReliedAsk, type ReliedBasis, type ReliedPick } from '@/lib/brief/relied-passage';
 import { ANNOTATION_DOT, ANNOTATION_FILL, printCss, scrollbarCss, type ReaderTheme } from '@/lib/reader-style';
 import {
   FindBox,
@@ -215,6 +218,50 @@ type Match = { page: number; index: number };
 // The opening words of a passage, for the find box.
 const firstWords = (t: string, n: number) => t.split(/\s+/).filter(Boolean).slice(0, n).join(' ');
 
+// The relied-on words at a pincite (src/lib/brief/relied-passage.ts): the
+// passages that can hold them, then the pick. A case's pin passage and the
+// two after it (never the one before: "Id. at 259" must not light 258); a
+// deposition's sheet and the next (a cite may run over); otherwise the page.
+type ReliedRow = { id: string; page_start: number | null; line_start: number | null; line_end: number | null; text: string | null; metadata: { pdf_page?: unknown } | null };
+const physicalPage = (r: { page_start: number | null; metadata: { pdf_page?: unknown } | null }) => {
+  const n = Number(r.metadata?.pdf_page);
+  return Number.isFinite(n) && n > 0 ? n : r.page_start;
+};
+async function pickReliedFor(documentId: string, ask: ReliedAsk, pin: { seq: number | null; page: number | null }): Promise<ReliedPick> {
+  const none: ReliedPick = { basis: 'none', phrases: [], detail: null };
+  let q = supabase
+    .from('passages')
+    .select('id, page_start, line_start, line_end, text, metadata')
+    .eq('document_id', documentId)
+    .eq('summary_level', 0);
+  if (ask.depo) {
+    if (pin.page === null) return none;
+    q = q.gte('page_start', pin.page).lte('page_start', pin.page + 1);
+  } else if (pin.seq !== null) {
+    q = q.gte('sequence_number', pin.seq).lte('sequence_number', pin.seq + 2);
+  } else if (pin.page !== null) {
+    q = q.eq('page_start', pin.page);
+  } else {
+    return none;
+  }
+  const { data } = await q.order('sequence_number').limit(80);
+  const rows = ((data ?? []) as ReliedRow[]).filter((r) => r.text);
+  const passages = rows.map((r) => ({ id: r.id, text: r.text!, page: physicalPage(r), page_start: r.page_start, line_start: r.line_start, line_end: r.line_end }));
+  return ask.depo ? depoLines(passages, ask.depo) : pickRelied(ask, passages);
+}
+
+/** What the Reader lit for a goto's `relied`, for the host's caveat. */
+export interface ReaderReliedResult {
+  nonce: number;
+  basis: ReliedBasis;
+  /** "5 of 9 words" (closest), "63:21–64:2" (lines). */
+  detail: string | null;
+  /** The picked words were found on screen and lit. */
+  lit: boolean;
+  /** The page carries no text to light (a scan without OCR). */
+  noTextLayer: boolean;
+}
+
 // Find every occurrence of `needle` in the text of a rendered document,
 // as DOM Ranges. The text nodes are joined into one string first, so a
 // hit may run across inline boundaries — a brief sets the case name in
@@ -255,6 +302,8 @@ function customHighlights(): { registry: Map<string, unknown>; Highlight: Highli
 }
 const FIND_HL = 'reader-find';
 const FIND_HL_CURRENT = 'reader-find-current';
+// The language a brief relies on, lit at its pincite (ReaderGoto.relied).
+const RELIED_HL = 'reader-relied';
 // Marks on a rendered document: one Highlight per color, plus one for the
 // dotted underline under a margin note's words. Painted at priority -1 so
 // the find highlights (priority 0) always sit on top of them.
@@ -320,6 +369,13 @@ export interface ReaderGoto {
   anchor?: TextAnchor;
   /** A footnote the cite pins to ("at 2 n.1"): a Word file opens AT that note. */
   footnote?: number;
+  /**
+   * The brief's words for this cite: the Reader lights the language on the
+   * pinned page that they rely on (a quote, the closest sentence, or a
+   * deposition's lines) instead of the passage's opening words, and reports
+   * what it lit through onRelied.
+   */
+  relied?: ReliedAsk;
   nonce: number;
 }
 
@@ -331,9 +387,9 @@ export interface ReaderGoto {
  */
 export type ReaderChrome = 'full' | 'pane';
 
-type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChrome };
+type ReaderProps = EmbeddableViewProps & { goto?: ReaderGoto; chrome?: ReaderChrome; onRelied?: (r: ReaderReliedResult) => void };
 
-export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full' }: ReaderProps = {}) {
+export default function DocumentReader({ id: propId, embedded = false, onClose, goto, chrome = 'full', onRelied }: ReaderProps = {}) {
   const pane = chrome === 'pane';
   const paneChrome = pane;
   const hideCover = embedded || pane;
@@ -1872,6 +1928,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   }, []);
   // A new document, or leaving: nothing of the old search should linger.
   useEffect(() => clearTextMatches, [docHtml, clearTextMatches]);
+  // The relied-on words go with the document too (the find box never clears them).
+  useEffect(() => () => { customHighlights()?.registry.delete(RELIED_HL); }, [docHtml]);
 
   // Paint the marks of a rendered document. Each anchor is turned back into
   // a Range over the current DOM (offsets first, then the quote), and the
@@ -1998,33 +2056,65 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // book, which applies it once its page stack is measured (and, on first
   // load, ahead of the remembered page).
   const [bookGoto, setBookGoto] = useState<PdfBookGoto | null>(null);
+  const onReliedRef = useRef(onRelied);
+  useEffect(() => { onReliedRef.current = onRelied; }, [onRelied]);
+  // The pick for the goto in flight, until the book says how its painting went.
+  const reliedPickRef = useRef<{ nonce: number; pick: ReliedPick } | null>(null);
   useEffect(() => {
-    if (!goto || fileKind !== 'pdf') return;
+    if (!goto || fileKind !== 'pdf' || !id) return;
     let live = true;
     const nonce = goto.nonce;
     void (async () => {
       let target = goto.page ?? null;
       let phrase: string | null = null;
+      let seq: number | null = null;
       if (goto.passageId) {
         const { data } = await supabase
           .from('passages')
-          .select('page_start, text, metadata')
+          .select('page_start, sequence_number, text, metadata')
           .eq('id', goto.passageId)
           .maybeSingle();
-        const row = data as { page_start: number | null; text: string | null; metadata: { pdf_page?: unknown } | null } | null;
+        const row = data as { page_start: number | null; sequence_number: number | null; text: string | null; metadata: { pdf_page?: unknown } | null } | null;
         if (row) {
           // A transcript's passages are filed under its printed page; the
           // physical page, the one to go to, is metadata.pdf_page.
-          const physical = Number(row.metadata?.pdf_page);
-          target = target ?? (Number.isFinite(physical) && physical > 0 ? physical : row.page_start);
+          target = target ?? physicalPage(row);
+          seq = row.sequence_number;
           phrase = row.text ? firstWords(row.text, 12) : null;
         }
       }
+      // The brief's words, when the host sent them: those are what is lit, and
+      // nothing is lit when nothing matches (the passage's opening words would
+      // read as a match).
+      let relied: PdfBookGoto['relied'] = null;
+      if (goto.relied) {
+        phrase = null;
+        let pick: ReliedPick = { basis: 'none', phrases: [], detail: null };
+        try { pick = await pickReliedFor(id, goto.relied, { seq, page: target }); } catch { /* the page still opens */ }
+        if (!live) return;
+        const byPage = new Map<number, string[]>();
+        for (const ph of pick.phrases) {
+          const pg = ph.page ?? target;
+          if (pg === null) continue;
+          byPage.set(pg, [...(byPage.get(pg) ?? []), ph.text]);
+        }
+        relied = Array.from(byPage, ([page, phrases]) => ({ page, phrases }));
+        // A quote may sit on the page after the pin passage's first page: go
+        // to the first page with lit words (a page the host named stays).
+        if (relied.length && !goto.page) target = relied[0].page;
+        reliedPickRef.current = { nonce, pick };
+        if (!relied.length) onReliedRef.current?.({ nonce, basis: pick.basis, detail: pick.detail, lit: false, noTextLayer: false });
+      }
       if (!live) return; // a newer goto arrived meanwhile
-      setBookGoto({ page: target, phrase, nonce });
+      setBookGoto({ page: target, phrase, relied, nonce });
     })();
     return () => { live = false; };
-  }, [goto, fileKind]);
+  }, [goto, fileKind, id]);
+  const onReliedPaint = useCallback((r: PdfBookReliedPaint) => {
+    const held = reliedPickRef.current;
+    if (!held || held.nonce !== r.nonce) return;
+    onReliedRef.current?.({ nonce: r.nonce, basis: held.pick.basis, detail: held.pick.detail, lit: r.lit > 0, noTextLayer: r.noTextLayer });
+  }, []);
 
   // The same `goto` for a rendered document, applied once per nonce, as
   // soon as it is rendered.
@@ -2036,14 +2126,23 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     const nonce = goto.nonce;
     void (async () => {
       let phrase: string | null = null;
+      let seq: number | null = null;
       if (goto.passageId) {
         const { data } = await supabase
           .from('passages')
-          .select('text')
+          .select('text, sequence_number')
           .eq('id', goto.passageId)
           .maybeSingle();
-        const row = data as { text: string | null } | null;
-        if (row) phrase = row.text ? firstWords(row.text, 12) : null;
+        const row = data as { text: string | null; sequence_number: number | null } | null;
+        if (row) { phrase = row.text ? firstWords(row.text, 12) : null; seq = row.sequence_number; }
+      }
+      // The brief's words, when the host sent them (see the PDF effect above).
+      // A footnote pin opens at the note, as before.
+      let pick: ReliedPick | null = null;
+      customHighlights()?.registry.delete(RELIED_HL);
+      if (goto.relied && id && !goto.footnote) {
+        phrase = null;
+        try { pick = await pickReliedFor(id, goto.relied, { seq, page: goto.page ?? null }); } catch { pick = { basis: 'none', phrases: [], detail: null }; }
       }
       if (appliedGotoRef.current !== nonce) return; // a newer goto arrived meanwhile
       const root = contentRef.current?.querySelector<HTMLElement>('.print-root');
@@ -2072,13 +2171,25 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         if (ranges.length || !phrase) break;
         ranges = findInRendered(root, firstWords(phrase, n));
       }
+      if (pick) {
+        // Lit on its own highlight, which the find box does not clear.
+        const lit = pick.phrases.length ? reliedRanges(root, pick.phrases.map((p) => p.text)) : [];
+        const hl = customHighlights();
+        if (hl) {
+          if (lit.length) hl.registry.set(RELIED_HL, new hl.Highlight(...lit));
+          else hl.registry.delete(RELIED_HL);
+        }
+        lit[0]?.startContainer.parentElement?.scrollIntoView({ block: 'center' });
+        onReliedRef.current?.({ nonce, basis: pick.basis, detail: pick.detail, lit: lit.length > 0, noTextLayer: false });
+        return;
+      }
       if (!ranges.length) return;
       textRangesRef.current = ranges;
       setMatches(ranges.map((_, i) => ({ page: 1, index: i })));
       setMatchIdx(0);
       showTextMatch(ranges, 0);
     })();
-  }, [goto, loadState, fileKind, docHtml, showTextMatch]);
+  }, [goto, loadState, fileKind, docHtml, showTextMatch, id]);
 
   // ────────────────────────────────────────────────────────────────────
   // Render
@@ -2496,6 +2607,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         pageMemoryKey={id ? `ctx_reader_page_${id}` : null}
         pageLink={pageLink}
         goto={bookGoto}
+        onReliedPaint={onReliedPaint}
         onClose={closeReader}
         header={!hideCover ? (
           /* Cover image — same component Pages/Lists/Tables use. When no cover
@@ -3112,6 +3224,7 @@ function RenderedDocStyle({ theme }: { theme: ReaderTheme }) {
          screenplay), painted by the Custom Highlight API over the words. */
       ::highlight(${FIND_HL}) { background-color: rgba(255, 214, 0, 0.6); }
       ::highlight(${FIND_HL_CURRENT}) { background-color: rgba(255, 150, 0, 0.85); }
+      ::highlight(${RELIED_HL}) { background-color: rgba(255, 226, 64, 0.55); }
       /* Highlights and margin-note underlines on a rendered document, in the
          PDF overlay's colors. Registered at priority -1, so a find hit over a
          highlighted word shows the find color. */
