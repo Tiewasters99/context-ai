@@ -612,6 +612,15 @@ test('the matter hint: fresh for 30 minutes, then cleared; malformed is ignored'
 test('which way the consent screen starts', () => {
   const hint = (provider) => ({ matterId: 'A1', provider, at: 0 });
   assert.equal(guessAgentProvider('Grok'), 'grok');
+  // Meta's bots, by any of the names they connect under.
+  assert.equal(guessAgentProvider('Meta AI'), 'meta');
+  assert.equal(guessAgentProvider('Muse'), 'meta');
+  assert.equal(guessAgentProvider('Instinct'), 'meta');
+  assert.equal(guessAgentProvider('Llama agent'), 'meta');
+  assert.equal(guessAgentProvider('metadata service'), 'other');
+  assert.equal(defaultConnectAs({ clientName: 'Muse', hint: null }), 'assistant');
+  assert.equal(defaultConnectAs({ clientName: 'Muse', hint: hint('meta') }), 'agent');
+  assert.equal(hintFitsClient(hint('meta'), 'claude.ai'), false);
   // Grok: agent, with or without a hint.
   assert.equal(defaultConnectAs({ clientName: 'Grok', hint: null }), 'agent');
   assert.equal(defaultConnectAs({ clientName: 'xAI Grok connector', hint: null }), 'agent');

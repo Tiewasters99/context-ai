@@ -13,7 +13,7 @@
 // Also here: which way the consent screen starts (Gap 4). Pure functions, no
 // imports, so a node harness can drive them directly.
 
-export type HintProvider = 'grok' | 'chatgpt' | 'claude' | 'gemini' | 'other';
+export type HintProvider = 'grok' | 'chatgpt' | 'claude' | 'gemini' | 'meta' | 'other';
 
 export interface PendingAgentConnect {
   matterId: string;
@@ -36,7 +36,7 @@ function defaultStore(): KV | null {
   }
 }
 
-const PROVIDERS: readonly HintProvider[] = ['grok', 'chatgpt', 'claude', 'gemini', 'other'];
+const PROVIDERS: readonly HintProvider[] = ['grok', 'chatgpt', 'claude', 'gemini', 'meta', 'other'];
 
 export function writePendingAgentConnect(
   hint: { matterId: string; provider: HintProvider },
@@ -99,6 +99,7 @@ export function guessAgentProvider(clientName: string): HintProvider {
   if (/chatgpt|openai|\bgpt\b/i.test(n)) return 'chatgpt';
   if (/claude|anthropic/i.test(n)) return 'claude';
   if (/gemini|antigravity|google/i.test(n)) return 'gemini';
+  if (/\bmeta\b|\bmuse\b|instinct|llama/i.test(n)) return 'meta';
   return 'other';
 }
 
