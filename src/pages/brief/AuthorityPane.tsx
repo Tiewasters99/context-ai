@@ -101,7 +101,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.caveat && state.docId && <div className="text-[11px] text-orange-200/80 mt-0.5">{state.caveat}</div>}
         {state.docId && state.goto?.relied && relied && relied.nonce === state.goto.nonce && (
           <div className={`text-[11px] mt-0.5 ${relied.lit && relied.basis !== 'closest' ? 'text-[#f5dc6a]/90' : 'text-orange-200/80'}`} data-testid="pane-relied">
-            {reliedLine(relied, !!state.goto.relied.depo)}
+            {reliedLine(relied, !!state.goto.relied.depo, !state.goto.relied.claim.trim() && !state.goto.relied.quotes.length)}
           </div>
         )}
         {/* The human check (103): with a cite open at its page, one press logs it with initials. */}
@@ -250,8 +250,9 @@ function Note({ children }: { children: React.ReactNode }) {
 }
 
 /** The line under the caveat: what the yellow on the page is, in words. */
-function reliedLine(r: ReaderReliedResult, depo: boolean): string {
+function reliedLine(r: ReaderReliedResult, depo: boolean, noWords: boolean): string {
   if (r.basis === 'none') {
+    if (noWords && !depo) return 'The desk has no words of the brief for this cite (it was not placed in the text), so nothing is lit. Read the page.';
     return depo
       ? 'The cited lines are not in this page’s text — nothing is lit. Read the page.'
       : 'Nothing on this page matches the brief’s words closely enough to light. Read the page.';

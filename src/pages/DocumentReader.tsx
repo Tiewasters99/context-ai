@@ -2140,7 +2140,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       // A footnote pin opens at the note, as before.
       let pick: ReliedPick | null = null;
       customHighlights()?.registry.delete(RELIED_HL);
+      // The passage's opening words still say WHERE the pin is; with relied
+      // words they place the page but are never lit.
+      let place: string | null = null;
       if (goto.relied && id && !goto.footnote) {
+        place = phrase;
         phrase = null;
         try { pick = await pickReliedFor(id, goto.relied, { seq, page: goto.page ?? null }); } catch { pick = { basis: 'none', phrases: [], detail: null }; }
       }
@@ -2179,7 +2183,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           if (lit.length) hl.registry.set(RELIED_HL, new hl.Highlight(...lit));
           else hl.registry.delete(RELIED_HL);
         }
-        lit[0]?.startContainer.parentElement?.scrollIntoView({ block: 'center' });
+        let at: Range | undefined = lit[0];
+        for (const n of [12, 6, 3]) {
+          if (at || !place) break;
+          at = findInRendered(root, firstWords(place, n))[0];
+        }
+        at?.startContainer.parentElement?.scrollIntoView({ block: 'center' });
         onReliedRef.current?.({ nonce, basis: pick.basis, detail: pick.detail, lit: lit.length > 0, noTextLayer: false });
         return;
       }

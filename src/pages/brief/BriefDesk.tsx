@@ -733,9 +733,12 @@ function DeskEditor(p: DeskProps) {
   const reliedFor = (pinned: boolean, raw: string, context: string, depo?: DepoCite | null): { relied?: ReliedAsk } => {
     if (!pinned) return {};
     if (depo) return { relied: { claim: '', quotes: [], depo: { page: depo.page, line: depo.line, endPage: depo.endPage, endLine: depo.endLine } } };
-    if (!context.trim() || !raw.trim()) return {};
+    // No words from the brief (a cite the pass named but could not place in
+    // the text): still ask, so the Reader lights nothing rather than the
+    // passage's opening words, which would read as a match.
+    if (!context.trim() || !raw.trim()) return { relied: { claim: '', quotes: [] } };
     const ask = claimFor(context, raw);
-    return ask.claim.trim() ? { relied: ask } : {};
+    return { relied: ask };
   };
   const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null; pinned?: boolean; depo?: DepoCite | null } = {}) => {
     markPlace();
