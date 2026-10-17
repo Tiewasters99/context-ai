@@ -236,7 +236,10 @@ async function pickReliedFor(documentId: string, ask: ReliedAsk, pin: { seq: num
     .eq('summary_level', 0);
   if (ask.depo) {
     if (pin.page === null) return none;
-    q = q.gte('page_start', pin.page).lte('page_start', pin.page + 1);
+    // A condensed transcript indexed by its printed pages files each passage
+    // under the transcript page and keeps the sheet in metadata.pdf_page.
+    const p = pin.page;
+    q = q.or(`and(page_start.gte.${p},page_start.lte.${p + 1}),metadata->>pdf_page.in.(${p},${p + 1})`);
   } else if (pin.seq !== null) {
     q = q.gte('sequence_number', pin.seq).lte('sequence_number', pin.seq + 2);
   } else if (pin.page !== null) {
