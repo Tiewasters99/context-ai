@@ -435,6 +435,7 @@ export default function PdfBook({
     textLayerRefs.current = [];
     restoredRef.current = false;
     anchorReadyRef.current = false;
+    heldGotoRef.current = null;
 
     const src = sourceRef.current;
     if (!src) return;
