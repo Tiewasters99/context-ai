@@ -27,7 +27,8 @@ import type { WorkshopPanelProps } from '@/components/reader/WorkshopPanel';
 import { clipUrl, type DocumentAnimation, type Turn } from '@/lib/document-animations';
 import { nextTurn, unionRect, type WorkshopItem } from '@/lib/document-workshop';
 import { downloadBlob } from '@/lib/export-page';
-import { merchDesignerUrl } from '@/lib/grapheon-merch';
+import MerchSheet, { type MerchSheetOpen } from '@/components/reader/MerchSheet';
+import { readMerchReturn, stripMerchReturn } from '@/lib/merch-sheet';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
@@ -185,7 +186,7 @@ export type PdfBookProps = {
   pageSides?: PageSides | null;
   /** Offered in the sidebar as "add a clip"; absent = not offered. */
   renderAttach?: ((a: AttachArgs) => React.ReactNode) | null;
-  /** Offers "Tee or tote" on the bench's pictures: the picture is set out in a public bucket and the Grapheon store's designer opens on it. Only for a Library or public-domain book, or the reader's own edition; absent = not offered. */
+  /** Offers a tee, a tote, a print on the bench's pictures: the product sheet beside the page (Phase 2b), sold through api/merch. Only for a Library or public-domain book, or the reader's own edition; absent = not offered. */
   merch?: boolean;
   /** The selection menu's Ask; absent = no Ask button. */
   onAsk?: (text: string, page: number) => void;
@@ -1067,39 +1068,62 @@ export default function PdfBook({
     }
   }, [workshopFail]);
 
-  // The picture to the Grapheon store's designer, for a tee or a tote. The
-  // tab is opened first, inside the click, or the browser would block it
-  // after the upload; a snip is drawn at the bench's largest size, upright
-  // per its turn; a still is fetched as it is.
+  // A picture from the bench on a tee, a tote, a print: the product sheet
+  // opens beside the page at once with the bench's own preview, and draws
+  // the picture at print size only when the sheet asks for the upload — a
+  // snip at the bench's largest size, upright per its turn; a still as it is.
+  // The bench here is a document's (migration 106), so the rights question
+  // names the document; the standalone Reader's edition bench (#413) will
+  // pass kind 'edition' with the edition's id.
+  const [merchSheet, setMerchSheet] = useState<MerchSheetOpen | null>(null);
   const makeMerch = useCallback(async (item: WorkshopItem) => {
-    if (!currentUserId) { setWorkshopNotice('Sign in to make a tee or tote.'); return; }
-    const win = window.open('', '_blank');
-    if (!win) { setWorkshopNotice('The browser blocked the new tab; allow pop-ups for this site and try again.'); return; }
-    try {
-      let blob: Blob;
+    if (!currentUserId) { setWorkshopNotice('Sign in to make a tee, a tote or a print.'); return; }
+    const getBlob = async (): Promise<Blob> => {
       if (item.kind === 'snip') {
         const pdf = pdfDocRef.current as PDFDocumentProxy | null;
         if (!pdf || !item.rect) throw new Error('The snip has no rectangle.');
         const canvas = await renderPageCanvas(pdf, item.page, { width: 3600, maxEdge: 4800 });
         // A scanned plate has no transparency to lose; JPEG keeps the upload
         // to a few MB where the PNG would be twenty.
-        blob = await canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect), item.turn), 'image/jpeg', 0.92);
-      } else {
-        const path = item.media?.storage_path;
-        if (!path) throw new Error('The still has no file.');
-        const url = await clipUrl(path);
-        if (!url) throw new Error('The still could not be reached.');
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`The still could not be read (${res.status}).`);
-        blob = await res.blob();
+        return canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect), item.turn), 'image/jpeg', 0.92);
       }
-      win.location.href = await merchDesignerUrl({ userId: currentUserId, itemId: item.id, blob, title: meta?.title ?? null });
-      setWorkshopNotice('The Grapheon designer has the picture (new tab).');
-    } catch (e) {
-      win.close();
-      workshopFail(e, 'The picture could not be sent to the store.');
-    }
-  }, [currentUserId, meta?.title, workshopFail]);
+      const path = item.media?.storage_path;
+      if (!path) throw new Error('The still has no file.');
+      const url = await clipUrl(path);
+      if (!url) throw new Error('The still could not be reached.');
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`The still could not be read (${res.status}).`);
+      return res.blob();
+    };
+    let preview: string | null = null;
+    try {
+      preview = item.kind === 'snip' && item.rect
+        ? await makeAnimationPreview(item.page, item.rect, item.turn)
+        : item.media?.storage_path ? await clipUrl(item.media.storage_path) : null;
+    } catch { preview = null; }
+    setMerchSheet({
+      kind: 'product',
+      itemId: item.id,
+      itemUpdatedAt: item.updated_at ?? null,
+      source: { kind: 'document', id: item.document_id, bench_item_id: item.id },
+      preview,
+      getBlob,
+      bookTitle: meta?.title ?? null,
+    });
+  }, [currentUserId, meta?.title, makeAnimationPreview]);
+
+  // Back from Stripe: ?merch=paid&order=<id> opens the orders view on that
+  // order; ?merch=cancel says so. The two parameters are taken off the URL
+  // so a reload does not repeat the message.
+  useEffect(() => {
+    if (!merch) return;
+    const back = readMerchReturn(window.location.search);
+    if (!back) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${stripMerchReturn(window.location.search)}${window.location.hash}`);
+    setMerchSheet(back.kind === 'paid'
+      ? { kind: 'orders', orderId: back.orderId }
+      : { kind: 'orders', orderId: null, notice: 'Checkout was cancelled. Nothing was charged.' });
+  }, [merch]);
 
   // A clip or a still brought back: kept by the store (filed in the matter,
   // or in the editions bucket), and set on the bench under its source.
@@ -1148,6 +1172,7 @@ export default function PdfBook({
     onDownload: downloadSnip,
     onCopy: copySnip,
     onMerch: merch ? makeMerch : null,
+    onMerchOrders: merch ? () => setMerchSheet({ kind: 'orders' }) : null,
     onTurn: async (item: WorkshopItem) => {
       try {
         const updated = await bench.update(item.id, { turn: nextTurn(item.turn) });
@@ -2054,6 +2079,15 @@ export default function PdfBook({
         />
       )}
       {children}
+      {merch && merchSheet && currentUserId && (
+        <MerchSheet
+          key={merchSheet.kind === 'product' ? merchSheet.itemId : 'orders'}
+          open={merchSheet}
+          userId={currentUserId}
+          returnPath={`${window.location.pathname}${window.location.search}`}
+          onClose={() => setMerchSheet(null)}
+        />
+      )}
     </div>
   );
 }
