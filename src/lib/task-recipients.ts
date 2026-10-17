@@ -68,7 +68,7 @@ export const HOW_LABEL: Record<RecipientKind, string> = {
 };
 
 const PROVIDER_LABEL: Record<string, string> = {
-  grok: 'Grok', chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', other: 'Other',
+  grok: 'Grok', chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', meta: 'Meta', other: 'Other',
 };
 
 // An AI client names itself, so the provider is guessed from that name; one
@@ -78,6 +78,7 @@ const CLIENT_MATCHERS: { name: string; test: RegExp }[] = [
   { name: 'ChatGPT', test: /chatgpt|openai|\bgpt\b/i },
   { name: 'Gemini', test: /gemini|antigravity|google/i },
   { name: 'Grok', test: /grok|xai|x\.ai/i },
+  { name: 'Meta', test: /\bmeta\b|\bmuse\b|instinct|llama/i },
 ];
 
 export function providerForClient(name: string | null | undefined): string | null {

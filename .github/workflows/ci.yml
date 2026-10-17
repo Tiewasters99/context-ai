@@ -844,6 +844,17 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-agent-scope-all.mjs
 
+      # Migration 118: 'meta' joins the agent providers (a label only). Runs
+      # the chain to 088, then 118 twice: the column rule takes 'meta', the
+      # consent write stores it, oauth_grant_approve keeps its signature and
+      # grants after the in-place patch, and 118 refuses to patch a function
+      # whose provider list is not where it expects.
+      - name: Migration 118 — Meta as an agent provider (PGlite)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-agent-provider-meta.mjs
+
       # Migration 089: a task can go to ANY connected AI — an agent token, a
       # full-access user token, or a full-assistant OAuth sign-in. Executes
       # 001…022 + 062 + 063 + 065 + 083 + 085 + 086 + 087 + 089 (twice) in
