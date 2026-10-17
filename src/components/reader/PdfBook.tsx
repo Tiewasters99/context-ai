@@ -520,6 +520,12 @@ export default function PdfBook({
   }, [pageDims, renderedScale]);
   const slotTopsRef = useRef<number[] | null>(null);
   useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
+  // The host's goto page, held until the reader scrolls by hand: the dims
+  // sweep replaces the page-1 stand-in sizes after the jump, and in a long
+  // record volume the old offset lands pages early. The re-anchor below goes
+  // back to the held page. (The find hit used to pull the view back; the
+  // relied-on words paint only once their page is drawn.)
+  const heldGotoRef = useRef<number | null>(null);
   useEffect(() => { pageStateRef.current = page; }, [page]);
 
   // The page the slots are painted around. Scrolling a page at a time paints
@@ -624,7 +630,12 @@ export default function PdfBook({
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
+    // The reader's own hand on the page releases a held goto (see heldGotoRef).
+    const release = () => { heldGotoRef.current = null; };
+    const hands = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    for (const h of hands) el.addEventListener(h, release, { passive: true });
     return () => {
+      for (const h of hands) el.removeEventListener(h, release);
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
@@ -664,7 +675,11 @@ export default function PdfBook({
     if (!restoredRef.current) return;
     if (!anchorReadyRef.current) { anchorReadyRef.current = true; return; }
     const el = contentRef.current;
-    if (el) el.scrollTo({ top: Math.max(0, slotTops[pageStateRef.current - 1] - 8) });
+    const p = heldGotoRef.current ?? pageStateRef.current;
+    if (!el) return;
+    el.scrollTo({ top: Math.max(0, slotTops[p - 1] - 8) });
+    // Words already lit on the held page stay in view.
+    if (heldGotoRef.current) el.querySelector('.relied-hit')?.scrollIntoView({ block: 'center' });
   }, [slotTops, loadState]);
 
   // Remember where the reader stands, for next time this document opens.
@@ -1709,6 +1724,7 @@ export default function PdfBook({
     reliedRef.current = goto.relied?.length
       ? { nonce: goto.nonce, byPage: new Map(goto.relied.map((r) => [r.page, r.phrases])), scrolled: false, reported: false }
       : null;
+    heldGotoRef.current = target;
     if (target) gotoPage(target);
     for (const p of new Set([...prevPages, ...(goto.relied ?? []).map((r) => r.page)])) {
       if (renderedKeyRef.current.has(p)) paintRelied(p);
