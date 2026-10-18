@@ -19,6 +19,8 @@ import {
   GENERAL,
 } from '../src/lib/comparator/assemble.ts';
 import { addComparisonCandidate, nextLabel, blindNames, slug } from '../lib/comparator.mjs';
+import { redact } from '../lib/ledger.mjs';
+import { describeEvent } from '../src/lib/matter-record/describe.ts';
 
 const RUBRIC = [
   { key: 'strategy', label: 'Strategy' },
@@ -265,4 +267,13 @@ test('labels run A…Z then AA; slugs and blind names are filesystem-safe', () =
   assert.equal(nextLabel('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')), 'AA');
   assert.equal(slug('Novak — 702 Motion (v2)'), 'novak-702-motion-v2');
   assert.deepEqual(blindNames('C', '  Novak   702 ', '.pdf'), { title: 'Candidate C — Novak 702', filename: 'candidate-c-novak-702.pdf' });
+});
+
+test('the reveal row survives the Record redaction and reads as names', () => {
+  const pairs = [{ label: 'A', revealed_label: 'Model One' }, { label: 'B', revealed_label: 'Model Two' }];
+  const kept = redact({ comparison_id: CMP, revealed: pairs });
+  assert.deepEqual(kept.revealed, pairs, 'the mapping is written as given');
+  assert.equal(redact({ key: pairs }).key, '[redacted]', 'negative control: a field named "key" would have been redacted');
+  const line = describeEvent({ kind: 'comparison.revealed', payload: kept, actor_kind: 'user', actor_ref: USER });
+  assert.match(line, /A = Model One; B = Model Two/);
 });

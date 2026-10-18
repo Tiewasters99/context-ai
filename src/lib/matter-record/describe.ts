@@ -626,7 +626,7 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
     case 'comparison.assembled':
       return `${who} filed the comparison notes`;
     case 'comparison.revealed': {
-      const key = Array.isArray(payload.key) ? (payload.key as Array<Record<string, unknown>>) : [];
+      const key = Array.isArray(payload.revealed) ? (payload.revealed as Array<Record<string, unknown>>) : [];
       const pairs = key
         .map((k) => (str(k.label) && str(k.revealed_label) ? `${str(k.label)} = ${str(k.revealed_label)}` : null))
         .filter(Boolean);

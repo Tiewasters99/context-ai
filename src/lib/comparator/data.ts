@@ -414,7 +414,7 @@ export async function revealComparison(cmp: Comparison, candidates: Candidate[])
   const keys = await keysFor(candidates.map((c) => c.id));
   await recordComparison('comparison.revealed', comparison.box_matter_id, {
     comparison_id: comparison.id,
-    key: candidates.map((c) => ({ label: c.label, revealed_label: keys[c.id] ?? null })),
+    revealed: candidates.map((c) => ({ label: c.label, revealed_label: keys[c.id] ?? null })),
   });
   return { comparison, keys };
 }

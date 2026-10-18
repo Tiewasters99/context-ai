@@ -63,7 +63,7 @@
 --                         — never the revealed name
 --   comparison.graded     {comparison_id, candidate_id, label, overall, initials}
 --   comparison.assembled  {comparison_id, document_id}
---   comparison.revealed   {comparison_id, key: [{label, revealed_label}]}
+--   comparison.revealed   {comparison_id, revealed: [{label, revealed_label}]} (not `key`: redact() treats any key named like a secret as one)
 --
 -- Needs: 012 (matterspace_descendants), 048 + 084 (document_annotations),
 -- 098 (INVOKER can_access_matter / can_write_matter). Additive only; no
