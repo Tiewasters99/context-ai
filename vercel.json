@@ -25,6 +25,9 @@
     "api/assistant.mjs": {
       "maxDuration": 300
     },
+    "api/video-discovery.mjs": {
+      "maxDuration": 300
+    },
     "api/deepgram-token.mjs": {
       "maxDuration": 10
     },

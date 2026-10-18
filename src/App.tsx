@@ -45,6 +45,7 @@ import DiscoveryHome from '@/pages/discovery/DiscoveryHome';
 import ReviewRoom from '@/pages/discovery/ReviewRoom';
 import DiscoveryLayout from '@/components/layout/DiscoveryLayout';
 import DiscoveryDashboard from '@/pages/discovery/DiscoveryDashboard';
+import VideoRoom from '@/pages/discovery/VideoRoom';
 import MediationCenter from '@/pages/mediation/MediationCenter';
 import MediationRegister from '@/pages/mediation/MediationRegister';
 import MediationJoin from '@/pages/mediation/MediationJoin';
@@ -193,6 +194,8 @@ export default function App() {
               <Route path="editor" element={<EditorRoom />} />
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
+              {/* The Video Room: one stored recording, its analysed timeline, questions about the footage (119) */}
+              <Route path="discovery/video/:documentId" element={<VideoRoom />} />
               <Route path="settings" element={<Settings />} />
               <Route path="bucketizer" element={<BucketizerHome />} />
               <Route path="agents" element={<AgentsHome />} />
@@ -238,6 +241,8 @@ export default function App() {
               <Route path="case" element={<DiscoveryHome />} />
               {/* Production review room — reused */}
               <Route path="production/:id" element={<ReviewRoom />} />
+              {/* The Video Room — reused */}
+              <Route path="video/:documentId" element={<VideoRoom />} />
             </Route>
             <Route
               path="/connect"
