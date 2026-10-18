@@ -35,6 +35,9 @@ import {
 } from '../lib/account-security.mjs';
 import { ledgerClientFor, recordLlmRequested, recordLlmReceived, newCallId } from '../lib/llm-record.mjs';
 import { walkEffectiveTier, isSealedTier } from '../lib/ai-tier-policy.mjs';
+import { consumeUsage, recordActualUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
+import { estimateVideoCents, centsForTokens } from '../lib/usage-prices.mjs';
+import { estimateUploadItem } from '../lib/ingest-estimate.mjs';
 import { VIDEO_EXTENSIONS } from '../lib/ingest-formats.mjs';
 import {
   buildInterrogationPrompt, normalizeInterrogation, digestForWindow, timestampsIn, deriveMeasures, ANALYSIS_WINDOW_SEC, fmtTime,
@@ -46,6 +49,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const MAX_CLAIMS = 6;
 const MAX_CLAIM_CHARS = 1000;
 const MAX_QUESTION_CHARS = 4000;
+// The structured answer / event graph is long; the meter's output allowance per call.
+const METER_OUTPUT_TOKENS = 16384;
 
 const base = () => String(SUPABASE_URL() || '').replace(/\/$/, '');
 const rpcNotDeployed = (r) => r.status === 404 || r.error === 'PGRST202' || r.error === '42883';
@@ -168,10 +173,31 @@ export default async function handler(req, res, deps = {}) {
   }
 
   if (action === 'analyze') {
+    // The meter, before anything is queued: the footage the worker will send is
+    // charged as video tokens over the planned passes. Length from an earlier
+    // pass when there was one, else from the file's size (the ingest estimate's
+    // media heuristic, which errs long). The worker records the actual tokens
+    // against this same meter row when the passes are done.
+    const prior = await userRest(bearer, 'GET', `video_analyses?select=duration_sec&document_id=eq.${documentId}&duration_sec=not.is.null&order=created_at.desc&limit=1`, null, doFetch);
+    const priorRow = Array.isArray(prior.data) ? prior.data[0] : null;
+    const sized = estimateUploadItem({ name: doc.source_filename ?? 'recording.mp4', bytes: doc.file_size_bytes ?? 0 });
+    const seconds = num(priorRow?.duration_sec)
+      ?? (sized?.kind === 'media' && sized.minutes > 0 ? sized.minutes * 60 : ANALYSIS_WINDOW_SEC);
+    const plannedPasses = Math.max(1, Math.ceil(seconds / ANALYSIS_WINDOW_SEC));
+    const estimateCents = estimateVideoCents({ model: gemini.modelsFromEnv()[0], seconds, maxOutputTokens: METER_OUTPUT_TOKENS * plannedPasses });
+    const meter = await consumeUsage({ supabaseUrl: SUPABASE_URL(), anonKey: ANON_KEY(), bearer, kind: 'video', estimateCents, fetchImpl: doFetch });
+    if (!meter.allowed) return sendUsageRefusal(res, meter);
+    // Nothing queued ⇒ nothing will be sent ⇒ the estimate is given back.
+    const refund = async (reason) => {
+      if (!meter.eventId) return;
+      await recordActualUsage({ supabaseUrl: SUPABASE_URL(), serviceKey: SERVICE_KEY(), eventId: meter.eventId, cents: 0, meta: { provider: gemini.PROVIDER, reason }, fetchImpl: doFetch }).catch(() => {});
+    };
+
     const ins = await userRest(bearer, 'POST', 'video_analyses', {
       document_id: doc.id, matterspace_id: doc.matterspace_id, status: 'queued', created_by: user.id,
     }, doFetch, { prefer: 'return=representation' });
     if (!ins.ok) {
+      await refund(ins.status === 409 ? 'already_running' : 'not_queued');
       if (ins.status === 409) return json(res, 409, { error: 'already_running', message: 'An analysis of this recording is already in progress.' });
       if (ins.status === 404) return json(res, 503, { error: 'migration_missing', message: 'Migration 119 is not applied yet.' });
       if (ins.status === 401 || ins.status === 403) return json(res, 403, { error: 'not_a_writer', message: 'Only a member who can write this matter can start an analysis.' });
@@ -180,9 +206,11 @@ export default async function handler(req, res, deps = {}) {
     const analysis = Array.isArray(ins.data) ? ins.data[0] : ins.data;
     const job = await userRest(bearer, 'POST', 'processing_jobs', {
       matterspace_id: doc.matterspace_id, production_id: null, job_type: 'video_analysis',
-      payload: { document_id: doc.id, analysis_id: analysis.id }, created_by: user.id,
+      payload: { document_id: doc.id, analysis_id: analysis.id, meter_event_id: meter.eventId ?? null, meter_cents_estimate: estimateCents },
+      created_by: user.id,
     }, doFetch, { prefer: 'return=representation' });
     if (!job.ok) {
+      await refund('enqueue_failed');
       await serviceRest('PATCH', `video_analyses?id=eq.${analysis.id}`, { status: 'error', error: 'The analysis job could not be queued.' }, doFetch);
       return json(res, 502, { error: 'enqueue_failed', detail: job.text?.slice(0, 300) });
     }
@@ -217,6 +245,27 @@ export default async function handler(req, res, deps = {}) {
       return json(res, 422, { error: 'window_too_long', message: `A window can be at most ${ANALYSIS_WINDOW_SEC / 60} minutes.` });
     }
 
+    // The meter, before any provider contact: the window's footage (or the
+    // whole recording, which the rule above has bounded) plus the question and
+    // claims at the input rate, and the full answer allowance.
+    const watchedSeconds = startSec != null ? (endSec - startSec) : (knownDuration ?? ANALYSIS_WINDOW_SEC);
+    const estimateCents = estimateVideoCents({
+      model: gemini.modelsFromEnv()[0], seconds: watchedSeconds, promptText: question + ' ' + claims.join(' '), maxOutputTokens: METER_OUTPUT_TOKENS,
+    });
+    const meter = await consumeUsage({ supabaseUrl: SUPABASE_URL(), anonKey: ANON_KEY(), bearer, kind: 'video', estimateCents, fetchImpl: doFetch });
+    if (!meter.allowed) {
+      await userRest(bearer, 'POST', 'video_interrogations', {
+        analysis_id: analysis.id, document_id: doc.id, matterspace_id: doc.matterspace_id, user_id: user.id,
+        question, start_sec: startSec, end_sec: endSec, claims, provider: gemini.PROVIDER, outcome: 'refused',
+      }, doFetch).catch(() => {});
+      return sendUsageRefusal(res, meter);
+    }
+    /** Correct the pre-charge: 0 when nothing was sent, the real tokens when it was. Never throws. */
+    const settle = async (cents, model, meta = {}) => {
+      if (!meter.eventId) return;
+      await recordActualUsage({ supabaseUrl: SUPABASE_URL(), serviceKey: SERVICE_KEY(), eventId: meter.eventId, cents, model, meta: { provider: gemini.PROVIDER, ...meta }, fetchImpl: doFetch }).catch(() => {});
+    };
+
     // Does the provider still hold the recording?
     const apiKey = process.env.GOOGLE_API_KEY;
     let fileResource = null;
@@ -239,6 +288,7 @@ export default async function handler(req, res, deps = {}) {
         analysis_id: analysis.id, document_id: doc.id, matterspace_id: doc.matterspace_id, user_id: user.id,
         question, start_sec: startSec, end_sec: endSec, claims, provider: gemini.PROVIDER, outcome: 'media_expired',
       }, doFetch).catch(() => {});
+      await settle(0, null, { reason: 'media_expired' });
       return json(res, 409, {
         error: 'media_expired',
         message: 'The video model no longer holds this recording (uploads last 48 hours). It is being re-uploaded; ask again when the room says the copy is back.',
@@ -276,6 +326,10 @@ export default async function handler(req, res, deps = {}) {
     }
     const result = normalizeInterrogation(r.json, { claims, durationSec: analysis.duration_sec ?? analysis.event_graph?.video?.duration_sec ?? null });
     result.timestamps = timestampsIn(result.answer_markdown);
+    if (r.usage) {
+      const tokens = { input: Number(r.usage.promptTokenCount || 0), output: Number(r.usage.candidatesTokenCount || 0) };
+      await settle(centsForTokens(r.model, gemini.PROVIDER, tokens), r.model, { input_tokens: tokens.input, output_tokens: tokens.output, seconds: watchedSeconds });
+    }
     await recordLlmReceived(ledger, {
       matterId: doc.matterspace_id, actor, feature: 'video.interrogate', callId, tier: 'A', provider: gemini.PROVIDER, model: r.model,
       outcome: 'ok', ms: r.ms, tokens: r.usage ? { input: r.usage.promptTokenCount, output: r.usage.candidatesTokenCount } : null,

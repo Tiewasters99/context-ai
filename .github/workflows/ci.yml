@@ -1151,3 +1151,10 @@ jobs:
       - name: Orchestrator — the map tells the truth about the plan
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-orchestrator-map.mjs
+      # The Video Room (migration 119): the provider-neutral core — window
+      # planning, the event-graph normaliser and merger, interrogation clamping
+      # — the adapter's pure helpers, the video meter's arithmetic, and the
+      # metadata-only Record row the worker writes when a recording leaves.
+      - name: Video Room — core, adapter helpers, meter and Record payload (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test tests/video-discovery.test.mjs
