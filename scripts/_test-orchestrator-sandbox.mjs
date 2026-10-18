@@ -223,6 +223,9 @@ test('B. the last round may still propose one document task (a deck outlined ove
   assert.ok(JSON.stringify(last).includes('SEARCH BUDGET USED'), 'the turn reached its final round');
   assert.notEqual(last.tool_choice, 'none', 'tools stay callable on the final round while a proposal is possible');
   assert.match(JSON.stringify(last), /you may still propose that ONE task/);
+  const finalTools = last.tools.map((t) => t.function.name);
+  assert.ok(finalTools.length > 0 && finalTools.every((n) => SANDBOX_ACTIONS.has(n)), `only proposals on the last round: ${finalTools}`);
+  assert.ok(!finalTools.includes('grep') && !finalTools.includes('search'), 'no more searching');
   const confirms = events.filter((e) => e.type === 'confirm');
   assert.equal(confirms.length, 1, 'the deck reaches the browser as a proposal');
   assert.equal(confirms[0].action, 'create_deck');
