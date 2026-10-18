@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation } from 'lucide-react';
+import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation, Scale } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { fetchPaged } from '@/lib/paged';
 import { useServerspaces, useServerspacesRefresh, type Serverspace } from '@/hooks/useServerspaces';
@@ -7,6 +7,7 @@ import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument } f
 import { sandboxApi } from '@/lib/sandbox-api';
 import PdfPageEditor from './PdfPageEditor';
 import DeckComposerModal from './DeckComposerModal';
+import ComparatorDialog from './ComparatorDialog';
 import CardDialog from '@/components/ui/CardDialog';
 
 // The Sandbox: the AI Workbench's scratch workspace. One serverspace named
@@ -61,6 +62,7 @@ export default function SandboxPanel() {
   const [dropHover, setDropHover] = useState(false);
   const [editingDoc, setEditingDoc] = useState<SandboxDoc | null>(null);
   const [showDeckComposer, setShowDeckComposer] = useState(false);
+  const [showComparator, setShowComparator] = useState(false);
 
   const loadDocs = useCallback(async (boxId: string) => {
     setDocsLoading(true);
@@ -299,6 +301,14 @@ export default function SandboxPanel() {
               ) : (
                 <>
                   <button
+                    onClick={() => setShowComparator(true)}
+                    disabled={busy !== null}
+                    title="Model Comparator — grade several drafts of one assignment blind, on one rubric"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[rgba(255,255,255,0.07)] hover:bg-[rgba(255,255,255,0.12)] text-white/85 text-[12px] font-semibold transition-colors disabled:opacity-35"
+                  >
+                    <Scale size={14} /> Compare
+                  </button>
+                  <button
                     onClick={() => setShowDeckComposer(true)}
                     disabled={docs.length === 0 || busy !== null}
                     title="Draft a PowerPoint deck from documents in this box"
@@ -422,6 +432,15 @@ export default function SandboxPanel() {
             setResult({ text: `Saved edited copy "${filename}" in this box.`, url: downloadUrl });
             if (selectedBox) await loadDocs(selectedBox.id);
           }}
+        />
+      )}
+
+      {showComparator && selectedBox && (
+        <ComparatorDialog
+          box={{ id: selectedBox.id, name: selectedBox.name }}
+          docs={docs.map((d) => ({ id: d.id, title: d.title }))}
+          onClose={() => setShowComparator(false)}
+          onFiled={() => { if (selectedBox) void loadDocs(selectedBox.id); }}
         />
       )}
 
