@@ -247,7 +247,8 @@ async function pickReliedFor(documentId: string, ask: ReliedAsk, pin: { seq: num
   } else {
     return none;
   }
-  const { data } = await q.order('sequence_number').limit(80);
+  // bounded by the filter above (a page or two, or three passages), so no .limit
+  const { data } = await q.order('sequence_number');
   const rows = ((data ?? []) as ReliedRow[]).filter((r) => r.text);
   const passages = rows.map((r) => ({ id: r.id, text: r.text!, page: physicalPage(r), page_start: r.page_start, line_start: r.line_start, line_end: r.line_end }));
   return ask.depo ? depoLines(passages, ask.depo) : pickRelied(ask, passages);
