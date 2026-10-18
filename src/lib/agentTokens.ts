@@ -15,13 +15,14 @@ import { generateConnectorToken } from '@/lib/connectorTokens';
 import { createTokenRow } from '@/lib/connector-token-create';
 import { raise } from '@/lib/agentTasks';
 
-export type AgentProvider = 'grok' | 'chatgpt' | 'claude' | 'gemini' | 'other';
+export type AgentProvider = 'grok' | 'chatgpt' | 'claude' | 'gemini' | 'meta' | 'other';
 
 export const AGENT_PROVIDERS: { value: AgentProvider; label: string }[] = [
   { value: 'grok', label: 'Grok' },
   { value: 'chatgpt', label: 'ChatGPT' },
   { value: 'claude', label: 'Claude' },
   { value: 'gemini', label: 'Gemini' },
+  { value: 'meta', label: 'Meta' },
   { value: 'other', label: 'Other' },
 ];
 
