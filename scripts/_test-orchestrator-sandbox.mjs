@@ -245,3 +245,62 @@ test('B. a final round with no document task on the menu keeps tool_choice none'
   } finally { globalThis.fetch = realFetch; }
   assert.equal(bodies[bodies.length - 1].tool_choice, 'none');
 });
+
+// ── copy_document's passage copy (live failure 2026-10-18: a 467-passage
+// deposition timed out at 100 rows a batch and left a 'ready' copy holding
+// part of its text, which the duplicate guard would return on a retry) ──
+function copyFake({ failInsert }) {
+  const MSRC = 'c0000000-0000-4000-8000-000000000003', SRC = 'a0000000-0000-4000-8000-000000000001', BOX = 'b0000000-0000-4000-8000-000000000002';
+  const state = { inserted: 0, batches: [], deletedDocs: [], removed: [] };
+  const passages = Array.from({ length: 100 }, (_, i) => ({ id: `p${i}`, sequence_number: i, summary_level: 0, text: `t${i}` }));
+  const chain = (result) => {
+    const q = { select: () => q, eq: () => q, order: () => q, limit: () => Promise.resolve(result()), maybeSingle: () => Promise.resolve(result()), single: () => Promise.resolve(result()), then: (r) => Promise.resolve(result()).then(r) };
+    return q;
+  };
+  const sb = {
+    from(t) {
+      if (t === 'matterspaces') return chain(() => ({ data: { id: BOX, name: 'Box', short_code: 'sbx-x' }, error: null }));
+      if (t === 'passages') {
+        return {
+          ...chain(() => ({ data: passages, error: null })),
+          insert(rows) {
+            state.batches.push(rows.length);
+            const err = failInsert(rows);
+            if (!err) state.inserted += rows.length;
+            return Promise.resolve({ error: err ? { message: err } : null });
+          },
+        };
+      }
+      // documents
+      let docsQuery = 0;
+      return {
+        select: () => chain(() => (docsQuery++, { data: { id: SRC, matterspace_id: MSRC, title: 'Bhatt Dep.', storage_path: `${MSRC}/${SRC}/bhatt.pdf`, source_filename: null }, error: null })),
+        insert: () => chain(() => ({ data: { id: 'new-doc', title: 'Bhatt Dep.' }, error: null })),
+        update: () => chain(() => ({ error: null })),
+        delete: () => ({ eq: (k, v) => { state.deletedDocs.push(v); return Promise.resolve({ error: null }); } }),
+      };
+    },
+    storage: { from: () => ({ copy: async () => ({ error: null }), remove: async (paths) => { state.removed.push(...paths); return { error: null }; } }) },
+    auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+  };
+  return { sb, state, SRC, BOX };
+}
+
+test('copy_document: big batches that time out are halved, and the copy completes', async () => {
+  const { handleCopyDocument } = await import('../lib/mcp-core.mjs');
+  const { sb, state, SRC, BOX } = copyFake({ failInsert: (rows) => (rows.length > 10 ? 'canceling statement due to statement timeout' : null) });
+  const out = await handleCopyDocument(sb, { document_ids: [SRC], to_matter: BOX });
+  assert.equal(out.copies[0].passages, 100);
+  assert.equal(state.inserted, 100, 'every passage copied');
+  assert.ok(Math.max(...state.batches) <= 40, `first try is at most 40 rows: ${state.batches}`);
+  assert.deepEqual(state.deletedDocs, [], 'nothing removed on success');
+});
+
+test('copy_document: a copy that still fails is removed whole, and says so', async () => {
+  const { handleCopyDocument } = await import('../lib/mcp-core.mjs');
+  let n = 0;
+  const { sb, state, SRC, BOX } = copyFake({ failInsert: () => (++n > 1 ? 'permission denied for table passages' : null) });
+  await assert.rejects(handleCopyDocument(sb, { document_ids: [SRC], to_matter: BOX }), /partial copy was removed/);
+  assert.ok(state.inserted > 0, 'part of the text had gone in');
+  assert.deepEqual(state.deletedDocs, ['new-doc'], 'the half-made copy is deleted (its passages cascade)');
+});

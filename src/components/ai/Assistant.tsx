@@ -607,8 +607,15 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       setPendingTask(null);
       if (action === 'send_to_sandbox' || action === 'copy_document') refreshServerspaces();
     } catch (err) {
-      note(`⚠️ That did not run: ${err instanceof Error ? err.message : 'unknown error'}. Nothing was changed.`);
+      // Not "nothing was changed": a copy of several documents can fail on the
+      // fifth after four are made, and the Sandbox box may now exist.
+      const several = documentIdsOf(action, args).length > 1;
+      note(`⚠️ That did not finish: ${err instanceof Error ? err.message : 'unknown error'}. Your originals are unchanged.` +
+        (action === 'send_to_sandbox' || action === 'copy_document'
+          ? (several ? ' Some copies may have been made before it stopped; asking again picks up where it left off.' : '')
+          : ''));
       setPendingTask(null);
+      if (action === 'send_to_sandbox' || action === 'copy_document') refreshServerspaces();
     } finally {
       setRunningTask(false);
     }
