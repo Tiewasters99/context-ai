@@ -299,11 +299,22 @@ function DeskEditor(p: DeskProps) {
     Placeholder.configure({ placeholder: 'Write the brief. ## for a part heading, ### I. for a point, **A. …** for a sub-point.' }),
   ], []);
 
+  const findRef = useRef<(() => Promise<void>) | null>(null);
   const editor = useEditor({
     extensions,
     content: p.initial,
     editable: p.editable,
-    editorProps: { attributes: { class: 'brief-doc', spellcheck: 'true' } },
+    editorProps: {
+      attributes: { class: 'brief-doc', spellcheck: 'true' },
+      // Ctrl+Enter on a highlight is "Find in corpus"; with nothing highlighted it stays a line break
+      handleKeyDown: (view, e) => {
+        if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return false;
+        if (view.state.selection.empty) return false;
+        e.preventDefault();
+        void findRef.current?.();
+        return true;
+      },
+    },
     onUpdate: () => {
       if (saveRef.current === 'conflict' || !editableRef.current) return;
       setSave('dirty');
@@ -1476,6 +1487,7 @@ function DeskEditor(p: DeskProps) {
     }
     await openRecordCite(cite, label);
   };
+  findRef.current = findHighlighted;
 
   // "No. 26-2098, Doc. 5" / "ECF 80": the docket sheet in the record at the
   // page listing the entry; the filed paper, when the pull holds it, is named.
@@ -1792,7 +1804,7 @@ function DeskEditor(p: DeskProps) {
             onClick={() => void findHighlighted()}
             disabled={!hasHighlight}
             className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
-            title={hasHighlight ? 'Find the highlighted authority in Contextspaces and open it beside the brief' : 'Highlight a cite in the brief first, then press this to open it beside the brief'}
+            title={hasHighlight ? 'Find the highlighted authority in Contextspaces and open it beside the brief (Ctrl+Enter)' : 'Highlight a cite in the brief first, then press this (or Ctrl+Enter) to open it beside the brief'}
           >
             <Search size={13} /> Find in corpus
           </button>
