@@ -589,7 +589,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         if (isVideoFilename(fn)) {
           // A recording: the reader does not play video. The Video Room does,
           // with the analysed timeline beside it (migration 119).
-          setVideoRoomHref(`/app/discovery/video/${data.id}`);
+          setVideoRoomHref(`/app/discovery/video/${data.id}?matter=${encodeURIComponent(data.matterspace_id)}`);
           setErrorMsg('This is a video recording. The reader does not play video — open it in the Video Room to watch it, see what the video model recorded, and ask about the footage.');
           setLoadState('error');
           return;

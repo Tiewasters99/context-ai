@@ -37,7 +37,7 @@ import { ledgerClientFor, recordLlmRequested, recordLlmReceived, newCallId } fro
 import { walkEffectiveTier, isSealedTier } from '../lib/ai-tier-policy.mjs';
 import { VIDEO_EXTENSIONS } from '../lib/ingest-formats.mjs';
 import {
-  buildInterrogationPrompt, normalizeInterrogation, digestForWindow, timestampsIn, deriveMeasures,
+  buildInterrogationPrompt, normalizeInterrogation, digestForWindow, timestampsIn, deriveMeasures, ANALYSIS_WINDOW_SEC, fmtTime,
 } from '../lib/video-discovery/core.mjs';
 import * as gemini from '../lib/video-discovery/gemini-video.mjs';
 
@@ -205,6 +205,16 @@ export default async function handler(req, res, deps = {}) {
     const analysis = pickAnalysis(Array.isArray(a.data) ? a.data : []);
     if (!analysis || analysis.status !== 'ready') {
       return json(res, 409, { error: 'no_analysis', message: 'Analyse the recording first; questions are asked against the analysed copy.' });
+    }
+    // One question watches at most one analysis pass's worth of footage: the
+    // whole of a long recording is past the model's context (the worker's
+    // 2026-09-16 note), and would fail as a provider error after a long wait.
+    const knownDuration = num(analysis.duration_sec) ?? num(analysis.event_graph?.video?.duration_sec);
+    if (startSec == null && knownDuration != null && knownDuration > ANALYSIS_WINDOW_SEC) {
+      return json(res, 422, { error: 'window_required', message: `This recording is ${fmtTime(knownDuration)} long. Ask about a window of up to ${ANALYSIS_WINDOW_SEC / 60} minutes.` });
+    }
+    if (startSec != null && endSec - startSec > ANALYSIS_WINDOW_SEC) {
+      return json(res, 422, { error: 'window_too_long', message: `A window can be at most ${ANALYSIS_WINDOW_SEC / 60} minutes.` });
     }
 
     // Does the provider still hold the recording?

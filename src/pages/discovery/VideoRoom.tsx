@@ -170,12 +170,17 @@ function RoomBody({ status, documentId, onChanged, onMediaExpired, awaitingMedia
   const [srcExpiresAt, setSrcExpiresAt] = useState<number>(0);
   const [srcError, setSrcError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  // The playhead survives a re-mint: a new src resets the element, so the
+  // position is saved before and restored once metadata is back.
+  const resumeAtRef = useRef<number | null>(null);
+  const errorCountRef = useRef(0);
   const [duration, setDuration] = useState<number>(analysis?.duration_sec ?? graph?.video.duration_sec ?? 0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
 
   const mint = useCallback(async () => {
     if (!status.document.storage_path) { setSrcError('This document has no stored file.'); return; }
+    if (videoRef.current && videoRef.current.currentTime > 0) resumeAtRef.current = videoRef.current.currentTime;
     try {
       const u = await storageObjectUrl(status.document.storage_path, { ttlSeconds: 3600 });
       setSrc(u.url);
@@ -266,10 +271,21 @@ function RoomBody({ status, documentId, onChanged, onMediaExpired, awaitingMedia
                   preload="metadata"
                   className="w-full h-full object-contain"
                   onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-                  onLoadedMetadata={(e) => { if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration); }}
+                  onLoadedMetadata={(e) => {
+                    if (Number.isFinite(e.currentTarget.duration)) setDuration(e.currentTarget.duration);
+                    errorCountRef.current = 0;
+                    if (resumeAtRef.current != null) { try { e.currentTarget.currentTime = resumeAtRef.current; } catch { /* not seekable yet */ } resumeAtRef.current = null; }
+                  }}
                   onPlay={() => setPlaying(true)}
                   onPause={() => setPlaying(false)}
-                  onError={() => { void mint(); }}
+                  onError={() => {
+                    // A lapsed URL is minted again, once. Anything else (a container the
+                    // browser cannot play such as .avi, .wmv, .mpg, or a network fault) is
+                    // said plainly, never retried in a loop against the sign endpoint.
+                    errorCountRef.current += 1;
+                    if (errorCountRef.current <= 1 && srcExpiresAt && Date.now() > srcExpiresAt - 60_000) { void mint(); return; }
+                    setSrcError('The browser could not play this recording. Formats like .avi, .wmv and .mpg do not play in a browser; download the original from the Vault to watch it locally. The timeline and questions still work.');
+                  }}
                 />
               ) : (
                 <div className="p-8 text-center max-w-md text-[12px] text-white/55">
@@ -318,6 +334,7 @@ function RoomBody({ status, documentId, onChanged, onMediaExpired, awaitingMedia
               onAsked={onChanged}
               onMediaExpired={onMediaExpired}
               awaitingMedia={awaitingMedia}
+              total={total}
             />
           )}
         </div>
@@ -595,9 +612,9 @@ function QuestionConsole(props: {
   documentId: string; analysis: VideoAnalysis; interrogations: VideoInterrogation[];
   inSec: number | null; outSec: number | null; inText: string; outText: string;
   onInText: (t: string) => void; onOutText: (t: string) => void;
-  onSeek: (s: number) => void; onAsked: () => Promise<void>; onMediaExpired: () => void; awaitingMedia: boolean;
+  onSeek: (s: number) => void; onAsked: () => Promise<void>; onMediaExpired: () => void; awaitingMedia: boolean; total: number;
 }) {
-  const { documentId, analysis, interrogations, inSec, outSec, inText, outText, onInText, onOutText, onSeek, onAsked, onMediaExpired, awaitingMedia } = props;
+  const { documentId, analysis, interrogations, inSec, outSec, inText, outText, onInText, onOutText, onSeek, onAsked, onMediaExpired, awaitingMedia, total } = props;
   const [question, setQuestion] = useState('');
   const [claims, setClaims] = useState<string[]>([]);
   const [claimDraft, setClaimDraft] = useState('');
@@ -605,7 +622,11 @@ function QuestionConsole(props: {
   const [err, setErr] = useState<string | null>(null);
   const [local, setLocal] = useState<VideoInterrogation[]>([]);
 
-  const windowOk = (inSec == null && outSec == null) || (inSec != null && outSec != null && outSec > inSec);
+  // One question watches at most one analysis pass's worth of footage (20 min).
+  const MAX_WINDOW = 20 * 60;
+  const needsWindow = total > MAX_WINDOW;
+  const windowOk = (inSec == null && outSec == null && !needsWindow)
+    || (inSec != null && outSec != null && outSec > inSec && outSec - inSec <= MAX_WINDOW);
   const mediaGone = analysis.media_expires_at ? Date.parse(analysis.media_expires_at) < Date.now() : false;
 
   const ask = async () => {
@@ -667,7 +688,10 @@ function QuestionConsole(props: {
         </div>
         <p className="text-[11px] text-white/40 pb-2">
           {inSec != null && outSec != null && windowOk ? `The model watches ${fmtTime(inSec)}–${fmtTime(outSec)} (${fmtDuration(outSec - inSec)}).`
-            : !windowOk ? 'The end must be after the start.' : 'Leave both empty to ask about the whole recording. Set in / Set out under the player fills them.'}
+            : inSec != null && outSec != null && outSec - inSec > MAX_WINDOW ? 'A window can be at most twenty minutes.'
+            : inSec != null && outSec != null && !windowOk ? 'The end must be after the start.'
+            : needsWindow ? 'This recording is longer than twenty minutes, so a question needs a window. Set in / Set out under the player fills them.'
+            : 'Leave both empty to ask about the whole recording. Set in / Set out under the player fills them.'}
         </p>
       </div>
 

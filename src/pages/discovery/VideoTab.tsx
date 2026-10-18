@@ -31,11 +31,14 @@ export default function VideoTab({ matterId, matterKey }: { matterId: string; ma
         const ids = videos.map((v) => v.id);
         const statusById = new Map<string, AnalysisStatus>();
         if (ids.length) {
-          const { data } = await supabase
+          const { data, error } = await supabase
             .from('video_analyses')
             .select('document_id, status, created_at')
             .in('document_id', ids)
             .order('created_at', { ascending: false });
+          // A database without migration 119 yet: every recording shows as
+          // "not analysed" rather than the tab failing wholesale.
+          if (error && error.code !== 'PGRST205' && error.code !== '42P01') throw new Error(error.message);
           for (const a of (data ?? []) as { document_id: string; status: AnalysisStatus }[]) {
             if (!statusById.has(a.document_id)) statusById.set(a.document_id, a.status);
           }

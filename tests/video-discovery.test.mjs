@@ -8,7 +8,7 @@ import {
   normalizeInterrogation, timestampsIn, ANALYSIS_WINDOW_SEC, WINDOW_OVERLAP_SEC,
 } from '../lib/video-discovery/core.mjs';
 import { EVENT_GRAPH_SCHEMA, INTERROGATION_SCHEMA, EVENT_TYPES } from '../lib/video-discovery/schemas.mjs';
-import { modelsFromEnv, displayNameFor, expiryOf, mimeForExt } from '../lib/video-discovery/gemini-video.mjs';
+import { modelsFromEnv, displayNameFor, expiryOf, mimeForExt, durationOf } from '../lib/video-discovery/gemini-video.mjs';
 import { isVideoFilename } from '../lib/video-discovery/jobs.mjs';
 
 test('fmtTime / parseTime round-trip', () => {
@@ -193,6 +193,9 @@ test('adapter helpers: env-driven models, stable display names, expiry, mime', (
   assert.equal(expiryOf({}, now), new Date(now + 47 * 3600 * 1000).toISOString());
   assert.equal(expiryOf({ expirationTime: '2026-10-21T00:00:00Z' }, now), new Date(now + 47 * 3600 * 1000).toISOString(), 'never later than our own 47 h');
   assert.equal(mimeForExt('.MOV'), 'video/mov');
+  assert.equal(durationOf({ videoMetadata: { videoDuration: '90s' } }), 90);
+  assert.equal(durationOf({ video_metadata: { video_duration: '1130.5s' } }), 1130.5);
+  assert.equal(durationOf({}), null);
   assert.equal(isVideoFilename('Clip.MP4'), true);
   assert.equal(isVideoFilename('brief.pdf'), false);
 });
