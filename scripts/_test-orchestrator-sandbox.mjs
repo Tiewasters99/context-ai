@@ -348,3 +348,27 @@ test('E. the server refuses a sealed document copied, moved or sent to the Sandb
   assert.equal(ok.refusal, undefined);
   assert.ok(sb.rpcs.includes('ledger_append'));
 });
+
+// F. finding a document by name (2026-10-18): search matches the words
+// inside documents, not their names, and a 2,663-document matter lists in
+// three pages of ~140 KB; the sealed pen read page 1 and said a document on
+// page 2 was not there. list_matter_contents takes `title` instead.
+test('F. list_matter_contents `title`: every word, edge punctuation dropped, LIKE wildcards literal', async () => {
+  const { handleListMatterContents } = await import('../lib/mcp-core.mjs');
+  const ilikes = [];
+  const chain = {
+    eq: () => chain, order: () => chain, ilike: (col, pat) => { ilikes.push([col, pat]); return chain; },
+    range: async () => ({ data: [{ id: 'd-1', title: 'Anderson v Owens-Corning Fiberglas Corp', doc_type: 'other' }], error: null, count: 1 }),
+  };
+  const sb = {
+    from: (t) => t === 'documents'
+      ? { select: () => chain }
+      : { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 'm-1', short_code: 'm', name: 'M' }, error: null }) }), ilike: () => ({ maybeSingle: async () => ({ data: { id: 'm-1', short_code: 'm', name: 'M' }, error: null }) }) }) },
+  };
+  const r = await handleListMatterContents(sb, { matter: 'm', title: '  Anderson v. Owens-Corning  50%_off ' });
+  assert.deepEqual(ilikes, [['title', '%Anderson%'], ['title', '%v%'], ['title', '%Owens-Corning%'], ['title', '%50\\%\\_off%']]);
+  assert.equal(r.title_filter, 'Anderson v Owens-Corning 50%_off');
+  assert.equal(r.document_count, 1);
+  const schema = TOOLS.find((t) => t.name === 'list_matter_contents');
+  assert.ok(schema.inputSchema.properties.title && /by name, pass `title`/.test(schema.description));
+});
