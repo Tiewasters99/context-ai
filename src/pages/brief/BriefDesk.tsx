@@ -1876,6 +1876,18 @@ function DeskEditor(p: DeskProps) {
             <ListChecks size={14} /> Cites{rows.length ? ` ${rows.length}` : ''}
           </button>
         )}
+        {!narrow && (
+          // The table's own collapse icon is easy to miss; this shows and hides it from the toolbar
+          <button
+            onClick={() => setTableCollapsed((v) => !v)}
+            className={`h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] ${!tableCollapsed ? 'bg-[#e8b84a]/15 text-[#e8b84a]' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
+            title={tableCollapsed ? 'Show the cite table' : 'Hide the cite table'}
+            aria-pressed={!tableCollapsed}
+            data-testid="desk-toggle-table"
+          >
+            <ListChecks size={14} /> <span className="hidden md:inline">{tableCollapsed ? 'Show cites' : 'Hide cites'}</span>
+          </button>
+        )}
         <button
           onClick={() => setShowReadingNote(true)}
           className="h-8 px-2 inline-flex items-center gap-1.5 rounded-md text-[12px] text-white/60 hover:bg-white/5 hover:text-white"
