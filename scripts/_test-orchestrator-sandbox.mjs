@@ -187,3 +187,11 @@ test('D. the note after the press carries every new id and the link', () => {
   assert.match(merged, /\[Download\]\(https:\/\/example\.test\/x\)/);
   assert.doesNotMatch(resultNote('edit_pdf', { document_id: 'n3', filename: 'e.pdf', page_count: 2, download_url: null }), /Download/, 'no link when none was minted');
 });
+
+test('D. a download link in a note becomes a link run; only https; other markup unchanged', async () => {
+  const { runsOf } = await import('../src/lib/prose.ts');
+  const runs = runsOf('Done. [Download](https://x.supabase.co/storage/v1/a.pdf?token=t) — 15 minutes. **bold** `c` *i*');
+  assert.deepEqual(runs.find((r) => r.href), { text: 'Download', href: 'https://x.supabase.co/storage/v1/a.pdf?token=t' });
+  assert.ok(runs.some((r) => r.bold && r.text === 'bold') && runs.some((r) => r.code) && runs.some((r) => r.italic));
+  assert.ok(!runsOf('[x](javascript:alert(1)) [y](http://e.test)').some((r) => r.href), 'no link for a non-https target');
+});
