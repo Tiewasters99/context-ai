@@ -195,3 +195,50 @@ test('D. a download link in a note becomes a link run; only https; other markup 
   assert.ok(runs.some((r) => r.bold && r.text === 'bold') && runs.some((r) => r.code) && runs.some((r) => r.italic));
   assert.ok(!runsOf('[x](javascript:alert(1)) [y](http://e.test)').some((r) => r.href), 'no link for a non-https target');
 });
+
+test('B. the last round may still propose one document task (a deck outlined over every round is not lost)', async () => {
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  const deckRound = sse([
+    { choices: [{ index: 0, delta: { role: 'assistant', content: 'Here is the outline.' } }] },
+    { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_d', type: 'function', function: { name: 'create_deck', arguments: JSON.stringify({ matter: 'elsewhere', title: 'Update', slides: [{ title: 'Where we are' }] }) } }] } }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] },
+    { choices: [], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+  ]);
+  globalThis.fetch = async (u, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    return new Response(JSON.stringify(body).includes('SEARCH BUDGET USED') ? deckRound : callRound([{ name: 'grep', args: { pattern: 'chiller' } }]), { status: 200 });
+  };
+  const events = [];
+  let text = '';
+  try {
+    await runAssistantStream({
+      supabase: stubSupabase(), anthropicKey: 'ak', fireworksKey: 'fk', bedrockCreds: CREDS, openaiApiKey: 'ok',
+      messages: [{ role: 'user', content: 'Make a client deck.' }], matterId: 'm-1',
+      emit: (ev) => { events.push(ev); if (ev.type === 'text') text += ev.text ?? ev.delta ?? ''; },
+    });
+  } finally { globalThis.fetch = realFetch; }
+  const last = bodies[bodies.length - 1];
+  assert.ok(JSON.stringify(last).includes('SEARCH BUDGET USED'), 'the turn reached its final round');
+  assert.notEqual(last.tool_choice, 'none', 'tools stay callable on the final round while a proposal is possible');
+  assert.match(JSON.stringify(last), /you may still propose that ONE task/);
+  const confirms = events.filter((e) => e.type === 'confirm');
+  assert.equal(confirms.length, 1, 'the deck reaches the browser as a proposal');
+  assert.equal(confirms[0].action, 'create_deck');
+  assert.equal(confirms[0].input.matter, 'm-1', 'still filed in the bound sealed matter');
+  assert.ok(!events.some((e) => e.type === 'tool' && e.name === 'create_deck'), 'never run server-side');
+});
+
+test('B. a final round with no document task on the menu keeps tool_choice none', async () => {
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (u, init) => { const b = JSON.parse(init.body); bodies.push(b); return new Response(JSON.stringify(b).includes('SEARCH BUDGET USED') ? answer : callRound([{ name: 'grep', args: { pattern: 'x' } }]), { status: 200 }); };
+  try {
+    await runAssistantStream({
+      supabase: stubSupabase(), anthropicKey: 'ak', fireworksKey: 'fk', bedrockCreds: CREDS, openaiApiKey: 'ok',
+      messages: [{ role: 'user', content: 'Search.' }], matterId: 'm-1', toolNames: ['grep'], emit: () => {},
+    });
+  } finally { globalThis.fetch = realFetch; }
+  assert.equal(bodies[bodies.length - 1].tool_choice, 'none');
+});
