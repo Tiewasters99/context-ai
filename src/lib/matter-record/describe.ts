@@ -603,6 +603,35 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
         : null;
       return `${who} exported a brief${dest ? ` ${dest}` : ''}`;
     }
+    // 120 — the Model Comparator. Ids, labels and numbers; never the drafts'
+    // words, and the candidate row never names who made the candidate.
+    case 'comparison.created': {
+      const n = num(payload.packet_count);
+      return `${who} started a model comparison${str(payload.type) ? ` (${str(payload.type)})` : ''}${
+        n != null ? ` over a packet of ${n} document${n === 1 ? '' : 's'}` : ''
+      }`;
+    }
+    case 'comparison.candidate': {
+      const label = str(payload.label);
+      return `${who} filed ${label ? `Candidate ${label}` : 'a candidate'} into a comparison, blind`;
+    }
+    case 'comparison.graded': {
+      const label = str(payload.label);
+      const overall = num(payload.overall);
+      const initials = str(payload.initials);
+      return `${who} signed the grade card for ${label ? `Candidate ${label}` : 'a candidate'}${
+        overall != null ? ` — overall ${overall}/10` : ''
+      }${initials ? ` (${initials})` : ''}`;
+    }
+    case 'comparison.assembled':
+      return `${who} filed the comparison notes`;
+    case 'comparison.revealed': {
+      const key = Array.isArray(payload.key) ? (payload.key as Array<Record<string, unknown>>) : [];
+      const pairs = key
+        .map((k) => (str(k.label) && str(k.revealed_label) ? `${str(k.label)} = ${str(k.revealed_label)}` : null))
+        .filter(Boolean);
+      return `${who} revealed who made each candidate${pairs.length ? ` (${pairs.join('; ')})` : ''}`;
+    }
     default:
       // A kind this build does not know. Say who and what it was called,
       // and say no more than that.
@@ -663,6 +692,16 @@ export function kindLabel(kind: string): string {
       return 'Brief cite check';
     case 'draft.exported':
       return 'Export';
+    case 'comparison.created':
+      return 'Comparison';
+    case 'comparison.candidate':
+      return 'Candidate filed';
+    case 'comparison.graded':
+      return 'Grade card';
+    case 'comparison.assembled':
+      return 'Comparison notes';
+    case 'comparison.revealed':
+      return 'Reveal';
     default:
       return kind;
   }

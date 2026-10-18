@@ -99,6 +99,13 @@ import {
   RefCard,
   type ComposerLink,
 } from '@/components/reader/Marginalia';
+import CandidateGradeCard, { CandidateChip } from '@/components/reader/CandidateGradeCard';
+import {
+  annotationTags,
+  candidateForDocument,
+  setAnnotationTag,
+  type CandidateContext,
+} from '@/lib/comparator/data';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   anchorFromRange,
@@ -443,6 +450,11 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     textAnchor?: TextAnchor;
   } | null>(null);
   const [openNote, setOpenNote] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Model Comparator (migration 120): when this document is a candidate in a
+  // comparison, its grade card, and a rubric-dimension tag on each margin note.
+  const [candidateCtx, setCandidateCtx] = useState<CandidateContext | null>(null);
+  const [gradeCardOpen, setGradeCardOpen] = useState(false);
+  const [noteTags, setNoteTags] = useState<Record<string, string | null>>({});
   const [openRef, setOpenRef] = useState<{ link: IncomingLink; x: number; y: number } | null>(null);
   const [incomingLinks, setIncomingLinks] = useState<IncomingLink[]>([]);
   // The open PDF, handed up by the book once it has it: the whole-document
@@ -1741,12 +1753,33 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }),
   }), [isMobile, incomingLinks, openRefAt, openNoteAt, user?.id]);
 
+  // Is this document a comparison candidate? Asked once per document; before
+  // migration 120 the answer is simply "no", and nothing here appears.
+  useEffect(() => {
+    let live = true;
+    setCandidateCtx(null);
+    setNoteTags({});
+    if (!id) return;
+    void candidateForDocument(id).then(async (ctx) => {
+      if (!live || !ctx) return;
+      const tags = await annotationTags(id);
+      if (!live) return;
+      setCandidateCtx(ctx);
+      setNoteTags(tags);
+    });
+    return () => { live = false; };
+  }, [id]);
+
+  const changeNoteTag = useCallback(async (annId: string, tag: string | null) => {
+    if (await setAnnotationTag(annId, tag)) setNoteTags((prev) => ({ ...prev, [annId]: tag }));
+  }, []);
+
   // Save a margin note: derive page:line deterministically from the ingested
   // passages (transcripts get real line numbers; everything else stays
   // page-only — the verbatim quote in anchor_text is the ground truth),
   // persist, then attach any document links.
   const saveNote = useCallback(
-    async (args: { body: string; visibility: AnnotationVisibility; links: ComposerLink[] }) => {
+    async (args: { body: string; visibility: AnnotationVisibility; links: ComposerLink[]; tag?: string | null }) => {
       if (!id || !noteComposer) return;
       // page:line comes from ingested transcript passages, which a document
       // without pages cannot be matched against; its anchor is the text.
@@ -1768,6 +1801,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       // The titles of links that did not save. The composer shows them
       // rather than closing, so a lost link is never silent.
       const failed: string[] = [];
+      // The tag is written as its own update, and only on a candidate document
+      // (where migration 120, which adds the column, is known to be applied),
+      // so an ordinary note writes exactly the row it always has.
+      if (ann && candidateCtx && args.tag) {
+        if (await setAnnotationTag(ann.id, args.tag)) setNoteTags((prev) => ({ ...prev, [ann.id]: args.tag ?? null }));
+      }
       if (ann) {
         const savedLinks: AnnotationLink[] = [];
         for (const l of args.links) {
@@ -1787,7 +1826,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
       if (failed.length > 0) return failed;
       setNoteComposer(null);
     },
-    [id, noteComposer, fileKind],
+    [id, noteComposer, fileKind, candidateCtx],
   );
 
   const editNote = useCallback(
@@ -2438,6 +2477,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           isMobile={isMobile}
           onSave={saveNote}
           onCancel={() => setNoteComposer(null)}
+          tagOptions={candidateCtx?.comparison.rubric}
         />
       )}
       {openNote && (() => {
@@ -2455,6 +2495,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               setOpenNote(null);
             }}
             onSaveEdit={(body, visibility) => void editNote(ann.id, body, visibility)}
+            tag={noteTags[ann.id] ?? null}
+            tagOptions={candidateCtx?.comparison.rubric}
+            onTagChange={candidateCtx ? (t) => void changeNoteTag(ann.id, t) : undefined}
             onOpenLink={(l) =>
               navigate(
                 `/app/document/${l.target_document_id}${l.target_page ? `?page=${l.target_page}` : ''}`,
@@ -2463,6 +2506,12 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           />
         );
       })()}
+      {candidateCtx && !gradeCardOpen && (
+        <CandidateChip ctx={candidateCtx} onOpen={() => setGradeCardOpen(true)} />
+      )}
+      {candidateCtx && gradeCardOpen && (
+        <CandidateGradeCard ctx={candidateCtx} onClose={() => setGradeCardOpen(false)} />
+      )}
       {openRef && (
         <RefCard
           refLink={openRef.link}

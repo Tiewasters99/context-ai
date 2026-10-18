@@ -28,7 +28,13 @@ export type LedgerEventKind =
   // 100 — the Brief Desk (094's kinds are written only from lib/, untyped here)
   | 'draft.snapshot'
   | 'cite.checked'
-  | 'draft.exported';
+  | 'draft.exported'
+  // 120 — the Model Comparator
+  | 'comparison.created'
+  | 'comparison.candidate'
+  | 'comparison.graded'
+  | 'comparison.assembled'
+  | 'comparison.revealed';
 
 export interface LedgerActor {
   kind: 'user' | 'charter' | 'connector' | 'system';
@@ -51,6 +57,7 @@ export interface LedgerResult {
 
 export const EVENT_KINDS: readonly LedgerEventKind[];
 export const KINDS_100: readonly LedgerEventKind[];
+export const KINDS_120: readonly LedgerEventKind[];
 export const EVENT_TYPES: readonly LedgerEventKind[];
 export const NIL_CHAIN: string;
 
