@@ -161,6 +161,8 @@ test('normalizeInterrogation pins claim assessments to the claims as supplied', 
   assert.equal(r.claim_assessments[1].finding, 'CANNOT_DETERMINE_FROM_FOOTAGE', 'a claim the model skipped is undetermined, never corroborated');
   assert.equal(r.line_of_sight.status, 'PARTIAL');
   assert.deepEqual(r.cited_intervals.map((c) => [c.start_sec, c.end_sec]), [[5, 7], [9, 9]]);
+  const clamped = normalizeInterrogation({ cited_intervals: [{ start_sec: 113, end_sec: 130 }, { start_sec: 80, end_sec: 95 }] }, { durationSec: 90 });
+  assert.deepEqual(clamped.cited_intervals.map((c) => [c.start_sec, c.end_sec]), [[80, 90], [90, 90]], 'cited times past the end of the recording are clamped');
   assert.deepEqual(r.limitations, ['short window']);
   assert.deepEqual(timestampsIn(r.answer_markdown).map((t) => t.sec), [5, 9]);
 });

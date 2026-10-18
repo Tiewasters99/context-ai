@@ -264,7 +264,7 @@ export default async function handler(req, res, deps = {}) {
       }, doFetch).catch(() => {});
       return json(res, 502, { error: 'provider_error', message: String(err?.message ?? err).slice(0, 400) });
     }
-    const result = normalizeInterrogation(r.json, { claims });
+    const result = normalizeInterrogation(r.json, { claims, durationSec: analysis.duration_sec ?? analysis.event_graph?.video?.duration_sec ?? null });
     result.timestamps = timestampsIn(result.answer_markdown);
     await recordLlmReceived(ledger, {
       matterId: doc.matterspace_id, actor, feature: 'video.interrogate', callId, tier: 'A', provider: gemini.PROVIDER, model: r.model,
