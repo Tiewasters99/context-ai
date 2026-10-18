@@ -14,6 +14,8 @@
 //      a time; the Brief Desk allows a practice copy and still no moves.
 //   D. the browser's words: the sentence before the press, the note after it
 //      (which must carry every new id — it is all the model sees of the result).
+//   E. the server's door: a sealed document copied, moved or sent to the
+//      Sandbox out of its seal is refused, and nothing is written to the Record.
 //
 //   node --test --import ./scripts/_node-src-loader.mjs scripts/_test-orchestrator-sandbox.mjs
 
@@ -303,4 +305,46 @@ test('copy_document: a copy that still fails is removed whole, and says so', asy
   await assert.rejects(handleCopyDocument(sb, { document_ids: [SRC], to_matter: BOX }), /partial copy was removed/);
   assert.ok(state.inserted > 0, 'part of the text had gone in');
   assert.deepEqual(state.deletedDocs, ['new-doc'], 'the half-made copy is deleted (its passages cascade)');
+});
+
+// E. the server's door (api/sandbox.mjs → guardSandboxCrossing): whatever a
+// pen proposes, a sealed document does not reach a less sealed matter. The
+// sealed run never offers these tools (A, B); this is the second wall.
+const SEALED_M = '11111111-1111-4111-8111-111111111111';
+const OPEN_M = '22222222-2222-4222-8222-222222222222';
+const SEALED_DOC = '33333333-3333-4333-8333-333333333333';
+function crossingClient() {
+  const rpcs = [];
+  const matters = { [SEALED_M]: { id: SEALED_M, parent_matterspace_id: null, ai_tier: 'B' }, [OPEN_M]: { id: OPEN_M, parent_matterspace_id: null, ai_tier: 'A' } };
+  return {
+    rpcs,
+    rpc: async (name, args) => { rpcs.push(name); return name === 'matter_entry' ? { data: 'open', error: null } : { data: { ok: true }, error: null }; },
+    from: (table) => ({
+      select: () => ({
+        in: async (_c, ids) => ({ data: table === 'documents' ? ids.filter((i) => i === SEALED_DOC).map((id) => ({ id, title: 'Sealed doc', matterspace_id: SEALED_M })) : [], error: null }),
+        eq: (_c, id) => ({ maybeSingle: async () => ({ data: matters[id] ?? null, error: null }) }),
+      }),
+    }),
+  };
+}
+
+test('E. the server refuses a sealed document copied, moved or sent to the Sandbox out of its seal, and records nothing', async () => {
+  const { guardSandboxCrossing } = await import('../lib/seal-crossing.mjs');
+  const cases = [
+    ['copy_document', { document_id: SEALED_DOC, to_matter: 'patel-open' }, 'sealed_copy_refused'],
+    ['move_document', { document_id: SEALED_DOC, to_matter: 'patel-open' }, 'sealed_move_refused'],
+    ['send_to_sandbox', { document_ids: [SEALED_DOC] }, 'sealed_copy_refused'],
+  ];
+  for (const [action, args, code] of cases) {
+    const sb = crossingClient();
+    const out = await guardSandboxCrossing({ action, args, userClient: sb, userId: 'u-1', resolveDestination: async () => ({ id: OPEN_M }) });
+    assert.equal(out.refusal?.status, 409, action);
+    assert.equal(out.refusal.body.error, code, action);
+    assert.ok(!sb.rpcs.includes('ledger_append'), `${action}: a refused crossing writes no export to the Record`);
+  }
+  // Within the seal (same tier) it goes ahead, written to the Record first.
+  const sb = crossingClient();
+  const ok = await guardSandboxCrossing({ action: 'copy_document', args: { document_id: SEALED_DOC, to_matter: 'x' }, userClient: sb, userId: 'u-1', resolveDestination: async () => ({ id: SEALED_M }) });
+  assert.equal(ok.refusal, undefined);
+  assert.ok(sb.rpcs.includes('ledger_append'));
 });
