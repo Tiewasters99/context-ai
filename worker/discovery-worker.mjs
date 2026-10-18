@@ -56,6 +56,9 @@ import {
   assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree, JobRefusedError, isJobRefusedError,
 } from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
+import {
+  VIDEO_ANALYSIS_JOB, VIDEO_REFRESH_JOB, runVideoAnalysisJob, runVideoMediaRefreshJob,
+} from '../lib/video-discovery/jobs.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError, tierMap } from '../lib/seal-pipes.mjs';
 import { crossingRefusal } from '../lib/seal-crossing.mjs';
@@ -296,6 +299,12 @@ async function assertJobScope(job) {
     // Round 4: a run over a matter includes its folders and sub-matters.
     case BUCKETIZER_JOB_TYPE:
       return assertJobBelongsToMatter(supabase, job, { runId: p.run_id, documentId: p.document_id, documentScope: 'subtree' });
+    // The Video Room (119): the recording's current matter in the job's tree,
+    // like ingest_document. The analysis row is checked against the document
+    // inside the handler.
+    case VIDEO_ANALYSIS_JOB:
+    case VIDEO_REFRESH_JOB:
+      return assertJobBelongsToMatter(supabase, job, { documentId: p.document_id, documentScope: 'tree' });
     default:
       return null;
   }
@@ -317,6 +326,15 @@ async function dispatch(job) {
     case 'stamp_production': return stampProduction(job);
     case 'package_production': return packageProduction(job);
     case 'ingest_document': return ingestDocument(job);
+    // The Video Room (migration 119): analyse a stored recording with the
+    // video model, or re-upload one the provider has dropped. The recording is
+    // streamed to disk (never a Buffer — the 2026-10-04 OOM) and the seal is
+    // asked before a byte moves; a sealed matter parks as 'held' like
+    // transcription. lib/video-discovery/jobs.mjs.
+    case VIDEO_ANALYSIS_JOB:
+      return runVideoAnalysisJob(videoJobContext(), job, (pct, note) => progress(job, pct, note));
+    case VIDEO_REFRESH_JOB:
+      return runVideoMediaRefreshJob(videoJobContext(), job, (pct, note) => progress(job, pct, note));
     // One document of a Bucketizer run (migration 079). Everything it needs —
     // the run row, the per-window progress, the seal, the pause, the meter and
     // the matter's Record — is in lib/bucketizer-run.mjs; a policy refusal
@@ -2057,6 +2075,33 @@ async function downloadFromBucket(bucket, storagePath, attempts = 3) {
     if (i >= attempts) throw new Error(`storage download ${bucket}/${storagePath}: ${error.message}`);
     await sleep(1000 * i);
   }
+}
+
+// What lib/video-discovery/jobs.mjs needs from this process: the service
+// client, the key, a stream-to-disk download, and ffprobe for the duration
+// (the Dockerfile installs ffmpeg). Built per job so env changes are read.
+function videoJobContext() {
+  return {
+    supabase,
+    apiKey: GOOGLE_API_KEY,
+    downloadToFile,
+    probeDurationSec: probeDurationFile,
+    tmpRoot: os.tmpdir(),
+    log,
+  };
+}
+
+// Duration of a media file on disk via ffprobe; null when it cannot be told.
+async function probeDurationFile(filePath) {
+  const { execFile } = await import('node:child_process');
+  return new Promise((resolve) => {
+    execFile('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
+      { timeout: 60_000 }, (err, stdout) => {
+        if (err) return resolve(null);
+        const n = Number(String(stdout).trim());
+        resolve(Number.isFinite(n) && n > 0 ? n : null);
+      });
+  });
 }
 
 // A stored object straight to a file, never whole in memory (recordings).

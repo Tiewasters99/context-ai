@@ -37,6 +37,7 @@ import { fetchPaged } from '@/lib/paged';
 import { hasDraftBody } from '@/lib/brief/draft-store';
 import { openStoredPdf, type PdfOpenProgress } from '@/lib/pdf-source';
 import { storageObjectBlob, downloadDocumentFile, isStepUpRequired } from '@/lib/vault-object';
+import { isVideoFilename } from '@/lib/video-discovery';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
 import PdfBook, {
   type AttachArgs,
@@ -364,6 +365,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // What the loader is doing right now, for the card shown while it works.
   const [loadProgress, setLoadProgress] = useState<PdfOpenProgress | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Set when the file is a video recording: the reader hands it to the Video Room.
+  const [videoRoomHref, setVideoRoomHref] = useState<string | null>(null);
   // A sealed matter's file asked for on a session that has not confirmed a
   // second factor (S4a: /api/document-url refuses it), or a sealed document's
   // row that reads as nothing at aal1 (098: document_entry says why). The
@@ -581,6 +584,14 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
           setTotalPages(1);
           setPage(1);
           setLoadState('ready');
+          return;
+        }
+        if (isVideoFilename(fn)) {
+          // A recording: the reader does not play video. The Video Room does,
+          // with the analysed timeline beside it (migration 119).
+          setVideoRoomHref(`/app/discovery/video/${data.id}`);
+          setErrorMsg('This is a video recording. The reader does not play video — open it in the Video Room to watch it, see what the video model recorded, and ask about the footage.');
+          setLoadState('error');
           return;
         }
         setErrorMsg('Unsupported file type — the reader currently handles PDF, Word (.docx), PowerPoint (.pptx), Fountain (.fountain), plain text (.txt, .md), and images (PNG, JPEG, GIF, WebP, SVG, BMP).');
@@ -2533,7 +2544,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               </div>
             )}
             {loadState === 'error' && !stepUp && (
-              <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
+              <div className="mt-10 space-y-3">
+                <p className="text-[13px] text-red-400">{errorMsg}</p>
+                {videoRoomHref && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(videoRoomHref)}
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#d4a054]/15 hover:bg-[#d4a054]/25 border border-[#d4a054]/40 text-[#f3c978] text-[12.5px] font-medium transition-colors"
+                  >
+                    Open in the Video Room
+                  </button>
+                )}
+              </div>
             )}
           </>
         ) : null}
@@ -2744,7 +2766,18 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
               </div>
             )}
             {loadState === 'error' && !stepUp && (
-              <p className="mt-10 text-[13px] text-red-400">{errorMsg}</p>
+              <div className="mt-10 space-y-3">
+                <p className="text-[13px] text-red-400">{errorMsg}</p>
+                {videoRoomHref && (
+                  <button
+                    type="button"
+                    onClick={() => navigate(videoRoomHref)}
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#d4a054]/15 hover:bg-[#d4a054]/25 border border-[#d4a054]/40 text-[#f3c978] text-[12.5px] font-medium transition-colors"
+                  >
+                    Open in the Video Room
+                  </button>
+                )}
+              </div>
             )}
             {loadState === 'ready' && fileKind === 'docx' && docHtml && (
               <div

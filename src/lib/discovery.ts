@@ -63,7 +63,10 @@ export type DiscoveryJobType =
   | 'intake_folder'
   | 'normalize_item'
   | 'stamp_production'
-  | 'package_production';
+  | 'package_production'
+  // The Video Room (migration 119): analyse a stored recording / re-upload it
+  | 'video_analysis'
+  | 'video_media_refresh';
 
 export interface Production {
   id: string;

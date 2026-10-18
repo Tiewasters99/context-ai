@@ -16,8 +16,8 @@ export default function DiscoveryLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { signOut } = useAuth();
-  // On a case ledger or a production review, offer a way back to the dashboard.
-  const onDeepPage = /^\/discovery\/(case|production)\b/.test(location.pathname);
+  // On a case ledger, a production review or the Video Room, offer a way back to the dashboard.
+  const onDeepPage = /^\/discovery\/(case|production|video)\b/.test(location.pathname);
 
   return (
     <div className="flex flex-col h-screen bg-black">
