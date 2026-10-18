@@ -32,6 +32,8 @@ export const LLM_FEATURES = [
   'workbench',
   'moot.generate',
   'moot.converse',
+  // The Video Room: a question put to the video model about a window of a recording.
+  'video.interrogate',
 ] as const;
 
 export type LlmFeature = (typeof LLM_FEATURES)[number];
