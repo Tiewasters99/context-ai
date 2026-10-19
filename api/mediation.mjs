@@ -99,6 +99,7 @@ import {
 import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { estimateLlmCents } from '../lib/usage-prices.mjs';
+import { cleanOrigin } from '../lib/site.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -377,7 +378,7 @@ export default async function handler(req, res) {
 
         const proto = req.headers['x-forwarded-proto'] || 'https';
         const host = req.headers['x-forwarded-host'] || req.headers.host;
-        const origin = process.env.SITE_ORIGIN || `${proto}://${host}`;
+        const origin = cleanOrigin(process.env.SITE_ORIGIN) || `${proto}://${host}`;
         const caseUrl = `${origin}/app/mediation/case/${caseRow.id}`;
 
         // Stripe REST (form-encoded) — no SDK dependency in this repo.
