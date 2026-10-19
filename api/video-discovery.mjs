@@ -335,6 +335,9 @@ export default async function handler(req, res, deps = {}) {
         apiKey, models, prompt, fileUri: fileResource.uri, mimeType: fileResource.mimeType, startSec, endSec,
       });
     } catch (err) {
+      // The provider did not answer (a 429 on 2026-10-19 was the first live
+      // case): nothing was billed by it, so nothing is charged here either.
+      await settle(0, models[0], { reason: 'provider_error' });
       await recordLlmReceived(ledger, { matterId: doc.matterspace_id, actor, feature: 'video.interrogate', callId, tier: 'A', provider: gemini.PROVIDER, model: models[0], outcome: 'provider_error', ms: Date.now() - started });
       await userRest(bearer, 'POST', 'video_interrogations', {
         analysis_id: analysis.id, document_id: doc.id, matterspace_id: doc.matterspace_id, user_id: user.id,
