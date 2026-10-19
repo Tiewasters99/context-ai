@@ -29,6 +29,8 @@ const SOURCES_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'cite-check', 
 const ASSISTANT_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'lib', 'assistant-core.mjs')).href;
 // Dev shim target for the /api/video-discovery Vercel function (the Video Room).
 const VIDEO_DISCOVERY_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'video-discovery.mjs')).href;
+// Dev shim target for the /api/trademark Vercel function (Trademark Clearance).
+const TRADEMARK_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'trademark.mjs')).href;
 
 interface ProviderRoute {
   url: (model: string) => string;
@@ -214,6 +216,19 @@ export default function llmProxy(): Plugin {
         } catch (err: unknown) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'video_discovery_failed', message: err instanceof Error ? err.message : String(err) }));
+        }
+      });
+
+      // Dev shim for the /api/trademark Vercel function (Trademark Clearance,
+      // migration 121): the same handler module production runs. It reads
+      // ANTHROPIC_API_KEY and the Supabase keys from process.env.
+      server.middlewares.use('/api/trademark', async (req, res) => {
+        try {
+          const mod = await import(TRADEMARK_MODULE_URL);
+          await mod.default(req, res);
+        } catch (err: unknown) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'trademark_failed', message: err instanceof Error ? err.message : String(err) }));
         }
       });
 

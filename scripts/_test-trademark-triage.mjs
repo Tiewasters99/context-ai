@@ -313,3 +313,85 @@ test('decompose and classes: shape-checked, linted, labelled', async () => {
 test('the three feature labels are in the Record\'s list', () => {
   for (const f of Object.values(FEATURES)) assert.ok(LLM_FEATURES.includes(f), f);
 });
+
+// ---------------------------------------------------------------------------
+// The server action (lib/trademark/actions.mjs) against a stub Supabase client
+// ---------------------------------------------------------------------------
+import { runTrademarkAction, TrademarkActionError, NOT_READY_MESSAGE } from '../lib/trademark/actions.mjs';
+
+function stubSb({ clearance, hits = [], canWrite = true, missing = false }) {
+  const updates = [];
+  const from = (table) => {
+    const q = { table, filters: {}, patch: null };
+    const api = {
+      select() { return api; },
+      eq(k, v) { q.filters[k] = v; return api; },
+      order() { return api; },
+      update(p) { q.patch = p; return api; },
+      async maybeSingle() {
+        if (missing) return { data: null, error: { code: 'PGRST205', message: "Could not find the table 'public.tm_clearances' in the schema cache" } };
+        return { data: clearance && clearance.id === q.filters.id ? clearance : null, error: null };
+      },
+      then(resolve) {
+        if (q.patch) {
+          const h = hits.find((x) => x.serial === q.filters.serial);
+          if (h) { Object.assign(h, q.patch); updates.push({ serial: h.serial, patch: q.patch }); }
+          return resolve({ data: h ? [{ serial: h.serial }] : [], error: null });
+        }
+        return resolve({ data: hits, error: null });
+      },
+    };
+    return api;
+  };
+  return { from, rpc: async () => ({ data: canWrite, error: null }), updates };
+}
+
+const CID = '6b0c1e7e-0000-4000-8000-0000000000c1';
+const MID = '6b0c1e7e-0000-4000-8000-0000000000a1';
+
+test('the triage action stores proposals (never a bin), records one tm.hit.proposed per hit with metadata only, and keeps a "clear" proposal out', async () => {
+  const hits = [
+    { serial: '98137428', mark: 'EQUALL', status_text: 'LIVE', live: true, classes: ['009'], bin: null, proposed: null },
+    { serial: '99887921', mark: 'YUEQUAZELL', status_text: 'LIVE', live: true, classes: ['014'], bin: null, proposed: null },
+    { serial: '98137417', mark: 'EQUALL COPILOT', status_text: 'DEAD', live: false, classes: [], bin: null, proposed: null },
+    { serial: '90562533', mark: 'EQUASITE', status_text: 'LIVE', live: true, classes: ['042'], bin: 'flag', proposed: null },
+  ];
+  const sb = stubSb({ clearance: { id: CID, matterspace_id: MID, mark: 'EQUAZIA', search_classes: [], filing_classes: [] }, hits });
+  const recorded = [];
+  const sent = [];
+  const send = async (req) => {
+    sent.push(req);
+    return toolAnswer({ hits: [
+      { serial: '98137428', similarity: { score: 4, reason: 'shared opening' }, relatedness: { score: 5, reason: 'AI software' }, bin: 'flag' },
+      { serial: '99887921', similarity: { score: 2, reason: 'so this one is cleared' }, relatedness: { score: 1, reason: 'jewelry' }, bin: 'dismiss' },
+    ] });
+  };
+  const out = await runTrademarkAction({ action: 'triage', args: { clearance_id: CID }, sb, userId: 'u1', send, record: async (_c, ev) => { recorded.push(ev); } });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].matterId, MID, 'the matter rides in the envelope, for the gate and the Record');
+  assert.equal(sent[0].feature, 'trademark.triage');
+  const asked = JSON.parse(sent[0].body).messages[0].content;
+  assert.ok(asked.includes('98137428') && asked.includes('99887921'));
+  assert.ok(!asked.includes('98137417'), 'a dead record is not sent for scoring');
+  assert.ok(!asked.includes('90562533'), 'a decided hit is not re-proposed');
+  assert.equal(out.proposed, 1);
+  assert.ok(out.discarded.some((d) => d.serial === '99887921'));
+  assert.equal(sb.updates.length, 1);
+  assert.deepEqual(Object.keys(sb.updates[0].patch), ['proposed'], 'only the proposal is written; the bin stays the reviewer\'s');
+  assert.equal(hits[0].bin, null);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].kind, 'tm.hit.proposed');
+  assert.deepEqual(recorded[0].payload, { clearance_id: CID, serial: '98137428', bin: 'flag', model: 'claude-opus-5-5' });
+  assert.equal(recorded[0].matterId, MID);
+});
+
+test('the action refuses a reader, an unknown clearance, a bad id, and says so before 121 is applied', async () => {
+  const c = { id: CID, matterspace_id: MID, mark: 'EQUAZIA' };
+  const run = (sb, args = { clearance_id: CID }, action = 'decompose') =>
+    runTrademarkAction({ action, args, sb, userId: 'u1', send: async () => { throw new Error('the model must not be called'); }, record: async () => {} });
+  await assert.rejects(() => run(stubSb({ clearance: c, canWrite: false })), (e) => e instanceof TrademarkActionError && e.status === 403);
+  await assert.rejects(() => run(stubSb({ clearance: null })), (e) => e.status === 404);
+  await assert.rejects(() => run(stubSb({ clearance: c }), { clearance_id: 'x' }), (e) => e.status === 400);
+  await assert.rejects(() => run(stubSb({ clearance: c }), { clearance_id: CID }, 'guess'), (e) => e.status === 400);
+  await assert.rejects(() => run(stubSb({ clearance: c, missing: true })), (e) => e.status === 503 && e.message === NOT_READY_MESSAGE);
+});

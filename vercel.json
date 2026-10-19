@@ -7,6 +7,9 @@
     "api/sandbox.mjs": {
       "maxDuration": 120
     },
+    "api/trademark.mjs": {
+      "maxDuration": 120
+    },
     "api/health.mjs": {
       "maxDuration": 10
     },
