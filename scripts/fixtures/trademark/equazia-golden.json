@@ -1,19 +1,19 @@
 {
-  "_note": "[M] Hand-built from Opus's Part 3 screenshots, 2026-10-18. Serials were read from screenshots: two are confirmed (EQUALL 98137428, EQUASITE 90562533), the rest are medium confidence. The two EQUALL clothing marks have UNKNOWN serials; 90000001 and 90000002 are placeholders. tmsearch-export-M-handbuilt.csv is likewise hand-built, not a real export: replace both with a real tmsearch export when Eden supplies one. Decisions below are the reviewer's (applied by the test), never the model's.",
+  "_note": "The EQUAZIA run of 2026-10-18, corrected 2026-10-19 from Eden's own tmsearch screenshots and the two real exports (owners, statuses, classes and the four EQUALL serials are now as the register showed them). Two runs are SYNTHETIC test scaffolding and were not part of the real run: Q0 (the self-test; Eden never ran SN:90562533) and Q5 (the substituted stems; the real run missed EQUASITE until the narrowed prefix sweep, which is exactly why Q5 exists). Q7's rows are a 6-row subset of the real 392-row export with EQUALL repeated on purpose, to exercise the pagination-overlap gap path; the real export had 392 distinct serials (no gap), though pages 4 and 5 did overlap on screen. The real page-1 export, images stripped, is tmsearch-export-2026-10-18-page1.xlsx/.csv beside this file. Decisions below are a reviewer's bins for the tests only; in a live clearance every bin is entered by the reviewer with initials and never pre-filled.",
   "clearance": {
     "mark": "EQUAZIA",
     "mark_format": "standard",
-    "goods_services": "Software for lawyers: matter workspaces, document review and drafting assistance, offered as downloadable software and as a hosted service.",
-    "users": "Lawyers and law firms",
-    "applicant": { "legal_name": "Equazia.ai", "entity_type": "LLC", "state": "NJ", "formation_status": "pending" },
-    "known_marks": [{ "name": "EQUALL", "owner": "Equall Inc.", "note": "AI legal assistant" }],
+    "goods_services": "Hosted software for knowledge workers (lawyers, academics, creatives): a document vault with search, audio and video transcription, citation verification with recorded human review, AI agents for research and drafting workflows, and an API layer connecting AI models to document repositories. A browser extension may ship under the name (Class 9 undecided).",
+    "users": "Knowledge workers: lawyers and law firms, academics, creatives",
+    "applicant": { "legal_name": "Equazia.ai, Inc.", "entity_type": "corporation", "formation_status": "pending", "address_is_mail_drop": "yes" },
+    "known_marks": [{ "name": "EQUALL", "owner": "Equall Inc.", "note": "legal-AI competitor; found on the web screen 2026-10-11" }],
     "search_classes": [
-      { "code": "009", "reason": "downloadable software" },
-      { "code": "042", "reason": "software as a service" },
-      { "code": "045", "reason": "legal services are related to legal software" }
+      { "code": "009", "reason": "downloadable software, if an installable tool ships under the name" },
+      { "code": "042", "reason": "software as a service: the core class" },
+      { "code": "045", "reason": "legal services are related to legal software; lawyers are a user group (search only)" }
     ],
     "filing_classes": [
-      { "code": "009", "reason": "product plan dated 2026-09" },
+      { "code": "009", "reason": "only if the browser extension or another installable tool ships under the Equazia name" },
       { "code": "042", "reason": "hosted service live since 2026-10" }
     ],
     "decomposition": { "opening": "equa", "hinge": "z", "ending": "ia", "reason": "the Z is the sound a respelling would change", "foreign": [] },
@@ -21,31 +21,30 @@
   },
   "runs": {
     "0": { "source": "manual", "reported": 1, "rows": [
-      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc.", "status": "LIVE registered", "classes": ["042"], "goods": "Software as a service" }
+      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc. (CORPORATION; MARYLAND, USA)", "status": "LIVE registered", "classes": ["042"], "goods": "Providing a web site featuring technology that enables users..." }
     ] },
     "1": { "source": "manual", "reported": 0, "rows": [] },
-    "2": { "source": "manual", "reported": 1, "rows": [
-      { "serial": "99887921", "mark": "YUEQUAZELL", "owner": "Yuequazell Co.", "status": "LIVE pending", "classes": ["014"], "goods": "Jewelry" }
+    "2": { "source": "manual", "reported": 3, "rows": [
+      { "serial": "99887921", "mark": "YUEQUAZELL", "owner": "Xin Yang (INDIVIDUAL; China)", "status": "LIVE pending", "classes": ["014"], "goods": "Costume jewelry; Sautoir necklaces; Necklace and earring..." },
+      { "serial": "97272405", "mark": "EQUAZEN FOR EVERY MIND.", "owner": "SOHO FLORDIS UK LIMITED (private limited company; ENGLAND, UNITED KINGDOM)", "status": "LIVE registered", "classes": ["005"], "goods": "Dietary and nutritional supplements; Dietetic foods adapted..." },
+      { "serial": "85889029", "mark": "EQUAZEN", "owner": "SOHO FLORDIS UK LIMITED (PRIVATE LIMITED COMPANY; ENGLAND, UNITED KINGDOM)", "status": "LIVE registered", "classes": ["005"], "goods": "Nutritional supplements; Nutritional supplement capsules..." }
     ] },
     "5": { "source": "manual", "reported": 1, "rows": [
-      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc.", "status": "LIVE registered", "classes": ["042"], "goods": "Software as a service" }
+      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc. (CORPORATION; MARYLAND, USA)", "status": "LIVE registered", "classes": ["042"], "goods": "Providing a web site featuring technology that enables users..." }
     ] },
     "7": { "source": "export", "reported": 392, "rows": [
-      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (DE)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "AI chatbot software" },
-      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc. (MD)", "status": "LIVE registered", "classes": ["042"], "goods": "Software as a service" },
-      { "serial": "79349638", "mark": "EQUA", "owner": "Equa Simulation AB", "status": "LIVE registered", "classes": ["009", "037", "042"], "goods": "Simulation software" },
-      { "serial": "99922464", "mark": "EQUARA", "owner": "Vital Blessings, LLC", "status": "LIVE pending", "classes": ["009"], "goods": "Educational software" },
-      { "serial": "98364901", "mark": "EQUANIMA", "owner": "Equanima LLC", "status": "LIVE pending", "classes": ["009"], "goods": "Audio and computer hardware" },
-      { "serial": "85889029", "mark": "EQUAZEN", "owner": "Equazen Ltd", "status": "LIVE registered", "classes": ["005"], "goods": "Nutritional supplements" },
-      { "serial": "97272405", "mark": "EQUAZEN FOR EVERY MIND", "owner": "Equazen Ltd", "status": "LIVE registered", "classes": ["005"], "goods": "Nutritional supplements" },
-      { "serial": "98137417", "mark": "EQUALL COPILOT", "owner": "Equall Inc.", "status": "DEAD abandoned", "classes": ["009", "042"], "goods": "AI software" },
-      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (DE)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "AI chatbot software" }
+      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (CORPORATION; DELAWARE, USA)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "Downloadable chatbot software using artificial intelligence..." },
+      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc. (CORPORATION; MARYLAND, USA)", "status": "LIVE registered", "classes": ["042"], "goods": "Providing a web site featuring technology that enables users..." },
+      { "serial": "79349638", "mark": "EQUA", "owner": "Equa Simulation AB (AKTIEBOLAG; SWEDEN)", "status": "LIVE registered", "classes": ["009", "037", "042"], "goods": "Downloadable software for designing computer-simulated models..." },
+      { "serial": "99922464", "mark": "EQUARA", "owner": "Vital Blessings, LLC (LIMITED LIABILITY COMPANY; Virginia, USA)", "status": "LIVE pending", "classes": ["009", "016", "041"], "goods": "Downloadable educational software featuring instruction in..." },
+      { "serial": "98364901", "mark": "EQUANIMA", "owner": "EQUANIMA VENTURES S.L. (sociedad de responsabilidad limitada (sl); SPAIN)", "status": "LIVE registered", "classes": ["009", "028", "041"], "goods": "Audio speakers; Computer hardware; Data processing equipment;..." },
+      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (CORPORATION; DELAWARE, USA)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "Downloadable chatbot software using artificial intelligence..." }
     ] },
     "9": { "source": "manual", "reported": 4, "rows": [
-      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc.", "status": "LIVE pending", "classes": ["009", "042"] },
-      { "serial": "98137417", "mark": "EQUALL COPILOT", "owner": "Equall Inc.", "status": "DEAD abandoned", "classes": ["009", "042"] },
-      { "serial": "90000001", "mark": "EQUALL", "owner": "Equall Apparel", "status": "LIVE registered", "classes": ["025"], "goods": "Clothing" },
-      { "serial": "90000002", "mark": "EQUALL", "owner": "Equall Apparel", "status": "LIVE registered", "classes": ["025"], "goods": "Hats" }
+      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (CORPORATION; DELAWARE, USA)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "Downloadable chatbot software using artificial intelligence..." },
+      { "serial": "98137417", "mark": "EQUALL COPILOT", "owner": "Equall Inc. (CORPORATION; DELAWARE, USA)", "status": "DEAD abandoned", "classes": ["009", "042"], "goods": "Downloadable chatbot software using artificial intelligence..." },
+      { "serial": "88129739", "mark": "EQUALL", "owner": "Demosthene, Clebens (INDIVIDUAL; USA)", "status": "DEAD abandoned", "classes": ["025"], "goods": "Hats; Hoodies; Long-sleeved shirts; Shell jackets; Sweaters..." },
+      { "serial": "88634323", "mark": "WORLD OF EQUALL", "owner": "Clebens Demosthene (INDIVIDUAL; USA)", "status": "LIVE registered", "classes": ["025"], "goods": "Bottoms as clothing; Hats; Headbands; Hoodies; Jackets;..." }
     ] }
   },
   "decisions": {
@@ -57,7 +56,6 @@
     "85889029": { "bin": "note", "reason": "supplements, class 5", "initials": "EQ" },
     "97272405": { "bin": "note", "reason": "supplements, class 5", "initials": "EQ" },
     "99887921": { "bin": "dismiss", "reason": "jewelry, class 14", "initials": "EQ" },
-    "90000001": { "bin": "dismiss", "reason": "clothing, class 25", "initials": "EQ" },
-    "90000002": { "bin": "dismiss", "reason": "clothing, class 25", "initials": "EQ" }
+    "88634323": { "bin": "dismiss", "reason": "clothing, class 25", "initials": "EQ" }
   }
 }
