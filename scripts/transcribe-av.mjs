@@ -41,7 +41,7 @@ const args = parseArgs(process.argv.slice(2));
 const DRY = !!args['dry-run'];
 const GOOGLE_API_KEY = DRY ? (process.env.GOOGLE_API_KEY || '') : requireEnv('GOOGLE_API_KEY');
 const LIMIT = args.limit ? parseInt(args.limit, 10) : Infinity;
-const MODEL = args.model || 'gemini-2.5-flash';
+const MODEL = args.model || 'gemini-3.8-flash';
 const ONLY = args.only ? String(args.only).toLowerCase().split(',').map((s) => s.trim()).filter(Boolean) : null;
 // --transcode: re-encode EVERY file to 16kHz mono mp3 before sending. For
 // files Gemini's stream hangs on repeatedly even though the format is

@@ -185,7 +185,7 @@ test('schemas are the structured-output subset: no $schema, no additionalPropert
 });
 
 test('adapter helpers: env-driven models, stable display names, expiry, mime', () => {
-  assert.deepEqual(modelsFromEnv({}), ['gemini-2.5-flash']);
+  assert.deepEqual(modelsFromEnv({}), ['gemini-3.8-flash']);
   assert.deepEqual(modelsFromEnv({ GEMINI_VIDEO_MODEL: 'gemini-x' }), ['gemini-x']);
   assert.deepEqual(modelsFromEnv({ GEMINI_VIDEO_MODELS: ' a , b,,c ' }), ['a', 'b', 'c']);
   assert.equal(displayNameFor('abc'), 'cs-video-abc');
@@ -215,6 +215,8 @@ test('the video meter charges the footage as input tokens plus the full answer a
   assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 0, maxOutputTokens: 0 }), 0);
   // actuals, in the shape the API and the worker record from usageMetadata
   assert.equal(centsForTokens('gemini-2.5-flash', 'google', { input: 26880, output: 3000 }), 2);
+  // The successor is priced: 26,880 in at $0.75 + 3,000 out at $3.75 = 3.14 c, rounded up.
+  assert.equal(centsForTokens('gemini-3.8-flash', 'google', { input: 26880, output: 3000 }), 4);
 });
 
 test('the Record row for a recording leaving for the video model is metadata only', () => {
