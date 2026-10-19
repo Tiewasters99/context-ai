@@ -381,6 +381,13 @@ assembly + lint + filing; Record events; the three test harnesses in CI; this sp
    `IC 045 IC 042`, `200.` or every class with a trailing period. The mapper fixture is now real
    (page 1, images stripped). The 392-row export had 392 distinct serials: the overlap Opus saw
    between pages 4 and 5 on screen was a display artefact, not missing records.
+10. Q8 exclusion picker needs a typed stem [found 10-19]: the proposer offers only stems it mined from
+    Q7's captured marks (equal, equat, equator, equan for EQUAZIA); the real run excluded `equit*`
+    too, which it never offered, so Opus's exact narrowed line lives as manual Q102 and Q8 stays
+    unconfirmed. Add a free-text stem input beside the checkboxes.
+11. Provider refuses a forced `tool_choice` for claude-opus-5-5 [V 10-19, HTTP 400]: every model
+    action was dead until model.mjs switched to `auto` + a system line. Any new structured call
+    on this model must do the same (lib/describe-image-anthropic already knew).
 
 ## 10. What a first-timer asked (from Eden's run with Opus, Oct 11–18; answer these in the stage copy)
 
@@ -424,4 +431,16 @@ of this is a conclusion about any mark; it is the explanatory layer the surface 
 13. Not the recipe's job, but it cost half the session: the USPTO.gov account and its authenticator
     enrolment. Stage 9 should say up front that searching needs no account and filing does, and
     link the USPTO's own setup page rather than troubleshoot inline.
+14. "Why is the new company the applicant at all? Couldn't the parent that already exists file?"
+    (Eden, 10-19) [stage 9 note: which entity files turns on who will own the brand when shares
+    are sold and on whether use has begun. 15 U.S.C. §1060(a)(1) [V 10-18] bars assigning an
+    intent-to-use application before an amendment to allege use or a statement of use, except to
+    a successor to the ongoing business; an assignment outside that voids the application. So:
+    (1) wait for the entity and file in its name, cleanest when its shares will be sold; (2) if
+    use has begun, the parent files under §1(a) and assigns freely with the goodwill; (3) the
+    parent files intent-to-use and keeps the mark, licensing it to the subsidiary (use by a
+    related company inures to the owner), which leaves the brand outside the company being sold;
+    (4) parent files intent-to-use and assigns as successor when the business is contributed —
+    textually within the exception, the riskiest path. Whichever, the code, domains and brand
+    must be assigned into the applicant by a separate agreement.]
 
