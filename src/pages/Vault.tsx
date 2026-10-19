@@ -45,7 +45,7 @@ import { isVaultDrag, readVaultDrag, type VaultDragItem } from '@/lib/vault-drag
 import { readGrouping, writeGrouping, type VaultGrouping } from '@/lib/vault-grouping';
 import { showingOf } from '@/lib/paged';
 import { checkUpload } from '../../lib/ingest-formats.mjs';
-import { useServerspaces } from '@/hooks/useServerspaces';
+import { useServerspaces, type Serverspace } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
 import { isZip, expandZip } from '@/lib/vault-zip';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -65,6 +65,8 @@ const menuItems: { icon: typeof Upload; label: string; description: string; view
   { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
 ];
+
+const NO_SERVERSPACES: Serverspace[] = [];
 
 export default function Vault() {
   const isMobile = useIsMobile();
@@ -146,7 +148,15 @@ export default function Vault() {
 
   // Matter tree state — same shape as the main sidebar so users can
   // switch matters without leaving the Vault.
-  const { data: serverspaces = [] } = useServerspaces();
+  // A stable empty list while the serverspaces query is still loading (or has
+  // failed). `= []` here made a NEW array on every render, so `matterScope`
+  // (memoised on it) changed every render, and the document-list effect
+  // below re-ran on every render: each list response set state, which
+  // rendered, which listed again. On a slow or briefly failing backend that
+  // became a thousand identical requests in two seconds (10-19), which kept
+  // Supabase answering 503 for every open tab until the last one closed.
+  const { data: serverspacesData } = useServerspaces();
+  const serverspaces = serverspacesData ?? NO_SERVERSPACES;
   const [matterTreeOpen, setMatterTreeOpen] = useState(true);
   const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
   const [expandedMatters, setExpandedMatters] = useState<Set<string>>(new Set());
