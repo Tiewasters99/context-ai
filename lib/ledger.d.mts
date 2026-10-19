@@ -34,7 +34,17 @@ export type LedgerEventKind =
   | 'comparison.candidate'
   | 'comparison.graded'
   | 'comparison.assembled'
-  | 'comparison.revealed';
+  | 'comparison.revealed'
+  // 121 — Trademark Clearance
+  | 'tm.clearance.created'
+  | 'tm.intake.updated'
+  | 'tm.classes.set'
+  | 'tm.queries.generated'
+  | 'tm.query.run'
+  | 'tm.hit.proposed'
+  | 'tm.hit.decided'
+  | 'tm.stage.done'
+  | 'tm.report.filed';
 
 export interface LedgerActor {
   kind: 'user' | 'charter' | 'connector' | 'system';
@@ -58,6 +68,7 @@ export interface LedgerResult {
 export const EVENT_KINDS: readonly LedgerEventKind[];
 export const KINDS_100: readonly LedgerEventKind[];
 export const KINDS_120: readonly LedgerEventKind[];
+export const KINDS_121: readonly LedgerEventKind[];
 export const EVENT_TYPES: readonly LedgerEventKind[];
 export const NIL_CHAIN: string;
 

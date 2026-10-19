@@ -36,6 +36,10 @@ export const LLM_FEATURES = [
   // recording; and an analysis pass, when the seal or the meter refuses it.
   'video.interrogate',
   'video.analyze',
+  // Trademark Clearance: the recipe's three judgment points (api/trademark.mjs).
+  'trademark.decompose',
+  'trademark.classes',
+  'trademark.triage',
 ] as const;
 
 export type LlmFeature = (typeof LLM_FEATURES)[number];

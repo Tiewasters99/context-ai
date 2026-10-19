@@ -50,6 +50,7 @@ import { ALL_TASKS_KEY, taskKey } from '@/lib/task-ui';
 import DelegateCard from '@/components/agents/DelegateCard';
 import { AddAgentCard, EditMattersCard, ALL_MATTERS_LABEL } from '@/components/agents/AgentsSection';
 import { TaskDetail, TaskLine } from '@/components/agents/MatterTasks';
+import RecipeCard from '@/components/trademark/RecipeCard';
 
 export const AGENTS_PAGE_INTRO =
   'Every AI connected to your Contextspaces, and every task you have handed one. An agent checks '
@@ -324,6 +325,13 @@ export default function AgentTasks() {
         )}
         {recipientsError && <p className="mb-3 text-[13px] text-[#f87171]">{recipientsError}</p>}
         {actionError && <p className="mb-3 text-[13px] text-[#f87171]">{actionError}</p>}
+
+        {/* Recipes: matter-scoped procedures the reviewer runs stage by stage.
+            Not gated on the task board (085): a recipe needs only its own tables. */}
+        <section aria-labelledby="recipes" className="mb-10">
+          <h2 id="recipes" className="text-[15px] font-medium text-[var(--color-text-bright)]">Recipes</h2>
+          <div className="mt-3"><RecipeCard /></div>
+        </section>
 
         {!notReady && (
           <section aria-labelledby="connected-ai">

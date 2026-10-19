@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "rule": "The ending pattern is the last letter of the opening, plus the hinge, plus the ending (EQUAZIA: a + z + ia = azia), searched as a suffix wildcard (*azia). The substitutions that apply to the hinge and the ending are applied to it, one at a time, up to the ending cap.",
+  "why": "A mark that shares the tail of the applicant's mark can share its commercial impression even with a different opening; the extra letter of the opening keeps the suffix from matching every word that ends in -ia.",
+  "examples": [
+    { "mark": "equazia", "opening": "equa", "hinge": "z", "ending": "ia", "pattern": "*azia", "variants": ["*asia", "*azzia", "*axia", "*aziya", "*azya", "*azea"] }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "about": "Sound-alike substitutions for whole-word variants (Q4), substituted stems (Q5) and endings (Q6). One substitution at a time, then pairs, tier by tier, until the cap. Tier 1 = the strongest sound-alikes (the hinge consonant and QU); tier 2 = vowel and ending spellings; tier 3 = cosmetic.",
+  "variantCap": 12,
+  "stemCap": 12,
+  "endingCap": 12,
+  "rows": [
+    { "id": "z-s", "from": "z", "to": ["s"], "tier": 1, "why": "Z and S sound alike between vowels (EQUAZIA / EQUASIA); a search on one spelling misses the other." },
+    { "id": "z-zz", "from": "z", "to": ["zz"], "tier": 1, "why": "A doubled consonant is pronounced the same; registrants double letters to stylise a mark." },
+    { "id": "z-x", "from": "z", "to": ["x"], "tier": 1, "why": "X is a common stylised stand-in for the Z and S sounds in software marks." },
+    { "id": "qu-kw", "from": "qu", "to": ["kw"], "tier": 1, "why": "QU is pronounced KW; phonetic respellings (EKWA-) are common and read as the same word." },
+    { "id": "qu-q", "from": "qu", "to": ["q"], "tier": 2, "why": "Dropping the U after Q is a common stylisation (EQAZIA) with the same sound." },
+    { "id": "qu-k", "from": "qu", "to": ["k"], "tier": 2, "why": "K is a hard-sound respelling of QU in coined marks." },
+    { "id": "qu-cu", "from": "qu", "to": ["cu"], "tier": 2, "why": "CU is the Spanish and Italian spelling of the same sound (ECUA-)." },
+    { "id": "ia-iya", "from": "ia", "to": ["iya"], "tier": 2, "why": "IA and IYA are pronounced alike; an ending respelled with Y reads the same." },
+    { "id": "ia-ya", "from": "ia", "to": ["ya"], "tier": 2, "why": "YA is a shortened spelling of the IA ending with the same sound." },
+    { "id": "ia-ea", "from": "ia", "to": ["ea"], "tier": 2, "why": "EA and IA endings are confused in speech and in memory." },
+    { "id": "a-ah", "from": "a", "to": ["ah"], "tier": 3, "why": "An added H changes the spelling, not the sound." },
+    { "id": "e-ae", "from": "e", "to": ["ae"], "tier": 3, "initialOnly": true, "why": "An initial E and AE are pronounced alike (AEQUA- / EQUA-)." },
+    { "id": "e-i", "from": "e", "to": ["i"], "tier": 3, "initialOnly": true, "why": "An initial E is often heard, and spelled, as I." },
+    { "id": "undouble", "from": "(a doubled consonant)", "to": ["(the single consonant)"], "tier": 3, "rule": "undouble", "why": "A doubled consonant and a single one sound the same (EQUALL / EQUAL); each spelling is searched." }
+  ]
+}

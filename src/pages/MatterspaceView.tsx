@@ -15,6 +15,8 @@ import { IMPORT_ACCEPT, kindOf, refusalFor } from '@/lib/brief/import';
 import AddCaseCard from '@/pages/brief/AddCaseCard';
 import MatterCalendar from '@/components/matter/MatterCalendar';
 import MatterTasks from '@/components/agents/MatterTasks';
+import TrademarkTab from '@/components/trademark/TrademarkTab';
+import { countClearances } from '@/lib/trademark/data';
 import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
@@ -38,9 +40,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Record', 'Calendar', 'Tasks', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
+const tabs = ['Updates', 'Record', 'Calendar', 'Tasks', 'Trademark', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar' | 'Tasks'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar' | 'Tasks' | 'Trademark'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
@@ -83,7 +85,9 @@ export default function MatterspaceView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<Tab>(() =>
+  // The tab the person chose (saved per matter). `activeTab`, below, is the
+  // one shown: the same, except a Trademark tab with no clearance behind it.
+  const [selectedTab, setActiveTab] = useState<Tab>(() =>
     loadInitialTab(id, searchParams.get('tab')),
   );
 
@@ -92,11 +96,11 @@ export default function MatterspaceView() {
   }, [id, searchParams]);
 
   useEffect(() => {
-    if (!id || NAV_TABS.includes(activeTab)) return;
+    if (!id || NAV_TABS.includes(selectedTab)) return;
     try {
-      localStorage.setItem(TAB_STORAGE_KEY(id), activeTab);
+      localStorage.setItem(TAB_STORAGE_KEY(id), selectedTab);
     } catch {}
-  }, [activeTab, id]);
+  }, [selectedTab, id]);
   const { cardRef, toggleFullscreen, pinned, togglePin, isMobile } =
     useDraggableResizable('cs.matterspace.card', { boundToViewport: true });
 
@@ -121,6 +125,21 @@ export default function MatterspaceView() {
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
   const refreshServerspaces = useServerspacesRefresh();
   const titleRef = useRef<HTMLHeadingElement>(null);
+
+  // The Trademark tab shows only when the matter holds a clearance (migration
+  // 121). undefined = still counting: a saved or linked Trademark tab is not
+  // bounced while the count loads. null = 121 not applied, or the read failed.
+  const [tm, setTm] = useState<{ id: string; n: number | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (!id) return;
+    void countClearances(id).then((n) => { if (live) setTm({ id, n }); });
+    return () => { live = false; };
+  }, [id, selectedTab]);
+  const tmCount = tm && tm.id === id ? tm.n : undefined;
+  // A Trademark tab saved for a matter that has no clearance shows Updates.
+  const activeTab: Tab = selectedTab === 'Trademark' && (tmCount === 0 || tmCount === null) ? 'Updates' : selectedTab;
+  const visibleTabs = tabs.filter((t) => t !== 'Trademark' || (tmCount ?? 0) > 0);
 
   // Tell the Orchestrator where the user is — the active tab lives only in
   // this component's state, so the panel can't read it from the router.
@@ -481,7 +500,7 @@ export default function MatterspaceView() {
         {/* Tabs — wrap onto extra rows as the card narrows so no tab ever
             spills outside the card (the card resizes down to 300px wide). */}
         {!gate && <div className="flex flex-wrap gap-x-1 gap-y-0.5 border-b border-[rgba(255,255,255,0.06)] mb-6 mt-6">
-          {tabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -514,6 +533,9 @@ export default function MatterspaceView() {
         {activeTab === 'Tasks' && matter && (
           <MatterTasks matterId={matter.id} />
         )}
+        {activeTab === 'Trademark' && matter && (
+          <TrademarkTab matterId={matter.id} matterName={matter.name} />
+        )}
         {activeTab === 'Cite-Check' && matter && (
           <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
         )}
@@ -523,7 +545,7 @@ export default function MatterspaceView() {
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && activeTab !== 'Tasks' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && activeTab !== 'Trademark' && activeTab !== 'Tasks' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

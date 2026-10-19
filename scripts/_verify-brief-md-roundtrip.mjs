@@ -259,10 +259,11 @@ try {
   console.error('Run:  npm i --no-save @electric-sql/pglite');
   process.exit(2);
 }
-const { EVENT_KINDS: ALL_KINDS, KINDS_094, KINDS_100, KINDS_120 } = await import('../lib/ledger.mjs');
-// Through 100: this harness never applies 120, whose five kinds (the Model
-// Comparator) scripts/_verify-comparator-120.mjs holds to the constraint.
-const EVENT_KINDS = ALL_KINDS.filter((k) => !KINDS_120.includes(k));
+const { EVENT_KINDS: ALL_KINDS, KINDS_094, KINDS_100, KINDS_120, KINDS_121 } = await import('../lib/ledger.mjs');
+// Through 100: this harness never applies 120 or 121, whose kinds (the Model
+// Comparator; Trademark Clearance) scripts/_verify-comparator-120.mjs and
+// scripts/_verify-trademark-121.mjs hold to the constraint.
+const EVENT_KINDS = ALL_KINDS.filter((k) => !KINDS_120.includes(k) && !KINDS_121.includes(k));
 const migrationSql = (name) => fs.readFileSync(path.join(root, 'supabase', 'migrations', name), 'utf8');
 
 async function freshDb() {
