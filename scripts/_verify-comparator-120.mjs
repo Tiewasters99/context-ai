@@ -24,7 +24,7 @@
 //   H. after the reveal: grades, candidates and the rubric are frozen.
 //   I. the rubric is frozen once the first grade exists, even before reveal.
 //   J. document_annotations.tag exists, length-checked.
-//   K. events_kind_check after 120 is lib/ledger.mjs's EVENT_KINDS exactly;
+//   K. events_kind_check after 120 is lib/ledger.mjs's EVENT_KINDS (through 120) exactly;
 //      without public.events, 120 skips the vocabulary and still applies.
 //
 //   npm i --no-save @electric-sql/pglite
@@ -49,7 +49,10 @@ try {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIG = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '120_model_comparator.sql'), 'utf8');
-const { EVENT_KINDS, KINDS_120 } = await import('../lib/ledger.mjs');
+const { EVENT_KINDS: ALL_KINDS, KINDS_120, KINDS_121 } = await import('../lib/ledger.mjs');
+// Through 120: this harness never applies 121, whose nine kinds (Trademark
+// Clearance) scripts/_verify-trademark-121.mjs holds to the constraint.
+const EVENT_KINDS = ALL_KINDS.filter((k) => !KINDS_121.includes(k));
 
 let failures = 0;
 const check = (ok, label, detail = '') => {
