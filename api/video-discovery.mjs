@@ -161,9 +161,25 @@ export default async function handler(req, res, deps = {}) {
   if (!isVideo) return json(res, 422, { error: 'not_a_video', message: `"${doc.source_filename ?? doc.title}" is not a video file.` });
   if (!doc.storage_path) return json(res, 422, { error: 'no_stored_file', message: 'This document has no stored file to analyse.' });
 
+  // Every refusal below leaves a truthful row in the matter's Record (the rule
+  // lib/llm-server-call.mjs keeps): what was asked for, who refused it, and
+  // that no provider and no model were ever chosen. Best-effort — the refusal
+  // itself is already the seal's promise kept.
+  const ledger = ledgerClientFor({ supabaseUrl: SUPABASE_URL(), anonKey: ANON_KEY(), bearer, fetchImpl: doFetch });
+  const actor = { kind: 'user', ref: user.id, user_id: user.id };
+  const featureOf = action === 'analyze' ? 'video.analyze' : 'video.interrogate';
+  const recordRefused = async (code, status, { sealed: wasSealed = false } = {}) => {
+    if (action !== 'analyze' && action !== 'interrogate') return;
+    await recordLlmRequested(ledger, {
+      matterId: doc.matterspace_id, actor, feature: featureOf, callId: newCallId(), tier: null,
+      provider: null, model: null, sealed: wasSealed, documentIds: [doc.id], refused: code, status,
+    }).catch(() => {});
+  };
+
   // The seal, for every action that moves the recording to a provider.
   const sealed = await isSealedMatter(doc.matterspace_id, doFetch);
   if (sealed !== false) {
+    await recordRefused(sealed === true ? 'sealed' : 'seal_unresolved', sealed === true ? 403 : 503, { sealed: sealed === true });
     return json(res, sealed === true ? 403 : 503, {
       error: sealed === true ? 'sealed' : 'seal_unresolved',
       message: sealed === true
@@ -186,7 +202,10 @@ export default async function handler(req, res, deps = {}) {
     const plannedPasses = Math.max(1, Math.ceil(seconds / ANALYSIS_WINDOW_SEC));
     const estimateCents = estimateVideoCents({ model: gemini.modelsFromEnv()[0], seconds, maxOutputTokens: METER_OUTPUT_TOKENS * plannedPasses });
     const meter = await consumeUsage({ supabaseUrl: SUPABASE_URL(), anonKey: ANON_KEY(), bearer, kind: 'video', estimateCents, fetchImpl: doFetch });
-    if (!meter.allowed) return sendUsageRefusal(res, meter);
+    if (!meter.allowed) {
+      await recordRefused(meter.reason || 'usage_limit', meter.status);
+      return sendUsageRefusal(res, meter);
+    }
     // Nothing queued ⇒ nothing will be sent ⇒ the estimate is given back.
     const refund = async (reason) => {
       if (!meter.eventId) return;
@@ -254,6 +273,7 @@ export default async function handler(req, res, deps = {}) {
     });
     const meter = await consumeUsage({ supabaseUrl: SUPABASE_URL(), anonKey: ANON_KEY(), bearer, kind: 'video', estimateCents, fetchImpl: doFetch });
     if (!meter.allowed) {
+      await recordRefused(meter.reason || 'usage_limit', meter.status);
       await userRest(bearer, 'POST', 'video_interrogations', {
         analysis_id: analysis.id, document_id: doc.id, matterspace_id: doc.matterspace_id, user_id: user.id,
         question, start_sec: startSec, end_sec: endSec, claims, provider: gemini.PROVIDER, outcome: 'refused',
@@ -297,8 +317,6 @@ export default async function handler(req, res, deps = {}) {
     }
 
     // Record the request before the provider is contacted (lib/llm-record.mjs's rule), then ask.
-    const ledger = ledgerClientFor({ supabaseUrl: SUPABASE_URL(), anonKey: ANON_KEY(), bearer, fetchImpl: doFetch });
-    const actor = { kind: 'user', ref: user.id, user_id: user.id };
     const callId = newCallId();
     const models = gemini.modelsFromEnv();
     await recordLlmRequested(ledger, {
