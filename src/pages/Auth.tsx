@@ -62,7 +62,7 @@ export default function Auth() {
       <div className="absolute top-[36%] left-[6%]">
         <Link to="/" className="block">
           <span className="text-white" style={{ textShadow: '0 3px 14px rgba(0,0,0,1), 0 0 50px rgba(0,0,0,0.8)' }}>
-            <span className="text-[52px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span><span className="text-[34px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span></span>
+            <span className="text-[52px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Equazia</span><span className="text-[34px] font-semibold tracking-tight text-[#d4a054]" style={{ fontFamily: '"Playfair Display Variable", serif' }}>.ai</span>
           </span>
         </Link>
         <p className="text-[22px] text-white font-semibold mt-3 max-w-sm" style={{ textShadow: '0 2px 10px rgba(0,0,0,1), 0 0 40px rgba(0,0,0,0.8)' }}>
@@ -119,11 +119,11 @@ export default function Auth() {
 
           {view === 'signup' && !SIGNUPS_OPEN ? (
             <div className="space-y-3 text-sm text-white/85 leading-relaxed">
-              <p className="text-white font-medium">Contextspaces opens on October 15, 2026.</p>
+              <p className="text-white font-medium">Equazia.ai — formerly Contextspaces — is onboarding by invitation.</p>
               <p>
-                New accounts are by invitation until then. To request early access, email{' '}
+                To request early access, email{' '}
                 <a
-                  href={`mailto:${EARLY_ACCESS_EMAIL}?subject=${encodeURIComponent('Contextspaces early access')}`}
+                  href={`mailto:${EARLY_ACCESS_EMAIL}?subject=${encodeURIComponent('Equazia.ai early access')}`}
                   className="text-[#d4a054] hover:text-[#c4903a] underline underline-offset-2"
                 >
                   {EARLY_ACCESS_EMAIL}
