@@ -2088,6 +2088,9 @@ function videoJobContext() {
     probeDurationSec: probeDurationFile,
     tmpRoot: os.tmpdir(),
     log,
+    // usage_record_actual is service-role only: the real tokens of each pass
+    // correct the estimate /api/video-discovery charged when it queued the job.
+    meter: { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
   };
 }
 

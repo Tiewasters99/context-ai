@@ -1151,3 +1151,20 @@ jobs:
       - name: Orchestrator — the map tells the truth about the plan
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-orchestrator-map.mjs
+      # The Video Room (migration 119): the provider-neutral core — window
+      # planning, the event-graph normaliser and merger, interrogation clamping
+      # — the adapter's pure helpers, the video meter's arithmetic, and the
+      # metadata-only Record row the worker writes when a recording leaves.
+      - name: Video Room — core, adapter helpers, meter and Record payload (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test tests/video-discovery.test.mjs
+      # The Video Room's contract with the seal and the meter: the REAL
+      # api/video-discovery.mjs handler against a stubbed, witnessed world
+      # (Auth, PostgREST, the RPCs, the Gemini Files + generateContent
+      # endpoints). A sealed matter is refused with zero provider requests and
+      # one truthful Record row; the meter is asked before anything is queued
+      # or asked and refunded when nothing was sent; a question's Record rows
+      # bracket the provider call in order; the request names the window.
+      - name: Video Room — the seal and the meter refuse before any byte moves
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-video-room-refusals.mjs
