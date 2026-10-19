@@ -3,10 +3,22 @@
 
 import { blocksOf, type Run } from '@/lib/prose';
 
+// A link is clickable only to this site or its own storage (a download link the
+// app minted). Anything else stays text, so a document cannot plant a link in an answer.
+const LINK_HOSTS = new Set([
+  typeof window !== 'undefined' ? window.location.host : '',
+  (() => { try { return new URL(import.meta.env.VITE_SUPABASE_URL).host; } catch { return ''; } })(),
+].filter(Boolean));
+const linkable = (href: string) => { try { return LINK_HOSTS.has(new URL(href).host); } catch { return false; } };
+
 function Runs({ runs }: { runs: Run[] }) {
   return (
     <>
       {runs.map((r, i) => {
+        if (r.href && linkable(r.href)) {
+          return <a key={i} href={r.href} target="_blank" rel="noopener noreferrer" className="text-[#e8b84a] underline underline-offset-2 hover:text-[#f3cf75]">{r.text}</a>;
+        }
+        if (r.href) return <span key={i}>{r.text}</span>;
         if (r.code) return <code key={i} className="px-1 py-px rounded bg-white/[0.08] text-[0.92em]">{r.text}</code>;
         if (r.bold && r.italic) return <strong key={i}><em>{r.text}</em></strong>;
         if (r.bold) return <strong key={i} className="font-semibold text-white">{r.text}</strong>;

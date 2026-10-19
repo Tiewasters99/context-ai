@@ -1115,6 +1115,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-orchestrator-scope.mjs
 
+      # The Orchestrator's document tasks (10-17): proposed by the model, run
+      # by the browser through /api/sandbox on the press; sealed runs offer
+      # no copy out and none of the tasks the bucket refuses. No database.
+      - name: Orchestrator — Sandbox and document tasks, confirm-gated
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-orchestrator-sandbox.mjs
+
       # Versions as documents (10-02): "Save as v19" names the next version
       # (the last v-number moves on; "Art78" is not one), and Compare is a
       # paragraph-then-word redline that rebuilds both versions exactly,
