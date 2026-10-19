@@ -122,7 +122,7 @@ export default function GrokConnect() {
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Grok</strong>{' '}
-            connects by signing in to Contextspaces, not with a pasted token,
+            connects by signing in to Equazia.ai, not with a pasted token,
             and it connects best as an{' '}
             <strong className="text-[var(--color-text-bright)]">agent</strong>:
             it sees only the matters you tick, never a SecureSpace, and works
@@ -134,7 +134,7 @@ export default function GrokConnect() {
             <strong className="text-[var(--color-text-bright)]">Checked end to end on 25 September 2026.</strong>{' '}
             A Grok task ran from start to finish with these steps. If one of
             Grok's menus no longer matches what you see, Grok has moved it
-            since; the Contextspaces side is unchanged.
+            since; the Equazia.ai side is unchanged.
           </div>
         </header>
 
@@ -173,7 +173,7 @@ export default function GrokConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
-                Grok opens a Contextspaces page. Sign in if it asks. The page
+                Grok opens an Equazia.ai page. Sign in if it asks. The page
                 says <strong className="text-[var(--color-text-bright)]">Authorize Grok</strong>;
                 under <strong className="text-[var(--color-text-bright)]">Connect Grok as</strong>,
                 keep <strong className="text-[var(--color-text-bright)]">An agent</strong>{' '}
@@ -188,11 +188,11 @@ export default function GrokConnect() {
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">4.</span>
               <span>
                 Click <strong className="text-[var(--color-text-bright)]">Connect as an agent</strong>.
-                You land back in Grok, which now lists Contextspaces as
+                You land back in Grok, which now lists Equazia.ai as
                 connected. Hand it a task with{' '}
                 <strong className="text-[var(--color-text-bright)]">Delegate</strong> on a
                 document in one of those matters, then ask Grok to check its
-                Contextspaces tasks.
+                Equazia.ai tasks.
               </span>
             </li>
           </ol>
@@ -200,7 +200,7 @@ export default function GrokConnect() {
             Starting from a matter instead? Open the matter's{' '}
             <strong>Share</strong> dialog and choose{' '}
             <strong>Connect an agent to this matter</strong>: it shows these
-            steps and ticks that matter for you on the Contextspaces page.
+            steps and ticks that matter for you on the Equazia.ai page.
           </p>
         </section>
 
@@ -411,7 +411,7 @@ function NewTokenModal({ token, name, onClose }: { token: string; name: string; 
         In your client (the xAI API, or any HTTP MCP client), add a server
         with the URL below and send the token as{' '}
         <code className="text-xs">Authorization: Bearer …</code>. Name it{' '}
-        <em>Contextspaces</em>. grok.com does not take tokens; it connects by
+        <em>Equazia.ai</em>. grok.com does not take tokens; it connects by
         signing in.
       </p>
 

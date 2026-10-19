@@ -50,7 +50,7 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 // The same name the resident assistant carries everywhere else in
 // Contextspaces (src/components/ai/assistant-scope.ts ASSISTANT_NAME, and
 // lib/orchestrator-system.mjs). The meeting page labels its answers with it.
-const SYSTEM_INSTRUCTIONS = `You are the Orchestrator, the resident assistant inside Contextspaces, here in a live meeting.
+const SYSTEM_INSTRUCTIONS = `You are the Orchestrator, the resident assistant inside Equazia.ai, here in a live meeting.
 
 The user is in a live meeting and asks you questions on the side. They cannot read paragraphs — give tight, actionable answers.
 

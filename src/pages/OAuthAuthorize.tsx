@@ -280,7 +280,7 @@ export default function OAuthAuthorize() {
         <ul className="space-y-1 text-[12px] text-red-300/90 list-disc pl-5 mb-4">
           {paramErrors.map((e, i) => <li key={i}>{e}</li>)}
         </ul>
-        <Link to="/app" className="text-[12px] text-[#e8b84a] hover:underline">Back to Contextspaces</Link>
+        <Link to="/app" className="text-[12px] text-[#e8b84a] hover:underline">Back to Equazia.ai</Link>
       </Frame>
     );
   }
@@ -296,7 +296,7 @@ export default function OAuthAuthorize() {
           <Shield size={16} className="text-[#e8b84a]" /> Sign in to continue
         </h1>
         <p className="text-[12px] text-white/60 mb-5">
-          <span className="text-white">{clientName}</span> wants to access your Contextspaces matters. Sign in to your Contextspaces account first.
+          <span className="text-white">{clientName}</span> wants to access your Equazia.ai matters. Sign in to your Equazia.ai account first.
         </p>
         <form onSubmit={handleSignIn} className="space-y-3">
           <input
@@ -380,7 +380,7 @@ export default function OAuthAuthorize() {
         <Shield size={16} className="text-[#e8b84a]" /> Authorize {clientName}
       </h1>
       <p className="text-[13px] text-white/70 mb-4">
-        <span className="text-white font-medium">{clientName}</span> is requesting access to your Contextspaces account
+        <span className="text-white font-medium">{clientName}</span> is requesting access to your Equazia.ai account
         as <span className="text-[#e8b84a]">{user.email}</span>.
       </p>
       <p className="text-[11px] font-semibold text-white/60 uppercase tracking-wider mb-2">Connect {clientName} as</p>
@@ -478,9 +478,9 @@ export default function OAuthAuthorize() {
       </div>
       )}
       <p className="text-[11px] text-white/40 mb-4">
-        To end this access, revoke it under Connections in Contextspaces
+        To end this access, revoke it under Connections in Equazia.ai
         {connectAs === 'agent' ? ' (or revoke the agent under Connections › Agents)' : ''}, or remove the
-        Contextspaces connector in {clientName}.
+        Equazia.ai connector in {clientName}.
       </p>
       {submitError && (
         <p className="text-[12px] text-red-300 mb-3 flex items-start gap-1.5">
@@ -547,7 +547,7 @@ function Frame({ children }: { children: React.ReactNode }) {
       <div className="w-full max-w-lg rounded-2xl border border-[rgba(255,255,255,0.08)] p-6" style={{ backgroundColor: 'rgba(20,20,28,0.95)' }}>
         <div className="mb-6 text-center">
           <span className="text-[18px] font-semibold tracking-tight">
-            <span className="text-white">Context</span><span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>
+            <span className="inline-flex items-baseline leading-none text-white" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span>Equazia</span><span className="text-[#d4a054]">.ai</span></span>
           </span>
         </div>
         {children}

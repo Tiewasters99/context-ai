@@ -341,10 +341,10 @@ export async function runHandlerChecks({ db, check, makeUser, asOwner, asUser, m
     wrapped(form.mode === 'payment', "the pack session is mode 'payment' — a one-time charge, not a plan");
     wrapped(form['invoice_creation[enabled]'] === 'true',
       'invoice_creation is on, so Stripe issues a real invoice and not just a card receipt');
-    wrapped(form['line_items[0][price_data][product_data][description]'] === 'Contextspaces usage credits — Matter: Anlauf v. UKC',
+    wrapped(form['line_items[0][price_data][product_data][description]'] === 'Equazia.ai usage credits — Matter: Anlauf v. UKC',
       "the matter's NAME is on the line item, which is what a client pass-through rests on",
       form['line_items[0][price_data][product_data][description]']);
-    wrapped(form['invoice_creation[invoice_data][description]'] === 'Contextspaces usage credits — Matter: Anlauf v. UKC',
+    wrapped(form['invoice_creation[invoice_data][description]'] === 'Equazia.ai usage credits — Matter: Anlauf v. UKC',
       'and on the invoice itself');
     wrapped(form['metadata[matter_name]'] === 'Anlauf v. UKC' && form['metadata[matter_id]'] === ownMatter,
       'and in the metadata the webhook will snapshot into the ledger');

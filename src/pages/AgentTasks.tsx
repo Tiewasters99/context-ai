@@ -52,7 +52,7 @@ import { AddAgentCard, EditMattersCard, ALL_MATTERS_LABEL } from '@/components/a
 import { TaskDetail, TaskLine } from '@/components/agents/MatterTasks';
 
 export const AGENTS_PAGE_INTRO =
-  'Every AI connected to your Contextspaces, and every task you have handed one. An agent checks '
+  'Every AI connected to your Equazia.ai, and every task you have handed one. An agent checks '
   + 'for its tasks on its own. An assistant you chat with picks a task up when you ask it to check its tasks.';
 
 const RECENT_DAYS = 30;

@@ -36,11 +36,15 @@ function base64url(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// The origin comes from src/lib/site.ts (VITE_SITE_ORIGIN). The '.ts' extension
+// keeps this module importable by plain node (scripts/_test-claude-code-command.mjs).
+import { siteUrl } from './site.ts';
+
 // Canonical MCP endpoint URL — what users paste into their Claude client.
 // Use www explicitly: Vercel's apex -> www 307 redirect is auth-safe in a
 // browser but some MCP clients and curl -L variants drop the Authorization
 // header on cross-host redirects. Canonical URL sidesteps the ambiguity.
-export const MCP_ENDPOINT_URL = 'https://www.contextspaces.ai/api/mcp';
+export const MCP_ENDPOINT_URL = siteUrl('/api/mcp');
 
 // A ready-to-paste Claude Desktop HTTP MCP config block.
 export function claudeDesktopConfigSnippet(token: string): string {

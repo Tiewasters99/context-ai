@@ -187,7 +187,7 @@ async function ocrPackCheckout(req, res, user, body, fetchImpl) {
   const settings = await loadSettings({ fetchImpl });
   const origin = originFor(req);
   const currency = String(settings.currency || 'usd').toLowerCase();
-  const description = `Contextspaces OCR pack — ${Number(pack.pages).toLocaleString('en-US')} scanned pages`;
+  const description = `Equazia.ai OCR pack — ${Number(pack.pages).toLocaleString('en-US')} scanned pages`;
   const lineItem = pack.stripe_price_id
     ? { price: pack.stripe_price_id, quantity: 1 }
     : {

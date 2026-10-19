@@ -528,7 +528,7 @@ export default function TheOffice() {
           <p className="text-[13px] text-white/45 mt-1.5 max-w-xl">
             The public face of your workspace. Drag a document from the vault onto a shelf or a
             practice area and it appears — display-only — in your walkable office. The file itself
-            never leaves Contextspaces.{' '}
+            never leaves Equazia.ai.{' '}
             <a href="/api/office" target="_blank" rel="noopener" className="text-white/60 hover:text-[#e8b84a] inline-flex items-center gap-0.5">
               public manifest <ExternalLink size={11} />
             </a>

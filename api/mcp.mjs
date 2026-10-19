@@ -28,6 +28,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TOOLS, callTool } from '../lib/mcp-core.mjs';
+import { SITE_ORIGIN, SITE_NAME, siteUrl } from '../lib/site.mjs';
 import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 // The bearer check, the Supabase clients and the callTool options live in
@@ -70,7 +71,7 @@ const AGENT_INSTRUCTIONS =
 // 089: a chat assistant (Claude, ChatGPT, Gemini, Grok …) can be handed tasks
 // too. It never polls; it acts when its user asks.
 export const ASSISTANT_TASKS_INSTRUCTIONS =
-  ' TASKS: when the user asks you to check their Contextspaces tasks, call ' +
+  ' TASKS: when the user asks you to check their Equazia.ai tasks, call ' +
   'my_tasks, claim_task the one to do, do the work with the normal tools inside ' +
   'that task\'s matter, call ask_human if you are blocked, and finish with post_result.';
 
@@ -137,13 +138,13 @@ export default async function handler(req, res) {
       // stays as it was: clients may key saved connections on it.
       {
         name: 'contextspaces-retrieval',
-        title: 'Contextspaces',
+        title: SITE_NAME,
         version: '0.6.0',
-        websiteUrl: 'https://www.contextspaces.ai',
+        websiteUrl: SITE_ORIGIN,
         icons: [
-          { src: 'https://www.contextspaces.ai/contextspaces-mark.svg', mimeType: 'image/svg+xml', sizes: ['any'] },
-          { src: 'https://www.contextspaces.ai/icon-192.png', mimeType: 'image/png', sizes: ['192x192'] },
-          { src: 'https://www.contextspaces.ai/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] },
+          { src: siteUrl('/contextspaces-mark.svg'), mimeType: 'image/svg+xml', sizes: ['any'] },
+          { src: siteUrl('/icon-192.png'), mimeType: 'image/png', sizes: ['192x192'] },
+          { src: siteUrl('/icon-512.png'), mimeType: 'image/png', sizes: ['512x512'] },
         ],
       },
       {

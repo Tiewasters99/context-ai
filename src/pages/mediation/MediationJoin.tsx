@@ -31,7 +31,7 @@ export default function MediationJoin() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <PageHead
-        kicker="Contextspaces Mediation"
+        kicker="Equazia.ai Mediation"
         title="Join a mediation"
         lede="Enter the invite code the other side sent you to take your seat in the case room."
       />

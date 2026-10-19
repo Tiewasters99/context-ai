@@ -17,14 +17,14 @@ const changes = [
     pos: 0,
     before: 'It is important to note that the motion is complex.',
     after: 'The motion turns on one undisputed fact.',
-    status: 'open', author: 'The Contextspaces Editor',
+    status: 'open', author: 'The Equazia.ai Editor',
     note: 'obscure — throat-clearing asserts nothing (authority: principle 1)',
   },
   { // resolved (accepted) edit → clean text, no revision marks
     pos: MANUSCRIPT.indexOf('In conclusion, the implications resonate broadly.'),
     before: 'In conclusion, the implications resonate broadly.',
     after: 'The export was complete, and no party disputes it.',
-    status: 'resolved', author: 'The Contextspaces Editor',
+    status: 'resolved', author: 'The Equazia.ai Editor',
   },
   { // the lawyer's own insertion → tracked insertion under their name
     pos: MANUSCRIPT.indexOf('The record shows'),
@@ -75,7 +75,7 @@ test('the lawyer\'s insertion is a tracked insertion under their name', () => {
 });
 
 test('editor revisions carry the Editor\'s name', () => {
-  assert.ok(body.includes('w:author="The Contextspaces Editor"'));
+  assert.ok(body.includes('w:author="The Equazia.ai Editor"'));
 });
 
 test('the margin work-product rides as a Word comment', () => {

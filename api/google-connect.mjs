@@ -14,6 +14,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { signJwt } from '../lib/oauth-jwt.mjs';
+import { siteUrl } from '../lib/site.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -21,7 +22,8 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 // space or newline; that whitespace makes Google reject the credentials.
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 
-const REDIRECT_URI = 'https://www.contextspaces.ai/api/google-callback';
+// Must match api/google-callback.mjs exactly; both follow SITE_ORIGIN.
+const REDIRECT_URI = siteUrl('/api/google-callback');
 
 // One OAuth client, several integrations — the requested scope differs.
 //   gmail            — restricted tier (heavy verification)

@@ -60,7 +60,7 @@ export function Parchment({ head, body }: { head: string; body: string }) {
     <div className="mt-3 rounded-lg border border-[rgba(212,160,84,0.25)] bg-[rgba(212,160,84,0.04)] overflow-hidden">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgba(212,160,84,0.2)] text-[11px] uppercase tracking-wider text-[#d4a054]">
         <span>{head}</span>
-        <span>Contextspaces Mediation</span>
+        <span>Equazia.ai Mediation</span>
       </div>
       <div className="px-5 py-4 text-[13.5px] leading-relaxed text-white/85 whitespace-pre-wrap max-h-[32rem] overflow-y-auto">
         {body}

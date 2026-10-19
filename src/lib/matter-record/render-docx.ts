@@ -169,7 +169,7 @@ export function buildMatterRecordDocument(doc: MatterRecordDoc): Document {
   });
 
   return new Document({
-    creator: 'Contextspaces',
+    creator: 'Equazia.ai',
     title: doc.title,
     description: 'Matter Record — assembled from the matter’s append-only Record.',
     styles: {

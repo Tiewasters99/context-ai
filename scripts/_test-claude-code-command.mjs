@@ -90,12 +90,15 @@ test('a token is never mangled by the builder', () => {
 test('one URL constant, and only one — the page never hard-codes a second', () => {
   const count = (hay, needle) => hay.split(needle).length - 1;
 
+  // The origin lives in src/lib/site.ts (one default, overridable by
+  // VITE_SITE_ORIGIN); connectorTokens.ts builds the endpoint from it once.
   const lib = readFileSync(join(ROOT, 'src/lib/connectorTokens.ts'), 'utf8');
   assert.equal(
-    count(lib, URL_),
+    count(lib, "siteUrl('/api/mcp')"),
     1,
     'connectorTokens.ts should declare the endpoint exactly once',
   );
+  assert.equal(count(lib, 'https://'), 0, 'connectorTokens.ts holds no literal origin');
 
   // If a second literal ever appears in the page, the www caveat that the
   // constant carries stops applying to it, and the two drift apart.

@@ -63,7 +63,7 @@ export async function downloadMatterZip(
   const names = zipEntryNames(stored);
   const zip = new JSZip();
   let bytes = 0;
-  const manifest: string[] = [`${matter.name}`, `Exported from Contextspaces on ${new Date().toISOString().slice(0, 10)}`, `${stored.length} file(s)`, ''];
+  const manifest: string[] = [`${matter.name}`, `Exported from Equazia.ai on ${new Date().toISOString().slice(0, 10)}`, `${stored.length} file(s)`, ''];
   for (let i = 0; i < stored.length; i++) {
     if (opts.signal?.aborted) throw new Error('Stopped.');
     const r = stored[i];

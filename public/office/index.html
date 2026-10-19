@@ -263,7 +263,7 @@
   <h2>ACTIVE MATTERS</h2>
   <div class="mrule"></div>
   <ul id="mattersList"></ul>
-  <p class="mfoot">Full dockets live in the firm's Contextspaces.</p>
+  <p class="mfoot">Full dockets live in the firm's Equazia.ai.</p>
 </aside>
 
 <div id="hint">W&thinsp;A&thinsp;S&thinsp;D — walk&ensp;·&ensp;wheel — zoom&ensp;·&ensp;mouse — look<br>step into the golden ring</div>
@@ -582,7 +582,7 @@ function openInfo(page) {
         <div class="pname">${s.title.toUpperCase()}</div>
         ${s.items.map(it => `<button class="pdoc" data-book="${it.id}">${it.title}</button>`).join('')}
       </div>`).join('') +
-      `<p class="pfoot">Filed and shown from the firm's Contextspaces.</p>`;
+      `<p class="pfoot">Filed and shown from the firm's Equazia.ai.</p>`;
   } else {
     bodyEl.contentEditable = 'true';
     bodyEl.textContent = body;
@@ -616,10 +616,11 @@ const ORDER_STUDIES = Object.keys(STUDIES);
 // collection stands on its own.
 let DYN_SECTIONS = [];
 const DYN_BOOKS = new Map();
-// Same-origin when the office is hosted on contextspaces.ai itself
-// (the bundled copy at /office/); absolute for local builds and mirrors.
+// Same-origin when the office is hosted on our own domain (contextspaces.ai
+// today, equazia.ai after the move; the bundled copy at /office/); absolute
+// for local builds and mirrors.
 const MANIFEST_URL = new URLSearchParams(location.search).get('manifest')
-  || (location.hostname.endsWith('contextspaces.ai')
+  || (/(^|\.)(contextspaces|equazia)\.ai$/.test(location.hostname)
     ? '/api/office'
     : 'https://www.contextspaces.ai/api/office');
 
@@ -635,7 +636,7 @@ function shelfHTML(title, blurb, books) {
 }
 function renderShelves() {
   const dyn = DYN_SECTIONS.filter(s => s.kind === 'library' || s.kind === 'cle')
-    .map(s => shelfHTML(s.title, s.blurb || "Shown from the firm's Contextspaces.", s.items));
+    .map(s => shelfHTML(s.title, s.blurb || "Shown from the firm's Equazia.ai.", s.items));
   const builtin = ORDER_STUDIES.map(study =>
     shelfHTML(study, STUDIES[study], LIBRARY.filter(b => b.src === study)));
   document.getElementById('shelves').innerHTML = dyn.concat(builtin).join('');

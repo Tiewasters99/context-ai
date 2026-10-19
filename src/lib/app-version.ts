@@ -74,7 +74,7 @@ export const DISMISS_QUIET_MS = 30 * 60_000
 // ---------------------------------------------------------------------------
 
 export const NEWER_BUILD_LINE =
-  'A newer version of Contextspaces is available. Refresh when you are at a stopping point.'
+  'A newer version of Equazia.ai is available. Refresh when you are at a stopping point.'
 
 export const STALE_CHUNK_LINE = 'This tab is out of date — refresh to continue.'
 

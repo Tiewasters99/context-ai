@@ -274,8 +274,8 @@ const FEATURE_PHRASES: Record<string, string> = {
 /** "Bucketizer", "Cite-Check" — the surface a reader would recognise. */
 export function featureOwner(feature: unknown): string {
   const id = str(feature);
-  if (!id || id === 'unspecified') return 'A Contextspaces feature';
-  return FEATURE_OWNERS[id.split('.')[0]] ?? 'A Contextspaces feature';
+  if (!id || id === 'unspecified') return 'An Equazia.ai feature';
+  return FEATURE_OWNERS[id.split('.')[0]] ?? 'An Equazia.ai feature';
 }
 
 /** "classified a document" — what the call did. */

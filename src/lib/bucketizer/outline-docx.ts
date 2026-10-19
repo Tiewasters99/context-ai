@@ -396,7 +396,7 @@ export function buildOutlineDocument(model: OutlineModel): Document {
   });
 
   return new Document({
-    creator: 'Contextspaces',
+    creator: 'Equazia.ai',
     title: `${model.matter.title} — Trial Outline ${model.version}`,
     styles: {
       default: { document: { run: { font: TNR, size: SIZE_12 } } },
