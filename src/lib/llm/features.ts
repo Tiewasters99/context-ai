@@ -34,6 +34,10 @@ export const LLM_FEATURES = [
   'moot.converse',
   // The Video Room: a question put to the video model about a window of a recording.
   'video.interrogate',
+  // Trademark Clearance: the recipe's three judgment points (api/trademark.mjs).
+  'trademark.decompose',
+  'trademark.classes',
+  'trademark.triage',
 ] as const;
 
 export type LlmFeature = (typeof LLM_FEATURES)[number];

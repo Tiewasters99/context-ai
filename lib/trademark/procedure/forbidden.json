@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "about": "Phrases the product never prints: the reviewer decides, and the product reports hits flagged for review. Case-insensitive. Applied to every model output before it is stored, and to the assembled report before preview and filing. A hit blocks filing and shows the offending sentence.",
+  "phrases": [
+    { "phrase": "is clear", "why": "A knockout search cannot establish that a mark is clear; that is the reviewer's opinion to give, after a full search, in their own words." },
+    { "phrase": "are clear", "why": "As above, for a plural subject (\"the results are clear\")." },
+    { "phrase": "cleared", "why": "\"Cleared\" states a conclusion this recipe does not reach." },
+    { "phrase": "registrable", "why": "Registrability is decided by the USPTO examining attorney, not by a search." },
+    { "phrase": "available for registration", "why": "Availability is a legal conclusion; the report lists what was found and what was not searched." },
+    { "phrase": "safe to file", "why": "Filing advice is the reviewer's, outside this report." },
+    { "phrase": "will register", "why": "A knockout search does not support a prediction of registration." },
+    { "phrase": "no conflicts", "unlessFollowedBy": "identified for review", "within": 40, "why": "\"No conflicts\" alone reads as a conclusion; \"no conflicts identified for review\" says what the search found." }
+  ]
+}
