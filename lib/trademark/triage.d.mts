@@ -24,6 +24,8 @@ export function latestRuns<R extends RunLike>(runs: R[]): Map<string, R>;
 export function selfTestState(queries: QueryLike[], runs: RunLike[], expect?: number): 'passed' | 'failed' | 'not_run';
 export const SELF_TEST_FAILED_WARNING: string;
 export function isDead(hit: { live?: boolean | null; status?: string | null; status_text?: string | null }): boolean;
+export const HIT_LIMITS: Readonly<{ registration_number: number; mark: number; owner: number; status_text: number; goods_services: number }>;
+export function clampHit<T extends object>(h: T): T;
 export function collectHits(queries: QueryLike[], runs: RunLike[]): CollectedHit[];
 export function splitLiveDead<H extends HitLike>(hits: H[]): { live: H[]; dead: H[] };
 export function crowdedField(hits: HitLike[], opening: string, searchClasses: string[]): { count: number; serials: string[] };

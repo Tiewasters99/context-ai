@@ -83,6 +83,18 @@ test('the self-test: passed when Q0 captured exactly 1; failed otherwise; a re-r
   assert.equal(selfTestState(queries, runs.filter((r) => r.query_id !== 'q0')), 'not_run');
 });
 
+test('hits: text fields are clamped to the tm_hits limits (a 1,119-character wordmark in the real sweep)', () => {
+  const { queries } = buildFixture();
+  const long = 'ADA COBRA DOL EEOC ERISA '.repeat(60);
+  const runs = [{ id: 'rx', query_id: 'q7', run_at: '2026-10-18T10:00:00Z', source: 'export', reported_count: 1, captured_count: 1, gap: false,
+    raw: [{ serial: '77505378', mark: long, owner: 'Labnet, Inc.', status: 'Live', classes: ['016'], goods: 'x'.repeat(30000) }] }];
+  const [h] = collectHits(queries, runs);
+  assert.equal(h.mark.length, 500);
+  assert.ok(h.mark.endsWith('…'));
+  assert.equal(h.goods_services.length, 20000);
+  assert.equal(h.owner, 'Labnet, Inc.');
+});
+
 test('hits: deduplicated across runs by serial, with every query that found them; dead records split out', () => {
   const { queries, runs } = buildFixture();
   const hits = collectHits(queries, runs);
@@ -304,7 +316,9 @@ test('triage: the model is reached only through send, with the feature label; a 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].feature, 'trademark.triage');
   assert.equal(calls[0].body.model, 'claude-opus-5-5');
-  assert.equal(calls[0].body.tool_choice.type, 'tool');
+  assert.equal(calls[0].body.tool_choice.type, 'auto', 'a forced tool choice is refused by the provider for this model (verified 2026-10-19)');
+  assert.equal(calls[0].body.tools[0].name, 'propose_triage');
+  assert.match(calls[0].body.system, /Answer ONLY by calling the propose_triage tool/);
   assert.ok(!res.proposals.some((p) => p.serial === '99887921'), 'the "clear" proposal is not stored');
   assert.ok(res.discarded.some((d) => d.serial === '99887921' && /is clear/.test(d.reason)));
   assert.ok(res.discarded.some((d) => d.serial === '12345678'), 'a serial that was not asked about is discarded');
