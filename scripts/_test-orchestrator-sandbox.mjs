@@ -198,7 +198,7 @@ test('D. a download link in a note becomes a link run; only https; other markup 
   assert.ok(!runsOf('[x](javascript:alert(1)) [y](http://e.test)').some((r) => r.href), 'no link for a non-https target');
 });
 
-test('B. the last round may still propose one document task (a deck outlined over every round is not lost)', async () => {
+test('B. a sealed (OpenAI-style) last round keeps every tool declared and tool use off; a proposal there is not run', async () => {
   const bodies = [];
   const realFetch = globalThis.fetch;
   const deckRound = sse([
@@ -223,15 +223,12 @@ test('B. the last round may still propose one document task (a deck outlined ove
   } finally { globalThis.fetch = realFetch; }
   const last = bodies[bodies.length - 1];
   assert.ok(JSON.stringify(last).includes('SEARCH BUDGET USED'), 'the turn reached its final round');
-  assert.notEqual(last.tool_choice, 'none', 'tools stay callable on the final round while a proposal is possible');
-  assert.match(JSON.stringify(last), /you may still propose that ONE task/);
-  const finalTools = last.tools.map((t) => t.function.name);
-  assert.ok(finalTools.length > 0 && finalTools.every((n) => SANDBOX_ACTIONS.has(n)), `only proposals on the last round: ${finalTools}`);
-  assert.ok(!finalTools.includes('grep') && !finalTools.includes('search'), 'no more searching');
-  const confirms = events.filter((e) => e.type === 'confirm');
-  assert.equal(confirms.length, 1, 'the deck reaches the browser as a proposal');
-  assert.equal(confirms[0].action, 'create_deck');
-  assert.equal(confirms[0].input.matter, 'm-1', 'still filed in the bound sealed matter');
+  // The last-round proposal is Anthropic-only (verified live, T5): an
+  // OpenAI-style route must still declare the tools its history refers to.
+  assert.equal(last.tool_choice, 'none');
+  assert.doesNotMatch(JSON.stringify(last), /you may still propose that ONE task/);
+  assert.ok(last.tools.some((t) => t.function.name === 'grep'), 'the tools in the history stay declared');
+  assert.equal(events.filter((e) => e.type === 'confirm').length, 0, 'nothing proposed on a tool-less round');
   assert.ok(!events.some((e) => e.type === 'tool' && e.name === 'create_deck'), 'never run server-side');
 });
 
