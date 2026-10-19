@@ -1104,5 +1104,38 @@ console.log('\n--- sealed strict mode (lib/assistant-core.mjs) -----------------
 }
 
 // ---------------------------------------------------------------------------
+// The worker's byline. A caller with NO JWT — the discovery worker, service
+// role — may write a Record row only as actor 'system': the Video Room's
+// file.exported when a recording leaves for the video model
+// (lib/video-discovery/jobs.mjs). Anything else from a no-JWT caller is
+// refused, so a server-side path can never forge a person's byline.
+console.log('\n--- a no-JWT caller writes as system, and as nothing else ----------');
+await asService();
+{
+  const [w] = await q(
+    `select public.ledger_append(p_kind := 'file.exported', p_matter := $1,
+       p_actor_kind := 'system', p_actor_ref := 'discovery-worker', p_actor_label := 'Discovery worker',
+       p_payload := '{"document_id":"00000000-0000-4000-8000-000000000001","destination":"video-model","provider":"google","bytes":1200}'::jsonb) as r`,
+    [m1.id]);
+  check(w.r?.seq >= 1 && typeof w.r?.hash === 'string', 'no JWT, actor system: file.exported lands on the matter chain', `seq ${w.r?.seq}`);
+  const [row] = await q(
+    `select actor_kind, actor_ref, actor_user_id, kind, payload->>'destination' as dest from public.events where id = $1`, [w.r.id]);
+  check(row?.actor_kind === 'system' && row?.actor_ref === 'discovery-worker' && row?.actor_user_id === null,
+    'the row names the worker and carries NO user byline', JSON.stringify(row));
+  check(row?.dest === 'video-model', 'and says where the bytes went');
+  let err = null;
+  try {
+    await q(`select public.ledger_append(p_kind := 'file.exported', p_matter := $1, p_actor_kind := 'user', p_actor_ref := 'someone')`, [m1.id]);
+  } catch (e) { err = e; }
+  check(err && /authenticated caller/.test(err.message), 'no JWT, actor user: REFUSED — a service-role caller cannot forge a person', err?.message?.slice(0, 80));
+  err = null;
+  try {
+    await q(`select public.ledger_append(p_kind := 'completion.received', p_matter := $1, p_actor_kind := 'connector', p_actor_ref := 'x')`, [m1.id]);
+  } catch (e) { err = e; }
+  check(err && /authenticated caller/.test(err.message), 'no JWT, actor connector: REFUSED too');
+}
+await asSuperuser();
+
+// ---------------------------------------------------------------------------
 console.log(`\n${failures === 0 ? 'ALL CHECKS PASSED' : `${failures} CHECK(S) FAILED`}`);
 process.exit(failures === 0 ? 0 : 1);
