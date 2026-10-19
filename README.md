@@ -1,4 +1,4 @@
-# Context.ai
+# Equazia.ai
 
 Your workspace, simplified. A modern productivity platform for small to mid-size teams.
 

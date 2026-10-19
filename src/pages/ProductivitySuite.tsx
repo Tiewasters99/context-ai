@@ -41,7 +41,7 @@ const PRODUCTS: Product[] = [
     status: 'New',
   },
   {
-    name: 'The Contextspaces Editor',
+    name: 'The Equazia.ai Editor',
     tagline: 'Hand over any AI draft — brief, memo, letter. The Editor improves, clarifies and polishes until the writing is clear, direct and logical, and every change returns as a redline.',
     accent: '#c96852',
     to: '/app/editor',
@@ -135,7 +135,7 @@ export default function ProductivitySuite() {
     <div className="max-w-3xl mx-auto px-8 py-12">
       <h1 className="font-display text-[28px] tracking-tight text-white">Productivity Suite</h1>
       <p className="text-[13px] text-white/45 mt-1.5 mb-9">
-        Every room in Contextspaces, gathered in one place. Several are also standalone products at their own address.
+        Every room in Equazia.ai, gathered in one place. Several are also standalone products at their own address.
       </p>
       <div className="space-y-3">
         {planLoading

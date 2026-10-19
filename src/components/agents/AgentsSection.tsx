@@ -149,7 +149,7 @@ export function AddAgentCard({
         storageKey="cs.agents.addAgent"
         z={z}
         title={`${issued.name}: connection details`}
-        subtitle="The token is shown once. Copy it into the agent now; Contextspaces keeps only a fingerprint of it."
+        subtitle="The token is shown once. Copy it into the agent now; Equazia.ai keeps only a fingerprint of it."
         onClose={onClose}
         footer={
           <button

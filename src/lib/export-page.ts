@@ -169,7 +169,7 @@ export async function pageToDocxBlob(
   ];
 
   const doc = new Document({
-    creator: 'Contextspaces',
+    creator: 'Equazia.ai',
     title: title || 'Untitled Page',
     numbering: {
       config: [

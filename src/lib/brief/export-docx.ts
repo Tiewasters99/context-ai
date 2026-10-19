@@ -132,7 +132,7 @@ export function buildBriefDocument(doc: BriefDoc, title: string): Document {
   const children = blocks(boldHeadings(doc), ctx);
   return new Document({
     title,
-    creator: 'Contextspaces Brief Desk',
+    creator: 'Equazia.ai Brief Desk',
     styles: {
       default: {
         document: { run: { font: FONT, size: 24 } },

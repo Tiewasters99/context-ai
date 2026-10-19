@@ -254,7 +254,7 @@ export default function TextView() {
                 ←
               </button>
             )}
-            <Link to="/app" style={crumbLink}>Contextspaces</Link> ·{' '}
+            <Link to="/app" style={crumbLink}>Equazia.ai</Link> ·{' '}
             <Link to="/app/student-hub" style={crumbLink}>Student Hub</Link> ·{' '}
             <button
               type="button"

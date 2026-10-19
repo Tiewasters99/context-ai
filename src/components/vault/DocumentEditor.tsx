@@ -279,7 +279,7 @@ export default function DocumentEditor({ file, persistent, onClose, onSaved }: D
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[#e8b84a] hover:bg-[#e8b84a]/20 transition-colors disabled:opacity-40"
               title={tableError
                 ? `Could not open as a table: ${tableError}`
-                : 'Work on this spreadsheet in Contextspaces: sort, filter, edit, paste, and download it again as Excel or CSV. The original stays filed as it is.'}
+                : 'Work on this spreadsheet in Equazia.ai: sort, filter, edit, paste, and download it again as Excel or CSV. The original stays filed as it is.'}
             >
               {tabling ? <Loader2 size={13} className="animate-spin" /> : tableError ? <AlertCircle size={13} /> : <Table size={13} />}
               {tabling ? 'Opening…' : 'Open as table'}

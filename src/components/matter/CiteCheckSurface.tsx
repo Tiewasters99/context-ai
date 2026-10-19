@@ -255,15 +255,15 @@ export default function CiteCheckSurface({ matterId }: { matterId: string; matte
             <button
               type="button"
               onClick={openPicker}
-              aria-label="Browse Contextspaces"
-              title="Browse Contextspaces"
+              aria-label="Browse Equazia.ai"
+              title="Browse Equazia.ai"
               className="p-2 -m-2 rounded-lg text-white/30 group-hover:text-[#e8b84a] hover:bg-[#e8b84a]/10 transition-colors"
             >
               <FolderOpen size={22} strokeWidth={1.5} />
             </button>
             <p className="text-[15px] text-white/60">
               Drop a brief here, or{' '}
-              <button type="button" onClick={openPicker} className="text-[#e8b84a] hover:underline">browse Contextspaces</button>
+              <button type="button" onClick={openPicker} className="text-[#e8b84a] hover:underline">browse Equazia.ai</button>
             </p>
             <p className="text-[13px] text-white/30">
               or{' '}

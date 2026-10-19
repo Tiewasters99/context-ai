@@ -277,7 +277,7 @@ function ProviderSteps({ provider, matterName }: { provider: AgentProvider; matt
           <span className="block mt-1.5"><CopyUrl /></span>
         </span></li>
         <li className={step}><span className={num}>3.</span><span>
-          Grok opens a Contextspaces page. Sign in if it asks. {consent}
+          Grok opens an Equazia.ai page. Sign in if it asks. {consent}
         </span></li>
       </ol>
     );
@@ -294,7 +294,7 @@ function ProviderSteps({ provider, matterName }: { provider: AgentProvider; matt
           <span className="block mt-1.5"><CopyUrl /></span>
         </span></li>
         <li className={step}><span className={num}>2.</span><span>
-          {name} opens a Contextspaces page. Sign in if it asks. {consent}
+          {name} opens an Equazia.ai page. Sign in if it asks. {consent}
         </span></li>
       </ol>
     );
@@ -303,11 +303,11 @@ function ProviderSteps({ provider, matterName }: { provider: AgentProvider; matt
   return (
     <ol className="space-y-2 text-[12px] text-white/70 leading-relaxed">
       <li className={step}><span className={num}>1.</span><span className="flex-1 min-w-0">
-        Add Contextspaces to it with this address:
+        Add Equazia.ai to it with this address:
         <span className="block mt-1.5"><CopyUrl /></span>
       </span></li>
       <li className={step}><span className={num}>2.</span><span>
-        If it opens a Contextspaces page to sign in: {consent}
+        If it opens an Equazia.ai page to sign in: {consent}
       </span></li>
       <li className={step}><span className={num}>3.</span><span>
         If instead it asks for a key, create the agent here with the button below.
@@ -453,7 +453,7 @@ function ConnectAgentCard({
             </p>
           )}
           <p className="text-[11px] text-white/40 leading-relaxed">
-            Do this in this browser within 30 minutes: that is how the Contextspaces page knows which
+            Do this in this browser within 30 minutes: that is how the Equazia.ai page knows which
             matter to tick. You still confirm it there.
           </p>
           {provider === 'other' && (

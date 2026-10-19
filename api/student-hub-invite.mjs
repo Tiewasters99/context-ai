@@ -49,13 +49,14 @@
 import { createClient } from '@supabase/supabase-js';
 
 import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
+import { siteUrl } from '../lib/site.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const DEFAULT_FROM = 'Contextspaces Student Hub <invites@contextspaces.ai>';
-const HUB_URL = 'https://www.contextspaces.ai/app/student-hub';
+const DEFAULT_FROM = 'Equazia.ai Student Hub <invites@contextspaces.ai>';
+const HUB_URL = siteUrl('/app/student-hub');
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
 // Deliberately loose: the address only has to be shaped like one. The real
@@ -247,12 +248,12 @@ export async function chargeInvite(admin, { groupId, email, senderId }) {
 /** The invitation itself — plain words, no images, nothing to click but the Hub. */
 export function invitation({ inviter, groupName, textTitle, email }) {
   const on = textTitle ? ` on ${textTitle}` : '';
-  const subject = `${inviter} invited you to ${groupName} on Contextspaces`;
+  const subject = `${inviter} invited you to ${groupName} on Equazia.ai`;
 
   const text = [
-    `${inviter} has given you a seat in ${groupName}, a study group${on} in the Contextspaces Student Hub.`,
+    `${inviter} has given you a seat in ${groupName}, a study group${on} in the Equazia.ai Student Hub.`,
     '',
-    `A group holds six people, and one of those seats is yours. To take it, create a Contextspaces account with this address — ${email} — and the seat is waiting for you the moment you sign in.`,
+    `A group holds six people, and one of those seats is yours. To take it, create an Equazia.ai account with this address — ${email} — and the seat is waiting for you the moment you sign in.`,
     '',
     HUB_URL,
     '',
@@ -261,9 +262,9 @@ export function invitation({ inviter, groupName, textTitle, email }) {
 
   const html = `<div style="font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:1.6;color:#1C1B17;max-width:520px">
   <p style="margin:0 0 14px"><strong>${esc(inviter)}</strong> has given you a seat in
-    <strong>${esc(groupName)}</strong>, a study group${on ? ` on ${esc(textTitle)}` : ''} in the Contextspaces Student Hub.</p>
+    <strong>${esc(groupName)}</strong>, a study group${on ? ` on ${esc(textTitle)}` : ''} in the Equazia.ai Student Hub.</p>
   <p style="margin:0 0 14px">A group holds six people, and one of those seats is yours. To take it, create a
-    Contextspaces account with this address &mdash; <span style="font-family:Consolas,monospace;font-size:13px">${esc(email)}</span>
+    Equazia.ai account with this address &mdash; <span style="font-family:Consolas,monospace;font-size:13px">${esc(email)}</span>
     &mdash; and the seat is waiting for you the moment you sign in.</p>
   <p style="margin:0 0 18px"><a href="${HUB_URL}" style="color:#1F4D3A">${HUB_URL}</a></p>
   <p style="margin:0;color:#6E6A5E;font-size:14px">Inside, the group reads the same text together: ask a question of the

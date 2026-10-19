@@ -36,7 +36,7 @@ const FEATURES: { name: string; line: string }[] = [
     line: 'paste anything, upload a file, or scan a whole chapter; it takes its place on your shelf.',
   },
   {
-    name: 'File to Contextspaces',
+    name: 'File to Equazia.ai',
     line: 'any reading becomes a regular document in your own vault, searchable and reachable over MCP.',
   },
   {
@@ -141,7 +141,7 @@ const RESOURCES: { group: string; items: ResourceItem[] }[] = [
 
 const INTEGRATIONS: { name: string; status: string; line: string }[] = [
   {
-    name: 'Contextspaces',
+    name: 'Equazia.ai',
     status: 'available now',
     line: 'File any reading into your vault as a real document — indexed, searchable, connected to any '
       + 'LLM over MCP. More coming: covers from the library, prep sessions on your calendar, briefs on '
@@ -235,8 +235,8 @@ export default function HubMenu() {
     <div className="student-hub-root" style={{ background: T.paper, minHeight: '100%' }}>
       <HubStyles />
       <CaseCaption
-        kicker="Contextspaces · Student Hub"
-        crumbs={[{ label: 'Contextspaces', to: '/app' }, { label: 'Student Hub' }]}
+        kicker="Equazia.ai · Student Hub"
+        crumbs={[{ label: 'Equazia.ai', to: '/app' }, { label: 'Student Hub' }]}
         title="Student Hub"
         citation="The menu."
       />

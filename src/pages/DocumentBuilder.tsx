@@ -34,7 +34,7 @@ export default function DocumentBuilder() {
           </div>
           <p className="text-[14px] text-white/55 leading-relaxed mt-1">
             Compose finished documents from your sources, then export them or file
-            them into the right place in Contextspaces.
+            them into the right place in Equazia.ai.
           </p>
         </div>
       </div>
@@ -73,7 +73,7 @@ export default function DocumentBuilder() {
           <div className="flex-1 flex items-center gap-3 px-4 py-3.5 rounded-xl border border-[rgba(255,255,255,0.08)]">
             <FolderInput size={18} className="text-[#d4a054] shrink-0" strokeWidth={1.75} />
             <div>
-              <div className="text-[14px] text-white font-medium">File into Contextspaces</div>
+              <div className="text-[14px] text-white font-medium">File into Equazia.ai</div>
               <div className="text-[12.5px] text-white/45">Route to the appropriate matter or sub-matter.</div>
             </div>
           </div>

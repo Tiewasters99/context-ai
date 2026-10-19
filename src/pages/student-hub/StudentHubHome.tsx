@@ -187,9 +187,9 @@ export default function StudentHubHome() {
       <HubStyles />
       <CaseCaption
         backTo="/app/student-hub"
-        kicker="Contextspaces · Student Hub · The shelf"
+        kicker="Equazia.ai · Student Hub · The shelf"
         crumbs={[
-          { label: 'Contextspaces', to: '/app' },
+          { label: 'Equazia.ai', to: '/app' },
           { label: 'Student Hub', to: '/app/student-hub' },
           { label: 'The shelf' },
         ]}

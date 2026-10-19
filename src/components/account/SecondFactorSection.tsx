@@ -86,7 +86,7 @@ export default function SecondFactorSection() {
     const { data, error: err } = await supabase.auth.mfa.enroll({
       factorType: 'totp',
       friendlyName: uniqueName(name.trim() || 'Authenticator app'),
-      issuer: 'Contextspaces',
+      issuer: 'Equazia.ai',
     });
     setBusy(false);
     if (err || !data) {
@@ -125,7 +125,7 @@ export default function SecondFactorSection() {
       const text = String(err.message ?? '');
       setError(
         /disabled|not enabled|not supported/i.test(text)
-          ? 'Passkeys are not switched on for Contextspaces yet. An authenticator app works today.'
+          ? 'Passkeys are not switched on for Equazia.ai yet. An authenticator app works today.'
           : 'The passkey was not created. Try again, or use an authenticator app.',
       );
       return;

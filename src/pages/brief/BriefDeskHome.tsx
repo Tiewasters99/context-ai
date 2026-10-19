@@ -202,7 +202,7 @@ export default function BriefDeskHome() {
         <div className="mb-2">
           <MatterTreePick value={chosen?.id ?? null} onChange={(id) => { setMatterId(id); setErr(null); }} maxHeight={220} collapsible />
         </div>
-        <p className="text-[11px] text-white/40 mb-5">Choose the case itself, not a folder inside it: the brief is filed here whichever way it comes in (a file from this computer, a document from Contextspaces, a blank brief), and its cites are looked up in this matter and everything beneath it. On the desk, the cite table's header shows the matter searched, with “change”.</p>
+        <p className="text-[11px] text-white/40 mb-5">Choose the case itself, not a folder inside it: the brief is filed here whichever way it comes in (a file from this computer, a document from Equazia.ai, a blank brief), and its cites are looked up in this matter and everything beneath it. On the desk, the cite table's header shows the matter searched, with “change”.</p>
 
         <button
           type="button"
@@ -218,7 +218,7 @@ export default function BriefDeskHome() {
             isMobile ? (
             <>
               <FolderOpen size={22} className="mx-auto text-[#e8b84a] mb-2" />
-              <div className="text-[15px] text-white/90">Open a brief from Contextspaces</div>
+              <div className="text-[15px] text-white/90">Open a brief from Equazia.ai</div>
               <div className="text-[12px] text-white/45 mt-1">{chosen ? `The briefs filed in ${chosen.label}, or any document by name.` : 'Choose the case above first.'}</div>
               <div className="text-[11px] text-white/30 mt-1">Word (.docx), Markdown or text.</div>
             </>
@@ -257,7 +257,7 @@ export default function BriefDeskHome() {
               onClick={openPicker}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/[0.1] text-[12px] text-white/80 hover:bg-white/[0.05] disabled:opacity-40"
             >
-              <FolderOpen size={13} /> From Contextspaces
+              <FolderOpen size={13} /> From Equazia.ai
             </button>
           )}
           <button
@@ -327,7 +327,7 @@ export default function BriefDeskHome() {
 
       {picking && (
         <CorpusDocumentPicker
-          title="Bring a brief in from Contextspaces"
+          title="Bring a brief in from Equazia.ai"
           rootMatterId={chosen?.id}
           // The desk reads the FILE (Word, Markdown, text) — a document just
           // filed can come in before the worker has read it for search. A PDF

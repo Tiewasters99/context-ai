@@ -975,7 +975,7 @@ function fanout(matterId, payloadOver = {}) {
   check(inAppOnly.doc.accountWideReads === 2 && inAppOnly.doc.accountWideByConnector === 0,
     'two in-app account-wide reads, none of them a connector’s',
     `${inAppOnly.doc.accountWideReads}/${inAppOnly.doc.accountWideByConnector}`);
-  check(inAppOnly.md.includes('2 searches run from inside Contextspaces across every matter'),
+  check(inAppOnly.md.includes('2 searches run from inside Equazia.ai across every matter'),
     'so the sentence says where they were run from, and does NOT say "connected assistant"');
   check(!inAppOnly.md.split('### Account-wide activity')[1].split('##')[0].includes('connected assistant'),
     'the section names no connector at all when no row recorded one');
@@ -983,7 +983,7 @@ function fanout(matterId, payloadOver = {}) {
   const mixed = await only([...sampleEvents(), fanout(PARENT), inApp(CHILD_B)]);
   check(mixed.doc.accountWideReads === 2 && mixed.doc.accountWideByConnector === 1,
     'one of each is counted as one of each');
-  check(mixed.md.includes('2 searches run by a connected assistant or from inside Contextspaces'),
+  check(mixed.md.includes('2 searches run by a connected assistant or from inside Equazia.ai'),
     'and the sentence names both, because both happened');
 
   const connectorOnly = await only([...sampleEvents(), fanout(PARENT)]);

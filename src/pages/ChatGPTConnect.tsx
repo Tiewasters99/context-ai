@@ -34,6 +34,7 @@ import {
 import CardDialog from '@/components/ui/CardDialog';
 import StepUpPrompt from '@/components/account/StepUpPrompt';
 import { createUserConnectorToken, isStepUpRequired } from '@/lib/connector-token-create';
+import { SITE_HOST } from '@/lib/site';
 
 interface TokenRow {
   id: string;
@@ -124,7 +125,7 @@ export default function ChatGPTConnect() {
             Connect to ChatGPT
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            Wire Contextspaces into{' '}
+            Wire Equazia.ai into{' '}
             <strong className="text-[var(--color-text-bright)]">ChatGPT</strong>{' '}
             as a custom connector. Once connected, GPT can search your
             matters, pull pincites from your Vault, and cite them while you
@@ -138,7 +139,7 @@ export default function ChatGPTConnect() {
                 ChatGPT doesn't use a pasted token.
               </strong>{' '}
               Unlike Grok and Gemini, OpenAI's connector only speaks OAuth —
-              it signs you in to Contextspaces in a browser window and holds
+              it signs you in to Equazia.ai in a browser window and holds
               the credential itself. There is nothing to copy. Skip straight to
               the steps below; the token section further down is only for
               calling GPT through the OpenAI API.
@@ -151,8 +152,8 @@ export default function ChatGPTConnect() {
           <div className="mt-4 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">On a phone, or setting up a client?</strong>{' '}
             The connector below only works in ChatGPT on a computer. The{' '}
-            <Link to="/gpt-connect" className="text-[var(--color-primary)] underline underline-offset-2">Contextspaces GPT</Link>{' '}
-            runs in the ChatGPT iPhone and Android apps with nothing to enable: open it, sign in to Contextspaces once, ask.
+            <Link to="/gpt-connect" className="text-[var(--color-primary)] underline underline-offset-2">Equazia.ai GPT</Link>{' '}
+            runs in the ChatGPT iPhone and Android apps with nothing to enable: open it, sign in to Equazia.ai once, ask.
             Setting the GPT up (account owner): <Link to="/app/connections/gpt-client" className="text-[var(--color-primary)] underline underline-offset-2">mint its OAuth client</Link>.
           </div>
         </header>
@@ -184,7 +185,7 @@ export default function ChatGPTConnect() {
                 and choose{' '}
                 <strong className="text-[var(--color-text-bright)]">Create</strong>{' '}
                 (or <em>Add custom connector</em>). Name it{' '}
-                <em>Contextspaces</em> and paste the endpoint URL below into the{' '}
+                <em>Equazia.ai</em> and paste the endpoint URL below into the{' '}
                 <strong className="text-[var(--color-text-bright)]">MCP Server URL</strong> field.
               </span>
             </li>
@@ -196,7 +197,7 @@ export default function ChatGPTConnect() {
                 to <strong className="text-[var(--color-text-bright)]">OAuth</strong> —
                 not "No authentication" — and click{' '}
                 <strong className="text-[var(--color-text-bright)]">Create</strong>. ChatGPT
-                registers itself with Contextspaces automatically and opens a
+                registers itself with Equazia.ai automatically and opens a
                 sign-in window. Sign in and approve access.
               </span>
             </li>
@@ -206,13 +207,13 @@ export default function ChatGPTConnect() {
                 In any chat, open the{' '}
                 <strong className="text-[var(--color-text-bright)]">+ → More</strong>{' '}
                 menu and enable{' '}
-                <strong className="text-[var(--color-text-bright)]">Contextspaces</strong>. Ask
+                <strong className="text-[var(--color-text-bright)]">Equazia.ai</strong>. Ask
                 it to <em>list my matters</em> to confirm the tools are live.
               </span>
             </li>
           </ol>
           <p className="text-xs text-[var(--color-text-muted)] mt-5 leading-relaxed">
-            Start every session with <em>list my matters</em>: the Contextspaces
+            Start every session with <em>list my matters</em>: the Equazia.ai
             tools are matter-scoped, so GPT needs a matter before it can search.
             Note that ChatGPT's separate <strong>Deep research</strong> connector
             picker expects a narrower <code>search</code>/<code>fetch</code> tool
@@ -236,7 +237,7 @@ export default function ChatGPTConnect() {
           </div>
           <p className="text-xs text-[var(--color-text-muted)] mt-3 leading-relaxed">
             Use the <code>www.</code> host exactly as shown. The bare
-            <code> contextspaces.ai</code> apex redirects, and some MCP clients
+            <code> {SITE_HOST.replace(/^www\./, '')}</code> apex redirects, and some MCP clients
             drop credentials across a cross-host redirect.
           </p>
         </div>
@@ -248,10 +249,10 @@ export default function ChatGPTConnect() {
           ChatGPT carries your own access: every matter your account can open,
           and never a SecureSpace. To limit it to certain matters, choose{' '}
           <strong className="text-[var(--color-text-bright)]">An agent</strong>{' '}
-          on the Contextspaces sign-in page in step 3 and tick them; you can
+          on the Equazia.ai sign-in page in step 3 and tick them; you can
           change them later under{' '}
           <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">Connections › Agents</Link>. To end its access, revoke
-          it in Contextspaces under{' '}
+          it in Equazia.ai under{' '}
           <Link to="/app/connections" className="text-[var(--color-primary)] hover:underline">Connections › Approved AI clients</Link>,
           or remove the connector in ChatGPT's connector settings.
         </div>
@@ -265,7 +266,7 @@ export default function ChatGPTConnect() {
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
             The ChatGPT app can't take a token — but the OpenAI API can. The
             Responses API's <code>mcp</code> tool accepts arbitrary headers, so
-            a connector token plugs Contextspaces into your own scripts and
+            a connector token plugs Equazia.ai into your own scripts and
             agents. Generate one below.
           </p>
 

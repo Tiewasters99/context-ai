@@ -27,7 +27,7 @@ export const FIRST_RUN_COPY = {
   heading: 'Where to start',
 
   intro:
-    'Contextspaces keeps one matter’s documents in one place, answers questions from them, ' +
+    'Equazia.ai keeps one matter’s documents in one place, answers questions from them, ' +
     'and records how AI was used on the matter. Six steps — each one opens what it names.',
 
   /** The quiet text control that puts the list away for good. */

@@ -25,6 +25,8 @@ h1 {
   letter-spacing: 0.01em;
 }
 
+h1 .tld { color: #d4a054; }
+
 p { margin: 0 0 12px; }
 .muted { color: var(--muted); }
 .small { font-size: 11.5px; }

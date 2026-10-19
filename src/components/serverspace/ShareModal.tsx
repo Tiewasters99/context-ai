@@ -21,6 +21,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import CardDialog from '@/components/ui/CardDialog';
 import { CAN_POST_LABEL, SHARE_CAN_POST_NOTE } from '@/lib/conversations';
+import { SITE_HOST } from '@/lib/site';
 import MatterAgentsSection from '@/components/agents/MatterAgentsSection';
 
 type Scope = 'serverspace' | 'matterspace';
@@ -181,7 +182,7 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
         throw new Error(rpcErr.message);
       }
       if (!profile) {
-        setFormError(`No Contextspaces account for ${trimmed}. Have them sign up at contextspaces.ai first, then add them here.`);
+        setFormError(`No Equazia.ai account for ${trimmed}. Have them sign up at ${SITE_HOST} first, then add them here.`);
         return;
       }
       const foundId = profile.id;
@@ -239,7 +240,7 @@ export default function ShareModal({ scope, scopeId, scopeName, onClose }: Share
       footerClassName="px-6 py-3 text-[10px] text-white/40 text-center"
       footer={
         <>
-          New members must already have a Contextspaces.ai account.
+          New members must already have an Equazia.ai account.
           {scope === 'matterspace' && ' Sub-matters under this one inherit your access automatically.'}
         </>
       }

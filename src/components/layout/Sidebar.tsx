@@ -442,7 +442,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
       <div className="flex items-center justify-between px-4 h-13 border-b border-[rgba(255,255,255,0.06)]">
         {!collapsed && (
           <span className="text-[15px] font-semibold text-white tracking-tight">
-            Context<span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>
+            <span className="inline-flex items-baseline leading-none" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span>Equazia</span><span className="text-[#d4a054]">.ai</span></span>
           </span>
         )}
         {!isMobile && (
@@ -793,7 +793,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               ? 'bg-[#16161d] text-white font-medium'
               : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
           }`}
-          title="Connect Contextspaces to Claude, Gmail, and more"
+          title="Connect Equazia.ai to Claude, Gmail, and more"
         >
           <Plug size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Connections</span>}

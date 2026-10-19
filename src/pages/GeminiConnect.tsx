@@ -118,7 +118,7 @@ export default function GeminiConnect() {
             Connect to Gemini
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            Wire Contextspaces into Google's Gemini models via the{' '}
+            Wire Equazia.ai into Google's Gemini models via the{' '}
             <strong className="text-[var(--color-text-bright)]">Antigravity CLI</strong>
             {' '}— Google's unified terminal agent (the rebranded successor to
             the Gemini CLI). Once connected you can ask Gemini to read your
@@ -127,7 +127,7 @@ export default function GeminiConnect() {
           </p>
           <div className="mt-5 max-w-2xl rounded-lg border border-[#f0c850]/35 bg-[#f0c850]/5 px-4 py-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Not yet verified by us.</strong>{' '}
-            Contextspaces speaks one protocol to every client, and Claude and
+            Equazia.ai speaks one protocol to every client, and Claude and
             ChatGPT both reach it. But nobody here has completed a round trip
             from Gemini to a working list of your matters, so treat the steps
             below as what the protocol requires rather than as a walkthrough
@@ -147,7 +147,7 @@ export default function GeminiConnect() {
           <div className="mt-7 max-w-2xl rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
             <strong className="text-[var(--color-text-bright)]">Permissions.</strong>{' '}
             A token made on this page carries your own access — no more, no
-            less: whatever your Contextspaces account can open, a client
+            less: whatever your Equazia.ai account can open, a client
             holding the token can open, except matters kept in a SecureSpace,
             which are invisible to every outside connector. It can read,
             search, file new documents and organise them; it cannot delete a
@@ -202,7 +202,7 @@ export default function GeminiConnect() {
                 — yes, the folder is still <code className="font-mono">.gemini</code>{' '}
                 (Antigravity reuses Gemini's config root). Paste the JSON
                 snippet from the dialog's <em>Advanced</em> section, save, and
-                run <code className="font-mono">agy</code>. Contextspaces tools
+                run <code className="font-mono">agy</code>. Equazia.ai tools
                 are live in any agy session.
               </span>
             </li>

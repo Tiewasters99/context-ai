@@ -15,6 +15,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { verifyJwt } from '../lib/oauth-jwt.mjs';
 import { encrypt } from '../lib/connections-crypto.mjs';
+import { siteUrl } from '../lib/site.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,8 +25,10 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GOOGLE_CLIENT_ID = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
 const GOOGLE_CLIENT_SECRET = (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
 
-const REDIRECT_URI = 'https://www.contextspaces.ai/api/google-callback';
-const APP_CONNECTIONS = 'https://www.contextspaces.ai/app/connections';
+// Registered in Google Cloud → Credentials → the OAuth client's redirect URIs.
+// It follows SITE_ORIGIN (lib/site.mjs); register the new value before moving it.
+const REDIRECT_URI = siteUrl('/api/google-callback');
+const APP_CONNECTIONS = siteUrl('/app/connections');
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {

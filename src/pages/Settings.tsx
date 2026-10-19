@@ -26,7 +26,7 @@ export default function Settings() {
       <h1 className="text-2xl font-semibold text-[var(--color-text)]">Settings</h1>
       {enrolRequired && (
         <p className="mt-3 text-sm text-[#f0dfa8]">
-          Your account needs a second factor before the rest of Contextspaces opens. Add one below —
+          Your account needs a second factor before the rest of Equazia.ai opens. Add one below —
           it takes a minute.
         </p>
       )}

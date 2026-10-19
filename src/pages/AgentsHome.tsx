@@ -112,12 +112,12 @@ export default function AgentsHome() {
             On duty
           </h2>
           <p className="text-[12px] text-white/40 mb-3 leading-relaxed">
-            The agents that come with Contextspaces. Ask any of them a question and it answers under
+            The agents that come with Equazia.ai. Ask any of them a question and it answers under
             its own charter, with only the tools that charter names.
           </p>
           <OnDutyDocket />
           <p className="text-[11.5px] text-white/35 mt-3 leading-relaxed">
-            None of these is on a schedule. There is no scheduler in Contextspaces yet, so a row that
+            None of these is on a schedule. There is no scheduler in Equazia.ai yet, so a row that
             says “not yet scheduled” means exactly that — it has not run and will not run on its own.
           </p>
         </section>
