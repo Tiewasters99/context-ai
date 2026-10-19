@@ -293,6 +293,12 @@ export async function recordRun(b: ClearanceBundle, query: TmQuery, input: RunIn
     export_document_id: input.exportDocumentId ?? null, run_by,
   });
   if (error) fail(error, 'Could not record the run.');
+  // The Record entry goes in as soon as the run row exists: a failure in the
+  // hits step below (seen 2026-10-19 on a 1,119-character wordmark) must not
+  // leave a recorded run with no event behind it.
+  await recordTm('tm.query.run', b.clearance.matterspace_id, {
+    clearance_id: b.clearance.id, seq: query.seq, reported: input.reported, captured: s.captured, gap: s.gap, source: input.source,
+  });
 
   const runs: TmRun[] = [...b.runs, {
     id: runId, query_id: query.id, run_at: new Date().toISOString(), run_by, source: input.source,
@@ -309,9 +315,6 @@ export async function recordRun(b: ClearanceBundle, query: TmQuery, input: RunIn
     await supabase.from('tm_clearances').update({ self_test_passed: input.source !== 'failed' && s.captured === 1 })
       .eq('id', b.clearance.id);
   }
-  await recordTm('tm.query.run', b.clearance.matterspace_id, {
-    clearance_id: b.clearance.id, seq: query.seq, reported: input.reported, captured: s.captured, gap: s.gap, source: input.source,
-  });
 }
 
 /** File an export into the matter; its document id goes on the run. */
