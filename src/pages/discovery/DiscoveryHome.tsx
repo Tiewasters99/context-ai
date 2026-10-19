@@ -19,6 +19,7 @@ import FloatingPanel from './FloatingPanel';
 import { AddDocumentsStep } from './AddDocuments';
 import ReviewTab from './ReviewTab';
 import PrivilegeLogTab from './PrivilegeLogTab';
+import VideoTab from './VideoTab';
 
 // Discovery home for a matter: the production ledger. Reached at
 // /app/discovery?matter=<short_code|uuid> — same matter-context convention
@@ -30,8 +31,8 @@ export default function DiscoveryHome() {
   // Productions (the ledger), Review (every document in the matter, R1) or
   // the matter's privilege log (R3).
   const tabParam = searchParams.get('tab');
-  const tab = tabParam === 'review' ? 'review' : tabParam === 'privlog' ? 'privlog' : 'productions';
-  const setTab = (t: 'productions' | 'review' | 'privlog') => {
+  const tab = tabParam === 'review' ? 'review' : tabParam === 'privlog' ? 'privlog' : tabParam === 'video' ? 'video' : 'productions';
+  const setTab = (t: 'productions' | 'review' | 'privlog' | 'video') => {
     const next = new URLSearchParams(searchParams);
     if (t === 'productions') next.delete('tab'); else next.set('tab', t);
     setSearchParams(next, { replace: true });
@@ -215,7 +216,7 @@ export default function DiscoveryHome() {
 
         {matter && (
           <div className="flex items-center gap-1 mb-4 border-b border-white/[0.08]">
-            {(['productions', 'review', 'privlog'] as const).map((t) => (
+            {(['productions', 'review', 'privlog', 'video'] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -225,18 +226,20 @@ export default function DiscoveryHome() {
                     : 'border-transparent text-white/50 hover:text-white/80'
                 }`}
               >
-                {t === 'productions' ? 'Productions' : t === 'review' ? 'Review' : 'Privilege log'}
+                {t === 'productions' ? 'Productions' : t === 'review' ? 'Review' : t === 'privlog' ? 'Privilege log' : 'Video'}
               </button>
             ))}
             <span className="ml-auto text-[11px] text-white/35 pb-1">
               {tab === 'review' ? 'Every document in the matter. Tags here stay with the document.'
-                : tab === 'privlog' ? 'One entry per document tagged Privileged, used by every production.' : ''}
+                : tab === 'privlog' ? 'One entry per document tagged Privileged, used by every production.'
+                : tab === 'video' ? 'Every recording filed in the matter; each opens its Video Room.' : ''}
             </span>
           </div>
         )}
 
         {matter && tab === 'review' && <ReviewTab matterId={matter.id} onProduced={() => { setTab('productions'); void refresh(); }} />}
         {matter && tab === 'privlog' && <PrivilegeLogTab matterId={matter.id} matterName={matter.name} />}
+        {matter && tab === 'video' && matterKey && <VideoTab matterId={matter.id} matterKey={matterKey} />}
 
         {tab === 'productions' && (<>
         {loadError && <p className="text-sm text-red-300 mb-3">{loadError}</p>}

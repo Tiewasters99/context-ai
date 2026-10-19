@@ -28,6 +28,8 @@ const SOURCES_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'cite-check', 
 // so the in-app Assistant works under `vite dev` without `vercel dev`.
 const ASSISTANT_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'lib', 'assistant-core.mjs')).href;
 const SANDBOX_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'sandbox.mjs')).href;
+// Dev shim target for the /api/video-discovery Vercel function (the Video Room).
+const VIDEO_DISCOVERY_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'video-discovery.mjs')).href;
 
 interface ProviderRoute {
   url: (model: string) => string;
@@ -214,6 +216,20 @@ export default function llmProxy(): Plugin {
         try { body = raw ? JSON.parse(raw) : {}; } catch { /* the handler answers a bad body */ }
         const { default: handler } = await import(SANDBOX_MODULE_URL);
         await handler(Object.assign(req, { body }), res);
+      });
+
+      // Dev shim for the /api/video-discovery Vercel function (the Video Room,
+      // migration 119): the same handler module production runs, under
+      // `vite dev`. It reads GOOGLE_API_KEY and the Supabase keys from
+      // process.env like the function does.
+      server.middlewares.use('/api/video-discovery', async (req, res) => {
+        try {
+          const mod = await import(VIDEO_DISCOVERY_MODULE_URL);
+          await mod.default(req, res);
+        } catch (err: unknown) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'video_discovery_failed', message: err instanceof Error ? err.message : String(err) }));
+        }
       });
 
       // Dev shim for the /api/assistant Vercel function: runs the in-app

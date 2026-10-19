@@ -6,10 +6,15 @@
 // this copy — showing page 1"). A cite with two copies in the matter offers
 // both; a cite not in the corpus says so and offers the matter's search, and
 // nothing else (B4).
+//
+// The Reader lights the language the brief relies on at the pincite (10-16),
+// and the line under the caveat says what that light is: the brief's quote
+// found exactly, the closest sentence (never presented as a quote), a
+// deposition's lines, or nothing — so a guess is never read as a match.
 
 import { useState } from 'react';
 import { ArrowLeft, BookOpen, Search, X, Check, AlertTriangle } from 'lucide-react';
-import DocumentReader, { type ReaderGoto } from '@/pages/DocumentReader';
+import DocumentReader, { type ReaderGoto, type ReaderReliedResult } from '@/pages/DocumentReader';
 import type { DeskEntry } from '@/lib/brief/anchor';
 import { caseNameOf } from '@/lib/brief/resolve';
 import { findQueryFor } from '@/lib/brief/find-query';
@@ -57,6 +62,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved' | 'note'>(false);
   const [problemNote, setProblemNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [relied, setRelied] = useState<ReaderReliedResult | null>(null);
   const press = async (status: ConfirmationStatus, note = '') => {
     if (!onConfirm || busy) return;
     setBusy(true);
@@ -93,6 +99,11 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.docTitle && <div className="text-[11px] text-white/45 truncate">{state.docTitle}</div>}
         {state.stale && <div className="text-[11px] text-[#e8b84a] mt-0.5">Changed since the check — Confirm to re-check it.</div>}
         {state.caveat && state.docId && <div className="text-[11px] text-orange-200/80 mt-0.5">{state.caveat}</div>}
+        {state.docId && state.goto?.relied && relied && relied.nonce === state.goto.nonce && (
+          <div className={`text-[11px] mt-0.5 ${relied.lit && relied.basis !== 'closest' ? 'text-[#f5dc6a]/90' : 'text-orange-200/80'}`} data-testid="pane-relied">
+            {reliedLine(relied, !!state.goto.relied.depo, !state.goto.relied.claim.trim() && !state.goto.relied.quotes.length)}
+          </div>
+        )}
         {/* The human check (103): with a cite open at its page, one press logs it with initials. */}
         {state.cite && state.docId && onConfirm && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5" data-testid="pane-confirm">
@@ -170,7 +181,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         <div className="flex-1 min-h-0">
           {/* The Reader's own ✕ closes the pane: embedded without onClose it
               did nothing (Eden, 10-02: "the x button is not working"). */}
-          <DocumentReader key={state.docId} id={state.docId} embedded chrome="pane" goto={state.goto ?? undefined} onClose={onClose} />
+          <DocumentReader key={state.docId} id={state.docId} embedded chrome="pane" goto={state.goto ?? undefined} onClose={onClose} onRelied={setRelied} />
         </div>
       </Frame>
     );
@@ -236,4 +247,22 @@ function Frame({ children }: { children: React.ReactNode }) {
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="p-4 text-[13px] text-white/60 leading-relaxed">{children}</p>;
+}
+
+/** The line under the caveat: what the yellow on the page is, in words. */
+function reliedLine(r: ReaderReliedResult, depo: boolean, noWords: boolean): string {
+  if (r.basis === 'none') {
+    if (noWords && !depo) return 'The desk has no words of the brief for this cite (it was not placed in the text), so nothing is lit. Read the page.';
+    return depo
+      ? 'The cited lines are not in this page’s text — nothing is lit. Read the page.'
+      : 'Nothing on this page matches the brief’s words closely enough to light. Read the page.';
+  }
+  if (!r.lit) {
+    return r.noTextLayer
+      ? 'This page is a scan with no text layer, so nothing can be lit. Read the page.'
+      : 'The words were found in the index but not on the page as shown — nothing is lit. Read the page.';
+  }
+  if (r.basis === 'quote') return 'Lit: the words the brief quotes, found exactly.';
+  if (r.basis === 'lines') return `Lit: transcript lines ${r.detail ?? ''}.`.replace(' .', '.');
+  return `Lit: the closest sentence to the brief’s (${r.detail ?? 'some words'} shared) — not a quote. Read around it.`;
 }

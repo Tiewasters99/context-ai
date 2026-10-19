@@ -127,6 +127,15 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-privilege-entries.mjs
 
+      # Migration 120 — the Model Comparator. Real roles and RLS: the key (who
+      # made each candidate) cannot be read before the reveal, the reveal needs
+      # a grade card on every candidate, everything freezes after it, and the
+      # Record's vocabulary is EVENT_KINDS exactly. Here, with the PGlite steps:
+      # the jsdom installs below prune PGlite.
+      - name: Model Comparator — blind key, grade cards, reveal (migration 120, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-comparator-120.mjs
+
       - name: Discovery — production links, the table and its rules (migration 115, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-share-links-115.mjs
@@ -452,6 +461,13 @@ jobs:
       - name: Reader — text anchors for marks on documents without pages
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-text-anchor.mjs
+
+      # The Comparison notes are a pure function (grades + margin notes in,
+      # Markdown out), and add_comparison_candidate files a candidate blind.
+      # Both offline: the action runs against a stub Supabase client.
+      - name: Model Comparator — the Comparison notes template and the add-candidate action (node --test)
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-comparator.mjs
 
       # Migration 067 executed against PGlite on top of the REAL 062 and 063,
       # then the real billing handlers driven against that database with Stripe
@@ -843,6 +859,17 @@ jobs:
         run: |
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-agent-scope-all.mjs
+
+      # Migration 118: 'meta' joins the agent providers (a label only). Runs
+      # the chain to 088, then 118 twice: the column rule takes 'meta', the
+      # consent write stores it, oauth_grant_approve keeps its signature and
+      # grants after the in-place patch, and 118 refuses to patch a function
+      # whose provider list is not where it expects.
+      - name: Migration 118 — Meta as an agent provider (PGlite)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-agent-provider-meta.mjs
 
       # Migration 089: a task can go to ANY connected AI — an agent token, a
       # full-access user token, or a full-assistant OAuth sign-in. Executes
