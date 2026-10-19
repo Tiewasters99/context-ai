@@ -11,7 +11,7 @@
 //   node scripts/ocr-scanned.mjs --matter fleming --dry-run
 //   node scripts/ocr-scanned.mjs --matter fleming --limit 1        (validate one)
 //   node scripts/ocr-scanned.mjs --matter fleming                  (full run)
-//   node scripts/ocr-scanned.mjs --matter fleming --model gemini-2.5-pro
+//   node scripts/ocr-scanned.mjs --matter fleming --model gemini-3.1-pro-preview
 //
 // Env (./.env): VITE_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY, GOOGLE_API_KEY
 
@@ -38,7 +38,7 @@ const DRY = !!args['dry-run'];
 // OCR key only needed for a real run; --dry-run just reports dedup stats.
 const GOOGLE_API_KEY = DRY ? (process.env.GOOGLE_API_KEY || '') : requireEnv('GOOGLE_API_KEY');
 const LIMIT = args.limit ? parseInt(args.limit, 10) : Infinity;
-const MODEL = args.model || 'gemini-2.5-flash';
+const MODEL = args.model || 'gemini-3.8-flash';
 if (!args.matter) die('Missing --matter');
 
 const matter = await resolveMatter(args.matter);

@@ -610,7 +610,8 @@ function usageFromResponse(text, provider) {
     return { input: j.usage.prompt_tokens || 0, output: j.usage.completion_tokens || 0 };
   }
   if (j.usageMetadata) {
-    return { input: j.usageMetadata.promptTokenCount || 0, output: j.usageMetadata.candidatesTokenCount || 0 };
+    // Gemini bills thinking as output.
+    return { input: j.usageMetadata.promptTokenCount || 0, output: (j.usageMetadata.candidatesTokenCount || 0) + (j.usageMetadata.thoughtsTokenCount || 0) };
   }
   return null;
 }
