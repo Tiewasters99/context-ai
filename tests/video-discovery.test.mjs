@@ -9,7 +9,8 @@ import {
 } from '../lib/video-discovery/core.mjs';
 import { EVENT_GRAPH_SCHEMA, INTERROGATION_SCHEMA, EVENT_TYPES } from '../lib/video-discovery/schemas.mjs';
 import { modelsFromEnv, displayNameFor, expiryOf, mimeForExt, durationOf } from '../lib/video-discovery/gemini-video.mjs';
-import { isVideoFilename } from '../lib/video-discovery/jobs.mjs';
+import { isVideoFilename, mediaExportPayload, WORKER_ACTOR } from '../lib/video-discovery/jobs.mjs';
+import { estimateVideoCents, centsForTokens, VIDEO_TOKENS_PER_SECOND } from '../lib/usage-prices.mjs';
 
 test('fmtTime / parseTime round-trip', () => {
   assert.equal(fmtTime(0), '00:00');
@@ -198,4 +199,39 @@ test('adapter helpers: env-driven models, stable display names, expiry, mime', (
   assert.equal(durationOf({}), null);
   assert.equal(isVideoFilename('Clip.MP4'), true);
   assert.equal(isVideoFilename('brief.pdf'), false);
+});
+
+test('the video meter charges the footage as input tokens plus the full answer allowance, rounded up', () => {
+  assert.equal(VIDEO_TOKENS_PER_SECOND, 295);
+  // 90 s × 295 = 26,550 input tokens at $0.30/M + 16,384 output at $2.50/M = 4.9 ¢ → 5 ¢
+  assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 90, maxOutputTokens: 16384 }), 5);
+  // one 20-minute window: 354,000 input tokens → 10.6 ¢ + 4.1 ¢ → 15 ¢
+  assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200, maxOutputTokens: 16384 }), 15);
+  // the question's bytes count too
+  assert.ok(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200, promptText: 'x'.repeat(300000) }) > 15);
+  // an unknown Google model falls back to the provider's dearest rate — never cheap by accident
+  assert.ok(estimateVideoCents({ model: 'gemini-9-ultra', seconds: 1200 }) > estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200 }));
+  // nothing watched, nothing asked: only the output allowance
+  assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 0, maxOutputTokens: 0 }), 0);
+  // actuals, in the shape the API and the worker record from usageMetadata
+  assert.equal(centsForTokens('gemini-2.5-flash', 'google', { input: 26880, output: 3000 }), 2);
+});
+
+test('the Record row for a recording leaving for the video model is metadata only', () => {
+  const payload = mediaExportPayload({
+    doc: { id: 'd1', title: 'Body cam 3', source_filename: 'cam3.mp4', file_size_bytes: 1200, matterspace_id: 'm1' },
+    analysis: { id: 'a1', created_by: 'u1' },
+    fileResource: { name: 'files/abc123', uri: 'https://generativelanguage.googleapis.com/v1beta/files/abc123', expirationTime: '2026-10-20T00:00:00Z' },
+  });
+  assert.equal(payload.destination, 'video-model');
+  assert.equal(payload.provider, 'google');
+  assert.equal(payload.document_id, 'd1');
+  assert.equal(payload.requested_by, 'u1');
+  assert.equal(payload.bytes, 1200);
+  assert.equal(payload.sealed, false);
+  assert.ok(payload.expires_at, 'the provider\'s retention end is recorded');
+  const text = JSON.stringify(payload);
+  assert.ok(!text.includes('files/abc123') && !text.includes('googleapis'), 'no provider handle or URL reaches the Record');
+  // the worker may write only as a system actor (064's _ledger_append_checked)
+  assert.equal(WORKER_ACTOR.kind, 'system');
 });

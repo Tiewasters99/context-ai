@@ -1,0 +1,11 @@
+# The worker image (worker/Dockerfile, built by `flyctl deploy` from the repo
+# root) copies only package.json, package-lock.json, lib/ and worker/. Without
+# this file the whole checkout went up to the builder on every deploy — 2.2 GB
+# of dist/, public/ and node_modules/ on 2026-10-18, for a 583 MB image.
+# Vercel does not read this file; it is the worker's alone.
+*
+!package.json
+!package-lock.json
+!lib
+!worker
+worker/RUNBOOK.md

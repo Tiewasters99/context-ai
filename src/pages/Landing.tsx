@@ -25,7 +25,7 @@ const suiteApps = [
   {
     title: 'FileSaver.ai',
     badge: null,
-    body: 'The suite’s chat-capture utility. Saves your AI conversations from ChatGPT, Claude, Gemini, and Grok and syncs them into Contextspaces — turning scattered, ephemeral sessions into a durable, searchable asset of the firm.',
+    body: 'The suite’s chat-capture utility. Saves your AI conversations from ChatGPT, Claude, Gemini, and Grok and syncs them into Equazia.ai — turning scattered, ephemeral sessions into a durable, searchable asset of the firm.',
   },
   {
     title: 'Moot Bench',
@@ -102,9 +102,9 @@ export default function Landing() {
         {/* Nav */}
         <nav className="relative z-10 flex items-center justify-between w-full px-6 sm:pl-[8.9%] sm:pr-[10%] h-20">
           <span className="text-white" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>
-            <span className="flex flex-col leading-none">
-              <span className="text-[28px] sm:text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span>
-              <span className="text-[20px] sm:text-[25px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">Spaces</span><span className="text-white">.ai</span></span>
+            <span className="flex items-baseline leading-none">
+              <span className="text-[28px] sm:text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Equazia</span>
+              <span className="text-[20px] sm:text-[25px] font-semibold tracking-tight text-[#d4a054]" style={{ fontFamily: '"Playfair Display Variable", serif' }}>.ai</span>
             </span>
           </span>
           {/* Desktop: the original absolutely-positioned link cluster. On
@@ -239,7 +239,7 @@ export default function Landing() {
           <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] mb-4">Early Access</h2>
           <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-6">Live today. Free during beta.</h3>
           <p className="text-[16px] text-[#8a8693] leading-relaxed mb-10">
-            Contextspaces is in production and onboarding a hand-picked group of design partners — practicing
+            Equazia.ai — formerly Contextspaces — is in production and onboarding a hand-picked group of design partners — practicing
             litigators who shape the roadmap and are supported without charge throughout the beta. Per-seat
             subscription pricing arrives at public launch.
           </p>
@@ -258,9 +258,9 @@ export default function Landing() {
           <div className="flex flex-col md:flex-row justify-between gap-8">
             <div>
               <span className="text-[15px] font-semibold text-[#f5f2ed]">
-                <span className="inline-flex flex-col leading-none">
-                  <span>Context</span>
-                  <span className="text-[#d4a054]">Spaces.ai</span>
+                <span className="inline-flex items-baseline leading-none">
+                  <span>Equazia</span>
+                  <span className="text-[#d4a054]">.ai</span>
                 </span>
               </span>
               <p className="text-[12px] text-[#5a5665] mt-2">Every matter, in context.</p>

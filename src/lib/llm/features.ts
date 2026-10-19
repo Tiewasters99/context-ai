@@ -32,8 +32,10 @@ export const LLM_FEATURES = [
   'workbench',
   'moot.generate',
   'moot.converse',
-  // The Video Room: a question put to the video model about a window of a recording.
+  // The Video Room: a question put to the video model about a window of a
+  // recording; and an analysis pass, when the seal or the meter refuses it.
   'video.interrogate',
+  'video.analyze',
   // Trademark Clearance: the recipe's three judgment points (api/trademark.mjs).
   'trademark.decompose',
   'trademark.classes',

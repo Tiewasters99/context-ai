@@ -25,6 +25,11 @@ const PANEL_DOCKED_W = 416;
 import { parseServerRefusal } from '@/lib/llm/refusals';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import { moveVaultDocument } from '@/lib/vault-persist';
+import { sandboxApi } from '@/lib/sandbox-api';
+import { useServerspacesRefresh } from '@/hooks/useServerspaces';
+import {
+  isSandboxAction, documentIdsOf, matterKeyOf, proposalSentence, resultNote, type SandboxAction,
+} from '@/lib/orchestrator-sandbox';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import PinToggle from '@/components/ui/PinToggle';
 import {
@@ -484,6 +489,15 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     matterName: string;
   } | null>(null);
   const [moving, setMoving] = useState(false);
+  // A document task the Orchestrator proposed (send_to_sandbox, assemble_documents,
+  // …): one at a time, run through /api/sandbox only on the press.
+  const [pendingTask, setPendingTask] = useState<{
+    action: SandboxAction;
+    args: Record<string, unknown>;
+    sentence: string;
+  } | null>(null);
+  const [runningTask, setRunningTask] = useState(false);
+  const refreshServerspaces = useServerspacesRefresh();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -550,6 +564,61 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
       docTitle: docRes.data.title || docRes.data.source_filename || 'this document',
       matterName: matRes.data.name,
     });
+  };
+
+  // The Orchestrator proposed a document task. Name the documents and the
+  // matter in one sentence so the person knows exactly what the button does.
+  const proposeTask = async (action: SandboxAction, args: Record<string, unknown>) => {
+    const ids = documentIdsOf(action, args);
+    const key = matterKeyOf(action, args);
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key);
+    const [docRes, matRes] = await Promise.all([
+      ids.length
+        ? supabase.from('documents').select('id, title, source_filename').in('id', ids)
+        : Promise.resolve({ data: [] as { id: string; title: string | null; source_filename: string | null }[], error: null }),
+      key
+        ? supabase.from('matterspaces').select('name').eq(isUuid ? 'id' : 'short_code', key).maybeSingle()
+        : Promise.resolve({ data: null as { name: string } | null, error: null }),
+    ]);
+    const titles = new Map((docRes.data ?? []).map((d) => [d.id, d.title || d.source_filename || d.id]));
+    const missing = ids.filter((id) => !titles.has(id));
+    if (missing.length) {
+      note(`⚠️ I couldn't find ${missing.length === 1 ? 'one of those documents' : `${missing.length} of those documents`}, so nothing was set up.`);
+      return;
+    }
+    if (key && !matRes.data) {
+      note(`⚠️ I couldn't find the matter “${key}”, so nothing was set up.`);
+      return;
+    }
+    setPendingTask({
+      action,
+      args,
+      sentence: proposalSentence(action, args, (id) => titles.get(id) ?? id, matRes.data?.name),
+    });
+  };
+
+  const confirmTask = async () => {
+    if (!pendingTask || runningTask) return;
+    setRunningTask(true);
+    const { action, args } = pendingTask;
+    try {
+      const result = await sandboxApi(action, args);
+      note(resultNote(action, result));
+      setPendingTask(null);
+      if (action === 'send_to_sandbox' || action === 'copy_document') refreshServerspaces();
+    } catch (err) {
+      // Not "nothing was changed": a copy of several documents can fail on the
+      // fifth after four are made, and the Sandbox box may now exist.
+      const several = documentIdsOf(action, args).length > 1;
+      note(`⚠️ That did not finish: ${err instanceof Error ? err.message : 'unknown error'}. Your originals are unchanged.` +
+        (action === 'send_to_sandbox' || action === 'copy_document'
+          ? (several ? ' Some copies may have been made before it stopped; asking again picks up where it left off.' : '')
+          : ''));
+      setPendingTask(null);
+      if (action === 'send_to_sandbox' || action === 'copy_document') refreshServerspaces();
+    } finally {
+      setRunningTask(false);
+    }
   };
 
   const confirmMove = async () => {
@@ -769,6 +838,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
             if (ev.action === 'create_sub_matter') void openCreateSubMatter(ev.input || {});
             else if (ev.action === 'move_document') void proposeMove(ev.input || {});
             else if (ev.action === 'sign_out') setSignOutOffer(true);
+            else if (isSandboxAction(ev.action)) void proposeTask(ev.action, ev.input || {});
           }
           // 'tool' / 'done' events need no UI change.
         }
@@ -1188,6 +1258,29 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
                 className="flex-1 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] text-[#e8e4de] text-[12px] hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
               >
                 Not now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Document task (send_to_sandbox, assemble_documents, …) — gated, one at a time */}
+        {pendingTask && (
+          <div className="px-4 py-3 border-t border-[rgba(255,255,255,0.08)] bg-[rgba(20,20,30,0.6)]" data-testid="task-confirm">
+            <p className="text-[12px] text-[#e8e4de] leading-snug mb-2">{pendingTask.sentence}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={confirmTask}
+                disabled={runningTask}
+                className="flex-1 py-1.5 rounded-lg bg-[#f0c850] hover:bg-[#f5d565] text-[#0e0e12] text-[12px] font-bold transition-colors disabled:opacity-40"
+              >
+                {runningTask ? 'Working…' : 'Go ahead'}
+              </button>
+              <button
+                onClick={() => { setPendingTask(null); note('Cancelled — nothing was changed.'); }}
+                disabled={runningTask}
+                className="flex-1 py-1.5 rounded-lg border border-[rgba(255,255,255,0.12)] text-[#e8e4de] text-[12px] hover:bg-[rgba(255,255,255,0.04)] transition-colors disabled:opacity-40"
+              >
+                Cancel
               </button>
             </div>
           </div>
