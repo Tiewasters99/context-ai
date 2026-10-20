@@ -8,7 +8,7 @@ const coreFeatures = [
   },
   {
     title: 'SecureSpaces',
-    body: 'A matter born sealed. A SecureSpace is invisible to every outside connector, and its AI work runs only through routes with no third-party retention — nothing in it is stored or trained on by a model provider. Open one for a client, and the questions they would otherwise put to a public chatbot are asked inside the matter, under your supervision.',
+    body: 'A matter born sealed. A SecureSpace is invisible to every outside connector, and its AI work runs only through routes with no third-party retention — nothing in it is stored or trained on by a model provider. Open one for a client, and the unprivileged questions they would otherwise put to a public chatbot are asked inside the matter, under your supervision.',
   },
   {
     title: 'The Vault',
