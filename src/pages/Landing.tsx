@@ -7,6 +7,10 @@ const coreFeatures = [
     body: 'Every case, deal, or project gets its own matter — with pages, lists, tables, a calendar, deadlines, and a discussion thread. Matters nest into sub-matters and live in shared Serverspaces with your team, in strict isolation from one another.',
   },
   {
+    title: 'SecureSpaces',
+    body: 'A matter born sealed. A SecureSpace is invisible to every outside connector, and its AI work runs only through routes with no third-party retention — nothing in it is stored or trained on by a model provider. Open one for a client, and the questions they would otherwise put to a public chatbot are asked inside the matter, under your supervision.',
+  },
+  {
     title: 'The Vault',
     body: 'Load a matter’s documents into its Vault and they’re ingested, OCR’d, and indexed. Search everything at once — semantic and exact-match — and retrieval returns not summaries but verbatim passages with page-accurate citations: the form of answer you can actually put in a brief.',
   },
