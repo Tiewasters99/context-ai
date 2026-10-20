@@ -549,6 +549,35 @@ export async function runHandlerChecks({ db, check, makeUser, asOwner, asUser, m
     stripeState.invoiceFails = false;
     wrapped(noInvoice.statusCode === 200 && await balanceOfUser(db, buyer2) === balBefore + 12500,
       'and if the invoice URL cannot be fetched, the credits are still granted');
+
+    // The live Stripe account is shared with Quorium (and merch, mediation).
+    // Their one-time sessions arrive here too and must be acknowledged, never
+    // granted: Quorium's client_reference_id is its own order id, not a user.
+    const quorium = await post({
+      id: 'evt_h24', type: 'checkout.session.completed', created: 9_000_024,
+      data: { object: { id: 'cs_quorium_1', mode: 'payment', payment_status: 'paid',
+        client_reference_id: '7d1f6f0e-1c4b-4c55-9a51-2f0d7c2f9e11', amount_total: 999,
+        payment_intent: 'pi_quorium_1',
+        metadata: { quorium_order: '7d1f6f0e-1c4b-4c55-9a51-2f0d7c2f9e11' } } },
+    });
+    wrapped(quorium.statusCode === 200 && quorium.json?.ignored === 'not_a_credit_pack'
+      && quorium.json?.kind === 'quorium',
+      'a Quorium purchase on the shared Stripe account is acknowledged and ignored',
+      `${quorium.statusCode} ${JSON.stringify(quorium.json)}`);
+
+    const foreign = await post({
+      id: 'evt_h25', type: 'checkout.session.completed', created: 9_000_025,
+      data: { object: { id: 'cs_foreign_1', mode: 'payment', payment_status: 'paid',
+        client_reference_id: buyer2, amount_total: 4000, metadata: { kind: 'merch' } } },
+    });
+    wrapped(foreign.statusCode === 200 && foreign.json?.ignored === 'not_a_credit_pack'
+      && await balanceOfUser(db, buyer2) === balBefore + 12500,
+      'a one-time payment not marked as a credit pack grants nothing, even naming a real user',
+      `${foreign.statusCode} ${JSON.stringify(foreign.json)}`);
+    const strays = (await db.query(
+      `select count(*)::int as n from public.usage_credit_ledger
+        where stripe_session_id in ('cs_quorium_1', 'cs_foreign_1')`)).rows[0].n;
+    wrapped(strays === 0, 'and neither one writes a ledger row', `${strays}`);
   }
 
   console.log('\n--- one subscription per account -------------------------------');
