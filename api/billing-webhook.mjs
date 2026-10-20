@@ -164,7 +164,17 @@ async function onCheckoutCompleted(event, session, created, fetchImpl) {
     return data;
   }
 
-  if (session.mode === 'payment' || md.kind === 'usage_credits') {
+  if (session.mode === 'payment' && md.kind !== 'usage_credits') {
+    // A one-time payment this handler did not create. The live Stripe account
+    // is shared: Quorium Quiddit packs (metadata.quorium_order), merch and
+    // mediation fees all complete Checkout Sessions here too, each fulfilled
+    // by its own webhook. Granting credits for one would credit the wrong
+    // account, or fail on the auth.users foreign key and make Stripe retry
+    // until it disables this endpoint. Acknowledge and leave it alone.
+    return { ok: true, ignored: 'not_a_credit_pack', kind: md.kind || (md.quorium_order ? 'quorium' : null) };
+  }
+
+  if (md.kind === 'usage_credits') {
     // A credit pack. Do not grant on an unpaid session: with certain payment
     // methods a Session completes before the money has actually arrived.
     if (session.payment_status && session.payment_status !== 'paid') {
