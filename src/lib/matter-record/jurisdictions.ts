@@ -2,7 +2,7 @@
 //
 // A build-time copy of the AI Use Record rules matrix
 // (`references/jurisdictions.yaml` in the `ai-use-record` skill), matrix
-// version 2026-09-21.2, converted verbatim by
+// version 2026-10-03.1, converted verbatim by
 // build-jurisdictions.py in this folder. Nothing here is fetched at runtime
 // and nothing here is reworded: the Matter Record export prints an entry's
 // rule text, cites and `status` exactly as the matrix has them, and adds no
@@ -16,7 +16,7 @@ import type { JurisdictionMatrix } from './types';
 
 export const JURISDICTIONS: JurisdictionMatrix = {
   "schema_version": 1,
-  "matrix_version": "2026-09-21.2",
+  "matrix_version": "2026-10-03.1",
   "entries": [
     {
       "id": "aba-formal-op-512",
@@ -2815,85 +2815,85 @@ export const JURISDICTIONS: JurisdictionMatrix = {
     {
       "id": "ca-sb-574",
       "kind": "state_statute",
-      "name": "California SB 574 (2025–2026 Reg. Sess.) (Umberg) — Attorneys, arbitrators, judicial officers, and alternative resolution providers (ENROLLED; PENDING BEFORE THE GOVERNOR as of 2026-09-18)",
-      "disclosure_to_court": "required IF ENACTED — not in force as of 2026-09-18 (enrolled Bus. & Prof. Code § 6068.1(a)(3)(C)); none under current California statute",
+      "name": "California SB 574 (2025–2026 Reg. Sess.) (Umberg) — Attorneys, arbitrators, judicial officers, and alternative resolution providers (ENACTED — Stats. 2026, ch. 858, approved by the Governor Sept. 30, 2026; OPERATIVE Jan. 1, 2027)",
+      "disclosure_to_court": "required from 2027-01-01 (Bus. & Prof. Code § 6068.1(a)(3)(C), added by Stats. 2026, ch. 858; ENACTED Sept. 30, 2026, not yet operative as of 2026-10-03); none under California statute before that date",
       "certification_required": false,
       "certificate_language": null,
-      "verification_duty": "NOT IN FORCE (bill pending before the Governor as of 2026-09-18). Enrolled text, new Bus. & Prof. Code § 6068.1(a)(3): \"An attorney who uses generative artificial intelligence to assist in the practice of law shall do all of the following:\" ... (B) \"Take reasonable steps to do both of the following:\" \"(i) Verify the accuracy of generative artificial intelligence outputs, including, but not limited to, the accuracy of all case and statutory citations.\" \"(ii) Correct any erroneous or hallucinated output in any material used by the attorney.\" § 6068.1(a)(2): \"An attorney shall not delegate the practice of law to generative artificial intelligence.\" § 6068.1(a)(1): \"Nothing in this section shall be construed to abrogate an attorney’s duty to exercise reasonable competence and diligence in the practice of law.\" Amended Code Civ. Proc. § 128.7(b)(2)(A) (bill § 3): \"A brief, pleading, motion, or any other paper filed in any court shall not contain any citations that an attorney responsible for submitting the pleading has not personally verified, including any citation provided by generative artificial intelligence.\" Sanctions for a § 128.7(b) violation follow § 128.7(c)-(d), re-enacted with wording unchanged from current law, including \"Absent exceptional circumstances, a law firm shall be held jointly responsible for violations committed by its partners, associates, and employees.\"",
-      "confidentiality_restriction": "NOT IN FORCE. Enrolled § 6068.1(a)(3)(A): the attorney shall \"Not enter confidential, personal identifying, and other nonpublic information into a generative artificial intelligence system for which access to confidential, personal identifying, or other nonpublic information the attorney inputs into the system is not restricted to the attorney and persons authorized by the attorney under obligations to protect the confidentiality of the information.\" § 6068.1(b)(2) defines personal identifying information to include driver's license numbers, dates of birth, Social Security numbers, NCIC/CII numbers, \"Addresses and phone numbers of parties, victims, witnesses, and court personnel.\", \"Medical or psychiatric information.\", \"Financial information.\", \"Account numbers.\", and \"Any other content sealed by court order or deemed confidential by court rule or statute.\" The restriction turns on the system's access controls (inputs restricted to the attorney and persons under confidentiality obligations), not on the vendor's identity.",
+      "verification_duty": "ENACTED (Stats. 2026, ch. 858, approved Sept. 30, 2026), OPERATIVE 2027-01-01. Chaptered text, new Bus. & Prof. Code § 6068.1(a)(3): \"An attorney who uses generative artificial intelligence to assist in the practice of law shall do all of the following:\" ... (B) \"Take reasonable steps to do both of the following:\" \"(i) Verify the accuracy of generative artificial intelligence outputs, including, but not limited to, the accuracy of all case and statutory citations.\" \"(ii) Correct any erroneous or hallucinated output in any material used by the attorney.\" § 6068.1(a)(2): \"An attorney shall not delegate the practice of law to generative artificial intelligence.\" § 6068.1(a)(1): \"Nothing in this section shall be construed to abrogate an attorney’s duty to exercise reasonable competence and diligence in the practice of law.\" Amended Code Civ. Proc. § 128.7(b)(2)(A) (bill § 3): \"A brief, pleading, motion, or any other paper filed in any court shall not contain any citations that an attorney responsible for submitting the pleading has not personally verified, including any citation provided by generative artificial intelligence.\" Sanctions for a § 128.7(b) violation follow § 128.7(c)-(d), re-enacted with wording unchanged from current law, including \"Absent exceptional circumstances, a law firm shall be held jointly responsible for violations committed by its partners, associates, and employees.\"",
+      "confidentiality_restriction": "OPERATIVE 2027-01-01. § 6068.1(a)(3)(A): the attorney shall \"Not enter confidential, personal identifying, and other nonpublic information into a generative artificial intelligence system for which access to confidential, personal identifying, or other nonpublic information the attorney inputs into the system is not restricted to the attorney and persons authorized by the attorney under obligations to protect the confidentiality of the information.\" § 6068.1(b)(2) defines personal identifying information to include driver's license numbers, dates of birth, Social Security numbers, NCIC/CII numbers, \"Addresses and phone numbers of parties, victims, witnesses, and court personnel.\", \"Medical or psychiatric information.\", \"Financial information.\", \"Account numbers.\", and \"Any other content sealed by court order or deemed confidential by court rule or statute.\" The restriction turns on the system's access controls (inputs restricted to the attorney and persons under confidentiality obligations), not on the vendor's identity.",
       "record_keeping_duty": "none",
-      "client_disclosure_duty": "none in the bill. The second clause of enrolled § 6068.1(a)(3)(C) (\"consider whether to disclose the use of generative artificial intelligence if it is used to create content provided to the public\") concerns content provided to the public, not disclosure to the client. Client-disclosure duties, if any, come from the ca-rpc entry (Rule 1.4) and the State Bar guidance (ca-state-bar-guidance).",
+      "client_disclosure_duty": "none in the bill. The second clause of § 6068.1(a)(3)(C) (\"consider whether to disclose the use of generative artificial intelligence if it is used to create content provided to the public\") concerns content provided to the public, not disclosure to the client. Client-disclosure duties, if any, come from the ca-rpc entry (Rule 1.4) and the State Bar guidance (ca-state-bar-guidance).",
       "fees_note": null,
       "sources": [
         {
-          "title": "SB 574 (2025–2026), Enrolled text dated September 04, 2026 (leginfo bill-text page, version \"09/04/26 - Enrolled\") — new Bus. & Prof. Code § 6068.1(a)(3)(C) (disclosure to the court)",
+          "title": "SB 574 (2025–2026), Chaptered text, Stats. 2026, ch. 858 (leginfo bill-text page, version \"09/30/26 - Chaptered\") — new Bus. & Prof. Code § 6068.1(a)(3)(C) (disclosure to the court)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(C) Disclose the use of generative artificial intelligence to the court for all documents submitted to the court and consider whether to disclose the use of generative artificial intelligence if it is used to create content provided to the public.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — § 6068.1(a)(3)(B) (verification and correction)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(B) Take reasonable steps to do both of the following: (i) Verify the accuracy of generative artificial intelligence outputs, including, but not limited to, the accuracy of all case and statutory citations. (ii) Correct any erroneous or hallucinated output in any material used by the attorney.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — § 6068.1(a)(3)(A) (confidential, personal identifying, and nonpublic information)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(A) Not enter confidential, personal identifying, and other nonpublic information into a generative artificial intelligence system for which access to confidential, personal identifying, or other nonpublic information the attorney inputs into the system is not restricted to the attorney and persons authorized by the attorney under obligations to protect the confidentiality of the information.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — § 6068.1(a)(1)-(2) (competence not abrogated; no delegation of the practice of law)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(a) (1) Nothing in this section shall be construed to abrogate an attorney’s duty to exercise reasonable competence and diligence in the practice of law. (2) An attorney shall not delegate the practice of law to generative artificial intelligence.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — § 6068.1(b)(1) (definition of generative artificial intelligence)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(1) “Generative artificial intelligence” means an artificial intelligence system that can generate derived synthetic content, including text, images, video, and audio that emulates the structure and characteristics of the system’s training data.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — bill § 3, amended Code Civ. Proc. § 128.7(b)(2)(A) (personally verified citations)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(2) (A) A brief, pleading, motion, or any other paper filed in any court shall not contain any citations that an attorney responsible for submitting the pleading has not personally verified, including any citation provided by generative artificial intelligence.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — bill § 3, Code Civ. Proc. § 128.7(c)(1) (law-firm joint responsibility; existing text re-enacted)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "Absent exceptional circumstances, a law firm shall be held jointly responsible for violations committed by its partners, associates, and employees.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — bill § 4, new Code Civ. Proc. § 180 (Judicial Council to revisit Standard 10.80)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "The Judicial Council shall publicly revisit, and revise as necessary, Standard 10.80 of the California Standards of Judicial Administration to incorporate any necessary changes to reflect the further development of generative artificial intelligence.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — bill § 5, new Code Civ. Proc. § 1282.1(b) (arbitrators)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "(b) (1) An arbitrator shall not delegate any part of their decisionmaking process to any generative artificial intelligence tool. (2) An arbitrator shall not rely on information generated by generative artificial intelligence outside the record without making appropriate disclosures to the parties beforehand and, as far as practical, allowing the parties to comment on its use.",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Same — Legislative Counsel's Digest, Digest Key (majority vote; no urgency clause found in the bill text)",
           "url": "https://leginfo.legislature.ca.gov/faces/billTextClient.xhtml?bill_id=202520260SB574",
           "verbatim": "Vote: MAJORITY",
-          "effective": null,
-          "fetched": "2026-09-18"
+          "effective": "2027-01-01",
+          "fetched": "2026-10-03"
         },
         {
           "title": "Code Civ. Proc. § 128.7 as currently in force (leginfo; \"Amended by Stats. 2005, Ch. 706, Sec. 9. Effective January 1, 2006.\") — current (b)(2), the legal-contentions certification that the bill renumbers",
@@ -2910,7 +2910,7 @@ export const JURISDICTIONS: JurisdictionMatrix = {
           "fetched": "2026-09-18"
         },
         {
-          "title": "SB 574 Bill History (leginfo) — last action as of fetch",
+          "title": "SB 574 Bill History (leginfo) — last action as of the 2026-09-18 fetch",
           "url": "https://leginfo.legislature.ca.gov/faces/billHistoryClient.xhtml?bill_id=202520260SB574",
           "verbatim": "09/09/26 Enrolled and presented to the Governor at 2 p.m.",
           "effective": null,
@@ -2938,11 +2938,18 @@ export const JURISDICTIONS: JurisdictionMatrix = {
           "fetched": "2026-09-18"
         },
         {
-          "title": "Office of the Governor, Newsroom (checked for SB 574 action; latest item dated Sep 16, 2026; no SB 574 item)",
-          "url": "https://www.gov.ca.gov/newsroom/",
-          "verbatim": null,
+          "title": "SB 574 Bill History (leginfo) — approval by the Governor",
+          "url": "https://leginfo.legislature.ca.gov/faces/billHistoryClient.xhtml?bill_id=202520260SB574",
+          "verbatim": "09/30/26 Approved by the Governor.",
           "effective": null,
-          "fetched": "2026-09-18"
+          "fetched": "2026-10-03"
+        },
+        {
+          "title": "Same — chaptering (Stats. 2026, ch. 858)",
+          "url": "https://leginfo.legislature.ca.gov/faces/billHistoryClient.xhtml?bill_id=202520260SB574",
+          "verbatim": "09/30/26 Chaptered by Secretary of State. Chapter 858, Statutes of 2026.",
+          "effective": null,
+          "fetched": "2026-10-03"
         },
         {
           "title": "LEAD ONLY — Sullivan & Cromwell memo, \"California Legislature Passes Rules on Generative AI Use by Legal Practitioners\" (Sept. 2026) (seed source; not relied on)",
@@ -2973,11 +2980,11 @@ export const JURISDICTIONS: JurisdictionMatrix = {
           "fetched": null
         }
       ],
-      "status": "pending",
-      "verified_on": "2026-09-18",
-      "verified_by": "claude-opus-5 (independent verifier session; every source URL re-fetched 2026-09-17; checkq/strictq exact match; pinpoints, effective dates, status and narrative claims checked against the fetched text; one missed-item search)",
+      "status": "verified",
+      "verified_on": "2026-10-03",
+      "verified_by": "claude-opus-5 (independent verifier session 2026-09-18, enrolled text; every source URL re-fetched; checkq/strictq exact match); claude-fable-5-1 (2026-10-03: enactment re-check — leginfo bill text, history and status pages re-fetched; all 10 bill-text quotations re-matched against the chaptered text; status, name, duty strings and effective dates updated; no other field changed)",
       "attorney_signoff": null,
-      "notes": "(i) STATUS AS OF FETCH (2026-09-18): pending before the Governor — neither signed nor vetoed. The leginfo Bill History's last action is \"09/09/26 Enrolled and presented to the Governor at 2 p.m.\" The Governor's newsroom (latest item Sep 16, 2026) had no SB 574 item. Under Cal. Const. art. IV, § 10(b)(2), a bill in this posture \"that is not returned on or before September 30 of that year becomes a statute\", i.e., it becomes law without signature unless vetoed by Sept. 30, 2026. Recommend the merge session set status: pending and re-check leginfo after Sept. 30, 2026. (ii) OPERATIVE DATE: the enrolled text states no operative or effective date and contains no urgency section (Digest Key \"Vote: MAJORITY\"). Under art. IV, § 8(c)(1) a statute enacted at a regular session goes into effect \"on January 1 next following a 90-day period from the date of enactment of the statute\"; for enactment on or before Sept. 30, 2026 that computes to Jan. 1, 2027 (the computation is the compiler's, not stated in any source). (iii) SEED CORRECTIONS: the seed's certification_required: true is not supported by the enrolled text — the bill prescribes a disclosure to the court (§ 6068.1(a)(3)(C)) and a no-unverified-citations rule (§ 128.7(b)(2)(A)), but no certificate and no form of words; certificate_language stays null. The seed's client_disclosure_duty described the public-content clause of § 6068.1(a)(3)(C), which is not a client-disclosure duty. The seed's single verbatim came from the S&C memo; the operative words now come from the enrolled text itself. (iv) SCOPE AND STRUCTURE: § 6068.1 is in the State Bar Act and binds California attorneys; § 128.7 is in the Code of Civil Procedure (California state courts; it does not govern federal filings in California). Compared with current § 128.7 (fetched 2026-09-18; last amended Stats. 2005, ch. 706), the bill moves the four existing certifications from (b)(1)-(4) into a new (b)(1)(A)-(D) and inserts the citation rule as a new (b)(2); subdivisions (c) and (d) are re-enacted with unchanged wording. Consequence the attorney should weigh: § 128.7(d)(1) still reads \"Monetary sanctions may not be awarded against a represented party for a violation of paragraph (2) of subdivision (b).\" — under current law that paragraph is the legal-contentions certification; under the enrolled text it would be the new citation rule, so monetary sanctions for unverified citations would run against attorneys and firms, not represented parties; conversely, the legal-contentions certification (moved to (b)(1)(B)) would no longer be covered by the (d)(1) bar, so a represented party could face monetary sanctions for frivolous legal contentions. (Compiler's reading of the renumbering, possibly unintended; no source states it.) § 128.7(b)(2)(A) is framed as a flat prohibition (\"shall not contain any citations that an attorney responsible for submitting the pleading has not personally verified\"), not as a reasonable-inquiry certification, and § 128.7(g) still excludes discovery papers. (v) OPEN QUESTION FOR THE ATTORNEY: § 6068.1(a)(3)(C) is conditioned on the attorney having used generative AI \"to assist in the practice of law\", but its object is \"all documents submitted to the court\" — read literally, an attorney who uses GAI at all may owe disclosure on every court submission, not only those GAI touched. This is an interpretive question the text does not resolve; do not resolve it in the record without the attorney. (vi) OTHER PROVISIONS: new Code Civ. Proc. § 1282.1 (arbitrators may not delegate decision-making to GAI and must disclose reliance on GAI information outside the record); new Code Civ. Proc. § 180 (Judicial Council to revisit Standard 10.80 — see ca-state-courts); amended Bus. & Prof. Code § 6173 (ADR certification complaint procedures; not AI-specific). (vii) History read in full: introduced 02/20/25; amended in Senate 03/24/25 and 01/05/26; passed Senate 01/29/26 (Ayes 39, Noes 0); amended in Assembly 06/22/26, 07/02/26, 08/13/26, 08/21/26; passed Assembly 08/31/26; Senate concurred 08/31/26 (Ayes 39, Noes 0); enrolled 09/04/26. The firm memos in sources[] describe different versions; only the enrolled text is quoted here. (viii) VERIFIER (2026-09-18) AND MERGE (2026-09-20): all 16 quotations re-checked exact. Status re-checked on 2026-09-18: leginfo's Bill History still ended at \"09/09/26 Enrolled and presented to the Governor at 2 p.m.\" — neither signed nor vetoed — so status is carried into the master as pending (not in force), with verified_on recording that the text and status were verified. The compiler's reading of the renumbering was tested against both texts and its premises are exact: current section 128.7(b)(1)-(4) becomes (b)(1)(A)-(D), the citation rule enters as a new (b)(2)(A) with its definition at (b)(2)(B), and subdivisions (c) through (i) are character-identical to current law, so the unchanged (d)(1) bar attaches to the new citation rule; the consequence remains an inference no source states. RE-CHECK leginfo after September 30, 2026: if the Governor neither signs nor vetoes by then the bill becomes law, and this entry's status, effective dates and disclosure_to_court must be revisited."
+      "notes": "(0) ENACTED. Re-checked on leginfo 2026-10-03: Bill History reads \"09/30/26 Approved by the Governor.\" and \"09/30/26 Chaptered by Secretary of State. Chapter 858, Statutes of 2026.\" — Stats. 2026, ch. 858. The chaptered text is character-identical to the enrolled text in every passage quoted below (10 quotations re-matched). No operative date is stated and there is no urgency clause, so under Cal. Const. art. IV, § 8(c)(1) the statute goes into effect January 1, 2027 (computation, not a stated date). The duty strings above now say OPERATIVE 2027-01-01; the status is verified (the entry is verified against the chaptered primary text) while the duties themselves are not in force until that date. ACTION DUE 2027-01-01: confirm nothing intervened (no amendment or stay), then drop the not-yet-operative qualifiers. Paragraphs (i)-(viii) below are the 2026-09-18 compile/verify record, kept as written; read \"pending\" there as history. (i) STATUS AS OF FETCH (2026-09-18): pending before the Governor — neither signed nor vetoed. The leginfo Bill History's last action is \"09/09/26 Enrolled and presented to the Governor at 2 p.m.\" The Governor's newsroom (latest item Sep 16, 2026) had no SB 574 item. Under Cal. Const. art. IV, § 10(b)(2), a bill in this posture \"that is not returned on or before September 30 of that year becomes a statute\", i.e., it becomes law without signature unless vetoed by Sept. 30, 2026. Recommend the merge session set status: pending and re-check leginfo after Sept. 30, 2026. (ii) OPERATIVE DATE: the enrolled text states no operative or effective date and contains no urgency section (Digest Key \"Vote: MAJORITY\"). Under art. IV, § 8(c)(1) a statute enacted at a regular session goes into effect \"on January 1 next following a 90-day period from the date of enactment of the statute\"; for enactment on or before Sept. 30, 2026 that computes to Jan. 1, 2027 (the computation is the compiler's, not stated in any source). (iii) SEED CORRECTIONS: the seed's certification_required: true is not supported by the enrolled text — the bill prescribes a disclosure to the court (§ 6068.1(a)(3)(C)) and a no-unverified-citations rule (§ 128.7(b)(2)(A)), but no certificate and no form of words; certificate_language stays null. The seed's client_disclosure_duty described the public-content clause of § 6068.1(a)(3)(C), which is not a client-disclosure duty. The seed's single verbatim came from the S&C memo; the operative words now come from the enrolled text itself. (iv) SCOPE AND STRUCTURE: § 6068.1 is in the State Bar Act and binds California attorneys; § 128.7 is in the Code of Civil Procedure (California state courts; it does not govern federal filings in California). Compared with current § 128.7 (fetched 2026-09-18; last amended Stats. 2005, ch. 706), the bill moves the four existing certifications from (b)(1)-(4) into a new (b)(1)(A)-(D) and inserts the citation rule as a new (b)(2); subdivisions (c) and (d) are re-enacted with unchanged wording. Consequence the attorney should weigh: § 128.7(d)(1) still reads \"Monetary sanctions may not be awarded against a represented party for a violation of paragraph (2) of subdivision (b).\" — under current law that paragraph is the legal-contentions certification; under the enrolled text it would be the new citation rule, so monetary sanctions for unverified citations would run against attorneys and firms, not represented parties; conversely, the legal-contentions certification (moved to (b)(1)(B)) would no longer be covered by the (d)(1) bar, so a represented party could face monetary sanctions for frivolous legal contentions. (Compiler's reading of the renumbering, possibly unintended; no source states it.) § 128.7(b)(2)(A) is framed as a flat prohibition (\"shall not contain any citations that an attorney responsible for submitting the pleading has not personally verified\"), not as a reasonable-inquiry certification, and § 128.7(g) still excludes discovery papers. (v) OPEN QUESTION FOR THE ATTORNEY: § 6068.1(a)(3)(C) is conditioned on the attorney having used generative AI \"to assist in the practice of law\", but its object is \"all documents submitted to the court\" — read literally, an attorney who uses GAI at all may owe disclosure on every court submission, not only those GAI touched. This is an interpretive question the text does not resolve; do not resolve it in the record without the attorney. (vi) OTHER PROVISIONS: new Code Civ. Proc. § 1282.1 (arbitrators may not delegate decision-making to GAI and must disclose reliance on GAI information outside the record); new Code Civ. Proc. § 180 (Judicial Council to revisit Standard 10.80 — see ca-state-courts); amended Bus. & Prof. Code § 6173 (ADR certification complaint procedures; not AI-specific). (vii) History read in full: introduced 02/20/25; amended in Senate 03/24/25 and 01/05/26; passed Senate 01/29/26 (Ayes 39, Noes 0); amended in Assembly 06/22/26, 07/02/26, 08/13/26, 08/21/26; passed Assembly 08/31/26; Senate concurred 08/31/26 (Ayes 39, Noes 0); enrolled 09/04/26. The firm memos in sources[] describe different versions; only the enrolled text is quoted here. (viii) VERIFIER (2026-09-18) AND MERGE (2026-09-20): all 16 quotations re-checked exact. Status re-checked on 2026-09-18: leginfo's Bill History still ended at \"09/09/26 Enrolled and presented to the Governor at 2 p.m.\" — neither signed nor vetoed — so status is carried into the master as pending (not in force), with verified_on recording that the text and status were verified. The compiler's reading of the renumbering was tested against both texts and its premises are exact: current section 128.7(b)(1)-(4) becomes (b)(1)(A)-(D), the citation rule enters as a new (b)(2)(A) with its definition at (b)(2)(B), and subdivisions (c) through (i) are character-identical to current law, so the unchanged (d)(1) bar attaches to the new citation rule; the consequence remains an inference no source states. RE-CHECK leginfo after September 30, 2026: if the Governor neither signs nor vetoes by then the bill becomes law, and this entry's status, effective dates and disclosure_to_court must be revisited."
     },
     {
       "id": "ca-state-courts",
