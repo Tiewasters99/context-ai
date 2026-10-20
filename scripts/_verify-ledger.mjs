@@ -773,7 +773,13 @@ console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ---------
   // key, so all three are a presence and a length; the handlers quote `list`
   // and `item` back in their errors, which scrubArgValues takes out again
   // (checked 10-06).
-  check(leaks.length === 0 && TOOLS.length === 27,
+  // 28th to 35th, the Trademark Clearance tools (2026-10-20): `clearance_id`
+  // and `query_id` are ids (kept only as uuids, ARG_UUID_KEYS); `step` is an
+  // enum; `matter` is the handle. The free text — the mark, goods_and_services,
+  // users, known_marks, the confirmed `value` (reasons), pasted `text`, `rows`
+  // (register records) and gap_note — is a presence and a length, or an item
+  // count (checked 10-20).
+  check(leaks.length === 0 && TOOLS.length === 35,
     `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
     leaks.join(' | '));
 
