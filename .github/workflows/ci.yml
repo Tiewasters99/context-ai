@@ -146,6 +146,23 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-trademark-121.mjs
 
+      # The tm_* MCP tools (a bring-your-own bot runs the recipe), against the
+      # real 121 in PGlite through callTool with a csp_ token's user-scoped
+      # client: the flow in the user's own matter, another user's clearance
+      # not found, sealed and paused matters refused (the model never called),
+      # an agent held to its grant, every Record row the connector's, and no
+      # tool or argument that decides a bin, signs a stage or files the report.
+      - name: Trademark Clearance over the connector — tm_* tools (PGlite + real 121 RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-connector.mjs
+
+      # The same, end to end over Streamable HTTP: an MCP client with a csp_
+      # bearer against the real api/mcp.mjs on 127.0.0.1 — authenticate, the
+      # meter, serverLlmCall to a stub provider — for quallet, quiddit, quirld.
+      - name: Trademark Clearance over the connector — end to end over Streamable HTTP
+        if: ${{ !cancelled() }}
+        run: node scripts/_e2e-trademark-mcp.mjs
+
       - name: Discovery — production links, the table and its rules (migration 115, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-share-links-115.mjs

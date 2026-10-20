@@ -8,6 +8,14 @@
 // clearance must be readable, and its matter writable, by the caller. Browser
 // sessions only: a connector token is refused.
 //
+// That refusal stays, deliberately (2026-10-20). A connected assistant runs the
+// recipe through the hosted MCP endpoint instead — the tm_* tools in
+// lib/trademark/connector.mjs — which call the same runTrademarkAction and the
+// same serverLlmCall, but behind callTool's seal / pause / agent-grant gates
+// and the connector meter, with the connector named on every Record row, and
+// with no way to decide a bin, sign a stage or file the report. Opening this
+// endpoint to connector tokens would bypass all of that.
+//
 // The model is reached ONLY through lib/llm-server-call.mjs serverLlmCall:
 // the gate (tier → pause → allowlist), the SEAL, the provider key, the meter
 // on the caller's month, the per-tier clamp, and the Record (completion.

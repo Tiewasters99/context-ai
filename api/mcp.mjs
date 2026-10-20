@@ -31,6 +31,8 @@ import { TOOLS, callTool } from '../lib/mcp-core.mjs';
 import { SITE_ORIGIN, SITE_NAME, siteUrl } from '../lib/site.mjs';
 import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
+import { TM_TOOL_NAMES } from '../lib/trademark/connector.mjs';
+import { trademarkToolOptsFor } from '../lib/trademark/connector-opts.mjs';
 // The bearer check, the Supabase clients and the callTool options live in
 // lib/oauth-bearer.mjs since 2026-09-29, shared with the GPT Actions facade
 // (api/gpt/[op].mjs). Re-exported here so the harnesses that import them from
@@ -185,7 +187,14 @@ export default async function handler(req, res) {
           'new copy; create_deck builds a filed .pptx (you author the ' +
           'slides — bullets, tables, native charts, notes); create_chart ' +
           'renders an SVG chart from data you extracted. search works ' +
-          'matter-scoped or, with matter omitted, across every matter at once.' +
+          'matter-scoped or, with matter omitted, across every matter at once. ' +
+          'TRADEMARK CLEARANCE (knockout search): tm_start_clearance opens one ' +
+          'per mark, then tm_propose / tm_confirm (classes, decomposition), ' +
+          'tm_generate_queries, tm_record_results, tm_triage and tm_report; ' +
+          'tm_get_clearance says the next step. The USPTO search is run by the ' +
+          'person on tmsearch: hand them the query lines and record what they ' +
+          'report. The report is a DRAFT until the reviewer signs it in ' +
+          'Equazia.ai; never call a mark clear.' +
           agentNote,
       }
     );
@@ -203,19 +212,28 @@ export default async function handler(req, res) {
       // carries the sign-in challenge in _meta (lib/oauth-bearer.mjs
       // withToolAuthMeta). Seal, pause and agent-scope refusals are untouched.
       let authRefusal = null;
+      const toolOpts = callToolOptsFor(identity, {
+        openaiApiKey: OPENAI_API_KEY,
+        googleApiKey: process.env.GOOGLE_API_KEY,
+      });
       return runMeteredToolCall({
         identity,
         name,
         args,
         sb,
         invoke: () => callTool(sb, name, args, {
-          ...callToolOptsFor(identity, {
-            openaiApiKey: OPENAI_API_KEY,
-            googleApiKey: process.env.GOOGLE_API_KEY,
-          }),
+          ...toolOpts,
           // Used by move_document only, to carry a moved document's queued
           // ingest job along (097 round 4); nothing else reads it.
           ...(name === 'move_document' ? { jobClient: adminClient() } : {}),
+          // Trademark Clearance (2026-10-20): the connector's actor on every
+          // Record row the call causes, and the model door (serverLlmCall on
+          // the user's month). /api/trademark still refuses connector tokens;
+          // these tools are the connector's own, narrower door — see
+          // lib/trademark/connector.mjs.
+          ...(TM_TOOL_NAMES.has(name)
+            ? trademarkToolOptsFor(identity, sb, toolOpts, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY })
+            : {}),
         }).catch((err) => {
           if (err instanceof AuthError) authRefusal = err;
           throw err;
