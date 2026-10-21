@@ -20,6 +20,9 @@ export interface CiteConfirmation {
   created_at: string;
 }
 
+/** The longest words a row holds (cite_raw, migration 103): a highlight or quotation longer than this is not logged. */
+export const LOG_WORDS_MAX = 400;
+
 /** Two presses are the same occurrence when their positions in the brief are this close (a cite is a few dozen characters). */
 export const SAME_SPOT = 24;
 
@@ -322,9 +325,10 @@ export function quotationFor(context: string, raw: string, near: number | null =
     spans.push({ start, end: start + m[0].length, inner: m[1] });
   }
   const before = spans.filter((s) => s.end <= at && at - s.end <= 160).pop();
-  if (before) return before.inner.trim() || null;
   const after = spans.find((s) => s.start >= at + cite.length && s.start - (at + cite.length) <= 60);
-  return after ? after.inner.trim() || null : null;
+  const q = (before ?? after)?.inner.trim() ?? '';
+  // a quotation longer than a row holds is highlighted and flagged on its own, in parts
+  return q && q.length <= LOG_WORDS_MAX ? q : null;
 }
 
 /**

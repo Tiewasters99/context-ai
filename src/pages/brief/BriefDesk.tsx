@@ -67,7 +67,7 @@ const storedOf = (r: Resolution): StoredResolution => ({
     : null,
 });
 import {
-  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemAt, flaggedWith, quotationFor, rememberedInitials, rememberInitials, guessInitials,
+  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemAt, flaggedWith, quotationFor, LOG_WORDS_MAX, rememberedInitials, rememberInitials, guessInitials,
   confirmationsCsv, whereRead, openProblems, answersProblem, briefParagraphs, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus, type ChangedReading,
 } from '@/lib/brief/confirmations';
 import { diffWordsWithSpace } from 'diff';
@@ -88,8 +88,8 @@ import { fetchMatterDocumentRows, type DocumentsSource } from '@/lib/vault-docum
 
 /** The model for the judgment step (the same the machine pass uses). */
 const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
-/** The longest highlight Confirm / Problem take (a block quotation); Find in corpus takes a cite, up to FIND_MAX. */
-const HIGHLIGHT_MAX = 4000;
+/** The longest highlight Confirm / Problem take: the log's limit on the words (migration 103). Find in corpus takes a cite, up to FIND_MAX. */
+const HIGHLIGHT_MAX = LOG_WORDS_MAX;
 const FIND_MAX = 400;
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
@@ -1638,7 +1638,7 @@ function DeskEditor(p: DeskProps) {
     const onSel = () => {
       const { from, to } = editor.state.selection;
       const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
-      // up to a block quotation: a passage can be confirmed or flagged red, not only a cite (10-21);
+      // a cite or a passage up to what the log holds can be confirmed or flagged red (10-21);
       // a longer selection clears the highlight rather than leave the last one standing
       if (text.length >= 2 && text.length <= HIGHLIGHT_MAX) {
         if (highlighted.current !== text) setHighlightTick((t) => t + 1);

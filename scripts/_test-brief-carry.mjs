@@ -167,6 +167,7 @@ test('the same cite twice is two cites: a flag on one does not hold up Confirm o
 });
 
 test('a cite’s quotation: the quoted words just before it, else a parenthetical just after', () => {
+  assert.equal(quotationFor(`"${"word ".repeat(100)}" Smith, 1 U.S. 1.`, 'Smith, 1 U.S. 1'), null, 'longer than a row holds');
   const E1 = 'The gatekeeping obligation extends to every step. "[N]othing in either Daubert or the Federal Rules of Evidence requires a district court to admit opinion evidence that is connected to existing data only by the ipse dixit of the expert. A court must exclude any opinion where there is an analytical gap between the data and the opinion proffered, and the proponent bears the burden of closing it." Gen. Elec. Co. v. Joiner, 522 U.S. 136, 146 (1997). The court must ensure "an expert employs the same level of intellectual rigor." Kumho Tire Co. v. Carmichael, 526 U.S. 137, 167 (1999).';
   assert.match(quotationFor(E1, 'Gen. Elec. Co. v. Joiner, 522 U.S. 136, 146 (1997)'), /^\[N\]othing in either Daubert .* burden of closing it\.$/);
   assert.equal(quotationFor(E1, '526 U.S. 137, 167'), 'an expert employs the same level of intellectual rigor.');
