@@ -20,7 +20,8 @@
 //
 //   Tier A  → first-party Claude, web_search attached, transcript in a cached
 //             system block. Exactly as before.
-//   Tier B  → the sealed pen (Kimi K2.5 in our own AWS account) through the
+//   Tier B  → the sealed pen (Claude Opus 4.6 in our own AWS account since
+//             2026-10-20; Kimi K2.5 before) through the
 //             Assistant's own agentic harness, with the matter's own tools and
 //             no web search — lib/meeting-sealed-chat.mjs. Eden's decision of
 //             2026-09-20: "sealed chat should be answered by Kimi with whatever

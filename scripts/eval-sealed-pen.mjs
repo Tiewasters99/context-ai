@@ -64,6 +64,7 @@ import { pathToFileURL } from 'node:url';
 
 import { sealedRouteFor } from '../lib/llm-sealed-route.mjs';
 import { bedrockCredsFromEnv, bedrockPenFor } from '../lib/assistant-core.mjs';
+import { eventStreamBody, isRuntimeInvoke } from './_bedrock-eventstream.mjs';
 import { SEALED_PEN_PREAMBLE_VERSION } from '../lib/pen-preambles.mjs';
 import { estimateLlmCents, ratePerMtok, centsForTokens } from '../lib/usage-prices.mjs';
 import {
@@ -531,7 +532,7 @@ export function dryCorpus() {
 
 /**
  * The stubbed pen. Replaces `fetch` for the duration of a dry run and answers
- * every bedrock-mantle request with a well-formed tool call — except every
+ * every sealed-pen request (either Bedrock route) with a well-formed tool call — except every
  * fourth, which answers with the shape a weaker model actually produces
  * (`{buckets:[...]}`), so the repair path is exercised rather than assumed.
  */
@@ -540,7 +541,8 @@ export function installStubPen() {
   let call = 0;
   globalThis.fetch = async (url, init) => {
     const target = String(url);
-    if (!target.startsWith('https://bedrock-mantle.')) {
+    const runtime = isRuntimeInvoke(target);
+    if (!runtime && !target.startsWith('https://bedrock-mantle.')) {
       throw new Error(`--dry refuses to contact ${new URL(target).host}`);
     }
     call += 1;
@@ -550,6 +552,18 @@ export function installStubPen() {
     const input = bad
       ? { buckets: [{ node: 'N2' }] }
       : { assignments: [{ ref: 'N2', confidence: 0.8, rationale: 'The excerpt bears on what was known.', passageRefs: ['P1'] }] };
+    if (runtime) {
+      // The default pen since 2026-10-20 (Opus 4.6, classic runtime):
+      // Messages events in AWS event-stream frames.
+      const frames = eventStreamBody([
+        { type: 'message_start', message: { usage: { input_tokens: 9_000, output_tokens: 1 } } },
+        { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: `toolu_${call}`, name: CLASSIFY_TOOL_NAME } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(input) } },
+        { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 300 } },
+        { type: 'message_stop' },
+      ]);
+      return new Response(frames, { status: 200, headers: { 'content-type': 'application/vnd.amazon.eventstream' } });
+    }
     const sse = [
       { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: `call_${call}`, function: { name: CLASSIFY_TOOL_NAME, arguments: JSON.stringify(input) } }] } }] },
       { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 9_000, completion_tokens: 300 } },

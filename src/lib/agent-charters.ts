@@ -164,14 +164,14 @@ export const PEN_BY_TIER: Record<AiTier, PenForTier> = {
   },
   B: {
     tier: 'B',
-    // The sealed pen is Kimi K2.5 on Amazon Bedrock, in the firm's own AWS
-    // account. It is NOT "Kimi K3, US-hosted": that was the Fireworks fallback
+    // The sealed pen is Claude Opus 4.6 on Amazon Bedrock (since 2026-10-20;
+    // Kimi K2.5 before), in the firm's own AWS account. It is NOT "Kimi K3, US-hosted": that was the Fireworks fallback
     // PR #159 deleted, and this label outlived it. The wording is the one the
     // 2026-09-19 audit permits and the Assistant already uses
     // (sealedPenSentence, src/components/ai/assistant-scope.ts): zero
     // retention is an account setting of ours, not a promise by the model's
     // vendor, and the pen is never called Claude.
-    label: 'Kimi K2.5 on Amazon Bedrock, in the firm’s own AWS account, zero data retention',
+    label: 'Claude Opus 4.6 on Amazon Bedrock, in the firm’s own AWS account, zero data retention',
     detail: 'Tier B — sealed. Claude only as a recorded escalation you ask for.',
   },
   C: {
