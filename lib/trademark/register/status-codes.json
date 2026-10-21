@@ -1,0 +1,9 @@
+{
+  "version": "2026-10-21.2",
+  "source": "USPTO Trademark Applications Daily XML DTD Element Documentation (V 2.0), uspto.gov/sites/default/files/products/applications-documentation.pdf, read 2026-10-21: <status-code> is 'a three position numeric field which identifies the status of the mark. Reference Table 1 Trademark Status Codes'; <abandonment-date> and <cancellation-date> hold zeros when there is no date. Table 1 itself (a product file of TRTDXFAP, Table1TrademarkStatusCodes_*.doc) was NOT read: it needs the ODP key.",
+  "marker": "[M]",
+  "rule": "A record is DEAD when its abandonment date or its cancellation date is present (not zeros), or its status code is listed below. Every other record is LIVE, including every status code not listed: a dead record shown as live is a false hit a reviewer dismisses; a live record shown as dead would be a missed conflict, the one failure that matters.",
+  "dead_ranges": [],
+  "dead_codes": [],
+  "why": "No status code is treated as dead until Table 1 has been read. A first draft treated the whole 600 series as abandoned (a secondary source's heuristic); the 600 series also holds live examination statuses [M], and that rule would have dropped live pending applications from every LD:true query. Fill dead_codes from Table 1, one code per entry with its Table 1 description, by a pull request; the recall test is rerun after the change."
+}
