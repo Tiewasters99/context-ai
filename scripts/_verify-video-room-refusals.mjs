@@ -134,6 +134,7 @@ function stubWorld(opts = {}) {
       if (u.includes(`/v1beta/${FILE_NAME}`)) return world.providerHolds ? jsonRes(activeFile()) : jsonRes({ error: { code: 404 } }, 404);
       if (u.includes('/v1beta/files?')) return jsonRes({ files: [] });
       if (u.includes(':generateContent')) {
+        if (world.provider === 'rate_limited') return jsonRes({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED' } }, 429);
         return jsonRes({
           candidates: [{ content: { parts: [{ text: JSON.stringify(providerAnswer()) }] }, finishReason: 'STOP' }],
           usageMetadata: { promptTokenCount: 9000, candidatesTokenCount: 400, thoughtsTokenCount: 100, totalTokenCount: 9500 },
@@ -300,6 +301,17 @@ console.log('\n3. A question that is answered: the order of events, and the wind
   check(refund?.p_cents_actual === 0 && refund?.p_meta?.reason === 'media_expired', 'the estimate is given back, with the reason', refund);
   const rows = restWrites('video_interrogations').map((q) => JSON.parse(q.init.body));
   check(rows[0]?.outcome === 'media_expired', 'and the interrogation row says media_expired', rows[0]?.outcome);
+}
+{
+  const r = await call({ action: 'interrogate', question: SENTINEL_PROMPT, start_sec: 30, end_sec: 60 }, { provider: 'rate_limited' });
+  check(r.status === 502 && r.body?.error === 'provider_error', 'the provider answers 429 (2026-10-19: the free-tier daily cap): 502 provider_error', `${r.status} ${r.body?.error}`);
+  check(/quota|429/i.test(r.body?.message ?? ''), 'and the sentence says what the provider said', r.body?.message);
+  const refund = rpcCalls('usage_record_actual')[0];
+  check(refund?.p_cents_actual === 0 && refund?.p_meta?.reason === 'provider_error', 'nothing was answered, so nothing is charged: the estimate is given back', refund);
+  const received = ledgerRows().find((x) => x.p_kind === 'completion.received');
+  check(received?.p_payload?.outcome === 'provider_error', 'completion.received says provider_error', received?.p_payload?.outcome);
+  const rows = restWrites('video_interrogations').map((q) => JSON.parse(q.init.body));
+  check(rows[0]?.outcome === 'provider_error' && rows[0]?.result == null, 'the interrogation row says provider_error, with no answer in it', rows[0]?.outcome);
 }
 {
   const r = await call({ action: 'interrogate', question: SENTINEL_PROMPT }, {});
