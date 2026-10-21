@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "about": "The statements of law, practice and fee that the application draft (stage 9) prints, each with its source and the date it was verified against that source. verified = null means not verified: the draft prints it with [M]. How to change this: a pull request to lib/trademark/filing/rules.json, with the source re-read on the day.",
+  "rules": {
+    "basis_1a": {
+      "text": "A use-based application states that the mark is in use in commerce, the date of first use anywhere, the date of first use in commerce, and includes one specimen per class.",
+      "source": "15 U.S.C. § 1051(a); 37 C.F.R. § 2.34(a)(1) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "basis_1b": {
+      "text": "An intent-to-use application is filed by a person with a bona fide intention, under circumstances showing good faith, to use the mark in commerce; the applicant verifies that intention.",
+      "source": "15 U.S.C. § 1051(b)(1); 37 C.F.R. § 2.34(a)(2) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "declaration_1a": {
+      "text": "the signer believes the applicant to be the owner of the mark; the facts recited are accurate; the mark is in use in commerce; and to the best of the signer's knowledge no other person has the right to use the mark in commerce in a form likely to cause confusion.",
+      "source": "15 U.S.C. § 1051(a)(3) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "declaration_1b": {
+      "text": "the signer believes the applicant to be entitled to use the mark in commerce; the applicant has a bona fide intention to use the mark in commerce; the facts recited are accurate; and to the best of the signer's knowledge no other person has the right to use the mark in commerce in a form likely to cause confusion.",
+      "source": "15 U.S.C. § 1051(b)(3) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "declaration_false_statements": {
+      "text": "The TEAS declaration also warns that willful false statements are punishable; read the form's own text before signing.",
+      "source": "TEAS declaration text (not re-read for this build)",
+      "verified": null
+    },
+    "use_in_commerce_bona_fide": {
+      "text": "Use in commerce means the bona fide use of a mark in the ordinary course of trade, and not made merely to reserve a right in a mark.",
+      "source": "15 U.S.C. § 1127 (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "use_in_commerce_goods": {
+      "text": "the mark is placed on the goods, their containers, the displays associated with them, or tags or labels affixed to them, and the goods are sold or transported in commerce",
+      "source": "15 U.S.C. § 1127 (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "use_in_commerce_services": {
+      "text": "the mark is used or displayed in the sale or advertising of the services and the services are rendered in commerce",
+      "source": "15 U.S.C. § 1127 (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "services_rendered_not_future": {
+      "text": "Use of a mark in the announcement of a future service, including an advance reservation or advance purchase, is not use as a service mark.",
+      "source": "TMEP § 1301.03(a) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "services_payment_not_required": {
+      "text": "Payment is not what makes a service: a service must be a real activity performed primarily for the benefit of others (free instructional events have been held a service).",
+      "source": "TMEP §§ 1301.01(a)(i)-(ii), 1301.01(b)(i) (May 2026); no express statement that payment is not required was found",
+      "verified": null
+    },
+    "feature_not_service": {
+      "text": "The name of a process, system, method or computer program is not a service mark unless it is also used to identify and distinguish a service.",
+      "source": "TMEP §§ 1301.01(a)(i), 1301.02(e)-(f) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "specimen_required": {
+      "text": "A use-based application includes one specimen per class showing how the applicant uses the mark in commerce.",
+      "source": "37 C.F.R. § 2.34(a)(1)(iv) (Cornell LII); TMEP § 904.07(a) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "specimen_goods": {
+      "text": "A trademark specimen must show use of the mark on the goods, on containers or packaging, on labels or tags affixed to the goods, or on a display associated with the goods.",
+      "source": "37 C.F.R. § 2.56(b)(1) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "specimen_goods_webpage": {
+      "text": "A web page is a display associated with the goods when it shows the goods, shows the mark in association with them, and provides a means for ordering them.",
+      "source": "TMEP § 904.03(i) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "service_mark_association": {
+      "text": "A service mark specimen must show the mark as used in the sale, rendering or advertising of the services, with a direct association between the mark and the services.",
+      "source": "37 C.F.R. § 2.56(b)(2) (Cornell LII); TMEP § 1301.04(f)(ii) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "specimen_shows_mark_as_mark": {
+      "text": "The specimen must show the applied-for mark functioning as a mark for the goods or services identified.",
+      "source": "TMEP §§ 904.07(a)-(b) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "specimen_webpage_url_date": {
+      "text": "A web page specimen must include its URL and the access or print date.",
+      "source": "37 C.F.R. § 2.56(c) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "specimen_not_digitally_created": {
+      "text": "An artist's rendering, printer's proof, computer illustration, digital image or similar mockup, or an image digitally created or altered to include the mark, is not a proper specimen.",
+      "source": "37 C.F.R. § 2.56(c) (Cornell LII); TMEP § 904.04(a) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "applicant_must_exist": {
+      "text": "The application must be filed by the party who owns the mark (or has the bona fide intention to use it) on the filing date; filed in the name of the wrong party it is void, and that cannot be cured by amendment or assignment. TMEP § 1201.02(c)(7) lets the name of a party that did not exist on the filing date be corrected in some cases; do not plan around it.",
+      "source": "TMEP §§ 1201.02(b), 1201.02(c)(7) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "domicile": {
+      "text": "The applicant must give and keep current its domicile: the principal place of business of an entity, or a person's permanent legal residence. P.O. boxes, c/o, mail-receiving-agency, registered-agent and private-mailbox (PMB) addresses may be mailing addresses but are presumptively not domicile addresses. An applicant domiciled outside the United States must be represented by a qualified U.S. attorney.",
+      "source": "37 C.F.R. §§ 2.189, 2.2(o), 2.11(a) (Cornell LII); TMEP §§ 601.01(c)(i), 803.05(a) (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "itu_assignment_bar": {
+      "text": "An intent-to-use application cannot be assigned before an amendment to allege use or a statement of use is filed, except to a successor to the applicant's business, or the portion of it to which the mark pertains, if that business is ongoing and existing.",
+      "source": "15 U.S.C. § 1060(a)(1) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "assignment_goodwill": {
+      "text": "A mark is assignable with the goodwill of the business in which it is used, or the part of the goodwill the mark symbolizes.",
+      "source": "15 U.S.C. § 1060(a)(1) (Cornell LII)",
+      "verified": "2026-10-21"
+    },
+    "bona_fide_intent_evidence": {
+      "text": "Keep dated, objective evidence of the intention for each identification (business plans, product specifications, budgets, correspondence); an applicant without it is exposed to a lack-of-bona-fide-intent challenge (M.Z. Berger & Co. v. Swatch AG, 787 F.3d 1368 (Fed. Cir. 2015)).",
+      "source": "M.Z. Berger & Co. v. Swatch AG, 787 F.3d 1368 (Fed. Cir. 2015), as cited in the spec; not re-read for this build",
+      "verified": null
+    },
+    "free_form_surcharge": {
+      "text": "An identification not taken directly from the ID Manual carries the free-form text fee per class, plus a fee per class for each group of 1,000 characters beyond the first 1,000.",
+      "source": "37 C.F.R. § 2.6(a)(1)(v)-(vi) (Cornell LII); TMEP § 810 (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "sou_deadline": {
+      "text": "After a notice of allowance, the statement of use is due within six months; extensions are granted in six-month increments, one plus up to four more, not more than 24 months in all beyond the first six.",
+      "source": "37 C.F.R. §§ 2.88, 2.89(a), (c) (Cornell LII); TMEP § 1108.01 (May 2026)",
+      "verified": "2026-10-21"
+    },
+    "office_action_response": {
+      "text": "An office action is answered within three months, with one optional three-month extension for a fee (a Madrid Section 66(a) application: six months, no extension).",
+      "source": "uspto.gov/trademarks/maintain/responding-office-actions, as verified in the spec",
+      "verified": "2026-10-18"
+    }
+  },
+  "fees": {
+    "source": "37 C.F.R. § 2.6 (Cornell LII, through 89 FR 91089); uspto.gov/trademarks/trademark-fee-information (last updated Jan. 18, 2025)",
+    "verified": "2026-10-21",
+    "base": { "label": "Base application filing fee (electronic)", "amount": 350 },
+    "insufficient_information": { "label": "Insufficient information surcharge", "amount": 100 },
+    "free_form": { "label": "Free-form text identification fee", "amount": 200 },
+    "excess_characters": { "label": "Excess characters, each 1,000 beyond the first 1,000 (free-form)", "amount": 200 },
+    "allegation_of_use": { "label": "Amendment to allege use or statement of use (electronic)", "amount": 150 },
+    "sou_extension": { "label": "Extension of time to file a statement of use (electronic)", "amount": 125 }
+  }
+}

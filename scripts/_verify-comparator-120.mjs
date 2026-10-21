@@ -49,10 +49,10 @@ try {
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MIG = fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', '120_model_comparator.sql'), 'utf8');
-const { EVENT_KINDS: ALL_KINDS, KINDS_120, KINDS_121 } = await import('../lib/ledger.mjs');
+const { EVENT_KINDS: ALL_KINDS, KINDS_120, KINDS_121, KINDS_122 } = await import('../lib/ledger.mjs');
 // Through 120: this harness never applies 121, whose nine kinds (Trademark
 // Clearance) scripts/_verify-trademark-121.mjs holds to the constraint.
-const EVENT_KINDS = ALL_KINDS.filter((k) => !KINDS_121.includes(k));
+const EVENT_KINDS = ALL_KINDS.filter((k) => !KINDS_121.includes(k) && !KINDS_122.includes(k));
 
 let failures = 0;
 const check = (ok, label, detail = '') => {

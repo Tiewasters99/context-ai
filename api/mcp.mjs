@@ -188,13 +188,17 @@ export default async function handler(req, res) {
           'slides — bullets, tables, native charts, notes); create_chart ' +
           'renders an SVG chart from data you extracted. search works ' +
           'matter-scoped or, with matter omitted, across every matter at once. ' +
-          'TRADEMARK CLEARANCE (knockout search): tm_start_clearance opens one ' +
-          'per mark, then tm_propose / tm_confirm (classes, decomposition), ' +
-          'tm_generate_queries, tm_record_results, tm_triage and tm_report; ' +
-          'tm_get_clearance says the next step. The USPTO search is run by the ' +
-          'person on tmsearch: hand them the query lines and record what they ' +
-          'report. The report is a DRAFT until the reviewer signs it in ' +
-          'Equazia.ai; never call a mark clear.' +
+          'TRADEMARK CLEARANCE (knockout search): tm_start_batch opens one ' +
+          'clearance per mark from the names and one sentence (tm_start_clearance ' +
+          'for one), with the model proposals saved PROPOSED; tm_confirm ' +
+          '(step "proposals") once the person accepts them; tm_record_results ' +
+          'for each query the person runs on tmsearch; tm_triage; tm_deep_check ' +
+          '(official TSDR status); tm_report; then tm_application_questions / ' +
+          'tm_application_answer / tm_application_draft for a use-based or ' +
+          'intent-to-use application DRAFT. tm_get_clearance says the next step. ' +
+          'The USPTO search is run by the person: hand them the query lines and ' +
+          'record what they report. Nothing is signed or filed with the USPTO by ' +
+          'you: the reviewer signs in Equazia.ai; never call a mark clear.' +
           agentNote,
       }
     );
