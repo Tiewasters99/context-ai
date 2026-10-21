@@ -335,7 +335,7 @@ and 8; procedure JSON + Method panel; `api/trademark.mjs` with the three model a
 assembly + lint + filing; Record events; the three test harnesses in CI; this spec copied to
 `docs/specs/TRADEMARK-CLEARANCE-2026-10-18.md`.
 
-**Slice 2 (not now; design the data for it):**
+**Slice 2 (built 2026-10-21 except stages 7 and 10; see §10 for what was built and the corrected citations):**
 - Stage 6 TSDR deep check (official API, key in env, per-serial status and prosecution history
   filed as a document per flagged hit) **[M endpoints]**.
 - Stage 7 web screen (labelled as such; domains .com/.ai + misspellings; handles).
@@ -369,3 +369,152 @@ assembly + lint + filing; Record events; the three test harnesses in CI; this sp
 7. TSDR API endpoints and limits [M]. 8. Bulk register data availability [L].
 9. tmsearch export format ("Export, first 500 results", sign-in required) [M]: one real export from
    Eden turns the mapper fixture from hand-built to real.
+
+---
+
+## 10. Slice 2 as built (2026-10-21)
+
+Built from the slice-2 build brief of 2026-10-21 and Eden's decisions of 10-20/21: stage 9 with BOTH
+bases (use-based Section 1(a) and intent-to-use Section 1(b)); stage 6 in the same PR; the applicant
+(Grapheon.ai, LLC for the Quorium marks) is data on the clearance; a person types the names and one
+sentence and the recipe stops only at the human steps; a bot runs the same flow to the DRAFT
+application. Stages 7 (web screen) and 10 (docket) remain later. Migration
+`122_trademark_slice2.sql` (NOT applied until Eden approves it by name).
+
+### 10.1 The one-box start
+- Browser: the Trademark tab (and the Agents-page card) has one box: marks, one per line, and one
+  sentence. One clearance per mark; the sentence is its goods and services; the model's class and
+  decomposition proposals are SAVED PROPOSED (`tm_clearances.proposals`, `tm.proposal.saved`), never
+  as the confirmed value.
+- ONE review screen across the marks: proposals, the queries they would generate (preview), accept
+  or edit, and one confirmation per mark with initials, which saves classes and decomposition,
+  generates the queries and signs stages 1–3 (each sign-off its own `tm.stage.done` row). "Accept all"
+  confirms each mark in turn, separately.
+- ONE search sheet: every unrun query of every confirmed mark, with Copy, the tmsearch link and a
+  paste/upload slot. When a mark's last query is recorded and Q0 passed, triage is proposed on its own;
+  the stage-8 report preview assembles on its own. Bins and sign-offs remain the reviewer's.
+- Connector: `tm_start_batch` (up to 10 marks; proposals in parallel across marks, the two steps of
+  one mark in turn, inside a 40 s budget of the endpoint's 60 s), `tm_confirm` step `"proposals"`
+  (both as saved, then the queries), and `next_step` at every stage through stage 9.
+
+### 10.2 Stage 6 — the TSDR deep check
+Targets: every hit triage proposed to flag (undecided) or the reviewer flagged, or marked
+`tm_hits.deep_check`. Server side only: the key is `USPTO_TSDR_API_KEY` in the server env, sent only in
+the request header. Stored on the hit (`tm_hits.tsdr`, `tsdr_checked_at`); one status record filed in
+the matter per hit (`TSDR status — <serial> — <MARK> — <date>.md`, `tsdr_document_id`); `tm.hit.status`
+and `tm.deep_check.run`. A dead record is noted, never dropped or re-binned. No key: the stage says so
+and the reviewer may skip it; nothing is invented. Prerequisite: stage 6 is signed after stage 5.
+
+TSDR API facts **[V 10-21]** — developer.uspto.gov now redirects to data.uspto.gov (a script app with
+no readable text), so the documentation was read from Wayback snapshots of the developer.uspto.gov
+TSDR FAQ (2024-12-25), the Enterprise API User Guide v2 (Sept. 2020) and `swagger_v1.json` (2023-03),
+and the live API was probed without a key (it answers 401 and names
+`https://account.uspto.gov/api-manager/`):
+- host `https://tsdrapi.uspto.gov`, base `/ts/cd/`; JSON is documented only for
+  `GET /ts/cd/caseMultiStatus/sn?ids=78787878,76767676` ("Returns case details for multiple cases as a
+  JSON"); `casestatus/sn{serial}/info` is ST96 XML. The client uses caseMultiStatus, one request per
+  batch of up to 10 serials (the batch size is **[M]**).
+- auth header `USPTO-API-KEY` ("You must enter "USPTO-API-KEY" exactly"); key from the API Key Manager,
+  "Select TSDR".
+- "All requests are rate limited at 60 requests per API key per minute. PDF, ZIP, and multi-case
+  downloads are rate limited at four requests per API key per minute"; over the limit → HTTP 429.
+  Whether caseMultiStatus JSON counts as a "multi-case download" is not stated, so the client assumes
+  4/minute (one request per 15 s per process). Retry-After is not documented: honoured if present,
+  else 15/30/60 s backoff, then a plain failure.
+- Response fields from the swagger schema, NOT from a real response (no key) **[M until Eden's key
+  returns one]**: `transactionList[].trademarks[]` with `status{serialNumber, markElement, status,
+  statusDate, extStatusDesc, tm5StatusDesc, usRegistrationNumber, usRegistrationDate, filingDate,
+  dateAbandoned, dateCancelled}`, `parties.currentOwners[].name`, `gsList[]{description,
+  internationalClasses[].code}`, `prosecutionHistory[]{entryDate, entryCode, entryDesc}`. There is no
+  live/dead field: `live` is read from the TM5 / extended status text and the abandoned / cancelled
+  dates, and is null when they say nothing. Unmapped top-level keys are kept (`raw_keys`).
+
+### 10.3 Stage 9 — the application draft
+Inputs: the applicant (`tm_clearances.applicant`), the filing classes, and per class
+(`tm_clearances.application`): identification (ID Manual entry or free-form), in use now?, if yes the
+dates of first use anywhere and in commerce and a specimen (a document in the same matter, its kind,
+description, URL and access date, and a short checklist); if no, the dated bona-fide-intent evidence;
+the basis (recommended by the recipe; chosen by the person; confirmed by the reviewer's sign-off); and
+the transfer plan. Output: a DRAFT in TEAS order (applicant, mark, classes and identifications, basis
+and dates, specimens, what the declaration verifies, fees) and a SEPARATE cautions annex, both filed in
+the matter (`tm.application.drafted`); stage 9 `awaiting_review`. The reviewer's sign-off in the browser
+files the reviewed copy and signs stage 9 (`tm.application.reviewed`). Prerequisites (migration 122):
+stage 9 needs stage 8 done, stage 6 done or skipped, and its document. Nothing is filed with the USPTO.
+
+The rules the draft prints live in `lib/trademark/filing/rules.json`, each with its source and
+verification date; the draft prints `[V date, source]` or `[M]`. Verified 2026-10-21 (Cornell LII for
+the statute and the C.F.R.; the TMEP May 2026 edition at tmep.uspto.gov):
+- **15 U.S.C. § 1051(a), (b)** [V 10-21]: use-based application with verified statement and specimens;
+  intent-to-use on "a bona fide intention, under circumstances showing the good faith of such person";
+  the verified statements of (a)(3) and (b)(3) (paraphrased in the draft's §6).
+- **15 U.S.C. § 1127** [V 10-21]: "use in commerce" is "the bona fide use of a mark in the ordinary
+  course of trade, and not made merely to reserve a right in a mark"; goods: placed on the goods,
+  containers, displays, tags or labels, and sold or transported in commerce; services: "used or
+  displayed in the sale or advertising of services and the services are rendered in commerce".
+- **15 U.S.C. § 1060(a)(1)** [V 10-21]: assignable with the goodwill; no § 1051(b) application
+  assignable before an allegation of use "except for an assignment to a successor to the business of
+  the applicant, or portion thereof, to which the mark pertains, if that business is ongoing and
+  existing."
+- **37 C.F.R. § 2.34(a)(1)–(2)** [V 10-21]: dates of first use anywhere and in commerce, one specimen;
+  the bona fide intention verified.
+- **37 C.F.R. § 2.56(b)(1)–(2), (c)** [V 10-21]: goods and service-mark specimens; "A web page must
+  include the URL and access or print date"; renderings, proofs, illustrations, digital images or
+  similar mockups are not proper specimens. **TMEP § 904.04(a)** [V 10-21]: digitally created / altered
+  or mocked-up images. **TMEP § 904.03(i)** [V 10-21]: a web page is a display associated with the goods
+  when it shows the goods, the mark with them, and a means of ordering. **TMEP §§ 904.07(a)–(b)**.
+- **TMEP § 1301.04(f)(ii)** [V 10-21]: a direct association between the mark and the services.
+  **TMEP § 1301.03(a)** [V 10-21] (not 1301.04(h)/(i), as the brief guessed): "the use of a mark in the
+  announcement of a future service ... does not constitute use as a service mark."
+- **TMEP §§ 1301.01(a)(i), 1301.02(e)–(f)** [V 10-21]: a system, process, method or computer program
+  name is not a service mark unless it also identifies a service (the "feature name / in-product unit"
+  flag).
+- Payment not required for services: **[M]** — no express TMEP statement was found; the closest is
+  1301.01(a)(i)–(ii) (a real activity for others' benefit) and 1301.01(b)(i) (free instructional
+  parties held a service). The draft prints it with [M].
+- **TMEP § 1201.02(b)** [V 10-21]: the application must be filed by the owner on the filing date;
+  wrong-party filings are void and not curable by amendment or assignment. **Correction to §8:** TMEP
+  § 1201.02(c)(7) lets the name of a party that did not exist on the filing date be corrected in some
+  cases, so the product does not say "a non-existent entity's application is void"; it says file only
+  when the applicant exists and not to plan around 1201.02(c)(7).
+- **Domicile** [V 10-21]: 37 C.F.R. § 2.189 (domicile required) with § 2.2(o) (definition). **Correction to
+  §8:** the P.O. box / PMB rule is TMEP § 601.01(c)(i) ("presumptively unacceptable" as domicile), not
+  § 2.189 itself; TMEP § 803.05(a); a foreign-domiciled applicant needs a U.S. attorney, 37 C.F.R.
+  § 2.11(a).
+- **Statement of use** [V 10-21]: due six months after the notice of allowance (37 C.F.R. § 2.88);
+  extensions in six-month increments, one plus up to four more, aggregate cap (§ 2.89(a), (c); TMEP
+  § 1108.01).
+- *M.Z. Berger & Co. v. Swatch AG*, 787 F.3d 1368 (Fed. Cir. 2015): **[M]**, as cited in §0.1; not
+  re-read for this build.
+- The TEAS declaration's own false-statement warning: **[M]**, the draft points the signer to the form.
+
+Fees **[V 10-21]**, uspto.gov/trademarks/trademark-fee-information ("Last updated on: Jan 18, 2025",
+fiscal year 2025 fee rule) corroborated against 37 C.F.R. § 2.6 (Cornell LII, through 89 FR 91089):
+$350/class base (electronic); $100/class insufficient information; $200/class free-form text
+identification; $200/class for each additional 1,000 characters beyond the first 1,000 (free-form);
+$150/class allegation of use (AAU or SOU); $125/class per SOU extension. Re-verify on the day of filing.
+
+Advisory specimen check (the reviewer decides; nothing rejects a specimen): mark absent; a mockup or
+edited image; use merely to reserve the name; the term only as a feature's name or an in-product unit;
+a webpage without URL or access date; services: "coming soon"/waitlist (not yet rendered), no
+association with the services; goods: advertising as a goods specimen, a webpage with no means of
+ordering, goods not sold or transported. Basis recommendation: not in use → 1(b); in use with both
+dates, a specimen and no flag → 1(a); in use but missing a date or specimen, or flagged → 1(b) until
+fixed. Entity: applicant not formed → the 1201.02 rule and "do not file before <formation date>";
+marks moving to an entity not yet formed → the three options (wait; file now as the existing applicant
+and move the marks later with the business; successor exception, with care), the § 1060(a)(1) bar
+printed for 1(b) classes, and for 1(a) classes "no such bar; goodwill must travel".
+
+### 10.4 Who can do what
+A connector (any `csp_` token, OAuth grant or agent) can start, propose, relay acceptance and answers,
+record runs, ask for triage proposals, run the deep check and file DRAFTs; it cannot sign a stage or
+decide a bin — migration 122 refuses both under a connector JWT (`cs_via: 'connector'`), in addition to
+there being no tool for it. Every Record row a bot causes is the connector's.
+
+### 10.5 Open questions (for Eden)
+1. The TSDR field mapping is from the swagger schema; confirm with the first real response (Eden's key).
+2. Whether caseMultiStatus is limited at 4/minute or 60/minute; the client assumes 4.
+3. Whether the bot should file DRAFTs into the matter (built: yes, marked DRAFT — NOT REVIEWED) or only
+   return the text, as `tm_report` does.
+4. `tm_deep_check` / `tm_application_draft` file documents through `file_document` inside the tool call;
+   the connector meter counts the outer call as WORK and does not charge the inner filing.
+5. Stage 7 (web screen) and stage 10 (docket) are still to build; the docket's deadlines are in the annex.

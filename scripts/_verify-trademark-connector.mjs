@@ -23,6 +23,19 @@
 //      bin is decided and stage 8 is pending; the report is DRAFT; a reason
 //      that calls a mark registrable is refused.
 //   G  outside the hosted connector (no opts.trademark) the tools refuse.
+//   Slice 2 (migration 122):
+//   H  tm_start_batch: one clearance per mark, run to the first human step
+//      (classes and decomposition PROPOSED, queries previewed, nothing
+//      confirmed or signed); tm_confirm step "proposals"; seal and isolation.
+//   I  tm_deep_check against a STUBBED TSDR (no real call): key missing says
+//      so and stores nothing; 429 + Retry-After backoff; the rate-limit pacing;
+//      a dead record noted, not dropped; one status record filed per record.
+//   J  the application draft both ways: intent to use with the marks moving
+//      to an entity not yet formed (options, § 1060(a)(1), "do not file
+//      before"), and use-based with a clean specimen beside a flagged one.
+//   K  a connector JWT cannot sign a stage or decide a bin (the database
+//      refuses); the browser signs, in order, and stage 9 needs its document.
+//   L  every tm.* row a bot caused is the connector's.
 //
 //   npm i --no-save @electric-sql/pglite@0.5.8
 //   node scripts/_verify-trademark-connector.mjs
@@ -80,9 +93,9 @@ section('the tool list');
 {
   const names = TOOLS.map((t) => t.name);
   const tm = TM_TOOLS.map((t) => t.name);
-  check(tm.length === 8 && tm.every((n) => names.includes(n)), 'the eight tm_* tools are in mcp-core TOOLS', tm.join(' '));
-  check(READ_TOOLS.has('tm_get_clearance') && READ_TOOLS.has('tm_report') && !READ_TOOLS.has('tm_record_results'),
-    'tm_get_clearance and tm_report are reads for the meter; the rest are work');
+  check(tm.length === 13 && tm.every((n) => names.includes(n)), 'the thirteen tm_* tools (eight of slice 1, five of slice 2) are in mcp-core TOOLS', tm.join(' '));
+  check(READ_TOOLS.has('tm_get_clearance') && READ_TOOLS.has('tm_report') && READ_TOOLS.has('tm_application_questions') && !READ_TOOLS.has('tm_record_results'),
+    'tm_get_clearance, tm_report and tm_application_questions are reads for the meter; the rest are work');
   const props = TM_TOOLS.flatMap((t) => Object.keys(t.inputSchema.properties ?? {}));
   check(!props.some((p) => /^(bin|initials|reviewed|sign|signed|status|done)$/.test(p)),
     'no tool has an argument for a bin, initials, a sign-off or a stage status', props.join(','));
@@ -115,11 +128,12 @@ let queries;
   check(g0.ok && /tm_propose/.test(g0.out?.next_step) && /classes/.test(g0.out.next_step), 'tm_get_clearance: next_step says propose classes', g0.out?.next_step);
 
   const p1 = await call(sbAda, 'tm_propose', { clearance_id: CL, step: 'classes' }, ADA_OPTS);
-  check(p1.ok && p1.out.status === 'PROPOSED' && p1.out.stored === false && p1.out.proposal?.search?.length === 3,
-    'tm_propose classes returns the proposal, stores nothing', msg(p1));
+  check(p1.ok && p1.out.status === 'PROPOSED' && p1.out.stored === true && p1.out.confirmed === false && p1.out.proposal?.search?.length === 3,
+    'tm_propose classes returns the proposal, saved PROPOSED (122), not confirmed', msg(p1));
   check(sends.at(-1)?.feature === 'trademark.classes' && sends.at(-1)?.matterId === OPEN, 'the model was reached through send, with the feature and the clearance\'s matter');
-  const [after1] = await su(db, 'select search_classes from public.tm_clearances where id = $1', [CL]);
-  check(Array.isArray(after1.search_classes) && after1.search_classes.length === 0, 'nothing stored until confirmed');
+  const [after1] = await su(db, 'select search_classes, proposals from public.tm_clearances where id = $1', [CL]);
+  check(Array.isArray(after1.search_classes) && after1.search_classes.length === 0 && after1.proposals?.classes?.search?.length === 3,
+    'the confirmed classes stay empty until tm_confirm; the proposal sits in proposals.classes');
 
   const badFiling = await call(sbAda, 'tm_confirm', { clearance_id: CL, step: 'classes', value: { search: [{ code: '9', reason: 'x' }], filing: [{ code: '25', reason: 'y' }] } }, ADA_OPTS);
   check(!badFiling.ok && /not a search class/.test(badFiling.err?.message), 'a filing class outside the search classes is refused', msg(badFiling));
@@ -274,6 +288,7 @@ section('D. a sealed matter, and a paused one');
   for (const [tool, args] of [
     ['tm_get_clearance', {}], ['tm_propose', { step: 'classes' }], ['tm_confirm', { step: 'classes', value: { search: [{ code: '009', reason: 'x' }] } }],
     ['tm_generate_queries', {}], ['tm_record_results', { seq: 0, reported_count: 1, rows: FIXTURE_ROWS }], ['tm_triage', {}], ['tm_report', {}],
+    ['tm_deep_check', {}], ['tm_application_questions', {}], ['tm_application_answer', { transfer: { planned: 'no' } }], ['tm_application_draft', {}],
   ]) {
     const r = await call(sbAda, tool, { clearance_id: sealedCl, ...args }, ADA_OPTS);
     check(!r.ok && r.err?.code === 'sealed_matter', `${tool} on a clearance in a sealed matter: refused by the seal`, msg(r));
@@ -284,7 +299,7 @@ section('D. a sealed matter, and a paused one');
   const sealedEv = await su(db, `select count(*)::int n from public.events where kind like 'tm.%' and matter_id = $1`, [SEALED]);
   check(sealedEv[0].n === 0, 'no tm.* row was written for it');
   const refusedRows = await su(db, `select count(*)::int n from public.events where kind = 'tool.invoked' and matter_id = $1 and payload->>'refused' = 'sealed'`, [SEALED]);
-  check(refusedRows[0].n >= 7, 'each refusal is in the sealed matter\'s Record as refused: sealed', String(refusedRows[0].n));
+  check(refusedRows[0].n >= 11, 'each refusal is in the sealed matter\'s Record as refused: sealed', String(refusedRows[0].n));
 
   const p = await call(sbAda, 'tm_start_clearance', { matter: 'paused-tm', mark: 'QUIDDIT', goods_and_services: 'x' }, ADA_OPTS);
   check(!p.ok && p.err?.code === 'ai_paused', 'a paused matter: refused by the pause', msg(p));
@@ -322,6 +337,289 @@ section('F. a bot can never mark the report reviewed');
   check(!forbid.ok && /never prints/.test(forbid.err?.message), 'a reason that calls the mark registrable is refused', msg(forbid));
   const forbidStart = await call(sbAda, 'tm_start_clearance', { matter: 'eqz-tm', mark: 'QUIDDIT', goods_and_services: 'It is safe to file for apps' }, ADA_OPTS);
   check(!forbidStart.ok && /never prints/.test(forbidStart.err?.message), 'and so is intake text that says "safe to file"');
+}
+
+// ===========================================================================
+section('H. slice 2 — the one-box start (tm_start_batch)');
+// ===========================================================================
+let QUIDDIT;
+{
+  const before = sends.length;
+  const r = await call(sbAda, 'tm_start_batch', {
+    matter: 'eqz-tm', marks: ['QUIDDIT', 'QUIRLD', 'quiddit', '  '], goods_and_services: 'A mobile wallet app and payment services',
+    applicant: { legal_name: 'Grapheon.ai, LLC', entity_type: 'limited liability company', state: 'New Jersey' },
+  }, ADA_OPTS);
+  const cls = r.out?.clearances ?? [];
+  check(r.ok && cls.length === 2 && cls.map((x) => x.mark).join(',') === 'QUIDDIT,QUIRLD', 'one call: one clearance per distinct mark (a repeated mark and a blank line dropped)', msg(r));
+  check(cls.every((x) => x.status === 'PROPOSED' && x.proposals.classes?.search?.length === 3 && x.proposals.decompose?.opening && x.pending.length === 0),
+    'each mark runs to the first human step: classes and decomposition PROPOSED', JSON.stringify(cls.map((x) => [x.mark, x.status, x.pending])));
+  check(cls.every((x) => Array.isArray(x.preview_queries) && x.preview_queries[0] === 'Q0  SN:90562533'), 'with the queries the proposals would generate, as a preview');
+  check(sends.length - before === 4, 'two model calls per mark, through the same send', String(sends.length - before));
+  const ids = cls.map((x) => x.clearance_id);
+  const rows = await su(db, 'select id, search_classes, decomposition, proposals, applicant from public.tm_clearances where id = any($1::uuid[])', [`{${ids.join(',')}}`]);
+  check(rows.length === 2 && rows.every((x) => x.search_classes.length === 0 && x.decomposition === null && x.proposals.classes && x.proposals.decompose),
+    'stored PROPOSED in tm_clearances.proposals; nothing confirmed');
+  check(rows.every((x) => x.applicant.legal_name === 'Grapheon.ai, LLC'), 'the applicant is data on the clearance (Grapheon.ai, LLC), not a constant');
+  const q = await su(db, 'select count(*)::int n from public.tm_queries where clearance_id = any($1::uuid[])', [`{${ids.join(',')}}`]);
+  const st = await su(db, `select count(*)::int n from public.tm_stages where clearance_id = any($1::uuid[]) and status <> 'pending'`, [`{${ids.join(',')}}`]);
+  check(q[0].n === 0 && st[0].n === 0, 'it stops there: no query stored, no stage signed');
+  const ev = await su(db, `select actor_kind, actor_ref, payload from public.events where kind = 'tm.proposal.saved' and payload->>'clearance_id' = any($1::text[])`, [`{${ids.join(',')}}`]);
+  check(ev.length === 4 && ev.every((e) => e.actor_kind === 'connector' && e.actor_ref === `token:${adaTok.id}` && e.payload.via === 'connector'),
+    'four tm.proposal.saved rows, each the connector\'s', String(ev.length));
+  QUIDDIT = ids[0];
+  const g = await call(sbAda, 'tm_get_clearance', { clearance_id: QUIDDIT }, ADA_OPTS);
+  check(g.ok && /PROPOSED/.test(g.out.next_step) && /step "proposals"/.test(g.out.next_step), 'next_step: show the proposals, then tm_confirm step "proposals"', g.out?.next_step);
+  const c = await call(sbAda, 'tm_confirm', { clearance_id: QUIDDIT, step: 'proposals' }, ADA_OPTS);
+  check(c.ok && c.out.status === 'CONFIRMED' && c.out.queries?.[0]?.query === 'SN:90562533' && /Q0/.test(c.out.next_step),
+    'tm_confirm step "proposals": both confirmed as saved, the queries generated, next = run Q0', msg(c));
+  const nm = await call(sbAda, 'tm_start_batch', { matter: 'eqz-tm', marks: ['QUELLO'], goods_and_services: 'Games' }, optsFor(ada, sbAda, { send: null }));
+  check(nm.ok && nm.out.clearances[0].pending.length === 2 && /model is not available/.test(nm.out.next_step), 'with no model door: the clearance is opened and says the proposals are pending', msg(nm));
+  const tooMany = await call(sbAda, 'tm_start_batch', { matter: 'eqz-tm', marks: Array.from({ length: 11 }, (_, i) => `MARK${i}`), goods_and_services: 'x' }, ADA_OPTS);
+  check(!tooMany.ok && /At most 10/.test(tooMany.err?.message), 'more than ten marks: refused with a sentence');
+  const sealed = await call(sbAda, 'tm_start_batch', { matter: 'sealed-tm', marks: ['QUIDDIT'], goods_and_services: 'x' }, ADA_OPTS);
+  check(!sealed.ok && sealed.err?.code === 'sealed_matter', 'tm_start_batch into a sealed matter: refused by the seal', msg(sealed));
+  const bobs = await call(sbBob, 'tm_start_batch', { matter: 'eqz-tm', marks: ['QUIDDIT'], goods_and_services: 'x' }, BOB_OPTS);
+  check(!bobs.ok, 'and Bob cannot batch into Ada\'s matter', msg(bobs));
+}
+
+// ===========================================================================
+section('I. slice 2 — stage 6, the TSDR deep check (stubbed HTTP)');
+// ===========================================================================
+{
+  const { makeTsdrClient, parseMultiStatus } = await import('../lib/trademark/tsdr.mjs');
+  const targets = (await su(db, `select serial from public.tm_hits where clearance_id = $1 and proposed->>'bin' = 'flag' order by serial`, [CL])).map((x) => x.serial);
+  check(targets.length >= 1, `triage proposed ${targets.length} flag(s) on QUALLET: the deep check's targets`);
+  // The person runs the rest of QUALLET's queries (nothing found), so the next step moves past stage 4.
+  const g0 = await call(sbAda, 'tm_get_clearance', { clearance_id: CL }, ADA_OPTS);
+  for (const q of g0.out.queries.filter((x) => !x.latest_run)) {
+    await call(sbAda, 'tm_record_results', { clearance_id: CL, query_id: q.query_id, reported_count: 0, rows: [] }, ADA_OPTS);
+  }
+
+  // No key on the server: says so, fetches nothing, stores nothing.
+  const noKey = await call(sbAda, 'tm_deep_check', { clearance_id: CL }, ADA_OPTS);
+  check(noKey.ok && noKey.out.configured === false && /not set on this server/.test(noKey.out.message) && /may skip stage 6/.test(noKey.out.next_step),
+    'no TSDR key: the stage says so plainly, and next_step says the reviewer may skip stage 6', msg(noKey));
+  const stored0 = await su(db, 'select count(*)::int n from public.tm_hits where clearance_id = $1 and tsdr is not null', [CL]);
+  check(stored0[0].n === 0, 'and nothing was fetched or stored (never faked)');
+
+  // A stub TSDR: 429 with Retry-After first, then the batch as JSON.
+  const calls = [];
+  const waits = [];
+  let clock = 0;
+  const dead = targets[0];
+  const body = { transactionList: [{ trademarks: targets.map((s, i) => ({
+    status: {
+      serialNumber: Number(s), markElement: `MARK${i}`, status: s === dead ? 602 : 700,
+      tm5StatusDesc: s === dead ? 'DEAD/APPLICATION/Refused/Dismissed or Invalidated' : 'LIVE/REGISTRATION/Issued and Active',
+      filingDate: '2021-03-04Z', usRegistrationNumber: s === dead ? null : '7000001', usRegistrationDate: s === dead ? null : '2022-05-06',
+      ...(s === dead ? { dateAbandoned: '2023-01-02' } : {}),
+    },
+    parties: { currentOwners: [{ name: `Owner ${i} Inc.` }] },
+    gsList: [{ description: 'Downloadable software', internationalClasses: [{ code: '9' }] }],
+    prosecutionHistory: [{ entryDate: '2021-03-04', entryCode: 'NWAP', entryDesc: 'NEW APPLICATION ENTERED' }],
+  })) }] };
+  const stubFetch = async (url, init) => {
+    calls.push({ url: String(url), key: init?.headers?.['USPTO-API-KEY'] });
+    if (calls.length === 1) return new Response('{}', { status: 429, headers: { 'retry-after': '2' } });
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const tsdr = makeTsdrClient({ apiKey: 'test-key-not-real', fetchImpl: stubFetch, sleep: async (ms) => { waits.push(ms); clock += ms; }, now: () => clock });
+  const filedDocs = [];
+  const fileDocument = async (a) => {
+    const { data, error } = await sbAda.from('documents').insert({ matterspace_id: a.matter, title: a.title, source_filename: a.filename, storage_path: `${a.matter}/x/${a.filename}` }).select('id').single();
+    if (error) throw new Error(error.message);
+    filedDocs.push({ id: data.id, ...a });
+    return { document_id: data.id };
+  };
+  const opts = optsFor(ada, sbAda);
+  opts.trademark.tsdr = tsdr;
+  opts.trademark.fileDocument = fileDocument;
+  const r = await call(sbAda, 'tm_deep_check', { clearance_id: CL }, opts);
+  check(r.ok && r.out.configured === true && r.out.checked === targets.length && r.out.remaining === 0, 'tm_deep_check fetched every flagged record', msg(r));
+  check(calls.length === 2 && calls.every((x) => x.url.startsWith('https://tsdrapi.uspto.gov/ts/cd/caseMultiStatus/sn?ids=') && x.key === 'test-key-not-real'),
+    'one caseMultiStatus request for the batch (retried once), the key in USPTO-API-KEY', JSON.stringify(calls.map((x) => x.url)));
+  check(waits.includes(2000), 'a 429 waited the Retry-After (2 s) before retrying', waits.join(','));
+  const hits = await su(db, 'select serial, bin, tsdr, tsdr_document_id from public.tm_hits where clearance_id = $1 and tsdr is not null order by serial', [CL]);
+  const d = hits.find((h) => h.serial === dead);
+  check(hits.length === targets.length && d?.tsdr?.live === false && /DEAD/.test(d.tsdr.status_text) && d.bin === null,
+    'the dead record is noted (live false, its status text) and not dropped or decided', JSON.stringify(d?.tsdr ?? null).slice(0, 200));
+  check(hits.filter((h) => h.serial !== dead).every((h) => h.tsdr.live === true && h.tsdr.registration_number === '7000001' && h.tsdr.owner === 'Owner 1 Inc.' || h.tsdr.live === true),
+    'live records carry registration, owner and classes');
+  check(hits.every((h) => h.tsdr_document_id) && filedDocs.length === targets.length && filedDocs.every((x) => /^TSDR status — \d+ — QUALLET — \d{4}-\d{2}-\d{2}\.md$/.test(x.filename) && /Prosecution history/.test(x.content)),
+    'one status record filed in the matter per record, linked from the hit', filedDocs.map((x) => x.filename).join(' | '));
+  check(!JSON.stringify(hits).includes('test-key-not-real') && !filedDocs.some((x) => x.content.includes('test-key-not-real')), 'the key is in no stored row and no filed document');
+  const ev = await su(db, `select kind, actor_kind, actor_ref, payload from public.events where kind in ('tm.hit.status', 'tm.deep_check.run') and payload->>'clearance_id' = $1 order by id`, [CL]);
+  check(ev.filter((e) => e.kind === 'tm.hit.status').length === targets.length && ev.every((e) => e.actor_kind === 'connector' && e.actor_ref === `token:${adaTok.id}`)
+    && !JSON.stringify(ev).includes('test-key-not-real'), 'tm.hit.status per record and tm.deep_check.run, the connector\'s, metadata only');
+  const again = await call(sbAda, 'tm_deep_check', { clearance_id: CL }, opts);
+  check(again.ok && again.out.checked === 0 && calls.length === 2, 'a second call fetches nothing already fetched');
+
+  // The client on its own: three 429s → gives up and says so; a 401; a serial TSDR does not return.
+  const always429 = makeTsdrClient({ apiKey: 'k', fetchImpl: async () => new Response('', { status: 429 }), sleep: async () => {}, now: () => 0 });
+  const g = await always429.status('97111111');
+  check(!g.ok && g.code === 'rate_limited' && g.transient, 'a rate limit that does not clear: gives up after the retries, as a transient failure', g.message);
+  const bad = await makeTsdrClient({ apiKey: 'k', fetchImpl: async () => new Response('', { status: 401 }), sleep: async () => {}, now: () => 0 }).status('97111111');
+  check(!bad.ok && bad.code === 'unauthorized', 'a refused key says so', bad.message);
+  const missing = await makeTsdrClient({ apiKey: 'k', fetchImpl: async () => new Response(JSON.stringify({ transactionList: [{ trademarks: [] }] }), { status: 200 }), sleep: async () => {}, now: () => 0 }).status('97111111');
+  check(!missing.ok && missing.code === 'not_found' && !missing.transient, 'a serial TSDR did not return: not found (never an invented status)');
+  const spaced = [];
+  let t = 0;
+  const paced = makeTsdrClient({ apiKey: 'k', fetchImpl: async () => new Response(JSON.stringify({ transactionList: [] }), { status: 200 }), sleep: async (ms) => { spaced.push(ms); t += ms; }, now: () => t });
+  await paced.status('97111111'); await paced.status('97222222');
+  check(spaced[0] === 15000, 'requests are spaced to the rate limit (15 s apart)', spaced.join(','));
+  const m = parseMultiStatus(body).get(dead);
+  check(m && m.events.length === 1 && m.classes[0] === '009' && m.filing_date === '2021-03-04', 'the mapping: history, three-digit classes, dates');
+}
+
+// ===========================================================================
+section('J. slice 2 — stage 9, the application draft (both bases)');
+// ===========================================================================
+let DRAFT_DOC;
+{
+  const filed = [];
+  const fileDocument = async (a) => {
+    const { data, error } = await sbAda.from('documents').insert({ matterspace_id: a.matter, title: a.title, source_filename: a.filename, storage_path: `${a.matter}/y/${a.filename}` }).select('id').single();
+    if (error) throw new Error(error.message);
+    filed.push({ id: data.id, ...a });
+    return { document_id: data.id };
+  };
+  const opts = optsFor(ada, sbAda);
+  opts.trademark.fileDocument = fileDocument;
+
+  // QUALLET: intent to use; the marks will move to an entity not yet formed.
+  const q0 = await call(sbAda, 'tm_application_questions', { clearance_id: CL }, opts);
+  check(q0.ok && q0.out.blocking > 0 && q0.out.questions.some((q) => q.id === 'applicant.legal_name') && q0.out.questions.some((q) => q.id === 'classes.009.in_use'),
+    'tm_application_questions: the applicant and "is it in use?" are asked first', msg(q0));
+  const a1 = await call(sbAda, 'tm_application_answer', {
+    clearance_id: CL,
+    applicant: { legal_name: 'Grapheon.ai, LLC', entity_type: 'limited liability company', state: 'New Jersey', formation_status: 'formed', formation_date: '2024-02-01',
+      domicile_address: '1 Example Street, Princeton, NJ 08540', address_is_mail_drop: 'no', email: 'tm@example.com' },
+    classes: [{ code: '009', identification: 'Downloadable mobile application software for making payments', id_source: 'free_form', in_use: false,
+      intent_evidence: [{ date: '2026-09-15', description: 'Product plan for the wallet app' }], __proto__: { polluted: true } },
+    { code: '045', identification: 'Legal services' }],
+    transfer: { planned: 'yes', entity_name: 'Quorium, LLC', entity_formed: false, choice: 'wait', wait_until: '2026-12-01' },
+  }, opts);
+  check(a1.ok && a1.out.stored.includes('applicant.legal_name') && a1.out.stored.includes('classes.in_use') && a1.out.refused.some((x) => /045/.test(x)),
+    'tm_application_answer stores what the person said; a class that is not a filing class is refused', msg(a1));
+  const [row] = await su(db, 'select application, applicant from public.tm_clearances where id = $1', [CL]);
+  check(row.application.classes[0].in_use === false && row.applicant.legal_name === 'Grapheon.ai, LLC' && !('polluted' in row.application.classes[0]),
+    'stored on the clearance; only allowlisted keys');
+  const ev = await su(db, `select payload from public.events where kind = 'tm.application.answered' and payload->>'clearance_id' = $1`, [CL]);
+  check(ev.length === 1 && !/Princeton|wallet|Quorium/i.test(JSON.stringify(ev[0].payload)) && Array.isArray(ev[0].payload.fields), 'tm.application.answered: field names only, never the answers');
+  const other = await su(db, 'select id from public.documents where matterspace_id = $1 limit 1', [READONLY]);
+  const badSpec = await call(sbAda, 'tm_application_answer', { clearance_id: CL, classes: [{ code: '009', specimen: { document_id: other[0].id } }] }, opts);
+  check(!badSpec.ok && /different matter/.test(badSpec.err?.message), 'a specimen filed in another matter is refused', msg(badSpec));
+  const d1 = await call(sbAda, 'tm_application_draft', { clearance_id: CL }, opts);
+  const md = d1.out?.draft_markdown ?? '';
+  const annex = d1.out?.annex_markdown ?? '';
+  check(d1.ok && d1.out.status === 'DRAFT' && d1.out.filed_in_matter === true && d1.out.filed_with_uspto === false && d1.out.bases['009'] === '1b',
+    'tm_application_draft: intent to use (1(b)), filed in the matter as a DRAFT, never with the USPTO', msg(d1));
+  check(md.startsWith('> **DRAFT — NOT REVIEWED.**') && /Do not file before 2026-12-01/.test(md) && /## 1\. Applicant[\s\S]*## 2\. Mark[\s\S]*## 3\. Classes[\s\S]*## 4\. Basis[\s\S]*## 5\. Specimens[\s\S]*## 6\. Declaration[\s\S]*## 7\. Fees/.test(md),
+    'the draft: DRAFT legend, "do not file before", TEAS order');
+  check(/\$350/.test(md) && /Free-form text identification fee/.test(md) && /Due at filing: \$550/.test(md), 'fees: $350 base + $200 free-form for the one class', md.match(/Due at filing: \$\d+/)?.[0]);
+  check(/successor to the applicant's business/.test(annex) && /15 U\.S\.C\. § 1060\(a\)\(1\)/.test(annex) && /\(1\) Wait/.test(annex) && !/## 1\. Applicant/.test(annex),
+    'the separate cautions annex: the three options and the § 1060(a)(1) bar for 1(b), not in the filing copy');
+  check(d1.out.lint.clean, 'both texts pass the forbidden-phrase lint');
+  DRAFT_DOC = d1.out.document_id;
+  const [s9] = await su(db, 'select status, initials, done_by, output_document_id from public.tm_stages where clearance_id = $1 and stage = 9', [CL]);
+  check(s9.status === 'awaiting_review' && s9.initials === null && s9.done_by === null && s9.output_document_id === DRAFT_DOC,
+    'stage 9: awaiting review, unsigned, with the draft attached');
+  check(filed.length === 2 && /^Trademark application draft — QUALLET — \d{4}-\d{2}-\d{2} [0-9a-f]{8}\.md$/.test(filed[0].filename) && /cautions/.test(filed[1].filename), 'two documents: the draft and the annex', filed.map((x) => x.filename).join(' | '));
+
+  // QUIDDIT: use-based in class 009 (goods), and a class 042 specimen that fails the check.
+  const cc = await call(sbAda, 'tm_confirm', { clearance_id: QUIDDIT, step: 'classes', value: {
+    search: [{ code: '009', reason: 'apps' }, { code: '036', reason: 'payments' }, { code: '042', reason: 'SaaS' }],
+    filing: [{ code: '009', reason: 'a dated product plan' }, { code: '042', reason: 'a dated launch plan' }] } }, opts);
+  check(cc.ok, 'QUIDDIT: filing classes 009 and 042', msg(cc));
+  const spec = u();
+  await su(db, 'insert into public.documents (id, matterspace_id, title, source_filename, storage_path) values ($1, $2, $3, $4, $5)', [spec, OPEN, 'Specimen', 'quiddit-page.png', `${OPEN}/quiddit-page.png`]);
+  const a2 = await call(sbAda, 'tm_application_answer', {
+    clearance_id: QUIDDIT,
+    applicant: { formation_status: 'formed', formation_date: '2024-02-01', domicile_address: '1 Example Street, Princeton, NJ 08540', address_is_mail_drop: 'no', email: 'tm@example.com' },
+    classes: [
+      { code: '009', identification: 'Downloadable software for making payments', id_source: 'id_manual', id_manual_entry: '009-1234', in_use: true,
+        first_use_anywhere: '2026-03-01', first_use_in_commerce: '2026-04-01',
+        specimen: { document_id: spec, kind: 'webpage', description: 'The app store page showing QUIDDIT beside the app, with its price and Get button', url: 'https://example.com/quiddit', access_date: '2026-10-20',
+          shows_mark: 'yes', mark_as_brand: 'yes', goods_sold: 'yes', means_of_ordering: 'yes', mockup: 'no' } },
+      { code: '042', identification: 'Platform as a service featuring software for payments', id_source: 'id_manual', in_use: true,
+        first_use_anywhere: '2026-05-01', first_use_in_commerce: '2026-05-01',
+        specimen: { document_id: spec, kind: 'webpage', description: 'Coming soon: join the waitlist. QUIDDIT credits inside the app', url: 'https://example.com/soon', access_date: '2026-10-20',
+          shows_mark: 'yes', mark_as_brand: 'no', services_available: 'no', shows_services: 'yes', mockup: 'no' } },
+    ],
+    transfer: { planned: 'no' },
+  }, opts);
+  check(a2.ok && a2.out.blocking === 0, 'QUIDDIT answers recorded; nothing blocking', msg(a2));
+  const st = a2.out.classes;
+  const c009 = st.find((x) => x.code === '009');
+  const c042 = st.find((x) => x.code === '042');
+  check(c009.recommended_basis === '1a' && c009.specimen_flags.length === 0, 'class 009: in use with dates and a clean specimen → 1(a) recommended', JSON.stringify(c009));
+  check(c042.recommended_basis === '1b' && c042.specimen_flags.some((f) => /not yet available/.test(f)) && c042.specimen_flags.some((f) => /name of a feature/.test(f)),
+    'class 042: "coming soon" and an in-app unit are flagged; 1(b) recommended until fixed', JSON.stringify(c042.specimen_flags));
+  const d2 = await call(sbAda, 'tm_application_draft', { clearance_id: QUIDDIT }, opts);
+  check(d2.ok && d2.out.bases['009'] === '1a' && d2.out.bases['042'] === '1b' && /First use in commerce/.test(d2.out.draft_markdown) && /2026-04-01/.test(d2.out.draft_markdown)
+    && /accessed 2026-10-20/.test(d2.out.draft_markdown) && !/Do not file before/.test(d2.out.draft_markdown), 'QUIDDIT draft: 1(a) for 009 with dates and specimen, 1(b) for 042', msg(d2));
+  check(/Advertising a service that is not yet available/.test(d2.out.annex_markdown) && /TMEP § 1301\.03\(a\)/.test(d2.out.annex_markdown),
+    'the annex carries the specimen flags with their sources');
+  const g = await call(sbAda, 'tm_get_clearance', { clearance_id: CL }, opts);
+  check(g.ok && /DRAFT application/.test(g.out.next_step) && /signs stage 9 off in Equazia\.ai/.test(g.out.next_step) && g.out.application.draft?.document_id === DRAFT_DOC,
+    'tm_get_clearance next_step after the draft: the reviewer signs stage 9 in Equazia.ai', g.out?.next_step);
+  const evd = await su(db, `select actor_kind, actor_ref from public.events where kind = 'tm.application.drafted'`);
+  check(evd.length === 2 && evd.every((e) => e.actor_kind === 'connector' && e.actor_ref === `token:${adaTok.id}`), 'tm.application.drafted: the connector\'s');
+}
+
+// ===========================================================================
+section('K. a connector token cannot sign; the browser can (migration 122)');
+// ===========================================================================
+{
+  // Ada's connector client carries cs_via: 'connector' (lib/supabase-user-jwt.mjs).
+  const s1 = await sbAda.from('tm_stages').update({ status: 'done', initials: 'EQ' }).eq('clearance_id', CL).eq('stage', 1).select('stage');
+  check(Boolean(s1.error) && /connected assistant cannot sign/.test(s1.error.message), 'a stage sign-off under a connector JWT: refused by the database', s1.error?.message);
+  const hit = (await su(db, 'select id from public.tm_hits where clearance_id = $1 limit 1', [CL]))[0];
+  const h1 = await sbAda.from('tm_hits').update({ bin: 'flag', initials: 'EQ' }).eq('id', hit.id).select('id');
+  check(Boolean(h1.error) && /cannot decide a bin/.test(h1.error.message), 'a bin decision under a connector JWT: refused by the database', h1.error?.message);
+  const s9 = await sbAda.from('tm_stages').update({ status: 'done', initials: 'EQ', output_document_id: DRAFT_DOC }).eq('clearance_id', CL).eq('stage', 9).select('stage');
+  check(Boolean(s9.error), 'and stage 9 (the application draft) likewise', s9.error?.message);
+
+  // A browser session: a JWT without cs_via (the stub reads claims; it does not verify signatures).
+  const { createClient } = await import('@supabase/supabase-js');
+  const fake = (claims) => `x.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.y`;
+  const browser = createClient('https://stub.supabase.test', 'stub-anon-key', {
+    global: { headers: { Authorization: `Bearer ${fake({ sub: ADA, role: 'authenticated', aal: 'aal2' })}` } }, auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const early9 = await browser.from('tm_stages').update({ status: 'done', initials: 'EQ', output_document_id: DRAFT_DOC }).eq('clearance_id', CL).eq('stage', 9).select('stage');
+  check(Boolean(early9.error) && /stage 8 must be done first/.test(early9.error.message), 'the browser cannot sign stage 9 before stage 8', early9.error?.message);
+  const early6 = await browser.from('tm_stages').update({ status: 'done', initials: 'EQ' }).eq('clearance_id', CL).eq('stage', 6).select('stage');
+  check(Boolean(early6.error) && /stage 5 must be done first/.test(early6.error.message), 'nor stage 6 before stage 5', early6.error?.message);
+  // The reviewer decides every live hit, then signs 1–5, skips 6, files and signs 8, then 9.
+  const live = await su(db, `select id from public.tm_hits where clearance_id = $1 and coalesce(live, true) and coalesce(status_text, '') not ilike '%dead%'`, [CL]);
+  for (const h of live) await browser.from('tm_hits').update({ bin: 'note', initials: 'eq', bin_reason: 'reviewed' }).eq('id', h.id);
+  let chainOk = true;
+  for (const n of [1, 2, 3, 4, 5]) {
+    const r = await browser.from('tm_stages').update({ status: 'done', initials: 'EQ' }).eq('clearance_id', CL).eq('stage', n).select('stage');
+    if (r.error) { chainOk = false; console.log(n, r.error.message); }
+  }
+  const sk6 = await browser.from('tm_stages').update({ status: 'skipped', initials: 'EQ' }).eq('clearance_id', CL).eq('stage', 6).select('stage');
+  const s8 = await browser.from('tm_stages').update({ status: 'done', initials: 'EQ', output_document_id: DRAFT_DOC }).eq('clearance_id', CL).eq('stage', 8).select('stage');
+  const no9doc = await browser.from('tm_stages').update({ status: 'done', initials: 'EQ', output_document_id: null }).eq('clearance_id', CL).eq('stage', 9).select('stage');
+  check(chainOk && !sk6.error && !s8.error, 'the browser signs 1 to 5, skips 6 and signs 8', [sk6.error?.message, s8.error?.message].join(' '));
+  check(Boolean(no9doc.error) && /needs the reviewed document/.test(no9doc.error.message), 'stage 9 needs the reviewed document attached', no9doc.error?.message);
+  const ok9 = await browser.from('tm_stages').update({ status: 'done', initials: 'EQ', output_document_id: DRAFT_DOC }).eq('clearance_id', CL).eq('stage', 9).select('stage');
+  const [row9] = await su(db, 'select status, initials, done_by from public.tm_stages where clearance_id = $1 and stage = 9', [CL]);
+  check(!ok9.error && row9.status === 'done' && row9.initials === 'EQ' && row9.done_by === ADA, 'then the reviewer signs stage 9 in the browser, stamped by the database', ok9.error?.message);
+  const g = await call(sbAda, 'tm_get_clearance', { clearance_id: CL }, ADA_OPTS);
+  check(g.ok && /has signed the application draft off/.test(g.out.next_step) && /files it in TEAS/.test(g.out.next_step), 'and the bot\'s next_step says so', g.out?.next_step);
+}
+
+// ===========================================================================
+section('L. every tm.* row a bot caused is the connector\'s');
+// ===========================================================================
+{
+  const ev = await su(db, `select kind, actor_kind, actor_ref from public.events where kind like 'tm.%'`);
+  const kinds = new Set(ev.map((e) => e.kind));
+  check(['tm.proposal.saved', 'tm.deep_check.run', 'tm.hit.status', 'tm.application.answered', 'tm.application.drafted'].every((k) => kinds.has(k)),
+    'the slice-2 kinds were written', [...kinds].join(' '));
+  check(ev.every((e) => e.actor_kind === 'connector' && /^(token|agent):/.test(e.actor_ref)), 'and every one is attributed to a connector (token or agent), none to a browser user',
+    JSON.stringify(ev.filter((e) => e.actor_kind !== 'connector').slice(0, 2)));
 }
 
 // ===========================================================================

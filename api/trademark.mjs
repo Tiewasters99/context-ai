@@ -1,6 +1,12 @@
 // POST /api/trademark — Trademark Clearance's model actions (a recipe, slice 1).
 //
-// Request body: { action: 'decompose' | 'classes' | 'triage', args: { clearance_id, all? } }
+// Request body: { action: 'decompose' | 'classes' | 'triage' | 'deep_check', args: { clearance_id, all?, save?, force? } }
+//
+// Slice 2 (2026-10-21): `save: true` on decompose / classes also saves the
+// proposal PROPOSED on the clearance (migration 122); `deep_check` runs stage 6
+// (lib/trademark/deepcheck.mjs): the TSDR key comes from this server's env
+// (USPTO_TSDR_API_KEY) only, and each status record is filed through
+// file_document under the caller's own client.
 // Response: the action's JSON (lib/trademark/actions.mjs), or { error, message }.
 //
 // Modeled on api/sandbox.mjs: the bearer is the user's own Supabase access
@@ -27,13 +33,15 @@
 // What never comes from the client: a model id, a provider, a prompt, a key.
 
 import { createClient } from '@supabase/supabase-js';
-import { timeoutFetch } from '../lib/mcp-core.mjs';
+import { timeoutFetch, callTool } from '../lib/mcp-core.mjs';
 import { jwtClaims, readJsonBody } from '../lib/account-security.mjs';
 import { serverLlmCall } from '../lib/llm-server-call.mjs';
 import { LlmCallError } from '../lib/llm-call-error.mjs';
 import { record } from '../lib/ledger.mjs';
 import { runTrademarkAction, TrademarkActionError, ACTIONS } from '../lib/trademark/actions.mjs';
 import { TrademarkModelError, TRADEMARK_MODEL } from '../lib/trademark/model.mjs';
+import { runDeepCheck } from '../lib/trademark/deepcheck.mjs';
+import { makeTsdrClient, TSDR_KEY_ENV } from '../lib/trademark/tsdr.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -62,7 +70,15 @@ export default async function handler(req, res) {
 
   const body = await readJsonBody(req);
   const action = body?.action;
-  if (!ACTIONS.includes(action)) return json(res, 400, { error: `action must be one of: ${ACTIONS.join(', ')}` });
+  if (action === 'deep_check') {
+    try {
+      return json(res, 200, await deepCheckFor({ sb, userId, args: body?.args ?? {} }));
+    } catch (err) {
+      if (err instanceof TrademarkActionError) return json(res, err.status, { error: err.code, message: err.message });
+      return json(res, 500, { error: 'trademark_failed', message: err?.message || String(err) });
+    }
+  }
+  if (!ACTIONS.includes(action)) return json(res, 400, { error: `action must be one of: ${[...ACTIONS, 'deep_check'].join(', ')}` });
 
   const send = async ({ feature, body: reqBody, matterId }) => {
     const out = await serverLlmCall({
@@ -94,6 +110,32 @@ export default async function handler(req, res) {
     }
     return json(res, 500, { error: 'trademark_failed', message: err?.message || String(err) });
   }
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Stage 6 for the browser: the caller's RLS, the server's TSDR key, the caller's filing. */
+async function deepCheckFor({ sb, userId, args }) {
+  const id = String(args?.clearance_id ?? '');
+  if (!UUID_RE.test(id)) throw new TrademarkActionError('clearance_id must be a uuid', 400, 'bad_request');
+  const { data: clearance, error } = await sb.from('tm_clearances').select('*').eq('id', id).maybeSingle();
+  if (error) throw new TrademarkActionError(error.message, 500, 'read_failed');
+  if (!clearance) throw new TrademarkActionError('That clearance could not be found, or you do not have access to its matter.', 404, 'not_found');
+  const { data: canWrite } = await sb.rpc('can_write_matter', { p_matter_id: clearance.matterspace_id });
+  if (canWrite !== true) throw new TrademarkActionError('You can read this matter but not work in it.', 403, 'read_only');
+  const [hs, st] = await Promise.all([
+    sb.from('tm_hits').select('*').eq('clearance_id', id).order('serial'),
+    sb.from('tm_stages').select('*').eq('clearance_id', id).order('stage'),
+  ]);
+  if (hs.error) throw new TrademarkActionError(hs.error.message, 500, 'read_failed');
+  const actor = { kind: 'user', ref: userId, user_id: userId, label: 'Trademark clearance' };
+  const toolOpts = { openaiApiKey: process.env.OPENAI_API_KEY, googleApiKey: process.env.GOOGLE_API_KEY, userId, actor };
+  return runDeepCheck({
+    sb, bundle: { clearance, hits: hs.data ?? [], stages: st.data ?? [] },
+    client: makeTsdrClient({ apiKey: process.env[TSDR_KEY_ENV] }),
+    fileDocument: (a) => callTool(sb, 'file_document', a, toolOpts),
+    record, actor, force: args?.force === true,
+  });
 }
 
 function json(res, status, obj) {

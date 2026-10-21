@@ -1,7 +1,7 @@
 // The shared fixture for the Trademark Clearance connector harnesses
 // (scripts/_verify-trademark-connector.mjs, scripts/_e2e-trademark-mcp.mjs).
 //
-// A real Postgres (PGlite) running the REAL migration 121 — its five tables,
+// A real Postgres (PGlite) running the REAL migrations 121 and 122 — their tables,
 // triggers and RLS — on a small stub of what 121 needs (matterspaces with a
 // membership table behind can_access_matter / can_write_matter, documents,
 // matterspace_descendants, the events vocabulary, ledger_append), and a stub
@@ -94,6 +94,10 @@ const STUBS = `
   create or replace function auth.uid() returns uuid language sql stable as $f$
     select nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub', '')::uuid
   $f$;
+  -- Supabase's auth.jwt(): the whole claim set (122 reads cs_via from it).
+  create or replace function auth.jwt() returns jsonb language sql stable as $f$
+    select nullif(current_setting('request.jwt.claims', true), '')::jsonb
+  $f$;
   create table public.profiles (id uuid primary key);
   create table public.matterspaces (
     id uuid primary key, name text not null, short_code text unique, description text,
@@ -104,8 +108,10 @@ const STUBS = `
   create table public.matter_members (matter_id uuid not null, user_id uuid not null, can_write boolean not null default false,
     primary key (matter_id, user_id));
   create table public.documents (
-    id uuid primary key, matterspace_id uuid not null references public.matterspaces(id),
-    title text, source_filename text, storage_path text, file_size_bytes bigint);
+    id uuid primary key default gen_random_uuid(), matterspace_id uuid not null references public.matterspaces(id),
+    title text, source_filename text, storage_path text, file_size_bytes bigint,
+    -- what lib/mcp-core.mjs file_document writes (slice 2 files status records and drafts)
+    doc_type text, processing_status text, processing_error text, created_by uuid, created_at timestamptz not null default now());
   create table public.connector_tokens (
     id uuid primary key default gen_random_uuid(), user_id uuid not null, token_hash text not null unique,
     name text, kind text not null default 'user', matter_scope uuid[] not null default '{}',
@@ -139,6 +145,9 @@ const STUBS = `
   create policy ms_read on public.matterspaces for select using (public.can_access_matter(id));
   alter table public.documents enable row level security;
   create policy doc_read on public.documents for select using (public.can_access_matter(matterspace_id));
+  create policy doc_write on public.documents for insert with check (public.can_write_matter(matterspace_id));
+  create policy doc_update on public.documents for update using (public.can_write_matter(matterspace_id));
+  create policy doc_delete on public.documents for delete using (public.can_write_matter(matterspace_id));
   alter table public.matter_members enable row level security;
   create policy mm_read on public.matter_members for select using (user_id = auth.uid());
 
@@ -197,6 +206,7 @@ const STUBS = `
 
   grant usage on schema public, auth to authenticated, anon, service_role;
   grant select on public.matterspaces, public.documents, public.profiles, public.matter_members to authenticated;
+  grant insert, update, delete on public.documents to authenticated;
   grant execute on all functions in schema public to authenticated;
   grant all on all tables in schema public to service_role;
   grant all on all sequences in schema public to service_role;
@@ -206,6 +216,7 @@ export async function makeDb() {
   const db = new PGlite();
   await db.exec(STUBS);
   await db.exec(mig('121_trademark_clearance.sql'));
+  await db.exec(mig('122_trademark_slice2.sql'));
   await db.exec(`
     grant all on all tables in schema public to service_role;
     insert into public.profiles values ('${ADA}'), ('${BOB}');
@@ -240,10 +251,10 @@ const headerOf = (init, name) => {
   const k = Object.keys(h).find((x) => x.toLowerCase() === name);
   return k ? h[k] : '';
 };
-const jwtSub = (tok) => {
+const jwtClaimsOf = (tok) => {
   try {
     const p = JSON.parse(Buffer.from(String(tok).split('.')[1], 'base64url').toString('utf8'));
-    return p?.role === 'authenticated' && typeof p.sub === 'string' ? p.sub : null;
+    return p?.role === 'authenticated' && typeof p.sub === 'string' ? p : null;
   } catch { return null; }
 };
 
@@ -280,6 +291,7 @@ function parseFilters(searchParams, params) {
       params.push(`{${list.map((s) => `"${s}"`).join(',')}}`);
       where.push(`${k}::text = any($${params.length}::text[])`);
     } else if (v === 'is.null') where.push(`${k} is null`);
+    else if (v === 'not.is.null') where.push(`${k} is not null`);
     else throw new Error(`stub: unsupported filter ${k}=${v}`);
   }
   return { where: where.length ? ` where ${where.join(' and ')}` : '', order, limit };
@@ -291,22 +303,31 @@ function parseFilters(searchParams, params) {
  * @param {(body:object)=>object} [o.anthropic]  the stub model: request body → Messages API response
  * @param {Map<string, Uint8Array>} [o.storage]   vault-documents objects by path
  */
-export function installFetch(db, { anthropic, storage = new Map() } = {}) {
+export const TSDR_HOST = 'https://tsdrapi.uspto.gov';
+export const OPENAI_HOST = 'https://api.openai.com';
+
+/**
+ * @param {(url:URL, init:object) => Response|Promise<Response>} [o.tsdr]  the stub TSDR API (never the real one)
+ * @param {boolean} [o.openaiDown]  answer api.openai.com with 503 (file_document's embedding then fails
+ *                                  softly, as it is built to), instead of refusing the call
+ */
+export function installFetch(db, { anthropic, storage = new Map(), tsdr, openaiDown = false } = {}) {
   const realFetch = globalThis.fetch;
-  const log = { anthropic: [], refusedOutbound: [], rest: [] };
+  const log = { anthropic: [], refusedOutbound: [], rest: [], tsdr: [], openai: 0 };
   // One request at a time: PGlite is one connection, and role / claims are session state.
   let chain = Promise.resolve();
   const serial = (fn) => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
 
   const as = async (bearer, fn) => {
     const tok = String(bearer || '').replace(/^Bearer\s+/i, '');
-    let role; let sub = null;
+    let role; let claims = null;
     if (tok === SERVICE) role = 'service_role';
-    else if ((sub = jwtSub(tok))) role = 'authenticated';
+    else if ((claims = jwtClaimsOf(tok))) role = 'authenticated';
     else return jsonResponse(401, { message: 'stub: no valid bearer' });
     return serial(async () => {
       await db.exec('reset role');
-      await db.query(`select set_config('request.jwt.claims', $1, false)`, [sub ? JSON.stringify({ sub, role }) : '']);
+      // The whole claim set, as PostgREST sets it: sub, role, and cs_via on a connector's token.
+      await db.query(`select set_config('request.jwt.claims', $1, false)`, [claims ? JSON.stringify(claims) : '']);
       await db.exec(`set role ${role}`);
       try { return await fn(); }
       catch (err) {
@@ -325,6 +346,14 @@ export function installFetch(db, { anthropic, storage = new Map() } = {}) {
       if (!anthropic) return jsonResponse(500, { error: 'no stub model' });
       return jsonResponse(200, anthropic(body));
     }
+    if (tsdr && url.href.startsWith(TSDR_HOST)) {
+      log.tsdr.push({ url: url.href, key: headerOf(init, 'uspto-api-key') });
+      return tsdr(url, init);
+    }
+    if (openaiDown && url.href.startsWith(OPENAI_HOST)) {
+      log.openai++;
+      return jsonResponse(503, { error: { message: 'stub: the embedding provider is down' } });
+    }
     if (!url.href.startsWith(SB_URL)) {
       log.refusedOutbound.push(url.href);
       throw new Error(`harness: outbound call refused: ${url.href}`);
@@ -334,6 +363,22 @@ export function installFetch(db, { anthropic, storage = new Map() } = {}) {
     log.rest.push(`${method} ${url.pathname}`);
 
     const st = url.pathname.match(/^\/storage\/v1\/object\/(?:authenticated\/)?vault-documents\/(.+)$/);
+    if (st && (method === 'POST' || method === 'PUT')) {
+      // An upload (file_document): the caller must be able to write the matter the path starts with.
+      const key = decodeURIComponent(st[1]);
+      const body = init.body;
+      let bytes;
+      if (body instanceof Uint8Array) bytes = body;
+      else if (body instanceof ArrayBuffer) bytes = new Uint8Array(body);
+      else if (body && typeof body.arrayBuffer === 'function') bytes = new Uint8Array(await body.arrayBuffer());
+      else bytes = new TextEncoder().encode(String(body ?? ''));
+      return as(bearer, async () => {
+        const { rows } = await db.query('select public.can_write_matter($1::uuid) ok', [key.split('/')[0]]);
+        if (!rows[0]?.ok) return jsonResponse(403, { error: 'Unauthorized', message: 'new row violates row-level security policy' });
+        storage.set(key, bytes);
+        return jsonResponse(200, { Key: `vault-documents/${key}` });
+      });
+    }
     if (st) {
       const key = decodeURIComponent(st[1]);
       // Storage's own check, approximated: the object's document must be readable by the caller.

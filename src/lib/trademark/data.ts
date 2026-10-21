@@ -19,10 +19,15 @@ import { procedureHash } from '../../../lib/trademark/procedure.mjs';
 import { collectHits, summarizeRun } from '../../../lib/trademark/triage.mjs';
 import type { ParsedRow } from '../../../lib/trademark/parse.mjs';
 import { reportFilename, reportHash } from '../../../lib/trademark/report.mjs';
+import {
+  applicationFilename, mergeAnswers, normalizeApplication, reviewedLegend, type Application,
+} from '../../../lib/trademark/application.mjs';
 import type { LedgerEventKind } from '../../../lib/ledger.mjs';
 
 export const TM_NOT_READY =
   'Trademark Clearance needs a database update (migration 121) that has not been applied yet. Nothing was created.';
+export const TM_SLICE2_NOT_READY =
+  'This step needs a database update (migration 122, Trademark Clearance slice 2) that has not been applied yet.';
 
 export type StageStatus = 'pending' | 'in_progress' | 'awaiting_review' | 'done' | 'skipped';
 export type Bin = 'flag' | 'note' | 'dismiss';
@@ -48,6 +53,10 @@ export interface Clearance {
   filing_classes: ClassEntry[];
   decomposition: TmDecomposition | null;
   foreign_equivalents: string[];
+  /** Migration 122: the model's proposals, saved PROPOSED (never the confirmed value). */
+  proposals?: { classes?: { search: ClassEntry[]; filing: ClassEntry[]; model: string; at?: string }; decompose?: TmDecomposition & { model: string; at?: string } };
+  /** Migration 122: the stage-9 answers. */
+  application?: Partial<Application>;
   procedure_hash: string | null;
   self_test_passed: boolean | null;
   created_by: string;
@@ -75,6 +84,13 @@ export interface TmHit {
   status_text: string | null; live: boolean | null; classes: string[]; goods_services: string | null; filing_date: string | null;
   raw: Record<string, string>; query_seqs: number[]; proposed: Proposal | null; bin: Bin | null; bin_reason: string | null;
   decided_by: string | null; initials: string | null; decided_at: string | null;
+  /** Migration 122: the official status from the TSDR API (stage 6). */
+  tsdr?: TsdrRecord | null; tsdr_checked_at?: string | null; tsdr_document_id?: string | null; deep_check?: boolean;
+}
+export interface TsdrRecord {
+  error?: string; code?: string; mark?: string | null; status_code?: string | null; status_text?: string | null; status_date?: string | null;
+  live?: boolean | null; filing_date?: string | null; registration_number?: string | null; registration_date?: string | null;
+  owner?: string | null; classes?: string[]; events?: { date: string | null; code: string | null; description: string | null }[]; fetched_at?: string;
 }
 export interface ClearanceBundle {
   clearance: Clearance; stages: Stage[]; queries: TmQuery[]; runs: TmRun[]; hits: TmHit[];
@@ -85,7 +101,7 @@ export const STAGE_NAMES: Record<number, string> = {
   6: 'Deep check (TSDR)', 7: 'Web screen', 8: 'Knockout report', 9: 'Application draft', 10: 'Docket',
 };
 /** Stages this version does not build; they render as "Not in this version" and may be skipped. */
-export const LATER_STAGES = new Set([6, 7, 9, 10]);
+export const LATER_STAGES = new Set([7, 10]);
 
 export function isTrademarkMissing(err: unknown): boolean {
   const e = err as { code?: string; message?: string } | null;
@@ -168,15 +184,165 @@ export async function loadClearance(id: string): Promise<ClearanceBundle> {
 // ---------------------------------------------------------------------------
 
 /** Mint the id here and insert without .select() (the createTask pattern). */
-export async function createClearance(matterId: string, mark: string): Promise<string> {
+export async function createClearance(matterId: string, mark: string, goods = ''): Promise<string> {
   const m = mark.trim();
   if (!m) throw new Error('Type the mark exactly as it will be used.');
   if (m.length > 200) throw new Error('A mark can be at most 200 characters.');
   const created_by = await userId();
   const id = crypto.randomUUID();
-  const { error } = await supabase.from('tm_clearances').insert({ id, matterspace_id: matterId, mark: m, created_by });
+  const g = goods.trim();
+  const { error } = await supabase.from('tm_clearances').insert({ id, matterspace_id: matterId, mark: m, created_by, ...(g ? { goods_services: g } : {}) });
   if (error) fail(error, 'Could not create the clearance.');
   await recordTm('tm.clearance.created', matterId, { clearance_id: id });
+  if (g) await recordTm('tm.intake.updated', matterId, { clearance_id: id, fields: ['goods_services'] });
+  return id;
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2 — the one-box start
+// ---------------------------------------------------------------------------
+
+/** One mark per line; blank lines and repeats dropped (case-insensitive), at most 10. */
+export function marksFromText(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const m = raw.trim().replace(/\s+/g, ' ');
+    if (!m || seen.has(m.toLowerCase())) continue;
+    seen.add(m.toLowerCase());
+    out.push(m);
+  }
+  return out;
+}
+
+export interface BatchProgress { mark: string; clearanceId: string | null; step: 'creating' | 'classes' | 'decompose' | 'proposed' | 'failed'; error?: string }
+
+/**
+ * Create one clearance per mark with the sentence as its goods and services,
+ * then ask for the class and decomposition proposals (saved PROPOSED, never
+ * confirmed): in parallel across marks, the two steps of one mark in turn
+ * (both save into the same row). Stops at the first human step.
+ */
+export async function startBatch(matterId: string, marks: string[], sentence: string, onProgress: (p: BatchProgress[]) => void): Promise<string[]> {
+  if (!marks.length) throw new Error('Type at least one mark, one per line.');
+  if (marks.length > 10) throw new Error('At most 10 marks at a time.');
+  if (!sentence.trim()) throw new Error('Add one sentence on what the marks are for.');
+  const state: BatchProgress[] = marks.map((mark) => ({ mark, clearanceId: null, step: 'creating' }));
+  const push = () => onProgress(state.map((x) => ({ ...x })));
+  push();
+  for (const row of state) {
+    row.clearanceId = await createClearance(matterId, row.mark, sentence);
+    row.step = 'classes';
+    push();
+  }
+  await Promise.all(state.map(async (row) => {
+    try {
+      await trademarkApi('classes', { clearance_id: row.clearanceId, save: true });
+      row.step = 'decompose'; push();
+      await trademarkApi('decompose', { clearance_id: row.clearanceId, save: true });
+      row.step = 'proposed'; push();
+    } catch (e) {
+      row.step = 'failed'; row.error = e instanceof Error ? e.message : String(e); push();
+    }
+  }));
+  return state.map((x) => x.clearanceId!).filter(Boolean);
+}
+
+/**
+ * The reviewer's one confirmation for one mark: the classes and the
+ * decomposition as shown (proposed, or as edited), the queries generated, and
+ * stages 1, 2 and 3 signed with the reviewer's initials — each its own row in
+ * the Record, as if signed one by one.
+ */
+export async function confirmMark(id: string, value: { search: ClassEntry[]; filing: ClassEntry[]; decomposition: TmDecomposition; foreign: string[] }, initials: string): Promise<void> {
+  const ini = initials.trim();
+  if (ini.length < 1 || ini.length > 4) throw new Error('Your initials (1 to 4 characters) confirm the mark.');
+  let b = await loadClearance(id);
+  await saveClasses(b.clearance, value.search, value.filing);
+  await saveDecomposition(b.clearance, value.decomposition, value.foreign);
+  b = await loadClearance(id);
+  await generateAndStore(b);
+  for (const n of [1, 2, 3]) {
+    const st = b.stages.find((s) => s.stage === n);
+    if (st?.status !== 'done') await signStage(b.clearance, n, 'done', ini);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2 — stage 6, the deep check (server side: the key never reaches the browser)
+// ---------------------------------------------------------------------------
+
+export interface DeepCheckResult {
+  configured: boolean; message?: string; targets: number; checked: number; remaining: number; live?: number; dead?: number; failed?: number; filed?: number;
+  stopped?: string; results: { serial: string; ok: boolean; reason?: string; live?: boolean | null; document_id?: string | null; note?: string }[];
+}
+export async function runDeepCheck(id: string, force = false): Promise<DeepCheckResult> {
+  return trademarkApi<DeepCheckResult>('deep_check', { clearance_id: id, force });
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2 — stage 9, the application draft
+// ---------------------------------------------------------------------------
+
+/** Save answers (the same merge the connector uses); field names only in the Record. */
+export async function saveApplicationAnswers(c: Clearance, answers: Record<string, unknown>): Promise<string[]> {
+  const merged = mergeAnswers({ application: c.application ?? {}, applicant: c.applicant ?? {}, filingClasses: c.filing_classes, answers });
+  const touchesApplicant = merged.fields.some((f) => f.startsWith('applicant.'));
+  const { error } = await supabase.from('tm_clearances').update({
+    application: { ...merged.application, updated_at: new Date().toISOString() },
+    ...(touchesApplicant ? { applicant: { ...(c.applicant ?? {}), ...merged.applicant } } : {}),
+  }).eq('id', c.id);
+  if (error) {
+    if (/application|column/.test(error.message ?? '')) throw new Error(TM_SLICE2_NOT_READY);
+    fail(error, 'Could not save the answers.');
+  }
+  if (merged.fields.length) await recordTm('tm.application.answered', c.matterspace_id, { clearance_id: c.id, fields: merged.fields });
+  return merged.refused;
+}
+
+async function sha256(text: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+async function fileText(matterId: string, filename: string, title: string, content: string): Promise<string> {
+  const out = await sandboxApi<{ document_id?: string }>('file_document', {
+    matter: matterId, filename, content, encoding: 'utf8', title, doc_type: 'other',
+  });
+  if (!out.document_id) throw new Error('The document was not filed.');
+  return out.document_id;
+}
+
+/** File the DRAFT and its annex in the matter; stage 9 awaits review. */
+export async function fileApplicationDraft(c: Clearance, draft: string, annex: string, date: string, bases: Record<string, string>): Promise<{ documentId: string; annexId: string }> {
+  const sha = await sha256(draft);
+  const stamp = `${date} ${sha.slice(0, 8)}`;
+  const documentId = await fileText(c.matterspace_id, applicationFilename(c.mark, stamp), `Trademark application draft — ${c.mark} — ${date}`, draft);
+  const annexId = await fileText(c.matterspace_id, applicationFilename(c.mark, stamp, 'annex'), `Trademark application cautions — ${c.mark} — ${date}`, annex);
+  const application = { ...normalizeApplication(c.application ?? {}), draft: { document_id: documentId, annex_document_id: annexId, sha256: sha, date, via: 'Equazia.ai' } };
+  const { error } = await supabase.from('tm_clearances').update({ application }).eq('id', c.id);
+  if (error) fail(error, 'The draft was filed but not recorded on the clearance.');
+  await supabase.from('tm_stages').update({ status: 'awaiting_review', output_document_id: documentId }).eq('clearance_id', c.id).eq('stage', 9);
+  await recordTm('tm.application.drafted', c.matterspace_id, {
+    clearance_id: c.id, document_id: documentId, annex_document_id: annexId, sha256: sha, bases: Object.values(bases).filter(Boolean),
+  });
+  return { documentId, annexId };
+}
+
+/**
+ * The reviewer's sign-off of stage 9: the reviewed copy (the draft body under
+ * a "Reviewed" legend, no DRAFT legend) is filed, and stage 9 is signed with
+ * it attached. The database refuses this before stage 8 is done and stage 6
+ * is done or skipped (migration 122), and from any connector token.
+ */
+export async function signApplication(c: Clearance, body: string, initials: string, date: string, doNotFileBefore: string | null): Promise<string> {
+  const ini = initials.trim().toUpperCase();
+  if (ini.length < 1 || ini.length > 4) throw new Error('Your initials (1 to 4 characters) sign stage 9 off.');
+  const md = `${reviewedLegend({ initials: ini, date, doNotFileBefore })}\n${body}`;
+  const sha = await sha256(md);
+  const id = await fileText(c.matterspace_id, applicationFilename(c.mark, `${date} ${sha.slice(0, 8)}`, 'reviewed'), `Trademark application (reviewed) — ${c.mark} — ${date}`, md);
+  await signStage(c, 9, 'done', ini, id);
+  await recordTm('tm.application.reviewed', c.matterspace_id, { clearance_id: c.id, document_id: id, sha256: sha, initials: ini });
   return id;
 }
 
@@ -378,7 +544,7 @@ export async function fileReport(c: Clearance, md: string, date: string, initial
 // The model actions (/api/trademark)
 // ---------------------------------------------------------------------------
 
-export async function trademarkApi<T>(action: 'decompose' | 'classes' | 'triage', args: Record<string, unknown>): Promise<T> {
+export async function trademarkApi<T>(action: 'decompose' | 'classes' | 'triage' | 'deep_check', args: Record<string, unknown>): Promise<T> {
   const session = (await supabase.auth.getSession()).data.session;
   if (!session) throw new Error('You are signed out. Sign in again and retry.');
   const res = await fetch('/api/trademark', {

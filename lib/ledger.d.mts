@@ -44,7 +44,13 @@ export type LedgerEventKind =
   | 'tm.hit.proposed'
   | 'tm.hit.decided'
   | 'tm.stage.done'
-  | 'tm.report.filed';
+  | 'tm.report.filed'
+  | 'tm.proposal.saved'
+  | 'tm.deep_check.run'
+  | 'tm.hit.status'
+  | 'tm.application.answered'
+  | 'tm.application.drafted'
+  | 'tm.application.reviewed';
 
 export interface LedgerActor {
   kind: 'user' | 'charter' | 'connector' | 'system';
@@ -69,6 +75,7 @@ export const EVENT_KINDS: readonly LedgerEventKind[];
 export const KINDS_100: readonly LedgerEventKind[];
 export const KINDS_120: readonly LedgerEventKind[];
 export const KINDS_121: readonly LedgerEventKind[];
+export const KINDS_122: readonly LedgerEventKind[];
 export const EVENT_TYPES: readonly LedgerEventKind[];
 export const NIL_CHAIN: string;
 

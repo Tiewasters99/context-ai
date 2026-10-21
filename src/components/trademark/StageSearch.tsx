@@ -14,7 +14,7 @@ import { btn, btnPrimary, copyText, day, field, label, mono } from './styles';
 import { ErrorLine, Note, Panel } from './ui';
 import SignOff from './SignOff';
 
-function RunForm({ b, q, onDone }: { b: ClearanceBundle; q: TmQuery; onDone: () => Promise<void> }) {
+export function RunForm({ b, q, onDone }: { b: ClearanceBundle; q: TmQuery; onDone: () => Promise<void> }) {
   const [reported, setReported] = useState('');
   const [text, setText] = useState('');
   const [file, setFile] = useState<File | null>(null);

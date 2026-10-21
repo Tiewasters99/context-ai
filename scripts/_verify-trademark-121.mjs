@@ -49,7 +49,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const mig = (name) => fs.readFileSync(path.join(ROOT, 'supabase', 'migrations', name), 'utf8');
 const MIG_120 = mig('120_model_comparator.sql');
 const MIG = mig('121_trademark_clearance.sql');
-const { EVENT_KINDS, KINDS_121 } = await import('../lib/ledger.mjs');
+const { EVENT_KINDS: ALL_KINDS, KINDS_121, KINDS_122 } = await import('../lib/ledger.mjs');
+// 122 (slice 2) widens the list again; this file holds 121 to the kinds through 121.
+const EVENT_KINDS = ALL_KINDS.filter((k) => !KINDS_122.includes(k));
 
 let failures = 0;
 const check = (ok, label, detail = '') => {

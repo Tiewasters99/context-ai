@@ -560,7 +560,7 @@ await db.exec('reset role');
 console.log('\n--- lib/ledger.mjs: redaction ------------------------------------');
 const {
   redact, redactToolArgs, scrubArgValues, record, recordStrict, LedgerWriteError,
-  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, KINDS_100, KINDS_120, KINDS_121, _resetWarnings,
+  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, KINDS_100, KINDS_120, KINDS_121, KINDS_122, _resetWarnings,
 } = await import('../lib/ledger.mjs');
 
 {
@@ -779,7 +779,13 @@ console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ---------
   // users, known_marks, the confirmed `value` (reasons), pasted `text`, `rows`
   // (register records) and gap_note — is a presence and a length, or an item
   // count (checked 10-20).
-  check(leaks.length === 0 && TOOLS.length === 35,
+  // 36th to 40th, Trademark Clearance slice 2 (2026-10-21): tm_start_batch
+  // (`marks` an array → an item count; goods_and_services, users and the
+  // applicant's fields → presence and length), tm_deep_check and
+  // tm_application_questions / _draft (a clearance_id only), and
+  // tm_application_answer (applicant, classes, transfer → presence/length or
+  // item counts; filing_date_planned → presence and length) (checked 10-21).
+  check(leaks.length === 0 && TOOLS.length === 40,
     `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
     leaks.join(' | '));
 
@@ -919,9 +925,9 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   // legitimately runs ahead of the constraint by exactly those and by
   // nothing else. 100 adds the Brief Desk's three
   // (scripts/_verify-brief-md-roundtrip.mjs holds those).
-  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094, ...KINDS_100, ...KINDS_120, ...KINDS_121];
+  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094, ...KINDS_100, ...KINDS_120, ...KINDS_121, ...KINDS_122];
   check(ahead.every((k) => LATER_MIGRATION_KINDS.includes(k)),
-    'and runs ahead of it only by what a later migration adds (072, 073, 094, 100, 120, 121)',
+    'and runs ahead of it only by what a later migration adds (072, 073, 094, 100, 120, 121, 122)',
     ahead.join(' ') || 'none');
 
   // ── 073: a kind the CHECK constraint does not admit yet ──────────────────
@@ -961,7 +967,7 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
     `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'events_kind_check'`);
   const kinds073 = [...String(after073.def).matchAll(/'([a-z]+\.[a-z]+)'/g)].map((m) => m[1]);
   // Everything the JS knows except 094's fifteen and 100's three, which 073 predates.
-  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k) && !KINDS_100.includes(k) && !KINDS_120.includes(k) && !KINDS_121.includes(k));
+  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k) && !KINDS_100.includes(k) && !KINDS_120.includes(k) && !KINDS_121.includes(k) && !KINDS_122.includes(k));
   check(through073.every((k) => kinds073.includes(k)) && kinds073.length === through073.length,
     "073's list is the UNION — 064's fourteen plus 072's kind plus its own, never a subset",
     `${kinds073.length} kinds`);

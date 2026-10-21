@@ -1,33 +1,18 @@
 // The Agents page's Recipes section: one card, Trademark clearance. Pick a
-// matter, type the mark, start a clearance, and land on the matter's
-// Trademark tab. No agent task is created: the recipe's work lives in the
-// matter, and the reviewer runs it stage by stage.
+// matter, type the marks (one per line) and one sentence, and land on the
+// matter's Trademark tab with the proposals ready to review (slice 2's one-box
+// start). No agent task is created: the recipe's work lives in the matter.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Stamp } from 'lucide-react';
 import MatterSelect from '@/components/agents/MatterSelect';
-import { createClearance } from '@/lib/trademark/data';
-import { btnPrimary, field, label } from './styles';
-import { ErrorLine } from './ui';
+import { label } from './styles';
+import StartBox from './StartBox';
 
 export default function RecipeCard() {
   const navigate = useNavigate();
   const [matterId, setMatterId] = useState('');
-  const [mark, setMark] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const start = async () => {
-    setBusy(true); setError(null);
-    try {
-      await createClearance(matterId, mark);
-      navigate(`/app/matterspace/${matterId}?tab=Trademark`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4">
@@ -38,20 +23,13 @@ export default function RecipeCard() {
         <div className="flex-1 min-w-0">
           <h3 className="text-[14px] font-medium text-[var(--color-text-bright)]">Trademark clearance — knockout search, reviewed by you</h3>
           <p className="mt-0.5 text-[12.5px] text-[var(--color-text-secondary)] leading-relaxed">
-            A U.S. federal register knockout search for a proposed mark: intake, classes, generated queries you run on the
-            USPTO search page, every hit decided by you with your initials, and a report filed into the matter. It never
-            says a mark is clear.
+            A U.S. federal register knockout search for one or more proposed marks: type the marks and one sentence; the
+            recipe proposes classes and search terms, you confirm them and run the queries on the USPTO search page, you
+            decide every hit, and the report and an application draft (use-based or intent-to-use) are filed into the
+            matter for you to sign off. It never says a mark is clear, and it never files with the USPTO.
           </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto] items-end">
-            <div><span className={label}>Matter</span><MatterSelect value={matterId} onChange={setMatterId} /></div>
-            <div><span className={label}>Mark</span>
-              <input className={field} value={mark} onChange={(e) => setMark(e.target.value)} placeholder="Exactly as it will be used" maxLength={200} />
-            </div>
-            <button className={btnPrimary} disabled={busy || !matterId || !mark.trim()} onClick={() => void start()}>
-              {busy ? 'Starting…' : 'Start'}
-            </button>
-          </div>
-          <ErrorLine text={error} />
+          <div className="mt-3 max-w-[420px]"><span className={label}>Matter</span><MatterSelect value={matterId} onChange={setMatterId} /></div>
+          <StartBox compact matterId={matterId} disabled={!matterId} onStarted={() => navigate(`/app/matterspace/${matterId}?tab=Trademark`)} />
         </div>
       </div>
     </div>
