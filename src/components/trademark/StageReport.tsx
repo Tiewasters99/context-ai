@@ -5,7 +5,7 @@
 // records tm.report.filed. A later assembly files a new document; the old one
 // stays.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { fileReport, rememberInitials, type ClearanceBundle } from '@/lib/trademark/data';
 import { assembleReport, aiUseFrom, lintReport, reportFilename } from '../../../lib/trademark/report.mjs';
@@ -62,6 +62,16 @@ export default function StageReport({ b, matterName, preparerName, initials, set
       setBusy(null);
     }
   };
+
+  // Slice 2: the report drafts on its own once the searches are recorded (a
+  // preview, never filed; filing stays the reviewer's, with initials).
+  const auto = useRef(false);
+  useEffect(() => {
+    if (auto.current || md || !b.runs.length || b.queries.some((q) => !b.runs.some((r) => r.query_id === q.id))) return;
+    auto.current = true;
+    void assemble();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [b.runs.length, b.queries.length, md]);
 
   const blocked = !md ? 'Assemble the report first.'
     : lint.length ? 'The report uses a phrase this product never prints; edit the source and assemble again.'

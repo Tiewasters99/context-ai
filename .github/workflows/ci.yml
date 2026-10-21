@@ -146,6 +146,14 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-trademark-121.mjs
 
+      # Migration 122 — Trademark Clearance, slice 2: re-runnable, INVOKER
+      # only, the kind list is EVENT_KINDS exactly, and the sign-off rules: a
+      # connector JWT (cs_via) can neither sign a stage nor decide a bin; 6
+      # needs 5; 9 needs 8, 6 done or skipped, and its reviewed document.
+      - name: Trademark Clearance slice 2 — sign-off rules (migration 122, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-122.mjs
+
       # The tm_* MCP tools (a bring-your-own bot runs the recipe), against the
       # real 121 in PGlite through callTool with a csp_ token's user-scoped
       # client: the flow in the user's own matter, another user's clearance
@@ -509,6 +517,13 @@ jobs:
       - name: Trademark Clearance — triage, the report and the lint (node --test)
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-trademark-triage.mjs
+
+      # Slice 2: the application draft (basis both ways, the advisory specimen
+      # check, the entity and assignment cautions, fees, TEAS order, the lint)
+      # and the TSDR mapping and client (no key, the header) — no network.
+      - name: Trademark Clearance — the application draft and the TSDR mapping (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-application.mjs
 
       # Migration 067 executed against PGlite on top of the REAL 062 and 063,
       # then the real billing handlers driven against that database with Stripe
