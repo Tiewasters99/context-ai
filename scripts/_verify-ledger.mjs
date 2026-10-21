@@ -992,11 +992,15 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
 console.log('\n--- sealed strict mode (lib/assistant-core.mjs) -------------------');
 {
   const { runAssistantStream, bedrockCredsFromEnv } = await import('../lib/assistant-core.mjs');
+  // Pinned to Kimi on the chat route: the canned answer below is that route's
+  // stream. (The default pen since 2026-10-20, Opus 4.6 on the classic
+  // runtime, is driven end to end by _verify-bedrock-pen and friends.)
   const CREDS = bedrockCredsFromEnv({
     BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST', BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret',
+    BEDROCK_MODEL: 'moonshotai.kimi-k2.5',
   });
   const sse = (evts) => evts.map((e) => `data: ${JSON.stringify(e)}`).join('\n\n') + '\n\ndata: [DONE]\n\n';
-  // The default sealed pen (BEDROCK_MODEL = moonshotai.kimi-k2.5) takes the
+  // The pinned sealed pen (BEDROCK_MODEL = moonshotai.kimi-k2.5) takes the
   // OpenAI-compatible chat route; Tier A's first-party pen goes through the
   // Anthropic SDK and wants the Messages SSE with `event:` lines. Both say
   // exactly THE ANSWER TEXT and nothing else.

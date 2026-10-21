@@ -14,7 +14,10 @@
 // test together rather than the adapter in isolation.
 //
 //   1. Tier B + Bedrock credentials  → exactly ONE upstream request, to
-//      bedrock-mantle, SigV4-signed, with the body translated.
+//      bedrock-mantle, SigV4-signed, with the body translated. These cases
+//      pin BEDROCK_MODEL=moonshotai.kimi-k2.5 (the chat route, whose
+//      translation is the deepest); the DEFAULT pen since 2026-10-20 — Opus
+//      4.6 on the classic runtime's invoke route — has its own section, 1c.
 //   2. Tier B, credentials ABSENT    → 503 sealed_pen_unavailable, and ZERO
 //      requests to any provider.
 //   3. Tier B naming anthropic / openai / fireworks / google → api.anthropic.com,
@@ -41,6 +44,7 @@ import handler from '../api/llm.mjs';
 import { sealedRouteFor, SEALED_PROVIDER } from '../lib/llm-sealed-route.mjs';
 import { estimateLlmCents, centsForTokens } from '../lib/usage-prices.mjs';
 import { readFile } from 'node:fs/promises';
+import { eventStreamBody, exceptionFrame, chunkedStream, isRuntimeInvoke } from './_bedrock-eventstream.mjs';
 import { SEALED_PEN_PREAMBLE_TEXT, SEALED_PEN_PREAMBLE_MARKER, SEALED_PEN_PREAMBLE_VERSION } from '../lib/pen-preambles.mjs';
 
 // The pen's preamble (lib/pen-preambles.mjs) goes in FRONT of whatever system
@@ -70,11 +74,13 @@ process.env.OPENAI_API_KEY = 'sk-openai-stub';
 process.env.NODE_ENV = 'production'; // production copy: no developer hints
 delete process.env.BEDROCK_AWS_SESSION_TOKEN;
 
+// Pins the chat-route pen: the canned replies below are its OpenAI-compatible
+// stream. Section 1c unsets BEDROCK_MODEL to exercise the default pen.
 const withBedrock = () => {
   process.env.BEDROCK_AWS_ACCESS_KEY_ID = 'AKIDTEST';
   process.env.BEDROCK_AWS_SECRET_ACCESS_KEY = 'testsecret';
   process.env.BEDROCK_REGION = 'us-east-1';
-  delete process.env.BEDROCK_MODEL;
+  process.env.BEDROCK_MODEL = 'moonshotai.kimi-k2.5';
 };
 const withoutBedrock = () => {
   delete process.env.BEDROCK_AWS_ACCESS_KEY_ID;
@@ -136,7 +142,7 @@ let requests = [];
 const safeHost = (u) => { try { return new URL(u).host; } catch { return u; } };
 const providerRequests = () => requests.filter((r) => r.host !== 'stub.supabase.co');
 const providerHosts = () => [...new Set(providerRequests().map((r) => r.host))];
-const nonBedrock = () => providerHosts().filter((h) => !h.startsWith('bedrock-mantle.'));
+const nonBedrock = () => providerHosts().filter((h) => !h.startsWith('bedrock-mantle.') && !h.startsWith('bedrock-runtime.'));
 
 function witness(tier, upstream) {
   requests = [];
@@ -372,7 +378,77 @@ console.log('\nTier B — the Bedrock Messages route (BEDROCK_MODEL=anthropic.*)
   eq('body: the named tool_choice is preserved on this route', sent.tool_choice, { type: 'tool', name: 'file_bucket' });
   if (!('thinking' in sent)) pass('body: no `thinking` block — extended thinking fights a named tool_choice'); else fail('thinking was sent', sent.thinking);
   eq('response: the tool input round-trips', anthropicToolInput(res.json()), { node_id: 'n-7' });
+  withBedrock();
+}
+
+console.log('\nTier B — the DEFAULT pen: Opus 4.6 on the classic runtime (no BEDROCK_MODEL)');
+{
+  withBedrock();
   delete process.env.BEDROCK_MODEL;
+  const runtimeOk = (events, size = 9) => (u) => {
+    if (isRuntimeInvoke(u)) return new Response(chunkedStream(eventStreamBody(events), size), { status: 200 });
+    throw new Error(`unexpected host: ${u}`);
+  };
+  const TOOL_EVENTS = [
+    { type: 'message_start', message: { usage: { input_tokens: 11, output_tokens: 0 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_1', name: 'file_bucket' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"node_id":' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '"n-7"}' } },
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 6 } },
+    { type: 'message_stop' },
+  ];
+  let res = await call({ tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_TOOL_BODY, upstream: runtimeOk(TOOL_EVENTS) });
+  const ups = providerRequests();
+  eq('exactly ONE upstream request', ups.length, 1);
+  const up = ups[0];
+  eq('the host is the classic Bedrock runtime in the pen\'s Region', up?.host, 'bedrock-runtime.us-east-1.amazonaws.com');
+  eq('the path is InvokeModelWithResponseStream on the us. profile', new URL(up.url).pathname, '/model/us.anthropic.claude-opus-4-6-v1/invoke-with-response-stream');
+  const auth = up.init.headers?.authorization ?? '';
+  if (auth.startsWith('AWS4-HMAC-SHA256 ') && auth.includes('/us-east-1/bedrock/aws4_request')) pass('SigV4 Authorization header present, service bedrock');
+  else fail('missing or wrong SigV4 Authorization header', auth.slice(0, 120));
+  const sent = JSON.parse(up.init.body);
+  eq('body: anthropic_version for the runtime', sent.anthropic_version, 'bedrock-2023-05-31');
+  if (!('model' in sent) && !('stream' in sent)) pass('body: no model or stream field — the runtime takes those from the URL'); else fail('model/stream sent in the runtime body', { model: sent.model, stream: sent.stream });
+  eq('body: the pen preamble leads the `system` field, feature prompt intact behind it', sent.system, withPreamble('Classify the document.'));
+  eq('body: exactly ONE preamble', markerCount(sent.system), 1);
+  eq('body: the named tool_choice is preserved', sent.tool_choice, { type: 'tool', name: 'file_bucket' });
+  if (!('thinking' in sent)) pass('body: no `thinking` block — extended thinking fights a named tool_choice'); else fail('thinking was sent', sent.thinking);
+  eq('response: the tool input round-trips from event-stream frames', anthropicToolInput(res.json()), { node_id: 'n-7' });
+  eq('response: usage the client parses', anthropicUsage(res.json()), { inputTokens: 11, outputTokens: 6 });
+  eq('the pen that answered is named in a header', res.headers['x-contextspaces-pen'], 'Claude Opus 4.6 (Bedrock, our AWS account, zero retention)');
+  if (nonBedrock().length === 0) pass('egress witness: Bedrock and nothing else'); else fail('a non-Bedrock host was contacted', nonBedrock());
+
+  // A streamed caller (generate.ts) gets the Anthropic SSE it parses.
+  res = await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_STREAM_BODY,
+    upstream: runtimeOk([
+      { type: 'message_start', message: { usage: { input_tokens: 9, output_tokens: 0 } } },
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'The lease ' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'is responsive.' } },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } },
+      { type: 'message_stop' },
+    ], 4),
+  });
+  eq('streamed: the text arrives in the shape generate.ts parses', anthropicStreamText(res.text()), 'The lease is responsive.');
+  if (anthropicStreamDone(res.text())) pass('streamed: message_stop closes it'); else fail('no message_stop', res.text().slice(-200));
+
+  // AWS reports a mid-stream failure as an exception FRAME inside a 200; a
+  // non-streaming caller must get the product's sealed_pen_error, not an
+  // empty answer dressed as success.
+  res = await call({
+    tier: 'B', provider: 'anthropic', model: 'claude-opus-4-8', body: ANTHROPIC_TOOL_BODY,
+    upstream: (u) => {
+      if (!isRuntimeInvoke(u)) throw new Error(`unexpected host: ${u}`);
+      return new Response(eventStreamBody([
+        { type: 'message_start', message: { usage: { input_tokens: 11, output_tokens: 0 } } },
+        exceptionFrame('modelStreamErrorException', 'stream broke (stub)'),
+      ]), { status: 200 });
+    },
+  });
+  eq('an exception frame → 502', res.statusCode, 502);
+  eq('...as sealed_pen_error', res.json()?.error, 'sealed_pen_error');
+  withBedrock();
 }
 
 console.log('\nTier B, Bedrock credentials ABSENT');

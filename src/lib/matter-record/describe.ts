@@ -8,8 +8,9 @@
 //   2. Nothing claims more than `audits/2026-09-19/02-securespace.md` allows.
 //      The sealed route is "a model served from Amazon Bedrock in the firm's
 //      own AWS account under an account-level setting that forbids retention";
-//      it is not any vendor's promise, it is not called Claude, and the seal
-//      is prospective. Tier A is "first-party provider terms", with the
+//      it is not any vendor's promise, the route's wording names no model
+//      (the model column does, from the row — Claude Opus 4.6 since
+//      2026-10-20), and the seal is prospective. Tier A is "first-party provider terms", with the
 //      retention period left for the attorney to confirm — the AI Use Record
 //      skill's rule: never assert a provider's terms as fact.
 //

@@ -614,9 +614,18 @@ console.log('\n5. The sealed route is described in the words we are allowed');
   const doc = assembleMatterRecord(data, CONTEXT, null);
   const sealedTool = doc.tools.find((t) => t.route.includes('sealed route'));
   check(!!sealedTool, 'the tools memo has a sealed row for the sealed exchange');
+  // The Record's own words for the seal (route + retention) never name a
+  // model or vendor; the model column is the ledger row's id, printed as
+  // recorded — since 2026-10-20 that is Claude Opus 4.6 on Bedrock, and the
+  // Record must say so rather than hide it.
   check(
-    sealedTool && !/claude/i.test(`${sealedTool.route} ${sealedTool.retention} ${sealedTool.model}`),
-    'the sealed row never says Claude',
+    sealedTool && !/claude|anthropic|kimi|moonshot/i.test(`${sealedTool.route} ${sealedTool.retention}`),
+    'the sealed row\'s route and retention wording names no model',
+  );
+  check(
+    sealedTool && sealedTool.model === 'moonshotai.kimi-k2.5',
+    'and its model column is the id the ledger recorded, verbatim',
+    sealedTool?.model,
   );
 }
 
