@@ -1278,21 +1278,39 @@ function DeskEditor(p: DeskProps) {
     const escLike = (s: string) => s.replace(/[%_\\]/g, (x) => '\\' + x).replace(/[,()]/g, ' ');
     p.setBusy(`Looking for ${c.words.map((w) => w[0]).join(' ')} in ${recordRootName ?? 'the record'}…`);
     try {
-      let q = supabase.from('documents').select('id, title, source_filename').in('matterspace_id', scope).neq('id', meta.id);
+      let q = supabase.from('documents').select('id, title, source_filename, doc_type').in('matterspace_id', scope).neq('id', meta.id);
       for (const forms of c.words) {
         q = q.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
       }
-      const { data, error } = await q.limit(200);   // names only; ranked below
+      const { data: named, error } = await q.limit(200);   // names only; ranked below
       if (error) throw new Error(error.message);
-      type Doc = { id: string; title: string | null; source_filename: string | null };
+      let data = named;
+      let partyOnly = false;
+      // a caption the file's name does not spell out ("Tiekert v. Village of Mamaroneck"
+      // filed as "Tiekert Order"): the first party's name, ranked and offered
+      if (!data?.length && c.party?.length && c.party.length < c.words.length) {
+        let pq = supabase.from('documents').select('id, title, source_filename, doc_type').in('matterspace_id', scope).neq('id', meta.id);
+        for (const forms of c.party) pq = pq.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
+        const { data: byParty, error: pe } = await pq.limit(200);
+        if (pe) throw new Error(pe.message);
+        data = byParty; partyOnly = !!byParty?.length;
+      }
+      type Doc = { id: string; title: string | null; source_filename: string | null; doc_type?: string | null };
+      // A brief or memo that CITES the case is never the case (Eden, 10-21: Del Biaggio's
+      // cite opened the memo about it): it ranks last, and never opens on its own.
+      const isBrief = (d: Doc) => d.doc_type === 'brief';
       // The first long form first: "Op." lists every Opinion before the
       // clerk's Orders (10-15: the Fifth Circuit Opinion sat among dozens).
       const rank = (d: Doc) => {
         const name = `${d.title ?? ''} ${d.source_filename ?? ''}`.toLowerCase();
-        return c.words.reduce((n, forms) => n + Math.max(0, forms.findIndex((f) => name.includes(f.toLowerCase()))), 0);
+        const named = c.words.reduce((n, forms) => n + Math.max(0, forms.findIndex((f) => name.includes(f.toLowerCase()))), 0);
+        // a caption's "Op.", "Order": the decision before the other papers named for the parties
+        const missing = (c.rank ?? []).filter((forms) => !forms.some((f) => name.includes(f.toLowerCase()))).length;
+        return (isBrief(d) ? 1000 : 0) + missing * 10 + named;
       };
-      let docs = ((data ?? []) as Doc[]).sort((a, b) => rank(a) - rank(b) || (a.title ?? '').localeCompare(b.title ?? '')).slice(0, 20);
-      let how = 'by name';
+      const ranked = (list: Doc[]) => list.sort((a, b) => rank(a) - rank(b) || (a.title ?? '').localeCompare(b.title ?? '')).slice(0, 20);
+      let docs = ranked((data ?? []) as Doc[]);
+      let how = partyOnly ? 'by the first party’s name only (the caption is not in the file name)' : 'by name';
       if (!docs.length) {
         // the caption on a first page: "OFFICE OF ADMINISTRATIVE TRIALS & HEARINGS … DEPARTMENT OF
         // CONSUMER AND WORKER PROTECTION, Petitioner" is "OATH Pet." (the acronyms' long forms)
@@ -1302,8 +1320,8 @@ function DeskEditor(p: DeskProps) {
         if (pe) throw new Error(pe.message);
         const ids = [...new Set(((pd ?? []) as { document_id: string }[]).map((r) => r.document_id))];
         if (ids.length) {
-          const { data: dd } = await supabase.from('documents').select('id, title, source_filename').in('id', ids);
-          docs = (dd ?? []) as Doc[];
+          const { data: dd } = await supabase.from('documents').select('id, title, source_filename, doc_type').in('id', ids);
+          docs = ranked((dd ?? []) as Doc[]);
           how = 'on its first page';
         }
       }
@@ -1314,7 +1332,7 @@ function DeskEditor(p: DeskProps) {
       }
       const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
       const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
-      if (docs.length === 1) {
+      if (docs.length === 1 && !isBrief(docs[0]) && !partyOnly) {
         // "TAC ¶ 55": the page where paragraph 55 begins
         const para = !c.page && c.paragraph ? await findParagraphPage(supabase, docs[0].id, c.paragraph) : null;
         const pinned = para ? ` — ¶ ${c.paragraph} begins on page ${para}` : pin;
@@ -1323,7 +1341,7 @@ function DeskEditor(p: DeskProps) {
       }
       setContentHits({
         label, number: c.words.map((w) => w[0]).join(' '), from: 'cite',
-        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: isBrief(d) ? 'A brief or memo filed in this matter — it cites the case; it is not the decision.' : `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
       });
       return true;
     } catch (e) {
