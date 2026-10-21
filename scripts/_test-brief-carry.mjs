@@ -159,6 +159,8 @@ test('the same cite twice is two cites: a flag on one does not hold up Confirm o
   // and the flag carries red to the next version
   const plan = carryPlan(rows, paras);
   assert.deepEqual(plan.carry.map((c) => [c.row.id, c.row.status]).sort(), [['c2', 'confirmed'], ['p1', 'problem']]);
+  // an edit above the cite moved its place: still the flag at this place
+  assert.equal(openProblemAt([flag], J, P125, 9400, paras)?.id, 'p1');
   // a flag whose sentence was reworded away still follows its words (09-28)
   const reworded = [`Her own table shows the gap. ${J}.`, P129];
   assert.equal(openProblemAt([flag], J, P129, 12000, reworded)?.id, 'p1');

@@ -269,6 +269,16 @@ export function openProblemAt(rows: CiteConfirmation[], raw: string, context: st
   const mine = latestFor(rows, raw, context, from);
   if (mine) return mine.status === 'problem' ? mine : null;
   const r = flat(raw);
+  // an edit above the cite moves its place: a flag in this same sentence, which
+  // holds these words once, is this one's
+  const ctx = sentenceKey(context ?? '');
+  const w = matchText(raw);
+  const here = paragraphs.find((p) => sentenceKey(p) === ctx);
+  if (ctx && here && matchText(here).split(w).length === 2) {
+    const flag = rows.filter((row) => row.status === 'problem' && flat(row.cite_raw) === r && sentenceKey(row.context) === ctx)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+    if (flag && isOpenProblem(rows, flag, paragraphs)) return flag;
+  }
   let best: CiteConfirmation | null = null;
   for (const row of rows) {
     if (row.status !== 'problem' || flat(row.cite_raw) !== r || (best && row.created_at <= best.created_at)) continue;

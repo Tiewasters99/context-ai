@@ -2325,7 +2325,7 @@ function DeskEditor(p: DeskProps) {
         >
           <ConfirmLog
             rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials}
-            briefText={editorRef.current?.state.doc.textContent ?? ''}
+            briefText={briefParas()}
             onResolve={async (was, note) => {
               // A reading of the SAME occurrence the flag was on (words,
               // sentence, place), so the flag's own line turns green; the
@@ -3155,7 +3155,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, bri
   rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
   initials: string; onInitials: (v: string) => void;
   /** The brief's words now, to say which open flags no longer have their text in it. */
-  briefText: string;
+  briefText: string[];
   /** Resolve an open flag by hand, with a note (10-02: a redraft left ¶ 90's flag with nowhere to say why). */
   onResolve: (was: CiteConfirmation, note: string) => Promise<void>;
   /** Carry an earlier brief's readings onto this one (v8 → v9): the candidates and the run. */
@@ -3300,7 +3300,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, bri
                 <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
               </div>
               <div className="text-white/45 truncate">{whereRead(r)}</div>
-              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{answersProblem(rows, r, [briefText]) ? 'Resolved: ' : ''}{r.note}</div>}
+              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{answersProblem(rows, r, briefText) ? 'Resolved: ' : ''}{r.note}</div>}
               {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
             </div>
           ))}
