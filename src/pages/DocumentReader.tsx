@@ -28,6 +28,7 @@ import {
   BookMarked,
 } from 'lucide-react';
 import mammoth from 'mammoth';
+import { boldStarPages } from '@/lib/reader-star-pages';
 import { labelWordNotes } from '@/lib/reader-notes';
 import { Fountain } from 'fountain-js';
 import { supabase } from '@/lib/supabase';
@@ -480,7 +481,8 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
   // fresh literal on every render would make it: the document re-parses,
   // the reader's selection drops, and the search's ranges collapse. One
   // object per document instead.
-  const docHtmlProp = useMemo(() => (docHtml ? { __html: docHtml } : undefined), [docHtml]);
+  // A case's star pages (*146, **523) in bold: the page is found at a glance (Eden, 10-21).
+  const docHtmlProp = useMemo(() => (docHtml ? { __html: boldStarPages(docHtml) } : undefined), [docHtml]);
   const titlePageHtmlProp = useMemo(() => (titlePageHtml ? { __html: titlePageHtml } : undefined), [titlePageHtml]);
 
   // Annotations state. A PDF's marks are the book's (PdfBook reports them
@@ -3363,6 +3365,8 @@ function RenderedDocStyle({ theme }: { theme: ReaderTheme }) {
   return (
     <style>{`
       /* A Word file's notes, labelled (src/lib/reader-notes.ts). */
+      /* A reporter's page break in a case (src/lib/reader-star-pages.ts): bold, and a touch of the find's gold. */
+      .star-page { font-weight: 700; color: #b8860b; }
       .reader-notes-heading { margin-top: 2.5em; padding-top: 0.8em; border-top: 1px solid currentColor; font-size: 0.95em; opacity: 0.85; }
       /* The find's two colors for a rendered document (docx, text, slides,
          screenplay), painted by the Custom Highlight API over the words. */

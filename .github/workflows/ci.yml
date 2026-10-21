@@ -490,6 +490,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Star pages (*146, **523) in bold on a rendered case: tags untouched, words unchanged.
+      - name: Reader — star pages in bold
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-reader-star-pages.mjs
+
       # Highlights and margin notes on a rendered document (docx, text,
       # markdown, screenplay) anchor to the text, not a page: offsets plus
       # the quoted words. Pure functions in src/lib/text-anchor.ts; no DOM.

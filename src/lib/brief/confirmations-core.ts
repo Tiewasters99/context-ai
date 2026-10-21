@@ -159,7 +159,7 @@ export function carryPlan(oldRows: CiteConfirmation[], newText: string | string[
   }
   for (const row of newest.values()) {
     const raw = matchText(row.cite_raw);
-    const open = row.status === 'problem' && openProblemForWords(oldRows, row.cite_raw)?.id === row.id;
+    const open = row.status === 'problem' && isOpenProblem(oldRows, row, paras);
     // a flag answered by a later reading of the same words elsewhere is not carried red
     if (row.status === 'problem' && !open) continue;
     if (!raw || !norm.some((p) => p.includes(raw))) {
@@ -219,10 +219,102 @@ export function lastReadingOfWords(rows: CiteConfirmation[], raw: string): CiteC
   return best;
 }
 
-/** The problem on these words that no later confirmation has answered; null when none is open. */
-export function openProblemForWords(rows: CiteConfirmation[], raw: string): CiteConfirmation | null {
-  const last = lastReadingOfWords(rows, raw);
-  return last && last.status === 'problem' ? last : null;
+/** Two rows are one occurrence: the same words in the same sentence, at the same place (latestByCite's rule). */
+function sameOccurrence(a: CiteConfirmation, b: CiteConfirmation): boolean {
+  if (matchText(a.cite_raw) !== matchText(b.cite_raw) || sentenceKey(a.context) !== sentenceKey(b.context)) return false;
+  return a.pm_from === null || b.pm_from === null || Math.abs(a.pm_from - b.pm_from) <= SAME_SPOT;
+}
+
+/** Whether a row's own occurrence (its words, in its sentence) is still in the brief's paragraphs. */
+export function occurrenceInBrief(row: CiteConfirmation, paragraphs: string[]): boolean {
+  const ctx = sentenceKey(row.context);
+  const w = matchText(row.cite_raw);
+  return !!ctx && !!w && paragraphs.some((p) => sentenceKey(p).includes(ctx) && matchText(p).includes(w));
+}
+
+/**
+ * Whether a problem is still open. Without the brief: open until any later
+ * reading of the same words (the flag follows the words into a reworded
+ * sentence, 09-28). With the brief's paragraphs: a flag whose own sentence is
+ * still there is answered only by a reading of THAT occurrence — the same
+ * cite twice in a brief is two cites (Eden, 10-21: Joiner flagged red at one
+ * place, and Confirm at the other asked how the flag was resolved).
+ */
+export function isOpenProblem(rows: CiteConfirmation[], p: CiteConfirmation, paragraphs?: string[]): boolean {
+  if (p.status !== 'problem') return false;
+  const w = flat(p.cite_raw);
+  const later = rows.filter((r) => r.id !== p.id && r.created_at > p.created_at && flat(r.cite_raw) === w);
+  if (!later.length) return true;
+  if (!paragraphs || !occurrenceInBrief(p, paragraphs)) return false;
+  return !later.some((r) => sameOccurrence(r, p));
+}
+
+/** The newest open problem on these words; null when none is open. */
+export function openProblemForWords(rows: CiteConfirmation[], raw: string, paragraphs?: string[]): CiteConfirmation | null {
+  const r = flat(raw);
+  let best: CiteConfirmation | null = null;
+  for (const row of rows) {
+    if (row.status !== 'problem' || flat(row.cite_raw) !== r || (best && row.created_at <= best.created_at)) continue;
+    if (isOpenProblem(rows, row, paragraphs)) best = row;
+  }
+  return best;
+}
+
+/**
+ * The open problem a Confirm at THIS place answers: the flag on this
+ * occurrence, or a flag on the same words whose sentence was reworded away.
+ * A flag on another occurrence still in the brief is that cite's, and stays red.
+ */
+export function openProblemAt(rows: CiteConfirmation[], raw: string, context: string | null, from: number | null, paragraphs: string[]): CiteConfirmation | null {
+  const mine = latestFor(rows, raw, context, from);
+  if (mine) return mine.status === 'problem' ? mine : null;
+  const r = flat(raw);
+  let best: CiteConfirmation | null = null;
+  for (const row of rows) {
+    if (row.status !== 'problem' || flat(row.cite_raw) !== r || (best && row.created_at <= best.created_at)) continue;
+    if (!occurrenceInBrief(row, paragraphs) && isOpenProblem(rows, row, paragraphs)) best = row;
+  }
+  return best;
+}
+
+/**
+ * Problems logged with this one in a single press (the cite and its
+ * quotation): same sentence, same note, within seconds, still open. A
+ * resolution of the cite resolves them with it.
+ */
+export function flaggedWith(rows: CiteConfirmation[], p: CiteConfirmation, paragraphs?: string[]): CiteConfirmation[] {
+  const t = Date.parse(p.created_at);
+  return rows.filter((r) => r.id !== p.id && r.status === 'problem' && r.note === p.note
+    && sentenceKey(r.context) === sentenceKey(p.context) && Math.abs(Date.parse(r.created_at) - t) <= 10_000
+    && isOpenProblem(rows, r, paragraphs));
+}
+
+/**
+ * The quotation a cite stands behind, in the cite's own paragraph: the last
+ * quoted span (“…” or "…") ending shortly before the cite, else one opening
+ * just after it (a parenthetical). Its inner words, exactly as the paragraph
+ * spells them, or null. Eden, 10-21: the miscite was a manufactured
+ * quotation behind a real cite; a cite checker passes the cite, and it is the
+ * quotation that has to show red.
+ */
+export function quotationFor(context: string, raw: string, near: number | null = null): string | null {
+  const text = flat(context);
+  const cite = flat(raw);
+  if (!text || !cite || /[“”"]/.test(cite)) return null;
+  let at = -1;
+  for (let k = text.indexOf(cite); k >= 0; k = text.indexOf(cite, k + 1)) {
+    if (at < 0 || (near !== null && Math.abs(k - near) < Math.abs(at - near))) at = k;
+  }
+  if (at < 0) return null;
+  const spans: { start: number; end: number; inner: string }[] = [];
+  for (const m of text.matchAll(/[“"]([^“”"]{3,})[”"]/g)) {
+    const start = m.index ?? 0;
+    spans.push({ start, end: start + m[0].length, inner: m[1] });
+  }
+  const before = spans.filter((s) => s.end <= at && at - s.end <= 160).pop();
+  if (before) return before.inner.trim() || null;
+  const after = spans.find((s) => s.start >= at + cite.length && s.start - (at + cite.length) <= 60);
+  return after ? after.inner.trim() || null : null;
 }
 
 /**
@@ -232,10 +324,11 @@ export function openProblemForWords(rows: CiteConfirmation[], raw: string): Cite
  * different set of words, so nothing asks how the old flag was answered
  * (Eden, 10-02: ¶ 90 of Bushell v18). The Log resolves these by hand.
  */
-export function openProblems(rows: CiteConfirmation[], briefText: string): { row: CiteConfirmation; inBrief: boolean }[] {
-  const text = flat(briefText);
+export function openProblems(rows: CiteConfirmation[], briefText: string | string[]): { row: CiteConfirmation; inBrief: boolean }[] {
+  const paras = (typeof briefText === 'string' ? [briefText] : briefText).map(flat);
+  const text = paras.join(' ');
   return rows
-    .filter((r) => r.status === 'problem' && openProblemForWords(rows, r.cite_raw)?.id === r.id)
+    .filter((r) => isOpenProblem(rows, r, paras))
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((row) => ({ row, inBrief: text.includes(flat(row.cite_raw)) }));
 }
@@ -271,10 +364,12 @@ export function rewordedNote(row: CiteConfirmation, fromTitle: string): string {
 }
 
 /** A confirmed row answers a problem when an earlier row on the same words was one (the Log labels its note "Resolved"). */
-export function answersProblem(rows: CiteConfirmation[], row: CiteConfirmation): boolean {
+export function answersProblem(rows: CiteConfirmation[], row: CiteConfirmation, paragraphs?: string[]): boolean {
   if (row.status !== 'confirmed' || /^(carried |read on “)/.test(row.note)) return false;
   const w = matchText(row.cite_raw);
-  return rows.some((r) => r.status === 'problem' && r.created_at < row.created_at && matchText(r.cite_raw) === w);
+  // with the brief: a reading of another occurrence still in it answers nothing
+  return rows.some((r) => r.status === 'problem' && r.created_at < row.created_at && matchText(r.cite_raw) === w
+    && (!paragraphs || sameOccurrence(r, row) || !occurrenceInBrief(r, paragraphs)));
 }
 
 /** Latest status per occurrence (cite, sentence, place): what the brief's highlights and the count show. */

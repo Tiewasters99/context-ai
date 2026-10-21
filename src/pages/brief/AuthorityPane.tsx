@@ -37,7 +37,21 @@ export interface PaneState {
   cite?: { raw: string; context: string; from: number | null } | null;
 }
 
-export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, openProblem, initials, onInitials, onConfirm }: {
+/**
+ * With a Problem: also mark the quotation the cite stands behind red (Eden,
+ * 10-21: a manufactured quotation behind a real cite; the cite checks out, the
+ * quotation is what is wrong). Ticked by default; the words are shown.
+ */
+export function QuoteToggle({ quote, checked, onChange }: { quote: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="w-full mt-1.5 flex items-start gap-1.5 text-[11px] text-white/65 cursor-pointer" data-testid="problem-quote">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 accent-red-400" />
+      <span>Also mark the quotation red: <span className="text-red-200/90">“{quote.length > 160 ? `${quote.slice(0, 157)}…` : quote}”</span></span>
+    </label>
+  );
+}
+
+export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, openProblem, quotation, initials, onInitials, onConfirm }: {
   state: PaneState | null;
   onClose?: () => void;
   /** Full screen (phone, narrow window): a back arrow instead of a close. */
@@ -50,11 +64,13 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   confirmation?: CiteConfirmation | null;
   /** A problem logged on these cite words that no later confirmation answered — confirming asks how it was resolved. */
   openProblem?: CiteConfirmation | null;
+  /** The quotation this cite stands behind, offered with Problem. */
+  quotation?: string | null;
   /** The initials the log signs with, editable here. */
   initials?: string;
   onInitials?: (v: string) => void;
   /** Confirm / Problem: one append-only row. */
-  onConfirm?: (status: ConfirmationStatus, note: string) => Promise<void>;
+  onConfirm?: (status: ConfirmationStatus, note: string, alsoQuote?: boolean) => Promise<void>;
 }) {
   // The note box: 'problem' asks what is wrong; 'resolved' asks what was found
   // and how it was fixed, when a red cite is being confirmed (the note sits in
@@ -62,11 +78,12 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved' | 'note'>(false);
   const [problemNote, setProblemNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [withQuote, setWithQuote] = useState(true);
   const [relied, setRelied] = useState<ReaderReliedResult | null>(null);
   const press = async (status: ConfirmationStatus, note = '') => {
     if (!onConfirm || busy) return;
     setBusy(true);
-    try { await onConfirm(status, note); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
+    try { await onConfirm(status, note, status === 'problem' && withQuote && !!quotation); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
   };
   const confirmPress = () => {
     if (openProblem || confirmation?.status === 'problem') { setProblemNote(''); setProblemOpen('resolved'); return; }
@@ -122,7 +139,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
               <Check size={13} /> {confirmation ? 'Confirm again' : 'Confirm'}
             </button>
             <button
-              onClick={() => { setProblemNote(''); setProblemOpen((v) => (v === 'problem' ? false : 'problem')); }}
+              onClick={() => { setProblemNote(''); setWithQuote(true); setProblemOpen((v) => (v === 'problem' ? false : 'problem')); }}
               disabled={busy}
               className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20"
               title="Something is wrong with this cite: say what, and it goes in the log"
@@ -155,6 +172,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
                 </button>
               </div>
             )}
+            {problemOpen === 'problem' && quotation && <QuoteToggle quote={quotation} checked={withQuote} onChange={setWithQuote} />}
           </div>
         )}
         {state.appendix && state.docId && (
