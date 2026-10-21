@@ -267,7 +267,7 @@ test('triage: the model is reached only through send, with the feature label; a 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].feature, 'trademark.triage');
   assert.equal(calls[0].body.model, 'claude-opus-5-5');
-  assert.equal(calls[0].body.tool_choice.type, 'tool');
+  assert.equal(calls[0].body.tool_choice.type, 'auto', 'Opus 5.5 refuses a named tool_choice');
   assert.ok(!res.proposals.some((p) => p.serial === '99887921'), 'the "clear" proposal is not stored');
   assert.ok(res.discarded.some((d) => d.serial === '99887921' && /is clear/.test(d.reason)));
   assert.ok(res.discarded.some((d) => d.serial === '12345678'), 'a serial that was not asked about is discarded');
@@ -394,4 +394,31 @@ test('the action refuses a reader, an unknown clearance, a bad id, and says so b
   await assert.rejects(() => run(stubSb({ clearance: c }), { clearance_id: 'x' }), (e) => e.status === 400);
   await assert.rejects(() => run(stubSb({ clearance: c }), { clearance_id: CID }, 'guess'), (e) => e.status === 400);
   await assert.rejects(() => run(stubSb({ clearance: c, missing: true })), (e) => e.status === 503 && e.message === NOT_READY_MESSAGE);
+});
+
+test('a proposal request offers the tool without naming it, asks again once when no tool call comes back, and turns a provider refusal into a plain sentence', async () => {
+  const c = { id: CID, matterspace_id: MID, mark: 'EQUORIUM', goods_services: 'Online game platform.' };
+  const toolReply = { content: [{ type: 'thinking', thinking: '' }, { type: 'tool_use', name: 'propose_classes', input: { search: [{ code: '41', reason: 'games' }], filing: [{ code: '41', reason: 'games' }] } }] };
+  const textReply = { content: [{ type: 'text', text: 'Here are my thoughts.' }] };
+
+  const bodies = [];
+  const replies = [textReply, toolReply];
+  const out = await proposeClasses({ clearance: c, send: async ({ body }) => { bodies.push(JSON.parse(body)); return replies.shift(); } });
+  assert.equal(bodies.length, 2, 'a reply without the tool call is asked once more');
+  assert.deepEqual(bodies[0].tool_choice, { type: 'auto' });
+  assert.deepEqual(out.search.map((x) => x.code), ['041']);
+
+  await assert.rejects(
+    () => proposeClasses({ clearance: c, send: async () => textReply }),
+    (e) => e.name === 'TrademarkModelError' && /fill this step in by hand/.test(e.message) && !/400/.test(e.message),
+  );
+
+  const refused = Object.assign(new Error('The model answered 400.'), { status: 400, code: 'provider_error' });
+  await assert.rejects(
+    () => proposeDecomposition({ clearance: c, send: async () => { throw refused; } }),
+    (e) => e.name === 'TrademarkModelError' && e.status === 502 && !/answered 400/.test(e.message),
+  );
+
+  const budget = Object.assign(new Error('This month\'s AI allowance is used up.'), { status: 402, code: 'budget_exhausted' });
+  await assert.rejects(() => proposeClasses({ clearance: c, send: async () => { throw budget; } }), (e) => e === budget);
 });
