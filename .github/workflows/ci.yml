@@ -171,6 +171,30 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_e2e-trademark-mcp.mjs
 
+      # Equazia's copy of the USPTO register (2026-10-21; spec §11). All
+      # offline, on COMMITTED fixtures only (scripts/fixtures/tm-register/,
+      # synthetic XML in the documented shape): nothing is downloaded in CI.
+      # Normalization, the streamed XML parser, the loader's upsert and
+      # atomicity, each query type's SQL and its parity with termMatchesMark,
+      # the stale and gate rules, the daily update against a stub ODP, and the
+      # recall harness on the seed set.
+      - name: Trademark register copy — parser, loader, search, stale and gate rules (node --test, PGlite)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-tm-register.mjs
+
+      # Migration 123: register_copy runs carry their as-of date and the
+      # preliminary flag; stage 4 cannot be signed on preliminary runs alone.
+      - name: Trademark register copy — run log and stage 4 (migration 123, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-123.mjs
+
+      # tm_run_search end to end over Streamable HTTP against a local register
+      # copy (PGlite): preliminary, then the gate passed, then a stale copy;
+      # the Record's attribution; refusals unchanged.
+      - name: Trademark register copy — tm_run_search end to end over Streamable HTTP
+        if: ${{ !cancelled() }}
+        run: node scripts/_e2e-tm-register-mcp.mjs
+
       - name: Discovery — production links, the table and its rules (migration 115, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-share-links-115.mjs

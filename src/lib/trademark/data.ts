@@ -72,9 +72,11 @@ export interface TmQuery {
   live_only: boolean; generator_version: string | null; created_at: string;
 }
 export interface TmRun {
-  id: string; query_id: string; run_at: string; run_by: string | null; source: 'manual' | 'export' | 'failed';
+  id: string; query_id: string; run_at: string; run_by: string | null; source: 'manual' | 'export' | 'failed' | 'register_copy';
   reported_count: number | null; captured_count: number; gap: boolean; gap_note: string | null;
   export_document_id: string | null; raw: ParsedRow[];
+  /** Migration 123: a run from Equazia's copy of the register — its as-of date, and whether it was preliminary. */
+  register_as_of?: string | null; register_preliminary?: boolean | null;
 }
 export interface Proposal {
   bin: Bin; similarity: { score: number; reason: string }; relatedness: { score: number; reason: string }; model: string; at: string;
@@ -544,7 +546,7 @@ export async function fileReport(c: Clearance, md: string, date: string, initial
 // The model actions (/api/trademark)
 // ---------------------------------------------------------------------------
 
-export async function trademarkApi<T>(action: 'decompose' | 'classes' | 'triage' | 'deep_check', args: Record<string, unknown>): Promise<T> {
+export async function trademarkApi<T>(action: 'decompose' | 'classes' | 'triage' | 'deep_check' | 'register_status' | 'register_search', args: Record<string, unknown>): Promise<T> {
   const session = (await supabase.auth.getSession()).data.session;
   if (!session) throw new Error('You are signed out. Sign in again and retry.');
   const res = await fetch('/api/trademark', {
@@ -558,6 +560,56 @@ export async function trademarkApi<T>(action: 'decompose' | 'classes' | 'triage'
     throw new Error(parseRefusalBody(res.status, body, res.headers.get('retry-after')).message);
   }
   return body as T;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 4 on Equazia's copy of the register (/api/trademark register_*)
+// ---------------------------------------------------------------------------
+
+export interface RegisterStatus {
+  configured: boolean; offered: boolean; default: boolean; as_of: string | null; stale: boolean;
+  days_behind: number | null; stale_after_days: number | null; gate_passed: boolean; gate: string | null; message: string | null;
+}
+export interface RegisterSearchResult {
+  runs: { query_id: string; seq: number; label: string; reported_count: number | null; captured_count: number; gap: boolean; gap_note: string | null; preliminary: boolean }[];
+  not_run: { query_id: string; seq: number; label: string; query: string; reason: string }[];
+  out_of_time: string[];
+  register: RegisterStatus;
+}
+
+let registerStatusPromise: Promise<RegisterStatus> | null = null;
+/** The copy's status, asked once per page load (a failure is "not available", never an error on the stage). */
+export function registerStatus(refresh = false): Promise<RegisterStatus> {
+  if (!registerStatusPromise || refresh) {
+    registerStatusPromise = trademarkApi<RegisterStatus>('register_status', {}).catch((e: unknown) => ({
+      configured: false, offered: false, default: false, as_of: null, stale: true, days_behind: null, stale_after_days: null,
+      gate_passed: false, gate: null, message: e instanceof Error ? e.message : "Equazia's copy of the register is not available.",
+    }));
+  }
+  return registerStatusPromise;
+}
+
+export const PRELIMINARY_LABEL = 'preliminary: confirm on tmsearch';
+
+/** Run the clearance's not-yet-run queries (or the named ones) on the copy; the server records each run. */
+export function runRegisterSearch(clearanceId: string, queryIds?: string[]): Promise<RegisterSearchResult> {
+  return trademarkApi<RegisterSearchResult>('register_search', { clearance_id: clearanceId, ...(queryIds?.length ? { query_ids: queryIds } : {}) });
+}
+
+/** The queries whose current run is a preliminary run from the copy (they block stage 4; migration 123). */
+export function preliminaryQueries(b: ClearanceBundle): TmQuery[] {
+  const latest = new Map<string, TmRun>();
+  for (const r of b.runs) { const cur = latest.get(r.query_id); if (!cur || r.run_at > cur.run_at) latest.set(r.query_id, r); }
+  return [...b.queries].sort((x, y) => x.seq - y.seq).filter((q) => {
+    const r = latest.get(q.id);
+    return r?.source === 'register_copy' && r.register_preliminary === true;
+  });
+}
+
+/** How a run's source reads on the screen. */
+export function runSourceLabel(r: TmRun): string {
+  if (r.source === 'register_copy') return `Equazia register copy, as of ${String(r.register_as_of ?? '?').slice(0, 10)}${r.register_preliminary ? ` (${PRELIMINARY_LABEL})` : ''}`;
+  return r.source;
 }
 
 // ---------------------------------------------------------------------------

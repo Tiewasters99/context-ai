@@ -3,7 +3,7 @@ import type { ParsedRow } from './parse.mjs';
 import type { Procedure } from './procedure.mjs';
 
 export interface RunLike {
-  id?: string; query_id: string; run_at: string; source: 'manual' | 'export' | 'failed';
+  id?: string; query_id: string; run_at: string; source: 'manual' | 'export' | 'failed' | 'register_copy';
   reported_count: number | null; captured_count: number; gap?: boolean; gap_note?: string | null; raw?: ParsedRow[];
 }
 export interface QueryLike { id: string; seq: number; purpose: string; query?: string }
