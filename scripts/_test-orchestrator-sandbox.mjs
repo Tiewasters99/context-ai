@@ -309,6 +309,83 @@ test('copy_document: a copy that still fails is removed whole, and says so', asy
   assert.deepEqual(state.deletedDocs, ['new-doc'], 'the half-made copy is deleted (its passages cascade)');
 });
 
+// ── copy_document's duplicate guard (live 2026-10-19: two different briefs
+// from the Brief Desk shared a filename and size, and copying the second
+// handed back the copy of the first). A copy is a duplicate only of the same
+// document, unchanged since it was copied. ──
+function provenanceFake({ src, held }) {
+  const BOX = 'b0000000-0000-4000-8000-000000000002';
+  const state = { inserted: [], lookups: [] };
+  const chain = (result) => {
+    const q = { select: () => q, eq: () => q, order: () => q, limit: () => Promise.resolve(result()), maybeSingle: () => Promise.resolve(result()), single: () => Promise.resolve(result()), then: (r) => Promise.resolve(result()).then(r) };
+    return q;
+  };
+  const sb = {
+    from(t) {
+      if (t === 'matterspaces') return chain(() => ({ data: { id: BOX, name: 'Box', short_code: 'sbx-x' }, error: null }));
+      if (t === 'passages') return { ...chain(() => ({ data: [], error: null })), insert: () => Promise.resolve({ error: null }) };
+      return {
+        select(cols) {
+          if (cols === '*') return chain(() => ({ data: src, error: null }));
+          // the prior-copy lookup: what the box holds copied from this source
+          const filters = {};
+          const q = {
+            eq: (k, v) => { filters[k] = v; return q; },
+            order: () => q,
+            limit: () => {
+              state.lookups.push({ ...filters });
+              const hit = held.filter((d) => d.matterspace_id === filters.matterspace_id
+                && d.metadata?.copied_from?.document_id === filters['metadata->copied_from->>document_id']);
+              return Promise.resolve({ data: hit, error: null });
+            },
+          };
+          return q;
+        },
+        insert: (row) => { state.inserted.push(row); return chain(() => ({ data: { id: 'new-doc', title: row.title }, error: null })); },
+        update: () => chain(() => ({ error: null })),
+        delete: () => ({ eq: () => Promise.resolve({ error: null }) }),
+      };
+    },
+    storage: { from: () => ({ copy: async () => ({ error: null }), remove: async () => ({ error: null }) }) },
+    auth: { getUser: async () => ({ data: { user: { id: 'u-1' } } }) },
+  };
+  return { sb, state, BOX };
+}
+const MS = 'c0000000-0000-4000-8000-000000000003';
+const briefB = { id: 'a0000000-0000-4000-8000-00000000000b', matterspace_id: MS, title: 'Opp Brief v2', storage_path: null, source_filename: 'brief.docx', file_size_bytes: 4096, updated_at: '2026-10-19T12:30:00.000000+00:00', metadata: { category: 'brief' } };
+
+test('copy_document: a copy of another document with the same filename and size is not a duplicate', async () => {
+  const { handleCopyDocument } = await import('../lib/mcp-core.mjs');
+  const BOX = 'b0000000-0000-4000-8000-000000000002';
+  const copyOfA = { id: 'copy-a', title: 'Opp Brief v1', matterspace_id: BOX, source_filename: 'brief.docx', file_size_bytes: 4096,
+    metadata: { copied_from: { document_id: 'a0000000-0000-4000-8000-00000000000a', source_updated_at: '2026-10-18T09:00:00+00:00' } } };
+  const { sb, state } = provenanceFake({ src: briefB, held: [copyOfA] });
+  const out = await handleCopyDocument(sb, { document_ids: [briefB.id], to_matter: BOX });
+  assert.equal(out.copies[0].document_id, 'new-doc', 'a new copy, not the copy of the other brief');
+  assert.ok(!out.copies[0].already_copied);
+  assert.equal(state.inserted.length, 1);
+  assert.deepEqual(state.inserted[0].metadata, { category: 'brief', copied_from: { document_id: briefB.id, source_updated_at: briefB.updated_at } },
+    'the copy records its source and the source’s state, keeping the rest of its metadata');
+  assert.equal(state.lookups[0]['metadata->copied_from->>document_id'], briefB.id, 'the guard looks up by source, not by filename');
+});
+
+test('copy_document: the same document, unchanged, is handed back; changed, it is copied afresh and the earlier copy named', async () => {
+  const { handleCopyDocument } = await import('../lib/mcp-core.mjs');
+  const BOX = 'b0000000-0000-4000-8000-000000000002';
+  const held = [{ id: 'copy-b', title: 'Opp Brief v2', matterspace_id: BOX, metadata: { copied_from: { document_id: briefB.id, source_updated_at: briefB.updated_at } } }];
+  const same = provenanceFake({ src: briefB, held });
+  const out1 = await handleCopyDocument(same.sb, { document_ids: [briefB.id], to_matter: BOX });
+  assert.deepEqual(out1.copies[0], { document_id: 'copy-b', title: 'Opp Brief v2', copied_from: briefB.id, already_copied: true });
+  assert.equal(same.state.inserted.length, 0, 'nothing written');
+
+  const edited = provenanceFake({ src: { ...briefB, updated_at: '2026-10-19T12:45:00.000000+00:00' }, held });
+  const out2 = await handleCopyDocument(edited.sb, { document_ids: [briefB.id], to_matter: BOX });
+  assert.equal(out2.copies[0].document_id, 'new-doc');
+  assert.equal(out2.copies[0].earlier_copy, 'copy-b', 'the earlier copy is named, and left in place');
+  assert.match(resultNote('copy_document', { to: { name: 'Box' }, copies: out2.copies }), /original changed since the earlier copy, id copy-b/);
+  assert.match(resultNote('copy_document', { to: { name: 'Box' }, copies: out1.copies }), /a copy of this version was already there/);
+});
+
 // E. the server's door (api/sandbox.mjs → guardSandboxCrossing): whatever a
 // pen proposes, a sealed document does not reach a less sealed matter. The
 // sealed run never offers these tools (A, B); this is the second wall.

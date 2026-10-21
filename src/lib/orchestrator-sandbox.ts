@@ -87,7 +87,7 @@ export function proposalSentence(
   }
 }
 
-type Doc = { document_id?: string; title?: string; copied_from?: string; already_copied?: boolean; note?: string };
+type Doc = { document_id?: string; title?: string; copied_from?: string; already_copied?: boolean; earlier_copy?: string; note?: string };
 type Box = { box?: { id?: string; short_code?: string; name?: string }; documents?: Doc[]; note?: string };
 type Result = Args & {
   boxes?: Box[]; to?: { id?: string; short_code?: string; name?: string }; copies?: Doc[];
@@ -97,7 +97,7 @@ type Result = Args & {
 };
 
 const docLine = (d: Doc) =>
-  `- ${quote(d.title || 'document')} — id ${d.document_id}${d.already_copied ? ' (a copy was already there)' : ''}${d.note ? ` (${d.note})` : ''}`;
+  `- ${quote(d.title || 'document')} — id ${d.document_id}${d.already_copied ? ' (a copy of this version was already there)' : ''}${d.earlier_copy ? ` (new copy; the original changed since the earlier copy, id ${d.earlier_copy}, which stays)` : ''}${d.note ? ` (${d.note})` : ''}`;
 const matterLabel = (m?: { short_code?: string; name?: string; id?: string }) =>
   m ? `${quote(m.name || m.short_code || m.id || 'the matter')}${m.short_code ? ` (short_code ${m.short_code})` : ''}` : 'the matter';
 const link = (url?: string | null, label = 'Download') =>
