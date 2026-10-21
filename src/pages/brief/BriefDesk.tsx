@@ -38,7 +38,7 @@ import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText, Check,
   ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
-  ClipboardCheck, GitCompare, CopyPlus, Tag,
+  ClipboardCheck, GitCompare, CopyPlus, Tag, StickyNote,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -67,8 +67,9 @@ const storedOf = (r: Resolution): StoredResolution => ({
     : null,
 });
 import {
-  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemAt, flaggedWith, quotationFor, LOG_WORDS_MAX, rememberedInitials, rememberInitials, guessInitials,
-  confirmationsCsv, whereRead, openProblems, answersProblem, briefParagraphs, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus, type ChangedReading,
+  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemAt, flaggedWith, quotationFor, rememberedInitials, rememberInitials, guessInitials,
+  confirmationsCsv, whereRead, openProblems, answersProblem, briefParagraphs, NOTE_MAX, noteThreads, notesReady, loadBriefNotes, addNote, logLimits, matchText, NOTE_MAX_123,
+  type CiteConfirmation, type ConfirmationStatus, type ChangedReading, type BriefNote, type NoteAudience, type NoteThread,
 } from '@/lib/brief/confirmations';
 import { diffWordsWithSpace } from 'diff';
 import { citesChecked, type FlagCounts } from '@/lib/cite-check/types';
@@ -88,8 +89,7 @@ import { fetchMatterDocumentRows, type DocumentsSource } from '@/lib/vault-docum
 
 /** The model for the judgment step (the same the machine pass uses). */
 const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
-/** The longest highlight Confirm / Problem take: the log's limit on the words (migration 103). Find in corpus takes a cite, up to FIND_MAX. */
-const HIGHLIGHT_MAX = LOG_WORDS_MAX;
+/** Find in corpus takes a cite, up to this; Confirm, Problem and Note take what the log holds (logLimits). */
 const FIND_MAX = 400;
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
@@ -415,11 +415,13 @@ function DeskEditor(p: DeskProps) {
     if (!doc) throw new Error('The brief is not loaded yet.');
     const r = await carryConfirmations(fromId, fromTitle, meta.id, briefParagraphs(doc));
     setConfs(await loadConfirmations(meta.id));
+    setBriefNotes(await loadBriefNotes(meta.id));
     setReview(r.changed.length ? { fromTitle, items: r.changed } : null);
     return `Carried ${r.inserted}: same words, same sentence${r.already ? ` (${r.already} already here)` : ''}.`
       + (r.flagsInserted ? `\n${r.flagsInserted} open ${r.flagsInserted === 1 ? 'problem' : 'problems'} carried as open; resolve with a note.` : '')
       + (r.changed.length ? `\n${r.changed.length} in reworded sentences: listed below, one at a time, for you to review.` : '')
-      + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '');
+      + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '')
+      + (r.notesCarried ? `\n${r.notesCarried} ${r.notesCarried === 1 ? 'note' : 'notes and replies'} carried with their words.` : '');
   };
   // An Export or Save as with problems still open says so first (10-13).
   const openFlagCount = () => openProblems(confs, briefParas()).length;
@@ -430,6 +432,11 @@ function DeskEditor(p: DeskProps) {
     let live = true;
     setConfsLoaded(false);
     loadConfirmations(meta.id).then((rows) => { if (live) { setConfs(rows); setConfsLoaded(true); } }).catch((e) => p.setNotice(`The confirmation log could not be read: ${(e as Error).message}`));
+    notesReady().then(async (ok) => {
+      if (!live) return;
+      setNotesOk(ok);
+      if (ok) { const n = await loadBriefNotes(meta.id); if (live) setBriefNotes(n); }
+    }).catch((e) => p.setNotice(`The notes on this brief could not be read: ${(e as Error).message}`));
     if (!rememberedInitials()) {
       supabase.auth.getUser().then(async ({ data }) => {
         const u = data.user; if (!u || !live) return;
@@ -507,17 +514,6 @@ function DeskEditor(p: DeskProps) {
   );
   // The unanswered flag on this cite's WORDS, in whatever sentence they sat (a
   // rewritten paragraph is a new occurrence; the flag is still the flag).
-  // A flag on the same words at ANOTHER place still in the brief is that cite's (Eden, 10-21: Joiner twice).
-  const paneOpenProblem = useMemo(
-    () => (pane?.cite ? openProblemAt(confs, pane.cite.raw, pane.cite.context, pane.cite.from, briefParas()) : null),
-    [pane?.cite, confs],
-  );
-  // The quotation the open cite stands behind, offered with Problem: a manufactured
-  // quotation behind a real cite must show red, not only the cite (Eden, 10-21).
-  const paneQuotation = useMemo(
-    () => (pane?.cite ? quotationFor(pane.cite.context, pane.cite.raw, paragraphOffset(pane.cite.from)) : null),
-    [pane?.cite],
-  );
   // Confirm the highlighted cite without opening it on the desk (a hard copy,
   // another window): the row records no authority, and the log says so.
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -526,6 +522,56 @@ function DeskEditor(p: DeskProps) {
   // — Eden, 09-28: a place to record why a flag went from red to green).
   const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' | 'note'; was?: CiteConfirmation | null; quote?: string | null } | null>(null);
   const [withQuote, setWithQuote] = useState(true);
+  // ── Notes on the brief (migration 123): to self, or to the team (Eden, 10-21).
+  // Never part of the brief's text, never a reading, never in the CSV.
+  const [briefNotes, setBriefNotes] = useState<BriefNote[]>([]);
+  const [notesOk, setNotesOk] = useState(false);
+  const wordsMax = logLimits(notesOk).words;
+  const wordsMaxRef = useRef(wordsMax);
+  wordsMaxRef.current = wordsMax;
+  const noteThreadList = useMemo(() => noteThreads(briefNotes), [briefNotes]);
+  const [noteFor, setNoteFor] = useState<{ raw: string; context: string; from: number } | null>(null);
+  const [noteText, setNoteText] = useState('');
+  const [noteBusy, setNoteBusy] = useState(false);
+  const [noteAudience, setNoteAudienceState] = useState<NoteAudience>(() => {
+    try { return localStorage.getItem('cs.brief.note-audience') === 'me' ? 'me' : 'team'; } catch { return 'team'; }
+  });
+  const setNoteAudience = (v: NoteAudience) => { setNoteAudienceState(v); try { localStorage.setItem('cs.brief.note-audience', v); } catch { /* private window */ } };
+  const [threadKey, setThreadKey] = useState<string | null>(null);
+  const openThread = threadKey ? noteThreadList.find((t) => t.anchor.id === threadKey) ?? null : null;
+  /** Where each open note's words are painted, for a click on them. */
+  const noteHitsRef = useRef<{ key: string; from: number; to: number }[]>([]);
+  /** The open thread on exactly these words in this sentence, if any. */
+  const threadAt = (raw: string, context: string): NoteThread | null =>
+    noteThreadList.find((t) => t.open && matchText(t.anchor.cite_raw.trim()) === matchText(raw.trim()) && matchText(t.anchor.context) === matchText(context)) ?? null;
+  const submitNote = async () => {
+    if (!noteFor || !noteText.trim() || noteBusy) return;
+    setNoteBusy(true);
+    try {
+      const row = await addNote({ document_id: meta.id, cite_raw: noteFor.raw, context: noteFor.context, pm_from: noteFor.from, note: noteText, initials, audience: noteAudience });
+      setBriefNotes((cur) => [...cur, row]);
+      setNoteFor(null); setNoteText('');
+      p.setNotice(`Note saved ${noteAudience === 'me' ? '(only you see it)' : 'for the team'}. Its words are underlined in blue; click them to read or reply.`);
+    } catch (e) {
+      p.setNotice((e as Error).message);
+    } finally {
+      setNoteBusy(false);
+    }
+  };
+  /** A reply to a thread, or "Done" (an empty row): appended at the thread's own place. */
+  const replyToThread = async (t: NoteThread, text: string) => {
+    if (noteBusy) return;
+    setNoteBusy(true);
+    try {
+      const row = await addNote({ document_id: meta.id, cite_raw: t.anchor.cite_raw, context: t.anchor.context, pm_from: t.anchor.pm_from, note: text, initials, audience: t.anchor.audience ?? 'team' });
+      setBriefNotes((cur) => [...cur, row]);
+      if (!text.trim()) setThreadKey(null);
+    } catch (e) {
+      p.setNotice((e as Error).message);
+    } finally {
+      setNoteBusy(false);
+    }
+  };
   const [problemNote, setProblemNote] = useState('');
   /** What the last rule-based path would have said on a miss; shown only if the assistant has no answer either. */
   const missNote = useRef<string | null>(null);
@@ -551,17 +597,20 @@ function DeskEditor(p: DeskProps) {
     try {
       // What was open beside the brief when the cite was confirmed, so the
       // log shows the page read (10-16: every toolbar confirm logged a blank).
-      let authTitle = pane?.docId ? pane.docTitle : null;
-      if (pane?.docId && !authTitle) {
-        const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
+      // …when it was opened for THIS sentence (or from a search): Kumho flagged
+      // with City of Pomona still open beside the brief logged Pomona (10-21)
+      const read = pane?.docId && (!pane.cite || matchText(pane.cite.context) === matchText(h.context)) ? pane : null;
+      let authTitle = read?.docId ? read.docTitle : null;
+      if (read?.docId && !authTitle) {
+        const { data } = await supabase.from('documents').select('title').eq('id', read.docId).maybeSingle();
         authTitle = (data as { title: string | null } | null)?.title ?? null;
       }
       const base = {
         document_id: meta.id,
         cite_raw: h.raw, context: h.context, pm_from: h.from,
-        authority_document_id: pane?.docId ?? null,
+        authority_document_id: read?.docId ?? null,
         authority_title: authTitle,
-        authority_page: pane?.docId && pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
+        authority_page: read?.docId && read.goto && 'page' in read.goto ? (read.goto.page ?? null) : null,
         status, note, initials,
       };
       const row = await addConfirmation(base);
@@ -606,34 +655,6 @@ function DeskEditor(p: DeskProps) {
       }
     }
     return out;
-  };
-  const confirmCite = async (status: ConfirmationStatus, note: string, alsoQuote = false) => {
-    if (!pane?.cite || !pane.docId) return;
-    try {
-      // a record volume is opened by id with no title in hand: name it for the log
-      let title = pane.docTitle;
-      if (!title) {
-        const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
-        title = (data as { title: string | null } | null)?.title ?? null;
-      }
-      const base = {
-        document_id: meta.id,
-        cite_raw: pane.cite.raw,
-        context: pane.cite.context,
-        pm_from: pane.cite.from,
-        authority_document_id: pane.docId,
-        authority_title: title,
-        authority_page: pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
-        status, note, initials,
-      };
-      const row = await addConfirmation(base);
-      const was = paneConfirmation?.status === 'problem' ? paneConfirmation : paneOpenProblem;
-      const more = await logAlongside(base, status, note, { quote: alsoQuote ? paneQuotation : null, was }, pane.cite.from);
-      setConfs((cur) => [...cur, row, ...more]);
-      p.setNotice(null);
-    } catch (e) {
-      p.setNotice((e as Error).message);
-    }
   };
   // Where the lawyer was reading when an authority opened (Eden, 09-27: "I was
   // looking at a cite and then lost my place").
@@ -729,6 +750,11 @@ function DeskEditor(p: DeskProps) {
   const recordRootRef = useRef<string | null>(null);   // the record the brief draws on (set below, read here)
   const openRow = useCallback((row: TableRow) => {
     markPlace();
+    // the cite's words selected: the bar over them confirms, flags or notes THIS cite
+    // (the pane's own Confirm / Problem are gone: one set of buttons, Eden 10-21)
+    if (row.from !== null && row.to !== null && editorRef.current) {
+      try { editorRef.current.commands.setTextSelection({ from: row.from, to: row.to }); } catch { /* moved under us */ }
+    }
     const e = row.entry;
     const res = e?.resolution ?? null;
     const resolved = res?.status === 'resolved' && !!res.hits[0];
@@ -1437,9 +1463,10 @@ function DeskEditor(p: DeskProps) {
     }
     const orig = (k: number) => (k < map.length ? map[k] : proj.text.length);
     const ranges: Record<'confirmed' | 'problem', Range[]> = { confirmed: [], problem: [] };
-    for (const row of latest) {
+    /** Where a row's words are in the brief now: its sentence, else anywhere, nearest its recorded place. */
+    const place = (row: { cite_raw: string; context: string; pm_from: number | null }): { from: number; to: number } | null => {
       const raw = row.cite_raw.trim();
-      if (!raw) continue;
+      if (!raw) return null;
       // every occurrence of the words inside the sentence; the one nearest the
       // recorded place is this row's (the same cite twice in a paragraph)
       const cands: number[] = [];
@@ -1457,7 +1484,7 @@ function DeskEditor(p: DeskProps) {
         for (let k = text.indexOf(raw); k >= 0; k = text.indexOf(raw, k + 1)) cands.push(k);
         if (row.pm_from === null && cands.length > 1) cands.length = 1;
       }
-      if (!cands.length) continue;
+      if (!cands.length) return null;
       let pm: { from: number; to: number } | null = null;
       let bestD = Infinity;
       for (const at of cands) {
@@ -1466,16 +1493,36 @@ function DeskEditor(p: DeskProps) {
         const d = row.pm_from === null ? cands.indexOf(at) : Math.abs(cand.from - row.pm_from);
         if (d < bestD) { bestD = d; pm = cand; }
       }
-      if (!pm) continue;
+      return pm;
+    };
+    const domRange = (pm: { from: number; to: number }): Range | null => {
       try {
         const a = editor.view.domAtPos(pm.from); const b = editor.view.domAtPos(pm.to);
         const r = document.createRange(); r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset);
-        ranges[row.status].push(r);
-      } catch { /* a position outside the rendered view */ }
+        return r;
+      } catch { return null; }   // a position outside the rendered view
+    };
+    for (const row of latest) {
+      const pm = place(row);
+      const r = pm && domRange(pm);
+      if (r) ranges[row.status].push(r);
     }
     if (ranges.confirmed.length) reg.set('brief-confirmed', new g.Highlight(...ranges.confirmed)); else reg.delete('brief-confirmed');
     if (ranges.problem.length) reg.set('brief-problem', new g.Highlight(...ranges.problem)); else reg.delete('brief-problem');
-  }, [editor, latest]);
+    // open notes: a blue underline, and where they are for a click
+    const noteRanges: Range[] = [];
+    const hits: { key: string; from: number; to: number }[] = [];
+    for (const t of noteThreadList) {
+      if (!t.open) continue;
+      const pm = place(t.anchor);
+      if (!pm) continue;
+      hits.push({ key: t.anchor.id, ...pm });
+      const r = domRange(pm);
+      if (r) noteRanges.push(r);
+    }
+    noteHitsRef.current = hits;
+    if (noteRanges.length) reg.set('brief-note', new g.Highlight(...noteRanges)); else reg.delete('brief-note');
+  }, [editor, latest, noteThreadList]);
   useEffect(() => {
     paintConfirmed();
     if (!editor) return;
@@ -1640,7 +1687,7 @@ function DeskEditor(p: DeskProps) {
       const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
       // a cite or a passage up to what the log holds can be confirmed or flagged red (10-21);
       // a longer selection clears the highlight rather than leave the last one standing
-      if (text.length >= 2 && text.length <= HIGHLIGHT_MAX) {
+      if (text.length >= 2 && text.length <= wordsMaxRef.current) {
         if (highlighted.current !== text) setHighlightTick((t) => t + 1);
         highlighted.current = text; setHasHighlight(true);
         // the sentence the cite sits in, for the log and for finding it again after edits
@@ -1655,6 +1702,35 @@ function DeskEditor(p: DeskProps) {
     editor.on('selectionUpdate', onSel);
     return () => { editor.off('selectionUpdate', onSel); };
   }, [editor]);
+
+  // The bar over a highlight (Eden, 10-21: "the page is getting crowded"):
+  // Find · Ask · Confirm · Problem · Note where the words are, instead of a
+  // toolbar of buttons that wait for a highlight. Shown while the brief has a
+  // selection, wherever the focus went (the pane, the bar itself).
+  const [bubble, setBubble] = useState<{ top: number; left: number } | null>(null);
+  const placeBubble = useCallback(() => {
+    const ed = editorRef.current;
+    if (!ed || ed.state.selection.empty || !highlighted.current) { setBubble(null); return; }
+    try {
+      const { from, to } = ed.state.selection;
+      const a = ed.view.coordsAtPos(from);
+      const b = ed.view.coordsAtPos(to);
+      const box = briefScrollRef.current?.getBoundingClientRect();
+      if (box && (b.bottom < box.top || a.top > box.bottom)) { setBubble(null); return; }   // scrolled away
+      const top = narrow ? b.bottom + 10 : a.top - 46;
+      setBubble({ top: Math.max(56, top), left: Math.max(8, Math.min(window.innerWidth - 420, a.left - 8)) });
+    } catch { setBubble(null); }
+  }, [narrow]);
+  useEffect(() => {
+    if (!editor) return;
+    const on = () => placeBubble();
+    editor.on('selectionUpdate', on);
+    const sc = briefScrollRef.current;
+    sc?.addEventListener('scroll', on, { passive: true });
+    window.addEventListener('resize', on);
+    return () => { editor.off('selectionUpdate', on); sc?.removeEventListener('scroll', on); window.removeEventListener('resize', on); };
+  }, [editor, placeBubble]);
+  const bubbleThread = hasHighlight && highlightedCtx.current ? threadAt(highlightedCtx.current.raw, highlightedCtx.current.context) : null;
 
   // An assistant beside the lawyer opens a document in the pane:
   //   window.dispatchEvent(new CustomEvent('cs:brief-open', { detail: { documentId, page, label } }))
@@ -1672,8 +1748,16 @@ function DeskEditor(p: DeskProps) {
 
   // A click on a marked cite in the brief.
   const onPaperClick = (ev: React.MouseEvent) => {
+    if (!editor) return;
     const el = (ev.target as HTMLElement).closest('span[data-cite]');
-    if (!el || !editor) return;
+    if (!el) {
+      // a note's words (a cite's own notes open from the bar over its highlight)
+      if (!editor.state.selection.empty) return;
+      const at = editor.view.posAtCoords({ left: ev.clientX, top: ev.clientY });
+      const hit = at ? noteHitsRef.current.find((h) => at.pos >= h.from && at.pos <= h.to) : null;
+      if (hit) setThreadKey(hit.key);
+      return;
+    }
     let pos: number;
     try { pos = editor.view.posAtDOM(el, 0); } catch { return; }
     const row = rowsRef.current.find((r) => r.from !== null && r.to !== null && pos >= r.from && pos < r.to);
@@ -1892,6 +1976,82 @@ function DeskEditor(p: DeskProps) {
   return (
     <Shell>
       <style>{BRIEF_CSS}</style>
+      {bubble && hasHighlight && (
+        <div
+          className="fixed z-40 flex items-center gap-1 rounded-lg border border-white/[0.14] bg-[#16161f]/95 backdrop-blur px-1 py-1 shadow-xl"
+          style={{ top: bubble.top, left: bubble.left }}
+          data-testid="selection-bubble"
+        >
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void findHighlighted()}
+            className="h-7 px-2 inline-flex items-center gap-1 rounded-md text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/15"
+            title="Find the highlighted authority in Equazia.ai and open it beside the brief (Ctrl+Enter)"
+            data-testid="find-highlighted"
+          >
+            <Search size={13} /> Find
+          </button>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => void askAbout()}
+            className="h-7 px-2 inline-flex items-center gap-1 rounded-md text-[12px] text-white/75 hover:bg-white/[0.08]"
+            title="Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter"
+          >
+            <MessageSquareQuote size={13} /> Ask
+          </button>
+          <span className="w-px h-5 bg-white/[0.12] mx-0.5" />
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={confirmFromToolbar}
+            disabled={!initials.trim() || confirmBusy}
+            className={`h-7 px-2 inline-flex items-center gap-1 rounded-md text-[12px] disabled:opacity-40 ${highlightedConfirmation?.status === 'confirmed' ? 'bg-emerald-400/25 text-emerald-100' : 'text-emerald-200 hover:bg-emerald-400/15'}`}
+            title={highlightedConfirmation ? `Already ${highlightedConfirmation.status === 'confirmed' ? 'confirmed' : 'marked as a problem'} by ${highlightedConfirmation.initials}, ${new Date(highlightedConfirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Press again to log another reading.`
+              : 'I checked this (here or elsewhere, a hard copy or another source): log it as confirmed with my initials'}
+            data-testid="confirm-highlighted"
+          >
+            <Check size={13} /> {confirmBusy ? 'Logging…' : highlightedConfirmation?.status === 'confirmed' ? `Confirmed · ${highlightedConfirmation.initials}` : 'Confirm'}
+          </button>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const h = highlightedCtx.current;
+              setProblemNote(''); setWithQuote(true);
+              setProblemFor({ raw: h?.raw ?? highlighted.current ?? '', kind: 'problem', quote: h ? quotationFor(h.context, h.raw, paragraphOffset(h.from), wordsMax) : null });
+            }}
+            disabled={!initials.trim()}
+            className="h-7 px-2 inline-flex items-center gap-1 rounded-md text-[12px] text-red-200 hover:bg-red-400/15 disabled:opacity-40"
+            title="Something is wrong with the highlighted words (a cite, a quotation, a passage): say what; it goes in the log and turns red in the brief"
+            data-testid="problem-highlighted"
+          >
+            <AlertTriangle size={13} /> Problem
+          </button>
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              const h = highlightedCtx.current;
+              if (!h) return;
+              if (bubbleThread) { setThreadKey(bubbleThread.anchor.id); return; }
+              setNoteText(''); setNoteFor({ raw: h.raw, context: h.context, from: h.from });
+            }}
+            disabled={!notesOk}
+            className="h-7 px-2 inline-flex items-center gap-1 rounded-md text-[12px] text-sky-200 hover:bg-sky-400/15 disabled:opacity-40"
+            title={!notesOk ? 'Notes are not switched on yet (migration 123)' : bubbleThread ? 'Read the notes on these words, or reply' : 'A note on these words, to yourself or to the team; it is never part of the brief'}
+            data-testid="note-highlighted"
+          >
+            <StickyNote size={13} /> {bubbleThread ? `Notes · ${bubbleThread.rows.filter((r) => r.note.trim()).length}` : 'Note'}
+          </button>
+          {!initials.trim() && (
+            <input
+              value={initials}
+              onChange={(e) => setInitials(e.target.value.toUpperCase().slice(0, 6))}
+              className="w-16 h-7 bg-white/[0.06] border border-[#e8b84a]/50 rounded px-1.5 text-[12px] text-white/90 text-center outline-none focus:border-[#e8b84a]"
+              placeholder="initials"
+              aria-label="Your initials"
+              title="Your initials sign every line you log; kept on this computer"
+            />
+          )}
+        </div>
+      )}
       <header className="flex items-center gap-2 px-3 h-12 border-b border-white/[0.06] bg-[rgba(14,14,20,0.9)] backdrop-blur shrink-0">
         <button onClick={p.onBack} className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-white/60 hover:text-white" title="Back to the matter">
           <ArrowLeft size={15} />
@@ -1906,63 +2066,6 @@ function DeskEditor(p: DeskProps) {
           aria-label="Brief title"
         />
         <SaveBadge save={save} error={p.saveError} />
-        {(
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void findHighlighted()}
-            disabled={!hasHighlight}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
-            title={hasHighlight ? 'Find the highlighted authority in Equazia.ai and open it beside the brief (Ctrl+Enter)' : 'Highlight a cite in the brief first, then press this (or Ctrl+Enter) to open it beside the brief'}
-          >
-            <Search size={13} /> Find in corpus
-          </button>
-        )}
-        {(
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => void askAbout()}
-            disabled={!hasHighlight}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-white/[0.12] text-[12px] text-white/80 hover:bg-white/[0.06] disabled:opacity-40"
-            title={hasHighlight ? "Put the highlighted proposition in the Orchestrator's box with the authority open beside the brief; nothing is sent until you press Enter" : 'Highlight a sentence in the brief first, then ask the Orchestrator about it'}
-          >
-            <MessageSquareQuote size={13} /> Ask about this
-          </button>
-        )}
-        {/* The check done elsewhere — a hard copy on the desk, Westlaw in another window:
-            the highlighted cite is confirmed (or a problem logged) without opening it here. */}
-        {(
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={confirmFromToolbar}
-            disabled={!hasHighlight || !initials.trim() || confirmBusy}
-            className={`h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border text-[12px] disabled:opacity-40 ${highlightedConfirmation?.status === 'confirmed' ? 'border-emerald-400/60 bg-emerald-400/25 text-emerald-100' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
-            title={!hasHighlight ? 'Highlight a cite in the brief first; then Confirm logs it with your initials'
-              : highlightedConfirmation ? `Already ${highlightedConfirmation.status === 'confirmed' ? 'confirmed' : 'marked as a problem'} by ${highlightedConfirmation.initials}, ${new Date(highlightedConfirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. Press again to log another reading.`
-                : 'I checked this cite (here or elsewhere, a hard copy or another source): log it as confirmed with my initials'}
-            data-testid="confirm-highlighted"
-          >
-            <Check size={13} /> {confirmBusy ? 'Logging…' : highlightedConfirmation?.status === 'confirmed' ? `Confirmed · ${highlightedConfirmation.initials}` : 'Confirm'}
-          </button>
-        )}
-        {(
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            // A card of the desk's own, not window.prompt: Chrome suppresses
-            // the browser prompt silently in some sessions, and the button
-            // then did nothing (Eden, 09-28, in the Bushell petition).
-            onClick={() => {
-              const h = highlightedCtx.current;
-              setProblemNote(''); setWithQuote(true);
-              setProblemFor({ raw: h?.raw ?? highlighted.current ?? '', kind: 'problem', quote: h ? quotationFor(h.context, h.raw, paragraphOffset(h.from)) : null });
-            }}
-            disabled={!hasHighlight || !initials.trim()}
-            className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
-            title={hasHighlight ? 'Something is wrong with the highlighted words (a cite, a quotation, a passage): say what; it goes in the log and turns red in the brief' : 'Highlight a cite, a quotation or a passage in the brief first; then Problem logs what is wrong'}
-            data-testid="problem-highlighted"
-          >
-            <AlertTriangle size={13} /> Problem
-          </button>
-        )}
         <button
           onMouseDown={(e) => e.preventDefault()}
           // Your own words, any time: the cite may name a document by a word
@@ -2127,11 +2230,8 @@ function DeskEditor(p: DeskProps) {
                   onSearch={setSearch}
                   onChangeAppendix={changeAppendix}
                   confirmation={paneConfirmation}
-              openProblem={paneOpenProblem}
-              quotation={paneQuotation}
                   initials={initials}
                   onInitials={setInitials}
-                  onConfirm={confirmCite}
                 />
               </div>
             </VEdges>
@@ -2238,11 +2338,8 @@ function DeskEditor(p: DeskProps) {
               onSearch={setSearch}
               onChangeAppendix={changeAppendix}
               confirmation={paneConfirmation}
-              openProblem={paneOpenProblem}
-              quotation={paneQuotation}
               initials={initials}
               onInitials={setInitials}
-              onConfirm={confirmCite}
             />
           ) : (
             <CiteTable
@@ -2341,6 +2438,24 @@ function DeskEditor(p: DeskProps) {
           onClose={() => setShowLog(false)}
           maxWidth={720}
         >
+          {noteThreadList.length > 0 && (
+            <NotesList
+              threads={noteThreadList}
+              onOpen={(t) => {
+                setShowLog(false);
+                const hit = noteHitsRef.current.find((h) => h.key === t.anchor.id);
+                const ed = editorRef.current;
+                if (hit && ed) {
+                  try {
+                    ed.commands.setTextSelection({ from: hit.from, to: hit.to });
+                    const { node } = ed.view.domAtPos(hit.from);
+                    (node instanceof HTMLElement ? node : node.parentElement)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                  } catch { /* moved under us */ }
+                }
+                setThreadKey(t.anchor.id);
+              }}
+            />
+          )}
           <ConfirmLog
             rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials}
             briefText={briefParas()}
@@ -2449,6 +2564,52 @@ function DeskEditor(p: DeskProps) {
             <QuoteToggle quote={problemFor.quote} checked={withQuote} onChange={setWithQuote} />
           )}
         </CardDialog>
+      )}
+      {noteFor && (
+        <CardDialog
+          storageKey="cs.brief.note"
+          title="A note on the brief"
+          subtitle={`On “${noteFor.raw.length > 100 ? `${noteFor.raw.slice(0, 99)}…` : noteFor.raw}”. A note is never part of the brief's text: not exported, not filed, not in the log's CSV.`}
+          onClose={() => setNoteFor(null)}
+          maxWidth={560}
+        >
+          <textarea
+            autoFocus
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value.slice(0, NOTE_MAX_123))}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) void submitNote(); if (e.key === 'Escape') setNoteFor(null); }}
+            rows={4}
+            placeholder="Note to self, or to the team: what to check, what this proves, what to emphasize…"
+            className="w-full bg-white/[0.04] border border-white/[0.12] rounded px-2 py-1.5 text-[13px] text-white/90 outline-none focus:border-sky-300/60 resize-y"
+            aria-label="The note"
+            data-testid="note-text"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <AudiencePick value={noteAudience} onChange={setNoteAudience} />
+            {!initials.trim() && (
+              <input value={initials} onChange={(e) => setInitials(e.target.value.toUpperCase().slice(0, 6))} placeholder="initials" aria-label="Your initials"
+                className="w-16 h-8 bg-white/[0.06] border border-[#e8b84a]/50 rounded px-1.5 text-[12px] text-white/90 text-center outline-none" />
+            )}
+            <span className="flex-1" />
+            <button
+              onClick={() => void submitNote()}
+              disabled={!noteText.trim() || !initials.trim() || noteBusy}
+              className="h-8 px-3 rounded border border-sky-400/40 bg-sky-400/10 text-[12px] text-sky-100 hover:bg-sky-400/20 disabled:opacity-40"
+              data-testid="note-save"
+            >
+              {noteBusy ? 'Saving…' : 'Save note'}
+            </button>
+          </div>
+        </CardDialog>
+      )}
+      {openThread && (
+        <NoteThreadCard
+          thread={openThread}
+          initials={initials}
+          busy={noteBusy}
+          onReply={(text) => void replyToThread(openThread, text)}
+          onClose={() => setThreadKey(null)}
+        />
       )}
       {contentHits && (
         <CardDialog
@@ -2631,15 +2792,19 @@ function ReadingNote() {
         The brief is on the left as text. Everything it cites opens on the right. The check of each cite is yours,
         and the desk keeps the record of it.
       </p>
-      {row('1. Find it', <>Highlight a cite in the brief and press <span className="text-[#e8b84a]">Find in corpus</span>. The case,
+      {row('1. Find it', <>Highlight a cite in the brief: a bar appears over it. Press <span className="text-[#e8b84a]">Find</span> (or Ctrl+Enter). The case,
         statute or appendix page opens beside the brief at the pinned page. A record cite (A-10) opens the Joint Appendix at
         its stamp.</>)}
-      {row('2. Read it', <>Read the page. <span className="text-white/85">Ask about this</span> puts the highlighted sentence to the
+      {row('2. Read it', <>Read the page. <span className="text-white/85">Ask</span> on the bar puts the highlighted sentence to the
         Orchestrator with the authority open: whether the case supports the proposition, which record page a fact sits on, or a
         proposed rewrite. Nothing is sent until you press Enter.</>)}
-      {row('3. Confirm it', <>In the pane header press <span className="text-emerald-300">Confirm</span> if the cite is right, or{' '}
-        <span className="text-red-300">Problem</span> with a word on what is wrong. Your initials are typed once and remembered.
-        Confirmed cites turn <span className="text-emerald-300">green</span> in the brief, problems <span className="text-red-300">red</span>.</>)}
+      {row('3. Confirm it', <>On the bar over the cite press <span className="text-emerald-300">Confirm</span> if it is right, or{' '}
+        <span className="text-red-300">Problem</span> with a word on what is wrong (a quotation can go red with its cite). Your
+        initials are typed once and remembered. Confirmed cites turn <span className="text-emerald-300">green</span> in the
+        brief, problems <span className="text-red-300">red</span>. Clicking a cite selects it, so the bar is there.</>)}
+      {row('Notes', <>Highlight any words and press <span className="text-sky-300">Note</span>: a note to yourself or to the
+        team, underlined in <span className="text-sky-300">blue</span>. Click the words to read it, reply, or mark it Done. Notes
+        are never part of the brief, never exported, and never in the Log's CSV.</>)}
       {row('The Log', <>Every press, newest first: who, when, which authority and page, and a CSV for the file. Nothing in it is
         edited or deleted; a second reading is a second line.</>)}
       {row('Locate every cite', <>The machine's pass over every cite at once: it finds each one in the record and marks what it
@@ -3166,6 +3331,115 @@ function RewordedReview({ review, initials, onReviewed }: {
   );
 }
 
+/** Just me / Team: who reads a note. */
+function AudiencePick({ value, onChange }: { value: NoteAudience; onChange: (v: NoteAudience) => void }) {
+  const opt = (v: NoteAudience, label: string, title: string) => (
+    <button
+      onClick={() => onChange(v)}
+      className={`h-8 px-2.5 text-[12px] ${value === v ? 'bg-sky-400/20 text-sky-100' : 'text-white/60 hover:bg-white/[0.06]'}`}
+      aria-pressed={value === v}
+      title={title}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="inline-flex rounded border border-white/[0.12] overflow-hidden" data-testid="note-audience">
+      {opt('team', 'Team', 'Everyone who can open this brief sees it')}
+      {opt('me', 'Just me', 'Only you see it')}
+    </div>
+  );
+}
+
+const noteStamp = (iso: string) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+/** A note's thread: the note, the replies, a reply box, and Done. */
+function NoteThreadCard({ thread, initials, busy, onReply, onClose }: {
+  thread: NoteThread; initials: string; busy: boolean; onReply: (text: string) => void; onClose: () => void;
+}) {
+  const [reply, setReply] = useState('');
+  const send = () => { const t = reply.trim(); if (!t) return; onReply(t); setReply(''); };
+  const words = thread.anchor.cite_raw;
+  return (
+    <CardDialog
+      storageKey="cs.brief.note-thread"
+      title={thread.anchor.audience === 'me' ? 'Your note (only you see it)' : 'Note for the team'}
+      subtitle={`On “${words.length > 100 ? `${words.slice(0, 99)}…` : words}”`}
+      onClose={onClose}
+      maxWidth={560}
+    >
+      <div className="space-y-2 max-h-[45vh] overflow-auto pr-1" data-testid="note-thread">
+        {thread.rows.map((r) => (
+          <div key={r.id} className={r.note.trim() ? 'rounded border border-sky-400/20 bg-sky-400/[0.05] px-2 py-1.5' : 'text-[11px] text-white/40 italic'}>
+            {r.note.trim()
+              ? <>
+                  <div className="text-[13px] text-white/90 whitespace-pre-wrap">{r.note}</div>
+                  <div className="mt-0.5 text-[11px] text-white/40">{r.initials} · {noteStamp(r.created_at)}</div>
+                </>
+              : <>Marked done · {r.initials} · {noteStamp(r.created_at)}</>}
+          </div>
+        ))}
+      </div>
+      <textarea
+        value={reply}
+        onChange={(e) => setReply(e.target.value.slice(0, NOTE_MAX_123))}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); }}
+        rows={2}
+        placeholder={thread.open ? 'Reply…' : 'Reply (reopens the note)…'}
+        className="mt-2 w-full bg-white/[0.04] border border-white/[0.12] rounded px-2 py-1.5 text-[13px] text-white/90 outline-none focus:border-sky-300/60 resize-y"
+        aria-label="Reply"
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <span className="text-[11px] text-white/40">{initials ? `Signed ${initials}` : 'Type your initials on the bar over a highlight first'}</span>
+        <span className="flex-1" />
+        {thread.open && (
+          <button
+            onClick={() => onReply('')}
+            disabled={busy || !initials.trim()}
+            className="h-8 px-3 rounded border border-white/[0.14] text-[12px] text-white/70 hover:bg-white/[0.06] disabled:opacity-40"
+            title="Nothing more to do here: the blue underline goes; the note stays in the Log"
+          >
+            Done
+          </button>
+        )}
+        <button
+          onClick={send}
+          disabled={busy || !reply.trim() || !initials.trim()}
+          className="h-8 px-3 rounded border border-sky-400/40 bg-sky-400/10 text-[12px] text-sky-100 hover:bg-sky-400/20 disabled:opacity-40"
+        >
+          Reply
+        </button>
+      </div>
+    </CardDialog>
+  );
+}
+
+/** The Log's notes: open first, each with its first words, who, and how many replies. Not the record of readings. */
+function NotesList({ threads, onOpen }: { threads: NoteThread[]; onOpen: (t: NoteThread) => void }) {
+  const sorted = [...threads].sort((a, b) => Number(b.open) - Number(a.open) || b.rows[b.rows.length - 1].created_at.localeCompare(a.rows[a.rows.length - 1].created_at));
+  const open = threads.filter((t) => t.open).length;
+  return (
+    <div className="mb-3 rounded-lg border border-sky-400/25 bg-sky-400/[0.04] px-3 py-2 text-[12px]" data-testid="log-notes">
+      <p className="text-sky-200/90 mb-1">Notes ({open} open{threads.length > open ? `, ${threads.length - open} done` : ''}). Not readings: they are not counted, and not in the CSV.</p>
+      <div className="divide-y divide-white/[0.06]">
+        {sorted.map((t) => {
+          const first = t.rows.find((r) => r.note.trim());
+          const replies = t.rows.filter((r) => r.note.trim()).length - 1;
+          return (
+            <button key={t.anchor.id} onClick={() => onOpen(t)} className={`w-full text-left py-1.5 hover:bg-white/[0.03] ${t.open ? '' : 'opacity-50'}`}>
+              <div className="text-white/85 line-clamp-2">{first?.note ?? ''}</div>
+              <div className="text-white/40">
+                {t.anchor.initials} · {noteStamp(t.anchor.created_at)}{replies > 0 ? ` · ${replies} ${replies === 1 ? 'reply' : 'replies'}` : ''}{t.anchor.audience === 'me' ? ' · only you' : ''}{t.open ? '' : ' · done'}
+                {' · on '}<span className="text-white/55">“{t.anchor.cite_raw.length > 60 ? `${t.anchor.cite_raw.slice(0, 59)}…` : t.anchor.cite_raw}”</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, briefText, onResolve, review, onReviewed }: {
   /** Readings in sentences reworded since, from the last Carry: each recorded only by the person's own press. */
   review: { fromTitle: string; items: ChangedReading[] } | null;
@@ -3398,6 +3672,7 @@ const BRIEF_CSS = `
 .brief-col::-webkit-scrollbar-button:single-button:horizontal:decrement, .authority-pane ::-webkit-scrollbar-button:single-button:horizontal:decrement, .authority-pane::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M7 1 L3 5 L7 9' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
 .brief-col::-webkit-scrollbar-button:single-button:horizontal:increment, .authority-pane ::-webkit-scrollbar-button:single-button:horizontal:increment, .authority-pane::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'><path d='M3 1 L7 5 L3 9' fill='none' stroke='white' stroke-width='1.8'/></svg>"); }
 ::highlight(brief-confirmed) { background-color: rgba(52,211,153,0.22); text-decoration: underline; text-decoration-color: rgba(52,211,153,0.9); }
+::highlight(brief-note) { text-decoration: underline; text-decoration-color: rgba(56,189,248,0.95); text-decoration-thickness: 2px; text-underline-offset: 3px; background-color: rgba(56,189,248,0.10); }
 ::highlight(brief-problem) { background-color: rgba(248,113,113,0.30); text-decoration: underline wavy; text-decoration-color: rgba(248,113,113,0.95); }
 .brief-doc .brief-cite { cursor: pointer; text-decoration: underline; text-decoration-thickness: 2px;
   text-underline-offset: 3px; text-decoration-color: rgba(120,120,120,0.55); text-indent: 0; }

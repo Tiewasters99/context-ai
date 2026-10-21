@@ -13,12 +13,12 @@
 // deposition's lines, or nothing — so a guess is never read as a match.
 
 import { useState } from 'react';
-import { ArrowLeft, BookOpen, Search, X, Check, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, BookOpen, Search, X } from 'lucide-react';
 import DocumentReader, { type ReaderGoto, type ReaderReliedResult } from '@/pages/DocumentReader';
 import type { DeskEntry } from '@/lib/brief/anchor';
 import { caseNameOf } from '@/lib/brief/resolve';
 import { findQueryFor } from '@/lib/brief/find-query';
-import type { CiteConfirmation, ConfirmationStatus } from '@/lib/brief/confirmations';
+import type { CiteConfirmation } from '@/lib/brief/confirmations';
 
 export interface PaneState {
   /** Which table row opened it (rowKey), for the highlight in the table. */
@@ -51,7 +51,7 @@ export function QuoteToggle({ quote, checked, onChange }: { quote: string; check
   );
 }
 
-export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, openProblem, quotation, initials, onInitials, onConfirm }: {
+export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, initials, onInitials }: {
   state: PaneState | null;
   onClose?: () => void;
   /** Full screen (phone, narrow window): a back arrow instead of a close. */
@@ -62,34 +62,11 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   onChangeAppendix?: () => void;
   /** The latest human reading of this cite (migration 103), if any. */
   confirmation?: CiteConfirmation | null;
-  /** A problem logged on these cite words that no later confirmation answered — confirming asks how it was resolved. */
-  openProblem?: CiteConfirmation | null;
-  /** The quotation this cite stands behind, offered with Problem. */
-  quotation?: string | null;
   /** The initials the log signs with, editable here. */
   initials?: string;
   onInitials?: (v: string) => void;
-  /** Confirm / Problem: one append-only row. */
-  onConfirm?: (status: ConfirmationStatus, note: string, alsoQuote?: boolean) => Promise<void>;
 }) {
-  // The note box: 'problem' asks what is wrong; 'resolved' asks what was found
-  // and how it was fixed, when a red cite is being confirmed (the note sits in
-  // the log beside the problem — Eden, 09-28).
-  const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved' | 'note'>(false);
-  const [problemNote, setProblemNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [withQuote, setWithQuote] = useState(true);
   const [relied, setRelied] = useState<ReaderReliedResult | null>(null);
-  const press = async (status: ConfirmationStatus, note = '') => {
-    if (!onConfirm || busy) return;
-    setBusy(true);
-    try { await onConfirm(status, note, status === 'problem' && withQuote && !!quotation); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
-  };
-  const confirmPress = () => {
-    if (openProblem || confirmation?.status === 'problem') { setProblemNote(''); setProblemOpen('resolved'); return; }
-    if (confirmation?.status === 'confirmed') { setProblemNote(''); setProblemOpen('note'); return; }   // a note on a green cite
-    void press('confirmed');
-  };
   if (!state) {
     return (
       <Frame>
@@ -121,58 +98,28 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
             {reliedLine(relied, !!state.goto.relied.depo, !state.goto.relied.claim.trim() && !state.goto.relied.quotes.length)}
           </div>
         )}
-        {/* The human check (103): with a cite open at its page, one press logs it with initials. */}
-        {state.cite && state.docId && onConfirm && (
+        {/* The cite's reading, and the initials the log signs with. Confirm, Problem and Note
+            are on the bar over the cite in the brief — one set of buttons (Eden, 10-21). */}
+        {state.cite && state.docId && onInitials && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5" data-testid="pane-confirm">
-            {confirmation && (
+            {confirmation ? (
               <span className={`text-[11px] ${confirmation.status === 'confirmed' ? 'text-emerald-300/90' : 'text-red-300/90'}`}>
                 {confirmation.status === 'confirmed' ? 'Confirmed' : 'Problem noted'} · {confirmation.initials} · {new Date(confirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                 {confirmation.status === 'problem' && confirmation.note ? ` — ${confirmation.note}` : ''}
               </span>
+            ) : (
+              <span className="text-[11px] text-white/45">Not yet read. Confirm, Problem or Note: on the bar over the cite in the brief.</span>
             )}
-            <button
-              onClick={confirmPress}
-              disabled={busy || !(initials ?? '').trim()}
-              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-50"
-              title="I read this page: the cite is right. One row in the log, with my initials and the time."
-            >
-              <Check size={13} /> {confirmation ? 'Confirm again' : 'Confirm'}
-            </button>
-            <button
-              onClick={() => { setProblemNote(''); setWithQuote(true); setProblemOpen((v) => (v === 'problem' ? false : 'problem')); }}
-              disabled={busy}
-              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20"
-              title="Something is wrong with this cite: say what, and it goes in the log"
-            >
-              <AlertTriangle size={13} /> Problem
-            </button>
             <label className="inline-flex items-center gap-1.5 text-[11px] text-white/55" title="Click and type your initials; they are kept on this computer and go on every row you log">
               Your initials
               <input
                 value={initials ?? ''}
-                onChange={(e) => onInitials?.(e.target.value.toUpperCase().slice(0, 6))}
+                onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))}
                 className="w-14 h-7 bg-white/[0.06] border border-[#e8b84a]/40 rounded px-1.5 text-[12px] text-white/90 font-medium outline-none focus:border-[#e8b84a] text-center"
                 aria-label="Your initials"
                 placeholder="type"
               />
             </label>
-            {problemOpen && (
-              <div className="w-full flex items-center gap-1.5 mt-1">
-                <input
-                  autoFocus
-                  value={problemNote}
-                  onChange={(e) => setProblemNote(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
-                  placeholder={problemOpen === 'problem' ? 'What is wrong (pin, quotation, proposition…)?' : problemOpen === 'resolved' ? `Resolved how? What was found${openProblem?.note ? ` (flag: “${openProblem.note}”)` : ''}?` : 'A note on this confirmed cite (what was checked or fixed)'}
-                  className={`flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none ${problemOpen === 'problem' ? 'focus:border-red-300/50' : 'focus:border-emerald-300/50'}`}
-                  aria-label={problemOpen === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
-                />
-                <button onClick={() => void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote)} disabled={busy || !problemNote.trim()} className={`h-7 px-2 rounded border text-[12px] disabled:opacity-50 ${problemOpen === 'problem' ? 'border-red-400/40 text-red-200' : 'border-emerald-400/40 text-emerald-200'}`}>
-                  {problemOpen === 'problem' ? 'Log it' : problemOpen === 'resolved' ? 'Confirm, resolved' : 'Log the note'}
-                </button>
-              </div>
-            )}
-            {problemOpen === 'problem' && quotation && <QuoteToggle quote={quotation} checked={withQuote} onChange={setWithQuote} />}
           </div>
         )}
         {state.appendix && state.docId && (
