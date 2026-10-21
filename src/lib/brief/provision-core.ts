@@ -37,8 +37,10 @@ const STATUTE_WORDS = /\b(?:U\.?\s?S\.?\s?C\.?|C\.?\s?F\.?\s?R\.?|CPLR|CPL|RCNY|
 /** The section number in a cite, without its subdivisions: "§ 20-393(4)" → "20-393"; "7803(2)" → "7803"; "433.2" → "433.2". */
 export function sectionNumber(text: string): string | null {
   const s = text.replace(/\s+/g, ' ');
-  // after a section sign, "Section", or the body's abbreviation: CPLR 3001, GBL 771, Rule 56
-  const m = /(?:§+\s*|\bSections?\s+|\bCPLR\s+|\bCPL\s+|\bG\.?B\.?L\.?\s+§?\s*|\bRule\s+|\bRCNY\s+§?\s*|\bNYCRR\s+§?\s*|\bCharter\s+§?\s*|\bCode\s+§?\s*|\bFed\.?\s*R\.?\s*(?:App|Civ|Crim|Evid|Bankr)\.?\s*(?:P\.?)?\s*|\bF\.?R\.?(?:A|C|Cr|E)\.?P?\.?\s*|\bL\.?\s?A\.?\s?R\.?\s*)(\d+[A-Za-z]?(?:[.-]\d+[A-Za-z]?)*)/i.exec(s);
+  // after a section sign, "Section", or the body's abbreviation: CPLR 3001, GBL 771, Rule 56,
+  // or a body's name spelled out: "Federal Rule of Evidence 702", "Rules of Civil Procedure 11(c)"
+  // (Eden, 10-21: the spelled-out 702 read no number and opened Rule 11 instead)
+  const m = /(?:§+\s*|\bSections?\s+|\bCPLR\s+|\bCPL\s+|\bG\.?B\.?L\.?\s+§?\s*|\bRules?\s+of\s+(?:Evidence|(?:Civil|Criminal|Appellate|Bankruptcy)\s+Procedure)\s+|\bRule\s+|\bRCNY\s+§?\s*|\bNYCRR\s+§?\s*|\bCharter\s+§?\s*|\bCode\s+§?\s*|\bFed\.?\s*R\.?\s*(?:App|Civ|Crim|Evid|Bankr)\.?\s*(?:P\.?)?\s*|\bF\.?R\.?(?:A|C|Cr|E)\.?P?\.?\s*|\bL\.?\s?A\.?\s?R\.?\s*)(\d+[A-Za-z]?(?:[.-]\d+[A-Za-z]?)*)/i.exec(s);
   if (m) return m[1];
   // "16 C.F.R. 433.2", "28 U.S.C. 1331" (no sign)
   const t = /\b\d+\s+(?:C\.?\s?F\.?\s?R\.?|U\.?\s?S\.?\s?C\.?)\s*(\d+[A-Za-z]?(?:[.-]\d+[A-Za-z]?)*)/i.exec(s);
@@ -73,7 +75,7 @@ export function numberFromBrief(name: string, briefText: string): string | null 
 export function patternsFor(number: string, cite: string): string[] {
   const out = new Set<string>([`§ ${number}`, `§${number}`, `Section ${number}`, `Sec. ${number}`]);
   if (/\bCPLR\b/i.test(cite)) { out.add(`CPLR ${number}`); out.add(`CPLR § ${number}`); }
-  if (/\bRule\b/i.test(cite) || /\bF\.?\s?R\.?/i.test(cite)) out.add(`Rule ${number}`);
+  if (/\bRules?\b/i.test(cite) || /\bF\.?\s?R\.?/i.test(cite) || /\bFed\.?\s*R\.?\s/i.test(cite)) out.add(`Rule ${number}`);
   if (/\bRCNY\b/i.test(cite) || /\bNYCRR\b/i.test(cite)) out.add(`${number}`.includes('-') ? number : `§ ${number}`);
   // a hyphenated or dotted number is distinctive on its own ("20-393", "433.2", "6-02")
   if (/[.-]/.test(number) && number.length >= 4) out.add(number);
@@ -120,6 +122,12 @@ export function provisionQuery(label: string, briefText: string): ProvisionQuery
   const own = sectionNumber(cite);
   if (own) return { number: own, from: 'cite', patterns: patternsFor(own, cite), name: own };
   if (!looksLikeProvision(cite) && !/\b(?:Rule|Act|Law|Regulation|Order|Code|Ordinance|Statute)\b/i.test(cite)) return null;
+  // Words that carry their own number are not a NAME: never borrow a number
+  // from the brief for them. Borrowing took "Federal Rule of Evidence 702" to
+  // the next cite in the brief, "Rule 11(c)(2)", and opened the wrong rule.
+  const tail = /(\d+[A-Za-z]?(?:[.-]\d+[A-Za-z]?)*)(?:\s*\([^)]*\))*$/.exec(cite);
+  if (tail) return { number: tail[1], from: 'cite', patterns: patternsFor(tail[1], cite), name: tail[1] };
+  if (/\d/.test(cite)) return { number: '', from: 'cite', patterns: [cite], name: cite };
   const fromBrief = numberFromBrief(cite, briefText);
   if (fromBrief) return { number: fromBrief, from: 'brief', patterns: patternsFor(fromBrief, briefText), name: fromBrief };
   // a name with no number anywhere in the brief: search the name's own words
