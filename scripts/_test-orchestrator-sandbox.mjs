@@ -58,7 +58,12 @@ test('A. a chartered run offers none; a narrowed run only its list', () => {
 });
 
 // ── B. the loop, offline ────────────────────────────────────────────────
-const CREDS = bedrockCredsFromEnv({ BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST', BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret' });
+// Pinned to Kimi on the chat route: the sealed cases script that route's
+// OpenAI-style stream. (The default pen since 2026-10-20 is Opus 4.6 on the
+// classic runtime, driven end to end by _verify-bedrock-pen and friends.)
+const CREDS = bedrockCredsFromEnv({
+  BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST', BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret', BEDROCK_MODEL: 'moonshotai.kimi-k2.5',
+});
 
 function stubSupabase() {
   const table = (name) => {
