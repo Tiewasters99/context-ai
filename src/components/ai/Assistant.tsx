@@ -74,7 +74,7 @@ const welcomeMessage: ChatMessage = {
 const SUGGESTIONS = [
   'Can you help me prepare a summary judgment brief?',
   'How can you help me prepare for trial?',
-  'Does Contextspaces connect to a public-facing site?',
+  'Does Equazia.ai connect to a public-facing site?',
   'What kind of tools do you have to help me?',
 ];
 
@@ -1242,7 +1242,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
         {signOutOffer && (
           <div className="px-4 py-3 border-t border-[rgba(255,255,255,0.08)] bg-[rgba(20,20,30,0.6)]">
             <p className="text-[12px] text-[#e8e4de] leading-snug mb-2">
-              Sign out of Contextspaces on this device?
+              Sign out of Equazia.ai on this device?
             </p>
             <div className="flex gap-2">
               <button

@@ -28,8 +28,11 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TOOLS, callTool } from '../lib/mcp-core.mjs';
+import { SITE_ORIGIN, SITE_NAME, siteUrl } from '../lib/site.mjs';
 import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
+import { TM_TOOL_NAMES } from '../lib/trademark/connector.mjs';
+import { trademarkToolOptsFor } from '../lib/trademark/connector-opts.mjs';
 // The bearer check, the Supabase clients and the callTool options live in
 // lib/oauth-bearer.mjs since 2026-09-29, shared with the GPT Actions facade
 // (api/gpt/[op].mjs). Re-exported here so the harnesses that import them from
@@ -70,7 +73,7 @@ const AGENT_INSTRUCTIONS =
 // 089: a chat assistant (Claude, ChatGPT, Gemini, Grok …) can be handed tasks
 // too. It never polls; it acts when its user asks.
 export const ASSISTANT_TASKS_INSTRUCTIONS =
-  ' TASKS: when the user asks you to check their Contextspaces tasks, call ' +
+  ' TASKS: when the user asks you to check their Equazia.ai tasks, call ' +
   'my_tasks, claim_task the one to do, do the work with the normal tools inside ' +
   'that task\'s matter, call ask_human if you are blocked, and finish with post_result.';
 
@@ -137,13 +140,13 @@ export default async function handler(req, res) {
       // stays as it was: clients may key saved connections on it.
       {
         name: 'contextspaces-retrieval',
-        title: 'Contextspaces',
+        title: SITE_NAME,
         version: '0.6.0',
-        websiteUrl: 'https://www.contextspaces.ai',
+        websiteUrl: SITE_ORIGIN,
         icons: [
-          { src: 'https://www.contextspaces.ai/contextspaces-mark.svg', mimeType: 'image/svg+xml', sizes: ['any'] },
-          { src: 'https://www.contextspaces.ai/icon-192.png', mimeType: 'image/png', sizes: ['192x192'] },
-          { src: 'https://www.contextspaces.ai/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] },
+          { src: siteUrl('/contextspaces-mark.svg'), mimeType: 'image/svg+xml', sizes: ['any'] },
+          { src: siteUrl('/icon-192.png'), mimeType: 'image/png', sizes: ['192x192'] },
+          { src: siteUrl('/icon-512.png'), mimeType: 'image/png', sizes: ['512x512'] },
         ],
       },
       {
@@ -184,7 +187,18 @@ export default async function handler(req, res) {
           'new copy; create_deck builds a filed .pptx (you author the ' +
           'slides — bullets, tables, native charts, notes); create_chart ' +
           'renders an SVG chart from data you extracted. search works ' +
-          'matter-scoped or, with matter omitted, across every matter at once.' +
+          'matter-scoped or, with matter omitted, across every matter at once. ' +
+          'TRADEMARK CLEARANCE (knockout search): tm_start_batch opens one ' +
+          'clearance per mark from the names and one sentence (tm_start_clearance ' +
+          'for one), with the model proposals saved PROPOSED; tm_confirm ' +
+          '(step "proposals") once the person accepts them; tm_record_results ' +
+          'for each query the person runs on tmsearch; tm_triage; tm_deep_check ' +
+          '(official TSDR status); tm_report; then tm_application_questions / ' +
+          'tm_application_answer / tm_application_draft for a use-based or ' +
+          'intent-to-use application DRAFT. tm_get_clearance says the next step. ' +
+          'The USPTO search is run by the person: hand them the query lines and ' +
+          'record what they report. Nothing is signed or filed with the USPTO by ' +
+          'you: the reviewer signs in Equazia.ai; never call a mark clear.' +
           agentNote,
       }
     );
@@ -202,19 +216,28 @@ export default async function handler(req, res) {
       // carries the sign-in challenge in _meta (lib/oauth-bearer.mjs
       // withToolAuthMeta). Seal, pause and agent-scope refusals are untouched.
       let authRefusal = null;
+      const toolOpts = callToolOptsFor(identity, {
+        openaiApiKey: OPENAI_API_KEY,
+        googleApiKey: process.env.GOOGLE_API_KEY,
+      });
       return runMeteredToolCall({
         identity,
         name,
         args,
         sb,
         invoke: () => callTool(sb, name, args, {
-          ...callToolOptsFor(identity, {
-            openaiApiKey: OPENAI_API_KEY,
-            googleApiKey: process.env.GOOGLE_API_KEY,
-          }),
+          ...toolOpts,
           // Used by move_document only, to carry a moved document's queued
           // ingest job along (097 round 4); nothing else reads it.
           ...(name === 'move_document' ? { jobClient: adminClient() } : {}),
+          // Trademark Clearance (2026-10-20): the connector's actor on every
+          // Record row the call causes, and the model door (serverLlmCall on
+          // the user's month). /api/trademark still refuses connector tokens;
+          // these tools are the connector's own, narrower door — see
+          // lib/trademark/connector.mjs.
+          ...(TM_TOOL_NAMES.has(name)
+            ? trademarkToolOptsFor(identity, sb, toolOpts, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY })
+            : {}),
         }).catch((err) => {
           if (err instanceof AuthError) authRefusal = err;
           throw err;

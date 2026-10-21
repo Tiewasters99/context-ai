@@ -136,6 +136,41 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-comparator-120.mjs
 
+      # Migration 121 — Trademark Clearance. Real roles and RLS: a member of the
+      # matter reads and writes, a non-member reads nothing; stage rows seeded
+      # 1-10; a sign-off needs initials and its prerequisite (8 needs 5); runs
+      # are append-only with captured count and gap computed by the database;
+      # a bin is a signed decision stamped with auth.uid(); every tm.* kind is
+      # admitted. Here, with the PGlite steps (before any jsdom install).
+      - name: Trademark Clearance — stages, runs, decisions (migration 121, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-121.mjs
+
+      # Migration 122 — Trademark Clearance, slice 2: re-runnable, INVOKER
+      # only, the kind list is EVENT_KINDS exactly, and the sign-off rules: a
+      # connector JWT (cs_via) can neither sign a stage nor decide a bin; 6
+      # needs 5; 9 needs 8, 6 done or skipped, and its reviewed document.
+      - name: Trademark Clearance slice 2 — sign-off rules (migration 122, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-122.mjs
+
+      # The tm_* MCP tools (a bring-your-own bot runs the recipe), against the
+      # real 121 in PGlite through callTool with a csp_ token's user-scoped
+      # client: the flow in the user's own matter, another user's clearance
+      # not found, sealed and paused matters refused (the model never called),
+      # an agent held to its grant, every Record row the connector's, and no
+      # tool or argument that decides a bin, signs a stage or files the report.
+      - name: Trademark Clearance over the connector — tm_* tools (PGlite + real 121 RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-connector.mjs
+
+      # The same, end to end over Streamable HTTP: an MCP client with a csp_
+      # bearer against the real api/mcp.mjs on 127.0.0.1 — authenticate, the
+      # meter, serverLlmCall to a stub provider — for quallet, quiddit, quirld.
+      - name: Trademark Clearance over the connector — end to end over Streamable HTTP
+        if: ${{ !cancelled() }}
+        run: node scripts/_e2e-trademark-mcp.mjs
+
       - name: Discovery — production links, the table and its rules (migration 115, PGlite)
         if: ${{ !cancelled() }}
         run: node scripts/_verify-share-links-115.mjs
@@ -468,6 +503,27 @@ jobs:
       - name: Model Comparator — the Comparison notes template and the add-candidate action (node --test)
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-comparator.mjs
+
+      # Trademark Clearance (spec docs/specs/TRADEMARK-CLEARANCE-2026-10-18.md
+      # §7): the EQUAZIA golden query set, well-formedness, EQUASITE caught by
+      # Q5 and nothing earlier, multi-word quoting, caps, the Q8 exclusion
+      # check; then runs, dedup, the dead drop, gaps, the knockout report, the
+      # forbidden-phrase lint, the export mapper and the model actions against
+      # a stub (the model is never called here).
+      - name: Trademark Clearance — query generation (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-queries.mjs
+
+      - name: Trademark Clearance — triage, the report and the lint (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-triage.mjs
+
+      # Slice 2: the application draft (basis both ways, the advisory specimen
+      # check, the entity and assignment cautions, fees, TEAS order, the lint)
+      # and the TSDR mapping and client (no key, the header) — no network.
+      - name: Trademark Clearance — the application draft and the TSDR mapping (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-application.mjs
 
       # Migration 067 executed against PGlite on top of the REAL 062 and 063,
       # then the real billing handlers driven against that database with Stripe

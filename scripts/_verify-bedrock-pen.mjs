@@ -11,10 +11,16 @@
 //      accumulation (text, tool_use input, thinking + signature), verbatim
 //      raw replay on the second round, and a hostname witness — nothing but
 //      bedrock-mantle is ever contacted.
+//   3c. The same driver on the `invoke` route (Opus 4.6, the default since
+//      2026-10-20): bedrock-runtime host, SigV4 service 'bedrock', the
+//      runtime body, event-stream frames delivered in odd-sized pieces, and
+//      an exception frame becoming a failed turn.
 //
 // LIVE (only when the BEDROCK_ keys in ../.env are real, not PASTE):
-//   4. Reads the model's effective data_retention_mode through the pen's
-//      own key. FAILS unless it is 'none' — a half-done setup cannot pass.
+//   4. Reads the effective data_retention_mode through the pen's own key —
+//      per model on bedrock-mantle, or the account's Region setting on the
+//      Bedrock control plane for the runtime route (which has no per-model
+//      signal). FAILS unless it is 'none' — a half-done setup cannot pass.
 //   5. One one-line real invoke (fixed fictional prompt), only after the
 //      retention mode is proven.
 import fs from 'node:fs/promises';
@@ -22,6 +28,7 @@ import {
   choosePen, bedrockCredsFromEnv, bedrockTurn, openaiCompatTurn, bedrockPenFor, PENS, AssistantRefusal,
 } from '../lib/assistant-core.mjs';
 import { signRequest } from '../lib/aws-sigv4.mjs';
+import { eventStreamBody, exceptionFrame, chunkedStream } from './_bedrock-eventstream.mjs';
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -47,14 +54,26 @@ if (fakeCreds && fakeCreds.region === 'us-east-1' && fakeCreds.sessionToken === 
 console.log('\nchoosePen');
 const KEYS = { anthropicKey: 'ak', fireworksKey: 'fk' };
 let pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: fakeCreds });
-if (pen.provider === 'aws-bedrock' && pen.route === 'chat' && pen.model === 'moonshotai.kimi-k2.5'
+if (pen.provider === 'aws-bedrock' && pen.route === 'invoke' && pen.model === 'us.anthropic.claude-opus-4-6-v1'
   && pen.escalation === false && pen.creds === fakeCreds) {
-  pass('B + Bedrock creds (no BEDROCK_MODEL) → Kimi K2.5 on the chat route, no escalation');
-} else fail('B should prefer Bedrock / Kimi K2.5', pen);
+  pass('B + Bedrock creds (no BEDROCK_MODEL) → Opus 4.6 on the runtime invoke route, no escalation');
+} else fail('B should prefer Bedrock / Opus 4.6', pen);
 pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: fakeCreds, escalate: true });
 if (pen.provider === 'anthropic' && pen.escalation === true) {
-  pass('B + escalate + non-Anthropic sealed pen → recorded escalation to first-party Claude');
+  pass('B + escalate + non-frontier sealed pen (Opus 4.6) → recorded escalation to first-party Claude');
 } else fail('escalation with a non-frontier sealed pen must be recorded', pen);
+const kimiCreds = { ...fakeCreds, model: 'moonshotai.kimi-k2.5' };
+pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: kimiCreds });
+if (pen.provider === 'aws-bedrock' && pen.route === 'chat' && pen.model === 'moonshotai.kimi-k2.5') {
+  pass('BEDROCK_MODEL=moonshotai.kimi-k2.5 → Kimi on the chat route (the old default, still selectable)');
+} else fail('a non-Anthropic model should ride the chat route', pen);
+pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: kimiCreds, escalate: true });
+if (pen.provider === 'anthropic' && pen.escalation === true) {
+  pass('B + escalate + Kimi → recorded escalation to first-party Claude');
+} else fail('escalation with Kimi must be recorded', pen);
+pen = bedrockPenFor({ ...fakeCreds, model: 'global.anthropic.claude-opus-4-6-v1' });
+if (pen.route !== 'invoke') pass('a global.* profile is NOT routed to the runtime (it would process outside the US)');
+else fail('global.* must not ride the invoke route', pen);
 const opusCreds = { ...fakeCreds, model: 'anthropic.claude-opus-5' };
 pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: opusCreds });
 if (pen.provider === 'aws-bedrock' && pen.route === 'messages' && pen.model === 'anthropic.claude-opus-5') {
@@ -203,6 +222,84 @@ try {
   globalThis.fetch = realFetch;
 }
 
+// ── 3c. the invoke route (Opus 4.6 on bedrock-runtime), offline ─────────
+console.log('\nbedrockTurn on the invoke route (stubbed fetch, event-stream frames)');
+{
+  const EVENTS1 = [
+    { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'weighing' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'sig-rt' } },
+    { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Sealed and ' } },
+    { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'ready.' } },
+    { type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'toolu_bdrk_01', name: 'search' } },
+    { type: 'content_block_delta', index: 2, delta: { type: 'input_json_delta', partial_json: '{"query":"seal"}' } },
+    { type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 34 } },
+    { type: 'message_stop', 'amazon-bedrock-invocationMetrics': { inputTokenCount: 12, outputTokenCount: 34 } },
+  ];
+  const rtRequests = [];
+  const bodies = [
+    chunkedStream(eventStreamBody(EVENTS1), 7),
+    chunkedStream(eventStreamBody([
+      { type: 'message_start', message: { usage: { input_tokens: 5, output_tokens: 1 } } },
+      exceptionFrame('throttlingException', 'Too many requests, please wait before trying again.'),
+    ]), 5),
+  ];
+  globalThis.fetch = async (url, init = {}) => {
+    rtRequests.push({ url: String(url), init });
+    return new Response(bodies.shift() ?? '', { status: 200 });
+  };
+  try {
+    const rtPen = { ...bedrockPenFor(fakeCreds), creds: fakeCreds, escalation: false };
+    let streamed = '';
+    const turn = await bedrockTurn({
+      pen: rtPen, system: 'You are the sealed pen.', tools: TOOLS,
+      convo: [{ role: 'user', text: 'What does the seal cover?' }], onText: (t) => { streamed += t; },
+    });
+    const u = new URL(rtRequests[0].url);
+    if (u.host === 'bedrock-runtime.us-east-1.amazonaws.com'
+      && u.pathname === '/model/us.anthropic.claude-opus-4-6-v1/invoke-with-response-stream') {
+      pass('request goes to bedrock-runtime.us-east-1.amazonaws.com /model/<us. profile>/invoke-with-response-stream');
+    } else fail('invoke route url', rtRequests[0].url);
+    const rauth = rtRequests[0].init.headers?.authorization ?? '';
+    if (rauth.startsWith('AWS4-HMAC-SHA256 Credential=AKIDTEST/') && rauth.includes('/us-east-1/bedrock/aws4_request')) {
+      pass('SigV4-signed, service bedrock, our key');
+    } else fail('invoke route auth', rauth.slice(0, 80));
+    const rbody = JSON.parse(rtRequests[0].init.body);
+    if (rbody.anthropic_version === 'bedrock-2023-05-31' && rbody.model === undefined && rbody.stream === undefined
+      && rbody.thinking?.type === 'adaptive' && rbody.tools?.[0]?.input_schema && typeof rbody.system === 'string') {
+      pass('body: anthropic_version, no model/stream fields, adaptive thinking, tools, system');
+    } else fail('invoke body', { v: rbody.anthropic_version, model: rbody.model, stream: rbody.stream });
+    if (streamed === 'Sealed and ready.') pass('text decoded from frames split across 7-byte reads, in order');
+    else fail('invoke streamed text', streamed);
+    const tool = turn.blocks.find((b) => b.type === 'tool_use');
+    if (turn.stop === 'tool_use' && tool?.id === 'toolu_bdrk_01' && tool.input?.query === 'seal'
+      && turn.usage.input === 12 && turn.usage.output === 34) {
+      pass('tool_use, stop reason and usage accumulated from the frames');
+    } else fail('invoke turn', { stop: turn.stop, blocks: turn.blocks, usage: turn.usage });
+    if (turn.raw?.content?.[0]?.type === 'thinking' && turn.raw.content[0].signature === 'sig-rt') {
+      pass('raw keeps the thinking block and signature for replay');
+    } else fail('invoke raw', turn.raw);
+    try {
+      await bedrockTurn({
+        pen: rtPen, system: 'x', tools: TOOLS, convo: [{ role: 'user', text: 'again' }], onText: () => {},
+      });
+      fail('an exception frame must fail the turn, not end it quietly');
+    } catch (err) {
+      if (/throttlingException/.test(err?.message ?? '')) pass('an exception frame mid-stream fails the turn with the AWS reason');
+      else fail('exception frame error', err?.message);
+    }
+    const rhosts = [...new Set(rtRequests.map((r) => new URL(r.url).host))];
+    if (rhosts.length === 1 && rhosts[0] === 'bedrock-runtime.us-east-1.amazonaws.com') pass(`egress witness: only ${rhosts[0]} was ever contacted`);
+    else fail('unexpected egress hosts', rhosts);
+  } catch (err) {
+    fail('invoke driver threw offline', { message: err?.message });
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 // ── 3b. the chat-route driver (Kimi K2.5 on Bedrock), offline ───────────
 console.log('\nopenaiCompatTurn on Bedrock (stubbed fetch)');
 const CHAT1 = sse([
@@ -220,7 +317,7 @@ globalThis.fetch = async (url, init = {}) => {
 };
 try {
   let streamed = '';
-  const kimiPen = { ...bedrockPenFor(fakeCreds), creds: fakeCreds, escalation: false };
+  const kimiPen = { ...bedrockPenFor(kimiCreds), creds: kimiCreds, escalation: false };
   const turn = await openaiCompatTurn({
     pen: kimiPen, system: 'You are the sealed pen.', tools: TOOLS,
     convo: [{ role: 'user', text: 'What does the seal cover?' }], onText: (t) => { streamed += t; },
@@ -274,7 +371,28 @@ if (!liveCreds) {
   console.log(`        pen: ${livePen.label} [${livePen.route} route]`);
   const modelUrl = `https://bedrock-mantle.${liveCreds.region}.api.aws/v1/models/${livePen.model}`;
   let retentionOk = false;
-  try {
+  if (livePen.route === 'invoke') {
+    // The runtime has no per-model retention signal; the account's setting
+    // for this Region lives on the Bedrock control plane and governs it.
+    const url = `https://bedrock.${liveCreds.region}.amazonaws.com/data-retention`;
+    try {
+      const headers = signRequest({
+        method: 'GET', url, headers: {}, body: '', region: liveCreds.region, service: 'bedrock',
+        accessKeyId: liveCreds.accessKeyId, secretAccessKey: liveCreds.secretAccessKey, sessionToken: liveCreds.sessionToken,
+      });
+      const res = await fetch(url, { headers });
+      const info = await res.json().catch(() => null);
+      console.log(`        account (${liveCreds.region}, control plane): mode=${info?.mode}`);
+      if (res.ok && info?.mode === 'none') {
+        retentionOk = true;
+        pass('account data_retention_mode is none on the runtime control plane — the seal claim is TRUE');
+      } else {
+        fail(`control-plane retention is ${res.status} / '${info?.mode}', not 'none' — does the key's policy include bedrock:GetAccountDataRetention?`, info);
+      }
+    } catch (err) {
+      fail('GetAccountDataRetention failed', { message: err?.message });
+    }
+  } else try {
     const headers = signRequest({
       method: 'GET', url: modelUrl, headers: { accept: 'application/json' }, body: '',
       region: liveCreds.region, service: 'bedrock-mantle',

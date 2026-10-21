@@ -325,6 +325,13 @@ const ENV = {
   BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST',
   BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret',
   BEDROCK_REGION: 'us-east-1',
+  // Pinned to the chat-route pen (BEDROCK_MODEL=moonshotai.kimi-k2.5): this
+  // harness scripts that route's OpenAI-compatible stream, and what it tests
+  // does not depend on which pen answers. The default pen (Opus 4.6 on the
+  // classic runtime, since 2026-10-20) is driven end to end by
+  // _verify-bedrock-pen, _verify-sealed-no-fallback, _verify-sealed-meetings
+  // and _verify-llm-sealed-route.
+  BEDROCK_MODEL: 'moonshotai.kimi-k2.5',
 };
 Object.assign(process.env, ENV);
 

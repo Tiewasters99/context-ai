@@ -170,7 +170,8 @@ export async function deleteNode(nodeId: string): Promise<void> {
  * Until this existed the tree call checked one thing — `result.claims.length`
  * — and then walked the answer inserting rows. On frontier Claude that was
  * nearly always enough. Inside a SEALED matter every feature call is answered
- * by the sealed pen (Kimi K2.5), which holds a forced-tool contract less
+ * by the sealed pen (Kimi K2.5 when this was written; Opus 4.6 since
+ * 2026-10-20 — keep the check either way), which held a forced-tool contract less
  * literally, and "nearly always" becomes a bucket in the attorney's tree whose
  * label is `undefined`, or the same element typed twice, or a claim whose
  * elements arrived as a flat list with parent references. Each of those is

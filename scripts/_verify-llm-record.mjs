@@ -76,11 +76,17 @@ process.env.OPENAI_API_KEY = 'sk-openai-stub';
 process.env.NODE_ENV = 'production';
 delete process.env.BEDROCK_AWS_SESSION_TOKEN;
 
+// Pinned to the chat-route pen (BEDROCK_MODEL=moonshotai.kimi-k2.5): this
+// harness scripts that route's OpenAI-compatible stream, and what it tests
+// does not depend on which pen answers. The default pen (Opus 4.6 on the
+// classic runtime, since 2026-10-20) is driven end to end by
+// _verify-bedrock-pen, _verify-sealed-no-fallback, _verify-sealed-meetings
+// and _verify-llm-sealed-route.
 const withBedrock = () => {
   process.env.BEDROCK_AWS_ACCESS_KEY_ID = 'AKIDTEST';
   process.env.BEDROCK_AWS_SECRET_ACCESS_KEY = 'testsecret';
   process.env.BEDROCK_REGION = 'us-east-1';
-  delete process.env.BEDROCK_MODEL;
+  process.env.BEDROCK_MODEL = 'moonshotai.kimi-k2.5';
 };
 const withoutBedrock = () => {
   delete process.env.BEDROCK_AWS_ACCESS_KEY_ID;

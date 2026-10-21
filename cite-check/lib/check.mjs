@@ -50,7 +50,7 @@ async function checkOne(cite, { store, anthropicApiKey }) {
 
   if (existing) {
     sourceText = existing.full_text;
-    source_label = existing.source_provenance ?? 'Contextspaces (cached)';
+    source_label = existing.source_provenance ?? 'Equazia.ai (cached)';
     source_url = null;
     authority_id = existing.id;
     verification_status = existing.verification_status ?? 'partial';

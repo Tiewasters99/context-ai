@@ -41,7 +41,7 @@ export default function DiscoveryLayout() {
                 Discovery
               </span>
               <span className="text-[10px] uppercase tracking-[0.18em] text-white/30 truncate">
-                by Contextspaces
+                by Equazia.ai
               </span>
             </Link>
           )}

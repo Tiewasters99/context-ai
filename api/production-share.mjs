@@ -52,6 +52,7 @@ import {
 } from '../lib/account-security.mjs';
 import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { record } from '../lib/ledger.mjs';
+import { SITE_ORIGIN, isOwnHost } from '../lib/site.mjs';
 import { walkEffectiveTier, isSealedTier } from '../lib/ai-tier-policy.mjs';
 import {
   newLinkToken, hashToken, isTokenShaped, hashPassword, verifyPassword, newCode, hashCode,
@@ -64,8 +65,8 @@ import {
 const TIMEOUT_MS = 8000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RESEND_ENDPOINT = 'https://api.resend.com/emails';
-const DEFAULT_FROM = 'Contextspaces Productions <productions@contextspaces.ai>';
-const DEFAULT_SITE = 'https://www.contextspaces.ai';
+const DEFAULT_FROM = 'Equazia.ai Productions <productions@contextspaces.ai>';
+const DEFAULT_SITE = SITE_ORIGIN;
 const BUCKET = 'discovery-files';
 const SENDABLE = new Set(['packaged', 'delivered']);
 
@@ -611,7 +612,7 @@ export function siteUrl(req) {
   const configured = (process.env.PUBLIC_SITE_URL || '').replace(/\/$/, '');
   if (configured) return configured;
   const host = String(req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').toLowerCase();
-  if (/^([a-z0-9-]+\.)*contextspaces\.ai$/.test(host) || /^context-ai[a-z0-9-]*\.vercel\.app$/.test(host)) return `https://${host}`;
+  if (isOwnHost(host) || /^context-ai[a-z0-9-]*\.vercel\.app$/.test(host)) return `https://${host}`;
   return DEFAULT_SITE;
 }
 

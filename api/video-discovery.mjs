@@ -348,12 +348,13 @@ export default async function handler(req, res, deps = {}) {
     const result = normalizeInterrogation(r.json, { claims, durationSec: analysis.duration_sec ?? analysis.event_graph?.video?.duration_sec ?? null });
     result.timestamps = timestampsIn(result.answer_markdown);
     if (r.usage) {
-      const tokens = { input: Number(r.usage.promptTokenCount || 0), output: Number(r.usage.candidatesTokenCount || 0) };
+      // Gemini bills thinking as output.
+      const tokens = { input: Number(r.usage.promptTokenCount || 0), output: Number(r.usage.candidatesTokenCount || 0) + Number(r.usage.thoughtsTokenCount || 0) };
       await settle(centsForTokens(r.model, gemini.PROVIDER, tokens), r.model, { input_tokens: tokens.input, output_tokens: tokens.output, seconds: watchedSeconds });
     }
     await recordLlmReceived(ledger, {
       matterId: doc.matterspace_id, actor, feature: 'video.interrogate', callId, tier: 'A', provider: gemini.PROVIDER, model: r.model,
-      outcome: 'ok', ms: r.ms, tokens: r.usage ? { input: r.usage.promptTokenCount, output: r.usage.candidatesTokenCount } : null,
+      outcome: 'ok', ms: r.ms, tokens: r.usage ? { input: r.usage.promptTokenCount, output: (r.usage.candidatesTokenCount || 0) + (r.usage.thoughtsTokenCount || 0) } : null,
     });
     const saved = await userRest(bearer, 'POST', 'video_interrogations', {
       analysis_id: analysis.id, document_id: doc.id, matterspace_id: doc.matterspace_id, user_id: user.id,

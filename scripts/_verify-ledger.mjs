@@ -560,7 +560,7 @@ await db.exec('reset role');
 console.log('\n--- lib/ledger.mjs: redaction ------------------------------------');
 const {
   redact, redactToolArgs, scrubArgValues, record, recordStrict, LedgerWriteError,
-  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, KINDS_100, KINDS_120, _resetWarnings,
+  isNotDeployed, isKindNotAdmitted, uuidList, EVENT_KINDS, KINDS_094, KINDS_100, KINDS_120, KINDS_121, KINDS_122, _resetWarnings,
 } = await import('../lib/ledger.mjs');
 
 {
@@ -773,7 +773,19 @@ console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ---------
   // key, so all three are a presence and a length; the handlers quote `list`
   // and `item` back in their errors, which scrubArgValues takes out again
   // (checked 10-06).
-  check(leaks.length === 0 && TOOLS.length === 27,
+  // 28th to 35th, the Trademark Clearance tools (2026-10-20): `clearance_id`
+  // and `query_id` are ids (kept only as uuids, ARG_UUID_KEYS); `step` is an
+  // enum; `matter` is the handle. The free text — the mark, goods_and_services,
+  // users, known_marks, the confirmed `value` (reasons), pasted `text`, `rows`
+  // (register records) and gap_note — is a presence and a length, or an item
+  // count (checked 10-20).
+  // 36th to 40th, Trademark Clearance slice 2 (2026-10-21): tm_start_batch
+  // (`marks` an array → an item count; goods_and_services, users and the
+  // applicant's fields → presence and length), tm_deep_check and
+  // tm_application_questions / _draft (a clearance_id only), and
+  // tm_application_answer (applicant, classes, transfer → presence/length or
+  // item counts; filing_date_planned → presence and length) (checked 10-21).
+  check(leaks.length === 0 && TOOLS.length === 40,
     `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
     leaks.join(' | '));
 
@@ -913,9 +925,9 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
   // legitimately runs ahead of the constraint by exactly those and by
   // nothing else. 100 adds the Brief Desk's three
   // (scripts/_verify-brief-md-roundtrip.mjs holds those).
-  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094, ...KINDS_100, ...KINDS_120];
+  const LATER_MIGRATION_KINDS = ['connector.connected', 'completion.requested', ...KINDS_094, ...KINDS_100, ...KINDS_120, ...KINDS_121, ...KINDS_122];
   check(ahead.every((k) => LATER_MIGRATION_KINDS.includes(k)),
-    'and runs ahead of it only by what a later migration adds (072, 073, 094, 100, 120)',
+    'and runs ahead of it only by what a later migration adds (072, 073, 094, 100, 120, 121, 122)',
     ahead.join(' ') || 'none');
 
   // ── 073: a kind the CHECK constraint does not admit yet ──────────────────
@@ -955,7 +967,7 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
     `select pg_get_constraintdef(oid) as def from pg_constraint where conname = 'events_kind_check'`);
   const kinds073 = [...String(after073.def).matchAll(/'([a-z]+\.[a-z]+)'/g)].map((m) => m[1]);
   // Everything the JS knows except 094's fifteen and 100's three, which 073 predates.
-  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k) && !KINDS_100.includes(k) && !KINDS_120.includes(k));
+  const through073 = EVENT_KINDS.filter((k) => !KINDS_094.includes(k) && !KINDS_100.includes(k) && !KINDS_120.includes(k) && !KINDS_121.includes(k) && !KINDS_122.includes(k));
   check(through073.every((k) => kinds073.includes(k)) && kinds073.length === through073.length,
     "073's list is the UNION — 064's fourteen plus 072's kind plus its own, never a subset",
     `${kinds073.length} kinds`);
@@ -986,11 +998,15 @@ const stubRpc = (error) => ({ rpc: async () => ({ data: null, error }) });
 console.log('\n--- sealed strict mode (lib/assistant-core.mjs) -------------------');
 {
   const { runAssistantStream, bedrockCredsFromEnv } = await import('../lib/assistant-core.mjs');
+  // Pinned to Kimi on the chat route: the canned answer below is that route's
+  // stream. (The default pen since 2026-10-20, Opus 4.6 on the classic
+  // runtime, is driven end to end by _verify-bedrock-pen and friends.)
   const CREDS = bedrockCredsFromEnv({
     BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST', BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret',
+    BEDROCK_MODEL: 'moonshotai.kimi-k2.5',
   });
   const sse = (evts) => evts.map((e) => `data: ${JSON.stringify(e)}`).join('\n\n') + '\n\ndata: [DONE]\n\n';
-  // The default sealed pen (BEDROCK_MODEL = moonshotai.kimi-k2.5) takes the
+  // The pinned sealed pen (BEDROCK_MODEL = moonshotai.kimi-k2.5) takes the
   // OpenAI-compatible chat route; Tier A's first-party pen goes through the
   // Anthropic SDK and wants the Messages SSE with `event:` lines. Both say
   // exactly THE ANSWER TEXT and nothing else.

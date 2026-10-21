@@ -37,7 +37,7 @@ export const IMPORT_ACCEPT = '.docx,.md,.markdown,.txt,.pdf,.doc';
 export function refusalFor(kind: ImportKind): string | null {
   switch (kind) {
     case 'pdf':
-      return 'A PDF is a picture of a brief, not its words. Import the Word file if you have it. If the PDF is all there is, file it in the matter first and import it from Contextspaces: the desk then takes its indexed text.';
+      return 'A PDF is a picture of a brief, not its words. Import the Word file if you have it. If the PDF is all there is, file it in the matter first and import it from Equazia.ai: the desk then takes its indexed text.';
     case 'doc':
       return 'This is an old-style Word file (.doc). Open it in Word and save it as .docx, then import that.';
     case 'unsupported':

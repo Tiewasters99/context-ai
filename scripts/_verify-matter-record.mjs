@@ -614,9 +614,18 @@ console.log('\n5. The sealed route is described in the words we are allowed');
   const doc = assembleMatterRecord(data, CONTEXT, null);
   const sealedTool = doc.tools.find((t) => t.route.includes('sealed route'));
   check(!!sealedTool, 'the tools memo has a sealed row for the sealed exchange');
+  // The Record's own words for the seal (route + retention) never name a
+  // model or vendor; the model column is the ledger row's id, printed as
+  // recorded — since 2026-10-20 that is Claude Opus 4.6 on Bedrock, and the
+  // Record must say so rather than hide it.
   check(
-    sealedTool && !/claude/i.test(`${sealedTool.route} ${sealedTool.retention} ${sealedTool.model}`),
-    'the sealed row never says Claude',
+    sealedTool && !/claude|anthropic|kimi|moonshot/i.test(`${sealedTool.route} ${sealedTool.retention}`),
+    'the sealed row\'s route and retention wording names no model',
+  );
+  check(
+    sealedTool && sealedTool.model === 'moonshotai.kimi-k2.5',
+    'and its model column is the id the ledger recorded, verbatim',
+    sealedTool?.model,
   );
 }
 
@@ -975,7 +984,7 @@ function fanout(matterId, payloadOver = {}) {
   check(inAppOnly.doc.accountWideReads === 2 && inAppOnly.doc.accountWideByConnector === 0,
     'two in-app account-wide reads, none of them a connector’s',
     `${inAppOnly.doc.accountWideReads}/${inAppOnly.doc.accountWideByConnector}`);
-  check(inAppOnly.md.includes('2 searches run from inside Contextspaces across every matter'),
+  check(inAppOnly.md.includes('2 searches run from inside Equazia.ai across every matter'),
     'so the sentence says where they were run from, and does NOT say "connected assistant"');
   check(!inAppOnly.md.split('### Account-wide activity')[1].split('##')[0].includes('connected assistant'),
     'the section names no connector at all when no row recorded one');
@@ -983,7 +992,7 @@ function fanout(matterId, payloadOver = {}) {
   const mixed = await only([...sampleEvents(), fanout(PARENT), inApp(CHILD_B)]);
   check(mixed.doc.accountWideReads === 2 && mixed.doc.accountWideByConnector === 1,
     'one of each is counted as one of each');
-  check(mixed.md.includes('2 searches run by a connected assistant or from inside Contextspaces'),
+  check(mixed.md.includes('2 searches run by a connected assistant or from inside Equazia.ai'),
     'and the sentence names both, because both happened');
 
   const connectorOnly = await only([...sampleEvents(), fanout(PARENT)]);

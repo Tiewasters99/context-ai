@@ -264,7 +264,7 @@ section('3. an AGENT token hits its own ceiling');
   }
   const r = await call(bot, 'list_matters');
   const t = refusedText(r);
-  check(r.isError === true && /This agent connection \("Grok bot"\) has reached its limit of 3 Contextspaces calls per hour/.test(t || ''),
+  check(r.isError === true && /This agent connection \("Grok bot"\) has reached its limit of 3 Equazia\.ai calls per hour/.test(t || ''),
     'the fourth call from this agent is refused, naming the agent and its limit', t);
   check(/resets at \d\d:\d\d UTC\./.test(t || '') && looksLikeSentence(t), 'with the reset time, as a sentence');
   // my_tasks is exempt (Eden 09-25): a capped agent can still ask for its

@@ -314,14 +314,14 @@ export default function EditorRoom() {
           if (!d) {
             return {
               pos: e.pos, before: e.before, after: e.after,
-              status: 'open' as const, author: 'The Contextspaces Editor',
+              status: 'open' as const, author: 'The Equazia.ai Editor',
               note: `${e.mark} — ${e.failure} (authority: ${e.authority})`,
             };
           }
           return {
             pos: e.pos, before: e.before,
             after: d.kind === 'modified' ? d.text : e.after,
-            status: 'resolved' as const, author: 'The Contextspaces Editor',
+            status: 'resolved' as const, author: 'The Equazia.ai Editor',
           };
         }),
       ...insertions.map((ins) => ({
@@ -333,7 +333,7 @@ export default function EditorRoom() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'Contextspaces Redline.docx';
+    a.download = 'Equazia.ai Redline.docx';
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -447,7 +447,7 @@ export default function EditorRoom() {
         throw err;
       }
       if (text.length < 40) {
-        throw new Error('no readable text found — if it is a scan, ingest it into Contextspaces (OCR runs there) and pull it from your matters instead');
+        throw new Error('no readable text found — if it is a scan, ingest it into Equazia.ai (OCR runs there) and pull it from your matters instead');
       }
       const prepared = prepareDeskText(text);
       if (prepared.kind === 'refused') throw new Error(prepared.reason);
@@ -521,7 +521,7 @@ export default function EditorRoom() {
         {backdrop}
         <div className="relative z-10 max-w-xl px-6 sm:px-10 lg:pl-[5%] lg:pr-0 pt-[16vh] lg:pt-[12vh] pb-10 mx-auto lg:mx-0">
           <p className="text-[11px] font-semibold tracking-[0.3em] uppercase" style={{ color: GOLD }}>
-            The Contextspaces Editor
+            The Equazia.ai Editor
           </p>
           <p className="mt-2 text-[15px] leading-snug text-[#f5f2ed]" style={{ fontFamily: 'Georgia, serif' }}>
             Bring any AI draft — a brief, a memo, a letter. Comments in the margin, then a proposed

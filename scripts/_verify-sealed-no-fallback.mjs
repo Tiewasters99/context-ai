@@ -16,10 +16,11 @@
 //   1. Tier B, no Bedrock credentials  → refusal, ZERO requests of any kind
 //      (this is the finding of the 2026-09-19 audit: choosePen used to serve
 //      Fireworks here, silently).
-//   2. Tier B, Bedrock credentials     → the aws-bedrock pen, and the only
-//      host ever contacted is bedrock-mantle.
+//   2. Tier B, Bedrock credentials     → the aws-bedrock pen (Opus 4.6 on
+//      bedrock-runtime by default since 2026-10-20), and the only host ever
+//      contacted is that one Bedrock endpoint.
 //   3. Tier B, sealed pen errors       → refusal, ONE request, still only
-//      bedrock-mantle. No second provider is tried.
+//      Bedrock. No second provider is tried.
 //   4. Tier B + explicit escalate      → first-party Claude, recorded as an
 //      escalation; and refused outright when the record cannot be opened.
 //   5. Tier A                          → unchanged (first-party Claude).
@@ -30,6 +31,7 @@ import {
   choosePen, runAssistantStream, bedrockCredsFromEnv, AssistantRefusal, PENS,
 } from '../lib/assistant-core.mjs';
 import { providerAllowed, isEscalation, gateLlmRequest } from '../lib/ai-tier-policy.mjs';
+import { eventStreamBody, isRuntimeInvoke } from './_bedrock-eventstream.mjs';
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -41,12 +43,16 @@ const fail = (m, d) => {
 const CREDS = bedrockCredsFromEnv({
   BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST', BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret',
 });
+// The rounds-budget cases (6b) script the OpenAI-compatible chat shape, so
+// they pin the chat-route pen; everything else runs the default pen.
+const KIMI_CREDS = { ...CREDS, model: 'moonshotai.kimi-k2.5' };
 const PROD = { NODE_ENV: 'production' };
 const DEV = { NODE_ENV: 'development' };
 
 // ── the witness ─────────────────────────────────────────────────────────
 // Every case runs with this installed. Nothing in a sealed turn may reach a
-// host that is not bedrock-mantle; several cases require that nothing is
+// host that is not Bedrock (bedrock-runtime or bedrock-mantle, our own
+// account); several cases require that nothing is
 // contacted at all.
 const realFetch = globalThis.fetch;
 let requests = [];
@@ -61,7 +67,7 @@ function witness(responder) {
 const restore = () => { globalThis.fetch = realFetch; };
 const safeHost = (u) => { try { return new URL(u).host; } catch { return u; } };
 const hosts = () => [...new Set(requests.map((r) => r.host))];
-const nonBedrock = () => hosts().filter((h) => !h.startsWith('bedrock-mantle.'));
+const nonBedrock = () => hosts().filter((h) => !h.startsWith('bedrock-mantle.') && !h.startsWith('bedrock-runtime.'));
 
 // ── a Supabase client stand-in ──────────────────────────────────────────
 // Enough of the supabase-js surface for matterTierWithClient + the ledger.
@@ -127,6 +133,14 @@ const ONE_LINE_ANSWER = sse([
   { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
   { choices: [], usage: { prompt_tokens: 11, completion_tokens: 4 } },
 ]);
+// The same answer from the default pen: Messages events in event-stream frames.
+const RUNTIME_ONE_LINE = () => eventStreamBody([
+  { type: 'message_start', message: { usage: { input_tokens: 11, output_tokens: 1 } } },
+  { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+  { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Sealed and ready.' } },
+  { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 4 } },
+  { type: 'message_stop' },
+]);
 
 // ── 1. Tier B with no sealed pen → refusal, nothing contacted ───────────
 console.log('Tier B, Bedrock credentials ABSENT');
@@ -166,7 +180,7 @@ console.log('\nTier B, Bedrock credentials PRESENT');
   if (pen.provider === 'aws-bedrock' && pen.escalation === false) pass(`choosePen → aws-bedrock / ${pen.model}`);
   else fail('sealed pen', pen);
 }
-witness(async () => new Response(ONE_LINE_ANSWER, { status: 200 }));
+witness(async (u) => new Response(isRuntimeInvoke(u) ? RUNTIME_ONE_LINE() : ONE_LINE_ANSWER, { status: 200 }));
 try {
   const { ev, result } = await run({ tier: 'B', bedrockCreds: CREDS });
   const s = ev('session');
@@ -176,6 +190,8 @@ try {
   else fail('turn did not complete', { error: ev('error'), result });
   if (nonBedrock().length === 0 && hosts().length === 1) pass(`egress witness: only ${hosts()[0]} was contacted`);
   else fail('unexpected egress hosts', hosts());
+  if (hosts()[0] === 'bedrock-runtime.us-east-1.amazonaws.com') pass('the default sealed pen is the classic runtime in us-east-1 (Opus 4.6)');
+  else fail('default sealed host', hosts());
 } finally { restore(); }
 
 // ── 3. the sealed pen fails → refusal, not a second provider ────────────
@@ -284,7 +300,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     return new Response(body.tool_choice === 'none' ? finalAnswer : toolRound(bodies.length), { status: 200 });
   });
   try {
-    const { events, result, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const { events, result, ev } = await run({ tier: 'B', bedrockCreds: KIMI_CREDS });
     const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
     const finals = bodies.filter((b) => b.tool_choice === 'none');
     if (!ev('error') && !result.withheld) pass('the turn completes — no error, nothing withheld');
@@ -302,7 +318,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     else fail('text shown to the user', shown);
     if (!/Let me search/.test(shown) && !/step limit/.test(shown)) pass('no search narration, no step-limit dead end');
     else fail('narration or step-limit text leaked', shown);
-    if (nonBedrock().length === 0) pass('egress witness: only bedrock-mantle across all 13 rounds');
+    if (nonBedrock().length === 0) pass('egress witness: only Bedrock across all 13 rounds');
     else fail('unexpected egress hosts', hosts());
   } finally { restore(); }
 
@@ -315,7 +331,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     return new Response(toolRound(bodies.length), { status: 200 });
   });
   try {
-    const { events, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const { events, ev } = await run({ tier: 'B', bedrockCreds: KIMI_CREDS });
     const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
     if (bodies.length === 13) pass('a tool call on the final round is not run — no 14th request');
     else fail('request count when the final round ignores tool_choice', bodies.length);
@@ -338,7 +354,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     return new Response(body.tool_choice === 'none' ? finalAnswer : toolRound(bodies.length), { status: 200 });
   });
   try {
-    const { events, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const { events, ev } = await run({ tier: 'B', bedrockCreds: KIMI_CREDS });
     const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
     const last = bodies[bodies.length - 1];
     if (!ev('error') && shown === FINAL && last?.tool_choice === 'none' && bodies.length < 13) {
@@ -356,7 +372,7 @@ console.log('\nTier B, a broad question that spends the whole search budget');
     return new Response(toolRound(bodies.length), { status: 200 });
   });
   try {
-    const { events, ev } = await run({ tier: 'B', bedrockCreds: CREDS });
+    const { events, ev } = await run({ tier: 'B', bedrockCreds: KIMI_CREDS });
     const shown = events.filter((e) => e.type === 'text').map((e) => e.text).join('');
     if (!ev('error') && /ran out of search steps/.test(shown)) pass('a rejected final round ends in the plain sentence, not a refusal');
     else fail('rejected final round', { shown, error: ev('error') });

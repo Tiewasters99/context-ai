@@ -8,8 +8,9 @@
 //   2. Nothing claims more than `audits/2026-09-19/02-securespace.md` allows.
 //      The sealed route is "a model served from Amazon Bedrock in the firm's
 //      own AWS account under an account-level setting that forbids retention";
-//      it is not any vendor's promise, it is not called Claude, and the seal
-//      is prospective. Tier A is "first-party provider terms", with the
+//      it is not any vendor's promise, the route's wording names no model
+//      (the model column does, from the row — Claude Opus 4.6 since
+//      2026-10-20), and the seal is prospective. Tier A is "first-party provider terms", with the
 //      retention period left for the attorney to confirm — the AI Use Record
 //      skill's rule: never assert a provider's terms as fact.
 //
@@ -252,6 +253,7 @@ const FEATURE_OWNERS: Record<string, string> = {
   deck: 'Deck Composer',
   workbench: 'the AI Workbench',
   moot: 'Moot Bench',
+  trademark: 'Trademark Clearance',
 };
 
 /** What the call was doing. Past tense: these rows record what happened. */
@@ -269,13 +271,16 @@ const FEATURE_PHRASES: Record<string, string> = {
   workbench: 'answered an instruction in the AI Workbench',
   'moot.generate': 'prepared a bench memo',
   'moot.converse': 'argued a moot session',
+  'trademark.decompose': 'proposed how to split a mark for searching',
+  'trademark.classes': 'proposed search and filing classes',
+  'trademark.triage': 'proposed bins for trademark search hits',
 };
 
 /** "Bucketizer", "Cite-Check" — the surface a reader would recognise. */
 export function featureOwner(feature: unknown): string {
   const id = str(feature);
-  if (!id || id === 'unspecified') return 'A Contextspaces feature';
-  return FEATURE_OWNERS[id.split('.')[0]] ?? 'A Contextspaces feature';
+  if (!id || id === 'unspecified') return 'An Equazia.ai feature';
+  return FEATURE_OWNERS[id.split('.')[0]] ?? 'An Equazia.ai feature';
 }
 
 /** "classified a document" — what the call did. */
@@ -632,6 +637,49 @@ export function describeEvent(event: LedgerEvent, people: People = {}): string {
         .filter(Boolean);
       return `${who} revealed who made each candidate${pairs.length ? ` (${pairs.join('; ')})` : ''}`;
     }
+    // 121 — Trademark Clearance. Serials, counts, bins and initials; never
+    // goods text or a query string.
+    case 'tm.clearance.created':
+      return `${who} started a trademark clearance`;
+    case 'tm.intake.updated':
+      return `${who} updated a trademark clearance's intake`;
+    case 'tm.classes.set': {
+      const search = Array.isArray(payload.search) ? (payload.search as unknown[]).map(String) : [];
+      const filing = Array.isArray(payload.filing) ? (payload.filing as unknown[]).map(String) : [];
+      return `${who} set the trademark classes${search.length ? ` — search ${search.join(' ')}` : ''}${
+        filing.length ? `; filing ${filing.join(' ')}` : ''
+      }`;
+    }
+    case 'tm.queries.generated': {
+      const n = num(payload.count);
+      return `${who} generated ${n != null ? `${n} ` : ''}trademark search quer${n === 1 ? 'y' : 'ies'}`;
+    }
+    case 'tm.query.run': {
+      const seq = num(payload.seq);
+      const captured = num(payload.captured);
+      const reported = num(payload.reported);
+      return `${who} recorded a run of ${seq != null ? `Q${seq}` : 'a trademark query'}${
+        captured != null ? ` — ${captured} captured${reported != null ? ` of ${reported} reported` : ''}` : ''
+      }${payload.gap === true ? ' (gap)' : ''}`;
+    }
+    case 'tm.hit.proposed': {
+      const serial = str(payload.serial);
+      return `A model proposed a bin${str(payload.bin) ? ` (${str(payload.bin)})` : ''} for ${serial ? `serial ${serial}` : 'a trademark hit'}, for ${who} to decide`;
+    }
+    case 'tm.hit.decided': {
+      const serial = str(payload.serial);
+      const initials = str(payload.initials);
+      return `${who} decided ${serial ? `serial ${serial}` : 'a trademark hit'}${str(payload.bin) ? `: ${str(payload.bin)}` : ''}${initials ? ` (${initials})` : ''}`;
+    }
+    case 'tm.stage.done': {
+      const stage = num(payload.stage);
+      const initials = str(payload.initials);
+      return `${who} signed off ${stage != null ? `trademark stage ${stage}` : 'a trademark stage'}${
+        str(payload.status) === 'skipped' ? ' as skipped' : ''
+      }${initials ? ` (${initials})` : ''}`;
+    }
+    case 'tm.report.filed':
+      return `${who} filed a trademark knockout report`;
     default:
       // A kind this build does not know. Say who and what it was called,
       // and say no more than that.
@@ -702,6 +750,24 @@ export function kindLabel(kind: string): string {
       return 'Comparison notes';
     case 'comparison.revealed':
       return 'Reveal';
+    case 'tm.clearance.created':
+      return 'Trademark clearance';
+    case 'tm.intake.updated':
+      return 'Trademark intake';
+    case 'tm.classes.set':
+      return 'Trademark classes';
+    case 'tm.queries.generated':
+      return 'Trademark queries';
+    case 'tm.query.run':
+      return 'Trademark search run';
+    case 'tm.hit.proposed':
+      return 'Trademark proposal';
+    case 'tm.hit.decided':
+      return 'Trademark decision';
+    case 'tm.stage.done':
+      return 'Trademark sign-off';
+    case 'tm.report.filed':
+      return 'Trademark report';
     default:
       return kind;
   }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { HubReader, type ReaderSlide } from '@/components/student-hub/HubReader';
 import { reflowReading } from '@/lib/student-hub-reflow';
 import { coverForTitle, loadPlates } from '@/lib/cover-plates';
+import { SITE_ORIGIN, isOwnHostname } from '@/lib/site';
 
 // The Reading Room: the Reader, standing on its own.
 //
@@ -55,10 +56,10 @@ function requestedBook(): string | null {
   return m ? decodeURIComponent(m[1]) : null;
 }
 
-/** Where the office feed answers: this origin on contextspaces.ai, production
+/** Where the office feed answers: this origin on our own domains, production
  *  from anywhere else (the feed is CORS-open by design), or ?api= for a harness. */
 const API_BASE = query.get('api')
-  ?? (/(^|\.)contextspaces\.ai$/i.test(window.location.hostname) ? '' : 'https://www.contextspaces.ai');
+  ?? (isOwnHostname(window.location.hostname) ? '' : SITE_ORIGIN);
 
 function tellTheOffice(action: 'ready' | 'close'): void {
   if (!embedded) return;

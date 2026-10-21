@@ -47,7 +47,7 @@ const key = envText.match(new RegExp(`^${host.envKey}=(.+)$`, 'm'))?.[1]?.trim()
 if (!key || key === 'PASTE') throw new Error(`${host.envKey} not set in context-ai\\.env`);
 
 const charter = readFileSync(join(here, '../docs/editor/CONSTITUTION.md'), 'utf8');
-const PREAMBLE = `You are the Contextspaces Editor. Your founding charter follows — it is your identity, your principles, and your procedures. Work from it.\n\n${charter}\n\n---\n`;
+const PREAMBLE = `You are the Equazia.ai Editor. Your founding charter follows — it is your identity, your principles, and your procedures. Work from it.\n\n${charter}\n\n---\n`;
 const FORM_CHARGE = FORM
   ? `\n\nTHE FORM: This manuscript is a ${FORM}. The charter's "forms of the work" entry for the ${FORM} governs its register and its characteristic failures — hold the manuscript to it.`
   : '';

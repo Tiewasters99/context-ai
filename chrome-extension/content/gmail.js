@@ -14,7 +14,7 @@ const BUTTON_ID = 'csp-gmail-attach-btn';
 const PICKER_FRAME_ID = 'csp-gmail-picker-frame';
 const TOAST_ID = 'csp-gmail-toast';
 
-console.log('[Contextspaces] content script loaded on', location.href);
+console.log('[Equazia.ai] content script loaded on', location.href);
 
 // Watch the whole page for compose windows mounting. Gmail mounts /
 // unmounts compose dialogs dynamically as the user opens "Compose" or
@@ -60,7 +60,7 @@ function scanForComposeWindows() {
   if (sendCount === 0 && !window.__cspNoSendLoggedRecently) {
     window.__cspNoSendLoggedRecently = true;
     setTimeout(() => { window.__cspNoSendLoggedRecently = false; }, 5000);
-    console.log('[Contextspaces] no Send button found yet — waiting for compose to open');
+    console.log('[Equazia.ai] no Send button found yet — waiting for compose to open');
   }
 }
 
@@ -74,16 +74,14 @@ function injectButton(sendBtn) {
   btn.className = 'csp-attach-btn';
   btn.setAttribute('role', 'button');
   btn.setAttribute('tabindex', '0');
-  btn.title = 'Attach from Contextspaces';
-  // Inline SVG: an open "C" glyph in the Contextspaces gold so the
-  // brand reads at toolbar scale without depending on icon fonts.
+  btn.title = 'Attach from Equazia.ai';
+  // Inline SVG: the Equazia.ai serif "E" (Playfair Display, drawn as a path)
+  // in the brand gold, so it reads at toolbar scale without icon fonts.
   btn.innerHTML = `
     <svg class="csp-attach-icon" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M17 6.5 A 7.5 7.5 0 1 0 17 17.5"
-            stroke="currentColor" stroke-width="2.5"
-            fill="none" stroke-linecap="round"/>
+      <path transform="matrix(0.02542 0 0 -0.02542 4.291 21.000)" fill="currentColor" d="M569 708Q565 664 563 623Q562 582 562 560Q562 540 563 522Q564 504 565 492H542Q532 565 511 608Q490 650 457 668Q423 685 378 685H337Q308 685 293 680Q278 675 273 660Q268 645 268 614V94Q268 63 273 48Q278 33 293 28Q308 23 337 23H386Q431 23 466 43Q500 62 525 109Q549 156 562 236H585Q582 204 582 152Q582 129 583 87Q584 45 589 0Q538 2 474 2Q410 3 360 3Q335 3 296 3Q257 3 212 2Q167 2 121 2Q75 1 34 0V20Q66 22 82 28Q98 34 103 52Q109 70 109 106V602Q109 639 103 656Q98 674 81 680Q65 687 34 688V708Q75 707 121 706Q167 706 212 706Q257 705 296 705Q335 705 360 705Q406 705 464 706Q523 706 569 708ZM413 366Q413 366 413 356Q413 346 413 346H238Q238 346 238 356Q238 366 238 366ZM442 498Q438 441 438 411Q439 381 439 356Q439 331 440 301Q441 271 445 214H422Q417 249 403 279Q390 309 365 328Q340 346 300 346V366Q330 366 351 379Q372 391 385 412Q399 432 407 455Q415 478 419 498Z"/>
     </svg>
-    <span class="csp-attach-label">Contextspaces</span>
+    <span class="csp-attach-label">Equazia.ai</span>
   `;
   btn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -95,7 +93,7 @@ function injectButton(sendBtn) {
   // us aligned in the same row.
   const slot = sendBtn.parentElement || sendBtn;
   slot.parentElement?.insertBefore(btn, slot.nextSibling);
-  console.log('[Contextspaces] injected button next to Send');
+  console.log('[Equazia.ai] injected button next to Send');
 }
 
 function openPicker(composeDlg) {
@@ -152,12 +150,12 @@ async function handleSelectedDocument(composeDlg, documentId, documentName) {
   if (result?.error) {
     if (result.error === 'drive_not_connected') {
       showToast(
-        'Drive not connected. Open contextspaces.ai → Connections → connect Google Drive, then try again.',
+        'Drive not connected. Open Equazia.ai → Connections → connect Google Drive, then try again.',
         'error',
         10000,
       );
     } else if (result.error === 'drive_needs_reconnect') {
-      showToast('Reconnect Google Drive on Contextspaces — your token expired.', 'error', 10000);
+      showToast('Reconnect Google Drive on Equazia.ai — your token expired.', 'error', 10000);
     } else {
       const detailMsg = result.detail?.error?.message || result.error;
       showToast(`Drive push failed: ${detailMsg}`, 'error', 10000);

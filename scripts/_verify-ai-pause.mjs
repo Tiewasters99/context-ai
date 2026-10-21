@@ -760,8 +760,15 @@ for (const tier of ['A', 'B', 'C']) {
 
 console.log('\n--- the assistant loop ------------------------------------------');
 const { runAssistantStream, bedrockCredsFromEnv, LEAVES_THE_MATTER } = await import('../lib/assistant-core.mjs');
+// Pinned to the chat-route pen (BEDROCK_MODEL=moonshotai.kimi-k2.5): this
+// harness scripts that route's OpenAI-compatible stream, and what it tests
+// does not depend on which pen answers. The default pen (Opus 4.6 on the
+// classic runtime, since 2026-10-20) is driven end to end by
+// _verify-bedrock-pen, _verify-sealed-no-fallback, _verify-sealed-meetings
+// and _verify-llm-sealed-route.
 const CREDS = bedrockCredsFromEnv({
   BEDROCK_AWS_ACCESS_KEY_ID: 'AKIDTEST', BEDROCK_AWS_SECRET_ACCESS_KEY: 'testsecret',
+  BEDROCK_MODEL: 'moonshotai.kimi-k2.5',
 });
 const sse = (evts) => evts.map((e) => `data: ${JSON.stringify(e)}`).join('\n\n') + '\n\ndata: [DONE]\n\n';
 const CHAT_ANSWER = sse([

@@ -24,7 +24,7 @@ export default function SharedProduction() {
   const [volumeLinks, setVolumeLinks] = useState<SharedVolumeDownload[] | null>(null);
 
   useEffect(() => {
-    document.title = 'A production sent to you · Contextspaces';
+    document.title = 'A production sent to you · Equazia.ai';
     sharedProductionInfo(token).then(setInfo).catch((e: Error) => setFatal(e.message));
   }, [token]);
 

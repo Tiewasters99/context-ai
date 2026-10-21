@@ -1,0 +1,63 @@
+{
+  "_note": "[M] Hand-built from Opus's Part 3 screenshots, 2026-10-18. Serials were read from screenshots: two are confirmed (EQUALL 98137428, EQUASITE 90562533), the rest are medium confidence. The two EQUALL clothing marks have UNKNOWN serials; 90000001 and 90000002 are placeholders. tmsearch-export-M-handbuilt.csv is likewise hand-built, not a real export: replace both with a real tmsearch export when Eden supplies one. Decisions below are the reviewer's (applied by the test), never the model's.",
+  "clearance": {
+    "mark": "EQUAZIA",
+    "mark_format": "standard",
+    "goods_services": "Software for lawyers: matter workspaces, document review and drafting assistance, offered as downloadable software and as a hosted service.",
+    "users": "Lawyers and law firms",
+    "applicant": { "legal_name": "Equazia.ai", "entity_type": "LLC", "state": "NJ", "formation_status": "pending" },
+    "known_marks": [{ "name": "EQUALL", "owner": "Equall Inc.", "note": "AI legal assistant" }],
+    "search_classes": [
+      { "code": "009", "reason": "downloadable software" },
+      { "code": "042", "reason": "software as a service" },
+      { "code": "045", "reason": "legal services are related to legal software" }
+    ],
+    "filing_classes": [
+      { "code": "009", "reason": "product plan dated 2026-09" },
+      { "code": "042", "reason": "hosted service live since 2026-10" }
+    ],
+    "decomposition": { "opening": "equa", "hinge": "z", "ending": "ia", "reason": "the Z is the sound a respelling would change", "foreign": [] },
+    "foreign_equivalents": ["equazione", "equacion"]
+  },
+  "runs": {
+    "0": { "source": "manual", "reported": 1, "rows": [
+      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc.", "status": "LIVE registered", "classes": ["042"], "goods": "Software as a service" }
+    ] },
+    "1": { "source": "manual", "reported": 0, "rows": [] },
+    "2": { "source": "manual", "reported": 1, "rows": [
+      { "serial": "99887921", "mark": "YUEQUAZELL", "owner": "Yuequazell Co.", "status": "LIVE pending", "classes": ["014"], "goods": "Jewelry" }
+    ] },
+    "5": { "source": "manual", "reported": 1, "rows": [
+      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc.", "status": "LIVE registered", "classes": ["042"], "goods": "Software as a service" }
+    ] },
+    "7": { "source": "export", "reported": 392, "rows": [
+      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (DE)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "AI chatbot software" },
+      { "serial": "90562533", "mark": "EQUASITE", "owner": "Equasite, Inc. (MD)", "status": "LIVE registered", "classes": ["042"], "goods": "Software as a service" },
+      { "serial": "79349638", "mark": "EQUA", "owner": "Equa Simulation AB", "status": "LIVE registered", "classes": ["009", "037", "042"], "goods": "Simulation software" },
+      { "serial": "99922464", "mark": "EQUARA", "owner": "Vital Blessings, LLC", "status": "LIVE pending", "classes": ["009"], "goods": "Educational software" },
+      { "serial": "98364901", "mark": "EQUANIMA", "owner": "Equanima LLC", "status": "LIVE pending", "classes": ["009"], "goods": "Audio and computer hardware" },
+      { "serial": "85889029", "mark": "EQUAZEN", "owner": "Equazen Ltd", "status": "LIVE registered", "classes": ["005"], "goods": "Nutritional supplements" },
+      { "serial": "97272405", "mark": "EQUAZEN FOR EVERY MIND", "owner": "Equazen Ltd", "status": "LIVE registered", "classes": ["005"], "goods": "Nutritional supplements" },
+      { "serial": "98137417", "mark": "EQUALL COPILOT", "owner": "Equall Inc.", "status": "DEAD abandoned", "classes": ["009", "042"], "goods": "AI software" },
+      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc. (DE)", "status": "LIVE pending", "classes": ["009", "042"], "goods": "AI chatbot software" }
+    ] },
+    "9": { "source": "manual", "reported": 4, "rows": [
+      { "serial": "98137428", "mark": "EQUALL", "owner": "Equall Inc.", "status": "LIVE pending", "classes": ["009", "042"] },
+      { "serial": "98137417", "mark": "EQUALL COPILOT", "owner": "Equall Inc.", "status": "DEAD abandoned", "classes": ["009", "042"] },
+      { "serial": "90000001", "mark": "EQUALL", "owner": "Equall Apparel", "status": "LIVE registered", "classes": ["025"], "goods": "Clothing" },
+      { "serial": "90000002", "mark": "EQUALL", "owner": "Equall Apparel", "status": "LIVE registered", "classes": ["025"], "goods": "Hats" }
+    ] }
+  },
+  "decisions": {
+    "98137428": { "bin": "flag", "reason": "shared EQUA- opening; AI software in 009/042", "initials": "EQ" },
+    "90562533": { "bin": "flag", "reason": "EQUAS- respelling; SaaS in 042", "initials": "EQ" },
+    "79349638": { "bin": "note", "reason": "simulation software; distinct field", "initials": "EQ" },
+    "99922464": { "bin": "note", "reason": "educational software", "initials": "EQ" },
+    "98364901": { "bin": "note", "reason": "hardware", "initials": "EQ" },
+    "85889029": { "bin": "note", "reason": "supplements, class 5", "initials": "EQ" },
+    "97272405": { "bin": "note", "reason": "supplements, class 5", "initials": "EQ" },
+    "99887921": { "bin": "dismiss", "reason": "jewelry, class 14", "initials": "EQ" },
+    "90000001": { "bin": "dismiss", "reason": "clothing, class 25", "initials": "EQ" },
+    "90000002": { "bin": "dismiss", "reason": "clothing, class 25", "initials": "EQ" }
+  }
+}

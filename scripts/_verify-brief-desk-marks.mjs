@@ -336,7 +336,7 @@ console.log('\n--- G. importing a brief (src/lib/brief/import.ts) --------------
   check(I.titleFrom('C:\\Users\\x\\Downloads\\Reply_Brief  v3.docx') === 'Reply Brief v3' && I.titleFrom('.docx') === 'Untitled brief',
     'titleFrom: no path, no extension, underscores read as spaces');
   check(I.refusalFor('docx') === null && I.refusalFor('md') === null && I.refusalFor('txt') === null, 'Word, Markdown and text are read');
-  check(/Contextspaces/.test(I.refusalFor('pdf')) && /\.docx/.test(I.refusalFor('doc')) && !!I.refusalFor('unsupported'),
+  check(/Equazia\.ai/.test(I.refusalFor('pdf')) && /\.docx/.test(I.refusalFor('doc')) && !!I.refusalFor('unsupported'),
     'a PDF, an old .doc and anything else get a sentence that says what to do instead');
   let threw = null;
   try { await I.importBytes('x.pdf', new Uint8Array([37, 80, 68, 70])); } catch (e) { threw = e.message; }

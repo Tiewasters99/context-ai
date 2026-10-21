@@ -93,7 +93,7 @@ export default function MainLayout() {
 
           {isMobile && (
             <span className="text-[14px] font-semibold text-white tracking-tight truncate px-2">
-              Context<span className="text-[#d4a054]">spaces</span>
+              <span className="inline-flex items-baseline leading-none" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span>Equazia</span><span className="text-[#d4a054]">.ai</span></span>
             </span>
           )}
 

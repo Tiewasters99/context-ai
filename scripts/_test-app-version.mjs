@@ -479,7 +479,7 @@ test('what the two lines say', async (t) => {
       assert.ok(line.length < 120, 'one line, not a paragraph');
       assert.match(line, /[.!]$/);
     }
-    assert.match(NEWER_BUILD_LINE, /Contextspaces/);
+    assert.match(NEWER_BUILD_LINE, /Equazia\.ai/);
     assert.match(STALE_CHUNK_LINE, /out of date/i);
   });
 

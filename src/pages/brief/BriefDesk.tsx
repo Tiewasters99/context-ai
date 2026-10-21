@@ -1804,7 +1804,7 @@ function DeskEditor(p: DeskProps) {
             onClick={() => void findHighlighted()}
             disabled={!hasHighlight}
             className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-[#e8b84a]/30 bg-[#e8b84a]/10 text-[12px] text-[#e8b84a] hover:bg-[#e8b84a]/20 disabled:opacity-40"
-            title={hasHighlight ? 'Find the highlighted authority in Contextspaces and open it beside the brief (Ctrl+Enter)' : 'Highlight a cite in the brief first, then press this (or Ctrl+Enter) to open it beside the brief'}
+            title={hasHighlight ? 'Find the highlighted authority in Equazia.ai and open it beside the brief (Ctrl+Enter)' : 'Highlight a cite in the brief first, then press this (or Ctrl+Enter) to open it beside the brief'}
           >
             <Search size={13} /> Find in corpus
           </button>

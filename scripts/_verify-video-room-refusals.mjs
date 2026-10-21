@@ -137,7 +137,7 @@ function stubWorld(opts = {}) {
         if (world.provider === 'rate_limited') return jsonRes({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED' } }, 429);
         return jsonRes({
           candidates: [{ content: { parts: [{ text: JSON.stringify(providerAnswer()) }] }, finishReason: 'STOP' }],
-          usageMetadata: { promptTokenCount: 9000, candidatesTokenCount: 400, totalTokenCount: 9400 },
+          usageMetadata: { promptTokenCount: 9000, candidatesTokenCount: 400, thoughtsTokenCount: 100, totalTokenCount: 9500 },
         });
       }
     }
@@ -280,16 +280,16 @@ console.log('\n3. A question that is answered: the order of events, and the wind
   check(providerRequests().filter((q) => q.url.includes(':generateContent')).length === 1, 'exactly ONE generateContent call');
   check(providerRequests().every((q) => !q.url.includes('upload')), 'and no upload — the copy the provider held was reused');
   const actual = rpcCalls('usage_record_actual')[0];
-  check(actual?.p_event_id === 'ev-1' && actual?.p_cents_actual >= 1 && actual?.p_model === 'gemini-2.5-flash', 'the actual charge: the meter row, ≥ 1 ¢ for 9,000 + 400 tokens, the model that answered', actual);
-  check(actual?.p_meta?.input_tokens === 9000 && actual?.p_meta?.output_tokens === 400, 'with the token counts from usageMetadata', actual?.p_meta);
+  check(actual?.p_event_id === 'ev-1' && actual?.p_cents_actual >= 1 && actual?.p_model === 'gemini-3.8-flash', 'the actual charge: the meter row, ≥ 1 ¢ for 9,000 + 500 tokens, the model that answered', actual);
+  check(actual?.p_meta?.input_tokens === 9000 && actual?.p_meta?.output_tokens === 500, 'with the token counts from usageMetadata, thinking billed as output', actual?.p_meta);
   const result = r.body?.interrogation?.result;
   check(result?.cited_intervals?.every((c) => c.end_sec <= 90), 'a cited interval past the 90-second end is clamped to the recording', result?.cited_intervals);
   check(result?.claim_assessments?.[0]?.finding === 'REFUTES', 'the claim finding comes through', result?.claim_assessments?.[0]);
   const received = ledgerRows().find((x) => x.p_kind === 'completion.received');
-  check(received?.p_payload?.feature === 'video.interrogate' && received?.p_payload?.model === 'gemini-2.5-flash' && received?.p_payload?.provider === 'google', 'completion.received names feature, provider and model', received?.p_payload);
+  check(received?.p_payload?.feature === 'video.interrogate' && received?.p_payload?.model === 'gemini-3.8-flash' && received?.p_payload?.provider === 'google', 'completion.received names feature, provider and model', received?.p_payload);
   check(!JSON.stringify(ledgerRows()).includes(SENTINEL_PROMPT) && !JSON.stringify(ledgerRows()).includes('binder'), 'neither the question nor the answer is in the Record');
   const saved = restWrites('video_interrogations').map((q) => JSON.parse(q.init.body))[0];
-  check(saved?.outcome === 'ok' && saved?.start_sec === 30 && saved?.end_sec === 60 && saved?.model === 'gemini-2.5-flash', 'the interrogation row stores the window, the model and the outcome', saved && { outcome: saved.outcome, start_sec: saved.start_sec, end_sec: saved.end_sec, model: saved.model });
+  check(saved?.outcome === 'ok' && saved?.start_sec === 30 && saved?.end_sec === 60 && saved?.model === 'gemini-3.8-flash', 'the interrogation row stores the window, the model and the outcome', saved && { outcome: saved.outcome, start_sec: saved.start_sec, end_sec: saved.end_sec, model: saved.model });
 }
 {
   const r = await call({ action: 'interrogate', question: SENTINEL_PROMPT, start_sec: 30, end_sec: 60 }, { providerHolds: false });

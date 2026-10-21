@@ -36,7 +36,7 @@ const TRIGGERS: { kind: TriggerKind; label: string; note: string; running: boole
   {
     kind: 'schedule',
     label: 'On a schedule',
-    note: 'Saved with the charter, but NOT running: Contextspaces has no scheduler yet, so nothing will fire.',
+    note: 'Saved with the charter, but NOT running: Equazia.ai has no scheduler yet, so nothing will fire.',
     running: false,
   },
   {

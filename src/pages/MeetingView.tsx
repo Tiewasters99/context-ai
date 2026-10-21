@@ -894,7 +894,7 @@ function renderTranscriptMarkdown(args: {
   out.push(`- Matter: ${matterName}`);
   out.push(`- Started: ${fmt(startedAt)}`);
   if (endedAt) out.push(`- Ended: ${fmt(endedAt)}`);
-  out.push(`- Live transcription by Contextspaces Meetings. Speakers are numbered as the transcriber heard them, not named.`);
+  out.push(`- Live transcription by Equazia.ai Meetings. Speakers are numbered as the transcriber heard them, not named.`);
   out.push("", "## Transcript", "");
   for (const line of lines) {
     if (isNote(line.text)) {

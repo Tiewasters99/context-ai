@@ -157,7 +157,7 @@ export default function DelegateCard({
       >
         <p className="text-[13px] text-white/80 leading-relaxed">
           {sent.chat
-            ? `The task is on ${sent.name}'s list. ${sent.name} picks it up when you ask it to check its Contextspaces tasks.`
+            ? `The task is on ${sent.name}'s list. ${sent.name} picks it up when you ask it to check its Equazia.ai tasks.`
             : `The task is on ${sent.name}'s board. It is picked up the next time the agent checks for work.`}
           {' '}Its questions and its result appear on the Agents page and on the matter's Tasks tab.
         </p>

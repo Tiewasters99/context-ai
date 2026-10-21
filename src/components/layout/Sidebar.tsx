@@ -442,7 +442,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
       <div className="flex items-center justify-between px-4 h-13 border-b border-[rgba(255,255,255,0.06)]">
         {!collapsed && (
           <span className="text-[15px] font-semibold text-white tracking-tight">
-            Context<span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>
+            <span className="inline-flex items-baseline leading-none" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span>Equazia</span><span className="text-[#d4a054]">.ai</span></span>
           </span>
         )}
         {!isMobile && (
@@ -479,7 +479,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2.5">
-        {/* My Contextspace */}
+        {/* My Equazia */}
         <Link
           to="/app"
           className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
@@ -489,7 +489,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           }`}
         >
           <Home size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>My Contextspace</span>}
+          {!collapsed && <span>My Equazia</span>}
         </Link>
 
         {/* Find a document by name, across every matter. Also Ctrl/Cmd+K,
@@ -553,7 +553,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             The Document Builder is still a stub (/app/document-builder).
 
             Plan gating (2026-09-19): because of that, every entry on this
-            rail is core — My Contextspace, the Assistant panel and the
+            rail is core — My Equazia, the Assistant panel and the
             SecureSpaces shelf have no gated route at all, and the Productivity
             Suite, Connections and Settings are core surfaces in lib/plan.ts.
             So there is nothing here to hide and no filter to write. If a
@@ -793,7 +793,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               ? 'bg-[#16161d] text-white font-medium'
               : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
           }`}
-          title="Connect Contextspaces to Claude, Gmail, and more"
+          title="Connect Equazia.ai to Claude, Gmail, and more"
         >
           <Plug size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Connections</span>}

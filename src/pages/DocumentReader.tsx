@@ -2015,8 +2015,56 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     }
     textMarkRangesRef.current = ranges;
     setUnplacedMarks((prev) => (prev.join() === unplaced.join() ? prev : unplaced));
+    // A small note glyph at the end of each block (paragraph, list item,
+    // heading, table cell) that holds a margin note's words: the dotted
+    // underline alone is easy to miss (Eden, 10-19). The marker holds no
+    // text node, so the flattened text the anchors and the find box share
+    // is unchanged; its count is CSS attr() and its glyph a background image.
+    // Clicking it opens the note, as clicking the entry in the marks panel does.
+    const markers: HTMLElement[] = [];
+    if (root) {
+      const BLOCK = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th, pre, dd, dt';
+      const byBlock = new Map<Element, Annotation[]>();
+      for (const a of textMarks) {
+        if (!annotationIsNote(a)) continue;
+        const r = ranges.get(a.id);
+        if (!r) continue;
+        const end = r.endContainer;
+        const el = end.nodeType === Node.ELEMENT_NODE ? (end as Element) : end.parentElement;
+        const block = el?.closest(BLOCK) ?? el;
+        if (!block || !root.contains(block)) continue;
+        const list = byBlock.get(block) ?? [];
+        list.push(a);
+        byBlock.set(block, list);
+      }
+      for (const [block, notes] of byBlock) {
+        const m = document.createElement('span');
+        m.className = 'reader-note-marker';
+        m.dataset.count = String(notes.length);
+        m.dataset.ann = notes[0].id;
+        m.setAttribute('role', 'button');
+        m.setAttribute('title', notes.length === 1 ? 'Margin note' : `${notes.length} margin notes`);
+        block.appendChild(m);
+        markers.push(m);
+      }
+    }
+    const onMarkerClick = (e: MouseEvent) => {
+      const m = (e.target as Element | null)?.closest<HTMLElement>('.reader-note-marker');
+      if (!m?.dataset.ann) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const ann = textMarks.find((a) => a.id === m.dataset.ann);
+      if (!ann) return;
+      const rect = m.getBoundingClientRect();
+      openNoteAt(ann, { x: rect.left, y: rect.bottom });
+    };
+    root?.addEventListener('click', onMarkerClick);
+    const dropMarkers = () => {
+      root?.removeEventListener('click', onMarkerClick);
+      for (const m of markers) m.remove();
+    };
     const hl = customHighlights();
-    if (!hl) return;
+    if (!hl) return dropMarkers;
     const names: string[] = [];
     const paint = (name: string, list: Annotation[]) => {
       const rs = list.map((a) => ranges.get(a.id)).filter((r): r is Range => !!r);
@@ -2031,8 +2079,9 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
     paint(ANN_HL_NOTE, textMarks.filter(annotationIsNote));
     return () => {
       for (const n of names) hl.registry.delete(n);
+      dropMarkers();
     };
-  }, [fileKind, loadState, textMarks, docHtml, titlePageHtml]);
+  }, [fileKind, loadState, textMarks, docHtml, titlePageHtml, openNoteAt]);
 
   // Bring a mark's words to the middle of the pane.
   const scrollToTextMark = useCallback((annId: string) => {
@@ -3333,6 +3382,24 @@ function RenderedDocStyle({ theme }: { theme: ReaderTheme }) {
         text-decoration-color: rgba(212, 160, 84, 0.8);
         text-decoration-thickness: 1.5px;
       }
+      /* The note glyph at the end of a block that holds a margin note
+         (DocumentReader's marks effect appends it; it carries no text). */
+      .reader-note-marker {
+        display: inline-block; position: relative; top: 1px;
+        width: 15px; height: 15px; margin-left: 0.4em; vertical-align: baseline;
+        border: 1px solid rgba(212, 160, 84, 0.75); border-radius: 3px;
+        background: rgba(212, 160, 84, 0.16) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d4a054' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
+        cursor: pointer;
+      }
+      .reader-note-marker:hover { background-color: rgba(212, 160, 84, 0.42); }
+      .reader-note-marker:not([data-count="1"])::after {
+        content: attr(data-count);
+        position: absolute; top: -7px; right: -8px;
+        min-width: 13px; height: 13px; padding: 0 3px; border-radius: 7px;
+        background: #d4a054; color: #000;
+        font: 700 9px/13px system-ui, sans-serif; text-align: center;
+      }
+      @media print { .reader-note-marker { display: none; } }
       ${scrollbarCss(theme)}
       ${printCss}
 

@@ -198,7 +198,13 @@ console.log('\n3. The Assistant loop — one preamble on a sealed turn, none on 
     ['message_stop', { type: 'message_stop' }],
   ].map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}`).join('\n\n') + '\n\n';
 
-  const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'testsecret', region: 'us-east-1', model: null };
+  // Pinned to the chat-route pen (BEDROCK_MODEL=moonshotai.kimi-k2.5): this
+  // harness scripts that route's OpenAI-compatible stream, and what it tests
+  // does not depend on which pen answers. The default pen (Opus 4.6 on the
+  // classic runtime, since 2026-10-20) is driven end to end by
+  // _verify-bedrock-pen, _verify-sealed-no-fallback, _verify-sealed-meetings
+  // and _verify-llm-sealed-route.
+  const CREDS = { accessKeyId: 'AKIDTEST', secretAccessKey: 'testsecret', region: 'us-east-1', model: 'moonshotai.kimi-k2.5' };
   const realFetch = globalThis.fetch;
 
   const run = async ({ tier, escalate = false }) => {
@@ -406,8 +412,8 @@ console.log('\n4. The eval kit — scripts/eval-sealed-pen.mjs');
   }
 
   // ── the estimate is priced at the pen that will ACTUALLY answer ──────
-  // BEDROCK_MODEL selects the pen, and PENS.bedrock (an anthropic.* id) costs
-  // nine times what PENS.bedrockOpen does. A hardcoded model id here would
+  // BEDROCK_MODEL selects the pen, and the Claude pens (Opus 4.6, the default
+  // since 2026-10-20) cost about nine times what Kimi (PENS.bedrockOpen) does. A hardcoded model id here would
   // print an estimate nine times too low on a server configured for the
   // expensive pen — which is the one guard this script exists to provide.
   {
@@ -434,12 +440,12 @@ console.log('\n4. The eval kit — scripts/eval-sealed-pen.mjs');
         rates: text.match(/\$([\d.]+)\/\$([\d.]+) per Mtok/)?.slice(1, 3).map(Number) ?? null,
       };
     };
-    const cheap = await priced(null);
-    const dear = await priced('anthropic.claude-opus-5');
-    eq('with no BEDROCK_MODEL the estimate names the default sealed pen', cheap.model, 'moonshotai.kimi-k2.5');
-    eq('...at its own rate from lib/usage-prices.mjs', cheap.rates, ratePerMtok('moonshotai.kimi-k2.5', 'aws-bedrock'));
-    eq('BEDROCK_MODEL selects the pen the estimate is priced at', dear.model, 'anthropic.claude-opus-5');
-    eq('...at ITS rate, not the default pen\'s', dear.rates, ratePerMtok('anthropic.claude-opus-5', 'aws-bedrock'));
+    const dear = await priced(null);
+    const cheap = await priced('moonshotai.kimi-k2.5');
+    eq('with no BEDROCK_MODEL the estimate names the default sealed pen', dear.model, 'us.anthropic.claude-opus-4-6-v1');
+    eq('...at its own rate from lib/usage-prices.mjs', dear.rates, ratePerMtok('us.anthropic.claude-opus-4-6-v1', 'aws-bedrock'));
+    eq('BEDROCK_MODEL selects the pen the estimate is priced at', cheap.model, 'moonshotai.kimi-k2.5');
+    eq('...at ITS rate, not the default pen\'s', cheap.rates, ratePerMtok('moonshotai.kimi-k2.5', 'aws-bedrock'));
     check(dear.cents > cheap.cents * 5,
       'so the expensive pen produces a visibly larger estimate — a hardcoded model id would not',
       { cheap: cheap.cents, dear: dear.cents });

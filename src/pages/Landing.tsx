@@ -7,6 +7,10 @@ const coreFeatures = [
     body: 'Every case, deal, or project gets its own matter — with pages, lists, tables, a calendar, deadlines, and a discussion thread. Matters nest into sub-matters and live in shared Serverspaces with your team, in strict isolation from one another.',
   },
   {
+    title: 'SecureSpaces',
+    body: 'A matter born sealed. A SecureSpace is invisible to every outside connector, and its AI work runs only through routes with no third-party retention — nothing in it is stored or trained on by a model provider. Open one for a client, and the unprivileged questions they would otherwise put to a public chatbot are asked inside the matter, under your supervision.',
+  },
+  {
     title: 'The Vault',
     body: 'Load a matter’s documents into its Vault and they’re ingested, OCR’d, and indexed. Search everything at once — semantic and exact-match — and retrieval returns not summaries but verbatim passages with page-accurate citations: the form of answer you can actually put in a brief.',
   },
@@ -89,6 +93,22 @@ const secondaryFeatures = [
   },
 ];
 
+// Teasers posted ahead of launch. One entry per film; add another to post it.
+// The files live in the public `marketing` bucket (Supabase Storage), not in
+// this repo: a 50 MB video does not belong in git. The poster is the film's
+// own title card.
+const MARKETING = 'https://glegjwxosocbyquzmtqs.supabase.co/storage/v1/object/public/marketing';
+const teasers = [
+  {
+    title: 'Brief Desk',
+    tagline: 'Use the power of AI. And verify what you file.',
+    body: 'A persuasive AI draft, a second AI check, and a courtroom morning that goes wrong. Brief Desk puts human verification in your workflow: you read the sources, you make the call.',
+    note: '2 min 53 s · Fictional dramatization. The sanctions orders shown are real and cited on screen.',
+    src: `${MARKETING}/brief-desk/v6.mp4`,
+    poster: `${MARKETING}/brief-desk/v6-poster.jpg`,
+  },
+];
+
 export default function Landing() {
   return (
     <div className="min-h-screen">
@@ -154,6 +174,42 @@ export default function Landing() {
             <div className="w-1 h-2 rounded-full bg-white/50 animate-bounce" />
           </div>
         </div>
+      </div>
+
+      {/* A first look — short films posted ahead of launch (see `teasers`). */}
+      <section id="first-look" className="bg-[#0a0a10] pt-24 pb-10 px-6">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] text-center mb-4">A first look</h2>
+          <p className="text-[16px] text-[#8a8693] text-center max-w-lg mx-auto mb-12">
+            Short films about the work, posted ahead of launch.
+          </p>
+          {teasers.map((t) => (
+            <figure key={t.src} className="mb-14">
+              <div className="rounded-xl overflow-hidden bg-black ring-1 ring-[#d4a054]/30 shadow-[0_30px_80px_rgba(0,0,0,0.7)]">
+                <video
+                  controls
+                  playsInline
+                  preload="metadata"
+                  poster={t.poster}
+                  src={t.src}
+                  className="w-full aspect-video block"
+                  aria-label={`${t.title}: ${t.tagline}`}
+                />
+              </div>
+              <figcaption className="mt-6 text-center">
+                <div className="text-[26px] font-semibold text-[#f5f2ed]" style={{ fontFamily: '"Playfair Display Variable", serif' }}>{t.title}</div>
+                <div className="text-[17px] text-[#d4a054] mt-1">{t.tagline}</div>
+                <p className="text-[15px] text-[#8a8693] leading-relaxed max-w-xl mx-auto mt-4">{t.body}</p>
+                <p className="text-[12px] text-[#5e5a66] mt-4">{t.note}</p>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+
+      {/* Divider — thin gold line */}
+      <div className="bg-[#0a0a10] flex justify-center">
+        <div className="w-16 h-px bg-[#d4a054]/40" />
       </div>
 
       {/* Core features — just text, no cards */}
@@ -270,6 +326,7 @@ export default function Landing() {
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Product</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
                   <li><a href="#features" className="hover:text-[#e8e4de] transition-colors">Features</a></li>
+                  <li><a href="#first-look" className="hover:text-[#e8e4de] transition-colors">A first look</a></li>
                   <li><a href="#beta" className="hover:text-[#e8e4de] transition-colors">Early Access</a></li>
                 </ul>
               </div>

@@ -608,7 +608,7 @@ export default function Connections() {
   const handleCloudDisconnect = async (service: CloudDriveService) => {
     const label = CLOUD_DRIVE_LABEL[service];
     if (
-      !confirm(`Disconnect ${label}? Contextspaces will lose access until you reconnect.`)
+      !confirm(`Disconnect ${label}? Equazia.ai will lose access until you reconnect.`)
     )
       return;
     setBusy(true);
@@ -638,7 +638,7 @@ export default function Connections() {
   const handleDisconnect = async (connection: Connection, label: string) => {
     if (
       !confirm(
-        `Disconnect ${label}? Contextspaces will lose access until you reconnect.`,
+        `Disconnect ${label}? Equazia.ai will lose access until you reconnect.`,
       )
     )
       return;
@@ -674,10 +674,10 @@ export default function Connections() {
             Connections
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-xl leading-relaxed">
-            One home for every connection between Contextspaces and the tools
+            One home for every connection between Equazia.ai and the tools
             you already work in. Gmail, Calendar and Drive connect once and are
             kept alive in the background. An AI assistant connects one of two
-            ways: over OAuth, where it signs in to Contextspaces itself and you
+            ways: over OAuth, where it signs in to Equazia.ai itself and you
             never see a token, or with a connector token you generate here and
             paste into it.
           </p>
@@ -711,7 +711,7 @@ export default function Connections() {
                 ? 'Approved over OAuth. Revoke it below to cut it off.'
                 : claudeState === 'token_active'
                   ? 'A connector token is live. Connections Claude made over OAuth are managed in Claude.'
-                  : 'Connect or manage in Claude — sign-in happens in the AI client, so Contextspaces has no status to show.'
+                  : 'Connect or manage in Claude — sign-in happens in the AI client, so Equazia.ai has no status to show.'
             }
             onClick={() => navigate('/app/connections/claude')}
           />
@@ -719,7 +719,7 @@ export default function Connections() {
           <AssistantRow
             name="ChatGPT"
             state={assistantState('ChatGPT')}
-            blurb="Add Contextspaces as a custom connector — GPT signs in over OAuth, no token to paste."
+            blurb="Add Equazia.ai as a custom connector — GPT signs in over OAuth, no token to paste."
             onClick={() => navigate('/app/connections/chatgpt')}
           />
 
@@ -733,7 +733,7 @@ export default function Connections() {
           <AssistantRow
             name="Grok"
             state={assistantState('Grok')}
-            blurb="Connect Contextspaces to xAI's Grok via MCP — same URL, same token."
+            blurb="Connect Equazia.ai to xAI's Grok via MCP — same URL, same token."
             onClick={() => navigate('/app/connections/grok')}
           />
 
@@ -779,7 +779,7 @@ export default function Connections() {
               Approved AI clients
             </h2>
             <p className="mt-1.5 mb-4 text-[13px] text-[var(--color-text-secondary)] max-w-xl leading-relaxed">
-              Each one signed in to Contextspaces itself and holds its own
+              Each one signed in to Equazia.ai itself and holds its own
               access. Revoking one ends that client's access and leaves every
               other connection alone. The name is whatever the client called
               itself when it registered.

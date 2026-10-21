@@ -205,7 +205,7 @@ export default async function handler(req, res) {
         error: 'invalid_grant',
         error_description: check.reason === 'legacy_token_after_cutoff'
           ? 'this connection predates per-connection grants and must be re-authorized'
-          : 'this connection has been revoked; reconnect from Contextspaces → Connections',
+          : 'this connection has been revoked; reconnect from Equazia.ai → Connections',
       });
     }
 

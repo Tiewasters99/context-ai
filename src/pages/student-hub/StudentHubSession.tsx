@@ -693,9 +693,9 @@ export default function StudentHubSession() {
       <HubStyles />
       <CaseCaption
         backTo={readingHome}
-        kicker={`Contextspaces · Student Hub${session.source_label ? ` · ${session.source_label}` : ''}`}
+        kicker={`Equazia.ai · Student Hub${session.source_label ? ` · ${session.source_label}` : ''}`}
         crumbs={[
-          { label: 'Contextspaces', to: '/app' },
+          { label: 'Equazia.ai', to: '/app' },
           { label: 'Student Hub', to: '/app/student-hub' },
           { label: session.source_label || 'Your text', to: readingHome },
         ]}
@@ -723,9 +723,9 @@ export default function StudentHubSession() {
           <QuietControl
             onClick={() => setExportOpen((v) => !v)}
             style={{ alignSelf: 'center' }}
-            title="File this reading into your regular Contextspaces library"
+            title="File this reading into your regular Equazia.ai library"
           >
-            {exportOpen ? 'close export' : 'file to Contextspaces →'}
+            {exportOpen ? 'close export' : 'file to Equazia.ai →'}
           </QuietControl>
           {confirmDelete ? (
             <QuietControl
@@ -762,7 +762,7 @@ export default function StudentHubSession() {
               <>
                 <p style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, lineHeight: 1.55, margin: '0 0 12px' }}>
                   Files <em>{session.title}</em> into <strong>{destSpaceName}</strong>
-                  {destMatterName ? <> → {destMatterName}</> : null} as a regular Contextspaces
+                  {destMatterName ? <> → {destMatterName}</> : null} as a regular Equazia.ai
                   document — indexed and searchable, reachable from any LLM you&rsquo;ve connected
                   over MCP. The space is private to you unless you have shared it; the reading
                   stays yours alone.
@@ -858,7 +858,7 @@ export default function StudentHubSession() {
             ) : (
               <p style={{ fontFamily: T.serif, fontSize: 14, color: T.ink, lineHeight: 1.6, margin: 0 }}>
                 Filed. <Link to={`/app/matterspace/${exportDone.matterId}`} style={{ color: T.green }}>
-                Open {exportDone.matterName} in Contextspaces →</Link>
+                Open {exportDone.matterName} in Equazia.ai →</Link>
                 {exportDone.shortCode && (
                   <span style={{ display: 'block', fontFamily: T.sans, fontSize: 12, color: T.faint, marginTop: 6 }}>
                     From a connected LLM, the matter answers to <code style={{ fontFamily: T.mono }}>{exportDone.shortCode}</code>.

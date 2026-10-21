@@ -233,17 +233,17 @@ function channelFor(event: LedgerEvent): string {
   // a matter. The feature is named first, because that is what counsel has to
   // reason about when they say what may go into it.
   if (isFeatureCall(event)) {
-    return `Contextspaces feature — ${featureOwner(event.payload?.feature)}`;
+    return `Equazia.ai feature — ${featureOwner(event.payload?.feature)}`;
   }
   switch (event.actor_kind) {
     case 'charter':
-      return 'Contextspaces agent charter';
+      return 'Equazia.ai agent charter';
     case 'connector':
       return 'Connected assistant (MCP)';
     case 'system':
-      return 'Contextspaces worker';
+      return 'Equazia.ai worker';
     default:
-      return 'Contextspaces in-app assistant';
+      return 'Equazia.ai in-app assistant';
   }
 }
 
@@ -316,9 +316,9 @@ function buildTools(events: LedgerEvent[], asOfDay: string, featureCalls: Featur
           model: 'not reported by the client',
           provider: 'not reported by the client',
           tier: 'n.a.',
-          route: 'read this matter through the Contextspaces connector',
+          route: 'read this matter through the Equazia.ai connector',
           retention:
-            'The connected assistant runs outside Contextspaces; what its own provider does ' +
+            'The connected assistant runs outside Equazia.ai; what its own provider does ' +
             'with what it read is governed by that provider’s terms, not by this record. ' +
             '[Confirm which assistant, on what account, and on what terms.]',
           firstUse: '',
@@ -338,7 +338,7 @@ function buildTools(events: LedgerEvent[], asOfDay: string, featureCalls: Featur
     if (reached <= 0 || call.model === 'not recorded') continue;
     byKey.set(`a|${call.title}|${call.model}|${call.tier}`, {
       title: `${call.model} (${call.provider}) — ${call.title}`,
-      channel: `Contextspaces feature — ${call.title.split(' — ')[0]}`,
+      channel: `Equazia.ai feature — ${call.title.split(' — ')[0]}`,
       model: call.model,
       provider: call.provider,
       tier: call.tier,

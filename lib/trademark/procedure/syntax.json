@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "source": "USPTO, \"Federal trademark searching: Field tag searching\" handout",
+  "verified": "2026-10-18",
+  "rules": [
+    "Field tags are upper case and end with a colon; search terms are lower case.",
+    "Wildcards: ? is exactly one character and * is any number of characters, anywhere in a term and in any field, never inside quotation marks.",
+    "Operators: AND, OR (or a space inside parentheses), AND NOT, and parentheses for grouping.",
+    "Combined line searches (1 AND 2) need expert mode; this recipe generates single-line queries only."
+  ],
+  "tags": [
+    { "tag": "CM:", "meaning": "Combined mark: word mark, pseudo mark, translation and transliteration" },
+    { "tag": "LD:", "meaning": "Live or dead: LD:true or LD:false" },
+    { "tag": "IC:", "meaning": "International class, three digits; grouped as IC:(009 042 045 a b 200)" },
+    { "tag": "CC:", "meaning": "Coordinated class" },
+    { "tag": "GS:", "meaning": "Goods and services text" },
+    { "tag": "SN:", "meaning": "Serial number" },
+    { "tag": "RN:", "meaning": "Registration number" },
+    { "tag": "ON:", "meaning": "Owner name, e.g. ON:\"world wide\"" },
+    { "tag": "OW:", "meaning": "Owner name, address and entity" },
+    { "tag": "AT:", "meaning": "Attorney of record" },
+    { "tag": "FD:", "meaning": "Filing date range, e.g. FD:[20230701 TO *]" }
+  ]
+}
