@@ -315,7 +315,8 @@ decision reason) or the model proposal is discarded.
 - `scripts/_test-trademark-queries.mjs` (node --test): the EQUAZIA golden set of §3; well-formedness
   rules; the EQUASITE-via-Q5 assertion; multi-word mark quoting; cap behaviour; the Q8 exclusion
   check rescues a known mark.
-- `scripts/_test-trademark-triage.mjs`: fixture rows (from Opus's Part 3, serials **[M]**): dedup,
+- `scripts/_test-trademark-triage.mjs`: fixture rows (Eden's run of 10-18, corrected 10-19 from his own
+  screenshots and exports; Q0 and Q5 synthetic, see the fixture's `_note`): dedup,
   dead drop, duplicate-serial overlap flagged, captured differs from reported flagged; the assembled
   report contains EQUALL 98137428 and EQUASITE 90562533 in the flagged table when so decided,
   EQUARA 99922464 in notes, YUEQUAZELL 99887921 dismissed, a gap line for the 392-result Q7
@@ -340,7 +341,11 @@ assembly + lint + filing; Record events; the three test harnesses in CI; this sp
   filed as a document per flagged hit) **[M endpoints]**.
 - Stage 7 web screen (labelled as such; domains .com/.ai + misspellings; handles).
 - Stage 9 application draft: entity existence on the filing date (void if not formed, TMEP
-  §1201.02(b) **[M]**); domicile vs. PMB/P.O. box (37 C.F.R. §2.189, TMEP §803.05(a) **[M]**);
+  §1201.02(b) **[M]**); domicile vs. PMB/P.O. box (37 C.F.R. §2.189, TMEP §803.05(a) **[V 10-19]**:
+  an address that does not identify an actual street address or that functions as a mail
+  forwarding address generally may not serve as a domicile address, cross-ref §601.01(c); for a
+  juristic entity the domicile is the principal place of business; verified from eCFR and the
+  BitLaw TMEP May 2024 ed. PDFs Eden downloaded 10-18);
   **15 U.S.C. §1060(a)(1) [V 10-18, Cornell LII]**: an intent-to-use application is not assignable
   before an amendment to allege use or a statement of use "except for an assignment to a successor
   to the business of the applicant ... if that business is ongoing and existing"; when formation is
@@ -364,8 +369,78 @@ assembly + lint + filing; Record events; the three test harnesses in CI; this sp
 
 1. Programmatic access to tmsearch: terms of use unconfirmed, so **human-in-the-loop only** in v1 [L].
 2. Malformed query = silent zero: the self-test Q0 (built in slice 1).
-3. TMEP §1201.02(b) void-applicant rule [M]. 4. §2.189 / §803.05(a) domicile [M].
+3. TMEP §1201.02(b) void-applicant rule [M]. 4. §2.189 / §803.05(a) domicile **[V 10-19]** (see stage 9 above).
 5. ID Manual template wording [M]. 6. Fees verified 10-18 [V]; re-verify each release.
 7. TSDR API endpoints and limits [M]. 8. Bulk register data availability [L].
-9. tmsearch export format ("Export, first 500 results", sign-in required) [M]: one real export from
-   Eden turns the mapper fixture from hand-built to real.
+9. tmsearch export format **[V 10-19]** from two real files of Eden's 10-18 run ("Results on page" =
+   50 rows; "First 500 results" = all 392; no sign-in was needed for either): sheet `tmSearch`,
+   three preamble rows (`Search results from 1 to N` / `Search term | | <query>` / blank), then
+   SerialNumber, Wordmark, Image, Status, GoodsAndServicesTruncated, Basis, FiledDate,
+   InternationalClass, OwnerFullText, PriorityDate, RegistrationDate, RegistrationNumber,
+   RegistrationType, SupplementalRegistrationDate. Status is only Live/Dead; the class cell is
+   `IC 045 IC 042`, `200.` or every class with a trailing period. The mapper fixture is now real
+   (page 1, images stripped). The 392-row export had 392 distinct serials: the overlap Opus saw
+   between pages 4 and 5 on screen was a display artefact, not missing records.
+10. Q8 exclusion picker needs a typed stem [found 10-19]: the proposer offers only stems it mined from
+    Q7's captured marks (equal, equat, equator, equan for EQUAZIA); the real run excluded `equit*`
+    too, which it never offered, so Opus's exact narrowed line lives as manual Q102 and Q8 stays
+    unconfirmed. Add a free-text stem input beside the checkboxes.
+11. Provider refuses a forced `tool_choice` for claude-opus-5-5 [V 10-19, HTTP 400]: every model
+    action was dead until model.mjs switched to `auto` + a system line. Any new structured call
+    on this model must do the same (lib/describe-image-anthropic already knew).
+
+## 10. What a first-timer asked (from Eden's run with Opus, Oct 11–18; answer these in the stage copy)
+
+The back-and-forth of the EQUAZIA run is the best evidence of what the recipe's copy must say
+without being asked. Each question below was asked, in these words or close to them, by a lawyer
+doing a knockout search for the first time. The stage that owns the answer is in brackets. None
+of this is a conclusion about any mark; it is the explanatory layer the surface owes the reviewer
+("explain, don't constrain").
+
+1. "What is a knockout search, and how is it different from the web screen we did?" [stage 1 note:
+   a quick look at the federal register for live marks that look or sound like yours for related
+   goods; not a clearance opinion; the web screen covers unregistered users, the register covers
+   what an examiner would cite.]
+2. "What do the pieces of the search mean?" [stage 3, Method panel: the exact term, the embedded
+   wildcard, the broad prefix, the known name; `CM:` searches the mark fields; `LD:true` keeps
+   live records; `IC:(…)` limits by class; `a b 200` adds certification and collective marks.]
+3. "Do I type the whole line including `CM:`? Caps? Spaces?" [stage 4 note: paste the line exactly;
+   field tag in caps with the colon, no space after it, terms lowercase, AND/OR in caps with a
+   space each side; if the box rejects it, switch on expert mode.]
+4. "Why these classes, and why 45 if we are not filing in it?" [stage 2: search classes vs. filing
+   classes; 45 because the users are lawyers; filing only where there is bona fide intent.]
+5. "What is live vs. dead, and does a pending application count?" [stage 5 note: a pending
+   application counts; if it registers, its filing date gives priority; dead records generally
+   cannot block, which is why they are listed apart.]
+6. "392 results — do I have to read them all?" [stage 4: no; the narrowed sweep (Q8) exists for
+   this; a scroll through 392 cards is not a review and the recipe never pretends it was.]
+7. "The export did nothing." [stage 4: browser download or pop-up block; try "First 500 results";
+   no sign-in was needed in the real run; if it still fails, record the run by hand from the screen
+   and mark the gap.]
+8. "Two pages showed the same marks." [stage 4: record what you saw; the database marks a repeated
+   serial as a gap; a full export closes it.]
+9. "What am I looking for in each result?" [stage 5 note: does a LIVE mark both resemble the
+   proposed mark and cover related goods or services; if either half is missing, note or dismiss;
+   open only the close ones and read their goods.]
+10. "Is the empty result real or did I type it wrong?" [stage 4: the self-test Q0; a zero on a
+    malformed line looks identical to a true zero.]
+11. "Which of these are a real problem?" [stage 5: the model may propose a bin with reasons; the
+    reviewer decides each bin with initials; the report never says clear.]
+12. "Can the agent run the searches for me?" [Method panel: not in v1; tmsearch's terms of use for
+    programmatic access are unconfirmed; the reviewer runs each line and records it.]
+13. Not the recipe's job, but it cost half the session: the USPTO.gov account and its authenticator
+    enrolment. Stage 9 should say up front that searching needs no account and filing does, and
+    link the USPTO's own setup page rather than troubleshoot inline.
+14. "Why is the new company the applicant at all? Couldn't the parent that already exists file?"
+    (Eden, 10-19) [stage 9 note: which entity files turns on who will own the brand when shares
+    are sold and on whether use has begun. 15 U.S.C. §1060(a)(1) [V 10-18] bars assigning an
+    intent-to-use application before an amendment to allege use or a statement of use, except to
+    a successor to the ongoing business; an assignment outside that voids the application. So:
+    (1) wait for the entity and file in its name, cleanest when its shares will be sold; (2) if
+    use has begun, the parent files under §1(a) and assigns freely with the goodwill; (3) the
+    parent files intent-to-use and keeps the mark, licensing it to the subsidiary (use by a
+    related company inures to the owner), which leaves the brand outside the company being sold;
+    (4) parent files intent-to-use and assigns as successor when the business is contributed —
+    textually within the exception, the riskiest path. Whichever, the code, domains and brand
+    must be assigned into the applicant by a separate agreement.]
+

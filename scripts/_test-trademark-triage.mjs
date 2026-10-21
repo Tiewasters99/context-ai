@@ -2,15 +2,18 @@
 //
 //   node --test scripts/_test-trademark-triage.mjs
 //
-// Fixture rows from Opus's Part 3 (serials [M], see
-// scripts/fixtures/trademark/equazia-golden.json): dedup across runs, the dead
-// drop, a duplicated serial flagged as overlap, captured ≠ reported flagged;
-// the assembled report carries EQUALL 98137428 and EQUASITE 90562533 as
-// flagged, EQUARA 99922464 in notes, YUEQUAZELL 99887921 dismissed and a gap
-// line for Q7's 392; the lint catches "the mark is clear" and passes "no
-// conflicts identified for review". The model is never called: a stub stands
-// in for it, and a proposal that says "clear" is discarded before storage.
-// The export mapper reads the hand-built CSV through the repo's xlsx.
+// Fixture rows from Eden's EQUAZIA run of 2026-10-18, corrected from his own
+// tmsearch screenshots and exports (scripts/fixtures/trademark/equazia-golden.json;
+// Q0 and Q5 are synthetic, see its _note): dedup across runs, the dead drop,
+// a duplicated serial flagged as overlap, captured ≠ reported flagged; the
+// assembled report carries EQUALL 98137428 and EQUASITE 90562533 as flagged,
+// EQUARA 99922464 in notes, YUEQUAZELL 99887921 dismissed and a gap line for
+// Q7's 392; the lint catches "the mark is clear" and passes "no conflicts
+// identified for review". The model is never called: a stub stands in for
+// it, and a proposal that says "clear" is discarded before storage. The
+// export mapper reads a REAL tmsearch export (page 1 of the 392-result sweep,
+// images stripped) in both XLSX and CSV form: three preamble rows, then the
+// header, then records.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -58,9 +61,9 @@ function buildFixture() {
 test('a run: captured differs from reported is a gap; a repeated serial is a pagination-overlap gap', () => {
   const { runs } = buildFixture();
   const q7 = runs.find((r) => r.query_id === 'q7');
-  assert.equal(q7.captured_count, 9);
+  assert.equal(q7.captured_count, 6);
   assert.equal(q7.gap, true);
-  assert.match(q7.gap_note, /tmsearch reported 392; 9 captured/);
+  assert.match(q7.gap_note, /tmsearch reported 392; 6 captured/);
   assert.match(q7.gap_note, /98137428 repeated within the run \(pagination overlap\)/);
   const ok = runs.find((r) => r.query_id === 'q0');
   assert.equal(ok.gap, false);
@@ -80,6 +83,18 @@ test('the self-test: passed when Q0 captured exactly 1; failed otherwise; a re-r
   assert.equal(selfTestState(queries, runs.filter((r) => r.query_id !== 'q0')), 'not_run');
 });
 
+test('hits: text fields are clamped to the tm_hits limits (a 1,119-character wordmark in the real sweep)', () => {
+  const { queries } = buildFixture();
+  const long = 'ADA COBRA DOL EEOC ERISA '.repeat(60);
+  const runs = [{ id: 'rx', query_id: 'q7', run_at: '2026-10-18T10:00:00Z', source: 'export', reported_count: 1, captured_count: 1, gap: false,
+    raw: [{ serial: '77505378', mark: long, owner: 'Labnet, Inc.', status: 'Live', classes: ['016'], goods: 'x'.repeat(30000) }] }];
+  const [h] = collectHits(queries, runs);
+  assert.equal(h.mark.length, 500);
+  assert.ok(h.mark.endsWith('…'));
+  assert.equal(h.goods_services.length, 20000);
+  assert.equal(h.owner, 'Labnet, Inc.');
+});
+
 test('hits: deduplicated across runs by serial, with every query that found them; dead records split out', () => {
   const { queries, runs } = buildFixture();
   const hits = collectHits(queries, runs);
@@ -89,7 +104,7 @@ test('hits: deduplicated across runs by serial, with every query that found them
   assert.deepEqual(by['90562533'].query_seqs, [0, 5, 7], 'EQUASITE found by Q0, Q5 and Q7');
   assert.equal(by['98137417'].live, false, 'EQUALL COPILOT is dead');
   const { live, dead } = splitLiveDead(hits);
-  assert.deepEqual(dead.map((h) => h.serial), ['98137417']);
+  assert.deepEqual(dead.map((h) => h.serial).sort(), ['88129739', '98137417'], 'EQUALL COPILOT and the abandoned EQUALL clothing mark');
   assert.ok(!live.some((h) => h.serial === '98137417'));
   assert.equal(isDead({ status_text: 'Abandoned' }), true);
   assert.equal(isDead({ status_text: 'LIVE registered' }), false);
@@ -100,7 +115,8 @@ test('the crowded field: live hits in the search classes that start with the ope
   const hits = collectHits(queries, runs);
   const cf = crowdedField(hits, clearance.decomposition.opening, clearance.search_classes.map((x) => x.code));
   // EQUALL, EQUASITE, EQUA, EQUARA, EQUANIMA (009/042) — not EQUAZEN (005), not
-  // YUEQUAZELL (014, and does not start with equa), not the dead COPILOT, not the clothing marks (025).
+  // YUEQUAZELL (014, and does not start with equa), not the dead COPILOT, not
+  // WORLD OF EQUALL (025, and does not start with equa).
   assert.deepEqual(cf.serials.sort(), ['79349638', '90562533', '98137428', '98364901', '99922464']);
   assert.equal(cf.count, 5);
 });
@@ -108,7 +124,7 @@ test('the crowded field: live hits in the search classes that start with the ope
 test('gaps are listed verbatim: not-run queries, Q7\'s 392 overlap', () => {
   const { queries, runs } = buildFixture();
   const lines = gapLines(queries, runs);
-  assert.ok(lines.some((l) => l.startsWith('Q7 (prefix): tmsearch reported 392; 9 captured; serial 98137428 repeated within the run (pagination overlap)')), lines.join('\n'));
+  assert.ok(lines.some((l) => l.startsWith('Q7 (prefix): tmsearch reported 392; 6 captured; serial 98137428 repeated within the run (pagination overlap)')), lines.join('\n'));
   assert.ok(lines.includes('Q3 (hinge) was not run.'));
   assert.ok(!lines.some((l) => l.startsWith('Q0 ')), 'the passed self-test is not a gap');
 });
@@ -146,11 +162,11 @@ test('the report: EQUALL and EQUASITE flagged, EQUARA in notes, YUEQUAZELL dismi
   assert.match(section(md, 5), /\| 99922464 \| EQUARA \|/);
   assert.match(section(md, 6), /\| 99887921 \| YUEQUAZELL \| jewelry, class 14 \| EQ \|/);
   assert.match(section(md, 7), /\| 98137417 \| EQUALL COPILOT \| DEAD abandoned \|/);
-  assert.match(section(md, 8), /Q7 \(prefix\): tmsearch reported 392; 9 captured; serial 98137428 repeated/);
+  assert.match(section(md, 8), /Q7 \(prefix\): tmsearch reported 392; 6 captured; serial 98137428 repeated/);
   assert.match(section(md, 8), /federal register \(USPTO\) only/);
   assert.match(md, /Self-test \(Q0\) \| Passed/);
   assert.match(md, /Procedure version \(sha256\) \| [0-9a-f]{64}/);
-  assert.match(section(md, 3), /\| Q7 \| prefix \| `CM:equa\* AND LD:true AND IC:\(009 042 045 a b 200\)` \| 2026-10-18 \| 392 \| 9 \| Y — /);
+  assert.match(section(md, 3), /\| Q7 \| prefix \| `CM:equa\* AND LD:true AND IC:\(009 042 045 a b 200\)` \| 2026-10-18 \| 392 \| 6 \| Y — /);
   assert.match(section(md, 3), /### Not run/);
   assert.match(section(md, 9), /Source: USPTO, "Federal trademark searching: Field tag searching" handout, verified 2026-10-18/);
   assert.match(section(md, 10), /\| trademark\.triage \| claude-opus-5-5 \| 1 \|/);
@@ -219,20 +235,53 @@ test('the manual path: serial | mark | owner | status | classes | goods; a line 
   assert.equal(liveFromStatus('Unknown thing'), null);
 });
 
-test('the export mapper reads the hand-built CSV by header name; unknown headers go to raw', async () => {
-  const bytes = fs.readFileSync(path.join(FIX, 'tmsearch-export-M-handbuilt.csv'));
-  const out = await readExportFile(new Uint8Array(bytes), 'tmsearch-export-M-handbuilt.csv');
-  assert.equal(out.rows.length, 5);
-  assert.deepEqual(out.unknownHeaders, ['Attorney of Record']);
-  assert.equal(out.mapped.serial, 'Serial Number');
-  const equall = out.rows[0];
-  assert.equal(equall.serial, '98137428');
-  assert.equal(equall.mark, 'EQUALL');
-  assert.deepEqual(equall.classes, ['009', '042']);
-  assert.equal(equall.filing_date, '2023-08-14');
-  assert.equal(equall.raw['Attorney of Record'], '[M] hand-built');
-  assert.equal(out.rows[3].live, false, 'DEAD in the Live/Dead column');
-  assert.equal(summarizeRun({ source: 'export', reported_count: 5, rows: out.rows }).gap, true, 'the duplicated EQUALL row is an overlap');
+test('the export mapper reads a real tmsearch export (XLSX and CSV): preamble, header by name, 50 rows', async () => {
+  for (const name of ['tmsearch-export-2026-10-18-page1.xlsx', 'tmsearch-export-2026-10-18-page1.csv']) {
+    const out = await readExportFile(new Uint8Array(fs.readFileSync(path.join(FIX, name))), name);
+    assert.equal(out.rows.length, 50, name);
+    assert.equal(out.errors.length, 0, name);
+    assert.equal(out.preamble.searchTerm, 'CM:equa* AND LD:true AND IC:(009 042 045 a b 200)', name);
+    assert.equal(out.preamble.from, 1, name);
+    assert.equal(out.preamble.to, 50, name);
+    assert.equal(out.mapped.serial, 'SerialNumber', name);
+    assert.equal(out.mapped.owner, 'OwnerFullText', name);
+    assert.equal(out.mapped.goods, 'GoodsAndServicesTruncated', name);
+    assert.equal(out.mapped.classes, 'InternationalClass', name);
+    assert.equal(out.mapped.filing_date, 'FiledDate', name);
+    assert.equal(out.mapped.registration_number, 'RegistrationNumber', name);
+    assert.deepEqual(out.unknownHeaders, ['Image', 'Basis', 'PriorityDate', 'RegistrationDate', 'RegistrationType', 'SupplementalRegistrationDate'], name);
+    const first = out.rows[0];
+    assert.equal(first.serial, '72051347');
+    assert.equal(first.mark, 'F.O.E. LIBERTY TRUTH JUSTICE EQUALITY');
+    assert.deepEqual(first.classes, ['200'], 'the export writes "200." with a trailing period');
+    assert.equal(first.live, true, 'Status "Live"');
+    assert.equal(first.filing_date, '1958-05-09');
+    assert.equal(first.registration_number, '0674341');
+    assert.equal(first.raw.Basis, '1a');
+    const privacy = out.rows[1];
+    assert.equal(privacy.serial, '87304421');
+    assert.deepEqual(privacy.classes, ['045', '042'], '"IC 045 IC 042"');
+    assert.match(privacy.owner, /^Sartor, Kay/);
+    const un = out.rows.find((r) => r.serial === '89001965');
+    assert.ok(un, 'UN WOMEN, every class');
+    assert.equal(un.classes.length, 48, '45 classes plus 200, A and B — "... 043 044 045 200 A B." with a trailing period');
+    assert.deepEqual(un.classes.slice(-3), ['200', 'A', 'B']);
+    // A "Results on page" export of a 392-result search: the file says 1 to 50, tmsearch reported 392.
+    const run = summarizeRun({ source: 'export', reported_count: 392, rows: out.rows });
+    assert.equal(run.gap, true, name);
+    assert.match(run.gapNote, /reported 392; 50 captured/, name);
+    assert.equal(summarizeRun({ source: 'export', reported_count: 50, rows: out.rows }).gap, false, 'the full page, no gap');
+    const overlap = summarizeRun({ source: 'export', reported_count: 51, rows: [...out.rows, out.rows[0]] });
+    assert.equal(overlap.gap, true, 'a repeated serial is an overlap');
+    assert.match(overlap.gapNote, /72051347 repeated within the run \(pagination overlap\)/);
+  }
+  // A header in row 0 (no preamble) still reads; the preamble is then empty.
+  const plain = mapExportTable([['Serial Number', 'Word Mark'], ['90562533', 'EQUASITE']]);
+  assert.equal(plain.rows.length, 1);
+  assert.deepEqual(plain.preamble, { searchTerm: null, from: null, to: null, lines: [] });
+  assert.deepEqual(parseClasses('200.'), ['200']);
+  assert.deepEqual(parseClasses('IC 043 044 045 200 A B.'), ['043', '044', '045', '200', 'A', 'B']);
+  assert.deepEqual(parseClasses('IC 045 IC 042'), ['045', '042']);
 });
 
 test('an export with no serial column is a clear error, never a silent zero-row run', async () => {
@@ -267,7 +316,9 @@ test('triage: the model is reached only through send, with the feature label; a 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].feature, 'trademark.triage');
   assert.equal(calls[0].body.model, 'claude-opus-5-5');
-  assert.equal(calls[0].body.tool_choice.type, 'tool');
+  assert.equal(calls[0].body.tool_choice.type, 'auto', 'a forced tool choice is refused by the provider for this model (verified 2026-10-19)');
+  assert.equal(calls[0].body.tools[0].name, 'propose_triage');
+  assert.match(calls[0].body.system, /Answer ONLY by calling the propose_triage tool/);
   assert.ok(!res.proposals.some((p) => p.serial === '99887921'), 'the "clear" proposal is not stored');
   assert.ok(res.discarded.some((d) => d.serial === '99887921' && /is clear/.test(d.reason)));
   assert.ok(res.discarded.some((d) => d.serial === '12345678'), 'a serial that was not asked about is discarded');

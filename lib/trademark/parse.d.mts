@@ -12,12 +12,22 @@ export interface ParsedRow {
   filing_date: string | null;
   raw: Record<string, string>;
 }
+export interface ExportPreamble {
+  /** The "Search term" line tmsearch writes above the header, or null. */
+  searchTerm: string | null;
+  /** "Search results from N to M": the exported range, not the reported total. */
+  from: number | null;
+  to: number | null;
+  lines: string[];
+}
 export interface ExportResult {
   rows: ParsedRow[];
   errors: { line: number; message: string }[];
   unknownHeaders: string[];
   mapped: Record<string, string>;
+  preamble: ExportPreamble;
 }
+export function parsePreamble(rowsAbove: unknown[][]): ExportPreamble;
 export function liveFromStatus(status: unknown): boolean | null;
 export function normalizeSerial(s: unknown): string | null;
 export function parseClasses(s: unknown): string[];

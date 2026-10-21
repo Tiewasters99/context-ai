@@ -34,7 +34,13 @@ function RunForm({ b, q, onDone }: { b: ClearanceBundle; q: TmQuery; onDone: () 
     try {
       const out = await readExportFile(new Uint8Array(await f.arrayBuffer()), f.name);
       setFileRows(out.rows);
-      setFileNote(`${out.rows.length} rows read${out.errors.length ? `, ${out.errors.length} without a serial skipped` : ''}${out.unknownHeaders.length ? `; kept as-is: ${out.unknownHeaders.join(', ')}` : ''}.`);
+      const p = out.preamble;
+      const range = p.from != null && p.to != null ? ` Export says results ${p.from} to ${p.to}; the reported count is still the number tmsearch showed.` : '';
+      const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+      const mismatch = p.searchTerm && norm(p.searchTerm) !== norm(q.query)
+        ? ` WARNING: the file's search term is "${p.searchTerm}", not this query.`
+        : '';
+      setFileNote(`${out.rows.length} rows read${out.errors.length ? `, ${out.errors.length} without a serial skipped` : ''}${out.unknownHeaders.length ? `; kept as-is: ${out.unknownHeaders.join(', ')}` : ''}.${range}${mismatch}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
