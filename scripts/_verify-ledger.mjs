@@ -779,7 +779,13 @@ console.log('\n--- tool.invoked: the allow-list on a tool\'s arguments ---------
   // users, known_marks, the confirmed `value` (reasons), pasted `text`, `rows`
   // (register records) and gap_note — is a presence and a length, or an item
   // count (checked 10-20).
-  check(leaks.length === 0 && TOOLS.length === 35,
+  // 36th to 40th, Trademark Clearance slice 2 (2026-10-21): tm_start_batch
+  // (`marks` an array → an item count; goods_and_services, users and the
+  // applicant's fields → presence and length), tm_deep_check and
+  // tm_application_questions / _draft (a clearance_id only), and
+  // tm_application_answer (applicant, classes, transfer → presence/length or
+  // item counts; filing_date_planned → presence and length) (checked 10-21).
+  check(leaks.length === 0 && TOOLS.length === 40,
     `all ${TOOLS.length} tools: ${sentinels.length} planted strings, not one survives into the payload`,
     leaks.join(' | '));
 
