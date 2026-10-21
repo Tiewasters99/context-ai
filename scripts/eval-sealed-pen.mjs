@@ -724,7 +724,7 @@ export async function main(argv = process.argv.slice(2), log = console.log) {
   log(`Sealed pen: ${model} (from BEDROCK_MODEL, or the default).`);
   log(`COST ESTIMATE: ${usd(estimateCents)} — ${prepared.length} documents x 2 arms, priced at the`);
   log(`  sealed pen's rate ($${inRate}/$${outRate} per Mtok, lib/usage-prices.mjs), plus 10% for repairs.`);
-  log('  That rate is an ESTIMATE: Bedrock has not published a list price for this pen.');
+  log('  That rate is a ledger ESTIMATE (lib/usage-prices.mjs), not checked against an AWS invoice.');
 
   const spend = checkSpendAllowed(opts);
   if (!spend.ok) { log(`\n${spend.reason}`); return 0; }
