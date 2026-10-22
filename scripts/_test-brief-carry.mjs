@@ -1,7 +1,7 @@
 // node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-carry.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { carryPlan, carryNote, openProblems, latestByCite, briefParagraphs, matchText, answersProblem, rewordedNote } from '../src/lib/brief/confirmations-core.ts';
+import { carryPlan, carryNote, openProblems, latestByCite, briefParagraphs, matchText, answersProblem, rewordedNote, openProblemAt, openProblemForWords, flaggedWith, quotationFor } from '../src/lib/brief/confirmations-core.ts';
 
 const row = (o) => ({ id: o.id, document_id: 'v8', cite_raw: o.raw, context: o.ctx ?? '', pm_from: o.from ?? null,
   authority_document_id: null, authority_title: null, authority_page: null, status: o.status ?? 'confirmed',
@@ -100,7 +100,8 @@ test('an open problem goes across open even when its words are gone; an answered
   const NEW = ['However, there are plausible ways to complete a transaction, so the speech is protected.', 'Only pro-rata distribution is sought.'];
   const gone = row({ id: 'p90', raw: 'plausible ways to complete a proposed transaction lawfully', ctx: '90. where there are plausible ways to complete a proposed transaction lawfully', status: 'problem', at: '2026-10-02T00:59:47Z' });
   const answered = row({ id: 'p65', raw: 'pro-rata distribution', ctx: 'Only pro-rata distribution is sought.', status: 'problem', at: '2026-10-02T00:32:43Z' });
-  const answer = row({ id: 'c65', raw: 'pro-rata distribution', ctx: '65. Language of g(4) confirmed: pro-rata distribution', at: '2026-10-02T09:00:00Z' });
+  // answered at its own sentence (a confirm of the same words in ANOTHER sentence still in the brief is another cite, 10-21)
+  const answer = row({ id: 'c65', raw: 'pro-rata distribution', ctx: 'Only pro-rata distribution is sought.', note: 'g(4) language confirmed', at: '2026-10-02T09:00:00Z' });
   const plan = carryPlan([gone, answered, answer], NEW);
   assert.deepEqual(plan.openFlags.map((r) => r.id), ['p90']);
   assert.ok(!plan.carry.some((c) => c.row.status === 'problem'));
@@ -133,4 +134,53 @@ test('the Log says "Resolved" only for a confirmation that answers a problem; a 
   assert.equal(answersProblem(all, carried), false);
   assert.equal(answersProblem(all, plain), false);
   assert.match(rewordedNote(row({ id: 'r', raw: 'x' }), 'v18'), /^read on “v18” by EQ .*reworded since, and the change was reviewed against that reading$/);
+});
+
+// Eden, 10-21, on the Patel demo: "Joiner, 522 U.S. at 146" twice in the brief.
+// He flagged one red; Confirm on the other asked how the flag was resolved.
+const J = 'Joiner, 522 U.S. at 146';
+const P125 = `That is a failure of Rule 702(d), where the "analytical gap" between "the data and the opinion proffered" is her own table. ${J}.`;
+const P129 = `The claim that the licensee-supplied variation is really the artifact's doing is ipse dixit. ${J}.`;
+
+test('the same cite twice is two cites: a flag on one does not hold up Confirm on the other', () => {
+  const flag = row({ id: 'p1', raw: J, ctx: P125, from: 9000, status: 'problem', note: 'wrong pin', at: '2026-10-21T20:00:00Z' });
+  const paras = [P125, P129];
+  // Confirm at the second place is a plain confirm, not "resolved how?"
+  assert.equal(openProblemAt([flag], J, P129, 12000, paras), null);
+  // …at the flagged place it is the flag
+  assert.equal(openProblemAt([flag], J, P125, 9000, paras)?.id, 'p1');
+  // confirming the second place leaves the first one red and open
+  const ok = row({ id: 'c2', raw: J, ctx: P129, from: 12000, at: '2026-10-21T20:05:00Z' });
+  const rows = [flag, ok];
+  assert.deepEqual(openProblems(rows, paras).map((o) => o.row.id), ['p1']);
+  assert.equal(openProblemForWords(rows, J, paras)?.id, 'p1');
+  assert.equal(answersProblem(rows, ok, paras), false, 'the Log does not call it "Resolved"');
+  assert.deepEqual(latestByCite(rows).map((r) => r.status).sort(), ['confirmed', 'problem']);
+  // and the flag carries red to the next version
+  const plan = carryPlan(rows, paras);
+  assert.deepEqual(plan.carry.map((c) => [c.row.id, c.row.status]).sort(), [['c2', 'confirmed'], ['p1', 'problem']]);
+  // an edit above the cite moved its place: still the flag at this place
+  assert.equal(openProblemAt([flag], J, P125, 9400, paras)?.id, 'p1');
+  // a flag whose sentence was reworded away still follows its words (09-28)
+  const reworded = [`Her own table shows the gap. ${J}.`, P129];
+  assert.equal(openProblemAt([flag], J, P129, 12000, reworded)?.id, 'p1');
+});
+
+test('a cite’s quotation: the quoted words just before it, else a parenthetical just after', () => {
+  assert.equal(quotationFor(`"${"word ".repeat(100)}" Smith, 1 U.S. 1.`, 'Smith, 1 U.S. 1'), null, 'longer than a row holds');
+  const E1 = 'The gatekeeping obligation extends to every step. "[N]othing in either Daubert or the Federal Rules of Evidence requires a district court to admit opinion evidence that is connected to existing data only by the ipse dixit of the expert. A court must exclude any opinion where there is an analytical gap between the data and the opinion proffered, and the proponent bears the burden of closing it." Gen. Elec. Co. v. Joiner, 522 U.S. 136, 146 (1997). The court must ensure "an expert employs the same level of intellectual rigor." Kumho Tire Co. v. Carmichael, 526 U.S. 137, 167 (1999).';
+  assert.match(quotationFor(E1, 'Gen. Elec. Co. v. Joiner, 522 U.S. 136, 146 (1997)'), /^\[N\]othing in either Daubert .* burden of closing it\.$/);
+  assert.equal(quotationFor(E1, '526 U.S. 137, 167'), 'an expert employs the same level of intellectual rigor.');
+  const paren = 'Courts agree. Primiano v. Cook, 598 F.3d 558, 564 (9th Cir. 2010) (“Shaky but admissible evidence is to be attacked by cross examination”).';
+  assert.equal(quotationFor(paren, 'Primiano v. Cook, 598 F.3d 558, 564 (9th Cir. 2010)'), 'Shaky but admissible evidence is to be attacked by cross examination');
+  assert.equal(quotationFor('No quotation here. CPLR 3001.', 'CPLR 3001'), null);
+  // the quotation itself highlighted: nothing more to offer
+  assert.equal(quotationFor(E1, '"an expert employs'), null);
+});
+
+test('the cite and its quotation flagged in one press are resolved together', () => {
+  const c = row({ id: 'pc', raw: J, ctx: P125, status: 'problem', note: 'invented words', at: '2026-10-21T20:00:00.000Z' });
+  const q = row({ id: 'pq', raw: 'the data and the opinion proffered', ctx: P125, status: 'problem', note: 'invented words', at: '2026-10-21T20:00:00.400Z' });
+  const other = row({ id: 'px', raw: 'analytical gap', ctx: P125, status: 'problem', note: 'something else', at: '2026-10-21T20:00:01Z' });
+  assert.deepEqual(flaggedWith([c, q, other], c).map((r) => r.id), ['pq']);
 });

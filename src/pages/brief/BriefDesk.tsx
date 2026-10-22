@@ -67,7 +67,7 @@ const storedOf = (r: Resolution): StoredResolution => ({
     : null,
 });
 import {
-  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemForWords, rememberedInitials, rememberInitials, guessInitials,
+  loadConfirmations, addConfirmation, carryConfirmations, recordRewordedReview, latestFor, latestByCite, openProblemAt, flaggedWith, quotationFor, LOG_WORDS_MAX, rememberedInitials, rememberInitials, guessInitials,
   confirmationsCsv, whereRead, openProblems, answersProblem, briefParagraphs, NOTE_MAX, type CiteConfirmation, type ConfirmationStatus, type ChangedReading,
 } from '@/lib/brief/confirmations';
 import { diffWordsWithSpace } from 'diff';
@@ -88,6 +88,9 @@ import { fetchMatterDocumentRows, type DocumentsSource } from '@/lib/vault-docum
 
 /** The model for the judgment step (the same the machine pass uses). */
 const ASSISTANT_MATCH_MODEL = 'claude-opus-4-8';
+/** The longest highlight Confirm / Problem take: the log's limit on the words (migration 103). Find in corpus takes a cite, up to FIND_MAX. */
+const HIGHLIGHT_MAX = LOG_WORDS_MAX;
+const FIND_MAX = 400;
 import { findProvisionInRecord, findProvisionByName, type ProvisionHit } from '@/lib/brief/provision-search';
 import { storageObjectBlob } from '@/lib/vault-object';
 import CardDialog from '@/components/ui/CardDialog';
@@ -102,7 +105,7 @@ import { runInAssistant } from '@/lib/assistant-bus';
 import { project, plainRangeToPm } from '@/lib/brief/anchor';
 import CiteTable from './CiteTable';
 import { rowKey } from '@/lib/brief/cite-words';
-import AuthorityPane, { type PaneState } from './AuthorityPane';
+import AuthorityPane, { QuoteToggle, type PaneState } from './AuthorityPane';
 import MatterTreePick from '@/components/matters/MatterTreePick';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { nearestCommonAncestor, isSealedIn, subtreeIds } from '@/lib/matter-tree';
@@ -419,7 +422,7 @@ function DeskEditor(p: DeskProps) {
       + (r.gone.length ? `\n${r.gone.length} no longer in this brief.` : '');
   };
   // An Export or Save as with problems still open says so first (10-13).
-  const openFlagCount = () => openProblems(confs, editorRef.current?.state.doc.textContent ?? '').length;
+  const openFlagCount = () => openProblems(confs, briefParas()).length;
   const [exportHold, setExportHold] = useState<'md' | 'docx' | null>(null);
   const [initials, setInitialsState] = useState<string>(() => rememberedInitials() ?? '');
   const setInitials = (v: string) => { setInitialsState(v); rememberInitials(v); };
@@ -455,6 +458,44 @@ function DeskEditor(p: DeskProps) {
       return ctx.replace(/\s+/g, ' ').trim();
     } catch { return ''; }
   };
+  /** The brief's paragraphs as the log names a sentence: which flags still sit where they were logged. */
+  const briefParas = (): string[] => { const doc = editorRef.current?.getJSON(); return doc ? briefParagraphs(doc) : []; };
+  /** How far into its paragraph's words a position sits (footnotes left out, as above): to tell two copies of a cite apart. */
+  const paragraphOffset = (from: number | null): number | null => {
+    const ed = editorRef.current;
+    if (!ed || from === null) return null;
+    try {
+      const $p = ed.state.doc.resolve(from);
+      let n = 0;
+      let done = false;
+      $p.parent.forEach((child, off) => {
+        if (done || child.type.name === 'footnote') return;
+        const at = $p.start() + off;
+        if (at + child.nodeSize > from) { n += child.isText ? from - at : 0; done = true; return; }
+        n += child.textContent.length;
+      });
+      return n;
+    } catch { return null; }
+  };
+  /** Where a quotation sits in the cite's paragraph, for its row's place in the log; null when the words are not found as typed. */
+  const quotePmFrom = (from: number | null, quote: string): number | null => {
+    const ed = editorRef.current;
+    if (!ed || from === null) return null;
+    try {
+      const $p = ed.state.doc.resolve(from);
+      let text = '';
+      const pos: number[] = [];
+      $p.parent.forEach((child, off) => {
+        if (child.type.name === 'footnote' || !child.isText) return;
+        const t = child.text ?? '';
+        for (let i = 0; i < t.length; i++) { text += t[i]; pos.push($p.start() + off + i); }
+      });
+      // the copy nearest the cite (the quotation sits just before it, or just after)
+      let best = -1;
+      for (let k = text.indexOf(quote); k >= 0; k = text.indexOf(quote, k + 1)) if (best < 0 || Math.abs(pos[k] - from) < Math.abs(pos[best] - from)) best = k;
+      return best >= 0 ? pos[best] : null;
+    } catch { return null; }
+  };
   const latest = useMemo(() => latestByCite(confs), [confs]);
   const confirmCounts = useMemo(() => ({
     confirmed: latest.filter((r) => r.status === 'confirmed').length,
@@ -466,21 +507,33 @@ function DeskEditor(p: DeskProps) {
   );
   // The unanswered flag on this cite's WORDS, in whatever sentence they sat (a
   // rewritten paragraph is a new occurrence; the flag is still the flag).
-  const paneOpenProblem = useMemo(() => (pane?.cite ? openProblemForWords(confs, pane.cite.raw) : null), [pane?.cite, confs]);
+  // A flag on the same words at ANOTHER place still in the brief is that cite's (Eden, 10-21: Joiner twice).
+  const paneOpenProblem = useMemo(
+    () => (pane?.cite ? openProblemAt(confs, pane.cite.raw, pane.cite.context, pane.cite.from, briefParas()) : null),
+    [pane?.cite, confs],
+  );
+  // The quotation the open cite stands behind, offered with Problem: a manufactured
+  // quotation behind a real cite must show red, not only the cite (Eden, 10-21).
+  const paneQuotation = useMemo(
+    () => (pane?.cite ? quotationFor(pane.cite.context, pane.cite.raw, paragraphOffset(pane.cite.from)) : null),
+    [pane?.cite],
+  );
   // Confirm the highlighted cite without opening it on the desk (a hard copy,
   // another window): the row records no authority, and the log says so.
   const [confirmBusy, setConfirmBusy] = useState(false);
   // The toolbar's note card: a Problem ("what is wrong"), or the note that
   // goes with confirming a cite that was red ("resolved how? what was found?"
   // — Eden, 09-28: a place to record why a flag went from red to green).
-  const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' | 'note'; was?: CiteConfirmation | null } | null>(null);
+  const [problemFor, setProblemFor] = useState<{ raw: string; kind: 'problem' | 'resolved' | 'note'; was?: CiteConfirmation | null; quote?: string | null } | null>(null);
+  const [withQuote, setWithQuote] = useState(true);
   const [problemNote, setProblemNote] = useState('');
   /** What the last rule-based path would have said on a miss; shown only if the assistant has no answer either. */
   const missNote = useRef<string | null>(null);
   /** The toolbar's Confirm: resolve an open flag on these words, add a note to a green cite, or just confirm. */
   const confirmFromToolbar = () => {
-    const raw = highlightedCtx.current?.raw ?? highlighted.current ?? '';
-    const open = openProblemForWords(confs, raw);
+    const h = highlightedCtx.current;
+    const raw = h?.raw ?? highlighted.current ?? '';
+    const open = h ? openProblemAt(confs, h.raw, h.context, h.from, briefParas()) : null;
     if (open) { setProblemNote(''); setProblemFor({ raw, kind: 'resolved', was: open }); return; }
     if (highlightedConfirmation?.status === 'confirmed') { setProblemNote(''); setProblemFor({ raw, kind: 'note', was: highlightedConfirmation }); return; }
     void confirmHighlighted('confirmed');
@@ -491,7 +544,7 @@ function DeskEditor(p: DeskProps) {
     void highlightTick;
     return h ? latestFor(confs, h.raw, h.context, h.from) : null;
   }, [confs, highlightTick]);  
-  const confirmHighlighted = async (status: ConfirmationStatus, note = '') => {
+  const confirmHighlighted = async (status: ConfirmationStatus, note = '', extra: { quote?: string | null; was?: CiteConfirmation | null } = {}) => {
     const h = highlightedCtx.current;
     if (!h || confirmBusy) return;
     setConfirmBusy(true);
@@ -503,27 +556,58 @@ function DeskEditor(p: DeskProps) {
         const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
         authTitle = (data as { title: string | null } | null)?.title ?? null;
       }
-      const row = await addConfirmation({
+      const base = {
         document_id: meta.id,
         cite_raw: h.raw, context: h.context, pm_from: h.from,
         authority_document_id: pane?.docId ?? null,
         authority_title: authTitle,
         authority_page: pane?.docId && pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
         status, note, initials,
-      });
-      setConfs((cur) => [...cur, row]);
+      };
+      const row = await addConfirmation(base);
+      const more = await logAlongside(base, status, note, extra, h.from);
+      setConfs((cur) => [...cur, row, ...more]);
       setHighlightTick((t) => t + 1);
       const when = new Date(row.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const words = h.raw.length > 80 ? `${h.raw.slice(0, 77)}…` : h.raw;
+      const both = more.length > 0;
       p.setNotice(status === 'confirmed'
-        ? `Logged: ${h.raw} confirmed · ${row.initials} · ${when}. It is green in the brief and in the Log.`
-        : `Logged: a problem with ${h.raw} · ${row.initials} · ${when}. It is red in the brief and in the Log.`);
+        ? `Logged: ${words} confirmed · ${row.initials} · ${when}. ${both ? 'It and the quotation flagged with it are' : 'It is'} green in the brief and in the Log.`
+        : `Logged: a problem with ${words}${both ? ' and its quotation' : ''} · ${row.initials} · ${when}. ${both ? 'Both are' : 'It is'} red in the brief and in the Log.`);
     } catch (e) {
       p.setNotice((e as Error).message);
     } finally {
       setConfirmBusy(false);
     }
   };
-  const confirmCite = async (status: ConfirmationStatus, note: string) => {
+  const submitProblemCard = () => {
+    const n = problemNote.trim();
+    if (!n || !problemFor) return;
+    const { kind, quote, was } = problemFor;
+    setProblemFor(null);
+    void confirmHighlighted(kind === 'problem' ? 'problem' : 'confirmed', n, { quote: kind === 'problem' && withQuote ? quote : null, was: kind === 'resolved' ? was : null });
+  };
+  /**
+   * The rows that go with a press: with a Problem, the cite's quotation (ticked
+   * in the card); with a resolution, the problems flagged in the same press as
+   * the one resolved (its quotation), so they go green together.
+   */
+  const logAlongside = async (
+    base: Parameters<typeof addConfirmation>[0], status: ConfirmationStatus, note: string,
+    extra: { quote?: string | null; was?: CiteConfirmation | null }, from: number | null,
+  ): Promise<CiteConfirmation[]> => {
+    const out: CiteConfirmation[] = [];
+    if (status === 'problem' && extra.quote) {
+      out.push(await addConfirmation({ ...base, cite_raw: extra.quote, pm_from: quotePmFrom(from, extra.quote) }));
+    }
+    if (status === 'confirmed' && extra.was?.status === 'problem') {
+      for (const r of flaggedWith(confs, extra.was, briefParas())) {
+        out.push(await addConfirmation({ ...base, cite_raw: r.cite_raw, context: r.context, pm_from: r.pm_from, status: 'confirmed', note }));
+      }
+    }
+    return out;
+  };
+  const confirmCite = async (status: ConfirmationStatus, note: string, alsoQuote = false) => {
     if (!pane?.cite || !pane.docId) return;
     try {
       // a record volume is opened by id with no title in hand: name it for the log
@@ -532,7 +616,7 @@ function DeskEditor(p: DeskProps) {
         const { data } = await supabase.from('documents').select('title').eq('id', pane.docId).maybeSingle();
         title = (data as { title: string | null } | null)?.title ?? null;
       }
-      const row = await addConfirmation({
+      const base = {
         document_id: meta.id,
         cite_raw: pane.cite.raw,
         context: pane.cite.context,
@@ -541,8 +625,11 @@ function DeskEditor(p: DeskProps) {
         authority_title: title,
         authority_page: pane.goto && 'page' in pane.goto ? (pane.goto.page ?? null) : null,
         status, note, initials,
-      });
-      setConfs((cur) => [...cur, row]);
+      };
+      const row = await addConfirmation(base);
+      const was = paneConfirmation?.status === 'problem' ? paneConfirmation : paneOpenProblem;
+      const more = await logAlongside(base, status, note, { quote: alsoQuote ? paneQuotation : null, was }, pane.cite.from);
+      setConfs((cur) => [...cur, row, ...more]);
       p.setNotice(null);
     } catch (e) {
       p.setNotice((e as Error).message);
@@ -1191,21 +1278,39 @@ function DeskEditor(p: DeskProps) {
     const escLike = (s: string) => s.replace(/[%_\\]/g, (x) => '\\' + x).replace(/[,()]/g, ' ');
     p.setBusy(`Looking for ${c.words.map((w) => w[0]).join(' ')} in ${recordRootName ?? 'the record'}…`);
     try {
-      let q = supabase.from('documents').select('id, title, source_filename').in('matterspace_id', scope).neq('id', meta.id);
+      let q = supabase.from('documents').select('id, title, source_filename, doc_type').in('matterspace_id', scope).neq('id', meta.id);
       for (const forms of c.words) {
         q = q.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
       }
-      const { data, error } = await q.limit(200);   // names only; ranked below
+      const { data: named, error } = await q.limit(200);   // names only; ranked below
       if (error) throw new Error(error.message);
-      type Doc = { id: string; title: string | null; source_filename: string | null };
+      let data = named;
+      let partyOnly = false;
+      // a caption the file's name does not spell out ("Tiekert v. Village of Mamaroneck"
+      // filed as "Tiekert Order"): the first party's name, ranked and offered
+      if (!data?.length && c.party?.length && c.party.length < c.words.length) {
+        let pq = supabase.from('documents').select('id, title, source_filename, doc_type').in('matterspace_id', scope).neq('id', meta.id);
+        for (const forms of c.party) pq = pq.or(forms.flatMap((f) => [`title.ilike.%${escLike(f)}%`, `source_filename.ilike.%${escLike(f)}%`]).join(','));
+        const { data: byParty, error: pe } = await pq.limit(200);
+        if (pe) throw new Error(pe.message);
+        data = byParty; partyOnly = !!byParty?.length;
+      }
+      type Doc = { id: string; title: string | null; source_filename: string | null; doc_type?: string | null };
+      // A brief or memo that CITES the case is never the case (Eden, 10-21: Del Biaggio's
+      // cite opened the memo about it): it ranks last, and never opens on its own.
+      const isBrief = (d: Doc) => d.doc_type === 'brief';
       // The first long form first: "Op." lists every Opinion before the
       // clerk's Orders (10-15: the Fifth Circuit Opinion sat among dozens).
       const rank = (d: Doc) => {
         const name = `${d.title ?? ''} ${d.source_filename ?? ''}`.toLowerCase();
-        return c.words.reduce((n, forms) => n + Math.max(0, forms.findIndex((f) => name.includes(f.toLowerCase()))), 0);
+        const named = c.words.reduce((n, forms) => n + Math.max(0, forms.findIndex((f) => name.includes(f.toLowerCase()))), 0);
+        // a caption's "Op.", "Order": the decision before the other papers named for the parties
+        const missing = (c.rank ?? []).filter((forms) => !forms.some((f) => name.includes(f.toLowerCase()))).length;
+        return (isBrief(d) ? 1000 : 0) + missing * 10 + named;
       };
-      let docs = ((data ?? []) as Doc[]).sort((a, b) => rank(a) - rank(b) || (a.title ?? '').localeCompare(b.title ?? '')).slice(0, 20);
-      let how = 'by name';
+      const ranked = (list: Doc[]) => list.sort((a, b) => rank(a) - rank(b) || (a.title ?? '').localeCompare(b.title ?? '')).slice(0, 20);
+      let docs = ranked((data ?? []) as Doc[]);
+      let how = partyOnly ? 'by the first party’s name only (the caption is not in the file name)' : 'by name';
       if (!docs.length) {
         // the caption on a first page: "OFFICE OF ADMINISTRATIVE TRIALS & HEARINGS … DEPARTMENT OF
         // CONSUMER AND WORKER PROTECTION, Petitioner" is "OATH Pet." (the acronyms' long forms)
@@ -1215,8 +1320,8 @@ function DeskEditor(p: DeskProps) {
         if (pe) throw new Error(pe.message);
         const ids = [...new Set(((pd ?? []) as { document_id: string }[]).map((r) => r.document_id))];
         if (ids.length) {
-          const { data: dd } = await supabase.from('documents').select('id, title, source_filename').in('id', ids);
-          docs = (dd ?? []) as Doc[];
+          const { data: dd } = await supabase.from('documents').select('id, title, source_filename, doc_type').in('id', ids);
+          docs = ranked((dd ?? []) as Doc[]);
           how = 'on its first page';
         }
       }
@@ -1227,7 +1332,7 @@ function DeskEditor(p: DeskProps) {
       }
       const titleOf = (d: Doc) => d.title || d.source_filename || 'Untitled document';
       const pin = c.page ? ` — opened at page ${c.page}` : c.paragraph ? ` — the cite pins ¶ ${c.paragraph}; find it in the page` : '';
-      if (docs.length === 1) {
+      if (docs.length === 1 && !isBrief(docs[0]) && !partyOnly) {
         // "TAC ¶ 55": the page where paragraph 55 begins
         const para = !c.page && c.paragraph ? await findParagraphPage(supabase, docs[0].id, c.paragraph) : null;
         const pinned = para ? ` — ¶ ${c.paragraph} begins on page ${para}` : pin;
@@ -1236,7 +1341,7 @@ function DeskEditor(p: DeskProps) {
       }
       setContentHits({
         label, number: c.words.map((w) => w[0]).join(' '), from: 'cite',
-        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
+        hits: docs.map((d) => ({ document_id: d.id, title: titleOf(d), passages: [{ passage_id: '', page: c.page ?? 1, snippet: isBrief(d) ? 'A brief or memo filed in this matter — it cites the case; it is not the decision.' : `Matched ${how}: ${c.words.map((w) => w[0]).join(', ')}${pin}.` }], namedForIt: true })),
       });
       return true;
     } catch (e) {
@@ -1451,6 +1556,7 @@ function DeskEditor(p: DeskProps) {
 
   const findHighlighted = async () => {
     const label = highlighted.current ?? '';
+    if (label.length > FIND_MAX) { p.setNotice('That is a passage, not a cite: highlight just the cite to find it. A passage can be confirmed, or marked as a problem.'); return; }
     // whatever opens next beside the brief was opened FOR this cite
     citeRef.current = highlightedCtx.current && highlightedCtx.current.raw === label ? highlightedCtx.current : { raw: label, context: '', from: null };
     missNote.current = null;
@@ -1532,13 +1638,15 @@ function DeskEditor(p: DeskProps) {
     const onSel = () => {
       const { from, to } = editor.state.selection;
       const text = from === to ? '' : editor.state.doc.textBetween(from, to, ' ', ' ').trim();
-      if (text.length >= 2 && text.length <= 400) {
+      // a cite or a passage up to what the log holds can be confirmed or flagged red (10-21);
+      // a longer selection clears the highlight rather than leave the last one standing
+      if (text.length >= 2 && text.length <= HIGHLIGHT_MAX) {
         if (highlighted.current !== text) setHighlightTick((t) => t + 1);
         highlighted.current = text; setHasHighlight(true);
         // the sentence the cite sits in, for the log and for finding it again after edits
         highlightedCtx.current = { raw: text, context: paragraphContextAt(from), from };
       }
-      else if (!text) setHasHighlight(false);
+      else { setHasHighlight(false); if (text) { highlighted.current = null; highlightedCtx.current = null; } }
       (window as unknown as { __briefDesk?: { selection: string | null } }).__briefDesk = {
         ...((window as unknown as { __briefDesk?: object }).__briefDesk ?? {}),
         selection: highlighted.current,
@@ -1842,10 +1950,14 @@ function DeskEditor(p: DeskProps) {
             // A card of the desk's own, not window.prompt: Chrome suppresses
             // the browser prompt silently in some sessions, and the button
             // then did nothing (Eden, 09-28, in the Bushell petition).
-            onClick={() => { setProblemNote(''); setProblemFor({ raw: highlightedCtx.current?.raw ?? highlighted.current ?? '', kind: 'problem' }); }}
+            onClick={() => {
+              const h = highlightedCtx.current;
+              setProblemNote(''); setWithQuote(true);
+              setProblemFor({ raw: h?.raw ?? highlighted.current ?? '', kind: 'problem', quote: h ? quotationFor(h.context, h.raw, paragraphOffset(h.from)) : null });
+            }}
             disabled={!hasHighlight || !initials.trim()}
             className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20 disabled:opacity-40"
-            title={hasHighlight ? 'Something is wrong with this cite: say what, and it goes in the log' : 'Highlight a cite in the brief first; then Problem logs what is wrong'}
+            title={hasHighlight ? 'Something is wrong with the highlighted words (a cite, a quotation, a passage): say what; it goes in the log and turns red in the brief' : 'Highlight a cite, a quotation or a passage in the brief first; then Problem logs what is wrong'}
             data-testid="problem-highlighted"
           >
             <AlertTriangle size={13} /> Problem
@@ -2016,6 +2128,7 @@ function DeskEditor(p: DeskProps) {
                   onChangeAppendix={changeAppendix}
                   confirmation={paneConfirmation}
               openProblem={paneOpenProblem}
+              quotation={paneQuotation}
                   initials={initials}
                   onInitials={setInitials}
                   onConfirm={confirmCite}
@@ -2126,6 +2239,7 @@ function DeskEditor(p: DeskProps) {
               onChangeAppendix={changeAppendix}
               confirmation={paneConfirmation}
               openProblem={paneOpenProblem}
+              quotation={paneQuotation}
               initials={initials}
               onInitials={setInitials}
               onConfirm={confirmCite}
@@ -2229,7 +2343,7 @@ function DeskEditor(p: DeskProps) {
         >
           <ConfirmLog
             rows={confs} briefTitle={meta.title ?? 'brief'} counts={confirmCounts} initials={initials} onInitials={setInitials}
-            briefText={editorRef.current?.state.doc.textContent ?? ''}
+            briefText={briefParas()}
             onResolve={async (was, note) => {
               // A reading of the SAME occurrence the flag was on (words,
               // sentence, place), so the flag's own line turns green; the
@@ -2296,9 +2410,9 @@ function DeskEditor(p: DeskProps) {
       {problemFor !== null && (
         <CardDialog
           storageKey="cs.brief.problem-note"
-          title={problemFor.kind === 'problem' ? 'What is wrong with this cite?' : problemFor.kind === 'resolved' ? 'Resolved — what was found, and how?' : 'A note on this confirmed cite'}
+          title={problemFor.kind === 'problem' ? 'What is wrong here?' : problemFor.kind === 'resolved' ? 'Resolved — what was found, and how?' : 'A note on this confirmed cite'}
           subtitle={problemFor.kind === 'problem'
-            ? `${problemFor.raw || 'The highlighted cite'} — one line goes in the log with your initials (${initials || '…'}) and the time. The cite turns red in the brief.`
+            ? `${problemFor.raw.length > 120 ? `${problemFor.raw.slice(0, 117)}…` : problemFor.raw || 'The highlighted words'} — one line goes in the log with your initials (${initials || '…'}) and the time. The highlighted words turn red in the brief.`
             : problemFor.kind === 'resolved'
               ? `${problemFor.raw || 'The highlighted cite'} was marked as a problem${problemFor.was?.note ? ` (“${problemFor.was.note}”, ${problemFor.was.initials})` : ''}. Say what was found and how it was fixed; it goes in the log beside the problem, with your initials (${initials || '…'}), and the cite turns green.`
               : `${problemFor.raw || 'The highlighted cite'} is already confirmed${problemFor.was ? ` (${problemFor.was.initials}, ${new Date(problemFor.was.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` : ''}. Add what was checked or fixed; it goes in the log as a further confirmed line with your initials (${initials || '…'}).`}
@@ -2311,7 +2425,7 @@ function DeskEditor(p: DeskProps) {
               value={problemNote}
               onChange={(e) => setProblemNote(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && problemNote.trim()) { const n = problemNote.trim(); const k = problemFor.kind; setProblemFor(null); void confirmHighlighted(k === 'problem' ? 'problem' : 'confirmed', n); }
+                if (e.key === 'Enter' && problemNote.trim()) submitProblemCard();
                 if (e.key === 'Escape') setProblemFor(null);
               }}
               placeholder={problemFor.kind === 'problem'
@@ -2324,13 +2438,16 @@ function DeskEditor(p: DeskProps) {
               data-testid="problem-note"
             />
             <button
-              onClick={() => { const n = problemNote.trim(); if (!n) return; const k = problemFor.kind; setProblemFor(null); void confirmHighlighted(k === 'problem' ? 'problem' : 'confirmed', n); }}
+              onClick={submitProblemCard}
               disabled={!problemNote.trim() || confirmBusy}
               className={`h-8 px-3 rounded border text-[12px] disabled:opacity-40 ${problemFor.kind === 'problem' ? 'border-red-400/40 bg-red-400/10 text-red-200 hover:bg-red-400/20' : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20'}`}
             >
               {problemFor.kind === 'problem' ? 'Log it' : problemFor.kind === 'resolved' ? 'Confirm, resolved' : 'Log the note'}
             </button>
           </div>
+          {problemFor.kind === 'problem' && problemFor.quote && (
+            <QuoteToggle quote={problemFor.quote} checked={withQuote} onChange={setWithQuote} />
+          )}
         </CardDialog>
       )}
       {contentHits && (
@@ -3056,7 +3173,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, bri
   rows: CiteConfirmation[]; briefTitle: string; counts: { confirmed: number; problems: number };
   initials: string; onInitials: (v: string) => void;
   /** The brief's words now, to say which open flags no longer have their text in it. */
-  briefText: string;
+  briefText: string[];
   /** Resolve an open flag by hand, with a note (10-02: a redraft left ¶ 90's flag with nowhere to say why). */
   onResolve: (was: CiteConfirmation, note: string) => Promise<void>;
   /** Carry an earlier brief's readings onto this one (v8 → v9): the candidates and the run. */
@@ -3201,7 +3318,7 @@ function ConfirmLog({ rows, briefTitle, counts, initials, onInitials, carry, bri
                 <span className="ml-auto shrink-0 text-white/45">{r.initials} · {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span>
               </div>
               <div className="text-white/45 truncate">{whereRead(r)}</div>
-              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{answersProblem(rows, r) ? 'Resolved: ' : ''}{r.note}</div>}
+              {r.note && <div className={r.status === 'problem' ? 'text-red-200/80' : 'text-emerald-200/80'}>{answersProblem(rows, r, briefText) ? 'Resolved: ' : ''}{r.note}</div>}
               {r.context && <div className="text-white/35 line-clamp-2">{r.context}</div>}
             </div>
           ))}
