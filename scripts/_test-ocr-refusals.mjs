@@ -41,6 +41,7 @@ const scanned = (count) => buildPdf(Array.from({ length: count }, (_, i) => ({ s
   assert.deepStrictEqual(w, [{ pageNumber: 4, text: 'four' }, { pageNumber: 5, text: '', missing: true }, { pageNumber: 6, text: 'six' }]);
   assert.deepStrictEqual(windowPages('just the text, no marker', [9]), [{ pageNumber: 9, text: 'just the text, no marker' }]);
   assert.deepStrictEqual(windowPages('[no legible text]', [9]), [{ pageNumber: 9, text: '' }]);
+  assert.deepStrictEqual(windowPages('<<<PAGE 1>>>\nrenumbered by the model', [9]), [{ pageNumber: 9, text: 'renumbered by the model' }], 'a lone page answered under the wrong number keeps its text');
   assert.throws(() => windowPages('prose with no markers at all', [1, 2]), (e) => e instanceof OcrWindowError && e.code === 'no_answer');
   assert.deepStrictEqual(parseDelimited('<<<PAGE 4>>>\nfour', [4, 5]), [{ pageNumber: 4, text: 'four' }, { pageNumber: 5, text: '' }], 'parseDelimited itself is unchanged');
   ok('windowPages: a skipped page is `missing`, a lone page without its marker keeps the text, a multi-page answer with no markers is no answer');
@@ -97,6 +98,29 @@ const scanned = (count) => buildPdf(Array.from({ length: count }, (_, i) => ({ s
   assert.strictEqual(pages.filter((p) => p.failed).length, 1);
   assert.strictEqual(asked.filter((a) => a.length === 1).length, 8, 'eight single-page retries after the refused window');
   ok('ocrPdf (Gemini) with a RECITATION window: 9 of 10 pages read after single-page retries; page 5 comes back failed, not blank');
+}
+
+// --- ocrImages (Student Hub photographed pages) retries a declined batch singly ------------
+{
+  const { ocrImages } = await import('../lib/ocr-gemini.mjs');
+  const images = [1, 2, 3].map((n) => ({ pageNumber: n, bytes: Buffer.from(`img${n}`), mimeType: 'image/jpeg' }));
+  const asked = [];
+  const fetchImpl = async (url, { body }) => {
+    const text = JSON.parse(body).contents[0].parts[0].text;
+    const nums = text.match(/in order: ([\d, ]+)\./)[1].split(',').map((s) => parseInt(s.trim(), 10));
+    asked.push(nums);
+    const json = (data) => ({ ok: true, status: 200, json: async () => data, text: async () => '' });
+    if (nums.length > 1 || nums[0] === 2) return json({ candidates: [{ finishReason: 'RECITATION', content: { parts: [] } }] });
+    return json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: `<<<PAGE ${nums[0]}>>>\nphoto page ${nums[0]}` }] } }] });
+  };
+  const out = await ocrImages(images, { apiKey: 'k', model: 'stub', fetchImpl });
+  assert.deepStrictEqual(asked, [[1, 2, 3], [1], [2], [3]]);
+  assert.strictEqual(out[0].text, 'photo page 1');
+  assert.strictEqual(out[2].text, 'photo page 3');
+  assert.strictEqual(out[1].text, '');
+  assert.strictEqual(out[1].failed, 'recitation');
+  await assert.rejects(() => ocrImages([images[1]], { apiKey: 'k', model: 'stub', fetchImpl }), (e) => e instanceof OcrWindowError && e.code === 'recitation');
+  ok('ocrImages: a declined batch is retried image by image; the one still declined is failed, a lone declined image throws');
 }
 
 // --- merge keeps refused apart from blank; the outcome names them --------------------
