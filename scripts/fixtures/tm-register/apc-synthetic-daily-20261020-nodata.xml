@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC TEST FIXTURE in the shape of the USPTO Trademark Applications Daily XML (DTD documentation V 2.0). NOT a USPTO file. A day with no data (data-available-code N). -->
+<trademark-applications-daily><version><version-no>2.0-synthetic</version-no><version-date>20261021</version-date></version>
+<application-information><data-available-code>N</data-available-code></application-information>
+</trademark-applications-daily>

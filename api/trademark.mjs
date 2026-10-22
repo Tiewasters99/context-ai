@@ -7,6 +7,13 @@
 // (lib/trademark/deepcheck.mjs): the TSDR key comes from this server's env
 // (USPTO_TSDR_API_KEY) only, and each status record is filed through
 // file_document under the caller's own client.
+// 2026-10-21: `register_status` and `register_search` — stage 4 on Equazia's
+// own copy of the USPTO register (lib/trademark/register/). Deterministic, no
+// model. TM_REGISTER_DB_URL unset = feature off: register_status answers
+// {configured: false, message: "… not available …"} and register_search
+// refuses with the same sentence; nothing is opened. The runs are written on
+// the caller's own client (121's RLS), with source 'register_copy', the copy's
+// as-of date and the preliminary flag (migration 123).
 // Response: the action's JSON (lib/trademark/actions.mjs), or { error, message }.
 //
 // Modeled on api/sandbox.mjs: the bearer is the user's own Supabase access
@@ -42,6 +49,7 @@ import { runTrademarkAction, TrademarkActionError, ACTIONS } from '../lib/tradem
 import { TrademarkModelError, TRADEMARK_MODEL } from '../lib/trademark/model.mjs';
 import { runDeepCheck } from '../lib/trademark/deepcheck.mjs';
 import { makeTsdrClient, TSDR_KEY_ENV } from '../lib/trademark/tsdr.mjs';
+import { registerAccess, registerSearch, REGISTER_SOURCE } from '../lib/trademark/register/service.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -78,7 +86,15 @@ export default async function handler(req, res) {
       return json(res, 500, { error: 'trademark_failed', message: err?.message || String(err) });
     }
   }
-  if (!ACTIONS.includes(action)) return json(res, 400, { error: `action must be one of: ${[...ACTIONS, 'deep_check'].join(', ')}` });
+  if (action === 'register_status' || action === 'register_search') {
+    try {
+      return json(res, 200, await registerFor({ sb, userId, action, args: body?.args ?? {} }));
+    } catch (err) {
+      if (err instanceof TrademarkActionError) return json(res, err.status, { error: err.code, message: err.message });
+      return json(res, 500, { error: 'trademark_failed', message: err?.message || String(err) });
+    }
+  }
+  if (!ACTIONS.includes(action)) return json(res, 400, { error: `action must be one of: ${[...ACTIONS, 'deep_check', 'register_status', 'register_search'].join(', ')}` });
 
   const send = async ({ feature, body: reqBody, matterId }) => {
     const out = await serverLlmCall({
@@ -136,6 +152,55 @@ async function deepCheckFor({ sb, userId, args }) {
     fileDocument: (a) => callTool(sb, 'file_document', a, toolOpts),
     record, actor, force: args?.force === true,
   });
+}
+
+/** What the browser may see of the copy's status. */
+function publicStatus(st) {
+  return {
+    configured: st.configured, offered: Boolean(st.offered), default: Boolean(st.default), as_of: st.as_of ?? null,
+    stale: Boolean(st.stale), days_behind: st.days_behind ?? null, stale_after_days: st.stale_after_days ?? null,
+    gate_passed: Boolean(st.gate?.passed), gate: st.gate?.reason ?? null, message: st.message ?? null,
+  };
+}
+
+/** Stage 4 on the register copy, for the browser: the caller's RLS, the server's copy. */
+async function registerFor({ sb, userId, action, args }) {
+  const access = registerAccess({ env: process.env });
+  const st = await access.status();
+  if (action === 'register_status') return publicStatus(st);
+  if (!st.offered) throw new TrademarkActionError(st.message, st.configured ? 409 : 404, st.configured ? 'register_unavailable' : 'not_available');
+  const id = String(args?.clearance_id ?? '');
+  if (!UUID_RE.test(id)) throw new TrademarkActionError('clearance_id must be a uuid', 400, 'bad_request');
+  const { data: clearance, error } = await sb.from('tm_clearances').select('*').eq('id', id).maybeSingle();
+  if (error) throw new TrademarkActionError(error.message, 500, 'read_failed');
+  if (!clearance) throw new TrademarkActionError('That clearance could not be found, or you do not have access to its matter.', 404, 'not_found');
+  const { data: canWrite } = await sb.rpc('can_write_matter', { p_matter_id: clearance.matterspace_id });
+  if (canWrite !== true) throw new TrademarkActionError('You can read this matter but not work in it.', 403, 'read_only');
+  const qs = await sb.from('tm_queries').select('*').eq('clearance_id', id).order('seq');
+  if (qs.error) throw new TrademarkActionError(qs.error.message, 500, 'read_failed');
+  const queries = qs.data ?? [];
+  let runs = [];
+  if (queries.length) {
+    const r = await sb.from('tm_query_runs').select('*').in('query_id', queries.map((q) => q.id)).order('run_at');
+    if (r.error) throw new TrademarkActionError(r.error.message, 500, 'read_failed');
+    runs = r.data ?? [];
+  }
+  if (!queries.length) throw new TrademarkActionError('There are no queries yet: generate them in stage 3 first.', 400, 'bad_request');
+  const actor = { kind: 'user', ref: userId, user_id: userId, label: 'Trademark clearance' };
+  const out = await registerSearch({
+    sb, bundle: { clearance, queries, runs }, status: st, db: await access.db(),
+    queryIds: Array.isArray(args?.query_ids) ? args.query_ids : null, runBy: userId, budgetMs: 60_000,
+    err: (message, code) => new TrademarkActionError(message, code === 'not_ready' ? 409 : code === 'not_found' ? 404 : 500, code),
+    onRun: async (q, stored, { preliminary }) => {
+      try {
+        await record(sb, { kind: 'tm.query.run', matterId: clearance.matterspace_id, actor, payload: {
+          clearance_id: clearance.id, seq: q.seq, reported: stored.reported_count, captured: stored.captured_count, gap: stored.gap,
+          source: REGISTER_SOURCE, register_as_of: st.as_of, preliminary,
+        } });
+      } catch { /* the Record is never the reason the work fails */ }
+    },
+  });
+  return { ...out, register: publicStatus(st) };
 }
 
 function json(res, status, obj) {

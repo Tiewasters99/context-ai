@@ -6,13 +6,14 @@
 // again when the run is stored.
 
 import { useMemo, useState } from 'react';
-import { fileExport, recordRun, type ClearanceBundle, type TmQuery } from '@/lib/trademark/data';
+import { fileExport, recordRun, preliminaryQueries, runSourceLabel, type ClearanceBundle, type TmQuery } from '@/lib/trademark/data';
 import { parseManualRows, readExportFile, type ParsedRow } from '../../../lib/trademark/parse.mjs';
 import { latestRuns, selfTestState, summarizeRun, SELF_TEST_FAILED_WARNING } from '../../../lib/trademark/triage.mjs';
 import { TMSEARCH_URL } from '../../../lib/trademark/queries.mjs';
 import { btn, btnPrimary, copyText, day, field, label, mono } from './styles';
 import { ErrorLine, Note, Panel } from './ui';
 import SignOff from './SignOff';
+import RegisterChoice from './RegisterChoice';
 
 export function RunForm({ b, q, onDone }: { b: ClearanceBundle; q: TmQuery; onDone: () => Promise<void> }) {
   const [reported, setReported] = useState('');
@@ -98,6 +99,7 @@ export default function StageSearch({ b, initials, setInitials, onChanged }: {
   const latest = useMemo(() => latestRuns(b.runs), [b.runs]);
   const st = selfTestState(b.queries, b.runs);
   const runCount = (id: string) => b.runs.filter((r) => r.query_id === id).length;
+  const prelim = preliminaryQueries(b);
 
   return (
     <Panel id="tm-stage-4" title="4. Register search">
@@ -106,6 +108,7 @@ export default function StageSearch({ b, initials, setInitials, onChanged }: {
         returned exactly one record, a run with no results cannot be relied on.{' '}
         <a className="text-[#e8b84a] hover:underline" href={TMSEARCH_URL} target="_blank" rel="noreferrer">USPTO trademark search</a>
       </Note>
+      {b.queries.length > 0 && <RegisterChoice bundles={[b]} onChanged={onChanged} />}
       {st === 'failed' && <p className="mt-2 rounded border border-[#f87171]/40 px-3 py-2 text-[12.5px] text-[#f8a1a1]">Warning: {SELF_TEST_FAILED_WARNING}.</p>}
       {b.queries.length === 0 && <p className="mt-2 text-[12.5px] text-white/60">Generate the queries in stage 3 first.</p>}
       <ul className="mt-3 divide-y divide-white/5">
@@ -124,7 +127,7 @@ export default function StageSearch({ b, initials, setInitials, onChanged }: {
               <p className="mt-1 pl-12 text-[12px] text-white/60">
                 {r ? (
                   <>
-                    {day(r.run_at)} · {r.source} · reported {r.reported_count ?? '—'} · captured {r.captured_count}
+                    {day(r.run_at)} · {runSourceLabel(r)} · reported {r.reported_count ?? '—'} · captured {r.captured_count}
                     {r.gap ? <span className="text-[#e8b84a]"> · gap{r.gap_note ? `: ${r.gap_note}` : ''}</span> : ' · no gap'}
                     {runCount(q.id) > 1 ? ` · ${runCount(q.id)} runs (the latest is current)` : ''}
                     {st === 'failed' && q.purpose !== 'selftest' ? <span className="text-[#f8a1a1]"> · {SELF_TEST_FAILED_WARNING}</span> : ''}
@@ -137,7 +140,8 @@ export default function StageSearch({ b, initials, setInitials, onChanged }: {
         })}
       </ul>
       <SignOff b={b} stage={4} initials={initials} setInitials={setInitials} onChanged={onChanged}
-        blocked={st === 'not_run' ? 'Record the self-test (Q0) first.' : null} />
+        blocked={st === 'not_run' ? 'Record the self-test (Q0) first.'
+          : prelim.length ? `${prelim.map((q) => `Q${q.seq}`).join(', ')} ran only on Equazia's copy of the register (preliminary): record a tmsearch run for ${prelim.length === 1 ? 'it' : 'them'} first.` : null} />
     </Panel>
   );
 }
