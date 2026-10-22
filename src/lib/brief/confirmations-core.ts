@@ -2,7 +2,12 @@
 // load it under plain node): identity of an occurrence, latest-row rules,
 // initials, CSV.
 
+/** A reading of a cite: the lawyer checked it, or found it wrong. */
 export type ConfirmationStatus = 'confirmed' | 'problem';
+/** A row of the log: a reading, or a note on the brief (migration 123), which is never a reading. */
+export type RowStatus = ConfirmationStatus | 'note';
+/** Who sees a note: everyone who can open the brief, or its writer only. */
+export type NoteAudience = 'team' | 'me';
 
 export interface CiteConfirmation {
   id: string;
@@ -18,10 +23,68 @@ export interface CiteConfirmation {
   initials: string;
   user_id: string;
   created_at: string;
+  /** Notes only (migration 123); every reading is the team's. */
+  audience?: NoteAudience;
+}
+
+/** A note on the brief: the same anchor as a reading, its own kind. */
+export interface BriefNote extends Omit<CiteConfirmation, 'status'> {
+  status: 'note';
+}
+
+/** A row as the table holds it: a reading or a note. */
+export type LogRow = CiteConfirmation | BriefNote;
+
+/** Readings and notes apart (Eden, 10-21): a note never counts, flags, answers a flag, or goes in the CSV. */
+export function splitRows(rows: LogRow[]): { readings: CiteConfirmation[]; notes: BriefNote[] } {
+  const readings: CiteConfirmation[] = [];
+  const notes: BriefNote[] = [];
+  for (const r of rows) {
+    if (r.status === 'note') notes.push(r as BriefNote);
+    else readings.push(r as CiteConfirmation);
+  }
+  return { readings, notes };
+}
+
+/** One place's notes: the first, the replies, and whether it is still open (its newest row has words; "Done" is an empty one). */
+export interface NoteThread {
+  anchor: BriefNote;
+  rows: BriefNote[];
+  open: boolean;
+}
+
+/** The brief's notes as threads, one per place (the words, their sentence, their position), oldest first. */
+export function noteThreads(notes: BriefNote[]): NoteThread[] {
+  const groups = new Map<string, BriefNote[]>();
+  for (const n of notes) {
+    const k = `${matchText(n.cite_raw)}\u0000${sentenceKey(n.context)}`;
+    groups.set(k, [...(groups.get(k) ?? []), n]);
+  }
+  const out: NoteThread[] = [];
+  for (const g of groups.values()) {
+    const sorted = [...g].sort((a, b) => (a.pm_from ?? -1) - (b.pm_from ?? -1));
+    let cluster: BriefNote[] = [];
+    const flush = () => {
+      if (!cluster.length) return;
+      const rows = [...cluster].sort((a, b) => a.created_at.localeCompare(b.created_at));
+      out.push({ anchor: rows[0], rows, open: rows[rows.length - 1].note.trim() !== '' });
+      cluster = [];
+    };
+    for (const row of sorted) {
+      const last = cluster[cluster.length - 1];
+      if (last && (row.pm_from === null || last.pm_from === null || row.pm_from - last.pm_from > SAME_SPOT)) flush();
+      cluster.push(row);
+    }
+    flush();
+  }
+  return out.sort((a, b) => a.anchor.created_at.localeCompare(b.anchor.created_at));
 }
 
 /** The longest words a row holds (cite_raw, migration 103): a highlight or quotation longer than this is not logged. */
 export const LOG_WORDS_MAX = 400;
+/** …once migration 123 is applied: a block quotation, and a note's own length. */
+export const LOG_WORDS_MAX_123 = 4000;
+export const NOTE_MAX_123 = 2000;
 
 /** Two presses are the same occurrence when their positions in the brief are this close (a cite is a few dozen characters). */
 export const SAME_SPOT = 24;
@@ -310,7 +373,7 @@ export function flaggedWith(rows: CiteConfirmation[], p: CiteConfirmation, parag
  * quotation behind a real cite; a cite checker passes the cite, and it is the
  * quotation that has to show red.
  */
-export function quotationFor(context: string, raw: string, near: number | null = null): string | null {
+export function quotationFor(context: string, raw: string, near: number | null = null, max = LOG_WORDS_MAX): string | null {
   const text = flat(context);
   const cite = flat(raw);
   if (!text || !cite || /[“”"]/.test(cite)) return null;
@@ -328,7 +391,7 @@ export function quotationFor(context: string, raw: string, near: number | null =
   const after = spans.find((s) => s.start >= at + cite.length && s.start - (at + cite.length) <= 60);
   const q = (before ?? after)?.inner.trim() ?? '';
   // a quotation longer than a row holds is highlighted and flagged on its own, in parts
-  return q && q.length <= LOG_WORDS_MAX ? q : null;
+  return q && q.length <= max ? q : null;
 }
 
 /**

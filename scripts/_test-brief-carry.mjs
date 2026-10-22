@@ -1,7 +1,7 @@
 // node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-carry.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { carryPlan, carryNote, openProblems, latestByCite, briefParagraphs, matchText, answersProblem, rewordedNote, openProblemAt, openProblemForWords, flaggedWith, quotationFor } from '../src/lib/brief/confirmations-core.ts';
+import { carryPlan, carryNote, openProblems, latestByCite, briefParagraphs, matchText, answersProblem, rewordedNote, openProblemAt, openProblemForWords, flaggedWith, quotationFor, splitRows, noteThreads } from '../src/lib/brief/confirmations-core.ts';
 
 const row = (o) => ({ id: o.id, document_id: 'v8', cite_raw: o.raw, context: o.ctx ?? '', pm_from: o.from ?? null,
   authority_document_id: null, authority_title: null, authority_page: null, status: o.status ?? 'confirmed',
@@ -183,4 +183,34 @@ test('the cite and its quotation flagged in one press are resolved together', ()
   const q = row({ id: 'pq', raw: 'the data and the opinion proffered', ctx: P125, status: 'problem', note: 'invented words', at: '2026-10-21T20:00:00.400Z' });
   const other = row({ id: 'px', raw: 'analytical gap', ctx: P125, status: 'problem', note: 'something else', at: '2026-10-21T20:00:01Z' });
   assert.deepEqual(flaggedWith([c, q, other], c).map((r) => r.id), ['pq']);
+});
+
+// Notes on the brief (migration 123, Eden 10-21): a note is never a reading.
+const note = (o) => ({ ...row({ ...o, status: 'note' }), audience: o.audience ?? 'team' });
+
+test('notes and readings are kept apart: a note never hides a red flag or counts', () => {
+  const flag = row({ id: 'p', raw: J, ctx: P125, from: 9000, status: 'problem', at: '2026-10-21T20:00:00Z' });
+  const n = note({ id: 'n', raw: J, ctx: P125, from: 9000, note: 'Shepardized, still wrong', at: '2026-10-21T20:01:00Z' });
+  const { readings, notes } = splitRows([flag, n]);
+  assert.deepEqual(readings.map((r) => r.id), ['p']);
+  assert.deepEqual(notes.map((r) => r.id), ['n']);
+  assert.equal(latestByCite(readings)[0].status, 'problem', 'the flag is still the latest reading');
+});
+
+test('a note thread: one per place, replies in order, "Done" closes it, a reply reopens it', () => {
+  const a = note({ id: 'a', raw: 'reasonable human verification', ctx: 'Attorney Miller failed to conduct a reasonable human verification.', from: 500, note: 'Emphasize this', at: '2026-10-21T20:00:00Z' });
+  const b = note({ id: 'b', raw: 'reasonable human verification', ctx: 'Attorney Miller failed to conduct a reasonable human verification.', from: 500, note: 'Agreed: the Shepardizing point', at: '2026-10-21T20:05:00Z' });
+  const other = note({ id: 'o', raw: 'Shepardizing', ctx: 'including by Shepardizing every case', from: 900, note: 'Quote this too', at: '2026-10-21T20:02:00Z' });
+  let t = noteThreads([b, other, a]);
+  assert.equal(t.length, 2);
+  assert.deepEqual(t[0].rows.map((r) => r.id), ['a', 'b']);
+  assert.equal(t[0].open, true);
+  const done = note({ id: 'd', raw: a.cite_raw, ctx: a.context, from: 500, note: '', at: '2026-10-21T20:10:00Z' });
+  t = noteThreads([a, b, done]);
+  assert.equal(t[0].open, false);
+  const again = note({ id: 'r', raw: a.cite_raw, ctx: a.context, from: 502, note: 'One more thing', at: '2026-10-21T20:20:00Z' });
+  assert.equal(noteThreads([a, b, done, again])[0].open, true);
+  // the same words elsewhere in the paragraph are another place
+  const far = note({ id: 'f', raw: a.cite_raw, ctx: a.context, from: 5000, note: 'elsewhere', at: '2026-10-21T20:30:00Z' });
+  assert.equal(noteThreads([a, far]).length, 2);
 });
