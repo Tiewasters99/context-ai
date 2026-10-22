@@ -96,8 +96,8 @@ export async function pasteVaultClip(targetMatterId: string, targetName: string)
   } else {
     // One call: copy_document takes the list and checks every document first.
     try {
-      // copy_document does not duplicate a file the folder already holds (same
-      // filename and size): it answers `already_copied`, or a `note` when the
+      // copy_document does not duplicate a copy the folder already holds of the
+      // same document, unchanged: it answers `already_copied`, or a `note` when the
       // document is already in that very folder.
       const r = await sandboxApi<{ copies?: { already_copied?: boolean; note?: string }[] }>('copy_document', {
         document_ids: todo.map((i) => i.docId),
