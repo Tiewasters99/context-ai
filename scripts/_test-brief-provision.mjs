@@ -54,6 +54,35 @@ test('a session law or local law is a year and a chapter, never a section', () =
   assert.equal(provisionQuery('Laws of 2020, chapter 205', BRIEF).number, '205');
 });
 
+// Eden, 10-21, on the Patel demo sanctions motion: highlighting "Federal Rule
+// of Evidence 702" opened Rule 11 — the spelled-out form read no number, and the
+// named-rule fallback took the NEXT number in the brief ("Rule 11(c)(2)").
+const MOTION = `Plaintiffs move under Federal Rule of Civil Procedure 11(c)(2) for sanctions based on Spatial
+Minds' Motion to Exclude Under Federal Rule of Evidence 702 (the "Motion to Exclude"). As Rule 11(c)(2) requires,
+this motion is made separately. Fed. R. Civ. P. 11(b)(2).`;
+
+test('a spelled-out federal rule reads its own number, never a neighbour’s', () => {
+  assert.equal(sectionNumber('Federal Rule of Evidence 702'), '702');
+  assert.equal(sectionNumber('Federal Rules of Evidence 702(b)'), '702');
+  assert.equal(sectionNumber('Federal Rule of Civil Procedure 11(c)(2)'), '11');
+  assert.equal(sectionNumber('Rule of Criminal Procedure 16'), '16');
+  assert.equal(sectionNumber('Federal Rule of Appellate Procedure 28(a)'), '28');
+  for (const [label, n] of [['Federal Rule of Evidence 702', '702'], ['Federal Rule of Civil Procedure 11(c)(2)', '11'],
+    ['Fed. R. Evid. 702', '702'], ['Rule 702', '702'], ['Fed. R. Civ. P. 11(b)(2)', '11']]) {
+    const q = provisionQuery(label, MOTION);
+    assert.equal(q.number, n, label);
+    assert.equal(q.from, 'cite', `${label} takes its number from the cite`);
+    assert.ok(q.patterns.includes(`Rule ${n}`), `${label} searches "Rule ${n}"`);
+  }
+});
+
+test('a cite with an unreadable number still never borrows one from the brief', () => {
+  const q = provisionQuery('Local Rule 7-3 of the Northern District', MOTION);
+  assert.notEqual(q.from, 'brief');
+  // a true name still does: the Holder Rule pairing is unchanged
+  assert.equal(provisionQuery("the Federal Trade Commission’s Holder Rule", BRIEF).number, '433.2');
+});
+
 test('a case caption is not a provision; a bare name with no number in the brief searches its words', () => {
   assert.equal(provisionQuery('Morgan v. Allison Crane & Rigging LLC, 114 F.4th 214', BRIEF), null);
   assert.ok(!looksLikeProvision('Taylor v. Phoenixville Sch. Dist.'));
