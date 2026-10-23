@@ -137,7 +137,10 @@ function stubWorld(opts = {}) {
         if (world.provider === 'rate_limited') return jsonRes({ error: { code: 429, message: 'You exceeded your current quota', status: 'RESOURCE_EXHAUSTED' } }, 429);
         return jsonRes({
           candidates: [{ content: { parts: [{ text: JSON.stringify(providerAnswer()) }] }, finishReason: 'STOP' }],
-          usageMetadata: { promptTokenCount: 9000, candidatesTokenCount: 400, thoughtsTokenCount: 100, totalTokenCount: 9500 },
+          usageMetadata: {
+            promptTokenCount: 9000, candidatesTokenCount: 400, thoughtsTokenCount: 100, totalTokenCount: 9500,
+            promptTokensDetails: [{ modality: 'TEXT', tokenCount: 300 }, { modality: 'VIDEO', tokenCount: 8700 }],
+          },
         });
       }
     }
@@ -207,6 +210,7 @@ console.log('\n1. The seal refuses before any byte moves');
 {
   const r = await call({ action: 'status' }, { sealed: true });
   check(r.status === 200, 'sealed matter, status: a READ is answered (RLS decides what the caller sees)', String(r.status));
+  check(r.body?.window_sec === 300, 'status names the longest window one question may watch (the 5-minute pass)', r.body?.window_sec);
   check(providerRequests().length === 0 && ledgerRows().length === 0, 'sealed matter, status: no provider, no Record row (nothing left, nothing to record)');
 }
 {
@@ -277,6 +281,8 @@ console.log('\n3. A question that is answered: the order of events, and the wind
   const meta = videoPart?.videoMetadata ?? videoPart?.video_metadata ?? {};
   check(/^30s$/.test(String(meta.startOffset ?? meta.start_offset)) && /^60s$/.test(String(meta.endOffset ?? meta.end_offset)), 'the provider request names the window (30s–60s), so the model sees only that footage', meta);
   check(gen.generationConfig?.responseMimeType === 'application/json' && gen.generationConfig?.responseSchema, 'and asks for structured JSON against the schema');
+  const budget = gen.generationConfig?.thinkingConfig?.thinkingBudget;
+  check(budget > 2048 && budget < gen.generationConfig?.maxOutputTokens, 'with a thinking budget that leaves room for the answer (and stays above the 2048 at which 3.8-flash stops thinking)', { budget, max: gen.generationConfig?.maxOutputTokens });
   check(providerRequests().filter((q) => q.url.includes(':generateContent')).length === 1, 'exactly ONE generateContent call');
   check(providerRequests().every((q) => !q.url.includes('upload')), 'and no upload — the copy the provider held was reused');
   const actual = rpcCalls('usage_record_actual')[0];
@@ -290,6 +296,7 @@ console.log('\n3. A question that is answered: the order of events, and the wind
   check(!JSON.stringify(ledgerRows()).includes(SENTINEL_PROMPT) && !JSON.stringify(ledgerRows()).includes('binder'), 'neither the question nor the answer is in the Record');
   const saved = restWrites('video_interrogations').map((q) => JSON.parse(q.init.body))[0];
   check(saved?.outcome === 'ok' && saved?.start_sec === 30 && saved?.end_sec === 60 && saved?.model === 'gemini-3.8-flash', 'the interrogation row stores the window, the model and the outcome', saved && { outcome: saved.outcome, start_sec: saved.start_sec, end_sec: saved.end_sec, model: saved.model });
+  check(JSON.stringify(saved?.result?.modalities_seen) === JSON.stringify(['TEXT', 'VIDEO']), 'and the modalities the provider counted, from usageMetadata', saved?.result?.modalities_seen);
 }
 {
   const r = await call({ action: 'interrogate', question: SENTINEL_PROMPT, start_sec: 30, end_sec: 60 }, { providerHolds: false });
