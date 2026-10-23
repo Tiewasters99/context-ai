@@ -230,12 +230,20 @@ const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
   assert.strictEqual(out.estimated_usd, (5000 * 5 + 500 * 25) / 1e6);
   ok('ocrPdfAnthropic: base64 PDF document per window, low effort, server-side fallbacks on, pages mapped by marker, usage summed into an estimate');
 
+  // 2026-10-22: a refusal no longer fails the whole document. The window is
+  // retried one page at a time, and a page still declined comes back
+  // `failed` with the reason — recorded as awaiting OCR, never as blank.
   const refusing = { beta: { messages: { stream: () => ({ finalMessage: async () => ({ stop_reason: 'refusal', stop_details: { category: 'graphic' }, content: [], usage: { input_tokens: 1, output_tokens: 0 } }) }) } } };
-  await assert.rejects(() => ocrPdfAnthropic(pdf, { client: refusing }), /declined to transcribe page\(s\) 1, 2, 3, 4, 5 \(graphic\)/);
+  const refused = await ocrPdfAnthropic(pdf, { client: refusing });
+  assert.strictEqual(refused.pages.length, 5);
+  assert(refused.pages.every((p) => p.failed === 'refusal' && p.text === ''), 'every page declined singly is failed:refusal');
+  assert.match(refused.pages[0].reason, /declined to transcribe page\(s\) 1 \(graphic\)/);
+  assert.strictEqual(refused.usage.requests, 1 + 5, 'one window of five, then five single pages');
   const truncating = { beta: { messages: { stream: () => ({ finalMessage: async () => ({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '<<<PAGE 1>>>\nhalf' }], usage: {} }) }) } } };
-  await assert.rejects(() => ocrPdfAnthropic(pdf, { client: truncating }), /truncated/);
+  const cut = await ocrPdfAnthropic(pdf, { client: truncating });
+  assert(cut.pages.every((p) => p.failed === 'truncated'), 'a window cut by max_tokens is retried singly; a page still cut is failed:truncated');
   assert.strictEqual(textOf({ content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }), 'ab');
-  ok('a refusal or a truncated window fails the window (the route falls back or records the pages) — never silent empty pages');
+  ok('a refusal or a truncated window is retried page by page; a page still declined is `failed` with its reason — never a silent empty page');
 }
 
 // --- long recordings --------------------------------------------------------------

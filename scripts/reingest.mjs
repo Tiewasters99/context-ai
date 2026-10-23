@@ -24,9 +24,10 @@
 //   SUPABASE_SERVICE_ROLE_KEY
 //   OPENAI_API_KEY
 // Optional env:
-//   GOOGLE_API_KEY — wires the Gemini OCR + transcription hooks, exactly like
-//   the production entry points. Without it, scanned PDFs/images re-ingest to
-//   zero passages and A/V loses its transcript — so it's near-mandatory.
+//   GOOGLE_API_KEY / ANTHROPIC_API_KEY — the OCR routes (lib/ocr-routes.mjs),
+//   exactly like the production entry points; GOOGLE_API_KEY also wires the
+//   transcription hook. Without them, scanned PDFs/images re-ingest to zero
+//   passages and A/V loses its transcript — so they are near-mandatory.
 
 import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs/promises';
@@ -35,7 +36,9 @@ import { fileURLToPath } from 'node:url';
 
 import { processDocument } from '../lib/ingest-core.mjs';
 import { assertPathInMatter } from '../lib/storage-path.mjs';
-import { reprocessInPlace } from '../lib/reprocess.mjs';
+import { reprocessInPlace, holdIngestJob } from '../lib/reprocess.mjs';
+import os from 'node:os';
+import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 await loadEnv(path.resolve(__dirname, '..', '.env'));
@@ -90,13 +93,18 @@ async function reingestOne(documentId) {
   const ext = path.extname(doc.source_filename || doc.storage_path).toLowerCase();
   log(`  ext: ${ext}, bytes: ${fileBuf.length.toLocaleString()}`);
 
-  // Same Gemini hooks the production entry points wire, so a re-ingest can
-  // never produce less than the original ingest did.
+  // The same OCR provider the production entry points wire (api/ingest.mjs,
+  // worker/discovery-worker.mjs): routes by tier, and since 2026-10-22 a page
+  // Gemini refuses (recitation on a published decision) goes to the next
+  // route instead of coming back blank. Until today this script wired the
+  // bare Gemini hook, so a re-run after the fix would still have left those
+  // pages awaiting OCR. Transcription stays on the Gemini hook as before.
   let ocr;
   let transcribe;
+  const provider = makeOcrProvider(process.env);
+  if (provider.configured()) ocr = provider;
+  else log('  WARNING: no OCR route configured — a scanned PDF re-ingests to zero passages.');
   if (GOOGLE_API_KEY) {
-    const { ocrPdf } = await import('../lib/ocr-gemini.mjs');
-    ocr = (buf) => ocrPdf(buf, { apiKey: GOOGLE_API_KEY });
     const { transcribeMedia, mimeForMediaExt } = await import('../lib/transcribe-gemini.mjs');
     transcribe = (buf, { ext: mediaExt, kind, onProgress }) => {
       const mimeType = mimeForMediaExt(mediaExt);
@@ -111,16 +119,19 @@ async function reingestOne(documentId) {
   // get their labels: `--matter <code> --ext .png,.jpg`.
   const { makeDescribeHook } = await import('../lib/describe-image-anthropic.mjs');
   const describe = makeDescribeHook(process.env);
-  const result = await reprocessInPlace(supabase, documentId, () => processDocument(supabase, {
-    documentId,
-    fileBuf,
-    ext,
-    openaiApiKey: OPENAI_API_KEY,
-    ocr,
-    transcribe,
-    describe,
-    onProgress: ({ stage, message }) => log(`  ${stage}: ${message}`),
-  }));
+  // Held as a running job for the whole run, so the worker's stranded sweep
+  // does not requeue the document under us (lib/reprocess.mjs, 2026-10-22).
+  const result = await holdIngestJob(supabase, { documentId, matterspaceId: doc.matterspace_id, claimedBy: `reingest.mjs@${os.hostname()}` },
+    () => reprocessInPlace(supabase, documentId, () => processDocument(supabase, {
+      documentId,
+      fileBuf,
+      ext,
+      openaiApiKey: OPENAI_API_KEY,
+      ocr,
+      transcribe,
+      describe,
+      onProgress: ({ stage, message }) => log(`  ${stage}: ${message}`),
+    })));
   log(`  ✓ ${result.passageCount} passages (${result.replacedPassages} old passage(s) replaced)`);
   return result.passageCount;
 }
