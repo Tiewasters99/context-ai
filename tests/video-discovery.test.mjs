@@ -2,13 +2,18 @@
 //   node --test tests/video-discovery.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import {
   fmtTime, parseTime, planWindows, buildAnalysisPrompt, buildInterrogationPrompt,
   normalizeEventGraph, looksExcerptRelative, mergeWindowGraphs, deriveMeasures, digestForWindow,
-  normalizeInterrogation, timestampsIn, ANALYSIS_WINDOW_SEC, WINDOW_OVERLAP_SEC,
+  normalizeInterrogation, timestampsIn, ANALYSIS_WINDOW_SEC, WINDOW_OVERLAP_SEC, windowSecFromEnv, mmssReading,
 } from '../lib/video-discovery/core.mjs';
 import { EVENT_GRAPH_SCHEMA, INTERROGATION_SCHEMA, EVENT_TYPES } from '../lib/video-discovery/schemas.mjs';
-import { modelsFromEnv, displayNameFor, expiryOf, mimeForExt, durationOf } from '../lib/video-discovery/gemini-video.mjs';
+import {
+  modelsFromEnv, displayNameFor, expiryOf, mimeForExt, durationOf, modalitiesSeen, uploadVideoFromPath,
+} from '../lib/video-discovery/gemini-video.mjs';
 import { isVideoFilename, mediaExportPayload, WORKER_ACTOR } from '../lib/video-discovery/jobs.mjs';
 import { estimateVideoCents, centsForTokens, VIDEO_TOKENS_PER_SECOND } from '../lib/usage-prices.mjs';
 
@@ -35,11 +40,28 @@ test('planWindows: one window for short recordings, overlapping passes for long 
   for (let i = 1; i < w.length; i++) assert.ok(w[i].startSec < w[i - 1].endSec, 'passes overlap');
 });
 
+test('the pass is five minutes unless GEMINI_VIDEO_WINDOW_SEC says otherwise (60-1200)', () => {
+  assert.equal(ANALYSIS_WINDOW_SEC, 300, 'the default this suite runs with');
+  assert.equal(windowSecFromEnv({}), 300);
+  assert.equal(windowSecFromEnv({ GEMINI_VIDEO_WINDOW_SEC: '600' }), 600);
+  for (const bad of ['30', '5000', 'abc', '']) assert.equal(windowSecFromEnv({ GEMINI_VIDEO_WINDOW_SEC: bad }), 300, `"${bad}" falls back`);
+  // A 25-minute recording: six passes, none longer than the window, each seam overlapping by 10 s, the end reached.
+  const w = planWindows(25 * 60);
+  assert.equal(w.length, 6);
+  for (const x of w) assert.ok(x.endSec - x.startSec <= 300, `pass ${x.index} is at most five minutes`);
+  for (let i = 1; i < w.length; i++) assert.equal(w[i].startSec, w[i - 1].endSec - WINDOW_OVERLAP_SEC);
+  assert.equal(w[0].startSec, 0);
+  assert.equal(w[w.length - 1].endSec, 1500);
+});
+
 test('prompts carry no legal vocabulary and state absolute time', () => {
   const p = buildAnalysisPrompt({ windowStart: 1190, windowEnd: 2390, durationSec: 3000, windowIndex: 1, windowCount: 3 });
   assert.match(p, /pass 2 of 3/);
   assert.match(p, /absolute position/);
   assert.match(p, /not at 00:30/);
+  assert.match(p, /1:45 is 105/);
+  assert.match(p, /11:33 is 693 \(11 × 60 \+ 33\), never 1133/);
+  assert.match(buildAnalysisPrompt({ durationSec: 90 }), /never 1133/, 'a one-pass recording gets the examples too');
   for (const banned of ['excessive', 'violation', 'directive', 'unlawful', 'sworn']) {
     assert.ok(!new RegExp(`\\b${banned}\\b`, 'i').test(p.replace(/Do not characterise conduct as[^.]*\./, '')), `prompt should not use "${banned}" except in the prohibition`);
   }
@@ -52,7 +74,7 @@ test('prompts carry no legal vocabulary and state absolute time', () => {
   assert.match(q2, /leave claim_assessments empty/);
 });
 
-test('normalizeEventGraph: clamps, sorts, enforces enums, drops junk', () => {
+test('normalizeEventGraph: sorts, enforces enums, drops junk, and flags (never clamps) times it cannot place', () => {
   const raw = {
     video: { duration_sec: '120', has_audio: true, camera_description: 'handheld' },
     actors: [{ id: 'A1', label: 'person in white coat', identifying_marks: '', role_observed: '', first_seen_sec: 5 }, { label: '' }],
@@ -71,16 +93,54 @@ test('normalizeEventGraph: clamps, sorts, enforces enums, drops junk', () => {
   assert.equal(g.video.duration_sec, 120);
   assert.equal(g.actors.length, 1);
   assert.deepEqual(g.events.map((e) => e.description), ['first', 'later', 'past the end']);
+  assert.equal(g.events[0].time_flag, undefined, 'a placeable entry carries no flag');
   assert.equal(g.events[1].type, 'OTHER');
-  assert.equal(g.events[1].end_sec, null, 'an end before the start is dropped');
+  assert.equal(g.events[1].end_sec, 40, 'a backwards interval keeps the end the model gave');
+  assert.equal(g.events[1].time_flag, 'suspect');
+  assert.match(g.events[1].time_flag_reason, /ends \(40\) before it starts \(50\)/);
   assert.deepEqual(g.events[1].actor_ids, ['A1'], 'unknown actor handles are dropped');
   assert.equal(g.events[1].basis, 'visual');
   assert.equal(g.events[1].confidence, 'medium');
-  assert.equal(g.events[2].start_sec, 120, 'clamped to the duration');
-  assert.equal(g.camera_coverage.length, 1);
+  assert.equal(g.events[2].start_sec, 999, 'past the end: kept as reported, not clamped');
+  assert.equal(g.events[2].time_flag, 'suspect');
+  assert.match(g.events[2].time_flag_reason, /999 s is outside this pass \(00:00–02:00\)/);
+  assert.equal(g.camera_coverage.length, 2, 'the backwards coverage interval is kept');
   assert.deepEqual(g.camera_coverage[0].obstructed_by, []);
+  assert.equal(g.camera_coverage[1].time_flag, 'suspect');
   assert.equal(g.subject_position[0].restrained, false, 'only a real true counts');
   assert.equal(g.transcript.length, 1);
+});
+
+test('normalizeEventGraph: MMSS run together is flagged with its reading; rounding at the edge is not', () => {
+  assert.equal(mmssReading(1133), 693);
+  assert.equal(mmssReading(105), 65);
+  assert.equal(mmssReading(170), null, '70 is not a seconds field');
+  assert.equal(mmssReading(12.5), null);
+  // Pass 3 of a recording: 580-880 s. 1133 lies past the pass; read as 11:33 = 693 s it lands inside.
+  const g = normalizeEventGraph({
+    events: [
+      { start_sec: 1133, end_sec: 1140, type: 'VERBAL', description: 'mmss' },
+      { start_sec: 600, end_sec: 881.5, type: 'OTHER', description: 'rounding past the end' },
+      { start_sec: 2000, type: 'OTHER', description: 'outside, no MMSS reading inside' },
+      { start_sec: 700, type: 'OTHER', description: 'model says flagged', time_flag: 'suspect', time_flag_reason: 'trust me' },
+    ],
+    camera_coverage: [{ start_sec: 578.5, end_sec: 700, status: 'CLEAR' }],
+    subject_position: [{ start_sec: 610, end_sec: 1205, position: 'PRONE' }],
+    transcript: [{ start_sec: 1133, speaker: 'A1', text: 'mmss line' }],
+  }, { clampStart: 580, clampEnd: 880 });
+  const byDesc = Object.fromEntries(g.events.map((e) => [e.description, e]));
+  assert.equal(byDesc.mmss.start_sec, 1133, 'kept as reported');
+  assert.match(byDesc.mmss.time_flag_reason, /1133 reads as 11:33 written without the colon \(693 s\)/);
+  assert.equal(byDesc['rounding past the end'].end_sec, 880, 'within the 2-s slack: placed at the edge, not flagged');
+  assert.equal(byDesc['rounding past the end'].time_flag, undefined);
+  assert.equal(byDesc['outside, no MMSS reading inside'].time_flag, 'suspect');
+  assert.doesNotMatch(byDesc['outside, no MMSS reading inside'].time_flag_reason, /reads as/);
+  assert.equal(byDesc['model says flagged'].time_flag, undefined, 'a flag the model volunteers is ignored');
+  assert.equal(g.camera_coverage[0].start_sec, 580);
+  assert.equal(g.camera_coverage[0].time_flag, undefined);
+  assert.equal(g.subject_position[0].end_sec, 1205);
+  assert.match(g.subject_position[0].time_flag_reason, /1205 reads as 12:05/);
+  assert.equal(g.transcript[0].time_flag, 'suspect');
 });
 
 test('looksExcerptRelative detects a pass that ignored the absolute-time instruction', () => {
@@ -118,6 +178,53 @@ test('mergeWindowGraphs merges actors by identity, drops the overlap, merges adj
   assert.equal(merged.video.duration_sec, 2400);
 });
 
+test('mergeWindowGraphs across many seams: a 25-minute recording in six passes, the same moment reported on both sides of every seam', () => {
+  const windows = planWindows(1500);
+  assert.equal(windows.length, 6);
+  const passes = windows.map((w) => {
+    const seamIn = w.startSec + WINDOW_OVERLAP_SEC + 2; // past the earlier pass's end, so only the seam check can drop it
+    const seamOut = w.endSec - 1;    // the same moment, seen from the earlier side of the seam
+    const events = [
+      { start_sec: w.startSec + 60, type: 'OTHER', description: `middle ${w.index}` },
+      ...(w.index > 0 ? [{ start_sec: seamIn, type: 'VERBAL', description: `seam ${w.index} late view`, verbatim_quote: `Line ${w.index}!` }] : []),
+      ...(w.index < windows.length - 1 ? [{ start_sec: seamOut, type: 'VERBAL', description: `seam ${w.index + 1} early view`, verbatim_quote: `line ${w.index + 1}` }] : []),
+      // Same type at the seam but different words: a second exchange, not a duplicate.
+      ...(w.index > 0 ? [{ start_sec: seamIn + 1, type: 'VERBAL', description: `reply ${w.index}`, verbatim_quote: `reply ${w.index}` }] : []),
+    ];
+    const transcript = [
+      ...(w.index > 0 ? [{ start_sec: seamIn, speaker: 'A1', text: `Line ${w.index}!` }] : []),
+      ...(w.index < windows.length - 1 ? [{ start_sec: seamOut, speaker: 'A1', text: `line ${w.index + 1}` }] : []),
+    ];
+    if (w.index === 2) events.push({ start_sec: 1205, type: 'OTHER', description: 'flagged MMSS' }); // 12:05 run together, pass 580-880
+    return {
+      index: w.index, windowStart: w.startSec, windowEnd: w.endSec,
+      graph: normalizeEventGraph({
+        video: { has_audio: true },
+        actors: [{ id: 'A1', label: 'speaker', identifying_marks: 'red jacket', first_seen_sec: w.startSec }],
+        events, transcript,
+        camera_coverage: [{ start_sec: w.startSec, end_sec: w.endSec, status: w.index === 2 ? 'OCCLUDED' : 'CLEAR' }],
+        subject_position: [],
+      }, { clampStart: w.startSec, clampEnd: w.endSec, durationSec: 1500 }),
+    };
+  });
+  const merged = mergeWindowGraphs(passes, { durationSec: 1500 });
+  const seamEvents = merged.events.filter((e) => /^seam/.test(e.description));
+  assert.equal(seamEvents.length, 5, 'one entry per seam, not two');
+  assert.ok(seamEvents.every((e) => /early view/.test(e.description)), 'the earlier pass owns the seam');
+  assert.equal(merged.events.filter((e) => /^reply/.test(e.description)).length, 5, 'a different exchange at the seam is kept');
+  assert.equal(merged.events.filter((e) => /^middle/.test(e.description)).length, 6);
+  assert.equal(merged.transcript.length, 5, 'one transcript line per seam');
+  assert.equal(merged.actors.length, 1);
+  const flagged = merged.events.find((e) => e.description === 'flagged MMSS');
+  assert.ok(flagged && flagged.time_flag === 'suspect', 'a flagged entry survives the merge wherever it says it is');
+  // Coverage: contiguous, CLEAR / OCCLUDED / CLEAR, ending at the end.
+  assert.deepEqual(merged.camera_coverage.map((c) => c.status), ['CLEAR', 'OCCLUDED', 'CLEAR']);
+  assert.equal(merged.camera_coverage[0].start_sec, 0);
+  assert.equal(merged.camera_coverage.at(-1).end_sec, 1500);
+  for (let i = 1; i < merged.camera_coverage.length; i++) assert.equal(merged.camera_coverage[i].start_sec, merged.camera_coverage[i - 1].end_sec, 'no gap, no overlap at a seam');
+  for (let i = 1; i < merged.events.length; i++) assert.ok(merged.events[i].start_sec >= merged.events[i - 1].start_sec, 'sorted');
+});
+
 test('deriveMeasures adds up the model\'s intervals', () => {
   const g = normalizeEventGraph({
     video: {}, actors: [],
@@ -132,6 +239,25 @@ test('deriveMeasures adds up the model\'s intervals', () => {
   assert.equal(m.restrained_total_sec, 70);
   assert.deepEqual(m.longest_position, { position: 'PRONE', total_sec: 70 });
   assert.equal(m.low_confidence_events, 1);
+  assert.equal(m.time_flagged, 0);
+});
+
+test('deriveMeasures and the digest leave flagged entries out, and say how many there were', () => {
+  const g = normalizeEventGraph({
+    events: [{ start_sec: 10, type: 'OTHER', description: 'placed' }, { start_sec: 1133, type: 'OTHER', description: 'flagged' }],
+    camera_coverage: [{ start_sec: 0, end_sec: 100, status: 'CLEAR' }, { start_sec: 90, end_sec: 50, status: 'OCCLUDED' }],
+    subject_position: [{ start_sec: 20, end_sec: 60, position: 'PRONE' }, { start_sec: 100, end_sec: 1205, position: 'PRONE' }],
+    transcript: [{ start_sec: 5, text: 'ok' }, { start_sec: 2000, text: 'flagged line' }],
+  }, { durationSec: 300 });
+  const m = deriveMeasures(g);
+  assert.equal(m.time_flagged, 4, 'one event, one coverage, one position, one transcript line');
+  assert.equal(m.coverage_sec.OCCLUDED, 0, 'the backwards OCCLUDED interval is not added');
+  assert.equal(m.coverage_sec.CLEAR, 100);
+  assert.equal(m.position_totals_sec.PRONE, 40, 'the 1,105-s flagged interval is not added');
+  assert.equal(m.event_count, 2, 'events are still all counted');
+  const d = digestForWindow(g, null, null);
+  assert.match(d, /placed/);
+  assert.doesNotMatch(d, /flagged/);
 });
 
 test('digestForWindow keeps only what falls in the window', () => {
@@ -199,16 +325,87 @@ test('adapter helpers: env-driven models, stable display names, expiry, mime', (
   assert.equal(durationOf({}), null);
   assert.equal(isVideoFilename('Clip.MP4'), true);
   assert.equal(isVideoFilename('brief.pdf'), false);
+  assert.deepEqual(modalitiesSeen({ promptTokensDetails: [{ modality: 'VIDEO', tokenCount: 5460 }, { modality: 'TEXT', tokenCount: 329 }] }), ['TEXT', 'VIDEO']);
+  assert.deepEqual(modalitiesSeen({ promptTokensDetails: [{ modality: 'TEXT', tokenCount: 330 }, { modality: 'AUDIO', tokenCount: 2880 }, { modality: 'VIDEO', tokenCount: 0 }] }), ['AUDIO', 'TEXT'], 'a zero count is not a modality seen (the 2.5-flash clipped shape)');
+  assert.equal(modalitiesSeen({ promptTokenCount: 9000 }), null, 'no breakdown: unknown, never "no video"');
+  assert.equal(modalitiesSeen(null), null);
+});
+
+test('a failed chunk resumes from the offset the upload session reports, never from zero', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-video-test-'));
+  const file = path.join(dir, 'clip.mp4');
+  const bytes = Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 251));
+  await fsp.writeFile(file, bytes);
+  const SESSION = 'https://upload.example/session-1';
+  const held = [];              // what the "server" has committed, in order
+  const puts = [];              // X-Goog-Upload-Offset of every chunk PUT
+  let failedOnce = false;
+  const res = (status, headers = {}, body = null) => ({
+    ok: status >= 200 && status < 300, status,
+    headers: { get: (k) => headers[k.toLowerCase()] ?? null },
+    json: async () => body, text: async () => JSON.stringify(body ?? {}),
+  });
+  const fetchImpl = async (url, init) => {
+    const h = Object.fromEntries(Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+    if (String(url).includes('/upload/v1beta/files')) return res(200, { 'x-goog-upload-url': SESSION });
+    assert.equal(url, SESSION);
+    if (h['x-goog-upload-command'] === 'query') {
+      return res(200, { 'x-goog-upload-status': 'active', 'x-goog-upload-size-received': String(held.length) });
+    }
+    const offset = Number(h['x-goog-upload-offset']);
+    puts.push(offset);
+    assert.equal(offset, held.length, 'every chunk starts exactly where the session left off');
+    const body = Buffer.from(init.body);
+    if (offset === 256 && !failedOnce) {
+      // The socket dies after the server took 128 of the chunk's 256 bytes.
+      failedOnce = true;
+      held.push(...body.subarray(0, 128));
+      throw new Error('socket hang up');
+    }
+    held.push(...body);
+    return h['x-goog-upload-command'].includes('finalize')
+      ? res(200, {}, { file: { name: 'files/abc', uri: 'https://x/files/abc', state: 'PROCESSING' } })
+      : res(200);
+  };
+  const out = await uploadVideoFromPath({ apiKey: 'k', filePath: file, fetchImpl, chunkBytes: 256, retryDelayMs: () => 0 });
+  assert.equal(out.name, 'files/abc');
+  assert.deepEqual(puts, [0, 256, 384, 640, 896], 'resumed at 384 (what the session held), not at 256 or 0');
+  assert.ok(Buffer.from(held).equals(bytes), 'the bytes the server holds are the file, once, in order');
+  await fsp.rm(dir, { recursive: true, force: true });
+});
+
+test('a finalize whose answer was lost is recovered from the session, not uploaded again', async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-video-test-'));
+  const file = path.join(dir, 'clip.mp4');
+  await fsp.writeFile(file, Buffer.alloc(300, 7));
+  let puts = 0;
+  const res = (status, headers = {}, body = null) => ({
+    ok: status >= 200 && status < 300, status,
+    headers: { get: (k) => headers[k.toLowerCase()] ?? null },
+    json: async () => body, text: async () => '',
+  });
+  const fetchImpl = async (url, init) => {
+    if (String(url).includes('/upload/v1beta/files')) return res(200, { 'x-goog-upload-url': 'https://s' });
+    if (init.headers['X-Goog-Upload-Command'] === 'query') return res(200, { 'x-goog-upload-status': 'final', 'x-goog-upload-size-received': '300' }, { file: { name: 'files/done' } });
+    puts++;
+    throw new Error('connection reset after the server finalised');
+  };
+  const out = await uploadVideoFromPath({ apiKey: 'k', filePath: file, fetchImpl, chunkBytes: 1024, retryDelayMs: () => 0 });
+  assert.equal(out.name, 'files/done');
+  assert.equal(puts, 1, 'the bytes went up once');
+  await fsp.rm(dir, { recursive: true, force: true });
 });
 
 test('the video meter charges the footage as input tokens plus the full answer allowance, rounded up', () => {
-  assert.equal(VIDEO_TOKENS_PER_SECOND, 295);
-  // 90 s × 295 = 26,550 input tokens at $0.30/M + 16,384 output at $2.50/M = 4.9 ¢ → 5 ¢
-  assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 90, maxOutputTokens: 16384 }), 5);
-  // one 20-minute window: 354,000 input tokens → 10.6 ¢ + 4.1 ¢ → 15 ¢
-  assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200, maxOutputTokens: 16384 }), 15);
+  assert.equal(VIDEO_TOKENS_PER_SECOND, 91, 'measured on gemini-3.8-flash 2026-10-23');
+  // 90 s × 91 = 8,190 input tokens at $0.75/M + 16,384 output at $3.75/M = 0.61 ¢ + 6.14 ¢ → 7 ¢ (was 8 ¢ at 295/s)
+  assert.equal(estimateVideoCents({ model: 'gemini-3.8-flash', seconds: 90, maxOutputTokens: 16384 }), 7);
+  // one 5-minute pass: 27,300 input tokens → 2.05 ¢ + 6.14 ¢ → 9 ¢
+  assert.equal(estimateVideoCents({ model: 'gemini-3.8-flash', seconds: 300, maxOutputTokens: 16384 }), 9);
+  // 20 minutes on the older rate table: 109,200 input at $0.30/M + 16,384 output at $2.50/M = 3.3 ¢ + 4.1 ¢ → 8 ¢
+  assert.equal(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200, maxOutputTokens: 16384 }), 8);
   // the question's bytes count too
-  assert.ok(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200, promptText: 'x'.repeat(300000) }) > 15);
+  assert.ok(estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200, promptText: 'x'.repeat(300000) }) > 8);
   // an unknown Google model falls back to the provider's dearest rate — never cheap by accident
   assert.ok(estimateVideoCents({ model: 'gemini-9-ultra', seconds: 1200 }) > estimateVideoCents({ model: 'gemini-2.5-flash', seconds: 1200 }));
   // nothing watched, nothing asked: only the output allowance

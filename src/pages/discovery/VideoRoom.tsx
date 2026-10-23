@@ -335,6 +335,7 @@ function RoomBody({ status, documentId, onChanged, onMediaExpired, awaitingMedia
               onMediaExpired={onMediaExpired}
               awaitingMedia={awaitingMedia}
               total={total}
+              maxWindow={status.window_sec ?? 5 * 60}
             />
           )}
         </div>
@@ -405,7 +406,7 @@ function AnalyzePanel({ documentId, onStarted }: { documentId: string; onStarted
         <p className="text-[12.5px] text-white/60 leading-relaxed">
           The recording is sent to a video model, which returns a timed account of what it saw and heard: who appears, what happens
           when, where the camera could and could not see, how the subject is positioned, and everything spoken. Long recordings are
-          read in twenty-minute passes. The model&rsquo;s copy lasts 48 hours; questions after that re-upload it first. Nothing it
+          read in passes of a few minutes each. The model&rsquo;s copy lasts 48 hours; questions after that re-upload it first. Nothing it
           returns is a finding until a person has watched the footage against it and said so.
         </p>
         <p className="text-[11.5px] text-white/40">Sealed matters are refused: their recordings do not leave the seal.</p>
@@ -490,8 +491,8 @@ function Timeline({ graph, total, t, inSec, outSec, onSeek }: {
       <Row label="camera">
         <div className="relative h-3.5 rounded bg-white/[0.04] overflow-hidden cursor-pointer" onClick={clickAt}>
           {graph.camera_coverage.map((c, i) => (
-            <div key={i} className={`absolute top-0 bottom-0 ${COVERAGE_STYLE[c.status].band}`} style={{ left: pct(c.start_sec), width: width(c.start_sec, c.end_sec) }}
-              title={`${fmtTime(c.start_sec)}–${fmtTime(c.end_sec)} ${COVERAGE_STYLE[c.status].label}${c.obstructed_by.length ? ` (${c.obstructed_by.join(', ')})` : ''}${c.what_is_not_visible ? `: ${c.what_is_not_visible}` : ''}`} />
+            <div key={i} className={`absolute top-0 bottom-0 ${COVERAGE_STYLE[c.status].band}${c.time_flag ? FLAGGED_BAND : ''}`} style={{ left: pct(Math.min(c.start_sec, c.end_sec)), width: width(Math.min(c.start_sec, c.end_sec), Math.max(c.start_sec, c.end_sec)) }}
+              title={`${flagNote(c)}${fmtTime(c.start_sec)}–${fmtTime(c.end_sec)} ${COVERAGE_STYLE[c.status].label}${c.obstructed_by.length ? ` (${c.obstructed_by.join(', ')})` : ''}${c.what_is_not_visible ? `: ${c.what_is_not_visible}` : ''}`} />
           ))}
           <Playhead pct={pct(t)} />
         </div>
@@ -500,8 +501,8 @@ function Timeline({ graph, total, t, inSec, outSec, onSeek }: {
         <Row label="subject">
           <div className="relative h-3.5 rounded bg-white/[0.04] overflow-hidden cursor-pointer" onClick={clickAt}>
             {graph.subject_position.map((p, i) => (
-              <div key={i} className={`absolute top-0 bottom-0 ${POSITION_STYLE[p.position]} ${p.restrained ? 'border-y border-white/40' : ''}`} style={{ left: pct(p.start_sec), width: width(p.start_sec, p.end_sec) }}
-                title={`${fmtTime(p.start_sec)}–${fmtTime(p.end_sec)} ${p.position.toLowerCase()}${p.restrained ? ', restrained' : ''} (${p.confidence} confidence, ${p.basis})`} />
+              <div key={i} className={`absolute top-0 bottom-0 ${POSITION_STYLE[p.position]} ${p.restrained ? 'border-y border-white/40' : ''}${p.time_flag ? FLAGGED_BAND : ''}`} style={{ left: pct(Math.min(p.start_sec, p.end_sec)), width: width(Math.min(p.start_sec, p.end_sec), Math.max(p.start_sec, p.end_sec)) }}
+                title={`${flagNote(p)}${fmtTime(p.start_sec)}–${fmtTime(p.end_sec)} ${p.position.toLowerCase()}${p.restrained ? ', restrained' : ''} (${p.confidence} confidence, ${p.basis})`} />
             ))}
             <Playhead pct={pct(t)} />
           </div>
@@ -512,12 +513,17 @@ function Timeline({ graph, total, t, inSec, outSec, onSeek }: {
           {inSec != null && outSec != null && outSec > inSec && (
             <div className="absolute top-0 bottom-0 bg-white/10 border-x border-white/40" style={{ left: pct(inSec), width: width(inSec, outSec) }} />
           )}
-          {graph.events.map((e, i) => (
+          {graph.events.map((e, i) => (e.time_flag ? (
+            <button key={i} type="button" onClick={(ev) => { ev.stopPropagation(); onSeek(e.start_sec); }}
+              className="absolute top-0 bottom-0 -ml-[4px] text-[10px] leading-5 text-amber-300 hover:scale-125 transition-transform"
+              style={{ left: pct(e.start_sec) }}
+              title={`${flagNote(e)}[${fmtTime(e.start_sec)}] ${EVENT_TYPE_LABEL[e.type] ?? e.type}: ${e.description}`}>⚑</button>
+          ) : (
             <button key={i} type="button" onClick={(ev) => { ev.stopPropagation(); onSeek(e.start_sec); }}
               className="absolute top-1 bottom-1 w-1.5 -ml-[3px] rounded-sm hover:scale-125 transition-transform"
               style={{ left: pct(e.start_sec), background: e.type === 'FORCE_CONTACT' || e.type === 'RESTRAINT_APPLIED' ? '#fb7185' : e.type === 'MEDICAL' ? '#c4b5fd' : GOLD, opacity: e.confidence === 'low' ? 0.45 : 1 }}
               title={`[${fmtTime(e.start_sec)}] ${EVENT_TYPE_LABEL[e.type] ?? e.type}: ${e.description}`} />
-          ))}
+          )))}
           <Playhead pct={pct(t)} />
         </div>
       </Row>
@@ -530,6 +536,11 @@ function Timeline({ graph, total, t, inSec, outSec, onSeek }: {
       </div>
     </div>
   );
+}
+// An entry whose time the server could not place as the model reported it.
+const FLAGGED_BAND = ' opacity-40 border border-dashed border-amber-300';
+function flagNote(x: { time_flag?: string; time_flag_reason?: string }): string {
+  return x.time_flag ? `⚑ time flagged (${x.time_flag_reason ?? 'not placeable as reported'}). ` : '';
 }
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -561,6 +572,7 @@ function EventsList({ events, actors, t, onSeek }: {
                 {fmtTime(e.start_sec)}{e.end_sec != null && e.end_sec > e.start_sec ? `–${fmtTime(e.end_sec)}` : ''}
               </span>
               <span className="text-[10px] uppercase tracking-wider text-white/55">{EVENT_TYPE_LABEL[e.type] ?? e.type}</span>
+              {e.time_flag && <span className="text-[10px] text-amber-300" title={e.time_flag_reason}>⚑ time flagged</span>}
               <span className="text-[10px] text-white/35 ml-auto">{e.basis}{e.confidence !== 'high' ? ` · ${e.confidence} confidence` : ''}</span>
             </div>
             <p className="text-[12.5px] text-white/85 leading-relaxed">{e.description}</p>
@@ -591,6 +603,7 @@ function MeasuresPanel({ analysis }: { analysis: VideoAnalysis }) {
         {positions.map(([p, s]) => <Stat key={p} label={`Subject ${p.toLowerCase()}`} value={fmtDuration(s)} />)}
         {m.restrained_total_sec > 0 && <Stat label="Subject visibly restrained" value={fmtDuration(m.restrained_total_sec)} />}
         <Stat label="Events recorded" value={`${m.event_count}${m.low_confidence_events ? ` (${m.low_confidence_events} low confidence)` : ''}`} />
+        {(m.time_flagged ?? 0) > 0 && <Stat label="⚑ Entries with a flagged time, left out of these totals" value={String(m.time_flagged)} />}
         <Stat label="People identified" value={String(m.actor_count)} />
         <Stat label="Passes" value={String(analysis.windows ?? 1)} />
         <Stat label="Model" value={analysis.model ?? '—'} />
@@ -612,9 +625,9 @@ function QuestionConsole(props: {
   documentId: string; analysis: VideoAnalysis; interrogations: VideoInterrogation[];
   inSec: number | null; outSec: number | null; inText: string; outText: string;
   onInText: (t: string) => void; onOutText: (t: string) => void;
-  onSeek: (s: number) => void; onAsked: () => Promise<void>; onMediaExpired: () => void; awaitingMedia: boolean; total: number;
+  onSeek: (s: number) => void; onAsked: () => Promise<void>; onMediaExpired: () => void; awaitingMedia: boolean; total: number; maxWindow: number;
 }) {
-  const { documentId, analysis, interrogations, inSec, outSec, inText, outText, onInText, onOutText, onSeek, onAsked, onMediaExpired, awaitingMedia, total } = props;
+  const { documentId, analysis, interrogations, inSec, outSec, inText, outText, onInText, onOutText, onSeek, onAsked, onMediaExpired, awaitingMedia, total, maxWindow } = props;
   const [question, setQuestion] = useState('');
   const [claims, setClaims] = useState<string[]>([]);
   const [claimDraft, setClaimDraft] = useState('');
@@ -622,8 +635,9 @@ function QuestionConsole(props: {
   const [err, setErr] = useState<string | null>(null);
   const [local, setLocal] = useState<VideoInterrogation[]>([]);
 
-  // One question watches at most one analysis pass's worth of footage (20 min).
-  const MAX_WINDOW = 20 * 60;
+  // One question watches at most one analysis pass's worth of footage (the server says how much).
+  const MAX_WINDOW = maxWindow;
+  const windowWords = MAX_WINDOW % 60 === 0 ? `${MAX_WINDOW / 60} minute${MAX_WINDOW === 60 ? '' : 's'}` : fmtDuration(MAX_WINDOW);
   const needsWindow = total > MAX_WINDOW;
   const windowOk = (inSec == null && outSec == null && !needsWindow)
     || (inSec != null && outSec != null && outSec > inSec && outSec - inSec <= MAX_WINDOW);
@@ -688,9 +702,9 @@ function QuestionConsole(props: {
         </div>
         <p className="text-[11px] text-white/40 pb-2">
           {inSec != null && outSec != null && windowOk ? `The model watches ${fmtTime(inSec)}–${fmtTime(outSec)} (${fmtDuration(outSec - inSec)}).`
-            : inSec != null && outSec != null && outSec - inSec > MAX_WINDOW ? 'A window can be at most twenty minutes.'
+            : inSec != null && outSec != null && outSec - inSec > MAX_WINDOW ? `A window can be at most ${windowWords}.`
             : inSec != null && outSec != null && !windowOk ? 'The end must be after the start.'
-            : needsWindow ? 'This recording is longer than twenty minutes, so a question needs a window. Set in / Set out under the player fills them.'
+            : needsWindow ? `This recording is longer than ${windowWords}, so a question needs a window. Set in / Set out under the player fills them.`
             : 'Leave both empty to ask about the whole recording. Set in / Set out under the player fills them.'}
         </p>
       </div>
@@ -739,6 +753,8 @@ function QuestionConsole(props: {
 
 function Answer({ q, onSeek }: { q: VideoInterrogation; onSeek: (s: number) => void }) {
   const r: InterrogationResult | null = q.result;
+  // The provider said what it counted, and frames were not among it.
+  const noFrames = Array.isArray(r?.modalities_seen) && r.modalities_seen.length > 0 && !r.modalities_seen.includes('VIDEO');
   return (
     <div className="rounded-lg border border-white/[0.08] bg-black/40 p-3.5 space-y-3">
       <div className="flex items-start gap-2 flex-wrap text-[12px]">
@@ -755,6 +771,11 @@ function Answer({ q, onSeek }: { q: VideoInterrogation; onSeek: (s: number) => v
       )}
       {r && (
         <>
+          {noFrames && (
+            <p className="text-[11.5px] text-amber-200" title={`The provider counted ${r.modalities_seen?.join(', ')} for this answer.`}>
+              From audio/transcript only: the provider counted no video frames for this answer.
+            </p>
+          )}
           <Markdown text={r.answer_markdown} onSeek={onSeek} />
           {r.cited_intervals.length > 0 && (
             <div className="flex flex-wrap gap-1.5">

@@ -29,8 +29,15 @@ export const providers: ProviderConfig[] = [
     id: 'google',
     name: 'Google',
     models: [
-      { id: 'gemini-2.5-pro', apiModelId: 'gemini-2.5-pro-preview-06-05', name: 'Gemini 2.5 Pro', description: 'Massive context — 1M tokens, great for large documents', contextWindow: 1000000, tier: 'byok' },
-      { id: 'gemini-2.5-flash', apiModelId: 'gemini-2.5-flash-preview-05-20', name: 'Gemini 2.5 Flash', description: 'Fast and efficient with large context', contextWindow: 1000000, tier: 'byok' },
+      // The ids below are catalog keys that saved choices point at (findModel), so
+      // they stay; what is sent to Google is apiModelId. Google retired the 2.5
+      // ids for new projects (404 "no longer available to new users", 2026-10-19).
+      // Checked against models.list + a one-word call on 2026-10-23: no Pro id is
+      // generally available — gemini-2.5-pro answers 404 and names
+      // gemini-3.1-pro-preview as its successor, which is also what the
+      // gemini-pro-latest alias resolves to. inputTokenLimit 1,048,576 for both.
+      { id: 'gemini-2.5-pro', apiModelId: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (preview)', description: 'Google\'s current Pro, still a preview release — 1M-token context for large documents', contextWindow: 1048576, tier: 'byok' },
+      { id: 'gemini-2.5-flash', apiModelId: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash', description: 'Fast and efficient, 1M-token context', contextWindow: 1048576, tier: 'byok' },
     ],
   },
   {
