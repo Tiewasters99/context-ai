@@ -27,6 +27,9 @@ interface SandboxDoc {
   processing_status: string;
   storage_path: string | null;
   doc_type: string | null;
+  // Set on a brief the desk made from a filed copy (draft-store.ts
+  // importBriefFromDocument): the copy it was made from, in this same box.
+  source_document_id: string | null;
 }
 
 interface PickerDoc {
@@ -42,6 +45,11 @@ const isPdf = (d: SandboxDoc) =>
 // "Open in the Brief Desk" button.
 const isDeskable = (d: SandboxDoc) =>
   d.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(d.source_filename ?? '');
+
+// The desk's working copy of another row in the box. It carries the same
+// title as its source (Eden, 10-22: two identical titles and nothing to tell
+// them apart), so the list tags it and names what it was made from.
+const isDeskCopy = (d: SandboxDoc) => d.doc_type === 'brief' && !!d.source_document_id;
 
 // A copy is opened where it sits (Eden, 10-22: "so we can actually open
 // documents and work on them in the Sandbox"): its name opens the Reader;
@@ -101,7 +109,7 @@ export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id:
       const { rows } = await fetchPaged<SandboxDoc>(
         (from, to) => supabase
           .from('documents')
-          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path, doc_type')
+          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path, doc_type, source_document_id:metadata->>source_document_id')
           .eq('matterspace_id', boxId)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -392,6 +400,8 @@ export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id:
             <div className="space-y-1 max-w-3xl">
               {docs.map((d) => {
                 const orderIdx = selection.indexOf(d.id);
+                const deskCopy = isDeskCopy(d);
+                const sourceTitle = deskCopy ? docs.find((x) => x.id === d.source_document_id)?.title : undefined;
                 return (
                   <div
                     key={d.id}
@@ -414,7 +424,17 @@ export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id:
                       title="Open this working copy in the Reader"
                       className="min-w-0 flex-1 text-left"
                     >
-                      <span className="text-[12px] text-white/90 truncate block hover:text-[#e8b84a] hover:underline">{d.title}</span>
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="text-[12px] text-white/90 truncate hover:text-[#e8b84a] hover:underline">{d.title}</span>
+                        {deskCopy && (
+                          <span
+                            title={sourceTitle ? `The Brief Desk's working copy of "${sourceTitle}". Its readings and notes stay here, off the original's log.` : 'The Brief Desk’s working copy. Its readings and notes stay here, off the original’s log.'}
+                            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-[1px] rounded border border-[rgba(232,184,74,0.35)] bg-[rgba(232,184,74,0.1)] text-[#e8b84a] text-[9px] font-semibold uppercase tracking-wide"
+                          >
+                            <PenLine size={9} /> Desk copy
+                          </span>
+                        )}
+                      </span>
                       <span className="text-[10px] text-white/40">
                         {d.source_filename ?? 'text'}
                         {d.file_size_bytes ? ` · ${(d.file_size_bytes / 1024).toFixed(0)} KB` : ''}
@@ -424,7 +444,9 @@ export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id:
                     {isDeskable(d) && (
                       <button
                         onClick={() => void openOnDesk(d)}
-                        title="Open it in the Brief Desk to edit it and check its cites. Its desk copy is filed in this box; the original in its matter is never touched."
+                        title={deskCopy
+                          ? 'Open this working copy on the Brief Desk.'
+                          : 'Open it in the Brief Desk to edit it and check its cites. Its desk copy is filed in this box; the original in its matter is never touched.'}
                         className="h-7 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-[11px] text-white/60 hover:text-[#e8b84a] transition-colors shrink-0"
                       >
                         <PenLine size={13} /> <span className="hidden md:inline">Brief Desk</span>
