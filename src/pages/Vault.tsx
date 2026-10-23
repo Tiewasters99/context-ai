@@ -909,7 +909,7 @@ export default function Vault() {
       case 'workbench':
         return <AIWorkbench vaultFiles={vaultFiles} matterId={matter?.id} onSaveToVault={addGeneratedDoc} />;
       case 'sandbox':
-        return <SandboxPanel />;
+        return <SandboxPanel onOpenDocument={setReaderDocId} />;
       case 'citecheck':
         return (
           <div className="flex-1 overflow-y-auto px-8 py-8">

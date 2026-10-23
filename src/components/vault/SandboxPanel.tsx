@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation, Scale } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation, Scale, PenLine } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { fetchPaged } from '@/lib/paged';
 import { useServerspaces, useServerspacesRefresh, type Serverspace } from '@/hooks/useServerspaces';
@@ -25,6 +26,7 @@ interface SandboxDoc {
   file_size_bytes: number | null;
   processing_status: string;
   storage_path: string | null;
+  doc_type: string | null;
 }
 
 interface PickerDoc {
@@ -36,7 +38,31 @@ interface PickerDoc {
 const isPdf = (d: SandboxDoc) =>
   (d.source_filename ?? '').toLowerCase().endsWith('.pdf');
 
-export default function SandboxPanel() {
+// What the Brief Desk can take in — the Reader's own test for its
+// "Open in the Brief Desk" button.
+const isDeskable = (d: SandboxDoc) =>
+  d.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(d.source_filename ?? '');
+
+// A copy is opened where it sits (Eden, 10-22: "so we can actually open
+// documents and work on them in the Sandbox"): its name opens the Reader;
+// a brief also opens on the desk, whose working copy is filed in this same
+// box, so the readings and notes made there stay off the original's log.
+export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void } = {}) {
+  const navigate = useNavigate();
+  const openInReader = (id: string) => (onOpenDocument ? onOpenDocument(id) : navigate(`/app/document/${id}`));
+  // The desk brings a filed copy in as a new brief each time it is opened, so
+  // a copy already brought in (its brief names it as the source) opens instead.
+  const openOnDesk = async (d: SandboxDoc) => {
+    const { data } = await supabase
+      .from('documents')
+      .select('id')
+      .eq('matterspace_id', selectedBox?.id ?? '')
+      .eq('doc_type', 'brief')
+      .eq('metadata->>source_document_id', d.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    navigate(`/app/brief/${data?.[0]?.id ?? d.id}`);
+  };
   const { data: serverspaces = [], isLoading } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
 
@@ -75,7 +101,7 @@ export default function SandboxPanel() {
       const { rows } = await fetchPaged<SandboxDoc>(
         (from, to) => supabase
           .from('documents')
-          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path')
+          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path, doc_type')
           .eq('matterspace_id', boxId)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -383,14 +409,27 @@ export default function SandboxPanel() {
                       {orderIdx >= 0 ? orderIdx + 1 : ''}
                     </button>
                     <FileText size={14} className={`shrink-0 ${isPdf(d) ? 'text-[#e8b84a]/80' : 'text-white/40'}`} />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[12px] text-white/90 truncate block">{d.title}</span>
+                    <button
+                      onClick={() => openInReader(d.id)}
+                      title="Open this working copy in the Reader"
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="text-[12px] text-white/90 truncate block hover:text-[#e8b84a] hover:underline">{d.title}</span>
                       <span className="text-[10px] text-white/40">
                         {d.source_filename ?? 'text'}
                         {d.file_size_bytes ? ` · ${(d.file_size_bytes / 1024).toFixed(0)} KB` : ''}
                         {d.processing_status !== 'ready' ? ` · ${d.processing_status}` : ''}
                       </span>
-                    </div>
+                    </button>
+                    {isDeskable(d) && (
+                      <button
+                        onClick={() => void openOnDesk(d)}
+                        title="Open it in the Brief Desk to edit it and check its cites. Its desk copy is filed in this box; the original in its matter is never touched."
+                        className="h-7 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-[11px] text-white/60 hover:text-[#e8b84a] transition-colors shrink-0"
+                      >
+                        <PenLine size={13} /> <span className="hidden md:inline">Brief Desk</span>
+                      </button>
+                    )}
                     {isPdf(d) && (
                       <button
                         onClick={() => setEditingDoc(d)}
