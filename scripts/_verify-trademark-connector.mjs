@@ -633,6 +633,26 @@ section('G. outside the hosted connector');
   check(!noModel.ok && /model is not available/.test(noModel.err?.message), 'with no model door, a proposal is refused with a sentence', msg(noModel));
 }
 
+// ===========================================================================
+section('I. a whole export is one run (migration 124: up to 10,000 rows)');
+// ===========================================================================
+{
+  // QUALLET's Q5 export held 1,485 records and was stored as 500.
+  const [q] = await su(db, 'select id from public.tm_queries where clearance_id = $1 order by seq desc limit 1', [CL]);
+  const big = Array.from({ length: 1485 }, (_, i) => ({ serial: String(97000000 + i), mark: `MARK ${i}`, status: 'LIVE', classes: '009' }));
+  const r = await call(sbAda, 'tm_record_results', { clearance_id: CL, query_id: q.id, reported_count: 10391, rows: big }, ADA_OPTS);
+  check(r.ok && r.out.run.captured_count === 1485 && /reported 10391; 1485 captured/.test(r.out.run.gap_note ?? ''),
+    '1,485 records: all captured; the gap is the tmsearch count against ours, not a cut of 500', msg(r));
+  const [n] = await su(db, 'select count(*)::int as n from public.tm_hits where clearance_id = $1 and serial between $2 and $3', [CL, '97000000', '97001484']);
+  check(n.n === 1485, 'every record reached the hits table', String(n.n));
+  let e = null;
+  try {
+    await su(db, `insert into public.tm_query_runs (query_id, source, reported_count, raw)
+      select $1, 'manual', 10001, jsonb_agg(jsonb_build_object('serial', (90000000 + g)::text)) from generate_series(1, 10001) g`, [q.id]);
+  } catch (err) { e = err; }
+  check(e && /tm_query_runs_raw_check/.test(e.message), 'the database still refuses a run past 10,000 rows', e?.message);
+}
+
 check(net.log.refusedOutbound.length === 0 && net.log.anthropic.length === 0,
   'no outbound call left the process (no USPTO, no model provider)', net.log.refusedOutbound.join(' '));
 net.restore();
