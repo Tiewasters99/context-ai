@@ -256,8 +256,8 @@ export default async function handler(req, res, deps = {}) {
       return json(res, 409, { error: 'no_analysis', message: 'Analyse the recording first; questions are asked against the analysed copy.' });
     }
     // One question watches at most one analysis pass's worth of footage
-    // (ANALYSIS_WINDOW_SEC, 5 minutes by default): the size at which the
-    // model's times stay checkable (core.mjs), and a bounded cost per question.
+    // (ANALYSIS_WINDOW_SEC, 30 minutes by default; see core.mjs for why), and
+    // so a bounded cost per question.
     const knownDuration = num(analysis.duration_sec) ?? num(analysis.event_graph?.video?.duration_sec);
     if (startSec == null && knownDuration != null && knownDuration > ANALYSIS_WINDOW_SEC) {
       return json(res, 422, { error: 'window_required', message: `This recording is ${fmtTime(knownDuration)} long. Ask about a window of up to ${ANALYSIS_WINDOW_SEC / 60} minutes.` });

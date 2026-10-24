@@ -335,7 +335,7 @@ function RoomBody({ status, documentId, onChanged, onMediaExpired, awaitingMedia
               onMediaExpired={onMediaExpired}
               awaitingMedia={awaitingMedia}
               total={total}
-              maxWindow={status.window_sec ?? 5 * 60}
+              maxWindow={status.window_sec ?? 30 * 60}
             />
           )}
         </div>

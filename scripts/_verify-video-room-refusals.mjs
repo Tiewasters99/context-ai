@@ -210,7 +210,7 @@ console.log('\n1. The seal refuses before any byte moves');
 {
   const r = await call({ action: 'status' }, { sealed: true });
   check(r.status === 200, 'sealed matter, status: a READ is answered (RLS decides what the caller sees)', String(r.status));
-  check(r.body?.window_sec === 300, 'status names the longest window one question may watch (the 5-minute pass)', r.body?.window_sec);
+  check(r.body?.window_sec === 1800, 'status names the longest window one question may watch (the 30-minute pass)', r.body?.window_sec);
   check(providerRequests().length === 0 && ledgerRows().length === 0, 'sealed matter, status: no provider, no Record row (nothing left, nothing to record)');
 }
 {

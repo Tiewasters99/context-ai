@@ -40,18 +40,21 @@ test('planWindows: one window for short recordings, overlapping passes for long 
   for (let i = 1; i < w.length; i++) assert.ok(w[i].startSec < w[i - 1].endSec, 'passes overlap');
 });
 
-test('the pass is five minutes unless GEMINI_VIDEO_WINDOW_SEC says otherwise (60-1200)', () => {
-  assert.equal(ANALYSIS_WINDOW_SEC, 300, 'the default this suite runs with');
-  assert.equal(windowSecFromEnv({}), 300);
+test('the pass is thirty minutes unless GEMINI_VIDEO_WINDOW_SEC says otherwise (60-3600)', () => {
+  assert.equal(ANALYSIS_WINDOW_SEC, 1800, 'the default this suite runs with');
+  assert.equal(windowSecFromEnv({}), 1800);
   assert.equal(windowSecFromEnv({ GEMINI_VIDEO_WINDOW_SEC: '600' }), 600);
-  for (const bad of ['30', '5000', 'abc', '']) assert.equal(windowSecFromEnv({ GEMINI_VIDEO_WINDOW_SEC: bad }), 300, `"${bad}" falls back`);
-  // A 25-minute recording: six passes, none longer than the window, each seam overlapping by 10 s, the end reached.
-  const w = planWindows(25 * 60);
-  assert.equal(w.length, 6);
-  for (const x of w) assert.ok(x.endSec - x.startSec <= 300, `pass ${x.index} is at most five minutes`);
-  for (let i = 1; i < w.length; i++) assert.equal(w[i].startSec, w[i - 1].endSec - WINDOW_OVERLAP_SEC);
+  assert.equal(windowSecFromEnv({ GEMINI_VIDEO_WINDOW_SEC: '3600' }), 3600, 'an hour is the ceiling');
+  for (const bad of ['30', '5000', 'abc', '']) assert.equal(windowSecFromEnv({ GEMINI_VIDEO_WINDOW_SEC: bad }), 1800, `"${bad}" falls back`);
+  // A 25-minute recording (the length in hand) is ONE pass: no seam, whole-recording questions allowed.
+  assert.deepEqual(planWindows(25 * 60), [{ index: 0, startSec: 0, endSec: 1500 }]);
+  // A 50-minute recording: two passes, none longer than the window, the seam overlapping by 10 s, the end reached.
+  const w = planWindows(50 * 60);
+  assert.equal(w.length, 2);
+  for (const x of w) assert.ok(x.endSec - x.startSec <= 1800, `pass ${x.index} is at most thirty minutes`);
+  assert.equal(w[1].startSec, w[0].endSec - WINDOW_OVERLAP_SEC);
   assert.equal(w[0].startSec, 0);
-  assert.equal(w[w.length - 1].endSec, 1500);
+  assert.equal(w[1].endSec, 3000);
 });
 
 test('prompts carry no legal vocabulary and state absolute time', () => {
@@ -178,8 +181,8 @@ test('mergeWindowGraphs merges actors by identity, drops the overlap, merges adj
   assert.equal(merged.video.duration_sec, 2400);
 });
 
-test('mergeWindowGraphs across many seams: a 25-minute recording in six passes, the same moment reported on both sides of every seam', () => {
-  const windows = planWindows(1500);
+test('mergeWindowGraphs across many seams: a 25-minute recording in six 5-minute passes, the same moment reported on both sides of every seam', () => {
+  const windows = planWindows(1500, { windowSec: 300 }); // pinned: the merge is exercised across five seams whatever the default window is
   assert.equal(windows.length, 6);
   const passes = windows.map((w) => {
     const seamIn = w.startSec + WINDOW_OVERLAP_SEC + 2; // past the earlier pass's end, so only the seam check can drop it
