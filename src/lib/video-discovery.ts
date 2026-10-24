@@ -22,20 +22,23 @@ export type Basis = 'visual' | 'audio' | 'both';
 export type Confidence = 'high' | 'medium' | 'low';
 export type ClaimFinding = 'CORROBORATES' | 'REFUTES' | 'CANNOT_DETERMINE_FROM_FOOTAGE';
 
+/** Set by the server's normalisation when an entry's time could not be placed as the model reported it. */
+export interface TimeFlag { time_flag?: 'suspect'; time_flag_reason?: string }
+
 export interface VideoActor {
   id: string; label: string; identifying_marks: string; role_observed: string; first_seen_sec: number;
 }
-export interface VideoEvent {
+export interface VideoEvent extends TimeFlag {
   start_sec: number; end_sec: number | null; type: EventType; actor_ids: string[];
   description: string; basis: Basis; confidence: Confidence; verbatim_quote: string | null;
 }
-export interface CoverageInterval {
+export interface CoverageInterval extends TimeFlag {
   start_sec: number; end_sec: number; status: CoverageStatus; obstructed_by: string[]; what_is_not_visible: string;
 }
-export interface PositionInterval {
+export interface PositionInterval extends TimeFlag {
   start_sec: number; end_sec: number; position: Position; restrained: boolean; basis: Basis; confidence: Confidence;
 }
-export interface TranscriptLine { start_sec: number; speaker: string; text: string }
+export interface TranscriptLine extends TimeFlag { start_sec: number; speaker: string; text: string }
 export interface EventGraph {
   video: { duration_sec: number | null; has_audio: boolean; camera_description: string };
   actors: VideoActor[];
@@ -52,6 +55,8 @@ export interface Measures {
   event_count: number;
   actor_count: number;
   low_confidence_events: number;
+  /** Entries whose time was flagged; left out of the totals above. Absent on analyses stored before 2026-10-23. */
+  time_flagged?: number;
 }
 
 export type AnalysisStatus = 'queued' | 'running' | 'ready' | 'error' | 'held';
@@ -84,6 +89,8 @@ export interface InterrogationResult {
   claim_assessments: { claim_text: string; finding: ClaimFinding; basis: string }[];
   limitations: string[];
   timestamps?: { sec: number; display: string }[];
+  /** Prompt modalities the provider counted tokens for, e.g. ['TEXT', 'VIDEO']; null/absent when it did not say. */
+  modalities_seen?: string[] | null;
 }
 export interface VideoInterrogation {
   id: string | null;
@@ -105,6 +112,8 @@ export interface VideoRoomStatus {
   analysis: VideoAnalysis | null;
   reviews: VideoReview[];
   interrogations: VideoInterrogation[];
+  /** The longest window one question may watch (the analysis pass size, GEMINI_VIDEO_WINDOW_SEC). */
+  window_sec?: number;
 }
 
 export class VideoApiError extends Error {
