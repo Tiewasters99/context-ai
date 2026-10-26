@@ -495,6 +495,38 @@ test('triage sees hits past the 1,000th serial, newest first (QUALLE 97770896 wa
   assert.ok(asked.includes('97770896'), 'the newest filing is in the first batch');
 });
 
+import { nearMark } from '../lib/trademark/triage.mjs';
+
+test('nearMark orders by spelling and never screens: resemblers, narrow-query finds, known marks; no decomposition means no ordering', () => {
+  const c = { decomposition: { opening: 'qual', hinge: 'l', ending: 'et' }, known_marks: [{ name: 'Wallety' }], foreign_equivalents: [] };
+  const near = nearMark(c, [{ seq: 1, purpose: 'exact' }, { seq: 5, purpose: 'prefix' }]);
+  assert.equal(near({ mark: 'QUALLA' }), true);
+  assert.equal(near({ mark: 'KWALLET PAY' }), true, 'within two letters');
+  assert.equal(near({ mark: 'WALLETY' }), true, 'a known mark');
+  assert.equal(near({ mark: 'ZEBRA', query_seqs: [1] }), true, 'found by a narrow query');
+  assert.equal(near({ mark: 'ZEBRA', query_seqs: [5] }), false, 'a broad sweep alone is not near');
+  assert.equal(near({ mark: null }), false);
+  assert.equal(nearMark({ decomposition: null })({ mark: 'ZEBRA' }), true);
+});
+
+test('triage proposes resembling marks first, then the rest', async () => {
+  const hits = Array.from({ length: 120 }, (_, i) => ({
+    serial: String(90000000 + i * 1000), mark: `ZEBRA${i}`, owner: 'O', status_text: 'Live', live: true,
+    classes: ['009'], goods_services: 'software', bin: null, proposed: null,
+  }));
+  hits.push({ serial: '70000001', mark: 'QUALLA', owner: 'O', status_text: 'Live', live: true, classes: ['009'], goods_services: 'games', bin: null, proposed: null });
+  const clearance = { id: CID, matterspace_id: MID, mark: 'QUALLET', search_classes: [], filing_classes: [], decomposition: { opening: 'qual', hinge: 'l', ending: 'et' } };
+  const sb = stubSb({ clearance, hits });
+  const asked = [];
+  const send = async (req) => {
+    asked.push(...(JSON.stringify(req).match(/\b\d{8}\b/g) ?? []));
+    throw new Error('stop after the batch is chosen');
+  };
+  await runTrademarkAction({ action: 'triage', args: { clearance_id: CID }, sb, userId: 'u', send, record: async () => {} }).catch((e) => { if (!asked.length) throw e; });
+  assert.equal(asked[0], '70000001', 'QUALLA goes first although its serial is the oldest');
+  assert.ok(asked.slice(1).every((s) => s.startsWith('9')), 'then the rest, in the order read (newest first from the database)');
+});
+
 test('the report header counts every record and how many have a proposal and a decision', () => {
   const { clearance, queries, runs } = buildFixture();
   const hits = [
