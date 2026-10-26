@@ -227,6 +227,8 @@ function documentToVaultFile(doc: {
   /** Migration 081; present only on an A-Z or Category read. */
   sort_key?: string | null;
   category?: string | null;
+  /** Migration 028: the chosen cover, or null. */
+  cover_url?: string | null;
 }, matterspace_name?: string): VaultFile {
   const name = doc.source_filename || doc.title || 'Untitled';
   const sizeBytes = doc.file_size_bytes || 0;
@@ -250,6 +252,7 @@ function documentToVaultFile(doc: {
     storagePath: doc.storage_path ?? undefined,
     textStatus: doc.processing_status === 'ready' ? (doc.text_status ?? undefined) : undefined,
     imageLabel: doc.processing_status === 'ready' ? (doc.image_label ?? undefined) : undefined,
+    coverUrl: doc.cover_url ?? undefined,
     ocrPending: doc.processing_status === 'ready' && doc.ocr_pending && typeof doc.ocr_pending === 'object'
       ? (doc.ocr_pending as OcrPending) : undefined,
     sortKey: doc.sort_key ?? undefined,

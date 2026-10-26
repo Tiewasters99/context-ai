@@ -67,6 +67,42 @@ export function canCaptureCover(filename: string | null | undefined): boolean {
   return /\.pdf$/i.test(filename ?? '');
 }
 
+/** Whether the office can be given any image for a document: a page one, or
+ *  the cover chosen for it in the vault. */
+export function canGiveJacket(filename: string | null | undefined, coverUrl: string | null | undefined): boolean {
+  return canCaptureCover(filename) || Boolean(coverUrl);
+}
+
+/**
+ * The chosen cover as a jacket: the vault's cover image (documents.cover_url
+ * — a public cover-images object or a /templates file) fetched, drawn at the
+ * jacket's long edge and re-encoded as the JPEG the feed's regex expects.
+ * fetch → ImageBitmap, not an <img>: a cross-origin <img> taints the canvas
+ * and toBlob would throw.
+ */
+async function coverJpeg(coverUrl: string): Promise<Blob> {
+  const res = await fetch(coverUrl);
+  if (!res.ok) throw new Error(`The cover could not be read (${res.status}).`);
+  const bitmap = await createImageBitmap(await res.blob());
+  try {
+    const scale = Math.min(1, COVER_LONG_EDGE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no 2d context');
+    // A cover with transparency lands on white, not black.
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/jpeg', COVER_QUALITY);
+    });
+  } finally {
+    bitmap.close();
+  }
+}
+
 async function upload(path: string, blob: Blob): Promise<void> {
   const { error } = await supabase.storage
     .from(OFFICE_COVER_BUCKET)
@@ -75,17 +111,35 @@ async function upload(path: string, blob: Blob): Promise<void> {
 }
 
 /**
- * Capture the images for one published item from its vault PDF: the jacket
- * always, and every page when the PDF is a deck. Pages left over from an
- * earlier, longer capture are removed so the feed's count is honest.
+ * Capture the images for one published item: the jacket always, and every
+ * page when the PDF is a deck. Pages left over from an earlier, longer
+ * capture are removed so the feed's count is honest.
+ *
+ * The jacket is the cover chosen for the document in the vault when it has
+ * one — a book filed from the Library carries its cover into the office —
+ * and page one of the PDF otherwise. A document that is not a PDF but has a
+ * chosen cover gives the office that cover alone, no pages.
  */
 export async function captureOfficeImages(
   itemId: string,
   storagePath: string,
   filename: string | null | undefined,
   onProgress?: (done: number, total: number) => void,
+  coverUrl?: string | null,
 ): Promise<OfficeImages> {
-  if (!canCaptureCover(filename)) return { cover: null, pages: 0 };
+  const isPdf = canCaptureCover(filename);
+  if (!isPdf && !coverUrl) return { cover: null, pages: 0 };
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) throw new Error('Not signed in.');
+  const jacketPath = `${uid}/office/${itemId}.jpg`;
+  const publicCover = () => supabase.storage.from(OFFICE_COVER_BUCKET).getPublicUrl(jacketPath).data.publicUrl;
+
+  if (!isPdf) {
+    await upload(jacketPath, await coverJpeg(coverUrl!));
+    return { cover: publicCover(), pages: 0 };
+  }
+
   // Direct on an unsealed matter; on a sealed one through /api/document-url,
   // which writes `file.opened` to the matter's Record (S4a).
   let file: Blob;
@@ -94,16 +148,12 @@ export async function captureOfficeImages(
   } catch (e) {
     throw new Error(e instanceof Error ? e.message : 'The document could not be read.');
   }
-  const { data: auth } = await supabase.auth.getUser();
-  const uid = auth.user?.id;
-  if (!uid) throw new Error('Not signed in.');
 
   const pdfjsLib = await loadPdfjs();
   const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer(), ...PDFJS_DOC_PARAMS }).promise;
   try {
-    const jacketPath = `${uid}/office/${itemId}.jpg`;
-    await upload(jacketPath, await pageJpeg(pdf, 1, COVER_LONG_EDGE, COVER_QUALITY));
-    const cover = supabase.storage.from(OFFICE_COVER_BUCKET).getPublicUrl(jacketPath).data.publicUrl;
+    await upload(jacketPath, coverUrl ? await coverJpeg(coverUrl) : await pageJpeg(pdf, 1, COVER_LONG_EDGE, COVER_QUALITY));
+    const cover = publicCover();
 
     const first = await pdf.getPage(1);
     const shape = first.getViewport({ scale: 1 });
