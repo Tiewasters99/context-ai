@@ -366,7 +366,7 @@ assembly + lint + filing; Record events; the three test harnesses in CI; this sp
 2. Malformed query = silent zero: the self-test Q0 (built in slice 1).
 3. TMEP §1201.02(b) void-applicant rule [M]. 4. §2.189 / §803.05(a) domicile [M].
 5. ID Manual template wording [M]. 6. Fees verified 10-18 [V]; re-verify each release.
-7. TSDR API endpoints and limits [M]. 8. Bulk register data availability [L].
+7. TSDR API endpoints and limits [M]. 8. Bulk register data availability: see §11 (a key is required; 2026-10-21).
 9. tmsearch export format ("Export, first 500 results", sign-in required) [M]: one real export from
    Eden turns the mapper fixture from hand-built to real.
 
@@ -518,3 +518,299 @@ there being no tool for it. Every Record row a bot causes is the connector's.
 4. `tm_deep_check` / `tm_application_draft` file documents through `file_document` inside the tool call;
    the connector meter counts the outer call as WORK and does not charge the inner filing.
 5. Stage 7 (web screen) and stage 10 (docket) are still to build; the docket's deadlines are in the annex.
+
+---
+
+## 11. The register copy: the agent searches Equazia's own copy of the USPTO register (2026-10-21)
+
+Built from the brief of 2026-10-21 and Eden's scope memo of the same day. The agent can run the
+knockout queries itself against Equazia's own copy of the federal register, built from the USPTO's
+free bulk XML and refreshed daily. tmsearch stays the official cross-check. Every run records its
+source and the copy's as-of date. **Everything sits behind configuration:** with
+`TM_REGISTER_DB_URL` unset the recipe behaves exactly as before (same tool list, same `next_step`
+text, same report), and stage 4 says the copy is "not available". Migration
+`123_trademark_register_copy.sql` (NOT applied until Eden approves it by name).
+
+### 11.1 Phase 0 facts (2026-10-21)
+
+**Access.** A key is needed. [V 10-21]
+- `bulkdata.uspto.gov` (the old Bulk Data Storage System) no longer resolves (DNS, 2026-10-21).
+- The Open Data Portal's download endpoint is
+  `GET https://api.uspto.gov/api/v1/datasets/products/files/{productIdentifier}/{fileName}`.
+  Its page (data.uspto.gov/apis/bulk-data/download, read in a browser) says "API Key is required".
+  Probed: no key gives 401, a wrong key in `X-API-KEY` gives 403 (the CORS allow-list names
+  `X-Api-Key`).
+- The portal's website also needs a sign-in. From June 18, 2026 it requires a USPTO.gov account
+  with MFA. The getting-started page says website downloads need no API key, but the sign-in still
+  applies, and a sign-in is the person's to do.
+- How the key is minted (data.uspto.gov/apis/getting-started):
+  1. a USPTO.gov account with the "Open Data Portal" profile fields filled in (required since
+     August 18, 2026; keys of accounts without them were deactivated October 8, 2026);
+  2. an ID.me account, verified and linked;
+  3. "Manage API Key" at data.uspto.gov.
+
+  It is one key per account, and it is NOT the TSDR key from account.uspto.gov/api-manager.
+- Placeholder: `C:\Users\equai\DO-NOT-SEND-keys\uspto-odp.env` (`USPTO_ODP_API_KEY=`).
+- Rate limits (data.uspto.gov/apis/api-rate-limits):
+  - one API call at a time per key;
+  - up to 5 files per 10 seconds per IP;
+  - 20 downloads of the same file per year per key ("except for XML files which has a much higher
+    limit");
+  - downloads redirect to a signed URL that expires in 5 seconds.
+- The data is public domain: data.gov's catalog lists license `creativecommons.org/publicdomain/mark/1.0`
+  and access level "public".
+
+**Product, naming, cadence, sizes.**
+- Daily applications: product `TRTDXFAP`, "Trademark Full Text XML Data (No Images)". data.gov's
+  "Trademark Application XML (1884 - Present)" links `data.uspto.gov/bulkdata/datasets/trtdxfap`,
+  with accrual periodicity R/P1D (daily).
+- Daily files are `apcYYMMDD.zip`, one per calendar day, weekends included.
+- The annual backfile is `apc18840407-YYYYMMDD-NN.zip`. The backfile through 2023-12-31 had 75
+  pieces.
+- Sizes are from the BDSS directory listing (Wayback snapshot of 2025-03-07; the live listing needs
+  the key):
+  - backfile: 75 pieces, **8,168,666,367 bytes zipped** (smallest 4.0 MB, largest 228.8 MB);
+  - dailies (431 files, 2024-01-01 to 2025-03-06): median **24.3 MB** zipped, mean 27.0 MB.
+- The listing also shows the DTD documentation versions:
+  - 2.0 (to April 12, 2024);
+  - 2.1;
+  - 2.2;
+  - **2.3 (from October 18, 2024)**.
+
+  The element documentation read for this build is V 2.0 (uspto.gov/sites/default/files/products/
+  applications-documentation.pdf), so the parser records each file's `version-no` and ignores
+  elements it does not know.
+- The product name for the annual backfile on the ODP is **not confirmed**. A secondary source says
+  `TRTAXMLA` [M].
+
+**Sample.** **None was downloaded.** The key is required, so the download part stopped as the brief
+says. An unofficial route exists: the Internet Archive holds copies of old BDSS files (for example
+`apc18840407-20191231-01.zip`, about 0.7 MB, and the status-code table
+`Table1TrademarkStatusCodes_20230620.doc`). It was not used, because the brief limits downloads to
+the documented routes. Eden may authorize it (§11.6).
+
+**Record count: not measured.** The estimate and its method:
+- Serial numbers are a 2-digit series code plus a 6-digit number [V DTD doc], so a series holds at
+  most 1,000,000 serials.
+- Eden's 10-18 export (392 rows) shows 18 series in use (50, 72–79, 85–90, 97–99).
+- That gives an upper bound of 18 × 1,000,000 = **18M**.
+- Several series are partly filled: 50 opened in 2026, and 89 is a small "non-registration data"
+  series.
+- A secondary source puts the corpus at about 12.7M records [M, not verified].
+- **Working estimate: 10–13M records [M].**
+- The first real backfile piece settles it: its record count × 75 pieces, corrected by its zipped
+  size against 8.17 GB.
+
+**Field list (DTD V 2.0) and what the copy keeps.**
+- Kept: serial, registration number, transaction date, filing date, registration date, status code,
+  status date, mark (`mark-identification`), mark drawing code, abandonment date, cancellation date,
+  attorney.
+- Kept from the statements (`type-code` + `text`):
+  - GS*ccc*1/2/3: goods and services per prime class;
+  - **PM: pseudo mark (present; "PM – Pseudo Mark", Note 7)**;
+  - TR: translation;
+  - TLIT: transliteration.
+- Kept from the classifications: international and US codes, primary code, and the class status.
+- Kept from the owners: party type, name and entity.
+- Kept: design search codes (6 digits).
+- Read but not stored: event statements, prior registrations, foreign applications, the international
+  registration and the Madrid history.
+
+**Live or dead.** The bulk data has no live/dead flag.
+- The status code refers to "Table 1 Trademark Status Codes", a separate product file that was not
+  read.
+- `lib/trademark/register/status-codes.json` therefore treats a record as dead **only** when its
+  abandonment date or cancellation date is present. Every status code alone counts as live [M].
+- A first draft treated the 600 series as abandoned. The 600 series also holds live examination
+  statuses [M], so that rule would have dropped live pending applications from every `LD:true`
+  query. Fill the table from Table 1 once it is read.
+
+**Loaded size per 100,000 records, with every index** (`scripts/tm-register/measure.mjs`; PGlite
+0.5.8 = Postgres 18.3, **synthetic rows**). The rows are cloned from the fixture's real tmsearch
+text, and tmsearch truncates goods at about 1,000 characters.
+
+| | Size |
+|---|---|
+| Heap, with TOAST | 131.5 MB |
+| Indexes | 62.0 MB |
+| **Total** | **195.2 MB** (2,047 bytes per record) |
+
+- The largest indexes are trigram on the CM variants (17.3 MB), on owners (13.8 MB) and on the
+  joined mark (13.4 MB).
+- Loading took 14 s.
+- The EQUAZIA query set ran in 3–364 ms per query on one CPU (Q7, the 35k-match prefix sweep, was
+  the slowest).
+- Real rows carry the full goods text and more distinct marks, so read 2 KB/record as a **floor**.
+  The estimate uses 2–5 KB/record [L].
+
+**Hosting estimate.** Size = 10–13M records × 2–5 KB = **20–65 GB** (working figure: about 40 GB).
+Prices were read 2026-10-21.
+
+(a) A dedicated Supabase project. Source: supabase.com/pricing and
+supabase.com/docs/guides/platform/compute-and-disk.
+- The figures used:
+  - Pro is "from $25/month";
+  - "Additional projects each add their own compute cost";
+  - each project includes 8 GB of disk, with extra disk at $0.125 per GB;
+  - compute: Small about $15 (2 GB RAM, recommended to 50 GB), Medium about $60 (4 GB, to 100 GB),
+    Large about $110 (8 GB, dedicated 2 vCPU).
+- Medium + (40 − 8) GB × $0.125 = $60 + $4 = **about $64/month**. At 65 GB:
+  $60 + 57 × $0.125 = **about $67**.
+- Small (about $15 + $4 = **about $19**) fits only the low end of the size range, and its 2 GB RAM
+  is thin for trigram scans over about 12M rows.
+- If Equazia's organization is already on Pro, no second plan fee applies [M: confirm on the
+  invoice].
+
+(b) Postgres on a small VM. Source: digitalocean.com/pricing/droplets, Basic.
+- 8 GiB RAM, 4 vCPU, 160 GiB SSD: **$48/month**. This fits 65 GB with room for the load and the
+  WAL.
+- 4 GiB, 2 vCPU, 80 GiB: **$24/month**. This fits the working figure; it is tight at 65 GB.
+- Backups are extra.
+- Hetzner's regular-performance cloud servers start at €6.49/month (hetzner.com/cloud; specs and
+  USD prices were not shown on that page).
+- One VM can also host Quorium's Archie worker and the daily update.
+
+**Recommendation:** the VM ($24–48) if the worker host is being set up anyway. Otherwise Supabase
+Medium (about $64), which is simplest to run. Decide after the first real backfile piece is loaded
+and measured.
+
+### 11.2 What was built
+
+- **Schema** `db/tm-register/schema.sql` (a separate database; not in `supabase/migrations`):
+  - `register_records`: one row per serial.
+  - Search columns:
+    - `cm_text`: every CM variant (word mark, pseudo marks, translation and transliteration
+      segments, and the numeral reading when there is no pseudo mark), each as words and run
+      together;
+    - `mark_joined`, `owner_text`, `gs_text`;
+    - `dm_codes`: Double Metaphone codes of the joined mark and of each word (fuzzystrmatch).
+  - Indexes:
+    - trigram on `cm_text`, `mark_joined` and `owner_text`;
+    - prefix and suffix btree on `mark_joined`;
+    - GIN on `dm_codes` and on `int_classes`;
+    - live.
+  - `register_files`: each loaded file, with its sha256, DTD version and counts.
+  - `register_meta`: `as_of` and `stale_after_days`.
+  - `register_gate`: append-only recall runs.
+- **Loader** (`lib/trademark/register/{xml,normalize,load}.mjs`, CLI `scripts/tm-register/load.mjs`):
+  - streams the XML through `sax`, never the whole file in memory;
+  - zip entries are read with `node-stream-zip`;
+  - upserts by serial, and only a file with the same or a later as-of date replaces a row;
+  - a file already loaded with the same sha256 is skipped;
+  - each file loads in one transaction, so a broken file leaves the copy as it was.
+- **Normalization** (see normalize.mjs): NFKD, accents dropped, lower case; apostrophes removed;
+  `&` becomes "and", `+` "plus", `@` "at"; everything else is a word break; numerals become words
+  only when the record has no pseudo mark.
+- **Daily update** (`lib/trademark/register/daily.mjs`, CLI `scripts/tm-register/daily.mjs`):
+  - fetches every day from as_of + 1 to yesterday, in order, one at a time;
+  - the key goes to api.uspto.gov only; the signed redirect is followed without it;
+  - it stamps `as_of` only through the last day of an unbroken run;
+  - a failure stops the run there, as_of does not move, and once as_of is older than the threshold
+    the copy is stale.
+- **The stale rule:** more than `stale_after_days` days behind (default 3; `TM_REGISTER_STALE_DAYS`
+  overrides).
+- **Search** (`lib/trademark/register/search.mjs`): it parses each generated query string and
+  translates it to one SQL WHERE clause.
+  - `CM:` term matching reproduces `queries.mjs termMatchesMark` (a whole word of any variant, or the
+    whole run-together variant). The tests check the parity record by record on every EQUAZIA query.
+  - Supported: SN, RN, LD, IC (including A, B, 200), ON, OW (owner names only), AT, GS, FD ranges,
+    AND / OR / AND NOT / parentheses.
+  - **Not expressible** (refused, never approximated): `CC:` (coordinated class, which needs the
+    USPTO coordination table, absent from the bulk XML) and any other tag.
+  - Results are run rows, at most 500: live before dead, then by closeness (trigram similarity) and
+    a sound-alike flag (Double Metaphone), with the class overlap. The full match count is the run's
+    reported count, so a capped run records a gap.
+  - tmsearch's own tokenization is not published [M]. The recall gate is the control.
+- **Recall gate** (`lib/trademark/register/recall.mjs`, CLI `scripts/tm-register/recall.mjs`).
+  - Test-set format `equazia-tm-recall/1`: per mark, the decomposition, the classes, the known
+    marks, and tmsearch's `live_conflicts`, plus optional recorded tmsearch queries with their
+    serials for diagnostics.
+  - The run generates the agent's queries and runs them on the copy; a miss is a live conflict
+    tmsearch found and the copy did not.
+  - A PASS needs zero misses AND at least 50 marks (`TM_REGISTER_GATE_MIN_MARKS`).
+  - `--store` appends the result to `register_gate` with the test set's sha256, the engine version
+    and the as-of date.
+  - The copy stands on its own only while the **latest** run for the **current** engine passed.
+- **Equazia side:**
+  - Migration 123 lets `tm_query_runs.source` take `register_copy` and adds `register_as_of` and
+    `register_preliminary`. Stage 4 cannot be signed while any query's current run is a
+    preliminary register run.
+  - `lib/trademark/register/service.mjs` holds `storeRun`, which `tm_record_results` now also uses
+    (one sequence for every run), and `registerSearch`.
+  - Connector tool `tm_run_search {clearance_id, query_ids?}`. It is listed only when
+    `TM_REGISTER_DB_URL` is set.
+  - `next_step`:
+    - gate passed: "call tm_run_search";
+    - not passed: the tmsearch queries, with the copy named as preliminary, then "confirm Qn on
+      tmsearch";
+    - stale: a plain fallback sentence.
+  - Browser: `/api/trademark` actions `register_status` and `register_search`, and stage 4's choice
+    (`RegisterChoice.tsx`) in both the stage panel and the search sheet.
+  - The report adds a source line, a scope line and, when it applies, a preliminary line, but only
+    when register runs exist.
+
+### 11.3 Seed and coverage
+
+`scripts/fixtures/tm-register/` holds SYNTHETIC files in the documented shape, built by
+`scripts/tm-register/make-fixture.mjs` from:
+- Eden's real tmsearch export of 2026-10-18: 392 rows of
+  `CM:equa* AND LD:true AND IC:(009 042 045 a b 200)`, giving serial, mark, owner, truncated goods,
+  classes and dates;
+- six records named in his 10-19 notes;
+- six INVENTED records (serials 76999901–07).
+
+Status codes, pseudo marks and translations of the real rows are not known and are left out.
+
+The seed recall set (`recall-seed-2026-10-21.json`) is EQUAZIA, with live conflicts EQUALL 98137428
+and EQUASITE 90562533 (Opus's 10-18 "watch" proposals, not decided bins).
+
+On the fixture:
+- Both live conflicts are found: EQUASITE by Q5 and Q7, EQUALL by Q7, Q9 and Q10. The seed is
+  **not a pass** (one mark).
+- The diagnostics re-run tmsearch's own Q7 on the copy, which finds 216 of tmsearch's 392.
+  - The 177 records tmsearch found and the fixture copy did not (EXOTEQ, EQUISPLIT, AXISEQ, DOWA,
+    YAMAWAKE, "PRIVACY = …", "+-=÷X" …) match `equa*` only through fields the export does not carry:
+    pseudo marks (for example "=" read as EQUAL[S]) and translations.
+  - This shows how much the CM: field depends on the pseudo mark and translation statements. The
+    real bulk data carries them; the first real load must be rerun through the seed to confirm.
+- Because the fixture was built from the same tmsearch rows, the seed tests the query translation
+  and the matching rule here, not the completeness of a real copy.
+
+### 11.4 Not verified
+
+- Every claim about the real files beyond the V 2.0 documentation and the 2025-03-07 listing:
+  - the v2.3 element changes;
+  - the backfile's ODP product id;
+  - the record count;
+  - the real bytes per record;
+  - Table 1's live and dead codes;
+  - whether a 40-character `<text>` overflow is split across several `<text>` elements (the parser
+    joins them with a space) [M].
+- tmsearch's tokenization of marks and pseudo marks [M].
+- The `postgres://` adapter (driver `postgres` 3.4.9) has not been run against a hosted Postgres;
+  everything ran on PGlite.
+
+### 11.5 What it will not do
+
+- It covers the federal register only.
+- It does no design-mark image comparison (design codes only).
+- It covers no state or common-law marks.
+- It is one or two days behind the register.
+
+The report says so in its Limits section whenever a register run is in it.
+
+### 11.6 For Eden
+
+1. **The ODP key:** mint it as §11.1 describes and put it in `DO-NOT-SEND-keys\uspto-odp.env`.
+   With it, the first daily file and the smallest backfile piece go into
+   `C:\Users\equai\context-ai-scratch\uspto-bulk\`, followed by the count, the measured size and a
+   rerun of the seed.
+   - Alternatively, authorize the Internet Archive copy of the smallest 2019 backfile piece and the
+     status-code table as a stop-gap sample.
+2. **Hosting** (§11.1): a VM ($24–48/month) or a dedicated Supabase project (about $64/month).
+   Decide after the first real piece is measured.
+3. **The recall test set:** about 50 marks, real and invented, including known conflicts, each run
+   on tmsearch once by Eden or a paralegal, with the live conflicts recorded in the
+   `equazia-tm-recall/1` format. Until it passes, every register result is "preliminary: confirm on
+   tmsearch".
+4. **Migration 123:** approve and apply it by name before turning the feature on (`TM_REGISTER_DB_URL`).

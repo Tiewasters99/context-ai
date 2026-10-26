@@ -12,6 +12,7 @@ import { TMSEARCH_URL } from '../../../lib/trademark/queries.mjs';
 import { btn, copyText, mono } from './styles';
 import { Note } from './ui';
 import { RunForm } from './StageSearch';
+import RegisterChoice from './RegisterChoice';
 
 function Row({ b, q, onDone }: { b: ClearanceBundle; q: TmQuery; onDone: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
@@ -50,6 +51,7 @@ export default function SearchSheet({ bundles, onChanged }: { bundles: Clearance
         For each line: copy it, paste it into the USPTO search, run it, then paste what it showed (the result count and the
         records) or upload its export. Triage is proposed for a mark as soon as its last query is recorded.
       </Note>
+      <RegisterChoice bundles={groups.map((g) => g.b)} onChanged={onChanged} />
       {groups.map(({ b, unrun, st }) => (
         <div key={b.clearance.id} className="mt-3">
           <h4 className="text-[13px] font-semibold text-white/85">{b.clearance.mark} <span className="text-[11.5px] font-normal text-white/50">{unrun.length} to run</span></h4>

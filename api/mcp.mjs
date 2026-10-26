@@ -32,6 +32,7 @@ import { SITE_ORIGIN, SITE_NAME, siteUrl } from '../lib/site.mjs';
 import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
 import { TM_TOOL_NAMES } from '../lib/trademark/connector.mjs';
+import { registerDbUrl } from '../lib/trademark/register/db.mjs';
 import { trademarkToolOptsFor } from '../lib/trademark/connector-opts.mjs';
 // The bearer check, the Supabase clients and the callTool options live in
 // lib/oauth-bearer.mjs since 2026-09-29, shared with the GPT Actions facade
@@ -199,6 +200,10 @@ export default async function handler(req, res) {
           'The USPTO search is run by the person: hand them the query lines and ' +
           'record what they report. Nothing is signed or filed with the USPTO by ' +
           'you: the reviewer signs in Equazia.ai; never call a mark clear.' +
+          (registerDbUrl(process.env)
+            ? ' This server also has Equazia\'s copy of the USPTO register: tm_run_search runs the queries on it ' +
+              'when tm_get_clearance\'s next_step says so (with the copy\'s as-of date; preliminary until its recall test passes).'
+            : '') +
           agentNote,
       }
     );
