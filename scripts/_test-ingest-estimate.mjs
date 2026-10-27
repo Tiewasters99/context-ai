@@ -94,7 +94,7 @@ test('prices are the real ones, and have not drifted from their sources', async 
     // it is the code that must not restate one.
     const text = src('lib/ingest-estimate.mjs')
       .replace(/\/\*[\s\S]*?\*\//g, '')
-      .split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+      .split(/\r?\n/).map((l) => l.replace(/\/\/.*$/, '')).join('\n');
     // A price would look like a decimal with three or more places (0.002,
     // 0.0043, 0.0015). Sizes are written as `n * 1024` and page/char counts as
     // integers, so neither trips this.
