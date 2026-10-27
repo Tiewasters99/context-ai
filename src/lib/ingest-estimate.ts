@@ -266,8 +266,9 @@ export function remainingCents(wallet: UploadWallet): number | null {
  * are read by AWS Textract inside our own account at its own rate, so the
  * figure a sealed matter is shown is not the unsealed one.
  *
- * A lookup that fails answers 'A': the unsealed rate is the DEARER of the two
- * OCR routes, so an unknown tier is quoted high rather than low.
+ * A lookup that fails answers 'A': Tier A is quoted at its first route
+ * (Textract, the same rate as the sealed tier) and every route behind it is
+ * dearer, so an unknown tier is never quoted below what it can cost.
  */
 export async function effectiveAiTier(matterId: string): Promise<AiTier> {
   try {

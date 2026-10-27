@@ -75,9 +75,11 @@ test('prices are the real ones, and have not drifted from their sources', async 
     assert.equal(OCR_USD_PER_PAGE_TEXTRACT, TEXTRACT_USD_PER_PAGE);
   });
 
-  await t.test('the sealed route is cheaper per page than the unsealed one', () => {
+  await t.test('Textract is the cheapest route in the table', () => {
     // Not a preference — it is why the handler may recompute at Tier A
-    // without a tier lookup and still be the conservative side.
+    // without a tier lookup and still be the conservative side: Tier A reads
+    // Textract first (2026-10-26) and falls back to dearer routes, Tier B
+    // reads Textract and nothing else, so no tier is ever quoted below Tier A.
     assert.ok(OCR_USD_PER_PAGE_TEXTRACT < OCR_USD_PER_PAGE_GEMINI);
     assert.ok(OCR_USD_PER_PAGE_GEMINI < OCR_USD_PER_PAGE_MAX);
   });
@@ -110,9 +112,10 @@ test('one file, priced against the real table', async (t) => {
     assert.equal(it.pages, 300);
     assert.equal(it.pagesKnown, true);
     assert.equal(it.lowCents, embedCents(300 * ASSUMED_CHARS_PER_PAGE));
+    // Tier A (the default) is read by Textract first since 2026-10-26.
     assert.equal(
       it.highCents,
-      centsUp(300 * OCR_USD_PER_PAGE_GEMINI) + embedCents(300 * ASSUMED_CHARS_PER_PAGE),
+      centsUp(300 * OCR_USD_PER_PAGE_TEXTRACT) + embedCents(300 * ASSUMED_CHARS_PER_PAGE),
     );
     assert.ok(it.highCents > it.lowCents, 'a scan must cost more than the same pages of text');
     assert.ok(it.basis.some((b) => /every page is a scan/.test(b)));
@@ -148,7 +151,7 @@ test('one file, priced against the real table', async (t) => {
     assert.equal(it.pages, 1);
     assert.equal(
       it.highCents,
-      centsUp(1 * OCR_USD_PER_PAGE_GEMINI) + embedCents(ASSUMED_CHARS_PER_PAGE),
+      centsUp(1 * OCR_USD_PER_PAGE_TEXTRACT) + embedCents(ASSUMED_CHARS_PER_PAGE),
     );
   });
 
@@ -174,16 +177,20 @@ test('one file, priced against the real table', async (t) => {
 test('sealed and unsealed are priced at their own routes', async (t) => {
   const file = { name: 'Production Vol 3.pdf', bytes: 60 * MB, pages: 400 };
 
-  await t.test('Tier A is read by the unsealed route', () => {
-    assert.equal(ocrRouteForTier('A'), 'gemini-flash');
+  await t.test('Tier A is read by the unsealed route — Textract first since 2026-10-26', () => {
+    // Measured on the 318-page Anthropic S-1: Textract 73 s, Gemini 56 min.
+    // The quote follows the route the policy names first; the dearer Gemini
+    // and Anthropic routes sit behind it for a page Textract cannot take.
+    assert.equal(ocrRouteForTier('A'), 'aws-textract');
     const it = estimateUploadItem(file, { tier: 'A' });
     assert.equal(
       it.highCents,
-      centsUp(400 * OCR_USD_PER_PAGE_GEMINI) + embedCents(400 * ASSUMED_CHARS_PER_PAGE),
+      centsUp(400 * OCR_USD_PER_PAGE_TEXTRACT) + embedCents(400 * ASSUMED_CHARS_PER_PAGE),
     );
+    assert.equal(estimateUpload([file], { tier: 'A' }).sealed, false);
   });
 
-  await t.test('Tier B is read by Textract, inside the seal, and costs less', () => {
+  await t.test('Tier B is read by Textract, inside the seal, and never costs more than Tier A', () => {
     assert.equal(ocrRouteForTier('B'), 'aws-textract');
     const sealed = estimateUploadItem(file, { tier: 'B' });
     const open = estimateUploadItem(file, { tier: 'A' });
@@ -191,7 +198,7 @@ test('sealed and unsealed are priced at their own routes', async (t) => {
       sealed.highCents,
       centsUp(400 * OCR_USD_PER_PAGE_TEXTRACT) + embedCents(400 * ASSUMED_CHARS_PER_PAGE),
     );
-    assert.ok(sealed.highCents < open.highCents);
+    assert.ok(sealed.highCents <= open.highCents);
     assert.equal(estimateUpload([file], { tier: 'B' }).sealed, true);
   });
 
@@ -228,8 +235,10 @@ test('the threshold: four independent triggers, and silence below all of them', 
     assert.ok(e.highCents < t0.cents);
   });
 
-  await t.test('money alone: four medium PDFs, no other trigger', () => {
-    const files = Array.from({ length: 4 }, (_, i) => ({ name: `Vol ${i}.pdf`, bytes: 8 * MB, pages: 150 }));
+  await t.test('money alone: seven medium PDFs, no other trigger', () => {
+    // 7 × 150 pages at Textract's rate is $1.58 of OCR: over the money line,
+    // under the file count and under the single-PDF page trigger.
+    const files = Array.from({ length: 7 }, (_, i) => ({ name: `Vol ${i}.pdf`, bytes: 8 * MB, pages: 150 }));
     const e = estimateUpload(files);
     assert.ok(e.files < t0.files);
     assert.ok(e.largestPdfPages < t0.pdfPages);
@@ -429,8 +438,10 @@ test('the handler does not take the browser’s word for it', async (t) => {
     const asSealedClient = estimateUploadItem(
       { name: 'Sealed.pdf', bytes: 20 * MB, pages: 400 }, { tier: 'B' },
     );
-    assert.ok(asSealedClient.highCents < asServer.highCents);
-    // …and the client's own (lower, correct) figure still clears the check.
+    // Tier A reads Textract first, so the two figures are equal today; the
+    // sealed figure must never come out ABOVE the server's Tier A recomputation.
+    assert.ok(asSealedClient.highCents <= asServer.highCents);
+    // …and the client's own (correct) figure still clears the check.
     assert.equal(
       verifyIngestConfirmation({ doc, body: { estimate: declarationFor(asSealedClient) }, tier: 'A' }),
       null,
