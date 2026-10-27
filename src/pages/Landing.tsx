@@ -333,15 +333,15 @@ export default function Landing() {
               <div>
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Company</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">About</a></li>
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Contact</a></li>
+                  <li><a href="#features" className="hover:text-[#e8e4de] transition-colors">About</a></li>
+                  <li><a href="mailto:info@equazia.ai" className="hover:text-[#e8e4de] transition-colors">Contact</a></li>
                 </ul>
               </div>
               <div>
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Legal</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
                   <li><Link to="/privacy" className="hover:text-[#e8e4de] transition-colors">Privacy</Link></li>
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Terms</a></li>
+                  <li><Link to="/terms" className="hover:text-[#e8e4de] transition-colors">Terms</Link></li>
                 </ul>
               </div>
             </div>
