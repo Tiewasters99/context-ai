@@ -8,6 +8,7 @@ import { listVaultReviewChips } from '@/lib/discovery';
 import ContentSearch from './ContentSearch';
 import { isVaultDrag, readVaultDrag, writeVaultDrag, type VaultDragItem } from '@/lib/vault-drag';
 import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
+import CoverThumb from '@/components/ui/CoverThumb';
 import { clearVaultClip, pasteVaultClip, setVaultClip, useVaultClip, type ClipMode } from '@/lib/vault-clipboard';
 import {
   buildVaultGroups,
@@ -749,6 +750,10 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       {file.status === 'indexed' && file.textStatus
         ? <CheckCircle size={14} className="text-white/35" />
         : statusIcon[file.status]}
+      {/* The cover chosen for the work, small, beside its title — the
+          Library's books stand on the list in their jackets. Nothing is
+          drawn for a document without one. */}
+      <CoverThumb coverUrl={file.coverUrl} size="row" />
       <div className="flex-1 min-w-0">
         <p className={`text-[13px] truncate ${canOpen ? 'text-white group-hover:text-[#e8b84a] transition-colors' : 'text-white'}`}>{file.name}</p>
         {reviewChips.get(file.id) && (
