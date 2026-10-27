@@ -14,6 +14,8 @@ import {
   READ_PAGES_MAX_PAGES_PER_CALL,
   READ_PAGES_MAX_BYTES_PER_CALL,
   READ_PAGES_REQUEST_HEADROOM,
+  READ_PAGES_TOKENS_PER_PAGE,
+  READ_PAGES_CONTEXT_RESERVE,
   penDocumentBudget,
   parsePageSpec,
   planPages,
@@ -84,18 +86,27 @@ test('the budget', async (t) => {
   await t.test('comes from the pen: Opus 5.5 on the Messages API', () => {
     const b = penDocumentBudget(PENS.anthropic);
     assert.equal(b.bytesLeft, Math.floor((32 * MB - READ_PAGES_REQUEST_HEADROOM) * 3 / 4));
-    assert.equal(b.pagesLeft, 600, 'a 1M window takes 600 PDF pages a request');
+    // 1M window: the API takes 600 pages a request, but at ~3,000 tokens a
+    // page the context holds (1M − 40k) / 3k = 320 — the context binds.
+    assert.equal(b.pagesLeft, Math.floor((1_000_000 - READ_PAGES_CONTEXT_RESERVE) / READ_PAGES_TOKENS_PER_PAGE));
+    assert.equal(b.pagesLeft, 320);
     assert.equal(b.callBytes, READ_PAGES_MAX_BYTES_PER_CALL);
     assert.equal(b.callPages, READ_PAGES_MAX_PAGES_PER_CALL);
   });
 
-  await t.test('the sealed pens: Bedrock caps a request at 20 MB; a 200k window takes 100 pages', () => {
+  await t.test('the sealed pens: Bedrock caps a request at 20 MB; a 200k window holds ~53 pages, under the API\'s 100', () => {
     const runtime = penDocumentBudget(PENS.bedrockRuntime);
     assert.equal(runtime.bytesLeft, Math.floor((20 * MB - READ_PAGES_REQUEST_HEADROOM) * 3 / 4));
-    assert.equal(runtime.pagesLeft, 100);
+    assert.equal(runtime.pagesLeft, Math.floor((200_000 - READ_PAGES_CONTEXT_RESERVE) / READ_PAGES_TOKENS_PER_PAGE));
+    assert.equal(runtime.pagesLeft, 53);
+    assert.ok(runtime.pagesLeft > READ_PAGES_MAX_PAGES_PER_CALL, 'one full call still fits a 200k turn');
     const mantle = penDocumentBudget(PENS.bedrock);
-    assert.equal(mantle.pagesLeft, 600);
+    assert.equal(mantle.pagesLeft, 320);
     assert.ok(mantle.bytesLeft < penDocumentBudget(PENS.anthropic).bytesLeft);
+  });
+
+  await t.test('a tiny window is still a budget of at least one page', () => {
+    assert.equal(penDocumentBudget({ documents: { maxRequestBytes: 32 * MB }, contextWindow: 10_000 }).pagesLeft, 1);
   });
 
   await t.test('the Kimi chat route cannot take a document block', () => {
@@ -138,6 +149,17 @@ test('the excerpt', async (t) => {
 
   await t.test('one page over the budget on its own is refused, with its weight', async () => {
     await assert.rejects(() => excerptPdf(src, [3], { maxBytes: 10 }), /page 3 alone is .* MB, over/);
+  });
+
+  await t.test('a full 40-page call is walked all the way down to one page', async () => {
+    const forty = await PDFDocument.load(await makePdf(40));
+    const pages = Array.from({ length: 40 }, (_, i) => i + 1);
+    const one = (await excerptPdf(forty, [1])).bytes.length;
+    // A budget only one page fits: the halving must reach length 1 and succeed…
+    const r = await excerptPdf(forty, pages, { maxBytes: one });
+    assert.deepEqual(r.pages, [1]);
+    // …and a budget no page fits must reach length 1 and say so, never "could not fit".
+    await assert.rejects(() => excerptPdf(forty, pages, { maxBytes: 10 }), /page 1 alone is/);
   });
 });
 
