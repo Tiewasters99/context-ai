@@ -122,7 +122,8 @@ export default function Privacy() {
         <Section title="Your choices">
           <p>
             You can export your documents, disconnect any assistant or integration, seal a matter, enrol a second
-            factor, and ask us to delete your account. Questions about this page or about your information go to{' '}
+            factor, and ask us to delete your account. Questions about this page or about your information go to
+            Equazia.ai, Inc., 245 Nassau Street, Princeton, NJ 08540, to{' '}
             <a href="mailto:info@equazia.ai" className="text-[#e8e4de] underline underline-offset-2">info@equazia.ai</a>, or to the
             firm that invited you to Equazia.ai.
           </p>

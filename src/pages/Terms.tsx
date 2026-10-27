@@ -253,7 +253,7 @@ export default function Terms() {
             is not a waiver of it.
           </p>
           <p>
-            Notices and questions go to{' '}
+            Notices and questions go to Equazia.ai, Inc., 245 Nassau Street, Princeton, NJ 08540, or to{' '}
             <a href={`mailto:${CONTACT}`} className="text-[#e8e4de] underline underline-offset-2">{CONTACT}</a>. Notices
             to you go to the email address on your account.
           </p>
