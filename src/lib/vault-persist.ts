@@ -570,6 +570,41 @@ export async function fetchIngestServiceStatus(): Promise<IngestServiceStatus | 
   }
 }
 
+/**
+ * The live ingest job behind each of these documents — its page count so far,
+ * in the worker's own words (processing_jobs.progress_note), which is what
+ * the bar on the row is drawn from (lib/ingest-progress.mjs). Members read
+ * their matters' jobs (migration 032); the lookup rides the
+ * payload->>document_id index of migration 055 and is bounded to jobs still
+ * queued or running — a finished job's document is terminal and needs no bar.
+ * Newest first, so the first row per document is the one that counts. A
+ * failure here rules nothing: the map is empty, the bar falls back to the
+ * stage, and the documents read decides the status as before.
+ */
+async function readIngestJobs(documentIds: string[]): Promise<Map<string, IngestJobSnapshot>> {
+  const byDoc = new Map<string, IngestJobSnapshot>();
+  if (!documentIds.length) return byDoc;
+  const { data, error } = await supabase
+    .from('processing_jobs')
+    .select('document_id:payload->>document_id, status, progress, progress_note, attempts, created_at')
+    .eq('job_type', 'ingest_document')
+    .in('status', ['queued', 'running'])
+    .in('payload->>document_id', documentIds)
+    .order('created_at', { ascending: false });
+  if (error) return byDoc;
+  for (const j of (data ?? []) as {
+    document_id: string | null; status: string; progress: number | null;
+    progress_note: string | null; attempts: number | null;
+  }[]) {
+    if (!j.document_id || byDoc.has(j.document_id)) continue;
+    byDoc.set(j.document_id, { status: j.status, progress: j.progress, note: j.progress_note, attempts: j.attempts });
+  }
+  return byDoc;
+}
+
+const pageCountOf = (row: { page_count?: number | null }): number | undefined =>
+  Number(row.page_count) > 0 ? Number(row.page_count) : undefined;
+
 export function watchDocumentStatus(
   documentId: string,
   onUpdate: (update: DocumentStatusUpdate) => void,
@@ -580,11 +615,17 @@ export function watchDocumentStatus(
 
   const tick = async () => {
     if (stopped) return;
-    const { data, error } = await supabase
-      .from('documents')
-      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
-      .eq('id', documentId)
-      .maybeSingle();
+    // The status and the job behind it on one tick (see readIngestJobs): a
+    // fresh upload is watched here, one row at a time, and the person who
+    // just dropped a 300-page scan is the one who most wants the page count.
+    const [{ data, error }, jobs] = await Promise.all([
+      supabase
+        .from('documents')
+        .select('processing_status, processing_error, page_count, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
+        .eq('id', documentId)
+        .maybeSingle(),
+      readIngestJobs([documentId]),
+    ]);
     if (stopped) return;
     if (error || !data) {
       onUpdate({ status: 'error', errorMessage: error?.message || 'document disappeared' });
@@ -595,6 +636,8 @@ export function watchDocumentStatus(
       status: uiStatus,
       errorMessage: data.processing_error || undefined,
       stage: stageOf(data.processing_status),
+      pageCount: pageCountOf(data as { page_count?: number | null }),
+      job: uiStatus === 'indexed' || uiStatus === 'error' ? undefined : jobs.get(documentId),
       textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
       imageLabel: data.processing_status === 'ready' ? ((data as { image_label?: string | null }).image_label ?? undefined) : undefined,
       ocrPending: data.processing_status === 'ready' && typeof (data as { ocr_pending?: unknown }).ocr_pending === 'object'
@@ -679,17 +722,12 @@ export function watchDocumentStatuses(
       // the bar on the row is drawn from (lib/ingest-progress.mjs). Members
       // read their matters' jobs (migration 032); the lookup rides the
       // payload->>document_id index of migration 055.
-      const [{ data, error }, jobsRes] = await Promise.all([
+      const [{ data, error }, jobByDoc] = await Promise.all([
         supabase
           .from('documents')
           .select('id, processing_status, processing_error, page_count, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
           .in('id', chunk),
-        supabase
-          .from('processing_jobs')
-          .select('document_id:payload->>document_id, status, progress, progress_note, attempts, created_at')
-          .eq('job_type', 'ingest_document')
-          .in('payload->>document_id', chunk)
-          .order('created_at', { ascending: false }),
+        readIngestJobs(chunk),
       ]);
       if (stopped) return;
       // A transient failure is not an answer about any document: keep them
@@ -697,19 +735,6 @@ export function watchDocumentStatuses(
       // that a failure which never clears ends the watch instead of leaving
       // the rows spinning (see STATUS_MAX_FAILED_TICKS).
       if (error) { tickFailed = true; lastError = error.message; continue; }
-      // The job read failing is not an answer either, but it rules nothing:
-      // the bar falls back to the stage, and the status above still decides.
-      const jobByDoc = new Map<string, IngestJobSnapshot>();
-      if (!jobsRes.error) {
-        for (const j of (jobsRes.data ?? []) as {
-          document_id: string | null; status: string; progress: number | null;
-          progress_note: string | null; attempts: number | null;
-        }[]) {
-          // Newest first: the first row per document is the one that counts.
-          if (!j.document_id || jobByDoc.has(j.document_id)) continue;
-          jobByDoc.set(j.document_id, { status: j.status, progress: j.progress, note: j.progress_note, attempts: j.attempts });
-        }
-      }
 
       const rows = (data ?? []) as {
         id: string;
@@ -732,7 +757,7 @@ export function watchDocumentStatuses(
             status,
             errorMessage: row.processing_error || undefined,
             stage: stageOf(row.processing_status),
-            pageCount: Number(row.page_count) > 0 ? Number(row.page_count) : undefined,
+            pageCount: pageCountOf(row),
             job: terminal ? undefined : jobByDoc.get(row.id),
             textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
             imageLabel: row.processing_status === 'ready' ? (row.image_label ?? undefined) : undefined,
