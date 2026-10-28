@@ -524,6 +524,15 @@ test('the Agents page is the front door: every connection, all tasks, New task',
   assert.match(surfaces, /agents: \{\s*tier: 'frozen',\s*paths: \['\/app\/agents'\]/);
   assert.match(src('src/App.tsx'), /<Route path="agent-tasks" element=\{<AgentTasks \/>\} \/>/);
   assert.match(src('src/components/layout/Sidebar.tsx'), /to="\/app\/agent-tasks"[\s\S]{0,600}<span>Agents<\/span>/);
+  // The top four (Eden, 10-28): My Equazia, Assistants, Agents, Orchestrator; then search.
+  const side = src('src/components/layout/Sidebar.tsx');
+  const at = ['<span>My Equazia</span>', '<span>Assistants</span>', '<span>Agents</span>', '<span>Orchestrator</span>', '<SiteSearchMount'].map((x) => side.indexOf(x));
+  assert.ok(at.every((i, k) => i > 0 && (k === 0 || i > at[k - 1])), `sidebar order: ${at}`);
+  assert.match(side, /to="\/app\/assistants"/);
+  assert.match(src('src/App.tsx'), /<Route path="assistants" element=\{<Assistants \/>\} \/>/);
+  const asst = src('src/pages/Assistants.tsx');
+  assert.match(asst, /r\.live && r\.group === 'assistants'/, 'the Assistants page lists live chat assistants only');
+  assert.match(asst, /except SecureSpaces, which no connected assistant ever reaches/);
   assert.match(src('src/components/layout/MainLayout.tsx'), /<NavLink to="\/app\/agent-tasks"/, 'on the phone tab bar too');
   const dash = src('src/pages/Dashboard.tsx');
   assert.match(dash, /\{ label: 'Agents', icon: Bot, action: 'agents', surface: 'agentTasks' \}/);
