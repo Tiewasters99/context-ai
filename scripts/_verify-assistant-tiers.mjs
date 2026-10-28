@@ -12,9 +12,9 @@
 //      (our own AWS account, zero retention). That is the ONLY sealed pen
 //      since 2026-09-19 — a server without the BEDROCK_ keys refuses
 //      (sealed_pen_unavailable); run with --skip-b to assert that instead.
-//   3b. B + escalate:true            → aws-bedrock + escalation=false when
-//      Bedrock served step 3 (frontier already inside the seal — nothing to
-//      record); else provider=anthropic, escalation=true
+//   3b. B + escalate:true            → ignored (removed 2026-10-28): the
+//      Bedrock pen with escalation=false, or sealed_pen_unavailable on a
+//      server without it. Never first-party Claude.
 //   4. same matter as C              → error code silo_not_connected
 //   5. ledger: ai_sessions rows with the right tier; ai_messages user +
 //      assistant rows with model/provider/tokens; refusal recorded too
@@ -137,19 +137,16 @@ try {
   }
 
   // ── 3b. tier B + escalate ───────────────────────────────────────────
-  // With the Bedrock pen configured, escalation is moot: the sealed default
-  // already IS frontier Claude inside the seal, so the same pen answers and
-  // nothing is recorded as an escalation. Without it, the old contract
-  // holds: first-party Claude, flagged escalation:true.
+  // There is no way out of the seal: a request that still sends escalate
+  // gets the sealed pen, or the sealed refusal on a server without it.
   out = await ask(matter.id, PROMPT, { escalate: true });
   s = ev(out.events, 'session'); e = ev(out.events, 'error');
   if (sealedProvider === 'aws-bedrock') {
-    if (s?.provider === 'aws-bedrock' && s?.escalation === false) { pass('tier B + escalate:true → Bedrock pen, stays inside the seal (frontier Claude is the sealed pen)'); sessions.push(s.sessionId); }
-    else if (s?.provider === 'anthropic' && s?.escalation === true) { pass('tier B + escalate:true → recorded escalation (the sealed Bedrock pen is not frontier Claude)'); sessions.push(s.sessionId); }
-    else fail('escalation (Bedrock-configured server)', { s, e });
-  } else if (s?.provider === 'anthropic' && s?.escalation === true) {
-    pass('tier B + escalate:true → frontier pen, flagged as escalation'); sessions.push(s.sessionId);
-  } else fail('escalation', { s, e });
+    if (s?.provider === 'aws-bedrock' && s?.escalation === false) { pass('tier B + escalate:true → ignored, the Bedrock pen answers inside the seal'); sessions.push(s.sessionId); }
+    else fail('escalate must be ignored (Bedrock-configured server)', { s, e });
+  } else if (e?.code === 'sealed_pen_unavailable' && s?.provider !== 'anthropic') {
+    pass('tier B + escalate:true → still refused without a sealed pen');
+  } else fail('escalate must be ignored', { s, e });
 
   // ── 4. tier C → refused ─────────────────────────────────────────────
   await setTier('C');

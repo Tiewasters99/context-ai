@@ -133,6 +133,21 @@ const STUBS = `
         select id, parent_matterspace_id from public.matterspaces where id = p_matter_id
         union all select m.id, m.parent_matterspace_id from public.matterspaces m join up on m.id = up.parent_matterspace_id)
       select auth.uid() is not null and exists (select 1 from public.matter_members mm join up on mm.matter_id = up.id where mm.user_id = auth.uid() and mm.can_write) $f$;
+  -- 094/096's seal test: effective tier B or C on the matter or any ancestor.
+  create schema if not exists stepup_internal;
+  create or replace function stepup_internal.effective_tier_is_sealed(p_matter uuid) returns boolean
+    language sql stable security definer set search_path = public as $f$
+      with recursive up as (
+        select id, parent_matterspace_id, ai_tier from public.matterspaces where id = p_matter
+        union all select m.id, m.parent_matterspace_id, m.ai_tier from public.matterspaces m join up on m.id = up.parent_matterspace_id)
+      select exists (select 1 from up where ai_tier in ('B', 'C')) $f$;
+  create or replace function public.effective_tier_is_sealed(p_matter uuid) returns boolean
+    language plpgsql stable as $f$
+    begin
+      if p_matter is null then return false; end if;
+      if auth.uid() is not null and not public.can_access_matter(p_matter) then return null; end if;
+      return stepup_internal.effective_tier_is_sealed(p_matter);
+    end $f$;
   create or replace function public.matterspace_descendants(p_root uuid)
   returns table (id uuid) language sql stable as $f$
     with recursive tree as (
@@ -204,7 +219,8 @@ const STUBS = `
     return jsonb_build_object('id', v_id, 'seq', v_id, 'hash', md5(v_id::text));
   end $f$;
 
-  grant usage on schema public, auth to authenticated, anon, service_role;
+  grant usage on schema public, auth, stepup_internal to authenticated, anon, service_role;
+  grant execute on all functions in schema stepup_internal to authenticated, service_role;
   grant select on public.matterspaces, public.documents, public.profiles, public.matter_members to authenticated;
   grant insert, update, delete on public.documents to authenticated;
   grant execute on all functions in schema public to authenticated;

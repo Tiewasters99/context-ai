@@ -319,7 +319,7 @@ test('the three feature labels are in the Record\'s list', () => {
 // ---------------------------------------------------------------------------
 import { runTrademarkAction, TrademarkActionError, NOT_READY_MESSAGE } from '../lib/trademark/actions.mjs';
 
-function stubSb({ clearance, hits = [], canWrite = true, missing = false }) {
+function stubSb({ clearance, hits = [], canWrite = true, missing = false, sealed = false }) {
   const updates = [];
   const from = (table) => {
     const q = { table, filters: {}, patch: null };
@@ -344,7 +344,7 @@ function stubSb({ clearance, hits = [], canWrite = true, missing = false }) {
     };
     return api;
   };
-  return { from, rpc: async () => ({ data: canWrite, error: null }), updates };
+  return { from, rpc: async (fn) => ({ data: fn === 'effective_tier_is_sealed' ? sealed : canWrite, error: null }), updates };
 }
 
 const CID = '6b0c1e7e-0000-4000-8000-0000000000c1';
@@ -483,7 +483,7 @@ test('triage sees hits past the 1,000th serial, newest first (QUALLE 97770896 wa
       };
       return chain;
     },
-    rpc: () => Promise.resolve({ data: true }),
+    rpc: (fn) => Promise.resolve({ data: fn !== 'effective_tier_is_sealed' }),
   };
   const send = async (req) => {
     const text = JSON.stringify(req);
@@ -527,6 +527,18 @@ test('triage proposes resembling marks first, then the rest', async () => {
   assert.ok(asked.slice(1).every((s) => s.startsWith('9')), 'then the rest, in the order read (newest first from the database)');
 });
 
+test('the Trademark Agent does not run in a sealed matter, nor when the seal cannot be read', async () => {
+  for (const sealed of [true, null]) {
+    const sb = stubSb({ clearance: { id: CID, matterspace_id: MID, mark: 'QUALLET', search_classes: [], filing_classes: [] }, sealed });
+    let called = false;
+    const err = await runTrademarkAction({ action: 'decompose', args: { clearance_id: CID }, sb, userId: 'u', send: async () => { called = true; }, record: async () => {} })
+      .catch((e) => e);
+    assert.ok(err instanceof TrademarkActionError, String(err));
+    assert.equal(err.code, 'sealed');
+    assert.equal(called, false, 'no model was called');
+  }
+});
+
 test('the report header counts every record and how many have a proposal and a decision', () => {
   const { clearance, queries, runs } = buildFixture();
   const hits = [

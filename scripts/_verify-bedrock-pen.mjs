@@ -3,8 +3,8 @@
 //
 // OFFLINE (always runs, no network):
 //   1. bedrockCredsFromEnv — PASTE and missing values mean "unprovisioned".
-//   2. choosePen matrix — the Bedrock pen is the ONLY Tier-B pen, escalation
-//      becomes moot when it is frontier Claude, a server without it refuses
+//   2. choosePen matrix — the Bedrock pen is the ONLY Tier-B pen, a stray
+//      `escalate` is ignored (removed 2026-10-28), a server without it refuses
 //      rather than falling back, and neither C nor A is affected.
 //   3. The bedrockTurn driver against a stubbed global fetch: wire shape
 //      (host, path, SigV4 service, anthropic-version, body), SSE
@@ -59,18 +59,18 @@ if (pen.provider === 'aws-bedrock' && pen.route === 'invoke' && pen.model === 'u
   pass('B + Bedrock creds (no BEDROCK_MODEL) → Opus 4.6 on the runtime invoke route, no escalation');
 } else fail('B should prefer Bedrock / Opus 4.6', pen);
 pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: fakeCreds, escalate: true });
-if (pen.provider === 'anthropic' && pen.escalation === true) {
-  pass('B + escalate + non-frontier sealed pen (Opus 4.6) → recorded escalation to first-party Claude');
-} else fail('escalation with a non-frontier sealed pen must be recorded', pen);
+if (pen.provider === 'aws-bedrock' && pen.escalation === false) {
+  pass('B + a stray escalate + Opus 4.6 on Bedrock → still Bedrock: there is no way out of the seal');
+} else fail('escalate must be ignored on a sealed matter', pen);
 const kimiCreds = { ...fakeCreds, model: 'moonshotai.kimi-k2.5' };
 pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: kimiCreds });
 if (pen.provider === 'aws-bedrock' && pen.route === 'chat' && pen.model === 'moonshotai.kimi-k2.5') {
   pass('BEDROCK_MODEL=moonshotai.kimi-k2.5 → Kimi on the chat route (the old default, still selectable)');
 } else fail('a non-Anthropic model should ride the chat route', pen);
 pen = choosePen({ tier: 'B', ...KEYS, bedrockCreds: kimiCreds, escalate: true });
-if (pen.provider === 'anthropic' && pen.escalation === true) {
-  pass('B + escalate + Kimi → recorded escalation to first-party Claude');
-} else fail('escalation with Kimi must be recorded', pen);
+if (pen.provider === 'aws-bedrock' && pen.escalation === false) {
+  pass('B + a stray escalate + Kimi → still Bedrock');
+} else fail('escalate must be ignored with Kimi too', pen);
 pen = bedrockPenFor({ ...fakeCreds, model: 'global.anthropic.claude-opus-4-6-v1' });
 if (pen.route !== 'invoke') pass('a global.* profile is NOT routed to the runtime (it would process outside the US)');
 else fail('global.* must not ride the invoke route', pen);
@@ -94,9 +94,13 @@ try {
   if (err instanceof AssistantRefusal && err.code === 'sealed_pen_unavailable') pass('B without Bedrock → refusal, never Fireworks');
   else fail('wrong refusal', { code: err.code, message: err.message });
 }
-pen = choosePen({ tier: 'B', ...KEYS, escalate: true });
-if (pen.provider === 'anthropic' && pen.escalation === true) pass('B without Bedrock + explicit escalate → recorded escalation unchanged');
-else fail('B escalation fallback', pen);
+try {
+  choosePen({ tier: 'B', ...KEYS, escalate: true });
+  fail('B without Bedrock + escalate must refuse — escalate no longer exists');
+} catch (err) {
+  if (err instanceof AssistantRefusal && err.code === 'sealed_pen_unavailable') pass('B without Bedrock + a stray escalate → refusal, never first-party Claude');
+  else fail('wrong refusal', { code: err.code, message: err.message });
+}
 try {
   choosePen({ tier: 'B', anthropicKey: 'ak' });
   fail('B with no sealed pen must refuse');
