@@ -76,6 +76,10 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
         content: { body: value.body },
       });
       invalidate.invalidateItem(id);
+      // The space's page list too: a list shows the pages under its points
+      // by their CURRENT titles, read from that list, and a rename here
+      // should reach it on the next look rather than after a stale window.
+      if (item) invalidate.invalidateList({ spaceId: item.space_id, spaceType: item.space_type }, 'page');
     },
   });
   const { change, adopt, flush } = autosave;
