@@ -9,7 +9,7 @@
 // stays in the original ephemeral mode.
 
 import { supabase } from './supabase';
-import type { VaultFile } from './vault-types';
+import type { VaultFile, IngestJobSnapshot } from './vault-types';
 // The matter-tree document read, paged past PostgREST's 1,000-row cap. It
 // lives in its own module because it takes the client as an argument, which
 // is what lets an offline harness drive the real query.
@@ -514,6 +514,11 @@ export interface DocumentStatusUpdate {
   textStatus?: string;
   /** A described picture's tile label, once the worker has written it (VaultFile.imageLabel). */
   imageLabel?: string;
+  /** documents.page_count once the page tree has been read (VaultFile.pageCount). */
+  pageCount?: number;
+  /** The ingest job's latest progress while non-terminal (VaultFile.job); the
+   *  batched watcher fills it, the single-document one does not. */
+  job?: IngestJobSnapshot;
   /** Pages a ready PDF still owes OCR (VaultFile.ocrPending). */
   ocrPending?: OcrPending;
   /** True when the SecureSpace held the document (VaultFile.held). */
@@ -668,21 +673,49 @@ export function watchDocumentStatuses(
 
     for (let i = 0; i < ids.length && !stopped; i += STATUS_CHUNK) {
       const chunk = ids.slice(i, i + STATUS_CHUNK);
-      const { data, error } = await supabase
-        .from('documents')
-        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
-        .in('id', chunk);
+      // Two reads on the same tick, never a second poller: the documents'
+      // status, and the ingest job behind each — its page count so far, in
+      // the worker's own words (processing_jobs.progress_note), which is what
+      // the bar on the row is drawn from (lib/ingest-progress.mjs). Members
+      // read their matters' jobs (migration 032); the lookup rides the
+      // payload->>document_id index of migration 055.
+      const [{ data, error }, jobsRes] = await Promise.all([
+        supabase
+          .from('documents')
+          .select('id, processing_status, processing_error, page_count, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
+          .in('id', chunk),
+        supabase
+          .from('processing_jobs')
+          .select('document_id:payload->>document_id, status, progress, progress_note, attempts, created_at')
+          .eq('job_type', 'ingest_document')
+          .in('payload->>document_id', chunk)
+          .order('created_at', { ascending: false }),
+      ]);
       if (stopped) return;
       // A transient failure is not an answer about any document: keep them
       // all pending and ask again on the next tick. It is only counted, so
       // that a failure which never clears ends the watch instead of leaving
       // the rows spinning (see STATUS_MAX_FAILED_TICKS).
       if (error) { tickFailed = true; lastError = error.message; continue; }
+      // The job read failing is not an answer either, but it rules nothing:
+      // the bar falls back to the stage, and the status above still decides.
+      const jobByDoc = new Map<string, IngestJobSnapshot>();
+      if (!jobsRes.error) {
+        for (const j of (jobsRes.data ?? []) as {
+          document_id: string | null; status: string; progress: number | null;
+          progress_note: string | null; attempts: number | null;
+        }[]) {
+          // Newest first: the first row per document is the one that counts.
+          if (!j.document_id || jobByDoc.has(j.document_id)) continue;
+          jobByDoc.set(j.document_id, { status: j.status, progress: j.progress, note: j.progress_note, attempts: j.attempts });
+        }
+      }
 
       const rows = (data ?? []) as {
         id: string;
         processing_status: string;
         processing_error: string | null;
+        page_count?: number | null;
         text_status?: string | null;
         image_label?: string | null;
         ocr_pending?: unknown;
@@ -692,12 +725,15 @@ export function watchDocumentStatuses(
 
       for (const row of rows) {
         const status = mapStatus(row.processing_status);
+        const terminal = status === 'indexed' || status === 'error';
         updates.push({
           documentId: row.id,
           update: {
             status,
             errorMessage: row.processing_error || undefined,
             stage: stageOf(row.processing_status),
+            pageCount: Number(row.page_count) > 0 ? Number(row.page_count) : undefined,
+            job: terminal ? undefined : jobByDoc.get(row.id),
             textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
             imageLabel: row.processing_status === 'ready' ? (row.image_label ?? undefined) : undefined,
             ocrPending: row.processing_status === 'ready' && row.ocr_pending && typeof row.ocr_pending === 'object'

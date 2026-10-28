@@ -996,6 +996,9 @@ jobs:
       - name: Upload estimate — the quote, the threshold, and the server's re-check
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-ingest-estimate.mjs
+
+      - name: Ingest progress — the bar reads the worker's note (node --test)
+        run: node --test scripts/_test-ingest-progress.mjs
       # A refresh, a closed tab or a navigation must not cost a lawyer typed
       # work. Three parts: the saver and the keyed draft store driven with
       # injected timers and a fake storage (debounce, one serial writer, an

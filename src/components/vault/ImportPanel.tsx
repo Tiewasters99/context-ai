@@ -6,6 +6,8 @@ import { describeTextStatus, describeOcrPending } from '../../../lib/ingest-form
 import { ingestServiceNotice, type IngestServiceStatus } from '@/lib/ingest-service-notice';
 import { listVaultReviewChips } from '@/lib/discovery';
 import ContentSearch from './ContentSearch';
+import IngestProgress from './IngestProgress';
+import { readIngestProgress } from '../../../lib/ingest-progress.mjs';
 import { isVaultDrag, readVaultDrag, writeVaultDrag, type VaultDragItem } from '@/lib/vault-drag';
 import ContextMenu, { type ContextMenuState } from '@/components/ui/ContextMenu';
 import CoverThumb from '@/components/ui/CoverThumb';
@@ -130,9 +132,28 @@ function statusLabel(file: VaultFile): string {
   // is; a dropped connection picks up where it stopped, and the number keeps
   // climbing instead of restarting.
   if (!file.storagePath) return file.uploadPct != null ? `Uploading… ${file.uploadPct}%` : 'Uploading…';
-  const stage = file.stage ? (stageLabel[file.stage] ?? file.stage) : (file.status === 'indexing' ? 'indexing for search' : 'starting');
-  return `Uploaded — processing: ${stage}`;
+  // The bar under the row (IngestProgress) says how far; this line says the
+  // same words, so the two never disagree. The stage table above is the
+  // fallback for a stage the reader does not know.
+  const reading = readIngestProgress({ stage: file.stage, progress: file.job?.progress, note: file.job?.note, pageCount: file.pageCount, attempts: file.job?.attempts });
+  const stage = reading.label !== 'Working'
+    ? reading.label
+    : (file.stage ? (stageLabel[file.stage] ?? file.stage) : (file.status === 'indexing' ? 'indexing for search' : 'starting'));
+  return `Uploaded — ${stage}`;
 }
+
+// The server is at work on this row and the bytes are safe: the one window
+// in which a bar has anything to say.
+const processingOnServer = (file: VaultFile) =>
+  !!file.matterspace_id && !!file.storagePath && (file.status === 'uploading' || file.status === 'indexing');
+
+// A stored PDF is readable before it is indexed — the Reader opens it page by
+// page from the bucket and needs no passages (Eden, 10-26: upload is storage,
+// and storage is instant). Other formats are converted first and have nothing
+// to show until they are.
+const isPdfFile = (file: VaultFile) =>
+  file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+const openableEarly = (file: VaultFile) => processingOnServer(file) && isPdfFile(file);
 
 // Translate raw pipeline errors into something a user can act on. The raw
 // message is still available on hover (title attr) for debugging.
@@ -694,7 +715,7 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
     `${(bytes / 1024).toFixed(0)} KB`;
 
   const openable = (file: VaultFile) =>
-    !!onOpenFile && (file.status === 'indexed' || file.status === 'error');
+    !!onOpenFile && (file.status === 'indexed' || file.status === 'error' || openableEarly(file));
 
   // One sentence, computed once for the whole panel: every document waiting on
   // the pipeline is waiting on the same pipeline, so the answer cannot differ
@@ -730,7 +751,9 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
       } ${
         canOpen ? 'cursor-pointer' : file.matterspace_id ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
-      title={canOpen ? 'Open document' : file.matterspace_id ? 'Drag to a folder to move' : undefined}
+      title={canOpen
+        ? (openableEarly(file) ? 'Open now — the file is stored; reading and indexing carry on in the background' : 'Open document')
+        : file.matterspace_id ? 'Drag to a folder to move' : undefined}
     >
       {selectable && (
         <button
@@ -779,6 +802,13 @@ export default function ImportPanel({ files, onAddFiles, onRemoveFile, onRetryFi
             <span className="text-white/30 ml-1">· {Math.round(file.textContent.length / 4)} tokens</span>
           )}
         </p>
+        {/* How far the pipeline has got, as a bar, with the page count the
+            worker reports and the reason the wait exists. Only while the
+            server is at work on stored bytes — a file still leaving this
+            browser has its own percentage above. */}
+        {processingOnServer(file) && (
+          <IngestProgress stage={file.stage} job={file.job} pageCount={file.pageCount} openNow={openableEarly(file) && !!onOpenFile} />
+        )}
         {/* Stored on purpose, with no searchable text: say why, in one line,
             instead of a green "Ready" that reads as indexed. */}
         {file.status === 'indexed' && (file.textStatus || file.ocrPending) && (
