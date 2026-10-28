@@ -1,4 +1,4 @@
-// /privacy — how Contextspaces handles information.
+// /privacy — how Equazia.ai (formerly Contextspaces) handles information.
 //
 // Public. Required by ChatGPT's GPT builder (a GPT with Actions must name a
 // privacy policy URL) and linked from the landing page footer, which pointed
@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 
 const serif = { fontFamily: '"Playfair Display Variable", serif' } as const;
-const UPDATED = '29 September 2026';
+const UPDATED = '26 October 2026';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -33,7 +33,7 @@ export default function Privacy() {
 
         <header className="mb-10">
           <h1 className="text-[34px] sm:text-[42px] leading-[1.05] font-semibold tracking-tight text-white" style={serif}>Privacy</h1>
-          <p className="mt-3 text-[13px] text-[#8a8694]">Last updated {UPDATED}. Equazia.ai is operated by Grapheon.ai, LLC.</p>
+          <p className="mt-3 text-[13px] text-[#8a8694]">Last updated {UPDATED}. Equazia.ai (formerly Contextspaces) is operated by Equazia.ai, Inc.</p>
           <p className="mt-4 text-[16px] leading-relaxed text-[#b8b4be]">
             Equazia.ai holds legal matters: documents, transcripts, notes and the record of what was done with them.
             This page says what we store, who can see it, which outside services touch it, and how you end that.
@@ -123,7 +123,9 @@ export default function Privacy() {
           <p>
             You can export your documents, disconnect any assistant or integration, seal a matter, enrol a second
             factor, and ask us to delete your account. Questions about this page or about your information go to
-            Grapheon.ai, LLC, 245 Nassau Street, Princeton, New Jersey, or to the firm that invited you to Equazia.ai.
+            Equazia.ai, Inc., 245 Nassau Street, Princeton, NJ 08540, to{' '}
+            <a href="mailto:info@equazia.ai" className="text-[#e8e4de] underline underline-offset-2">info@equazia.ai</a>, or to the
+            firm that invited you to Equazia.ai.
           </p>
         </Section>
 
@@ -135,7 +137,8 @@ export default function Privacy() {
         </Section>
 
         <p className="mt-12 text-[12px] text-[#5a5665]">
-          See also: <Link to="/gpt-connect" className="text-[#8a8694] underline underline-offset-2">Equazia.ai in ChatGPT</Link>.
+          See also: <Link to="/terms" className="text-[#8a8694] underline underline-offset-2">Terms of Service</Link> ·{' '}
+          <Link to="/gpt-connect" className="text-[#8a8694] underline underline-offset-2">Equazia.ai in ChatGPT</Link>.
         </p>
       </div>
     </div>

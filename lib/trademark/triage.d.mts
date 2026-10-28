@@ -35,3 +35,7 @@ export function exclusionCheck(o: { exclusions: string[]; knownMarks?: { name: s
   swallowed: { stem: string; name: string; kind: 'known' | 'hit'; serial?: string }[]; rescue: string[];
 };
 export function gapLines(queries: QueryLike[], runs: RunLike[]): string[];
+export function nearMark(
+  clearance: { decomposition?: { opening: string; hinge?: string; ending: string } | null; known_marks?: unknown[]; foreign_equivalents?: string[] },
+  queries?: { seq: number; purpose: string }[],
+): (hit: { mark?: string | null; query_seqs?: number[] }) => boolean;

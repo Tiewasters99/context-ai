@@ -4,13 +4,14 @@
 // An office_items row is the book on the shelf: title, author, a short
 // excerpt from the first passage, a spine colour from the title. The jacket
 // (cover image and page images, lib/office-cover.ts) is captured afterwards
-// and never blocks the filing — a book with no jacket keeps its plate.
+// and never blocks the filing — a book with no jacket keeps its plate. A
+// book with a chosen cover in the vault wears that cover as its jacket.
 //
 // The Office Library is PUBLIC (/read/:id, api/office.mjs), so filing is a
 // deliberate act: callers confirm with the person before calling publish().
 
 import { supabase } from '@/lib/supabase';
-import { canCaptureCover, captureOfficeImages } from '@/lib/office-cover';
+import { canGiveJacket, captureOfficeImages } from '@/lib/office-cover';
 
 export const SPINES = ['#7a2530', '#243a52', '#39505f', '#8a6d2a', '#2e5a50', '#5a4a6e', '#6e4a2e', '#3a5a6e', '#742d2d', '#2e6b64'];
 export const spineFor = (title: string) =>
@@ -88,8 +89,9 @@ export async function publishDocumentToOffice(
   return { status: 'filed', itemId: row.id, sectionTitle: section.title };
 }
 
-/** The jacket, after the fact. Resolves to what was captured; never throws
- *  for a non-PDF (nothing to capture) — only a failed capture does. */
+/** The jacket, after the fact: the document's chosen cover when it has one,
+ *  page one of the PDF otherwise. Resolves to what was captured; never
+ *  throws for a document with nothing to show — only a failed capture does. */
 export async function captureJacket(
   itemId: string,
   docId: string,
@@ -97,10 +99,10 @@ export async function captureJacket(
 ): Promise<{ cover: boolean; pages: number } | null> {
   const { data: doc } = await supabase
     .from('documents')
-    .select('storage_path, source_filename')
+    .select('storage_path, source_filename, cover_url')
     .eq('id', docId)
     .single();
-  if (!doc?.storage_path || !canCaptureCover(doc.source_filename)) return null;
-  const got = await captureOfficeImages(itemId, doc.storage_path, doc.source_filename, onProgress);
+  if (!doc?.storage_path || !canGiveJacket(doc.source_filename, doc.cover_url)) return null;
+  const got = await captureOfficeImages(itemId, doc.storage_path, doc.source_filename, onProgress, doc.cover_url);
   return { cover: !!got.cover, pages: got.pages };
 }

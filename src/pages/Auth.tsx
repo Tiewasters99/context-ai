@@ -10,7 +10,7 @@ type View = 'signin' | 'signup' | 'reset';
 // Sign Up tab explains that and says how to ask for early access. At launch:
 // flip this to true AND turn sign-ups back on in Supabase Auth.
 const SIGNUPS_OPEN = false;
-const EARLY_ACCESS_EMAIL = 'quaintonlaw@gmail.com';
+const EARLY_ACCESS_EMAIL = 'info@equazia.ai';
 
 export default function Auth() {
   const navigate = useNavigate();
@@ -185,6 +185,15 @@ export default function Auth() {
                   Forgot password?
                 </button>
               </div>
+            )}
+
+            {view === 'signup' && (
+              <p className="text-xs text-white/60 leading-relaxed">
+                By creating an account you accept the{' '}
+                <Link to="/terms" className="text-[#d4a054] hover:text-[#c4903a] underline underline-offset-2">Terms of Service</Link>{' '}
+                and the{' '}
+                <Link to="/privacy" className="text-[#d4a054] hover:text-[#c4903a] underline underline-offset-2">Privacy</Link> page.
+              </p>
             )}
 
             <button

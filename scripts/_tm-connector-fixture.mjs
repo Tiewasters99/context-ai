@@ -269,10 +269,14 @@ function parseSelect(sel) {
   }).join(', ');
 }
 
+/** The project's PostgREST max-rows. */
+export const MAX_ROWS = 1000;
+
 function parseFilters(searchParams, params) {
   const where = [];
   let order = '';
   let limit = '';
+  let offset = '';
   for (const [k, v] of searchParams) {
     if (['select', 'columns', 'on_conflict'].includes(k)) continue;
     if (k === 'order') {
@@ -283,7 +287,8 @@ function parseFilters(searchParams, params) {
       }).join(', ');
       continue;
     }
-    if (k === 'limit') { limit = ` limit ${Number(v) | 0}`; continue; }
+    if (k === 'limit') { limit = ` limit ${Math.min(Number(v) | 0, MAX_ROWS)}`; continue; }
+    if (k === 'offset') { offset = ` offset ${Number(v) | 0}`; continue; }
     if (!COL.test(k)) throw new Error(`stub: bad column ${k}`);
     if (v.startsWith('eq.')) { params.push(v.slice(3)); where.push(`${k}::text = $${params.length}`); }
     else if (v.startsWith('neq.')) { params.push(v.slice(4)); where.push(`${k}::text <> $${params.length}`); }
@@ -295,7 +300,8 @@ function parseFilters(searchParams, params) {
     else if (v === 'not.is.null') where.push(`${k} is not null`);
     else throw new Error(`stub: unsupported filter ${k}=${v}`);
   }
-  return { where: where.length ? ` where ${where.join(' and ')}` : '', order, limit };
+  // PostgREST's max-rows: an unbounded read is clipped silently, as on the project.
+  return { where: where.length ? ` where ${where.join(' and ')}` : '', order, limit: (limit || ` limit ${MAX_ROWS}`) + offset };
 }
 
 /**

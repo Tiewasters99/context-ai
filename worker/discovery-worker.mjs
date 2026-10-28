@@ -573,9 +573,9 @@ async function requeueOcrPendingIfDue() {
       payload: { document_id: d.id, ocr_retry: (Number(d.ocr_pending.attempts) || 0) + 1 },
     });
     if (qErr) { log(`  ocr retry enqueue failed for ${d.source_filename}: ${qErr.message}`); continue; }
-    await supabase.from('documents')
-      .update({ processing_status: 'pending', processing_error: null })
-      .eq('id', d.id);
+    // The row stays 'ready' and searchable while the retry runs: the run
+    // swaps its passages in (ingestDownloaded), it does not wipe them, so
+    // there is nothing to hide from search in the meantime.
     queued++;
   }
   if (queued) log(`ocr_pending sweep: queued ${queued} document(s) for another OCR attempt`);
@@ -1220,7 +1220,13 @@ async function ingestDownloaded(job, doc, docId, ext, fileBuf, mediaPath) {
   // originals, so success removes both and failure keeps the originals.
   // Unforced jobs are documents that never finished, whose partial passages
   // are clutter — so idempotency there is the old way: clear, then run.
-  const swap = forced;
+  // An OCR retry (the ocr_pending sweep) swaps too (2026-10-26): it re-reads
+  // only the pages still awaiting OCR, and the document's passages stay
+  // searchable throughout. Before this, the retry wiped the passages first
+  // and re-OCR'd every page — the Anthropic S-1 (318 pages) spent a second
+  // hour unsearchable to re-read one page.
+  const ocrRetry = Boolean(job.payload?.ocr_retry);
+  const swap = forced || ocrRetry;
   if (!swap) await supabase.from('passages').delete().eq('document_id', docId);
 
   // OCR goes through the tier's routes (ocrProvider). Transcription stays on
@@ -1277,6 +1283,7 @@ async function ingestDownloaded(job, doc, docId, ext, fileBuf, mediaPath) {
     ext,
     openaiApiKey: OPENAI_API_KEY,
     ocr: ocrProvider,
+    ocrRetry,
     transcribe,
     // A picture with no words is described so it can be found (step 2 of
     // the image plan, 2026-09-26). Null without ANTHROPIC_API_KEY; the

@@ -327,6 +327,7 @@ function stubSb({ clearance, hits = [], canWrite = true, missing = false }) {
       select() { return api; },
       eq(k, v) { q.filters[k] = v; return api; },
       order() { return api; },
+      range(from, to) { return Promise.resolve({ data: hits.slice(from, to + 1), error: null }); },
       update(p) { q.patch = p; return api; },
       async maybeSingle() {
         if (missing) return { data: null, error: { code: 'PGRST205', message: "Could not find the table 'public.tm_clearances' in the schema cache" } };
@@ -421,4 +422,119 @@ test('a proposal request offers the tool without naming it, asks again once when
 
   const budget = Object.assign(new Error('This month\'s AI allowance is used up.'), { status: 402, code: 'budget_exhausted' });
   await assert.rejects(() => proposeClasses({ clearance: c, send: async () => { throw budget; } }), (e) => e === budget);
+});
+
+// ---------------------------------------------------------------------------
+// Every row, not the first page (PostgREST clips an unbounded select at 1,000).
+// ---------------------------------------------------------------------------
+import { selectAll } from '../lib/trademark/rows.mjs';
+
+/** A table that answers like PostgREST: at most `cap` rows a request, whatever range was asked. */
+function clippedTable(rows, cap) {
+  const calls = [];
+  const build = () => ({
+    range(from, to) {
+      calls.push([from, to]);
+      return Promise.resolve({ data: rows.slice(from, Math.min(to + 1, from + cap)), error: null });
+    },
+  });
+  return { build, calls };
+}
+
+test('selectAll reads past the server\'s cap: 2,729 rows through a 1,000-row clip', async () => {
+  const rows = Array.from({ length: 2729 }, (_, i) => ({ serial: String(70000000 + i) }));
+  const t = clippedTable(rows, 1000);
+  const { data, error } = await selectAll(t.build);
+  assert.equal(error, null);
+  assert.equal(data.length, 2729);
+  assert.equal(data.at(-1).serial, '70002728');
+  // A server cap smaller than the page still reads everything.
+  const small = clippedTable(rows, 400);
+  assert.equal((await selectAll(small.build)).data.length, 2729);
+});
+
+test('selectAll returns the error, not a partial list', async () => {
+  let n = 0;
+  const build = () => ({ range: () => Promise.resolve(n++ ? { data: null, error: { message: 'boom' } } : { data: [{ serial: '1' }], error: null }) });
+  const out = await selectAll(build);
+  assert.equal(out.data, null);
+  assert.equal(out.error.message, 'boom');
+});
+
+test('triage sees hits past the 1,000th serial, newest first (QUALLE 97770896 was never proposed)', async () => {
+  const hits = Array.from({ length: 1500 }, (_, i) => ({
+    serial: String(70000000 + i * 10000), mark: `MARK${i}`, owner: 'O', status_text: 'Live', live: true,
+    classes: ['009'], goods_services: 'software', bin: null, proposed: null,
+  }));
+  hits.push({ serial: '97770896', mark: 'QUALLE', owner: 'O', status_text: 'Live', live: true, classes: ['009'], goods_services: 'games', bin: null, proposed: null });
+  const asked = [];
+  const sb = {
+    from(table) {
+      const q = { _asc: true, _range: null };
+      const chain = {
+        select: () => chain, eq: () => chain, in: () => chain,
+        order: (_c, o) => { q._asc = o?.ascending !== false; return chain; },
+        range: (from, to) => {
+          const sorted = [...hits].sort((x, y) => (q._asc ? 1 : -1) * x.serial.localeCompare(y.serial));
+          return Promise.resolve({ data: table === 'tm_hits' ? sorted.slice(from, Math.min(to + 1, from + 1000)) : [], error: null });
+        },
+        maybeSingle: () => Promise.resolve({ data: { id: '00000000-0000-4000-8000-000000000001', matterspace_id: 'm', mark: 'QUALLET', decomposition: null }, error: null }),
+        update: () => ({ eq: () => ({ eq: () => ({ select: () => Promise.resolve({ data: [{}], error: null }) }) }) }),
+      };
+      return chain;
+    },
+    rpc: () => Promise.resolve({ data: true }),
+  };
+  const send = async (req) => {
+    const text = JSON.stringify(req);
+    for (const s of text.match(/\b\d{8}\b/g) ?? []) asked.push(s);
+    throw new Error('stop after the batch is chosen');
+  };
+  await runTrademarkAction({ action: 'triage', args: { clearance_id: '00000000-0000-4000-8000-000000000001' }, sb, userId: 'u', send, record: async () => {} })
+    .catch((e) => { if (!asked.length) throw e; });
+  assert.ok(asked.includes('97770896'), 'the newest filing is in the first batch');
+});
+
+import { nearMark } from '../lib/trademark/triage.mjs';
+
+test('nearMark orders by spelling and never screens: resemblers, narrow-query finds, known marks; no decomposition means no ordering', () => {
+  const c = { decomposition: { opening: 'qual', hinge: 'l', ending: 'et' }, known_marks: [{ name: 'Wallety' }], foreign_equivalents: [] };
+  const near = nearMark(c, [{ seq: 1, purpose: 'exact' }, { seq: 5, purpose: 'prefix' }]);
+  assert.equal(near({ mark: 'QUALLA' }), true);
+  assert.equal(near({ mark: 'KWALLET PAY' }), true, 'within two letters');
+  assert.equal(near({ mark: 'WALLETY' }), true, 'a known mark');
+  assert.equal(near({ mark: 'ZEBRA', query_seqs: [1] }), true, 'found by a narrow query');
+  assert.equal(near({ mark: 'ZEBRA', query_seqs: [5] }), false, 'a broad sweep alone is not near');
+  assert.equal(near({ mark: null }), false);
+  assert.equal(nearMark({ decomposition: null })({ mark: 'ZEBRA' }), true);
+});
+
+test('triage proposes resembling marks first, then the rest', async () => {
+  const hits = Array.from({ length: 120 }, (_, i) => ({
+    serial: String(90000000 + i * 1000), mark: `ZEBRA${i}`, owner: 'O', status_text: 'Live', live: true,
+    classes: ['009'], goods_services: 'software', bin: null, proposed: null,
+  }));
+  hits.push({ serial: '70000001', mark: 'QUALLA', owner: 'O', status_text: 'Live', live: true, classes: ['009'], goods_services: 'games', bin: null, proposed: null });
+  const clearance = { id: CID, matterspace_id: MID, mark: 'QUALLET', search_classes: [], filing_classes: [], decomposition: { opening: 'qual', hinge: 'l', ending: 'et' } };
+  const sb = stubSb({ clearance, hits });
+  const asked = [];
+  const send = async (req) => {
+    asked.push(...(JSON.stringify(req).match(/\b\d{8}\b/g) ?? []));
+    throw new Error('stop after the batch is chosen');
+  };
+  await runTrademarkAction({ action: 'triage', args: { clearance_id: CID }, sb, userId: 'u', send, record: async () => {} }).catch((e) => { if (!asked.length) throw e; });
+  assert.equal(asked[0], '70000001', 'QUALLA goes first although its serial is the oldest');
+  assert.ok(asked.slice(1).every((s) => s.startsWith('9')), 'then the rest, in the order read (newest first from the database)');
+});
+
+test('the report header counts every record and how many have a proposal and a decision', () => {
+  const { clearance, queries, runs } = buildFixture();
+  const hits = [
+    { serial: '1', mark: 'A', live: true, proposed: { bin: 'flag' }, bin: 'flag', initials: 'EQ' },
+    { serial: '2', mark: 'B', live: true, proposed: { bin: 'note' }, bin: null },
+    { serial: '3', mark: 'C', live: true, proposed: null, bin: null },
+    { serial: '4', mark: 'D', live: false, status_text: 'Dead' },
+  ];
+  const md = assembleReport({ clearance, matter: { name: 'M' }, preparer: { name: 'R', initials: 'R' }, date: '2026-10-24', queries, runs, hits, procedureHash: 'x' });
+  assert.match(md, /Records in this clearance \| 4 records \(3 live, 1 dead\); 2 live with a model proposal; 1 decided/);
 });

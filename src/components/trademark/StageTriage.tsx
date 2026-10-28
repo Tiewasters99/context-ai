@@ -105,13 +105,16 @@ export default function StageTriage({ b, initials, setInitials, onChanged }: {
   const propose = async () => {
     setBusy('propose'); setError(null); setNote(null);
     try {
-      let total = 0; let dropped = 0;
-      for (let i = 0; i < 20; i++) {
+      // 50 hits a request; keep going until none are left (a clearance can
+      // hold thousands), newest serials first.
+      let total = 0; let dropped = 0; let left = 0;
+      for (let i = 0; i < 200; i++) {
         const out = await trademarkApi<{ proposed: number; discarded: { serial: string; reason: string }[]; remaining: number }>('triage', { clearance_id: c.id });
-        total += out.proposed; dropped += out.discarded.length;
+        total += out.proposed; dropped += out.discarded.length; left = out.remaining;
+        setNote(`${total} proposal${total === 1 ? '' : 's'} added so far; ${left} still to propose…`);
         if (!out.remaining || out.proposed === 0) break;
       }
-      setNote(`${total} proposal${total === 1 ? '' : 's'} added${dropped ? `; ${dropped} discarded (a phrase this product never prints, or an answer about a record not asked about)` : ''}. Decide each row.`);
+      setNote(`${total} proposal${total === 1 ? '' : 's'} added${dropped ? `; ${dropped} discarded (a phrase this product never prints, or an answer about a record not asked about)` : ''}.${left ? ` ${left} live record${left === 1 ? '' : 's'} still without a proposal — press Propose again.` : ''} Decide each row.`);
       await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -123,12 +123,19 @@ pipeline, which asks only "does this tier have a route?"):
 
 | Tier | Routes, in order | Secrets on the worker |
 |---|---|---|
-| A (unsealed) | Gemini → Anthropic vision (fallback) | `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY` |
+| A (unsealed) | AWS Textract → Gemini → Anthropic vision (2026-10-26: Textract read the 318-page Anthropic S-1 in 73 s where Gemini took 56 min) | `TEXTRACT_*` (as Tier B), then `GOOGLE_API_KEY`, `ANTHROPIC_API_KEY` |
 | B (SecureSpace) | AWS Textract in our own account, nothing else | `TEXTRACT_AWS_ACCESS_KEY_ID`, `TEXTRACT_AWS_SECRET_ACCESS_KEY`, `TEXTRACT_AI_OPT_OUT_CONFIRMED` — see `docs/SEALED_OCR_SETUP.md` |
 | C (Silo) | none | — |
 
     fly secrets set -a contextspaces-worker ANTHROPIC_API_KEY="..."        # the Tier A fallback
-    fly secrets set -a contextspaces-worker OCR_TIER_A_ROUTES="anthropic-vision,gemini-flash"   # flip the order, no deploy
+    fly secrets set -a contextspaces-worker OCR_TIER_A_ROUTES="gemini-flash,anthropic-vision"   # change the order, no deploy
+    fly secrets set -a contextspaces-worker OCR_TEXTRACT_LANES=16 OCR_GEMINI_LANES=4 OCR_ANTHROPIC_LANES=3   # pages in flight per route (defaults shown)
+
+Without the three `TEXTRACT_*` secrets on the worker, Tier A silently keeps
+Gemini first (the route is not "ready"); `check_ingest_status` → `ocr_route`
+says which route read a document. A retry for pages still awaiting OCR reads
+only those pages and takes the rest from `ocr-pages.json` beside the file in
+the vault bucket; the document stays `ready` and searchable throughout.
 
 Every OCR'd document records `metadata.ocr_route` (route, model, pages, a
 dollar estimate, and which route failed first); `check_ingest_status` reads it

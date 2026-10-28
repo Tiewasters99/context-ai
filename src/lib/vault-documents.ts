@@ -38,7 +38,10 @@ export const VAULT_DOCUMENT_COLUMNS =
   // The tile label a vision model wrote for a picture (step 2 of the image
   // plan, 2026-09-26): "Luthiers workshop dusk snow falling". Null on
   // everything else, and on pictures described before the feature.
-  'image_label:metadata->image_description->>label';
+  'image_label:metadata->image_description->>label, ' +
+  // The cover chosen for the document (migration 028), drawn small beside
+  // the title in the list — the Library's books wear their jackets.
+  'cover_url';
 
 /**
  * The same columns plus the two migration 081 adds. Asked for ONLY when the
@@ -107,6 +110,8 @@ export interface VaultDocumentRow {
   text_status?: string | null;
   /** `metadata->ocr_pending` arrives typed as Json; the caller narrows it. */
   ocr_pending?: unknown;
+  /** Migration 028: the cover chosen for the document, or null. */
+  cover_url?: string | null;
   /** Migration 081, and only on an A–Z or Category read. */
   sort_key?: string | null;
   category?: string | null;

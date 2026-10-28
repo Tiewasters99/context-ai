@@ -19,6 +19,7 @@ import { procedureHash } from '../../../lib/trademark/procedure.mjs';
 import { collectHits, summarizeRun, MAX_RUN_ROWS } from '../../../lib/trademark/triage.mjs';
 import type { ParsedRow } from '../../../lib/trademark/parse.mjs';
 import { reportFilename, reportHash } from '../../../lib/trademark/report.mjs';
+import { selectAll } from '../../../lib/trademark/rows.mjs';
 import {
   applicationFilename, mergeAnswers, normalizeApplication, reviewedLegend, type Application,
 } from '../../../lib/trademark/application.mjs';
@@ -164,7 +165,7 @@ export async function loadClearance(id: string): Promise<ClearanceBundle> {
   const [st, qs, hs] = await Promise.all([
     supabase.from('tm_stages').select('*').eq('clearance_id', id).order('stage'),
     supabase.from('tm_queries').select('*').eq('clearance_id', id).order('seq'),
-    supabase.from('tm_hits').select('*').eq('clearance_id', id).order('serial'),
+    selectAll(() => supabase.from('tm_hits').select('*').eq('clearance_id', id).order('serial')),
   ]);
   if (st.error) fail(st.error, 'Could not read the stages.');
   if (qs.error) fail(qs.error, 'Could not read the queries.');
@@ -172,7 +173,7 @@ export async function loadClearance(id: string): Promise<ClearanceBundle> {
   const queries = (qs.data ?? []) as TmQuery[];
   let runs: TmRun[] = [];
   if (queries.length) {
-    const r = await supabase.from('tm_query_runs').select('*').in('query_id', queries.map((q) => q.id)).order('run_at');
+    const r = await selectAll(() => supabase.from('tm_query_runs').select('*').in('query_id', queries.map((q) => q.id)).order('run_at').order('id'));
     if (r.error) fail(r.error, 'Could not read the runs.');
     runs = (r.data ?? []) as TmRun[];
   }
