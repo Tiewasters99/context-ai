@@ -9,7 +9,7 @@
 // stays in the original ephemeral mode.
 
 import { supabase } from './supabase';
-import type { VaultFile } from './vault-types';
+import type { VaultFile, IngestJobSnapshot } from './vault-types';
 // The matter-tree document read, paged past PostgREST's 1,000-row cap. It
 // lives in its own module because it takes the client as an argument, which
 // is what lets an offline harness drive the real query.
@@ -514,6 +514,11 @@ export interface DocumentStatusUpdate {
   textStatus?: string;
   /** A described picture's tile label, once the worker has written it (VaultFile.imageLabel). */
   imageLabel?: string;
+  /** documents.page_count once the page tree has been read (VaultFile.pageCount). */
+  pageCount?: number;
+  /** The ingest job's latest progress while non-terminal (VaultFile.job); the
+   *  batched watcher fills it, the single-document one does not. */
+  job?: IngestJobSnapshot;
   /** Pages a ready PDF still owes OCR (VaultFile.ocrPending). */
   ocrPending?: OcrPending;
   /** True when the SecureSpace held the document (VaultFile.held). */
@@ -565,6 +570,41 @@ export async function fetchIngestServiceStatus(): Promise<IngestServiceStatus | 
   }
 }
 
+/**
+ * The live ingest job behind each of these documents — its page count so far,
+ * in the worker's own words (processing_jobs.progress_note), which is what
+ * the bar on the row is drawn from (lib/ingest-progress.mjs). Members read
+ * their matters' jobs (migration 032); the lookup rides the
+ * payload->>document_id index of migration 055 and is bounded to jobs still
+ * queued or running — a finished job's document is terminal and needs no bar.
+ * Newest first, so the first row per document is the one that counts. A
+ * failure here rules nothing: the map is empty, the bar falls back to the
+ * stage, and the documents read decides the status as before.
+ */
+async function readIngestJobs(documentIds: string[]): Promise<Map<string, IngestJobSnapshot>> {
+  const byDoc = new Map<string, IngestJobSnapshot>();
+  if (!documentIds.length) return byDoc;
+  const { data, error } = await supabase
+    .from('processing_jobs')
+    .select('document_id:payload->>document_id, status, progress, progress_note, attempts, created_at')
+    .eq('job_type', 'ingest_document')
+    .in('status', ['queued', 'running'])
+    .in('payload->>document_id', documentIds)
+    .order('created_at', { ascending: false });
+  if (error) return byDoc;
+  for (const j of (data ?? []) as {
+    document_id: string | null; status: string; progress: number | null;
+    progress_note: string | null; attempts: number | null;
+  }[]) {
+    if (!j.document_id || byDoc.has(j.document_id)) continue;
+    byDoc.set(j.document_id, { status: j.status, progress: j.progress, note: j.progress_note, attempts: j.attempts });
+  }
+  return byDoc;
+}
+
+const pageCountOf = (row: { page_count?: number | null }): number | undefined =>
+  Number(row.page_count) > 0 ? Number(row.page_count) : undefined;
+
 export function watchDocumentStatus(
   documentId: string,
   onUpdate: (update: DocumentStatusUpdate) => void,
@@ -575,11 +615,17 @@ export function watchDocumentStatus(
 
   const tick = async () => {
     if (stopped) return;
-    const { data, error } = await supabase
-      .from('documents')
-      .select('processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
-      .eq('id', documentId)
-      .maybeSingle();
+    // The status and the job behind it on one tick (see readIngestJobs): a
+    // fresh upload is watched here, one row at a time, and the person who
+    // just dropped a 300-page scan is the one who most wants the page count.
+    const [{ data, error }, jobs] = await Promise.all([
+      supabase
+        .from('documents')
+        .select('processing_status, processing_error, page_count, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
+        .eq('id', documentId)
+        .maybeSingle(),
+      readIngestJobs([documentId]),
+    ]);
     if (stopped) return;
     if (error || !data) {
       onUpdate({ status: 'error', errorMessage: error?.message || 'document disappeared' });
@@ -590,6 +636,8 @@ export function watchDocumentStatus(
       status: uiStatus,
       errorMessage: data.processing_error || undefined,
       stage: stageOf(data.processing_status),
+      pageCount: pageCountOf(data as { page_count?: number | null }),
+      job: uiStatus === 'indexed' || uiStatus === 'error' ? undefined : jobs.get(documentId),
       textStatus: data.processing_status === 'ready' ? ((data as { text_status?: string | null }).text_status ?? undefined) : undefined,
       imageLabel: data.processing_status === 'ready' ? ((data as { image_label?: string | null }).image_label ?? undefined) : undefined,
       ocrPending: data.processing_status === 'ready' && typeof (data as { ocr_pending?: unknown }).ocr_pending === 'object'
@@ -668,10 +716,19 @@ export function watchDocumentStatuses(
 
     for (let i = 0; i < ids.length && !stopped; i += STATUS_CHUNK) {
       const chunk = ids.slice(i, i + STATUS_CHUNK);
-      const { data, error } = await supabase
-        .from('documents')
-        .select('id, processing_status, processing_error, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
-        .in('id', chunk);
+      // Two reads on the same tick, never a second poller: the documents'
+      // status, and the ingest job behind each — its page count so far, in
+      // the worker's own words (processing_jobs.progress_note), which is what
+      // the bar on the row is drawn from (lib/ingest-progress.mjs). Members
+      // read their matters' jobs (migration 032); the lookup rides the
+      // payload->>document_id index of migration 055.
+      const [{ data, error }, jobByDoc] = await Promise.all([
+        supabase
+          .from('documents')
+          .select('id, processing_status, processing_error, page_count, text_status:metadata->>text_status, ocr_pending:metadata->ocr_pending, image_label:metadata->image_description->>label')
+          .in('id', chunk),
+        readIngestJobs(chunk),
+      ]);
       if (stopped) return;
       // A transient failure is not an answer about any document: keep them
       // all pending and ask again on the next tick. It is only counted, so
@@ -683,6 +740,7 @@ export function watchDocumentStatuses(
         id: string;
         processing_status: string;
         processing_error: string | null;
+        page_count?: number | null;
         text_status?: string | null;
         image_label?: string | null;
         ocr_pending?: unknown;
@@ -692,12 +750,15 @@ export function watchDocumentStatuses(
 
       for (const row of rows) {
         const status = mapStatus(row.processing_status);
+        const terminal = status === 'indexed' || status === 'error';
         updates.push({
           documentId: row.id,
           update: {
             status,
             errorMessage: row.processing_error || undefined,
             stage: stageOf(row.processing_status),
+            pageCount: pageCountOf(row),
+            job: terminal ? undefined : jobByDoc.get(row.id),
             textStatus: row.processing_status === 'ready' ? (row.text_status ?? undefined) : undefined,
             imageLabel: row.processing_status === 'ready' ? (row.image_label ?? undefined) : undefined,
             ocrPending: row.processing_status === 'ready' && row.ocr_pending && typeof row.ocr_pending === 'object'

@@ -4,7 +4,9 @@ import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, Fold
 import { supabase } from '@/lib/supabase';
 import { fetchPaged } from '@/lib/paged';
 import { useServerspaces, useServerspacesRefresh, type Serverspace } from '@/hooks/useServerspaces';
-import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument } from '@/lib/vault-persist';
+import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument, watchDocumentStatuses } from '@/lib/vault-persist';
+import type { IngestJobSnapshot } from '@/lib/vault-types';
+import IngestProgress from './IngestProgress';
 import { sandboxApi } from '@/lib/sandbox-api';
 import PdfPageEditor from './PdfPageEditor';
 import DeckComposerModal from './DeckComposerModal';
@@ -40,6 +42,11 @@ interface PickerDoc {
 
 const isPdf = (d: SandboxDoc) =>
   (d.source_filename ?? '').toLowerCase().endsWith('.pdf');
+
+// Still being read, OCR'd or indexed: the rows that get a bar, and that the
+// panel keeps asking about until they settle.
+const TERMINAL_STATUS = new Set(['ready', 'error', 'held']);
+const inFlight = (d: SandboxDoc) => !TERMINAL_STATUS.has(d.processing_status);
 
 // What the Brief Desk can take in — the Reader's own test for its
 // "Open in the Brief Desk" button.
@@ -129,6 +136,37 @@ export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id:
     if (selectedBox) loadDocs(selectedBox.id);
     else setDocs([]);
   }, [selectedBox?.id, loadDocs]);
+
+  // A copy that is still being read gets the same bar as a Vault row, from
+  // the same batched watcher (one request per tick for the whole box, not one
+  // per document). The key is the set of in-flight ids, so a stage change
+  // does not re-subscribe; a copy that settles leaves the set and the
+  // traffic falls away with it. Until 2026-10-28 the row printed the raw
+  // status word and the panel never asked again.
+  const [jobs, setJobs] = useState<Record<string, { job?: IngestJobSnapshot; pageCount?: number }>>({});
+  const inFlightKey = useMemo(() => docs.filter(inFlight).map((d) => d.id).sort().join(','), [docs]);
+  useEffect(() => {
+    if (!inFlightKey) return;
+    return watchDocumentStatuses(inFlightKey.split(','), (rows) => {
+      const byId = new Map(rows.map((r) => [r.documentId, r.update] as const));
+      setDocs((prev) => prev.map((d) => {
+        const u = byId.get(d.id);
+        if (!u) return d;
+        const processing_status = u.status === 'indexed' ? 'ready'
+          : u.status === 'error' ? (u.held ? 'held' : 'error')
+          : (u.stage ?? d.processing_status);
+        return processing_status === d.processing_status ? d : { ...d, processing_status };
+      }));
+      setJobs((prev) => {
+        const next = { ...prev };
+        for (const [id, u] of byId) {
+          if (u.status === 'indexed' || u.status === 'error') delete next[id];
+          else next[id] = { job: u.job, pageCount: u.pageCount };
+        }
+        return next;
+      });
+    });
+  }, [inFlightKey]);
 
   const toggleSelect = (id: string) =>
     setSelection((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -438,8 +476,14 @@ export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id:
                       <span className="text-[10px] text-white/40">
                         {d.source_filename ?? 'text'}
                         {d.file_size_bytes ? ` · ${(d.file_size_bytes / 1024).toFixed(0)} KB` : ''}
-                        {d.processing_status !== 'ready' ? ` · ${d.processing_status}` : ''}
+                        {d.processing_status !== 'ready' && !(inFlight(d) && d.storage_path) ? ` · ${d.processing_status}` : ''}
                       </span>
+                      {/* Still being read: how far, and why it takes time. A
+                          PDF opens now from the button above — the Reader
+                          draws it from the bucket, passages or not. */}
+                      {inFlight(d) && d.storage_path && (
+                        <IngestProgress stage={d.processing_status} job={jobs[d.id]?.job} pageCount={jobs[d.id]?.pageCount} openNow={isPdf(d)} />
+                      )}
                     </button>
                     {isDeskable(d) && (
                       <button

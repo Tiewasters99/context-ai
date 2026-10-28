@@ -682,7 +682,7 @@ export default function Vault() {
   // PDF that failed before OCR was wired, or a transient embed failure). Flips
   // the row back to "uploading" locally, fires /api/ingest, and re-polls.
   const retryVaultFile = useCallback((id: string) => {
-    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', stage: 'pending', errorMessage: undefined, textStatus: undefined } : f));
+    setVaultFiles((prev) => prev.map((f) => f.id === id ? { ...f, status: 'uploading', stage: 'pending', errorMessage: undefined, textStatus: undefined, job: undefined } : f));
     triggerIngest(id).catch((err) => console.error('retry ingest:', err.message));
     watchDocumentStatus(id, applyDocUpdate(id));
   }, [applyDocUpdate]);
