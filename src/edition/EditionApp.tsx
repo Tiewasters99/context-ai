@@ -676,6 +676,7 @@ function Read({ id, session, navigate }: { id: string; session: Session; navigat
         source={source}
         marks={marks}
         bench={bench}
+        merch={mine}
         currentUserId={session.user.id}
         meta={{ title: edition.title, pageCount: null }}
         pageMemoryKey={`edition:${edition.id}`}
