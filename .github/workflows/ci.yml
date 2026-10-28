@@ -1224,6 +1224,13 @@ jobs:
       - name: Orchestrator — the map tells the truth about the plan
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-orchestrator-map.mjs
+      # read_pages (2026-10-27): the Orchestrator reads a stored PDF's pages
+      # directly as a document block — page specs, the per-pen byte/page
+      # budget, the pdf-lib excerpt and its trimming, the result's page
+      # mapping, and which pens the menu offers it to.
+      - name: Orchestrator — read_pages hands the pen the pages themselves
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-read-pages.mjs
       # The Video Room (migration 119): the provider-neutral core — window
       # planning, the event-graph normaliser and merger, interrogation clamping
       # — the adapter's pure helpers, the video meter's arithmetic, and the
