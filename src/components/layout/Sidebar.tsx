@@ -18,6 +18,7 @@ import {
   Folder,
   LayoutGrid,
   ListChecks,
+  MessagesSquare,
   Lock,
   Stamp,
 } from 'lucide-react';
@@ -492,10 +493,40 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           {!collapsed && <span>My Equazia</span>}
         </Link>
 
-        {/* Find a document by name, across every matter. Also Ctrl/Cmd+K,
-            which is what makes it reachable from the Vault — the Vault covers
-            this rail entirely — and why it is mounted even when collapsed. */}
-        <SiteSearchMount collapsed={collapsed} />
+        {/* The top four (Eden, 2026-10-28): My Equazia, Assistants, Agents,
+            Orchestrator. Assistants are the chat assistants you connect
+            (Claude, ChatGPT, Gemini, Grok, Muse); Agents are the agents page;
+            the Orchestrator is the built-in assistant. None of them works in a
+            SecureSpace. */}
+        <Link
+          to="/app/assistants"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            location.pathname.startsWith('/app/assistants')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+          title="The chat assistants you have connected"
+        >
+          <MessagesSquare size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Assistants</span>}
+        </Link>
+
+        {/* Agents (2026-09-25; three classes since 10-28): Equazia Agents,
+            Custom Agents, My Connected Agents, and every task handed to one. Core ('agentTasks' in
+            lib/surfaces.mjs), so it needs no plan filter here. Not the frozen
+            agent-charters room at /app/agents. */}
+        <Link
+          to="/app/agent-tasks"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
+            location.pathname.startsWith('/app/agent-tasks')
+              ? 'bg-[#16161d] text-white font-medium'
+              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
+          }`}
+          title="Equazia Agents, your own agents, and the agents you connect"
+        >
+          <ListChecks size={15} className="shrink-0" strokeWidth={1.75} />
+          {!collapsed && <span>Agents</span>}
+        </Link>
 
         {/* The Orchestrator — the one door to everything else: it explains how
             the place works and, on request, does the work. It sits up here
@@ -512,22 +543,10 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           {!collapsed && <span>Orchestrator</span>}
         </button>
 
-        {/* Agents (2026-09-25): every connected AI and every task handed to
-            one — the front door for tasks. Core ('agentTasks' in
-            lib/surfaces.mjs), so it needs no plan filter here. Not the frozen
-            agent-charters room at /app/agents. */}
-        <Link
-          to="/app/agent-tasks"
-          className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors mt-px ${
-            location.pathname.startsWith('/app/agent-tasks')
-              ? 'bg-[#16161d] text-white font-medium'
-              : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
-          }`}
-          title="Every connected AI, and the tasks you have handed them"
-        >
-          <ListChecks size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Agents</span>}
-        </Link>
+        {/* Find a document by name, across every matter. Also Ctrl/Cmd+K,
+            which is what makes it reachable from the Vault — the Vault covers
+            this rail entirely — and why it is mounted even when collapsed. */}
+        <SiteSearchMount collapsed={collapsed} />
 
         {/* The Brief Desk (2026-09-27): Eden asked for it as a door of its
             own — "Open Brief Desk, import brief, open brief, cite-check".
@@ -546,8 +565,8 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           {!collapsed && <span>Brief Desk</span>}
         </Link>
 
-        {/* The top level is deliberately short (2026-09-08): home, the
-            Assistant, Agents (09-25), the Suite. Calendar, the Mediation Center, the Student
+        {/* The top level is deliberately short (2026-09-08): home, Assistants
+            (10-28), Agents (09-25), the Orchestrator, the Suite. Calendar, the Mediation Center, the Student
             Hub and The Office keep their routes and are reached from the
             Productivity Suite — every tool a room, not every room a door.
             The Document Builder is still a stub (/app/document-builder).
