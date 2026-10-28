@@ -123,7 +123,7 @@ export const LAW_SHELF = [
    shelf," which lists the study's volumes and says plainly where the
    full study lives. One honest sentence each — no phantom claims. */
 export const STUDIES = {
-  'The Writer’s Desk': 'Drafts in progress from the firm’s founder — screenplays, at the moment. They live in the firm’s Contextspaces and change week to week.',
+  'The Writer’s Desk': 'Drafts in progress from the firm’s founder — screenplays, at the moment. They live in the firm’s Equazia.ai and change week to week.',
   'Essay Library': 'Short literary essays written for the firm’s video series — each one pinned to a single verified quotation, from Mandelstam to Hardy. The series posts as QuasiAi80 on TikTok; the full approved texts are shelved here.',
   'History': 'The quantum centennial shelf: how physics backed into discontinuity between 1894 and 1927, told through its most careful historians.',
   'Colors': 'The firm’s color studies — what a single color carries across literature, science, and law. Running folders on whiteness, ultra-violet, and turquoise.',

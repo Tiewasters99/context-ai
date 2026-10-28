@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "about": "Default exclusions for the narrowed prefix sweep (Q8): dictionary words that begin with a common opening and swamp the results. Proposed to the reviewer after Q7 has been run; never applied without the reviewer's confirmation. Every exclusion is checked against the known marks and against every flagged or noted hit; a mark an exclusion would swallow gets its own query.",
+  "reviewThreshold": 75,
+  "frequencyFloor": 5,
+  "defaults": {
+    "equa": ["equal", "equat", "equator", "equit"]
+  },
+  "why": {
+    "equa": "EQUAL-, EQUAT- (equation), EQUATOR- and EQUIT- (equity, equitable) are dictionary words that return hundreds of live records under CM:equa*; excluding them leaves the coined EQUA- marks to review. EQUALL is a known mark that equal* swallows, which is why the exclusion check exists."
+  }
+}

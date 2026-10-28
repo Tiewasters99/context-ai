@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "about": "Notes per common Nice class. Search classes are broad (coordinated classes); a filing class needs dated evidence of a bona fide intent per identification (M.Z. Berger & Co. v. Swatch AG, 787 F.3d 1368 (Fed. Cir. 2015)).",
+  "notes": [
+    { "code": "009", "label": "Downloadable software, apps, electronic publications", "why": "The class for software a customer downloads or installs; searched with 042 because the same product is often offered both ways." },
+    { "code": "035", "label": "Advertising, business management, office functions", "why": "Search it when the mark will be used for a marketplace, a directory or business services around the product; not a filing class for software itself." },
+    { "code": "038", "label": "Telecommunications, online forums, chat", "why": "Search it for messaging or communication features; file in it only with evidence of a telecommunications service." },
+    { "code": "041", "label": "Education, training, publishing (non-downloadable)", "why": "Search it for courses, webinars or online publications offered under the mark." },
+    { "code": "042", "label": "Software as a service, platforms, technology services", "why": "The class for hosted software (SaaS, PaaS); the usual filing class for a web application." },
+    { "code": "045", "label": "Legal services", "why": "A filing class only with evidence of intent to provide legal services; software for lawyers is 009/042, not 045. Searched because legal-services marks are related to legal software." }
+  ]
+}

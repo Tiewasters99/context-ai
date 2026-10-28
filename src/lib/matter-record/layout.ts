@@ -149,7 +149,7 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
   out.push({
     type: 'p',
     text:
-      'This is a mechanical account of what was done on this matter inside Contextspaces, ' +
+      'This is a mechanical account of what was done on this matter inside Equazia.ai, ' +
       'assembled from the matter’s Record. The Record is tamper-evident: each entry is sealed to ' +
       'the one before it, so any later change, removal or insertion of an entry would be detected ' +
       'when the Record is checked. Entries cannot be edited or deleted. No part of this document ' +
@@ -395,9 +395,9 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     // may never have existed on the account.
     const byConnector = doc.accountWideByConnector;
     const who =
-      byConnector === 0 ? 'run from inside Contextspaces'
+      byConnector === 0 ? 'run from inside Equazia.ai'
       : byConnector === n ? 'run by a connected assistant'
-      : 'run by a connected assistant or from inside Contextspaces';
+      : 'run by a connected assistant or from inside Equazia.ai';
     out.push({
       type: 'p',
       text:
@@ -494,7 +494,7 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
       'Entries are written automatically, as the work happens: each AI answer, each model call a ' +
       'feature made, each tool a connected assistant ran, each change to who can see the matter, ' +
       'and each change to its confidentiality tier. Nobody can edit or delete an entry once it ' +
-      'is written — not a member of the matter, not the firm, and not Contextspaces; repairing ' +
+      'is written — not a member of the matter, not the firm, and not Equazia.ai; repairing ' +
       'an entry would require a deliberate, visible change to the database itself, which the ' +
       'check below is designed to expose.',
   });
@@ -505,7 +505,7 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
       'before it. “Intact” means every seal matched, so no entry has been altered, removed or ' +
       'inserted since it was written. It does not mean the entries are complete: the Record ' +
       'shows what was recorded, and an act the product did not record would not appear here at ' +
-      'all. Work done on this matter outside Contextspaces is not recorded and cannot be ' +
+      'all. Work done on this matter outside Equazia.ai is not recorded and cannot be ' +
       'inferred from its absence. Nothing in this document is a legal characterisation of the ' +
       'Record or of its use in any proceeding.',
   });
@@ -536,7 +536,7 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
       type: 'p',
       text:
         'No jurisdiction was selected for this export. The rules matrix that comes with ' +
-        'Contextspaces can print the forum court’s, the licensing state’s or a national guidance ' +
+        'Equazia.ai can print the forum court’s, the licensing state’s or a national guidance ' +
         'entry’s rule text here verbatim; select one when exporting.',
     });
   }
@@ -576,12 +576,12 @@ export function matterRecordBlocks(doc: MatterRecordDoc): Block[] {
     type: 'bullets',
     items: [
       'A search that names no matter — run by a connected assistant, or from inside ' +
-        'Contextspaces — touches many matters at once. Where account-wide recording has been ' +
+        'Equazia.ai — touches many matters at once. Where account-wide recording has been ' +
         'switched on, this matter’s Record gains one entry for each such search that returned ' +
         'passages from this matter, and that entry says nothing about any other matter it may ' +
         'also have read. Where it has not, such a search leaves no entry anywhere and does not ' +
         'appear here.',
-      'Work done on this matter outside Contextspaces — a browser chat, another firm’s tool, a ' +
+      'Work done on this matter outside Equazia.ai — a browser chat, another firm’s tool, a ' +
         'local model — is not recorded and cannot be inferred from its absence.',
       'Document-level attestations, the citation verification log and the corrections log are ' +
         'kept separately and are not assembled here.',

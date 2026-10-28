@@ -41,7 +41,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import fs from 'node:fs/promises';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import os from 'node:os';
@@ -56,18 +56,26 @@ import {
   assertJobBelongsToMatter, isJobScopeError, JobScopeError, sameMatterTree, JobRefusedError, isJobRefusedError,
 } from '../lib/job-scope.mjs';
 import { BUCKETIZER_JOB_TYPE, runBucketizerDocumentJob } from '../lib/bucketizer-run.mjs';
+import {
+  VIDEO_ANALYSIS_JOB, VIDEO_REFRESH_JOB, runVideoAnalysisJob, runVideoMediaRefreshJob,
+} from '../lib/video-discovery/jobs.mjs';
 import { createHeartbeat } from '../lib/worker-heartbeat.mjs';
 import { HELD_STATUS, heldReason, isSealedPipeError, tierMap } from '../lib/seal-pipes.mjs';
 import { crossingRefusal } from '../lib/seal-crossing.mjs';
 import { makeOcrProvider } from '../lib/ocr-routes.mjs';
 import { makeDescribeHook } from '../lib/describe-image-anthropic.mjs';
 import {
-  sha256, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
+  sha256, md5, formatBates, sanitizeStorageName, mimeFor, isJunkPath, extOf, loadEnv, zipEntryPath,
 } from '../lib/discovery/util.mjs';
-import { normalizeFile, pdfPageCount } from '../lib/discovery/normalize.mjs';
 import {
-  parseDat, datLookupByFilename, emitDat, emitOpt,
-} from '../lib/discovery/loadfile.mjs';
+  withholdFamilies, familyRanges, privilegeEntriesWithFamilies, duplicatesToSetAside, duplicateColumns, setAsideLines,
+} from '../lib/discovery/families.mjs';
+import { normalizeFile, pdfPageCount, errorText } from '../lib/discovery/normalize.mjs';
+import { mapLimit, discoveryConcurrency } from '../lib/discovery/pool.mjs';
+import { packageVolumes } from '../lib/discovery/volumes.mjs';
+import { uploadFileResumable } from '../lib/discovery/resumable-upload.mjs';
+import { vaultSourcePlan, isPdfBytes } from '../lib/discovery/vault-source.mjs';
+import { parseDat, datLookupByFilename } from '../lib/discovery/loadfile.mjs';
 import { packageDocument, passagesToPages } from '../lib/discovery/package-docs.mjs';
 import { confidentialityOf } from '../lib/discovery/designations.mjs';
 import { rasterizerAvailable } from '../lib/discovery/tiff.mjs';
@@ -104,9 +112,31 @@ const HEARTBEAT_MS = 60_000;
 // Watchdog. The queue is served by this one loop, one job at a time, so a job
 // that never returns does not just lose itself — it stops every other matter's
 // uploads behind it. That is the cross-matter stall: a wedged Gemini stream on
-// one file froze intake for the whole practice. Nothing legitimate runs this
-// long, so past the cap we stop trusting the process.
+// one file froze intake for the whole practice.
+//
+// Since 2026-10-13 the cap is on STALLING, not on running: a job is stopped
+// when it has reported no progress for JOB_TIMEOUT_MINUTES (120). A 9,000-page
+// production stamps and packages for longer than two hours while reporting
+// progress every few seconds; under the old wall-clock cap it was killed and
+// started over, forever. A job that never reports progress (one OCR pass) is
+// measured from its start, exactly as before. JOB_MAX_MINUTES (12 h) is the
+// backstop for a job that keeps reporting without ever finishing.
 const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MINUTES ?? 120) * 60_000;
+const JOB_MAX_MS = Number(process.env.JOB_MAX_MINUTES ?? 720) * 60_000;
+// When each running job last reported progress (the watchdog's clock), and
+// when that was last written to its row: a production reports per document,
+// and 9,000 row updates would be a load of their own, so writes are spaced.
+const lastProgressAt = new Map();
+const lastProgressWrite = new Map();
+const PROGRESS_WRITE_MS = 3000;
+
+// Stamping and packaging handle this many documents at once
+// (DISCOVERY_CONCURRENCY, default 6; lib/discovery/pool.mjs). Output order is
+// unchanged: Bates order, load-file order, ZIP order.
+const DISCOVERY_CONCURRENCY = discoveryConcurrency();
+// A package volume larger than this is streamed to storage in chunks (TUS,
+// lib/discovery/resumable-upload.mjs) instead of being read into memory.
+const LARGE_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 // How often the idle loop sweeps for documents the queue lost track of
 // entirely (killed serverless function → no job row at all → nothing to reap).
@@ -126,6 +156,9 @@ const OCR_RETRY_SWEEP_MS = 5 * 60_000;
 // Declared up here because the poll loop below never returns: a const placed
 // after it is never initialised (TDZ: "Cannot access ... before initialization").
 const MAX_VAULT_PICK_BYTES = 500 * 1024 * 1024;
+// The parts of a twin's source_metadata that come from its bytes alone, and
+// so are true of an identical copy too (normalize.mjs; intakeOneFile).
+const TWIN_SHARED_KEYS = new Set(['author', 'to', 'cc', 'bcc', 'subject', 'date', 'imaged_from', 'imaging_error', 'media']);
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -185,7 +218,7 @@ for (;;) {
       // restarts us, and 044's reaper reclaims the abandoned claim under the
       // job's own attempt budget — so a genuinely poisonous file fails loudly
       // after max_attempts instead of wedging the queue forever.
-      log(`[job ${job.id}] WATCHDOG: no completion after ${JOB_TIMEOUT_MS / 60_000}m — restarting worker so the claim can be reclaimed`);
+      log(`[job ${job.id}] WATCHDOG: ${err.message} — restarting worker so the claim can be reclaimed`);
       process.exit(1);
     }
     // The SecureSpace seal (lib/seal-pipes.mjs) is a decision, not a fault.
@@ -246,7 +279,7 @@ log('Queue drained; exiting.');
 //   intake_folder                 refused from the queue outright (below)
 //
 // The payload keys read after this point — ingest, force, ocr_retry,
-// include_privilege_log — are flags, not references.
+// include_privilege_log, remove_duplicates — are flags, not references.
 async function assertJobScope(job) {
   const p = job.payload ?? {};
   switch (job.job_type) {
@@ -266,6 +299,12 @@ async function assertJobScope(job) {
     // Round 4: a run over a matter includes its folders and sub-matters.
     case BUCKETIZER_JOB_TYPE:
       return assertJobBelongsToMatter(supabase, job, { runId: p.run_id, documentId: p.document_id, documentScope: 'subtree' });
+    // The Video Room (119): the recording's current matter in the job's tree,
+    // like ingest_document. The analysis row is checked against the document
+    // inside the handler.
+    case VIDEO_ANALYSIS_JOB:
+    case VIDEO_REFRESH_JOB:
+      return assertJobBelongsToMatter(supabase, job, { documentId: p.document_id, documentScope: 'tree' });
     default:
       return null;
   }
@@ -287,6 +326,15 @@ async function dispatch(job) {
     case 'stamp_production': return stampProduction(job);
     case 'package_production': return packageProduction(job);
     case 'ingest_document': return ingestDocument(job);
+    // The Video Room (migration 119): analyse a stored recording with the
+    // video model, or re-upload one the provider has dropped. The recording is
+    // streamed to disk (never a Buffer — the 2026-10-04 OOM) and the seal is
+    // asked before a byte moves; a sealed matter parks as 'held' like
+    // transcription. lib/video-discovery/jobs.mjs.
+    case VIDEO_ANALYSIS_JOB:
+      return runVideoAnalysisJob(videoJobContext(), job, (pct, note) => progress(job, pct, note));
+    case VIDEO_REFRESH_JOB:
+      return runVideoMediaRefreshJob(videoJobContext(), job, (pct, note) => progress(job, pct, note));
     // One document of a Bucketizer run (migration 079). Everything it needs —
     // the run row, the per-window progress, the seal, the pause, the meter and
     // the matter's Record — is in lib/bucketizer-run.mjs; a policy refusal
@@ -313,6 +361,10 @@ async function claimJob() {
 // timer below is the guarantee; this just means a job reporting steadily is
 // never one poll away from looking dead.
 async function progress(job, pct, note) {
+  const now = Date.now();
+  lastProgressAt.set(job.id, now);
+  if (pct < 99 && now - (lastProgressWrite.get(job.id) ?? 0) < PROGRESS_WRITE_MS) return;
+  lastProgressWrite.set(job.id, now);
   await supabase.from('processing_jobs')
     .update({
       progress: Math.min(99, Math.round(pct)),
@@ -348,16 +400,32 @@ async function withHeartbeat(job, run) {
 // A losing race against the clock. The work is not cancellable — the caller's
 // job is to stop the process, not to pretend this promise went away.
 function withWatchdog(job, work) {
+  const started = Date.now();
+  lastProgressAt.set(job.id, started);
   let timer;
   const expiry = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      const err = new Error(`job exceeded ${JOB_TIMEOUT_MS / 60_000} minutes`);
-      err.isWatchdog = true;
-      reject(err);
-    }, JOB_TIMEOUT_MS);
+    const check = () => {
+      const now = Date.now();
+      const idle = now - (lastProgressAt.get(job.id) ?? started);
+      if (idle >= JOB_TIMEOUT_MS || now - started >= JOB_MAX_MS) {
+        const err = new Error(idle >= JOB_TIMEOUT_MS
+          ? `job reported no progress for ${JOB_TIMEOUT_MS / 60_000} minutes`
+          : `job exceeded ${JOB_MAX_MS / 60_000} minutes`);
+        err.isWatchdog = true;
+        reject(err);
+        return;
+      }
+      timer = setTimeout(check, Math.min(30_000, JOB_TIMEOUT_MS));
+      timer.unref?.();
+    };
+    timer = setTimeout(check, Math.min(30_000, JOB_TIMEOUT_MS));
     timer.unref?.();
   });
-  return Promise.race([work, expiry]).finally(() => clearTimeout(timer));
+  return Promise.race([work, expiry]).finally(() => {
+    clearTimeout(timer);
+    lastProgressAt.delete(job.id);
+    lastProgressWrite.delete(job.id);
+  });
 }
 
 // Park a job the seal refused, and the document with it. Both rows land in
@@ -505,9 +573,9 @@ async function requeueOcrPendingIfDue() {
       payload: { document_id: d.id, ocr_retry: (Number(d.ocr_pending.attempts) || 0) + 1 },
     });
     if (qErr) { log(`  ocr retry enqueue failed for ${d.source_filename}: ${qErr.message}`); continue; }
-    await supabase.from('documents')
-      .update({ processing_status: 'pending', processing_error: null })
-      .eq('id', d.id);
+    // The row stays 'ready' and searchable while the retry runs: the run
+    // swaps its passages in (ingestDownloaded), it does not wipe them, so
+    // there is nothing to hide from search in the meantime.
     queued++;
   }
   if (queued) log(`ocr_pending sweep: queued ${queued} document(s) for another OCR attempt`);
@@ -575,11 +643,10 @@ async function intakeZip(job) {
         .sort((a, b) => a.name.localeCompare(b.name));
 
       for (const [n, e] of contentEntries.entries()) {
-        fileIndex += 1;
         await progress(job, ((n + 1) / contentEntries.length) * 100, e.name);
         const buf = await zip.entryData(e.raw);
-        await intakeOneFile(prod, job, {
-          buf, originalPath: e.name, sortOrder: fileIndex, datLookup,
+        fileIndex += await intakeOneFile(prod, job, {
+          buf, originalPath: e.name, sortOrder: fileIndex + 1, datLookup,
         });
       }
       await zip.close();
@@ -597,14 +664,14 @@ async function intakeFiles(job) {
   if (paths.length === 0) throw new Error('intake_files: payload.storage_paths is empty');
   assertJobPaths(job, prod, paths, 'intake_files');
   await setProductionStatus(prod.id, 'processing');
-  const base = await nextSortBase(prod.id);
+  let next = await nextSortBase(prod.id);
 
   for (const [i, storagePath] of paths.entries()) {
     const filename = path.basename(storagePath);
     await progress(job, ((i + 1) / paths.length) * 100, filename);
     const buf = await downloadFromStorage(storagePath);
-    await intakeOneFile(prod, job, {
-      buf, originalPath: filename, sortOrder: base + i + 1, datLookup: new Map(),
+    next += await intakeOneFile(prod, job, {
+      buf, originalPath: filename, sortOrder: next + 1, datLookup: new Map(),
     });
   }
   await setProductionStatus(prod.id, 'review');
@@ -645,7 +712,7 @@ async function intakeDocuments(job) {
   const docs = new Map();
   for (let i = 0; i < ids.length; i += 200) {
     const { data, error } = await supabase.from('documents')
-      .select('id, matterspace_id, title, source_filename, storage_path, file_size_bytes')
+      .select('id, matterspace_id, title, source_filename, storage_path, file_size_bytes, metadata')
       .in('id', ids.slice(i, i + 200));
     if (error) throw new Error(`document lookup: ${error.message}`);
     for (const d of data ?? []) docs.set(d.id, d);
@@ -658,14 +725,17 @@ async function intakeDocuments(job) {
   }
 
   await setProductionStatus(prod.id, 'processing');
-  const base = await nextSortBase(prod.id);
+  let next = await nextSortBase(prod.id);
 
   for (const [i, id] of ids.entries()) {
     const doc = docs.get(id);
     const filename = vaultFilename(doc, id);
     const originalPath = `${id}/${filename}`;
     await progress(job, ((i + 1) / ids.length) * 100, filename);
-    const fail = (why) => recordIntakeFailure(prod, { filename, originalPath, sortOrder: base + i + 1, documentId: doc ? id : null, error: why });
+    const fail = async (why) => {
+      await recordIntakeFailure(prod, { filename, originalPath, sortOrder: next + 1, documentId: doc ? id : null, error: why });
+      next += 1;
+    };
     if (!doc) { await fail('The document was deleted from the matter before it could be added.'); continue; }
     if (!doc.storage_path) { await fail('The document has no stored file to produce.'); continue; }
     // 097: the worker reads with the service role; a row pointing at another
@@ -682,11 +752,47 @@ async function intakeDocuments(job) {
       await fail(`Could not read the stored file: ${err.message}`);
       continue;
     }
-    await intakeOneFile(prod, job, {
-      buf, originalPath, sortOrder: base + i + 1, datLookup: new Map(), documentId: id,
+    // A PDF filed under a Word or email name is the rendition a production
+    // made (lib/discovery/vault-source.mjs): produce the original it came
+    // from when it can be found, else the PDF itself, never the PDF fed to
+    // LibreOffice as a Word file.
+    let asName = null;
+    const plan = vaultSourcePlan(doc, buf);
+    if (plan.kind === 'rendition') {
+      const original = plan.productionItemId ? await originalOfRendition(doc, plan.productionItemId) : null;
+      if (original) {
+        buf = original;
+        log(`  ${filename}: filed as a PDF rendition; producing the original from its production`);
+      } else {
+        asName = `${filename}.pdf`;
+        log(`  ${filename}: filed as a PDF rendition with no original on record; producing the PDF`);
+      }
+    }
+    next += await intakeOneFile(prod, job, {
+      buf, originalPath, sortOrder: next + 1, datLookup: new Map(), documentId: id, asName,
     });
   }
   await setProductionStatus(prod.id, 'review');
+}
+
+// The original behind a Vault document that is a production's PDF rendition:
+// the native of the production item it records. Only an item of the SAME
+// matter as the document, read from inside that item's own production (097),
+// and only bytes that are not themselves a PDF (otherwise there is nothing
+// better than what the Vault holds). Anything else answers null.
+async function originalOfRendition(doc, productionItemId) {
+  try {
+    const { data: item, error } = await supabase.from('production_items')
+      .select('id, matterspace_id, production_id, native_storage_path, status')
+      .eq('id', productionItemId).maybeSingle();
+    if (error || !item || item.matterspace_id !== doc.matterspace_id || !item.native_storage_path) return null;
+    assertPathInProduction(item.native_storage_path, item.matterspace_id, item.production_id);
+    const buf = await downloadFromStorage(item.native_storage_path);
+    return isPdfBytes(buf) ? null : buf;
+  } catch (err) {
+    log(`  original of ${doc.source_filename ?? doc.id} not read: ${errorText(err)}`);
+    return null;
+  }
 }
 
 // The name a Vault document is produced under: its original filename, else
@@ -749,11 +855,12 @@ async function intakeFolder(job) {
   }
 
   const content = files.filter((f) => !/\.(dat|opt|lfp)$/i.test(f.rel));
+  let next = 0;
   for (const [i, f] of content.entries()) {
     await progress(job, ((i + 1) / content.length) * 100, f.rel);
     const buf = await fs.readFile(f.full);
-    await intakeOneFile(prod, job, {
-      buf, originalPath: f.rel, sortOrder: i + 1, datLookup,
+    next += await intakeOneFile(prod, job, {
+      buf, originalPath: f.rel, sortOrder: next + 1, datLookup,
     });
   }
   await setProductionStatus(prod.id, 'review');
@@ -765,10 +872,34 @@ async function intakeFolder(job) {
  * into the matter's searchable corpus. `documentId` is set when the file IS
  * a document already in the matter (intake_documents): the row links to it
  * and nothing is ingested a second time.
+ *
+ * An email's attachments are taken in as their own items right behind it
+ * (lib/discovery/families.mjs), at sortOrder+1, +2, … `parent` is set on
+ * those calls. Returns how many sort positions the file used (1 + its
+ * attachments), the same on every run of the same bytes, so a retried job
+ * puts the next file where the first attempt did.
  */
-async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLookup, documentId = null }) {
+async function intakeOneFile(prod, job, {
+  buf, originalPath, sortOrder, datLookup, documentId = null, parent = null, asName = null,
+}) {
   const filename = path.basename(originalPath);
+  // What the bytes are, when the name says otherwise (a PDF rendition taken
+  // from the Vault under its Word name): normalized and stored as that.
+  const normName = asName ?? filename;
   const hash = sha256(buf);
+  const attachments = parent ? [] : await emailAttachmentsOf(buf, normName);
+  const slots = 1 + attachments.length;
+  const takeInAttachments = async (parentItem) => {
+    for (const [k, a] of attachments.entries()) {
+      await intakeOneFile(prod, job, {
+        buf: a.bytes,
+        originalPath: `${originalPath}/attachments/${a.filename}`,
+        sortOrder: sortOrder + k + 1,
+        datLookup,
+        parent: { id: parentItem.id, filename, index: k + 1 },
+      });
+    }
+  };
 
   // F6 (2026-09-20 re-verification). idx_production_items_sha
   // (matterspace_id, sha256) has existed since 030:122 and was never once
@@ -780,7 +911,7 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   // different (and wrong) decision.
   const { data: sameBytes, error: dupLookupErr } = await supabase.from('production_items')
     .select('id, original_path, original_filename, sort_order, status, kind, page_count, '
-      + 'native_storage_path, display_storage_path, duplicate_of_item_id')
+      + 'native_storage_path, display_storage_path, duplicate_of_item_id, source_metadata, document_id')
     .eq('matterspace_id', prod.matterspace_id)
     .eq('sha256', hash)
     .eq('production_id', prod.id)
@@ -804,7 +935,10 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
   const already = twins.find((t) => (t.original_path ?? t.original_filename) === originalPath);
   if (already && already.status !== 'pending') {
     log(`  ${filename}: already intaken in this production (${already.status}) — skipping`);
-    return;
+    // An attempt that died between an email and its attachments: each
+    // attachment skips or resumes itself in turn.
+    if (already.status === 'ready' && already.source_metadata?.family) await takeInAttachments(already);
+    return slots;
   }
   const resumeId = already?.id ?? null;
   if (resumeId) log(`  ${filename}: resuming the row a previous attempt left mid-flight`);
@@ -833,45 +967,72 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
     return data;
   };
 
-  // An empty file is not a document that can be "produced once": every
-  // zero-byte file in existence shares one sha256, so de-duplicating them
-  // would collapse a blank .pdf and a blank .txt into the same document. They
-  // each get their own row and their own slip sheet.
-  const first = buf.length === 0 ? null
-    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
-  if (first) {
-    // The ZIP really did contain this file twice, and that is part of the
-    // record, so the row stays. It points at the first instance's stored
-    // objects — identical bytes by definition — is never stamped, and is
-    // listed in DATA/DUPLICATES.csv under the Bates number it WAS produced at.
-    await writeItem({
-      kind: first.kind,
-      page_count: first.page_count,
-      native_storage_path: first.native_storage_path,
-      display_storage_path: first.display_storage_path,
-      duplicate_of_item_id: first.id,
-      source_metadata: { duplicate_of: first.original_filename },
+  // Byte-identical files used to be collapsed here, always: the second copy
+  // became a "duplicate", never stamped (F6). Since 2026-10-13 that is a
+  // choice made at stamping, "Remove duplicates" (lib/discovery/families.mjs),
+  // OFF unless chosen, because a copy carries its own custodian and location.
+  // So every copy is its own normal, stampable item. It reuses its twin's
+  // stored objects (identical bytes, same production), so a copy costs a row,
+  // not a second conversion, and records the twin in source_metadata.
+  //
+  // An empty file has no twin: every zero-byte file shares one sha256, and a
+  // blank .txt is not a copy of a blank .pdf.
+  const twin = buf.length === 0 ? null
+    : twins.find((t) => t.id !== resumeId && t.status === 'ready' && t.native_storage_path) ?? null;
+  if (twin) {
+    const datRec = datLookup.get(filename.toLowerCase());
+    // What normalizing the same bytes would have said (email headers, how it
+    // was imaged); never the twin's custodian or other load-file provenance.
+    const fromBytes = Object.fromEntries(Object.entries(twin.source_metadata ?? {})
+      .filter(([k]) => TWIN_SHARED_KEYS.has(k)));
+    const item = await writeItem({
+      kind: twin.kind,
+      page_count: twin.page_count,
+      bates_first: datRec?.bates_first ?? null,
+      bates_last: datRec?.bates_last ?? null,
+      native_storage_path: twin.native_storage_path,
+      display_storage_path: twin.display_storage_path,
+      source_metadata: {
+        ...fromBytes,
+        ...(datRec ?? {}),
+        ...(documentId ? { vault_document_id: documentId } : {}),
+        md5: md5(buf),
+        twin_of_item_id: twin.id,
+        ...(attachments.length ? { family: true, attachment_count: attachments.length } : {}),
+        ...(parent ? { parent_item_id: parent.id, attachment_of: parent.filename, attachment_index: parent.index } : {}),
+      },
+      duplicate_of_item_id: null,
       status: 'ready',
       error: null,
     });
-    log(`  ${filename}: byte-identical to ${first.original_filename} — produced once, listed as a duplicate`);
-    return;
+    log(`  ${filename}: byte-identical to ${twin.original_filename}; its own item, stored objects shared`);
+    // An email copy is its own family: its attachments follow it.
+    await takeInAttachments(item);
+    return slots;
   }
 
   let norm;
   try {
-    norm = await normalizeFile(buf, filename);
+    norm = await normalizeFile(buf, normName);
   } catch (err) {
     await writeItem({
       kind: 'native', duplicate_of_item_id: null,
-      status: 'error', error: `normalize: ${err.message}`,
+      status: 'error', error: `normalize: ${errorText(err)}`,
     });
-    return;
+    return slots;
   }
 
   // Attach load-file metadata when the production's DAT references this file.
   const datRec = datLookup.get(filename.toLowerCase());
-  const metadata = { ...norm.metadata, ...(datRec ?? {}), ...(documentId ? { vault_document_id: documentId } : {}) };
+  const metadata = {
+    ...norm.metadata,
+    ...(datRec ?? {}),
+    ...(documentId ? { vault_document_id: documentId } : {}),
+    ...(asName ? { produced_from: 'pdf_rendition' } : {}),
+    md5: md5(buf),
+    ...(attachments.length ? { family: true, attachment_count: attachments.length } : {}),
+    ...(parent ? { parent_item_id: parent.id, attachment_of: parent.filename, attachment_index: parent.index } : {}),
+  };
 
   const item = await writeItem({
     kind: norm.kind,
@@ -886,10 +1047,10 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
 
   try {
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
-    const ext = extOf(filename);
+    const ext = extOf(normName);
 
     // Native: the original bytes, always retained.
-    const nativePath = `${base}/native/${sanitizeStorageName(filename)}`;
+    const nativePath = `${base}/native/${sanitizeStorageName(normName)}`;
     await uploadToStorage(nativePath, buf, mimeFor(ext));
 
     // Display PDF: passthrough PDFs reuse the native object; conversions
@@ -919,6 +1080,25 @@ async function intakeOneFile(prod, job, { buf, originalPath, sortOrder, datLooku
     await supabase.from('production_items')
       .update({ status: 'error', error: err.message })
       .eq('id', item.id);
+    // An email that could not be stored is an exception; its attachments are
+    // not produced loose without it.
+    return slots;
+  }
+  await takeInAttachments(item);
+  return slots;
+}
+
+// The attachments of a top-level email, as lib/eml-attachments.mjs reads them
+// for the corpus (inline images skipped). An email whose attachments cannot be
+// read is still produced, as one document; the reason is logged.
+async function emailAttachmentsOf(buf, filename) {
+  if (extOf(filename) !== '.eml' || buf.length === 0) return [];
+  try {
+    const { extractEmlAttachments } = await import('../lib/eml-attachments.mjs');
+    return (await extractEmlAttachments(buf)).attachments;
+  } catch (err) {
+    log(`  ${filename}: attachments not read (${err.message}) — produced as one document`);
+    return [];
   }
 }
 
@@ -1040,7 +1220,13 @@ async function ingestDownloaded(job, doc, docId, ext, fileBuf, mediaPath) {
   // originals, so success removes both and failure keeps the originals.
   // Unforced jobs are documents that never finished, whose partial passages
   // are clutter — so idempotency there is the old way: clear, then run.
-  const swap = forced;
+  // An OCR retry (the ocr_pending sweep) swaps too (2026-10-26): it re-reads
+  // only the pages still awaiting OCR, and the document's passages stay
+  // searchable throughout. Before this, the retry wiped the passages first
+  // and re-OCR'd every page — the Anthropic S-1 (318 pages) spent a second
+  // hour unsearchable to re-read one page.
+  const ocrRetry = Boolean(job.payload?.ocr_retry);
+  const swap = forced || ocrRetry;
   if (!swap) await supabase.from('passages').delete().eq('document_id', docId);
 
   // OCR goes through the tier's routes (ocrProvider). Transcription stays on
@@ -1097,6 +1283,7 @@ async function ingestDownloaded(job, doc, docId, ext, fileBuf, mediaPath) {
     ext,
     openaiApiKey: OPENAI_API_KEY,
     ocr: ocrProvider,
+    ocrRetry,
     transcribe,
     // A picture with no words is described so it can be found (step 2 of
     // the image plan, 2026-09-26). Null without ANTHROPIC_API_KEY; the
@@ -1186,11 +1373,19 @@ async function stampProduction(job) {
   // error — and must certainly not renumber anything.
   const locked = prod.status === 'stamped';
 
+  // "Remove duplicates" (payload.remove_duplicates, lib/discovery/families.mjs).
+  // Decided here, before any number is spent, and recorded on each copy set
+  // aside, so packaging reads the same decision. A stamped production keeps
+  // whatever it was stamped with, old-style intake duplicates included.
+  if (!locked) await setAsideDuplicates(prod, job.payload?.remove_duplicates === true);
+
   const { included, excluded, exceptions, duplicates, endorsementsByItem } = await partitionItems(prod);
   if (included.length === 0) throw new Error('No documents to stamp (all excluded?)');
 
   await progress(job, 1, `Checking ${included.length} document(s) before any Bates number is spent…`);
-  const { plan, failed } = await preflightStamp(prod, included, endorsementsByItem, { locked });
+  const { plan, failed } = await preflightStamp(prod, included, endorsementsByItem, {
+    locked, onChecked: (k) => progress(job, 1 + (k / included.length) * 19, `Checked ${k} of ${included.length} before numbering`),
+  });
   for (const f of failed) {
     log(`  EXCEPTION ${f.item.original_filename}: ${f.reason}`);
     exceptions.push({ ...f.item, status: 'error', error: f.reason });
@@ -1211,9 +1406,15 @@ async function stampProduction(job) {
   log(`  Bates ${formatBates(prefix, pad, Number(alloc.start_seq))}–${formatBates(prefix, pad, Number(alloc.end_seq))}`
     + ` allocated to this production (${alloc.total_pages} page(s))`);
 
+  // Several documents at once (lib/discovery/pool.mjs). Each has its numbers
+  // already, from the allocation above, so the order they finish in changes
+  // nothing on any page; a document that fails stops new ones from starting,
+  // lets those in flight finish whole, and the retry resumes past all of them.
+  const registered = await registeredPagesByItem(prod.id);
   let stamped = 0;
   let resumed = 0;
-  for (const [i, entry] of plan.entries()) {
+  let settled = 0;
+  await mapLimit(plan, DISCOVERY_CONCURRENCY, async (entry) => {
     const item = entry.item;
     const slot = slots.get(item.id);
     if (!slot) throw new Error(`the Bates allocation has no slot for ${item.original_filename}`);
@@ -1223,14 +1424,15 @@ async function stampProduction(job) {
       throw new Error(`${item.original_filename} was allocated ${pages} page(s) but now pre-flights at ${entry.pages}`);
     }
     const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
-    await progress(job, (i / plan.length) * 100, `Stamping ${item.original_filename} (${slot.bates_first})`);
 
     // Already done by an earlier attempt? Leave it exactly as it is.
     if (item.bates_first === slot.bates_first && item.bates_last === slot.bates_last
-        && (await registeredPagesFor(item.id)) === pages
+        && (registered.get(item.id) ?? 0) === pages
         && (await storageObjectExists(`${base}/stamped.pdf`))) {
       resumed += 1;
-      continue;
+      settled += 1;
+      await progress(job, 20 + (settled / plan.length) * 80, `Stamped ${settled} of ${plan.length}`);
+      return;
     }
     if (locked) {
       throw new Error(
@@ -1277,7 +1479,9 @@ async function stampProduction(job) {
     });
     if (regErr) throw new Error(`bates_registry: ${regErr.message}`);
     stamped += 1;
-  }
+    settled += 1;
+    await progress(job, 20 + (settled / plan.length) * 80, `Stamped ${settled} of ${plan.length} (${slot.bates_first})`);
+  });
 
   await supabase.from('productions').update({
     bates_start: Number(alloc.start_seq),
@@ -1293,6 +1497,46 @@ async function stampProduction(job) {
     + `${duplicates.length} duplicate(s), ${exceptions.length} exception(s)`);
 }
 
+// Record the switch's decision on the items: a copy set aside points at the
+// copy produced in its place (duplicate_of_item_id, so it is accounted as a
+// duplicate everywhere) and carries source_metadata.set_aside_duplicate.
+//
+// Every earlier mark is cleared first, on an unstamped production, so the box
+// as ticked NOW is what counts: turning it off produces every copy again. That
+// includes rows the old intake marked as duplicates automatically (before
+// 2026-10-13, no set_aside_duplicate flag). They point at their twin's stored
+// objects, so they are stampable as they stand; they get the twin's
+// bytes-derived metadata and a twin_of_item_id, and are produced unless the
+// switch sets them aside again.
+async function setAsideDuplicates(prod, on) {
+  const write = async (item, duplicateOf, sm) => {
+    const { error } = await supabase.from('production_items')
+      .update({ duplicate_of_item_id: duplicateOf, source_metadata: sm }).eq('id', item.id);
+    if (error) throw new Error(`duplicate switch (${item.original_filename}): ${error.message}`);
+  };
+  const { items, byId } = await partitionItems(prod);
+  for (const it of items) {
+    if (!it.duplicate_of_item_id) continue;
+    const sm = { ...(it.source_metadata ?? {}) };
+    if (!sm.set_aside_duplicate) {
+      const twin = byId.get(it.duplicate_of_item_id);
+      for (const [k, v] of Object.entries(twin?.source_metadata ?? {})) {
+        if (TWIN_SHARED_KEYS.has(k) && sm[k] === undefined) sm[k] = v;
+      }
+      sm.twin_of_item_id = it.duplicate_of_item_id;
+    }
+    delete sm.set_aside_duplicate;
+    await write(it, null, sm);
+  }
+  if (!on) return;
+  const { included } = await partitionItems(prod);
+  const setAside = duplicatesToSetAside(included);
+  for (const { item, of } of setAside) {
+    await write(item, of.id, { ...(item.source_metadata ?? {}), set_aside_duplicate: true });
+  }
+  if (setAside.length) log(`  ${setAside.length} identical cop(ies) set aside as duplicates`);
+}
+
 // Prove every page of every document is stampable before a single number is
 // allocated. This is what turns F0's residual ("an undrawable endorsement
 // refuses at item N, and items 1…N−1 are already in the registry") into a
@@ -1302,7 +1546,7 @@ async function stampProduction(job) {
 // production_items.page_count: the count decides which numbers every LATER
 // document gets, so a stale one would not merely mis-stamp this document, it
 // would shift the whole production.
-async function preflightStamp(prod, included, endorsementsByItem, { locked }) {
+async function preflightStamp(prod, included, endorsementsByItem, { locked, onChecked }) {
   const badPrefix = undrawableChars(prod.bates_prefix ?? '');
   if (badPrefix.length) {
     throw new Error(
@@ -1321,10 +1565,12 @@ async function preflightStamp(prod, included, endorsementsByItem, { locked }) {
     }
   }
 
-  const plan = [];
-  const failed = [];
-  for (const item of included) {
-    if (item.kind === 'native') { plan.push({ item, pages: 1 }); continue; }
+  // Counted several at a time; the plan keeps the production's order, which
+  // is the order numbers are allocated in.
+  let checked = 0;
+  const results = await mapLimit(included, DISCOVERY_CONCURRENCY, async (item) => {
+    const settle = async (r) => { checked += 1; await onChecked?.(checked); return r; };
+    if (item.kind === 'native') return settle({ item, pages: 1 });
     try {
       if (!item.display_storage_path) throw new Error('no display PDF was stored for this document');
       assertPathInProduction(item.display_storage_path, prod.matterspace_id, prod.id);
@@ -1333,23 +1579,36 @@ async function preflightStamp(prod, included, endorsementsByItem, { locked }) {
       if (pages !== item.page_count && !locked) {
         await supabase.from('production_items').update({ page_count: pages }).eq('id', item.id);
       }
-      plan.push({ item, pages });
+      return settle({ item, pages });
     } catch (err) {
-      const reason = `stamp pre-flight: ${err.message}`;
+      const reason = `stamp pre-flight: ${errorText(err)}`;
       if (!locked) {
         await supabase.from('production_items').update({ status: 'error', error: reason }).eq('id', item.id);
       }
-      failed.push({ item, reason });
+      return settle({ item, failed: reason });
     }
-  }
+  });
+  const plan = results.filter((r) => !r.failed);
+  const failed = results.filter((r) => r.failed).map((r) => ({ item: r.item, reason: r.failed }));
   return { plan, failed };
 }
 
-async function registeredPagesFor(itemId) {
-  const { count } = await supabase.from('bates_registry')
-    .select('id', { count: 'exact', head: true })
-    .eq('production_item_id', itemId);
-  return count ?? 0;
+// Registered pages per item for a whole production, in one paged read: the
+// resume check used to ask once per document.
+async function registeredPagesByItem(productionId) {
+  const out = new Map();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase.from('bates_registry')
+      .select('production_item_id')
+      .eq('production_id', productionId)
+      .order('id')
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`bates_registry: ${error.message}`);
+    for (const r of data ?? []) out.set(r.production_item_id, (out.get(r.production_item_id) ?? 0) + 1);
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
 }
 
 async function registeredPagesForProduction(productionId) {
@@ -1416,13 +1675,16 @@ async function partitionItems(prod) {
     if (c) confidentialityByItem.set(id, c);
   }
 
+  // A withheld email takes its attachments with it (lib/discovery/families.mjs).
+  const family = withholdFamilies(items, excludedIds);
+
   const included = [];
   const withheld = [];
   const duplicates = [];
   const exceptions = [];
   for (const it of items) {
     if (it.status !== 'ready') { exceptions.push(it); continue; }
-    if (excludedIds.has(it.id)) { withheld.push(it); continue; }
+    if (family.excludedIds.has(it.id)) { withheld.push(it); continue; }
     if (it.duplicate_of_item_id) { duplicates.push(it); continue; }
     included.push(it);
   }
@@ -1432,6 +1694,9 @@ async function partitionItems(prod) {
     byId: new Map(items.map((i) => [i.id, i])),
     included,
     excluded: withheld,
+    // Attachments withheld only because their email was (and still ready, so
+    // actually in the withheld bucket).
+    withheldWithParent: family.withParent.filter((w) => w.item.status === 'ready'),
     duplicates,
     exceptions,
     endorsementsByItem,
@@ -1456,7 +1721,7 @@ async function packageProduction(job) {
   }
 
   const {
-    items, byId, included, excluded, duplicates, exceptions, confidentialityByItem,
+    items, byId, included, excluded, withheldWithParent, duplicates, exceptions, confidentialityByItem,
   } = await partitionItems(prod);
   const produced = included.filter((i) => i.bates_first);
   if (produced.length === 0) throw new Error('Nothing stamped to package');
@@ -1505,16 +1770,11 @@ async function packageProduction(job) {
 
   const matterName = await matterNameOf(prod.matterspace_id);
   const volumeName = sanitizeStorageName(prod.name.replace(/\s+/g, '_')) || 'PRODUCTION';
-
-  const archiver = (await import('archiver')).default;
-  const tmpZip = path.join(os.tmpdir(), `disc-pkg-${crypto.randomUUID()}.zip`);
-  const out = createWriteStream(tmpZip);
-  const archive = archiver('zip', { zlib: { level: 6 } });
-  const archiveDone = new Promise((resolve, reject) => {
-    out.on('close', resolve);
-    archive.on('error', reject);
-  });
-  archive.pipe(out);
+  // "Split into volumes of about N pages" (payload.volume_pages; the panel
+  // offers 2,500). Absent: one volume, unless the size makes it two.
+  const volumePages = Number.isInteger(job.payload?.volume_pages) && job.payload.volume_pages > 0
+    ? Math.min(Math.max(job.payload.volume_pages, 100), 100_000) : null;
+  const includePrivilegeLog = !!job.payload?.include_privilege_log;
 
   // Every read is confined to this production's own storage prefix (097):
   // display and native paths are member-writable while the production is a
@@ -1523,96 +1783,127 @@ async function packageProduction(job) {
     assertPathInProduction(storagePath, prod.matterspace_id, prod.id);
     return downloadFromStorage(storagePath);
   };
-  const datRows = [];
-  const textless = [];
-  let totalPages = 0;
-  for (const [i, item] of produced.entries()) {
-    await progress(job, (i / produced.length) * 80, `Packaging ${item.bates_first}`);
-    const base = `${prod.matterspace_id}/${prod.id}/${item.id}`;
-    const doc = await packageDocument({
-      item,
-      volumeName,
-      confidential: confidentialityByItem.get(item.id) ?? '',
-      stampedPath: `${base}/stamped.pdf`,
-      read: readInProduction,
-      append: (buf, name) => archive.append(buf, { name }),
-      corpusPages: corpusPagesFor,
-      imageFormat,
-    });
-    totalPages += doc.pages;
-    if (!doc.textChars) textless.push(item.bates_first);
-    datRows.push(doc.datRow);
-  }
+  const families = familyRanges(produced);
+  // Copies set aside as duplicates, with the copy produced in their place (now
+  // carrying its Bates number): by the "Remove duplicates" switch, or by the
+  // old automatic intake in a production stamped before it was a choice.
+  const setAside = duplicates
+    .filter((d) => byId.get(d.duplicate_of_item_id))
+    .map((d) => ({ item: d, of: byId.get(d.duplicate_of_item_id) }));
+  const dupColumns = duplicateColumns(setAside);
 
-  if (totalPages !== producedPages) {
-    throw new Error(
-      `The package holds ${totalPages} page(s) but the production reconciled at ${producedPages}; `
-      + 'it was not finalized.');
-  }
+  const pkgDir = `${prod.matterspace_id}/${prod.id}/package`;
+  const manifestPath = `${pkgDir}/volumes.json`;
+  let manifestBuf = null;
 
-  await progress(job, 85, 'Writing load files and cover documents…');
-  archive.append(emitDat(datRows), { name: `${volumeName}/DATA/loadfile.dat` });
-  archive.append(emitOpt(datRows, volumeName), { name: `${volumeName}/DATA/loadfile.opt` });
-
-  // The exceptions report: every document taken into this production that
-  // could not be produced, by original path, hash and reason. It ships even
-  // when it is empty, because an empty one is itself a statement — and it is
-  // deliberately NOT the privilege log: nothing here was withheld as a
-  // judgment, these are documents the software could not render.
-  archive.append(exceptionsCsv(exceptions), { name: `${volumeName}/DATA/EXCEPTIONS.csv` });
-
-  archive.append(duplicatesCsv(duplicates.map((d) => {
-    const f = byId.get(d.duplicate_of_item_id);
-    return {
-      original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
-      firstFilename: f?.original_filename ?? '',
-      firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
-    };
-  })), { name: `${volumeName}/DATA/DUPLICATES.csv` });
-
-  archive.append(reconciliationText(counts, {
-    matterName,
-    productionName: prod.name,
-    batesFirst: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_start),
-    batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
-    dateStr: new Date().toISOString().slice(0, 10),
-    textless,
+  // The packaging loop is shared with the offline harness (lib/discovery/
+  // volumes.mjs): several documents at once, released in Bates order; split
+  // into volumes when asked or when the size requires it; each volume
+  // uploaded and checkpointed as it is finished, so a restart resumes at the
+  // next volume.
+  const result = await packageVolumes({
+    produced,
     imageFormat,
-  }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
+    baseName: volumeName,
+    maxPages: volumePages,
+    includePrivilegeLog,
+    concurrency: DISCOVERY_CONCURRENCY,
+    packageOne: async (item) => {
+      const files = [];
+      const doc = await packageDocument({
+        item,
+        volumeName: '',
+        confidential: confidentialityByItem.get(item.id) ?? '',
+        stampedPath: `${prod.matterspace_id}/${prod.id}/${item.id}/stamped.pdf`,
+        read: readInProduction,
+        append: (buf, name) => files.push({ buf, name }),
+        corpusPages: corpusPagesFor,
+        imageFormat,
+      });
+      return { files, datRow: doc.datRow, pages: doc.pages, textChars: doc.textChars, textSource: doc.textSource };
+    },
+    rowFor: (item, row) => ({ ...row, ...(families.get(item.id) ?? {}), ...(dupColumns.get(item.id) ?? {}) }),
+    productionFiles: async ({ append, volumes, textless, totalPages }) => {
+      if (totalPages !== producedPages) {
+        throw new Error(
+          `The package holds ${totalPages} page(s) but the production reconciled at ${producedPages}; `
+          + 'it was not finalized.');
+      }
+      // The exceptions report: every document taken into this production that
+      // could not be produced, by original path, hash and reason. It ships even
+      // when it is empty, because an empty one is itself a statement — and it is
+      // deliberately NOT the privilege log: nothing here was withheld as a
+      // judgment, these are documents the software could not render.
+      append(exceptionsCsv(exceptions), 'DATA/EXCEPTIONS.csv');
+      append(duplicatesCsv(duplicates.map((d) => {
+        const f = byId.get(d.duplicate_of_item_id);
+        return {
+          original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
+          firstFilename: f?.original_filename ?? '',
+          firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
+        };
+      })), 'DATA/DUPLICATES.csv');
+      append(reconciliationText(counts, {
+        matterName,
+        productionName: prod.name,
+        batesFirst: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_start),
+        batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
+        dateStr: new Date().toISOString().slice(0, 10),
+        textless,
+        imageFormat,
+        withheldWithParent: withheldWithParent.map((w) => ({
+          filename: w.item.original_filename, parentFilename: byId.get(w.parentId)?.original_filename ?? '',
+        })),
+        setAside: setAsideLines(setAside, byId),
+        volumes,
+      }), 'DATA/RECONCILIATION.txt');
 
-  if (job.payload?.include_privilege_log) {
-    const { data: entries } = await supabase.from('privilege_log_entries')
-      .select('*').eq('production_id', prod.id).order('doc_date', { ascending: true, nullsFirst: false });
-    if (entries?.length) {
-      const privLog = await makePrivilegeLogPdf({ matterName, productionName: prod.name, entries });
-      archive.append(privLog, { name: `${volumeName}/PrivilegeLog.pdf` });
-    }
-  }
+      if (includePrivilegeLog) {
+        const { data: entries } = await supabase.from('privilege_log_entries')
+          .select('*').eq('production_id', prod.id).order('doc_date', { ascending: true, nullsFirst: false });
+        if (entries?.length) {
+          append(await makePrivilegeLogPdf({
+            matterName, productionName: prod.name, entries: privilegeEntriesWithFamilies(entries, withheldWithParent),
+          }), 'PrivilegeLog.pdf');
+        }
+      }
 
-  const letter = await makeProductionLetter({
-    productionName: prod.name,
-    matterName,
-    receivingParty: prod.receiving_party,
-    batesFirst: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_start),
-    batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
-    docCount: produced.length,
-    pageCount: totalPages,
-    nativeCount: produced.filter((i) => i.kind === 'native').length,
-    confidentialCount: produced.filter((i) => confidentialityByItem.has(i.id)).length,
-    requestRefs: prod.request_refs,
-    dateStr: new Date().toISOString().slice(0, 10),
+      append(await makeProductionLetter({
+        productionName: prod.name,
+        matterName,
+        receivingParty: prod.receiving_party,
+        batesFirst: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_start),
+        batesLast: formatBates(prod.bates_prefix, prod.bates_pad, prod.bates_end),
+        docCount: produced.length,
+        pageCount: totalPages,
+        nativeCount: produced.filter((i) => i.kind === 'native').length,
+        confidentialCount: produced.filter((i) => confidentialityByItem.has(i.id)).length,
+        requestRefs: prod.request_refs,
+        dateStr: new Date().toISOString().slice(0, 10),
+      }), 'ProductionLetter.pdf');
+    },
+    storeVolume: async ({ name, file, bytes }) => {
+      const storagePath = `${pkgDir}/${name}.zip`;
+      return { storage_path: storagePath, sha256: await storeFile(storagePath, file, bytes) };
+    },
+    exists: storageObjectExists,
+    checkpoint: {
+      load: async () => JSON.parse((await downloadFromStorage(manifestPath, 1)).toString('utf8')),
+      save: async (m) => {
+        manifestBuf = Buffer.from(JSON.stringify(m, null, 2), 'utf8');
+        await uploadToStorage(manifestPath, manifestBuf, 'application/json');
+      },
+    },
+    progress: (pct, note) => progress(job, pct, note),
   });
-  archive.append(letter, { name: `${volumeName}/ProductionLetter.pdf` });
 
-  await archive.finalize();
-  await archiveDone;
-
-  await progress(job, 92, 'Hashing and uploading package…');
-  const pkgSha = await sha256File(tmpZip);
-  const pkgStoragePath = `${prod.matterspace_id}/${prod.id}/package/${volumeName}.zip`;
-  const zipBuf = await fs.readFile(tmpZip);
-  await uploadToStorage(pkgStoragePath, zipBuf, 'application/zip');
-  await fs.unlink(tmpZip).catch(() => {});
+  // One volume: the production's package is its ZIP, exactly as before.
+  // Several: the package is the volume list (package/volumes.json, each
+  // volume's path, size and SHA-256), and its own SHA-256 fixes them all.
+  const single = !result.split && result.volumes.length === 1;
+  const pkgStoragePath = single ? result.volumes[0].storage_path : manifestPath;
+  if (!single && !manifestBuf) manifestBuf = await downloadFromStorage(manifestPath);
+  const pkgSha = single ? result.volumes[0].sha256 : sha256(manifestBuf);
 
   await supabase.from('productions').update({
     package_storage_path: pkgStoragePath,
@@ -1621,9 +1912,28 @@ async function packageProduction(job) {
   }).eq('id', prod.id);
 
   for (const e of exceptions) log(`  EXCEPTION in package: ${e.original_path ?? e.original_filename} — ${exceptionReason(e)}`);
-  log(`  packaged ${produced.length} docs / ${producedPages} pages -> ${pkgStoragePath} `
+  const vols = result.volumes.length > 1 || result.split
+    ? ` in ${result.volumes.length} volume(s)${result.autoSplit ? ' (split for size)' : ''}`
+      + `${result.resumed ? `, ${result.resumed} kept from an earlier attempt` : ''}`
+    : '';
+  log(`  packaged ${produced.length} docs / ${producedPages} pages${vols} -> ${pkgStoragePath} `
     + `(sha256 ${pkgSha.slice(0, 12)}…); ${counts.withheld} withheld, ${counts.duplicates} duplicate(s), `
     + `${counts.exceptions} exception(s) — received ${counts.received}, reconciled`);
+}
+
+// A finished volume into storage. Small ones as before (one request); large
+// ones streamed in chunks from the temp file, never read whole into memory.
+async function storeFile(storagePath, file, bytes) {
+  if (bytes <= LARGE_UPLOAD_BYTES) {
+    const buf = await fs.readFile(file);
+    await uploadToStorage(storagePath, buf, 'application/zip');
+    return sha256(buf);
+  }
+  const { sha256: digest } = await uploadFileResumable({
+    supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY, bucket: BUCKET,
+    objectName: storagePath, filePath: file, contentType: 'application/zip',
+  });
+  return digest;
 }
 
 // TEXT/ for a scanned page: the OCR the matter's corpus already holds for
@@ -1632,10 +1942,12 @@ async function packageProduction(job) {
 async function corpusPagesFor(item) {
   let documentId = item.document_id ?? null;
   if (!documentId) {
+    // A copy shares its twin's stored objects and so its twin's indexed text.
+    const twinId = item.source_metadata?.twin_of_item_id;
     const { data: docs, error } = await supabase.from('documents')
       .select('id')
       .eq('matterspace_id', item.matterspace_id)
-      .eq('metadata->>production_item_id', item.id)
+      .in('metadata->>production_item_id', twinId ? [item.id, twinId] : [item.id])
       .limit(1);
     if (error || !docs?.length) return null;
     documentId = docs[0].id;
@@ -1772,6 +2084,36 @@ async function downloadFromBucket(bucket, storagePath, attempts = 3) {
   }
 }
 
+// What lib/video-discovery/jobs.mjs needs from this process: the service
+// client, the key, a stream-to-disk download, and ffprobe for the duration
+// (the Dockerfile installs ffmpeg). Built per job so env changes are read.
+function videoJobContext() {
+  return {
+    supabase,
+    apiKey: GOOGLE_API_KEY,
+    downloadToFile,
+    probeDurationSec: probeDurationFile,
+    tmpRoot: os.tmpdir(),
+    log,
+    // usage_record_actual is service-role only: the real tokens of each pass
+    // correct the estimate /api/video-discovery charged when it queued the job.
+    meter: { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+  };
+}
+
+// Duration of a media file on disk via ffprobe; null when it cannot be told.
+async function probeDurationFile(filePath) {
+  const { execFile } = await import('node:child_process');
+  return new Promise((resolve) => {
+    execFile('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
+      { timeout: 60_000 }, (err, stdout) => {
+        if (err) return resolve(null);
+        const n = Number(String(stdout).trim());
+        resolve(Number.isFinite(n) && n > 0 ? n : null);
+      });
+  });
+}
+
 // A stored object straight to a file, never whole in memory (recordings).
 // The size is checked against what storage said it would send: a short file
 // would otherwise be transcribed as if it were the whole recording.
@@ -1802,16 +2144,6 @@ async function uploadToStorage(storagePath, buf, contentType, attempts = 3) {
     if (i >= attempts) throw new Error(`storage upload ${storagePath}: ${error.message}`);
     await sleep(1000 * i);
   }
-}
-
-function sha256File(filePath) {
-  return new Promise((resolve, reject) => {
-    const h = crypto.createHash('sha256');
-    createReadStream(filePath)
-      .on('data', (d) => h.update(d))
-      .on('end', () => resolve(h.digest('hex')))
-      .on('error', reject);
-  });
 }
 
 function parseArgs(argv) {

@@ -434,7 +434,7 @@ function readsLikeAWarning(msg) {
   if (typeof msg !== 'string' || msg.length < 120) return false;
   const m = msg.toLowerCase();
   return (m.includes('sealed') || m.includes('silo'))
-    && m.includes('outside contextspaces')
+    && m.includes('outside equazia.ai')
     && m.includes('nothing has been sent yet')
     && (m.includes('record') || m.includes('logging'));
 }

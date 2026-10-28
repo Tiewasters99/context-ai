@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight, Copy,
+  Scissors, Quote, RotateCw, Download, Upload, Trash2, Film, Image as ImageIcon, Loader2, Play, X, Check, Scan, CornerDownRight, Copy, Shirt,
 } from 'lucide-react';
 import type { Turn } from '@/lib/document-animations';
 import type { FractionalRect } from '@/lib/document-annotations';
@@ -37,6 +37,10 @@ export type WorkshopPanelProps = {
   onDownload: (item: WorkshopItem, scale: 1 | 2 | 3) => Promise<void>;
   /** The snip onto the clipboard as a picture, to paste into a generator. */
   onCopy: (item: WorkshopItem) => Promise<void>;
+  /** A snip or a still on a tee, a tote, a print: opens the product sheet beside the page; absent = not offered (not a Library book). */
+  onMerch?: ((item: WorkshopItem) => Promise<void>) | null;
+  /** The reader's merchandise orders (the sheet's second view); absent = not offered. */
+  onMerchOrders?: (() => void) | null;
   onTurn: (item: WorkshopItem) => Promise<void>;
   /** A snippet's words, corrected or completed by hand. */
   onRetext: (item: WorkshopItem, text: string) => Promise<void>;
@@ -80,6 +84,14 @@ export default function WorkshopPanel(p: WorkshopPanelProps) {
         <p className="rounded-md border border-[rgba(232,184,74,0.35)] bg-[rgba(232,184,74,0.08)] px-2 py-1.5 text-[11px] text-[#e8b84a]">
           {p.notice}
         </p>
+      )}
+
+      {p.onMerch && p.onMerchOrders && (
+        <div className="flex justify-end -mb-1.5">
+          <button onClick={p.onMerchOrders} className="inline-flex items-center gap-1 text-[11px] text-white/45 hover:text-[#e8b84a]" title="Tees, totes and prints you have ordered">
+            <Shirt size={11} /> My orders
+          </button>
+        </div>
       )}
 
       {/* The two ways something gets onto the bench. */}
@@ -309,6 +321,9 @@ function SourceCard({ item, derived, p }: { item: WorkshopItem; derived: Worksho
             <IconBtn title="Draw the rectangle again (crop)" onClick={() => p.onResnip(item)}><Scissors size={12} /></IconBtn>
             <IconBtn title="Copy as a picture — then paste it into Flow, Midjourney, Runway, Grok or ChatGPT" busy={busy === 'copy'} onClick={() => run('copy', () => p.onCopy(item))}><Copy size={12} /></IconBtn>
             <DownloadMenu busy={busy === 'dl'} onPick={(scale) => run('dl', () => p.onDownload(item, scale))} />
+            {p.onMerch && (
+              <IconBtn title="A tee, a tote, a print — made from this plate, sold here" busy={busy === 'merch'} onClick={() => run('merch', () => p.onMerch!(item))}><Shirt size={12} /></IconBtn>
+            )}
           </>
         )}
         {item.kind === 'snippet' && (
@@ -441,6 +456,9 @@ function MediaRow({ item, source, sources = [], p }: { item: WorkshopItem; sourc
               {sources.map((s) => <option key={s.id} value={s.id}>{sourceName(s)}</option>)}
             </select>
           )
+        )}
+        {still && p.onMerch && (
+          <IconBtn title="A tee, a tote, a print — made from this still, sold here" busy={busy === 'merch'} onClick={() => run('merch', () => p.onMerch!(item))}><Shirt size={12} /></IconBtn>
         )}
         <IconBtn title="Take this off the bench (the file stays in the Vault)" danger busy={busy === 'del'} onClick={() => run('del', () => p.onDelete(item))}><Trash2 size={12} /></IconBtn>
       </div>

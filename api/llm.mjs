@@ -39,9 +39,10 @@
 //   1. The SEAL DECISION comes first, before any cap. Two reasons. It is the
 //      only thing that knows which model will actually answer, and the
 //      pre-charge estimate has to be priced on that model — a sealed turn is
-//      served by the Bedrock pen (Kimi K2.5, $0.6/$2.5 per Mtok) and pricing
-//      it as the Opus the browser named ($5/$25) overcharged the user's
-//      wallet by roughly 8×. And the meter's own failure mode is to ALLOW: if
+//      served by the Bedrock pen (Kimi K2.5 then, $0.6/$2.5 per Mtok) and
+//      pricing it as the Opus the browser named ($5/$25) overcharged the
+//      user's wallet by roughly 8×. (Since 2026-10-20 the pen is Opus 4.6 at
+//      a ledger $5.5/$27.5 — the rule is the same: price the pen, not the name.) And the meter's own failure mode is to ALLOW: if
 //      the cap ran first and failed open, a sealed matter would sail past it
 //      into the forward below. A request the meter waved through must still
 //      be sealed, so the seal is never downstream of a check that can fail
@@ -610,7 +611,8 @@ function usageFromResponse(text, provider) {
     return { input: j.usage.prompt_tokens || 0, output: j.usage.completion_tokens || 0 };
   }
   if (j.usageMetadata) {
-    return { input: j.usageMetadata.promptTokenCount || 0, output: j.usageMetadata.candidatesTokenCount || 0 };
+    // Gemini bills thinking as output.
+    return { input: j.usageMetadata.promptTokenCount || 0, output: (j.usageMetadata.candidatesTokenCount || 0) + (j.usageMetadata.thoughtsTokenCount || 0) };
   }
   return null;
 }

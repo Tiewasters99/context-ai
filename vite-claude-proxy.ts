@@ -27,6 +27,11 @@ const SOURCES_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'cite-check', 
 // Dev shim target for the /api/assistant Vercel function (lib/assistant-core.mjs),
 // so the in-app Assistant works under `vite dev` without `vercel dev`.
 const ASSISTANT_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'lib', 'assistant-core.mjs')).href;
+const SANDBOX_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'sandbox.mjs')).href;
+// Dev shim target for the /api/video-discovery Vercel function (the Video Room).
+const VIDEO_DISCOVERY_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'video-discovery.mjs')).href;
+// Dev shim target for the /api/trademark Vercel function (Trademark Clearance).
+const TRADEMARK_MODULE_URL = pathToFileURL(path.join(process.cwd(), 'api', 'trademark.mjs')).href;
 
 interface ProviderRoute {
   url: (model: string) => string;
@@ -198,6 +203,47 @@ export default function llmProxy(): Plugin {
         } catch (err: unknown) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ found: false, error: err instanceof Error ? err.message : 'fetch_failed' }));
+        }
+      });
+
+      // Dev shim for the /api/sandbox Vercel function: the Sandbox panel and the
+      // Orchestrator's document tasks under `vite dev`. The production handler
+      // itself runs here (same guard, meter and tools) with the body pre-parsed,
+      // as Vercel would hand it over.
+      server.middlewares.use('/api/sandbox', async (req, res) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const raw = Buffer.concat(chunks).toString();
+        let body: unknown = raw;
+        try { body = raw ? JSON.parse(raw) : {}; } catch { /* the handler answers a bad body */ }
+        const { default: handler } = await import(SANDBOX_MODULE_URL);
+        await handler(Object.assign(req, { body }), res);
+      });
+
+      // Dev shim for the /api/video-discovery Vercel function (the Video Room,
+      // migration 119): the same handler module production runs, under
+      // `vite dev`. It reads GOOGLE_API_KEY and the Supabase keys from
+      // process.env like the function does.
+      server.middlewares.use('/api/video-discovery', async (req, res) => {
+        try {
+          const mod = await import(VIDEO_DISCOVERY_MODULE_URL);
+          await mod.default(req, res);
+        } catch (err: unknown) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'video_discovery_failed', message: err instanceof Error ? err.message : String(err) }));
+        }
+      });
+
+      // Dev shim for the /api/trademark Vercel function (Trademark Clearance,
+      // migration 121): the same handler module production runs. It reads
+      // ANTHROPIC_API_KEY and the Supabase keys from process.env.
+      server.middlewares.use('/api/trademark', async (req, res) => {
+        try {
+          const mod = await import(TRADEMARK_MODULE_URL);
+          await mod.default(req, res);
+        } catch (err: unknown) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'trademark_failed', message: err instanceof Error ? err.message : String(err) }));
         }
       });
 

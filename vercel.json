@@ -7,6 +7,9 @@
     "api/sandbox.mjs": {
       "maxDuration": 120
     },
+    "api/trademark.mjs": {
+      "maxDuration": 120
+    },
     "api/health.mjs": {
       "maxDuration": 10
     },
@@ -23,6 +26,9 @@
       "maxDuration": 300
     },
     "api/assistant.mjs": {
+      "maxDuration": 300
+    },
+    "api/video-discovery.mjs": {
       "maxDuration": 300
     },
     "api/deepgram-token.mjs": {
@@ -69,9 +75,18 @@
     },
     "api/editions.mjs": {
       "maxDuration": 15
+    },
+    "api/production-share.mjs": {
+      "maxDuration": 30
     }
   },
   "headers": [
+    {
+      "source": "/.well-known/openai-apps-challenge",
+      "headers": [
+        { "key": "Content-Type", "value": "text/plain; charset=utf-8" }
+      ]
+    },
     {
       "source": "/version.json",
       "headers": [

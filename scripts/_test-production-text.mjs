@@ -185,15 +185,15 @@ ok('fitPages pads short text and folds extra pages into the last, so N pages -> 
   // The DAT round-trips, every column present, and a value cannot break a record.
   const dat = emitDat([img.datRow, { ...nat.datRow, subject: 'line one\r\nline two' }]);
   const { fields, records } = parseDat(dat);
-  for (const f of ['begbates', 'endbates', 'pages', 'custodian', 'from', 'to', 'cc', 'bcc', 'subject', 'date',
-    'filename', 'fileext', 'filesize', 'sha256', 'prodvol', 'producedas', 'nativelink', 'textlink', 'confidentiality']) {
+  for (const f of ['begbates', 'endbates', 'begattach', 'endattach', 'pages', 'custodian', 'from', 'to', 'cc', 'bcc', 'subject', 'date',
+    'filename', 'fileext', 'filesize', 'md5hash', 'sha256', 'prodvol', 'producedas', 'nativelink', 'textlink', 'confidentiality', 'allcustodians', 'duplicatepaths']) {
     assert.ok(fields.includes(f), `DAT column ${f}`);
   }
   assert.equal(records.length, 2);
   assert.equal(records[0].confidentiality, 'CONFIDENTIAL');
   assert.equal(records[0].custodian, 'P. Patel');
   assert.equal(records[1].subject, 'line one line two');
-  ok('the DAT carries all 19 columns, round-trips, and a line break inside a value cannot split a record');
+  ok('the DAT carries all 24 columns, round-trips, and a line break inside a value cannot split a record');
 }
 
 console.log(`\nProduction TEXT/ and load file verified offline: ${n} checks passed.`);

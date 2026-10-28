@@ -1,5 +1,16 @@
 import type { OcrPending } from '../../lib/ingest-formats.mjs';
 
+/** The worker's latest word on the ingest job behind a document
+ *  (processing_jobs.status / progress / progress_note / attempts), polled
+ *  alongside the document's status while it is non-terminal. The bar on the
+ *  row reads it through lib/ingest-progress.mjs. */
+export interface IngestJobSnapshot {
+  status: string;
+  progress: number | null;
+  note: string | null;
+  attempts: number | null;
+}
+
 export interface VaultFile {
   id: string;
   name: string;
@@ -34,6 +45,9 @@ export interface VaultFile {
    *  (documents.metadata.image_description.label), for the thumbnail tile.
    *  Absent on everything that is not a described picture. */
   imageLabel?: string;
+  /** Persistent mode: the cover chosen for the document (documents.cover_url),
+   *  drawn small beside the title. Absent when none was chosen. */
+  coverUrl?: string;
   /** Persistent mode: pages a ready PDF still owes OCR, with the reason and
    *  the retry state (documents.metadata.ocr_pending). Present beside real
    *  passages — "Ready — 3 pages awaiting OCR" — or beside textStatus
@@ -43,6 +57,14 @@ export interface VaultFile {
    *  outside provider (documents.processing_status = 'held'). Terminal; the
    *  reason is in errorMessage; a retry would be refused identically. */
   held?: boolean;
+  /** Persistent mode: the PDF's page count once the pipeline has read its
+   *  page tree (documents.page_count). Absent before that, and on formats
+   *  without pages. */
+  pageCount?: number;
+  /** Persistent mode: the ingest job behind this row while the document is
+   *  non-terminal — its page count so far, in the worker's own words. Absent
+   *  until a job has been claimed, and dropped at a terminal state. */
+  job?: IngestJobSnapshot;
   /** Persistent mode: how far the browser has sent a large file (0–100),
    *  while `storagePath` is still unset. Only resumable uploads (50 MB and
    *  up, Phase 4) report it; a small file goes in one request. */

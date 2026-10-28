@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ArrowUpDown, FileText, Folder, MoreHorizontal } from 'lucide-react';
+import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ChevronDown, ChevronsDownUp, ChevronsUpDown, ArrowUpDown, FileText, Folder, MoreHorizontal, CornerDownRight } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -8,10 +8,11 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
 import {
-  arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -41,6 +42,19 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 import { useAutosave } from '@/hooks/useUnsavedGuard';
 import { saveStatusLine } from '@/lib/draft-store';
+import {
+  buildTree,
+  normalizeOutline,
+  insertSiblingAfter,
+  appendChild,
+  removeItem as removeOutlineItem,
+  moveItem as moveOutlineItem,
+  indentItem,
+  outdentItem,
+  ancestorIds,
+  subtreeIds,
+  type TreeNode,
+} from '@/lib/list-tree';
 
 /** What is saved for a list: its name and its items, written together. */
 interface ListDraft {
@@ -53,7 +67,15 @@ interface ChecklistItem {
   text: string;
   done: boolean;
   due?: string | null;       // YYYY-MM-DD or null
-  linked_page_id?: string | null;   // child page spawned from this item, if any
+  // The point this one sits under, or null at the top level. Subpoints nest
+  // without limit; the array stays flat and in pre-order (see lib/list-tree).
+  parent_id?: string | null;
+  // The pages spawned from this item, in the order they were made. A point
+  // may carry any number of them. `linked_page_id` is the legacy single slot:
+  // read as the first page, and written back as the first page so older
+  // readers (the MCP tools' has_page) stay right.
+  linked_page_ids: string[];
+  linked_page_id?: string | null;
   linked_matter_id?: string | null; // sub-matter spawned from this item, if any
   // One line under the item, written by an agent working the list from a
   // terminal (the MCP update_list_item tool): a question when the item was
@@ -102,12 +124,46 @@ function readListContent(content: Record<string, unknown> | undefined): Checklis
       : o.text == null ? ''
       : String(o.text);
     const due = typeof o.due === 'string' ? o.due : null;
-    const linked_page_id = typeof o.linked_page_id === 'string' ? o.linked_page_id : null;
+    // Pages: the array, with the legacy single slot folded in (first, since
+    // it was the first page), de-duplicated.
+    const pageIds: string[] = [];
+    if (typeof o.linked_page_id === 'string' && o.linked_page_id) pageIds.push(o.linked_page_id);
+    if (Array.isArray(o.linked_page_ids)) {
+      for (const p of o.linked_page_ids) if (typeof p === 'string' && p && !pageIds.includes(p)) pageIds.push(p);
+    }
     const linked_matter_id = typeof o.linked_matter_id === 'string' ? o.linked_matter_id : null;
+    const parent_id = typeof o.parent_id === 'string' && o.parent_id ? o.parent_id : null;
     const note = typeof o.note === 'string' && o.note ? o.note : null;
-    out.push({ id, text, done: !!o.done, due, linked_page_id, linked_matter_id, ...(note ? { note } : {}) });
+    out.push({
+      id, text, done: !!o.done, due, parent_id,
+      linked_page_ids: pageIds,
+      linked_page_id: pageIds[0] ?? null,
+      linked_matter_id,
+      ...(note ? { note } : {}),
+    });
   });
-  return out;
+  // An unknown or circular parent_id becomes a top-level item, and the
+  // array is put back in pre-order — repaired, never dropped.
+  return normalizeOutline(out);
+}
+
+/** A fresh, empty item. */
+function blankItem(text = ''): ChecklistItem {
+  return {
+    id: crypto.randomUUID(),
+    text,
+    done: false,
+    due: null,
+    parent_id: null,
+    linked_page_ids: [],
+    linked_page_id: null,
+    linked_matter_id: null,
+  };
+}
+
+/** Set an item's pages, keeping the legacy slot in step. */
+function withPages(i: ChecklistItem, pageIds: string[]): ChecklistItem {
+  return { ...i, linked_page_ids: pageIds, linked_page_id: pageIds[0] ?? null };
 }
 
 // Check which linked pages and sub-matters still exist and return the items
@@ -115,7 +171,7 @@ function readListContent(content: Record<string, unknown> | undefined): Checklis
 // A failed read is never read as "gone": we only clear on a definite answer,
 // so a target hidden by RLS keeps its link rather than losing it.
 async function withoutDeadLinks(current: ChecklistItem[]): Promise<ChecklistItem[] | null> {
-  const pageIds = [...new Set(current.map((i) => i.linked_page_id).filter((v): v is string => !!v))];
+  const pageIds = [...new Set(current.flatMap((i) => i.linked_page_ids))];
   const matterIds = [...new Set(current.map((i) => i.linked_matter_id).filter((v): v is string => !!v))];
   if (pageIds.length === 0 && matterIds.length === 0) return null;
 
@@ -135,8 +191,9 @@ async function withoutDeadLinks(current: ChecklistItem[]): Promise<ChecklistItem
   let changed = false;
   const next = current.map((i) => {
     let out = i;
-    if (i.linked_page_id && !livePages.has(i.linked_page_id)) {
-      out = { ...out, linked_page_id: null };
+    const livePageIds = i.linked_page_ids.filter((p) => livePages.has(p));
+    if (livePageIds.length !== i.linked_page_ids.length) {
+      out = withPages(out, livePageIds);
       changed = true;
     }
     if (i.linked_matter_id && !liveMatters.has(i.linked_matter_id)) {
@@ -149,6 +206,24 @@ async function withoutDeadLinks(current: ChecklistItem[]): Promise<ChecklistItem
 }
 
 type SortMode = 'manual' | 'due';
+
+// The folded branches of a list, remembered on this computer.
+const collapsedKey = (listId: string | undefined) => `cs.list.collapsed.${listId ?? 'none'}`;
+function readCollapsed(listId: string | undefined): Set<string> {
+  try {
+    const raw = localStorage.getItem(collapsedKey(listId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.filter((k): k is string => typeof k === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+function writeCollapsed(listId: string | undefined, keys: Set<string>) {
+  try {
+    if (keys.size === 0) localStorage.removeItem(collapsedKey(listId));
+    else localStorage.setItem(collapsedKey(listId), JSON.stringify([...keys]));
+  } catch { /* private window, blocked storage: the fold just isn't remembered */ }
+}
 
 export default function ListView({ id: propId, embedded = false, onClose }: EmbeddableViewProps = {}) {
   const params = useParams();
@@ -189,6 +264,34 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const [flashItemId, setFlashItemId] = useState<string | null>(null);
   const [parentMatter, setParentMatter] = useState<ParentMatter | null>(null);
   const [newMatterContext, setNewMatterContext] = useState<NewMatterContext | null>(null);
+  // Which branches are folded shut: `${itemId}:sub` for a point's subpoints,
+  // `${itemId}:pages` for its pages — the two fold independently. Open is the
+  // default (nothing hides work), and the folds are remembered per list on
+  // this computer, not in the list itself, so folding never writes a save.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsed(id));
+  useEffect(() => { setCollapsed(readCollapsed(id)); }, [id]);
+  const isExpanded = (key: string) => !collapsed.has(key);
+  const setExpanded = (key: string, open: boolean) => {
+    setCollapsed((prev) => {
+      if (open ? !prev.has(key) : prev.has(key)) return prev;
+      const next = new Set(prev);
+      if (open) next.delete(key); else next.add(key);
+      writeCollapsed(id, next);
+      return next;
+    });
+  };
+  /** Fold or unfold everything under one point — its subpoints AND its
+   *  pages — the way the chevron beside a matter folds its whole branch. */
+  const setFoldedAll = (itemId: string, open: boolean) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      for (const key of [`${itemId}:sub`, `${itemId}:pages`]) {
+        if (open) next.delete(key); else next.add(key);
+      }
+      writeCollapsed(id, next);
+      return next;
+    });
+  };
   const titleRef = useRef<HTMLDivElement>(null);
   const draftInputRef = useRef<HTMLInputElement>(null);
   const hydrated = useRef(false);
@@ -307,16 +410,33 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     }
   }, [item, adoptDraft]);
 
-  // Scroll the linked item into view and flash it, once the list is up.
+  // Scroll the linked item into view and flash it, once the list is up. A
+  // subpoint under a folded branch is unfolded first, or there would be
+  // nothing to scroll to.
+  const flashedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusItemId || items.length === 0) return;
+    if (!focusItemId || items.length === 0 || flashedFor.current === focusItemId) return;
+    const folded = ancestorIds(items, focusItemId).map((a) => `${a}:sub`).filter((k) => collapsed.has(k));
+    if (folded.length) {
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        folded.forEach((k) => next.delete(k));
+        writeCollapsed(id, next);
+        return next;
+      });
+      return;
+    }
     const el = document.querySelector<HTMLElement>(`[data-item-id="${focusItemId}"]`);
     if (!el) return;
     el.scrollIntoView({ block: 'center' });
+    flashedFor.current = focusItemId;
     setFlashItemId(focusItemId);
     const t = setTimeout(() => setFlashItemId(null), 4000);
     return () => clearTimeout(t);
-  }, [focusItemId, items.length]);
+    // `items` is read for the ancestors only; re-running on every keystroke
+    // would re-flash the row.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusItemId, items.length, collapsed, id]);
 
   // A list filed in a matterspace can spawn sub-matters; one filed straight
   // into a serverspace cannot. Load the parent matter (for its serverspace
@@ -352,58 +472,82 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     commitSoon({ title: (titleRef.current?.textContent ?? '').trim() });
   };
 
+  // Every structural edit goes through here: the new array is adopted into
+  // state and the ref at once (so a second edit in the same tick builds on
+  // it), then written.
+  const applyItems = (next: ChecklistItem[]) => {
+    setItems(next);
+    itemsRef.current = next;
+    persistItems(next);
+  };
+
   // Returns the new item's id so callers (the bottom-input Enter handler)
   // can move focus to the freshly created bullet when the draft was empty.
   const addItem = (): string => {
-    const text = draftText.trim();
-    const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text, done: false, due: null, linked_page_id: null, linked_matter_id: null };
-    const next = [...items, newItem];
-    setItems(next);
+    const newItem = blankItem(draftText.trim());
+    applyItems([...itemsRef.current, newItem]);
     setDraftText('');
-    persistItems(next);
-    return newId;
+    return newItem.id;
   };
 
   // Enter on an inline item input: save the current text and insert a fresh
-  // item right below. Returns the new item's id so the caller can focus it.
+  // sibling right below — below the item's subpoints too, at the same level.
+  // Returns the new item's id so the caller can focus it.
   const insertItemAfter = (afterItemId: string, currentText: string): string => {
-    const newId = crypto.randomUUID();
-    const newItem: ChecklistItem = { id: newId, text: '', done: false, due: null, linked_page_id: null, linked_matter_id: null };
-    const next: ChecklistItem[] = [];
-    for (const i of items) {
-      next.push(i.id === afterItemId ? { ...i, text: currentText } : i);
-      if (i.id === afterItemId) next.push(newItem);
-    }
-    setItems(next);
-    persistItems(next);
-    return newId;
+    const newItem = blankItem();
+    const withText = itemsRef.current.map((i) => (i.id === afterItemId ? { ...i, text: currentText } : i));
+    applyItems(insertSiblingAfter(withText, afterItemId, newItem));
+    return newItem.id;
+  };
+
+  // "+ Add subpoint": a fresh point one level under this one, at the end of
+  // its subpoints. The branch is opened so the new point is seen and focused.
+  const addSubpoint = (parentId: string): string => {
+    const newItem = blankItem();
+    applyItems(appendChild(itemsRef.current, parentId, newItem));
+    setExpanded(`${parentId}:sub`, true);
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLInputElement>(`[data-item-id="${newItem.id}"]`)?.focus();
+    });
+    return newItem.id;
+  };
+
+  // Tab / Shift+Tab on an item: one level in (under the point above it) or
+  // one level out. Focus stays on the item — it is the same input, re-keyed
+  // by id, so the browser keeps it.
+  const indent = (itemId: string): boolean => {
+    const next = indentItem(itemsRef.current, itemId);
+    if (next === itemsRef.current) return false;
+    const parent = next.find((i) => i.id === itemId)?.parent_id;
+    if (parent) setExpanded(`${parent}:sub`, true);
+    applyItems(next);
+    return true;
+  };
+  const outdent = (itemId: string): boolean => {
+    const next = outdentItem(itemsRef.current, itemId);
+    if (next === itemsRef.current) return false;
+    applyItems(next);
+    return true;
   };
 
   const updateItem = (itemId: string, patch: Partial<ChecklistItem>) => {
-    const next = items.map((i) => i.id === itemId ? { ...i, ...patch } : i);
-    setItems(next);
-    persistItems(next);
+    applyItems(itemsRef.current.map((i) => i.id === itemId ? { ...i, ...patch } : i));
   };
 
+  // Delete one point. Its subpoints step up to take its place rather than
+  // vanishing with it: removing a heading is not removing the work under it.
   const deleteItem = (itemId: string) => {
-    const next = items.filter((i) => i.id !== itemId);
-    setItems(next);
-    persistItems(next);
+    applyItems(removeOutlineItem(itemsRef.current, itemId));
   };
 
-  // Expand a list item into a full page. If the item already has a linked
-  // page, just navigate; otherwise create a new content_item of type 'page'
-  // in the same space, store its id back on the item, and navigate.
-  const expandItem = async (itemId: string) => {
+  // "Add page": a NEW page under this point, every time — a point may carry
+  // as many pages as it needs. The page is a content_item of type 'page' in
+  // the same space, titled after the point (its title is edited on the page
+  // itself), its id appended to the point's pages; then it opens.
+  const addPage = async (itemId: string) => {
     if (!item) return;
-    const target = items.find((i) => i.id === itemId);
+    const target = itemsRef.current.find((i) => i.id === itemId);
     if (!target) return;
-
-    if (target.linked_page_id) {
-      navigate(`/app/page/${target.linked_page_id}`);
-      return;
-    }
 
     setSaving(true);
     try {
@@ -412,10 +556,12 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
         contentType: 'page',
         title: target.text.trim() || 'Untitled Page',
       });
-      const next = items.map((i) =>
-        i.id === itemId ? { ...i, linked_page_id: page.id } : i,
+      const next = itemsRef.current.map((i) =>
+        i.id === itemId ? withPages(i, [...i.linked_page_ids, page.id]) : i,
       );
       setItems(next);
+      itemsRef.current = next;
+      setExpanded(`${itemId}:pages`, true);
       await persistItems(next);
       invalidate.invalidateList(
         { spaceId: item.space_id, spaceType: item.space_type },
@@ -423,10 +569,20 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
       );
       navigate(`/app/page/${page.id}`);
     } catch (e) {
-      console.error('expand failed', e);
+      console.error('add page failed', e);
     } finally {
       setSaving(false);
     }
+  };
+
+  const openPage = (pageId: string) => navigate(`/app/page/${pageId}`);
+
+  // Take a page off this point. The page itself stays in the matter's Pages
+  // tab — only the link under the bullet goes.
+  const unlinkPage = (itemId: string, pageId: string) => {
+    applyItems(itemsRef.current.map((i) =>
+      i.id === itemId ? withPages(i, i.linked_page_ids.filter((p) => p !== pageId)) : i,
+    ));
   };
 
   // Break a list item out into a sub-matter of the matter this list sits in.
@@ -487,31 +643,110 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = items.findIndex((i) => i.id === active.id);
-    const newIndex = items.findIndex((i) => i.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-    const next = arrayMove(items, oldIndex, newIndex);
-    setItems(next);
-    persistItems(next);
+  // While a point is dragged its subpoints are hidden: they ride along in
+  // the data, and on screen they would otherwise sit inside the dragged
+  // block and be the nearest drop target — a drop onto its own subtree,
+  // which is refused, so the drag would do nothing.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const handleDragStart = (event: DragStartEvent) => setDraggingId(String(event.active.id));
+  const handleDragCancel = () => setDraggingId(null);
+  // Belt and braces: the dragged point's own descendants are never candidates.
+  const collisionDetection: CollisionDetection = (args) => {
+    const activeId = String(args.active.id);
+    const own = subtreeIds(itemsRef.current, activeId);
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (c) => String(c.id) === activeId || !own.has(String(c.id)),
+      ),
+    });
   };
 
-  // Display order: manual respects array order; due-date sort puts undated last.
-  const displayItems = useMemo(() => {
-    if (sortMode === 'manual') return items;
-    return [...items].sort((a, b) => {
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    // The dragged point takes the target's slot — its level and its place
+    // among its siblings — and brings its subpoints along.
+    const next = moveOutlineItem(itemsRef.current, String(active.id), String(over.id));
+    if (next === itemsRef.current) return;
+    applyItems(next);
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // What is drawn. Manual order is the outline itself; sorting by due date
+  // flattens it — every point at one level, dated ones first — because a
+  // date order and a nesting order cannot both hold at once.
+  const tree = useMemo<TreeNode<ChecklistItem>[]>(() => {
+    if (sortMode === 'manual') return buildTree(items);
+    const sorted = [...items].sort((a, b) => {
       if (a.due && b.due) return a.due.localeCompare(b.due);
       if (a.due) return -1;
       if (b.due) return 1;
       return 0;
     });
+    return sorted.map((it) => ({ item: it, depth: 0, children: [] }));
   }, [items, sortMode]);
+
+  // Every fold the list has: both keys of each point that carries subpoints
+  // or pages. "Collapse all" adds them all; "Expand all" clears them.
+  const branchKeys = useMemo(() => {
+    const withChildren = new Set(items.map((i) => i.parent_id).filter((p): p is string => !!p));
+    const keys: string[] = [];
+    for (const i of items) {
+      if (withChildren.has(i.id)) keys.push(`${i.id}:sub`);
+      if (i.linked_page_ids.length > 0) keys.push(`${i.id}:pages`);
+    }
+    return keys;
+  }, [items]);
+  const anyBranchOpen = branchKeys.some((k) => !collapsed.has(k));
+  const collapseAll = () => {
+    const next = new Set(branchKeys);
+    writeCollapsed(id, next);
+    setCollapsed(next);
+  };
+  const expandAll = () => {
+    writeCollapsed(id, new Set());
+    setCollapsed(new Set());
+  };
+
+  const outline: OutlineActions = {
+    today,
+    flashItemId,
+    draggingId,
+    // No hover on a phone: the row's controls stay visible there.
+    alwaysShowControls: isMobile,
+    sortable: sortMode === 'manual',
+    nested: sortMode === 'manual',
+    pageTitles,
+    subMatterDisabledReason: parentMatter ? null : NO_MATTER_REASON,
+    isExpanded,
+    toggleExpanded: (key) => setExpanded(key, !isExpanded(key)),
+    setFoldedAll,
+    toggle: (id) => { const it = itemsRef.current.find((i) => i.id === id); if (it) updateItem(id, { done: !it.done }); },
+    changeText: (id, text) => updateItem(id, { text }),
+    typeText: (id, text) => {
+      const next = itemsRef.current.map((i) => (i.id === id ? { ...i, text } : i));
+      setItems(next);
+      itemsRef.current = next;
+      commitSoon({ items: next });
+    },
+    changeDue: (id, due) => updateItem(id, { due: due || null }),
+    clearNote: (id) => updateItem(id, { note: null }),
+    remove: deleteItem,
+    enter: insertItemAfter,
+    indent,
+    outdent,
+    addSubpoint,
+    addPage: (id) => { void addPage(id); },
+    openPage,
+    unlinkPage,
+    subMatter: makeSubMatter,
+  };
 
   const doneCount = items.filter((i) => i.done).length;
   const progress = items.length === 0 ? 0 : Math.round((doneCount / items.length) * 100);
-  const today = new Date().toISOString().slice(0, 10);
 
   const handleCoverChange = async (url: string | null) => {
     if (!id) return;
@@ -553,6 +788,16 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
                     ?? `${doneCount} of ${items.length} complete · ${progress}%`}
               </p>
               <div className="flex items-center gap-1">
+                {branchKeys.length > 0 && sortMode === 'manual' && (
+                  <button
+                    onClick={() => (anyBranchOpen ? collapseAll() : expandAll())}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+                    title={anyBranchOpen ? 'Fold every subpoint and page in this list' : 'Unfold every subpoint and page in this list'}
+                  >
+                    {anyBranchOpen ? <ChevronsDownUp size={11} /> : <ChevronsUpDown size={11} />}
+                    {anyBranchOpen ? 'Collapse all' : 'Expand all'}
+                  </button>
+                )}
                 <button
                   onClick={() => setShowCalendar(true)}
                   className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
@@ -579,35 +824,12 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
               />
             </div>
 
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={displayItems.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-                <div className="space-y-1">
-                  {displayItems.map((it) => (
-                    <SortableItem
-                      key={it.id}
-                      item={it}
-                      pageTitle={it.linked_page_id ? pageTitles.get(it.linked_page_id) ?? null : null}
-                      today={today}
-                      flash={flashItemId === it.id}
-                      sortable={sortMode === 'manual'}
-                      onToggle={() => updateItem(it.id, { done: !it.done })}
-                      onChangeText={(text) => updateItem(it.id, { text })}
-                      onTypeText={(text) => {
-                        const next = itemsRef.current.map((i) => (i.id === it.id ? { ...i, text } : i));
-                        setItems(next);
-                        itemsRef.current = next;
-                        commitSoon({ items: next });
-                      }}
-                      onChangeDue={(due) => updateItem(it.id, { due: due || null })}
-                      onClearNote={() => updateItem(it.id, { note: null })}
-                      onDelete={() => deleteItem(it.id)}
-                      onEnter={(currentText) => insertItemAfter(it.id, currentText)}
-                      onExpand={() => expandItem(it.id)}
-                      onSubMatter={() => makeSubMatter(it.id)}
-                      subMatterDisabledReason={parentMatter ? null : NO_MATTER_REASON}
-                    />
-                  ))}
-                </div>
+            <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
+              {/* One sortable context over the whole outline, in pre-order:
+                  rows at every depth stack vertically in exactly that order,
+                  so dnd-kit's vertical strategy measures them as one column. */}
+              <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+                <OutlineLevel nodes={tree} outline={outline} />
               </SortableContext>
             </DndContext>
 
@@ -717,34 +939,64 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
 }
 
 
-interface SortableItemProps {
-  item: ChecklistItem;
-  /** Current title of the page this item was turned into, when it has one
-   *  and the page is still readable; null otherwise (the nested row then
-   *  shows the item text). */
-  pageTitle: string | null;
+// Everything a row needs, by item id. One object for the whole outline
+// instead of a closure per row: the rows recurse, and a branch twelve deep
+// still reads the same handlers.
+interface OutlineActions {
   today: string;
-  flash?: boolean;
+  flashItemId: string | null;
+  /** The point being dragged right now; its subpoints are hidden meanwhile. */
+  draggingId: string | null;
+  /** Touch screens have no hover: show the row controls outright. */
+  alwaysShowControls: boolean;
+  /** Rows can be dragged (manual order). */
   sortable: boolean;
-  onToggle: () => void;
-  onChangeText: (text: string) => void;
-  /** Every keystroke. The list debounces it, so a refresh mid-word costs
-   *  nothing; onChangeText still fires on blur and flushes. */
-  onTypeText: (text: string) => void;
-  onChangeDue: (due: string) => void;
-  onClearNote: () => void;
-  onDelete: () => void;
-  onEnter: (currentText: string) => string;
-  onExpand: () => void;
-  onSubMatter: () => void;
+  /** Rows nest (manual order). Sorted by due date, every point sits at one level. */
+  nested: boolean;
+  /** Current titles of the space's pages, by id. */
+  pageTitles: Map<string, string>;
   // Null when the action is available; otherwise the plain-English reason
   // it isn't, shown under the greyed-out menu entry.
   subMatterDisabledReason: string | null;
+  isExpanded: (key: string) => boolean;
+  toggleExpanded: (key: string) => void;
+  /** Fold (false) or unfold (true) both branches of one point at once. */
+  setFoldedAll: (id: string, open: boolean) => void;
+  toggle: (id: string) => void;
+  changeText: (id: string, text: string) => void;
+  /** Every keystroke. The list debounces it, so a refresh mid-word costs
+   *  nothing; changeText still fires on blur and flushes. */
+  typeText: (id: string, text: string) => void;
+  changeDue: (id: string, due: string) => void;
+  clearNote: (id: string) => void;
+  remove: (id: string) => void;
+  enter: (id: string, currentText: string) => string;
+  /** True when the point actually moved; false leaves the key to the browser. */
+  indent: (id: string) => boolean;
+  outdent: (id: string) => boolean;
+  addSubpoint: (id: string) => string;
+  addPage: (id: string) => void;
+  openPage: (pageId: string) => void;
+  unlinkPage: (id: string, pageId: string) => void;
+  subMatter: (id: string) => void;
 }
 
-function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onChangeText, onTypeText, onChangeDue, onClearNote, onDelete, onEnter, onExpand, onSubMatter, subMatterDisabledReason }: SortableItemProps) {
+/** One level of the outline: the rows of these nodes, each with its own
+ *  branches under it. The top level and every nested level draw the same. */
+function OutlineLevel({ nodes, outline }: { nodes: TreeNode<ChecklistItem>[]; outline: OutlineActions }) {
+  return (
+    <div className="space-y-1">
+      {nodes.map((n) => (
+        <SortableItem key={n.item.id} node={n} outline={outline} />
+      ))}
+    </div>
+  );
+}
+
+function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outline: OutlineActions }) {
+  const item = node.item;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: item.id, disabled: !sortable });
+    useSortable({ id: item.id, disabled: !outline.sortable });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -763,8 +1015,29 @@ function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onCha
     setText(item.text);
   }
 
+  const { today } = outline;
   const overdue = item.due && !item.done && item.due < today;
   const todayDue = item.due && !item.done && item.due === today;
+  const flash = outline.flashItemId === item.id;
+
+  const subCount = outline.nested ? node.children.length : 0;
+  const pages = item.linked_page_ids;
+  const subOpen = outline.isExpanded(`${item.id}:sub`) && outline.draggingId !== item.id;
+  // Hover-revealed on a pointer screen, always there on a touch screen.
+  const reveal = outline.alwaysShowControls ? 'opacity-100' : 'opacity-0 group-hover:opacity-100';
+  const pagesOpen = outline.isExpanded(`${item.id}:pages`);
+  // The branch line shows whenever there is something under the point. With
+  // nothing under it, the row's own + and its menu are the way in.
+  const hasBranches = subCount > 0 || pages.length > 0;
+
+  const focusItem = (id: string, caretAtEnd = false) => {
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>(`[data-item-id="${id}"]`);
+      if (!el) return;
+      el.focus();
+      if (caretAtEnd) { const n = el.value.length; el.setSelectionRange(n, n); }
+    });
+  };
 
   return (
     <div
@@ -777,17 +1050,34 @@ function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onCha
       }`}
     >
     <div className="flex items-center gap-2 px-2 py-2">
-      {sortable && (
+      {/* The fold, beside the heading, as beside a matter in the sidebar: one
+          click folds everything under this point — subpoints and pages —
+          and one click brings it all back. A point with nothing under it
+          keeps the gutter so the headings line up. */}
+      {outline.nested && (
+        hasBranches ? (
+          <button
+            onClick={() => outline.setFoldedAll(item.id, !(subOpen || pagesOpen))}
+            className="shrink-0 p-0.5 rounded text-white/55 hover:text-white hover:bg-[rgba(255,255,255,0.06)] transition-colors"
+            title={subOpen || pagesOpen ? 'Collapse everything under this point' : 'Expand everything under this point'}
+          >
+            {subOpen || pagesOpen ? <ChevronDown size={13} strokeWidth={2.5} /> : <ChevronRight size={13} strokeWidth={2.5} />}
+          </button>
+        ) : (
+          <span className="w-[18px] shrink-0" aria-hidden />
+        )
+      )}
+      {outline.sortable && (
         <button
           {...attributes}
           {...listeners}
-          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-white/70 transition-all shrink-0 cursor-grab active:cursor-grabbing"
-          title="Drag to reorder"
+          className={`${reveal} p-0.5 rounded text-white/30 hover:text-white/70 transition-all shrink-0 cursor-grab active:cursor-grabbing`}
+          title="Drag to reorder — drop on another point to sit beside it"
         >
           <GripVertical size={13} />
         </button>
       )}
-      <button onClick={onToggle} className="shrink-0 transition-opacity hover:opacity-70" title={item.done ? 'Mark incomplete' : 'Mark done'}>
+      <button onClick={() => outline.toggle(item.id)} className="shrink-0 transition-opacity hover:opacity-70" title={item.done ? 'Mark incomplete' : 'Mark done'}>
         {item.done
           ? <CheckCircle2 size={18} className="text-[#4ade80]" />
           : <Circle size={18} className="text-white/40" />}
@@ -796,21 +1086,28 @@ function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onCha
       <input
         type="text"
         value={text}
-        onChange={(e) => { setText(e.target.value); onTypeText(e.target.value); }}
-        // No `text !== item.text` guard: onTypeText has already synced the
+        onChange={(e) => { setText(e.target.value); outline.typeText(item.id, e.target.value); }}
+        // No `text !== item.text` guard: typeText has already synced the
         // item, so the guard would short-circuit blur and leave the debounce
         // pending. Committing an unchanged value writes nothing (the saver
         // compares signatures), so this is free and it flushes.
-        onBlur={() => onChangeText(text)}
+        onBlur={() => outline.changeText(item.id, text)}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            const newId = onEnter(text);
-            // Focus the freshly inserted item's input on the next paint.
-            requestAnimationFrame(() => {
-              const el = document.querySelector<HTMLInputElement>(`[data-item-id="${newId}"]`);
-              el?.focus();
-            });
+            // A sibling below, at this level. Focus it on the next paint.
+            focusItem(outline.enter(item.id, text));
+          } else if (e.key === 'Tab' && outline.nested) {
+            // Tab nests this point under the one above it; Shift+Tab steps
+            // it back out. The outliner's keyboard, so a branch can be
+            // typed without reaching for the mouse. When there is nowhere
+            // to go, the key is left to the browser so focus can leave.
+            const moved = e.shiftKey ? outline.outdent(item.id) : outline.indent(item.id);
+            if (moved) {
+              e.preventDefault();
+              // The input remounts under its new parent; put the caret back at the end.
+              focusItem(item.id, true);
+            }
           }
         }}
         data-item-id={item.id}
@@ -822,7 +1119,7 @@ function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onCha
         <div className="flex items-start gap-1 mt-0.5 text-[12px] leading-snug text-[#e8b84a]/85">
           <span className="min-w-0 break-words italic">{item.note}</span>
           <button
-            onClick={onClearNote}
+            onClick={() => outline.clearNote(item.id)}
             className="shrink-0 p-0.5 rounded text-white/30 hover:text-white/70 transition-colors"
             title="Clear note"
           >
@@ -833,50 +1130,137 @@ function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onCha
       </div>
       <DueDateField
         value={item.due ?? ''}
-        onChange={onChangeDue}
+        onChange={(due) => outline.changeDue(item.id, due)}
         overdue={!!overdue}
         todayDue={!!todayDue}
         muted={item.done}
       />
       {/* Standing marker: an item that has a sub-matter says so without
-          being hovered, and the marker itself opens it. (An item's page is
-          the row nested under it, below.) */}
+          being hovered, and the marker itself opens it. (A point's pages
+          and subpoints are the branches under it, below.) */}
       {item.linked_matter_id && (
         <button
-          onClick={onSubMatter}
+          onClick={() => outline.subMatter(item.id)}
           className="p-1 rounded shrink-0 text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors"
           title="Open sub-matter"
         >
           <Folder size={13} />
         </button>
       )}
+      {/* The + Eden asked for: a subpoint under this point, one click, as
+          far down as the thought goes. */}
+      {outline.nested && (
+        <button
+          onClick={() => outline.addSubpoint(item.id)}
+          className={`${reveal} p-1 rounded text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-all shrink-0`}
+          title="Add subpoint"
+        >
+          <Plus size={13} />
+        </button>
+      )}
       <ItemActionsMenu
         item={item}
-        onExpand={onExpand}
-        onSubMatter={onSubMatter}
-        subMatterDisabledReason={subMatterDisabledReason}
+        nested={outline.nested}
+        alwaysVisible={outline.alwaysShowControls}
+        onAddSubpoint={() => outline.addSubpoint(item.id)}
+        onAddPage={() => outline.addPage(item.id)}
+        onSubMatter={() => outline.subMatter(item.id)}
+        subMatterDisabledReason={outline.subMatterDisabledReason}
       />
       <button
-        onClick={onDelete}
-        className="opacity-0 group-hover:opacity-100 p-1 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
-        title="Delete"
+        onClick={() => outline.remove(item.id)}
+        className={`${reveal} p-1 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0`}
+        title={subCount > 0 ? 'Delete this point (its subpoints move up a level)' : 'Delete'}
       >
         <Trash2 size={13} />
       </button>
     </div>
-    {/* The page this item was turned into, nested under it — so a page made
-        from a list item has a place: one click under the item it came from,
-        titled as the page is titled now. */}
-    {item.linked_page_id && (
-      <button
-        onClick={onExpand}
-        className="flex items-center gap-2 w-full text-left pl-[38px] pr-3 pb-2 -mt-1 text-[13px] text-[#e8b84a]/90 hover:text-[#e8b84a] transition-colors"
-        title="Open page"
-      >
-        <span className="w-3 border-t border-[rgba(232,184,74,0.35)]" aria-hidden />
-        <FileText size={13} className="shrink-0" />
-        <span className="truncate">{pageTitle ?? (item.text.trim() || 'Untitled Page')}</span>
-      </button>
+
+    {/* The branch line, right under the point: subpoints fold on the left,
+        pages fold on the right, each on its own. */}
+    {hasBranches && (
+      <div className="flex items-center justify-between gap-3 pl-[64px] pr-3 pb-1.5 -mt-1 text-[11.5px]">
+        <div className="flex items-center gap-1 min-w-0">
+          {subCount > 0 ? (
+            <>
+              <button
+                onClick={() => outline.toggleExpanded(`${item.id}:sub`)}
+                className="flex items-center gap-1 text-white/55 hover:text-white transition-colors"
+                title={subOpen ? 'Fold the subpoints' : 'Unfold the subpoints'}
+              >
+                {subOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                <CornerDownRight size={11} className="opacity-70" />
+                <span>{subCount} {subCount === 1 ? 'subpoint' : 'subpoints'}</span>
+              </button>
+              <button
+                onClick={() => outline.addSubpoint(item.id)}
+                className="p-0.5 rounded text-white/35 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors"
+                title="Add subpoint"
+              >
+                <Plus size={11} />
+              </button>
+            </>
+          ) : <span />}
+        </div>
+        <div className="flex items-center gap-1 min-w-0">
+          {pages.length > 0 && (
+            <>
+              <button
+                onClick={() => outline.addPage(item.id)}
+                className="p-0.5 rounded text-white/35 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors"
+                title="Add another page under this point"
+              >
+                <Plus size={11} />
+              </button>
+              <button
+                onClick={() => outline.toggleExpanded(`${item.id}:pages`)}
+                className="flex items-center gap-1 text-[#e8b84a]/80 hover:text-[#e8b84a] transition-colors"
+                title={pagesOpen ? 'Fold the pages' : 'Unfold the pages'}
+              >
+                <FileText size={11} />
+                <span>{pages.length} {pages.length === 1 ? 'page' : 'pages'}</span>
+                {pagesOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* The pages, stacked at the right under their point, each titled as the
+        page is titled now. Click opens; the x takes the page off this point
+        and leaves it in the matter. */}
+    {pages.length > 0 && pagesOpen && (
+      <div className="flex justify-end pl-[64px] pr-3 pb-2">
+        <div className="w-full sm:w-[62%] space-y-0.5">
+          {pages.map((pid) => (
+            <div key={pid} className="group/page flex items-center gap-2 rounded-md border border-[rgba(232,184,74,0.18)] bg-[rgba(232,184,74,0.05)] pl-2.5 pr-1 py-1 text-[13px] text-[#e8b84a]/90 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors">
+              <button
+                onClick={() => outline.openPage(pid)}
+                className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                title="Open page"
+              >
+                <FileText size={13} className="shrink-0" />
+                <span className="truncate">{outline.pageTitles.get(pid) ?? 'Untitled Page'}</span>
+              </button>
+              <button
+                onClick={() => outline.unlinkPage(item.id, pid)}
+                className={`${outline.alwaysShowControls ? 'opacity-100' : 'opacity-0 group-hover/page:opacity-100'} p-1 rounded text-white/35 hover:text-red-300 transition-all shrink-0`}
+                title="Take this page off the point (the page stays in the matter)"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {/* The subpoints, indented under their point, each able to branch again. */}
+    {subCount > 0 && subOpen && (
+      <div className="ml-[34px] mr-1 mb-1.5 pl-2 border-l border-[rgba(255,255,255,0.08)]">
+        <OutlineLevel nodes={node.children} outline={outline} />
+      </div>
     )}
     </div>
   );
@@ -885,7 +1269,10 @@ function SortableItem({ item, pageTitle, today, flash, sortable, onToggle, onCha
 
 interface ItemActionsMenuProps {
   item: ChecklistItem;
-  onExpand: () => void;
+  nested: boolean;
+  alwaysVisible: boolean;
+  onAddSubpoint: () => void;
+  onAddPage: () => void;
   onSubMatter: () => void;
   subMatterDisabledReason: string | null;
 }
@@ -893,14 +1280,15 @@ interface ItemActionsMenuProps {
 // The quiet per-item menu. It stays out of the way until the row is hovered,
 // and it is portalled to <body> with fixed coordinates so a resized (and
 // therefore scrolling) list card can't clip it.
-function ItemActionsMenu({ item, onExpand, onSubMatter, subMatterDisabledReason }: ItemActionsMenuProps) {
+function ItemActionsMenu({ item, nested, alwaysVisible, onAddSubpoint, onAddPage, onSubMatter, subMatterDisabledReason }: ItemActionsMenuProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
 
   const open = () => {
     const r = buttonRef.current?.getBoundingClientRect();
     if (!r) return;
-    const MENU_HEIGHT = subMatterDisabledReason ? 132 : 84;
+    const ENTRY = 32;
+    const MENU_HEIGHT = 8 + ENTRY * (nested ? 3 : 2) + (subMatterDisabledReason ? 48 : 0);
     const below = r.bottom + 6;
     const top = below + MENU_HEIGHT > window.innerHeight ? Math.max(8, r.top - 6 - MENU_HEIGHT) : below;
     setAnchor({ top, right: Math.max(8, window.innerWidth - r.right) });
@@ -929,6 +1317,7 @@ function ItemActionsMenu({ item, onExpand, onSubMatter, subMatterDisabledReason 
   }, [anchor]);
 
   const entry = 'w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] transition-colors';
+  const pageCount = item.linked_page_ids.length;
 
   return (
     <>
@@ -936,7 +1325,7 @@ function ItemActionsMenu({ item, onExpand, onSubMatter, subMatterDisabledReason 
         ref={buttonRef}
         onClick={() => (anchor ? setAnchor(null) : open())}
         className={`p-1 rounded transition-all shrink-0 text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)] ${
-          anchor ? 'opacity-100 text-white' : 'opacity-0 group-hover:opacity-100'
+          anchor ? 'opacity-100 text-white' : alwaysVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
         title="More"
       >
@@ -950,12 +1339,22 @@ function ItemActionsMenu({ item, onExpand, onSubMatter, subMatterDisabledReason 
             onPointerDown={(e) => e.stopPropagation()}
             className="fixed z-[70] min-w-[210px] rounded-lg border border-[rgba(255,255,255,0.12)] bg-[#12121a] py-1 shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
           >
+            {nested && (
+              <button
+                onClick={() => { setAnchor(null); onAddSubpoint(); }}
+                className={`${entry} text-white/80 hover:bg-[rgba(255,255,255,0.06)] hover:text-white`}
+              >
+                <CornerDownRight size={12} className="shrink-0 text-white/45" />
+                Add subpoint
+              </button>
+            )}
+
             <button
-              onClick={() => { setAnchor(null); onExpand(); }}
+              onClick={() => { setAnchor(null); onAddPage(); }}
               className={`${entry} text-white/80 hover:bg-[rgba(255,255,255,0.06)] hover:text-white`}
             >
               <FileText size={12} className="shrink-0 text-white/45" />
-              {item.linked_page_id ? 'Open page' : 'Open as page'}
+              {pageCount > 0 ? 'Add another page' : 'Add page'}
             </button>
 
             {item.linked_matter_id || !subMatterDisabledReason ? (

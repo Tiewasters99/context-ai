@@ -7,7 +7,7 @@ import {
 import { resolveMatter, type MatterRef } from '@/lib/vault-persist';
 import {
   getProduction, listProductionItems, ensurePresetTagDefs,
-  applyTag, removeTag, ensurePrivilegeDraft, getDiscoverySignedUrl,
+  applyTag, removeTag, ensurePrivilegeDraft, applyReviewTag, removeReviewTag, isReviewTagsMissing, getDiscoverySignedUrl,
   listJobsForProduction, setItemStampPosition, canAddDocuments, BATES_POSITIONS, BATES_POSITION_LABEL,
   type Production, type ProductionItem, type DocumentTagDef, type ProcessingJob, type BatesPosition,
 } from '@/lib/discovery';
@@ -212,6 +212,19 @@ export default function ReviewRoom() {
     } catch (e) {
       setTagError(e instanceof Error ? e.message : 'Tagging failed');
       void refreshItems(); // roll back the optimistic flip from truth
+      return;
+    }
+    // Write through to the matter document (migration 113), so the Review
+    // tab and every later production see the same tag. The production's own
+    // tag above is what stamping reads; this one never blocks it.
+    if (selected.document_id) {
+      try {
+        if (has) await removeReviewTag(def.id, [selected.document_id]);
+        else await applyReviewTag(def.id, [selected.document_id], production.matterspace_id);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '';
+        if (!isReviewTagsMissing(msg)) setTagError(`Tagged in this production, but not on the matter document: ${msg}`);
+      }
     }
   }, [selected, production, refreshItems]);
 

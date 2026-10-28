@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, Check, Copy, KeyRound, AlertCircle, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { siteUrl } from '@/lib/site';
 
 interface Minted { client_id: string; client_secret: string; client_name: string; redirect_uris: string[]; minted_at: string }
 
@@ -38,7 +39,7 @@ function CopyField({ label, value, secret = false }: { label: string; value: str
 }
 
 export default function GptClientMint() {
-  const [name, setName] = useState('Contextspaces GPT');
+  const [name, setName] = useState('Equazia.ai GPT');
   // Prefilled for a Custom GPT: the builder changes the callback's id every
   // time the OAuth settings are saved, so a client pinned to one id is
   // refused on the very next save. The wildcard covers any id on the two
@@ -56,7 +57,7 @@ export default function GptClientMint() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      if (!token) { setError('Sign in to Contextspaces first.'); return; }
+      if (!token) { setError('Sign in to Equazia.ai first.'); return; }
       const res = await fetch('/api/oauth-client-mint', {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -85,7 +86,7 @@ export default function GptClientMint() {
         <header className="mb-8">
           <h1 className="text-4xl font-serif tracking-tight text-[var(--color-text-bright)]" style={serif}>Mint a GPT client</h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            A Custom GPT signs in to Contextspaces with an OAuth client id and secret. This page mints that pair on the
+            A Custom GPT signs in to Equazia.ai with an OAuth client id and secret. This page mints that pair on the
             server. The secret is shown once, here, and then exists only where you paste it: the GPT builder's
             Authentication panel. Only the account owner's email may mint.
           </p>
@@ -94,7 +95,7 @@ export default function GptClientMint() {
         {!minted ? (
           <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-6 space-y-5">
             <ol className="text-sm text-[var(--color-text-secondary)] leading-relaxed space-y-2">
-              <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">1.</span><span>In the GPT builder, add the Action (import <code>https://www.contextspaces.ai/api/gpt/openapi.json</code>) and choose <strong className="text-[var(--color-text-bright)]">OAuth</strong>.</span></li>
+              <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">1.</span><span>In the GPT builder, add the Action (import <code>{siteUrl('/api/gpt/openapi.json')}</code>) and choose <strong className="text-[var(--color-text-bright)]">OAuth</strong>.</span></li>
               <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">2.</span><span>Leave the two callback lines below as they are. The builder shows a callback like <code>https://chat.openai.com/aip/g-…/oauth/callback</code> and changes the <code>g-…</code> part every time the OAuth settings are saved; the <code>*</code> stands for whatever it is today.</span></li>
               <li className="flex gap-3"><span className="text-[var(--color-primary)] font-mono shrink-0">3.</span><span>Mint, copy both values into the builder, then leave this page. They are not shown again.</span></li>
             </ol>
@@ -121,8 +122,8 @@ export default function GptClientMint() {
           <section className="space-y-4">
             <div className="rounded-lg border border-[var(--color-primary)]/40 bg-[var(--color-primary-light)] px-5 py-4 text-sm text-[var(--color-text-secondary)] leading-relaxed">
               <strong className="text-[var(--color-text-bright)]">Shown once.</strong> Paste both into the GPT builder now (Authentication → OAuth →
-              Client ID and Client Secret). Then set Authorization URL <code>https://www.contextspaces.ai/oauth/authorize</code>, Token URL{' '}
-              <code>https://www.contextspaces.ai/api/oauth-token</code>, Scope <code>contextspaces</code>, Token Exchange Method <em>Default (POST request)</em>.
+              Client ID and Client Secret). Then set Authorization URL <code>{siteUrl('/oauth/authorize')}</code>, Token URL{' '}
+              <code>{siteUrl('/api/oauth-token')}</code>, Scope <code>contextspaces</code>, Token Exchange Method <em>Default (POST request)</em>.
               If you lose the secret, mint again and replace both values in the builder.
             </div>
             <CopyField label="Client ID" value={minted.client_id} />

@@ -58,7 +58,7 @@ const JOURNEY: { title: string; body: string }[] = [
   },
   {
     title: 'The human signature',
-    body: 'A licensed attorney on the Contextspaces panel reviews and documents the final agreement. No settlement leaves the Center without a human lawyer’s hand on it.',
+    body: 'A licensed attorney on the Equazia.ai panel reviews and documents the final agreement. No settlement leaves the Center without a human lawyer’s hand on it.',
   },
 ];
 
@@ -96,7 +96,7 @@ export default function MediationCenter() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <PageHead
-        kicker="Contextspaces"
+        kicker="Equazia.ai"
         title="Mediation Center"
         lede="A dispute resolved in weeks, not years — conducted by an AI mediator, documented by a human attorney."
       />
@@ -157,7 +157,7 @@ export default function MediationCenter() {
       {tab === 'about' && (
         <section>
           <p className="text-[14px] text-white/70 leading-relaxed max-w-xl">
-            The Contextspaces Mediation Center puts a tireless, impartial mediator at the center
+            The Equazia.ai Mediation Center puts a tireless, impartial mediator at the center
             of your dispute — an AI trained for the work, holding each side&rsquo;s confidences
             absolutely — and a licensed attorney at the end of it, reviewing and documenting
             whatever the parties agree. The procedure is fixed, the writings are short, and the
@@ -207,7 +207,7 @@ export default function MediationCenter() {
       {tab === 'mediators' && (
         <section>
           <p className="text-[14px] text-white/70 leading-relaxed max-w-xl">
-            Every mediator on the panel is trained on the same Contextspaces Mediation Skill —
+            Every mediator on the panel is trained on the same Equazia.ai Mediation Skill —
             one professional playbook governing procedure, confidentiality, and the conduct of
             the day. In choosing a mediator you choose a temperament and a provider, never a
             different process.
@@ -254,7 +254,7 @@ export default function MediationCenter() {
           <p className="text-[14px] text-white/70 leading-relaxed max-w-xl">
             The mediation is conducted by AI; the settlement is signed into the world by people.
             Every agreement reached in the Center is reviewed and documented by a licensed
-            attorney of the Contextspaces panel — a practicing lawyer who reads the draft,
+            attorney of the Equazia.ai panel — a practicing lawyer who reads the draft,
             confirms it says what the parties meant, and puts it in the form the courts expect.
           </p>
           <div className="mt-7 space-y-4">

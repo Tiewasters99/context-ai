@@ -9,6 +9,7 @@
 // Request body: { action: string, args: object }
 //   action ∈ send_to_sandbox | copy_document | assemble_documents
 //          | file_document | create_matter | move_document
+//          | add_comparison_candidate (the Model Comparator, lib/comparator.mjs)
 // Response: the handler's JSON result, or { error } with a status code.
 
 import { createClient } from '@supabase/supabase-js';
@@ -17,6 +18,8 @@ import { jwtClaims } from '../lib/account-security.mjs';
 import { guardSandboxCrossing, nonCanonicalMatterArg } from '../lib/seal-crossing.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { EMBED_USD_PER_MTOK } from '../lib/usage-prices.mjs';
+import { addComparisonCandidate, ComparatorError } from '../lib/comparator.mjs';
+import { record } from '../lib/ledger.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -43,6 +46,10 @@ const ALLOWED_ACTIONS = new Set([
   'create_deck',
   'create_chart',
   'search',
+  // The Model Comparator (migration 120): file a candidate into a
+  // comparison's box, blind. Not an MCP tool — it is not in lib/mcp-core.mjs,
+  // so connectors cannot call it; the Compare dialog and a filing script can.
+  'add_comparison_candidate',
 ]);
 
 export default async function handler(req, res) {
@@ -113,6 +120,28 @@ export default async function handler(req, res) {
     estimateCents: action === 'search' ? Math.ceil((1000 / 1e6) * EMBED_USD_PER_MTOK * 100) : 0,
   });
   if (!meter.allowed) return sendUsageRefusal(res, meter);
+
+  const toolOpts = {
+    openaiApiKey: process.env.OPENAI_API_KEY,
+    googleApiKey: process.env.GOOGLE_API_KEY,
+  };
+
+  if (action === 'add_comparison_candidate') {
+    if (!process.env.OPENAI_API_KEY) return json(res, 500, { error: 'config_error' });
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    if (userErr || !userData?.user) return json(res, 401, { error: 'invalid_session' });
+    try {
+      const result = await addComparisonCandidate(sb, args, {
+        userId: userData.user.id,
+        fileDocument: (fileArgs) => callTool(sb, 'file_document', fileArgs, toolOpts),
+        record,
+      });
+      return json(res, 200, result);
+    } catch (err) {
+      const status = err instanceof ComparatorError ? err.status : 500;
+      return json(res, status, { error: err?.message || String(err) });
+    }
+  }
 
   try {
     const result = await callTool(sb, action, args, {

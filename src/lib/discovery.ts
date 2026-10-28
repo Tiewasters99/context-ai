@@ -63,7 +63,10 @@ export type DiscoveryJobType =
   | 'intake_folder'
   | 'normalize_item'
   | 'stamp_production'
-  | 'package_production';
+  | 'package_production'
+  // The Video Room (migration 119): analyse a stored recording / re-upload it
+  | 'video_analysis'
+  | 'video_media_refresh';
 
 export interface Production {
   id: string;
@@ -142,6 +145,9 @@ export interface ProductionItem {
    *  production's (migration 111); null = the production's position. */
   stamp_position?: BatesPosition | null;
   source_metadata: Record<string, unknown>;
+  /** An exact duplicate of another item in this production (071), or a filed
+   *  copy set aside by "Remove duplicates of email attachments". */
+  duplicate_of_item_id?: string | null;
   status: string; // pending | ready | error
   error: string | null;
   created_at: string;
@@ -521,6 +527,360 @@ export async function removeTag(tagDefId: string, productionItemId: string): Pro
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Review tags — tags on the matter's DOCUMENTS (migration 113, spec R1).
+// One tag, one document, seen in every production built later. Productions
+// keep their own document_tags; nothing here is stamped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DocumentReviewTag {
+  id: string;
+  tag_def_id: string;
+  document_id: string;
+  matterspace_id: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export type TagKind = 'exclusion' | 'designation' | 'note' | 'issue';
+
+/** What a tag does, for grouping (spec Q2: one list, labelled by kind).
+ *  Exclusions keep a document out of a production; designations are burned
+ *  on; notes never print; everything else the firm adds is an issue code. */
+export function tagKindOf(def: Pick<DocumentTagDef, 'behavior' | 'is_endorsement' | 'name'>): TagKind {
+  if (def.behavior) return 'exclusion';
+  if (def.is_endorsement) return 'designation';
+  if (def.name === 'Hot Doc') return 'note';
+  return 'issue';
+}
+
+export const TAG_KIND_LABEL: Record<TagKind, string> = {
+  exclusion: 'Keeps it out',
+  designation: 'Designations',
+  note: 'Notes',
+  issue: 'Issues',
+};
+
+/** True when 113 has not been pasted yet (PostgREST cannot find the table). */
+export function isReviewTagsMissing(message: string): boolean {
+  return /document_review_tags/.test(message) && /schema cache|does not exist|not find/i.test(message);
+}
+
+export async function listReviewTags(matterspaceId: string): Promise<DocumentReviewTag[]> {
+  const { rows } = await fetchPaged<DocumentReviewTag>(
+    (from, to) => supabase
+      .from('document_review_tags')
+      .select('*', { count: 'exact' })
+      .eq('matterspace_id', matterspaceId)
+      .order('id')
+      .range(from, to),
+    { label: 'review tags', ceiling: 200_000 },
+  );
+  return rows;
+}
+
+const REVIEW_TAG_CHUNK = 200;
+
+/** Tag every listed document (already-tagged ones are left as they are). */
+export async function applyReviewTag(
+  tagDefId: string,
+  documentIds: string[],
+  matterspaceId: string,
+): Promise<void> {
+  const uid = await currentUserId();
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) {
+    const { error } = await supabase
+      .from('document_review_tags')
+      .upsert(
+        documentIds.slice(i, i + REVIEW_TAG_CHUNK).map((document_id) => ({
+          tag_def_id: tagDefId, document_id, matterspace_id: matterspaceId, created_by: uid,
+        })),
+        { onConflict: 'tag_def_id,document_id', ignoreDuplicates: true },
+      );
+    if (error) throw new Error(`tag documents: ${error.message}`);
+  }
+}
+
+export async function removeReviewTag(tagDefId: string, documentIds: string[]): Promise<void> {
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) {
+    const { error } = await supabase
+      .from('document_review_tags')
+      .delete()
+      .eq('tag_def_id', tagDefId)
+      .in('document_id', documentIds.slice(i, i + REVIEW_TAG_CHUNK));
+    if (error) throw new Error(`untag documents: ${error.message}`);
+  }
+}
+
+export interface ReviewDocument {
+  id: string;
+  title: string;
+  source_filename: string | null;
+  /** Lower-case extension of the original file, '' when unknown. */
+  ext: string;
+  page_count: number | null;
+  created_at: string;
+  matterspace_id: string;
+  /** The folder or sub-matter it is filed in, when not the matter itself. */
+  folder: string | null;
+  /** The production it arrived in, when it was filed from one. */
+  production_id: string | null;
+  /** Why it cannot go into a production, or null when it can. */
+  blocked: string | null;
+}
+
+interface ReviewDocumentRow {
+  id: string;
+  title: string | null;
+  source_filename: string | null;
+  page_count: number | null;
+  created_at: string;
+  matterspace_id: string;
+  production_id: string | null;
+  storage_path: string | null;
+  file_size_bytes: number | null;
+}
+
+/**
+ * Every document filed in this matter and its folders/sub-matters, for the
+ * Review tab. Unlike the "From this matter" picker, documents filed from a
+ * production are kept: an incoming volume is reviewed here too.
+ */
+export async function listReviewDocuments(matterId: string): Promise<{
+  docs: ReviewDocument[]; truncated: boolean;
+}> {
+  const { data: tree } = await supabase.rpc('matterspace_descendants', { p_root: matterId });
+  const ids = ((tree ?? []) as { id: string }[]).map((r) => r.id);
+  if (!ids.includes(matterId)) ids.push(matterId);
+  const { data: names } = await supabase.from('matterspaces').select('id, name').in('id', ids);
+  const nameOf = new Map(((names ?? []) as { id: string; name: string }[]).map((m) => [m.id, m.name]));
+
+  const { rows, truncated } = await fetchPaged<ReviewDocumentRow>(
+    (from, to) => supabase
+      .from('documents')
+      .select('id, title, source_filename, page_count, created_at, matterspace_id, storage_path, file_size_bytes, production_id:metadata->>production_id', { count: 'exact' })
+      .in('matterspace_id', ids)
+      .order('title')
+      .order('id')
+      .range(from, to),
+    { label: 'review documents', ceiling: 20_000 },
+  );
+
+  const docs = rows.map((d): ReviewDocument => {
+    const name = d.source_filename || d.title || '';
+    const dot = name.lastIndexOf('.');
+    return {
+      id: d.id,
+      title: d.title || d.source_filename || 'Untitled',
+      source_filename: d.source_filename,
+      ext: dot > 0 && dot > name.length - 7 ? name.slice(dot + 1).toLowerCase() : '',
+      page_count: d.page_count,
+      created_at: d.created_at,
+      matterspace_id: d.matterspace_id,
+      folder: d.matterspace_id === matterId ? null : (nameOf.get(d.matterspace_id) ?? 'Sub-matter'),
+      production_id: d.production_id,
+      blocked: !d.storage_path ? 'Still uploading, or no stored file'
+        : (d.file_size_bytes ?? 0) > MAX_MATTER_PICK_BYTES ? `Over ${MAX_MATTER_PICK_BYTES / 1048576} MB`
+          : null,
+    };
+  });
+  return { docs, truncated };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sets (migration 114, spec R2): a saved question about the matter's
+// documents, or a hand-picked list; productions are built from them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface FilterRule {
+  kind: 'filter';
+  tags_has: string[];
+  tags_not: string[];
+  folder: string;   // '' = any; '(matter)' = the matter itself
+  ext: string;      // '' = any
+  text: string;
+  from: string;     // yyyy-mm-dd filed on or after, '' = any
+  to: string;       // yyyy-mm-dd filed on or before, '' = any
+}
+export interface ListRule { kind: 'list'; document_ids: string[] }
+export type SetRule = FilterRule | ListRule;
+
+export interface DiscoverySet {
+  id: string;
+  matterspace_id: string;
+  name: string;
+  rule: SetRule;
+  created_by: string | null;
+  created_at: string;
+}
+
+export const EMPTY_FILTER: FilterRule = {
+  kind: 'filter', tags_has: [], tags_not: [], folder: '', ext: '', text: '', from: '', to: '',
+};
+
+/** One rule, two uses: the Review tab's filters and a saved set. */
+export function matchesRule(doc: ReviewDocument, tags: Set<string> | undefined, rule: SetRule): boolean {
+  if (rule.kind === 'list') return rule.document_ids.includes(doc.id);
+  const q = rule.text.trim().toLowerCase();
+  if (q && !doc.title.toLowerCase().includes(q) && !(doc.source_filename ?? '').toLowerCase().includes(q)) return false;
+  if (rule.folder && (doc.folder ?? '') !== (rule.folder === '(matter)' ? '' : rule.folder)) return false;
+  if (rule.ext && doc.ext !== rule.ext) return false;
+  const day = doc.created_at.slice(0, 10);
+  if (rule.from && day < rule.from) return false;
+  if (rule.to && day > rule.to) return false;
+  for (const id of rule.tags_has) if (!tags?.has(id)) return false;
+  for (const id of rule.tags_not) if (tags?.has(id)) return false;
+  return true;
+}
+
+export function isFilterEmpty(rule: FilterRule): boolean {
+  return !rule.tags_has.length && !rule.tags_not.length && !rule.folder && !rule.ext
+    && !rule.text.trim() && !rule.from && !rule.to;
+}
+
+/** True when a rule would mean "every document in the matter" (a filter with
+ *  nothing set) or nothing at all (an empty list). Such a set is never saved:
+ *  on 2026-10-13 an empty filter saved as a set produced all 2,660 documents
+ *  of the Patel matter instead of the 269 the reviewer had filtered to. */
+export function isRuleEmpty(rule: SetRule): boolean {
+  return rule.kind === 'list' ? rule.document_ids.length === 0 : isFilterEmpty(rule);
+}
+
+/** A rule in plain words, for the line that says what is about to be saved. */
+export function describeRule(rule: SetRule, defs: DocumentTagDef[]): string {
+  if (rule.kind === 'list') {
+    return `${rule.document_ids.length} ticked ${rule.document_ids.length === 1 ? 'document' : 'documents'}`;
+  }
+  const tagName = (id: string) => defs.find((d) => d.id === id)?.name ?? 'a deleted tag';
+  const parts: string[] = [];
+  if (rule.text.trim()) parts.push(`name contains "${rule.text.trim()}"`);
+  for (const id of rule.tags_has) parts.push(`tagged ${tagName(id)}`);
+  for (const id of rule.tags_not) parts.push(`not tagged ${tagName(id)}`);
+  if (rule.folder) parts.push(rule.folder === '(matter)' ? 'filed in the matter itself' : `folder ${rule.folder}`);
+  if (rule.ext) parts.push(`.${rule.ext.replace(/^\./, '')} files`);
+  if (rule.from) parts.push(`filed on or after ${rule.from}`);
+  if (rule.to) parts.push(`filed on or before ${rule.to}`);
+  return parts.length ? parts.join(' · ') : 'no filter (the whole matter)';
+}
+
+/** True when 114 has not been pasted yet. */
+export function isSetsMissing(message: string): boolean {
+  return /discovery_sets|source_set/.test(message) && /schema cache|does not exist|not find/i.test(message);
+}
+
+export async function listSets(matterspaceId: string): Promise<DiscoverySet[]> {
+  const { data, error } = await supabase
+    .from('discovery_sets')
+    .select('*')
+    .eq('matterspace_id', matterspaceId)
+    .order('created_at', { ascending: true });
+  if (error) throw new Error(`list sets: ${error.message}`);
+  return (data ?? []) as DiscoverySet[];
+}
+
+export async function createSet(matterspaceId: string, name: string, rule: SetRule): Promise<DiscoverySet> {
+  if (isRuleEmpty(rule)) {
+    throw new Error(rule.kind === 'list'
+      ? 'No documents are ticked, so there is nothing to save. Nothing was saved.'
+      : 'A set needs at least one filter (a name, a tag, a folder...). Without one it would be the whole matter. Nothing was saved.');
+  }
+  const { data, error } = await supabase
+    .from('discovery_sets')
+    .insert({ matterspace_id: matterspaceId, name: name.trim(), rule, created_by: await currentUserId() })
+    .select('*')
+    .single();
+  if (error) {
+    if (/duplicate|unique/i.test(error.message)) throw new Error(`There is already a set called "${name.trim()}".`);
+    throw new Error(`save set: ${error.message}`);
+  }
+  return data as DiscoverySet;
+}
+
+export async function deleteSet(id: string): Promise<void> {
+  const { error } = await supabase.from('discovery_sets').delete().eq('id', id);
+  if (error) throw new Error(`delete set: ${error.message}`);
+}
+
+export interface SetSplit {
+  /** Go into the production and are stamped. */
+  produce: ReviewDocument[];
+  /** Tagged Privileged: go into the production, are withheld at stamping and
+   *  listed on its privilege log (the tag is copied onto the item, 114). */
+  privileged: ReviewDocument[];
+  /** Tagged Non-Responsive or Irrelevant (any tag that keeps a document out
+   *  other than Privileged): never sent to the production. */
+  heldBack: ReviewDocument[];
+  /** Cannot be read from the matter (no stored file, too large). */
+  blocked: ReviewDocument[];
+}
+
+/** Sort a set's documents the way a production built from it treats them.
+ *  Exclusion tags win over everything the rule says (spec 3.3). */
+export function splitForProduction(
+  docs: ReviewDocument[],
+  tagsByDoc: Map<string, Set<string>>,
+  defs: DocumentTagDef[],
+): SetSplit {
+  const privileged = new Set(defs.filter((d) => d.behavior === 'privileged').map((d) => d.id));
+  const keepOut = new Set(defs.filter((d) => d.behavior && d.behavior !== 'privileged').map((d) => d.id));
+  const out: SetSplit = { produce: [], privileged: [], heldBack: [], blocked: [] };
+  for (const d of docs) {
+    const tags = tagsByDoc.get(d.id);
+    const has = (ids: Set<string>) => !!tags && [...ids].some((id) => tags.has(id));
+    if (has(keepOut)) out.heldBack.push(d);
+    else if (d.blocked) out.blocked.push(d);
+    else if (has(privileged)) out.privileged.push(d);
+    else out.produce.push(d);
+  }
+  return out;
+}
+
+/**
+ * Build an outgoing production from a set: create the production (recording
+ * the set and its rule as they stand now), then queue the documents with the
+ * same server-side job as "From this matter" (intake_documents, 110). Each
+ * document's review tags follow it onto its item (114's trigger).
+ */
+export async function produceFromSet(args: {
+  matterspaceId: string;
+  set: Pick<DiscoverySet, 'id' | 'name'> | null;
+  rule: SetRule;
+  documentIds: string[];
+  name: string;
+  receivingParty: string | null;
+  productionDate: string | null;
+  requestRefs: string | null;
+}): Promise<Production> {
+  if (args.documentIds.length === 0) throw new Error('There is nothing in this set to produce.');
+  if (args.documentIds.length > MAX_MATTER_PICK_COUNT) {
+    throw new Error(`A production can take ${MAX_MATTER_PICK_COUNT.toLocaleString()} documents at a time; this set has ${args.documentIds.length.toLocaleString()}. Narrow the set and produce it in parts.`);
+  }
+  const prod = await createProduction({
+    matterspace_id: args.matterspaceId,
+    direction: 'outgoing',
+    name: args.name.trim(),
+    receiving_party: args.receivingParty,
+    production_date: args.productionDate,
+    request_refs: args.requestRefs,
+    notes: args.set ? `Built from the set "${args.set.name}".` : 'Built from the Review tab.',
+  });
+  const { error } = await supabase
+    .from('productions')
+    .update({
+      source_set_id: args.set?.id ?? null,
+      source_set_rule: { ...args.rule, set_name: args.set?.name ?? null, frozen_at: new Date().toISOString() },
+    })
+    .eq('id', prod.id);
+  if (error && !isSetsMissing(error.message)) throw new Error(`record the set on the production: ${error.message}`);
+  await enqueueJob({
+    matterspace_id: args.matterspaceId,
+    production_id: prod.id,
+    job_type: 'intake_documents',
+    payload: { document_ids: args.documentIds, ingest: false },
+  });
+  return prod;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Privilege log
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -585,6 +945,135 @@ export async function updatePrivilegeLogEntry(
     .single();
   if (error) throw new Error(`update privilege log entry: ${error.message}`);
   return data as PrivilegeLogEntry;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The matter's privilege log (migration 116, spec R3): one entry per document,
+// drafted when it is tagged Privileged on the Review tab. Outgoing productions
+// copy it; the copy follows it until the production is stamped.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DocumentPrivilegeEntry {
+  id: string;
+  matterspace_id: string;
+  document_id: string;
+  doc_date: string | null;
+  author: string | null;
+  addressee: string | null;
+  cc: string | null;
+  subject_matter: string | null;
+  basis: PrivilegeBasis;
+  basis_custom: string | null;
+  description: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DocumentPrivilegePatch = Partial<Pick<DocumentPrivilegeEntry,
+  'doc_date' | 'author' | 'addressee' | 'cc' | 'subject_matter' | 'basis' | 'basis_custom' | 'description'>>;
+
+/** True when 116 has not been pasted yet (PostgREST cannot find the table). */
+export function isPrivilegeEntriesMissing(message: string): boolean {
+  return /document_privilege_entries/.test(message) && /schema cache|does not exist|not find/i.test(message);
+}
+
+export async function listDocumentPrivilegeEntries(matterspaceId: string): Promise<DocumentPrivilegeEntry[]> {
+  const { rows } = await fetchPaged<DocumentPrivilegeEntry>(
+    (from, to) => supabase
+      .from('document_privilege_entries')
+      .select('*', { count: 'exact' })
+      .eq('matterspace_id', matterspaceId)
+      .order('id')
+      .range(from, to),
+    { label: 'privilege log', ceiling: 50_000 },
+  );
+  return rows;
+}
+
+export async function updateDocumentPrivilegeEntry(id: string, patch: DocumentPrivilegePatch): Promise<void> {
+  const { error } = await supabase
+    .from('document_privilege_entries')
+    .update(patch)
+    .eq('id', id);
+  if (error) throw new Error(`update privilege log entry: ${error.message}`);
+}
+
+/** Titles of the listed documents (the log names each document). */
+export async function documentTitles(documentIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < documentIds.length; i += REVIEW_TAG_CHUNK) chunks.push(documentIds.slice(i, i + REVIEW_TAG_CHUNK));
+  const results = await Promise.all(chunks.map((ids) => supabase
+    .from('documents').select('id, title, source_filename').in('id', ids)));
+  for (const { data, error } of results) {
+    if (error) throw new Error(`document names: ${error.message}`);
+    for (const d of (data ?? []) as { id: string; title: string | null; source_filename: string | null }[]) {
+      out.set(d.id, d.title || d.source_filename || 'Untitled');
+    }
+  }
+  return out;
+}
+
+/** The matter's privilege log as CSV (Excel opens it). */
+export function privilegeLogCsv(rows: { document: string; entry: DocumentPrivilegeEntry }[]): string {
+  const cell = (v: string | null | undefined) => {
+    const t = v ?? '';
+    return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const basisOf = (e: DocumentPrivilegeEntry) =>
+    e.basis === 'custom' ? (e.basis_custom ?? '') : PRIVILEGE_BASIS_LABELS[e.basis];
+  const head = ['No.', 'Document', 'Date', 'Author', 'Recipients', 'Cc', 'Subject matter', 'Basis', 'Description'];
+  const lines = rows.map(({ document, entry: e }, i) => [
+    String(i + 1), document, e.doc_date ?? '', e.author ?? '', e.addressee ?? '', e.cc ?? '',
+    e.subject_matter ?? '', basisOf(e), e.description ?? '',
+  ].map(cell).join(','));
+  return [head.join(','), ...lines].join('\r\n') + '\r\n';
+}
+
+/** Read-only review-tag chips for documents listed in the Vault (spec Q1:
+ *  tagging stays in Discovery). One query per chunk of the listed documents;
+ *  an empty map when 113 is not in yet, so the Vault never fails over it. */
+export async function listVaultReviewChips(documentIds: string[]): Promise<Map<string, Pick<DocumentTagDef, 'name' | 'color'>[]>> {
+  const out = new Map<string, Pick<DocumentTagDef, 'name' | 'color'>[]>();
+  // 100 ids a request keeps each URL well under gateway limits (36-char ids).
+  const VAULT_CHIP_CHUNK = 100;
+  const chunks: string[][] = [];
+  for (let i = 0; i < documentIds.length; i += VAULT_CHIP_CHUNK) chunks.push(documentIds.slice(i, i + VAULT_CHIP_CHUNK));
+  // One chunk, tried twice. A chunk that still fails is skipped and logged:
+  // it costs only its own chips, never every chip in the list (which is what
+  // a single failed request used to do, silently).
+  const readChunk = async (ids: string[]): Promise<unknown[]> => {
+    let last: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { data, error } = await supabase
+          .from('document_review_tags')
+          .select('document_id, def:document_tag_defs(name, color)')
+          .in('document_id', ids);
+        if (!error) return data ?? [];
+        last = error;
+      } catch (e) {
+        last = e;
+      }
+    }
+    console.warn('[vault chips] review tags not read for', ids.length, 'documents:', last);
+    return [];
+  };
+  // Six at a time: a 20,000-document matter must not open 200 requests at once.
+  for (let i = 0; i < chunks.length; i += 6) {
+    const pages = await Promise.all(chunks.slice(i, i + 6).map(readChunk));
+    for (const data of pages) {
+      for (const r of data as { document_id: string; def: { name: string; color: string } | null }[]) {
+        if (!r.def) continue;
+        const list = out.get(r.document_id) ?? [];
+        // A document tagged in its matter's list and in a folder's: one chip a name.
+        if (!list.some((c) => c.name === r.def!.name)) list.push(r.def);
+        out.set(r.document_id, list);
+      }
+    }
+  }
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -841,6 +1330,38 @@ const DISCOVERY_BUCKET = 'discovery-files' as const;
 // `purpose: 'download'` (a native, a package), `file.exported` — in the
 // matter's Record and lasts 900 s. Unsealed matters sign here, as before.
 // A step-up refusal is thrown as StepUpRequired (vault-object.ts).
+/** One volume of a production packaged in volumes (worker lib/discovery/volumes.mjs). */
+export interface PackageVolume {
+  name: string;
+  storage_path: string;
+  sha256: string;
+  bytes: number;
+  docs: number;
+  pages: number;
+  bates_first: string;
+  bates_last: string;
+}
+
+/** A split production's package is its volume list, package/volumes.json. */
+export function isVolumeList(packagePath: string | null | undefined): boolean {
+  return !!packagePath && packagePath.endsWith('/package/volumes.json');
+}
+
+/**
+ * The volumes of a production packaged in more than one, or null for a
+ * production packaged as one ZIP. `autoSplit`: split for size, not asked.
+ */
+export async function getPackageVolumes(
+  production: Pick<Production, 'package_storage_path'>,
+): Promise<{ volumes: PackageVolume[]; autoSplit: boolean } | null> {
+  if (!isVolumeList(production.package_storage_path)) return null;
+  const url = await getDiscoverySignedUrl(production.package_storage_path as string, 120, 'read');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`volume list: HTTP ${res.status}`);
+  const m = await res.json() as { volumes?: PackageVolume[]; auto_split?: boolean };
+  return { volumes: m.volumes ?? [], autoSplit: !!m.auto_split };
+}
+
 export async function getDiscoverySignedUrl(
   storagePath: string,
   expiresInSeconds = 3600,

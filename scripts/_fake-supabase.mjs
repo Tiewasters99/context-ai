@@ -30,7 +30,12 @@ export function fakeSupabase(seed = {}) {
     insert(rows) { this.op = 'insert'; this.rows = Array.isArray(rows) ? rows : [rows]; return this; }
     update(patch) { this.op = 'update'; this.patch = patch; return this; }
     delete(opts) { this.op = 'delete'; this.wantCount = opts?.count === 'exact'; return this; }
-    eq(c, v) { this.filters.push((r) => r[c] === v); return this; }
+    eq(c, v) {
+      // 'payload->>document_id' reads r.payload.document_id, as PostgREST does.
+      const path = c.split('->>');
+      const read = path.length === 2 ? (r) => r[path[0]]?.[path[1]] : (r) => r[c];
+      this.filters.push((r) => read(r) === v); return this;
+    }
     neq(c, v) { this.filters.push((r) => r[c] !== v); return this; }
     gt(c, v) { this.filters.push((r) => r[c] > v); return this; }
     lte(c, v) { this.filters.push((r) => r[c] <= v); return this; }

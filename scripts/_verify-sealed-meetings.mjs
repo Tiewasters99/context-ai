@@ -4,7 +4,8 @@
 //   node scripts/_verify-sealed-meetings.mjs
 //
 // Entirely OFFLINE and secret-free: no .env is read, `fetch` is replaced by a
-// witness that answers for Supabase and for bedrock-mantle and records every
+// witness that answers for Supabase and for the sealed pen (bedrock-runtime,
+// Opus 4.6 — the default since 2026-10-20) and records every
 // request, and the two endpoint handlers are driven directly with a fake
 // req/res. Every key in this file is a fake string. CI-ready — exits non-zero
 // on failure.
@@ -27,7 +28,7 @@
 // A Tier-B meeting is no longer refused; it is answered by the sealed pen
 // through lib/assistant-core.mjs's own agentic loop.
 //
-//   7.  Sealed + pen present → EXACTLY bedrock-mantle is contacted, SigV4
+//   7.  Sealed + pen present → EXACTLY the sealed Bedrock host is contacted, SigV4
 //                        signed, transcript included, in-seal tools only, no
 //                        web_search, and zero requests to any other provider.
 //   8.  Sealed + no creds → refusal (503 sealed_pen_unavailable), zero
@@ -51,7 +52,9 @@
 // environment is overwritten rather than used.
 const SUPABASE_URL = 'https://stub.supabase.test';
 const SUPA_HOST = 'stub.supabase.test';
-const BEDROCK_HOST = 'bedrock-mantle.us-east-1.api.aws';
+const BEDROCK_HOST = 'bedrock-runtime.us-east-1.amazonaws.com';
+// The default sealed pen (PENS.bedrockRuntime) — what every sealed turn here is answered by.
+const PEN_MODEL = 'us.anthropic.claude-opus-4-6-v1';
 process.env.VITE_SUPABASE_URL = SUPABASE_URL;
 process.env.SUPABASE_URL = SUPABASE_URL;
 process.env.VITE_SUPABASE_ANON_KEY = 'anon-stub-not-a-key';
@@ -62,6 +65,7 @@ delete process.env.CLAUDE_FLAG_MODEL;
 delete process.env.BEDROCK_MODEL;
 delete process.env.OPENAI_API_KEY;
 
+const { eventStreamBody } = await import('./_bedrock-eventstream.mjs');
 const { default: meetingChat } = await import('../api/meeting-chat.mjs');
 const { default: meetingFlag } = await import('../api/meeting-flag.mjs');
 const { meetingModelDecision, meetingRefusalMessage } = await import('../lib/meeting-seal.mjs');
@@ -103,7 +107,7 @@ const LONG_TRANSCRIPT = [
 // ── the witness ──────────────────────────────────────────────────────────
 // Installed for every case. It answers as Supabase (so the real supabase-js
 // client, and therefore the real tier walk and the real ledger writes, run
-// unmodified) and as bedrock-mantle, and records every request. A sealed case
+// unmodified) and as the sealed Bedrock pen, and records every request. A sealed case
 // must show no host but Supabase and — when a pen is configured — bedrock.
 const realFetch = globalThis.fetch;
 let requests = [];
@@ -267,8 +271,9 @@ function anthropicAnswer(init) {
   return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
 }
 
-// The sealed pen: bedrock-mantle's OpenAI-compatible chat route, the shape
-// lib/assistant-core.mjs's openaiCompatTurn reads.
+// The sealed pen: Opus 4.6 on the classic runtime's invoke route — Messages
+// events in AWS event-stream frames, the shape lib/assistant-core.mjs's
+// bedrockTurn reads (through lib/bedrock-runtime.mjs).
 const SEALED_ANSWER = 'Push back on the 3.1 figure — the term sheet is the document that controls.';
 function bedrockAnswer() {
   if (world.bedrock === '403') {
@@ -276,11 +281,14 @@ function bedrockAnswer() {
       status: 403, headers: { 'content-type': 'application/json' },
     });
   }
-  const sse = [
-    { choices: [{ index: 0, delta: { role: 'assistant', content: SEALED_ANSWER } }] },
-    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1200, completion_tokens: 30 } },
-  ].map((d) => `data: ${JSON.stringify(d)}\n\n`).join('') + 'data: [DONE]\n\n';
-  return new Response(sse, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  const frames = eventStreamBody([
+    { type: 'message_start', message: { usage: { input_tokens: 1200, output_tokens: 1 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: SEALED_ANSWER } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 30 } },
+    { type: 'message_stop' },
+  ]);
+  return new Response(frames, { status: 200, headers: { 'content-type': 'application/vnd.amazon.eventstream' } });
 }
 
 // ── the HTTP layer, faked ────────────────────────────────────────────────
@@ -474,20 +482,23 @@ try {
   check(res.text.includes(SEALED_ANSWER), "the sealed pen's answer streams back to the browser", res.text.slice(0, 120));
   check(bedrockCalls().length === 1, 'exactly one request to the sealed pen', requests.map((r) => r.host));
   check(providerHosts().length === 1 && providerHosts()[0] === BEDROCK_HOST,
-    'egress witness: bedrock-mantle and NOTHING else — first-party Anthropic was never contacted', hosts());
-  check(bedrockCalls()[0].url.endsWith('/v1/chat/completions'), 'the OpenAI-compatible bedrock-mantle route, as the pen table says', bedrockCalls()[0]?.url);
+    'egress witness: the sealed Bedrock host and NOTHING else — first-party Anthropic was never contacted', hosts());
+  check(bedrockCalls()[0].url.endsWith('/model/us.anthropic.claude-opus-4-6-v1/invoke-with-response-stream'),
+    'the classic runtime invoke route with the us. profile, as the pen table says', bedrockCalls()[0]?.url);
   check(String(bedrockCalls()[0].headers?.authorization || '').startsWith('AWS4-HMAC-SHA256'),
     'SigV4-signed with our own AWS credentials — no bearer token, no provider key', Object.keys(bedrockCalls()[0].headers || {}));
-  check(sealedSent?.model === 'moonshotai.kimi-k2.5', 'answered by the sealed pen named in the pen table', sealedSent?.model);
+  // The runtime names the model in the URL (checked above), not the body.
+  check(sealedSent?.anthropic_version === 'bedrock-2023-05-31' && sealedSent?.model === undefined,
+    'answered by the sealed pen named in the pen table (the Messages body the runtime takes)', sealedSent && { v: sealedSent.anthropic_version, model: sealedSent.model });
   check(JSON.stringify(sealedSent).includes('Reyes:'), 'the transcript IS included — the meeting is what the question is about');
-  check(sealedSent?.messages?.[0]?.role === 'system' && /SECURESPACE/i.test(sealedSent.messages[0].content),
-    'the system prompt tells the pen it is the sealed pen on a sealed matter', sealedSent?.messages?.[0]?.content?.slice(-200));
+  check(typeof sealedSent?.system === 'string' && /SECURESPACE/i.test(sealedSent.system),
+    'the system prompt tells the pen it is the sealed pen on a sealed matter', sealedSent?.system?.slice(-200));
   // The pen's own preamble (lib/pen-preambles.mjs) leads it, once, and the
   // harness's own prompt is byte-identical behind the separator. The meeting
   // panel runs the SAME loop as sealed chat, so this is where that is proved
   // for this surface.
   {
-    const sys = sealedSent?.messages?.[0]?.content ?? '';
+    const sys = sealedSent?.system ?? '';
     const markers = sys.split(SEALED_PEN_PREAMBLE_MARKER).length - 1;
     check(sys.startsWith(SEALED_PEN_PREAMBLE_TEXT),
       'the pen preamble is the FIRST thing the sealed meeting pen reads', sys.slice(0, 80));
@@ -495,12 +506,12 @@ try {
     check(/SECURESPACE/i.test(sys.slice(SEALED_PEN_PREAMBLE_TEXT.length)),
       "and the harness's own prompt is intact behind it");
   }
-  check(sealedSent?.messages?.[1]?.content?.includes('<meeting_transcript>'),
+  check(String(sealedSent?.messages?.[0]?.content ?? '').includes('<meeting_transcript>'),
     'the transcript rides a framing turn, so the real question stays the last user message');
   check(sealedSent?.messages?.[sealedSent.messages.length - 1]?.content === 'What should I push back on?',
     'the last user message is the question the user actually asked', sealedSent?.messages?.[sealedSent.messages.length - 1]);
 
-  const toolNames = (sealedSent?.tools || []).map((t) => t.function?.name);
+  const toolNames = (sealedSent?.tools || []).map((t) => t.name);
   check(toolNames.length > 0, 'the pen is offered tools — this is the agentic harness, not a single shot', toolNames);
   check(!toolNames.includes('web_search'), 'NO web_search: the one tool that would leave the seal is not in this harness at all', toolNames);
   check(['search', 'grep', 'get_passage', 'get_outline'].every((n) => toolNames.includes(n)),
@@ -514,7 +525,7 @@ try {
   for (const p of msgPosts) { try { const b = JSON.parse(p.body); if (b.role === 'assistant') assistantRow = b; } catch { /* ignore */ } }
   check(supaCalls('/rest/v1/ai_sessions').length === 1, 'an ai_sessions row is opened for the turn', supaCalls('/rest/v1/ai_sessions').length);
   check(msgPosts.length === 2, 'two ai_messages rows: the question and the answer', msgPosts.length);
-  check(assistantRow?.model === 'moonshotai.kimi-k2.5' && assistantRow?.provider === 'aws-bedrock',
+  check(assistantRow?.model === PEN_MODEL && assistantRow?.provider === 'aws-bedrock',
     'the row names the pen that answered — model AND provider', assistantRow);
   check(assistantRow?.input_tokens === 1200 && assistantRow?.output_tokens === 30,
     'with the token counts the pen reported', { in: assistantRow?.input_tokens, out: assistantRow?.output_tokens });
@@ -527,7 +538,7 @@ try {
   console.log('\n/api/meeting-chat — the sealed turn is metered at the sealed pen');
   const sealedMeter = rpcBody('usage_consume');
   const penCents = estimateLlmCents({
-    provider: 'aws-bedrock', model: 'moonshotai.kimi-k2.5',
+    provider: 'aws-bedrock', model: PEN_MODEL,
     bodyText: TRANSCRIPT + JSON.stringify(chatBody().messages), maxOutputTokens: 4096,
   });
   const opusCents = estimateLlmCents({
@@ -538,7 +549,7 @@ try {
   check(sealedMeter?.p_cents_estimate === penCents, "pre-charge: the SEALED PEN's rate, on the allowance the harness asks for", { got: sealedMeter?.p_cents_estimate, want: penCents });
   check(penCents < opusCents, 'which is less than pricing it as the Opus this route used to name', { pen: penCents, opus: opusCents });
   const actual = rpcBody('usage_record_actual');
-  check(actual?.p_model === 'moonshotai.kimi-k2.5', 'reconciled against the model that actually answered', actual);
+  check(actual?.p_model === PEN_MODEL, 'reconciled against the model that actually answered', actual);
   check(actual?.p_meta?.sealed === true && actual?.p_meta?.route === 'meeting-chat', 'and the ledger row says it was a sealed meeting turn', actual?.p_meta);
 
   // Over budget — the pen is never asked.
@@ -570,7 +581,7 @@ try {
     "it is on the MEETING'S matter chain, and names the session", { matter: led?.p_matter, session: led?.p_session });
   check(led?.p_actor_kind === 'user', 'the actor is the person who asked, not a charter or the worker', led?.p_actor_kind);
   check(led?.p_payload?.tier === 'B' && led?.p_payload?.provider === 'aws-bedrock'
-    && led?.p_payload?.model === 'moonshotai.kimi-k2.5' && led?.p_payload?.within_policy === true,
+    && led?.p_payload?.model === PEN_MODEL && led?.p_payload?.within_policy === true,
     'the payload names the tier and the pen that answered', led?.p_payload);
   check(led?.p_payload?.input_tokens === 1200 && led?.p_payload?.output_tokens === 30
     && led?.p_payload?.answer_chars === SEALED_ANSWER.length,

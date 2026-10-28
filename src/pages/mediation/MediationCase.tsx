@@ -115,7 +115,7 @@ function AwaitingStage({ view }: { view: CaseView }) {
           </div>
           <StageNote>
             They join from the Mediation Center — &ldquo;Join with an invite code&rdquo; — after signing in
-            to their own Contextspaces account. This page notices their appearance on its own; no need to reload.
+            to their own Equazia.ai account. This page notices their appearance on its own; no need to reload.
           </StageNote>
         </>
       ) : (
@@ -1074,7 +1074,7 @@ function SettlementStage({ view, onRefresh }: { view: CaseView; onRefresh: () =>
               {sendBusy ? 'Sending…' : 'Send to the attorney panel'}
             </GoldButton>
             <StageNote>
-              A licensed Contextspaces panel attorney will review the draft and prepare the
+              A licensed Equazia.ai panel attorney will review the draft and prepare the
               final, executable agreement.
             </StageNote>
           </div>
@@ -1093,7 +1093,7 @@ function AttorneyReviewStage({ view }: { view: CaseView }) {
   return (
     <div>
       <StageProse>
-        The draft agreement is with the Contextspaces attorney panel. A licensed attorney is
+        The draft agreement is with the Equazia.ai attorney panel. A licensed attorney is
         reviewing and documenting the settlement; both parties will be contacted for
         execution.
       </StageProse>
@@ -1128,7 +1128,7 @@ function ClosingStage({ view }: { view: CaseView }) {
       </p>
       <p className="text-[12.5px] text-white/45 leading-relaxed mt-2 max-w-md mx-auto">
         {settled
-          ? 'The agreement has been documented by a Contextspaces panel attorney. The file is sealed; the confidences within it stay within it.'
+          ? 'The agreement has been documented by an Equazia.ai panel attorney. The file is sealed; the confidences within it stay within it.'
           : 'The file is sealed. Everything said in confidence remains in confidence.'}
       </p>
       {view.settlementDraft && settled && (
@@ -1244,7 +1244,7 @@ export default function MediationCase() {
   if (needsAuth) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
-        <PageHead kicker="Contextspaces Mediation" title="The case room" />
+        <PageHead kicker="Equazia.ai Mediation" title="The case room" />
         <p className="text-[14px] text-white/70">This room is confidential — sign in to take your seat.</p>
         <div className="mt-6">
           <Link to="/app/mediation"><QuietButton>Back to the Mediation Center</QuietButton></Link>
@@ -1276,7 +1276,7 @@ export default function MediationCase() {
     <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <header className="mb-8">
         <p className="text-[11px] uppercase tracking-[0.18em] text-[#d4a054] mb-2">
-          <Link to="/app/mediation" className="hover:text-[#e8b84a] transition-colors">Contextspaces Mediation</Link>
+          <Link to="/app/mediation" className="hover:text-[#e8b84a] transition-colors">Equazia.ai Mediation</Link>
         </p>
         <h1
           className="text-[26px] font-semibold tracking-tight text-white"

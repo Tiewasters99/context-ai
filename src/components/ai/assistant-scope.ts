@@ -61,12 +61,13 @@ export const ASSISTANT_THE = 'the Orchestrator';
 
 /**
  * The sealed pen, named. The product's own label for it lives in `PENS` in
- * lib/assistant-core.mjs — "Kimi K2.5 (Bedrock, our AWS account, zero
- * retention)". It is NOT Claude: AWS gates the Claude 5 generation for this
- * account, and the 2026-09-19 audit is explicit that the claim to make is a
- * zero-retention model in the firm's own AWS account.
+ * lib/assistant-core.mjs — "Claude Opus 4.6 (Bedrock, our AWS account, zero
+ * retention)", the default since 2026-10-20 (Kimi K2.5 before). Not the
+ * Claude 5 generation, which AWS still gates for this account; the
+ * 2026-09-19 audit is explicit that the claim to make is a zero-retention
+ * model in the firm's own AWS account.
  */
-export const SEALED_PEN_DEFAULT_LABEL = 'Kimi K2.5';
+export const SEALED_PEN_DEFAULT_LABEL = 'Opus 4.6';
 
 export function sealedPenSentence(label: string = SEALED_PEN_DEFAULT_LABEL): string {
   return `Answers come from the sealed model — ${label} in the firm's own AWS account. Zero data retention. Nothing reaches an outside provider.`;
@@ -96,7 +97,7 @@ export const SILO_SENTENCE =
  * meaning. Saying so is the difference between a useful answer and a shrug.
  */
 export const SEALED_SEARCH_NOTE =
-  'Inside a sealed matter the assistant finds passages by their words, not by meaning — use the document’s own terms.';
+  'Inside a sealed matter the Orchestrator finds passages by their words, not by meaning — use the document’s own terms.';
 
 /** The strip after "clear" on a scope the page put there. */
 export function unscopedStripText(name?: string): string {
@@ -165,6 +166,7 @@ export const SEALED_STARTERS: Starter[] = [
  * left for the lane that owns lib/.
  */
 const PEN_NAMES: Record<string, string> = {
+  'us.anthropic.claude-opus-4-6-v1': 'Opus 4.6',
   'moonshotai.kimi-k2.5': 'Kimi K2.5',
   'anthropic.claude-opus-5': 'Opus 5',
   'claude-opus-5': 'Opus 5',
@@ -293,7 +295,7 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
 
 /** What the matter header's button reads. */
 export function askAssistantLabel(sealed: boolean): string {
-  return sealed ? 'Ask the sealed assistant' : 'Ask the assistant';
+  return sealed ? 'Ask the sealed Orchestrator' : 'Ask the Orchestrator';
 }
 
 /**

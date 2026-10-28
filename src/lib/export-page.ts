@@ -169,8 +169,20 @@ export async function pageToDocxBlob(
   ];
 
   const doc = new Document({
-    creator: 'Contextspaces',
+    creator: 'Equazia.ai',
     title: title || 'Untitled Page',
+    // Word's built-in Title style is 28 pt, which reads as a poster on a page
+    // export (Eden, 2026-10-28). The paragraph keeps the Title style, so Word's
+    // navigation pane and Styles gallery still know it as the title; only its
+    // look is set here: 14 pt, bold, a little room below. Sizes are half-points.
+    styles: {
+      default: {
+        title: {
+          run: { size: 28, bold: true },
+          paragraph: { spacing: { after: 200 } },
+        },
+      },
+    },
     numbering: {
       config: [
         {

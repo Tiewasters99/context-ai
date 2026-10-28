@@ -7,6 +7,10 @@ const coreFeatures = [
     body: 'Every case, deal, or project gets its own matter — with pages, lists, tables, a calendar, deadlines, and a discussion thread. Matters nest into sub-matters and live in shared Serverspaces with your team, in strict isolation from one another.',
   },
   {
+    title: 'SecureSpaces',
+    body: 'A matter born sealed. A SecureSpace is invisible to every outside connector, and its AI work runs only through routes with no third-party retention — nothing in it is stored or trained on by a model provider. Open one for a client, and the unprivileged questions they would otherwise put to a public chatbot are asked inside the matter, under your supervision.',
+  },
+  {
     title: 'The Vault',
     body: 'Load a matter’s documents into its Vault and they’re ingested, OCR’d, and indexed. Search everything at once — semantic and exact-match — and retrieval returns not summaries but verbatim passages with page-accurate citations: the form of answer you can actually put in a brief.',
   },
@@ -25,7 +29,7 @@ const suiteApps = [
   {
     title: 'FileSaver.ai',
     badge: null,
-    body: 'The suite’s chat-capture utility. Saves your AI conversations from ChatGPT, Claude, Gemini, and Grok and syncs them into Contextspaces — turning scattered, ephemeral sessions into a durable, searchable asset of the firm.',
+    body: 'The suite’s chat-capture utility. Saves your AI conversations from ChatGPT, Claude, Gemini, and Grok and syncs them into Equazia.ai — turning scattered, ephemeral sessions into a durable, searchable asset of the firm.',
   },
   {
     title: 'Moot Bench',
@@ -89,6 +93,22 @@ const secondaryFeatures = [
   },
 ];
 
+// Teasers posted ahead of launch. One entry per film; add another to post it.
+// The files live in the public `marketing` bucket (Supabase Storage), not in
+// this repo: a 50 MB video does not belong in git. The poster is the film's
+// own title card.
+const MARKETING = 'https://glegjwxosocbyquzmtqs.supabase.co/storage/v1/object/public/marketing';
+const teasers = [
+  {
+    title: 'Brief Desk',
+    tagline: 'Use the power of AI. And verify what you file.',
+    body: 'A persuasive AI draft, a second AI check, and a courtroom morning that goes wrong. Brief Desk puts human verification in your workflow: you read the sources, you make the call.',
+    note: '2 min 53 s · Fictional dramatization. The sanctions orders shown are real and cited on screen.',
+    src: `${MARKETING}/brief-desk/v6.mp4`,
+    poster: `${MARKETING}/brief-desk/v6-poster.jpg`,
+  },
+];
+
 export default function Landing() {
   return (
     <div className="min-h-screen">
@@ -102,9 +122,9 @@ export default function Landing() {
         {/* Nav */}
         <nav className="relative z-10 flex items-center justify-between w-full px-6 sm:pl-[8.9%] sm:pr-[10%] h-20">
           <span className="text-white" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.9)' }}>
-            <span className="flex flex-col leading-none">
-              <span className="text-[28px] sm:text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Context</span>
-              <span className="text-[20px] sm:text-[25px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span className="text-[#d4a054]">Spaces</span><span className="text-white">.ai</span></span>
+            <span className="flex items-baseline leading-none">
+              <span className="text-[28px] sm:text-[36px] font-semibold tracking-tight" style={{ fontFamily: '"Playfair Display Variable", serif' }}>Equazia</span>
+              <span className="text-[20px] sm:text-[25px] font-semibold tracking-tight text-[#d4a054]" style={{ fontFamily: '"Playfair Display Variable", serif' }}>.ai</span>
             </span>
           </span>
           {/* Desktop: the original absolutely-positioned link cluster. On
@@ -154,6 +174,42 @@ export default function Landing() {
             <div className="w-1 h-2 rounded-full bg-white/50 animate-bounce" />
           </div>
         </div>
+      </div>
+
+      {/* A first look — short films posted ahead of launch (see `teasers`). */}
+      <section id="first-look" className="bg-[#0a0a10] pt-24 pb-10 px-6">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] text-center mb-4">A first look</h2>
+          <p className="text-[16px] text-[#8a8693] text-center max-w-lg mx-auto mb-12">
+            Short films about the work, posted ahead of launch.
+          </p>
+          {teasers.map((t) => (
+            <figure key={t.src} className="mb-14">
+              <div className="rounded-xl overflow-hidden bg-black ring-1 ring-[#d4a054]/30 shadow-[0_30px_80px_rgba(0,0,0,0.7)]">
+                <video
+                  controls
+                  playsInline
+                  preload="metadata"
+                  poster={t.poster}
+                  src={t.src}
+                  className="w-full aspect-video block"
+                  aria-label={`${t.title}: ${t.tagline}`}
+                />
+              </div>
+              <figcaption className="mt-6 text-center">
+                <div className="text-[26px] font-semibold text-[#f5f2ed]" style={{ fontFamily: '"Playfair Display Variable", serif' }}>{t.title}</div>
+                <div className="text-[17px] text-[#d4a054] mt-1">{t.tagline}</div>
+                <p className="text-[15px] text-[#8a8693] leading-relaxed max-w-xl mx-auto mt-4">{t.body}</p>
+                <p className="text-[12px] text-[#5e5a66] mt-4">{t.note}</p>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+
+      {/* Divider — thin gold line */}
+      <div className="bg-[#0a0a10] flex justify-center">
+        <div className="w-16 h-px bg-[#d4a054]/40" />
       </div>
 
       {/* Core features — just text, no cards */}
@@ -239,7 +295,7 @@ export default function Landing() {
           <h2 className="text-[11px] font-semibold text-[#d4a054] uppercase tracking-[0.2em] mb-4">Early Access</h2>
           <h3 className="text-[28px] font-semibold text-[#f5f2ed] mb-6">Live today. Free during beta.</h3>
           <p className="text-[16px] text-[#8a8693] leading-relaxed mb-10">
-            Contextspaces is in production and onboarding a hand-picked group of design partners — practicing
+            Equazia.ai — formerly Contextspaces — is in production and onboarding a hand-picked group of design partners — practicing
             litigators who shape the roadmap and are supported without charge throughout the beta. Per-seat
             subscription pricing arrives at public launch.
           </p>
@@ -258,9 +314,9 @@ export default function Landing() {
           <div className="flex flex-col md:flex-row justify-between gap-8">
             <div>
               <span className="text-[15px] font-semibold text-[#f5f2ed]">
-                <span className="inline-flex flex-col leading-none">
-                  <span>Context</span>
-                  <span className="text-[#d4a054]">Spaces.ai</span>
+                <span className="inline-flex items-baseline leading-none">
+                  <span>Equazia</span>
+                  <span className="text-[#d4a054]">.ai</span>
                 </span>
               </span>
               <p className="text-[12px] text-[#5a5665] mt-2">Every matter, in context.</p>
@@ -270,21 +326,22 @@ export default function Landing() {
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Product</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
                   <li><a href="#features" className="hover:text-[#e8e4de] transition-colors">Features</a></li>
+                  <li><a href="#first-look" className="hover:text-[#e8e4de] transition-colors">A first look</a></li>
                   <li><a href="#beta" className="hover:text-[#e8e4de] transition-colors">Early Access</a></li>
                 </ul>
               </div>
               <div>
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Company</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">About</a></li>
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Contact</a></li>
+                  <li><a href="#features" className="hover:text-[#e8e4de] transition-colors">About</a></li>
+                  <li><a href="mailto:info@equazia.ai" className="hover:text-[#e8e4de] transition-colors">Contact</a></li>
                 </ul>
               </div>
               <div>
                 <h4 className="text-[12px] font-semibold text-[#e8e4de] mb-3">Legal</h4>
                 <ul className="space-y-2 text-[12px] text-[#5a5665]">
                   <li><Link to="/privacy" className="hover:text-[#e8e4de] transition-colors">Privacy</Link></li>
-                  <li><a href="#" className="hover:text-[#e8e4de] transition-colors">Terms</a></li>
+                  <li><Link to="/terms" className="hover:text-[#e8e4de] transition-colors">Terms</Link></li>
                 </ul>
               </div>
             </div>

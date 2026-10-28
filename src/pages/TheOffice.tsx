@@ -5,7 +5,8 @@ import {
   ExternalLink, Folder, Users, Lock, FileText, DoorOpen, Image as JacketIcon,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { canCaptureCover, captureOfficeImages } from '@/lib/office-cover';
+import { canGiveJacket, captureOfficeImages } from '@/lib/office-cover';
+import CoverThumb from '@/components/ui/CoverThumb';
 import { publishDocumentToOffice } from '@/lib/office-publish';
 import { useServerspaces } from '@/hooks/useServerspaces';
 import { buildMatterTree, type MatterTreeNode } from '@/lib/matter-tree';
@@ -52,11 +53,15 @@ interface OfficeItem {
   excerpt: string;
   spine: string;
   published: boolean;
+  /** The cover chosen for the stored document (documents.cover_url, embedded
+   *  through document_id), drawn small beside the title. */
+  cover_url?: string | null;
 }
 interface DocRow {
   id: string;
   title: string;
   author: string | null;
+  cover_url: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +142,9 @@ function OfficeMatterNode({
                 ? `${d.title} — sealed matter: read it here, nothing leaves`
                 : `${d.title} — drag onto a shelf to publish, click to open in the reader`}
             >
-              <FileText size={11} className="shrink-0 text-white/35" strokeWidth={1.75} />
+              {d.cover_url
+                ? <CoverThumb coverUrl={d.cover_url} size="shelf" />
+                : <FileText size={11} className="shrink-0 text-white/35" strokeWidth={1.75} />}
               <span className="truncate">{d.title}</span>
             </button>
           ))}
@@ -174,7 +181,7 @@ function VaultCard({ onOpenDoc }: { onOpenDoc: (docId: string) => void }) {
       if (d[id]) return d;
       supabase
         .from('documents')
-        .select('id, title, author')
+        .select('id, title, author, cover_url')
         .eq('matterspace_id', id)
         .order('title')
         .limit(300)
@@ -321,6 +328,8 @@ function SectionCard({
             {items.map((it) => (
               <li key={it.id} className="group flex items-center gap-2 text-[12.5px] text-white/80 min-w-0">
                 <span className="w-[3px] h-4 rounded-full shrink-0" style={{ backgroundColor: it.spine }} />
+                {/* The book's cover, carried over from the vault when it has one. */}
+                <CoverThumb coverUrl={it.cover_url} size="shelf" />
                 {/* span, not button: the card's drag machinery ignores spans,
                     so the title stays clickable without fighting the drag */}
                 <span
@@ -336,7 +345,7 @@ function SectionCard({
                   <button
                     onClick={() => onCaptureCover(it)}
                     className="p-0.5 rounded text-white/0 group-hover:text-white/50 hover:!text-white transition-colors"
-                    title="Capture the jacket — page one of the PDF — and every page when it is a deck, for the office's Reader"
+                    title="Capture the jacket — the document's chosen cover, or page one of the PDF — and every page when it is a deck, for the office's Reader"
                   >
                     <JacketIcon size={12} />
                   </button>
@@ -381,12 +390,20 @@ export default function TheOffice() {
   const refresh = useCallback(async () => {
     const [s, i] = await Promise.all([
       supabase.from('office_sections').select('id, kind, title, blurb, sort_order').order('sort_order').order('created_at'),
-      supabase.from('office_items').select('id, section_id, document_id, title, author, excerpt, spine, published').order('sort_order').order('created_at'),
+      // The stored document's cover rides along through document_id, so the
+      // shelf shows the same jacket the vault list does.
+      supabase.from('office_items').select('id, section_id, document_id, title, author, excerpt, spine, published, document:documents(cover_url)').order('sort_order').order('created_at'),
     ]);
     if (s.error) say(`Could not load sections: ${s.error.message}`);
     else setSections((s.data ?? []) as OfficeSection[]);
     if (i.error) say(`Could not load items: ${i.error.message}`);
-    else setItems((i.data ?? []) as OfficeItem[]);
+    else {
+      type Row = Omit<OfficeItem, 'cover_url'> & { document: { cover_url: string | null } | { cover_url: string | null }[] | null };
+      setItems(((i.data ?? []) as unknown as Row[]).map(({ document, ...it }) => ({
+        ...it,
+        cover_url: (Array.isArray(document) ? document[0] : document)?.cover_url ?? null,
+      })));
+    }
     setLoading(false);
   }, []);
 
@@ -416,27 +433,28 @@ export default function TheOffice() {
     setItems((prev) => prev.filter((p) => p.id !== it.id));
   };
 
-  // The jacket: page one of the item's PDF, captured into the public cover
-  // bucket so the office's Reader can open the book on its real cover. The
-  // only image the one-way glass lets through; a Word file or a deck has
-  // no page one to show and keeps the library's plate.
+  // The jacket: the cover chosen for the document in the vault, or page one
+  // of the item's PDF, captured into the public cover bucket so the office's
+  // Reader can open the book on its real cover. The only image the one-way
+  // glass lets through; a Word file with no chosen cover has nothing to show
+  // and keeps the library's plate.
   const captureCover = async (it: OfficeItem, quiet = false) => {
     if (!it.document_id) return;
     const { data: doc } = await supabase
       .from('documents')
-      .select('storage_path, source_filename')
+      .select('storage_path, source_filename, cover_url')
       .eq('id', it.document_id)
       .single();
     if (!doc?.storage_path) { if (!quiet) say('The stored file could not be found.'); return; }
-    if (!canCaptureCover(doc.source_filename)) {
-      if (!quiet) say(`"${it.title}" is not a PDF — only a PDF has a page one to show as a jacket.`);
+    if (!canGiveJacket(doc.source_filename, doc.cover_url)) {
+      if (!quiet) say(`"${it.title}" has no cover and is not a PDF — nothing to show as a jacket.`);
       return;
     }
     try {
       say(`Capturing the jacket for "${it.title}"…`);
       const got = await captureOfficeImages(it.id, doc.storage_path, doc.source_filename, (done, total) => {
         say(`Capturing the pages of "${it.title}"… ${done} of ${total}`);
-      });
+      }, doc.cover_url);
       say(got.pages
         ? `"${it.title}" shows its jacket and all ${got.pages} pages in the office now.`
         : `"${it.title}" wears its jacket in the office now.`);
@@ -528,7 +546,7 @@ export default function TheOffice() {
           <p className="text-[13px] text-white/45 mt-1.5 max-w-xl">
             The public face of your workspace. Drag a document from the vault onto a shelf or a
             practice area and it appears — display-only — in your walkable office. The file itself
-            never leaves Contextspaces.{' '}
+            never leaves Equazia.ai.{' '}
             <a href="/api/office" target="_blank" rel="noopener" className="text-white/60 hover:text-[#e8b84a] inline-flex items-center gap-0.5">
               public manifest <ExternalLink size={11} />
             </a>

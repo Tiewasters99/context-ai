@@ -1,6 +1,51 @@
 # Sealed chat pen: Claude Opus 5 via Bedrock, in our own AWS account
 
-> **2026-09-18 status.** The Claude 5 generation (Opus 5 / 4.8 / 4.7, Sonnet 5) is
+> **2026-10-20 status — the sealed default is now Claude Opus 4.6.** AWS opened
+> Opus 4.6 to this account on the **classic Bedrock runtime**
+> (`bedrock-runtime.<region>.amazonaws.com`), through the `us.` geographic
+> inference profile `us.anthropic.claude-opus-4-6-v1` (the base id refuses
+> on-demand calls). Opus 4.6 is not in the bedrock-mantle catalog, and every
+> Claude id on mantle — like the whole Claude 5 generation on both planes — is
+> still "not available for this account". So the default pen is
+> `PENS.bedrockRuntime` (route `invoke`, `lib/bedrock-runtime.mjs`):
+> InvokeModelWithResponseStream, SigV4 service `bedrock`, the Messages body
+> with `anthropic_version: bedrock-2023-05-31`, AWS event-stream framing.
+> Live-verified 2026-10-21 with the pen's own key: a two-round tool turn with
+> adaptive thinking, and `scripts/_verify-bedrock-pen.mjs`'s live section.
+>
+> **What the seal claims on this route** (AWS "Data retention" and "Abuse
+> detection" pages, read 2026-10-20; re-verify before anything client-facing):
+>
+> - The account retention mode is set **per Region** and governs bedrock-runtime
+>   as well as mantle; the runtime's setting is read and written on the Bedrock
+>   control plane (`GET/PUT https://bedrock.<region>.amazonaws.com/data-retention`).
+>   This account: **`none` in us-east-1** (both planes); us-east-2 and us-west-2
+>   are `inherit`. The live verify reads it with the pen's own key and fails
+>   unless it is `none`.
+> - AWS: "There is no data retention change to Claude models released before
+>   Claude Fable 5", and Opus 4.6 is not among the models whose traffic it
+>   retains for abuse detection.
+> - **Residency changes from single-Region to US-only.** A `us.` profile
+>   processes in us-east-1, us-east-2 or us-west-2 ("Geographic cross-Region
+>   inference"); CloudTrail in us-east-1 records the Region that served each
+>   call (`additionalEventData.inferenceRegion`). `global.` profiles route
+>   worldwide and the code deliberately never sends one to the runtime.
+>   Recommended: set `none` in us-east-2 and us-west-2 as well (one control-plane
+>   PUT per Region, owner credentials — the pen key cannot write it).
+> - Opus 4.6 is not frontier, so a sealed `escalate: true` still goes to
+>   first-party Claude and is recorded as an escalation, exactly as with Kimi.
+>
+> **Access, as it happened:** the first calls on 2026-10-20 succeeded, then
+> lapsed with "not authorized to perform the required AWS Marketplace actions"
+> (the account's Marketplace subscription had not completed); AWS accepted the
+> Opus 4.6 request and it has answered since 2026-10-21. Opus 4.6 in us-west-2,
+> Haiku 4.5 and Sonnet 4.5/4.6 still return that Marketplace error. The pen key
+> stays invoke-only — it is never given Marketplace permissions.
+>
+> `BEDROCK_MODEL` unset = Opus 4.6. `moonshotai.kimi-k2.5` selects the previous
+> default (status below); `anthropic.claude-opus-5` the mantle Messages route.
+
+> **2026-09-18 status (superseded 2026-10-20, above).** The Claude 5 generation (Opus 5 / 4.8 / 4.7, Sonnet 5) is
 > account-gated on Bedrock for this account on both planes and both Regions
 > ("not available for this account… contact AWS Sales"; support case
 > 178785685000654; `docs/strategy/004`, "Invoke tests 2026-09-18"). Until AWS

@@ -111,7 +111,7 @@ export function buildRedlineDocument(opts: { manuscript: string; changes: Redlin
       // Comment instances itself.
       children: comments.map((c) => ({
         id: c.id,
-        author: 'The Contextspaces Editor',
+        author: 'The Equazia.ai Editor',
         date,
         children: [new Paragraph({ children: [new TextRun(c.text)] })],
       })),

@@ -442,7 +442,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
       <div className="flex items-center justify-between px-4 h-13 border-b border-[rgba(255,255,255,0.06)]">
         {!collapsed && (
           <span className="text-[15px] font-semibold text-white tracking-tight">
-            Context<span className="text-[#d4a054]">spaces</span><span className="text-white">.ai</span>
+            <span className="inline-flex items-baseline leading-none" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span>Equazia</span><span className="text-[#d4a054]">.ai</span></span>
           </span>
         )}
         {!isMobile && (
@@ -479,7 +479,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2.5">
-        {/* My Contextspace */}
+        {/* My Equazia */}
         <Link
           to="/app"
           className={`flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] transition-colors ${
@@ -489,7 +489,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           }`}
         >
           <Home size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>My Contextspace</span>}
+          {!collapsed && <span>My Equazia</span>}
         </Link>
 
         {/* Find a document by name, across every matter. Also Ctrl/Cmd+K,
@@ -497,7 +497,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             this rail entirely — and why it is mounted even when collapsed. */}
         <SiteSearchMount collapsed={collapsed} />
 
-        {/* The Assistant — the one door to everything else: it explains how
+        {/* The Orchestrator — the one door to everything else: it explains how
             the place works and, on request, does the work. It sits up here
             with the rooms rather than down with the account plumbing. */}
         <button
@@ -509,7 +509,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           }`}
         >
           <Bot size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Assistant</span>}
+          {!collapsed && <span>Orchestrator</span>}
         </button>
 
         {/* Agents (2026-09-25): every connected AI and every task handed to
@@ -553,7 +553,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             The Document Builder is still a stub (/app/document-builder).
 
             Plan gating (2026-09-19): because of that, every entry on this
-            rail is core — My Contextspace, the Assistant panel and the
+            rail is core — My Equazia, the Assistant panel and the
             SecureSpaces shelf have no gated route at all, and the Productivity
             Suite, Connections and Settings are core surfaces in lib/plan.ts.
             So there is nothing here to hide and no filter to write. If a
@@ -793,7 +793,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
               ? 'bg-[#16161d] text-white font-medium'
               : 'text-white hover:bg-[rgba(255,255,255,0.04)]'
           }`}
-          title="Connect Contextspaces to Claude, Gmail, and more"
+          title="Connect Equazia.ai to Claude, Gmail, and more"
         >
           <Plug size={15} className="shrink-0" strokeWidth={1.75} />
           {!collapsed && <span>Connections</span>}
@@ -1041,7 +1041,7 @@ function MatterNode({
         {...attributes}
         {...listeners}
         onContextMenu={openPasteMenu}
-        className={`group flex items-center gap-1 rounded-md transition-colors ${
+        className={`group relative flex items-center gap-1 rounded-md transition-colors ${
           isActive(path)
             ? 'bg-[#16161d] text-white'
             : 'text-white/70 hover:bg-[rgba(255,255,255,0.04)]'
@@ -1080,10 +1080,10 @@ function MatterNode({
         <Link
           to={path}
           onDoubleClick={(e) => { e.preventDefault(); setDraft(matter.name); setRenaming(true); }}
-          className={`flex-1 truncate py-1.5 text-[12px] ${
+          className={`flex-1 min-w-0 break-words leading-snug py-1.5 pr-1 text-[12px] ${
             isActive(path) ? 'font-medium text-white' : 'hover:text-white'
           }`}
-          title={sealed ? `${matter.name} — sealed` : undefined}
+          title={sealed ? `${matter.name} — sealed` : matter.name}
         >
           {sealed && (
             <Lock
@@ -1096,55 +1096,59 @@ function MatterNode({
           {matter.name}
         </Link>
         )}
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            setDraft(matter.name);
-            setRenaming(true);
-          }}
-          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
-          aria-label="Rename matter"
-          title="Rename"
-        >
-          <Pencil size={11} strokeWidth={2} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onAddChild(serverspaceId, matter.id, myLabel);
-          }}
-          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
-          aria-label="Add sub-matter"
-          title="Add sub-matter"
-        >
-          <Plus size={11} strokeWidth={2} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onShare(matter.id, matter.name);
-          }}
-          className="p-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
-          aria-label="Share matter"
-          title="Share matter"
-        >
-          <UserPlus size={11} strokeWidth={2} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete(matter.id, matter.name);
-          }}
-          className="p-1 mr-1 rounded text-white/30 opacity-0 group-hover:opacity-100 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
-          aria-label="Delete matter"
-          title="Delete matter"
-        >
-          <Trash2 size={11} strokeWidth={2} />
-        </button>
+        {/* Actions float over the row's right end on hover, so they never
+            take width from the name (hidden, they used to reserve ~80px). */}
+        <div className="absolute right-1 top-1/2 -translate-y-1/2 hidden group-hover:flex group-focus-within:flex items-center rounded-md bg-[#1b1b23] shadow-md">
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDraft(matter.name);
+              setRenaming(true);
+            }}
+            className="p-1 rounded text-white/30 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+            aria-label="Rename matter"
+            title="Rename"
+          >
+            <Pencil size={11} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onAddChild(serverspaceId, matter.id, myLabel);
+            }}
+            className="p-1 rounded text-white/30 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+            aria-label="Add sub-matter"
+            title="Add sub-matter"
+          >
+            <Plus size={11} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onShare(matter.id, matter.name);
+            }}
+            className="p-1 rounded text-white/30 hover:text-[#e8b84a] hover:bg-[rgba(255,255,255,0.04)] transition-all shrink-0"
+            aria-label="Share matter"
+            title="Share matter"
+          >
+            <UserPlus size={11} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onDelete(matter.id, matter.name);
+            }}
+            className="p-1 rounded text-white/30 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
+            aria-label="Delete matter"
+            title="Delete matter"
+          >
+            <Trash2 size={11} strokeWidth={2} />
+          </button>
+        </div>
       </div>
       {renameErr && <p className="px-2 py-1 text-[11px] text-red-300">{renameErr}</p>}
       {pasteNote && <p className={`px-2 py-1 text-[11px] ${pasteNote.ok ? 'text-white/60' : 'text-red-300'}`}>{pasteNote.text}</p>}

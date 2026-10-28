@@ -95,9 +95,9 @@ export default function AddChapter() {
       <HubStyles />
       <CaseCaption
         backTo="/app/student-hub/texts"
-        kicker="Contextspaces · Student Hub · New chapter"
+        kicker="Equazia.ai · Student Hub · New chapter"
         crumbs={[
-          { label: 'Contextspaces', to: '/app' },
+          { label: 'Equazia.ai', to: '/app' },
           { label: 'Student Hub', to: '/app/student-hub' },
           { label: 'New chapter' },
         ]}

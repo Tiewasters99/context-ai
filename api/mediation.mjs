@@ -99,6 +99,7 @@ import {
 import { requireEntitlement, sendEntitlementRefusal } from '../lib/entitlements.mjs';
 import { consumeUsage, sendUsageRefusal } from '../lib/usage-meter.mjs';
 import { estimateLlmCents } from '../lib/usage-prices.mjs';
+import { cleanOrigin } from '../lib/site.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -377,7 +378,7 @@ export default async function handler(req, res) {
 
         const proto = req.headers['x-forwarded-proto'] || 'https';
         const host = req.headers['x-forwarded-host'] || req.headers.host;
-        const origin = process.env.SITE_ORIGIN || `${proto}://${host}`;
+        const origin = cleanOrigin(process.env.SITE_ORIGIN) || `${proto}://${host}`;
         const caseUrl = `${origin}/app/mediation/case/${caseRow.id}`;
 
         // Stripe REST (form-encoded) — no SDK dependency in this repo.
@@ -387,7 +388,7 @@ export default async function handler(req, res) {
           'line_items[0][quantity]': '1',
           'line_items[0][price_data][currency]': 'usd',
           'line_items[0][price_data][unit_amount]': String(amountCents),
-          'line_items[0][price_data][product_data][name]': `Contextspaces Mediation — registration fee (Party ${myParty.label})`,
+          'line_items[0][price_data][product_data][name]': `Equazia.ai Mediation — registration fee (Party ${myParty.label})`,
           'line_items[0][price_data][product_data][description]': `Matter: ${caseRow.title.slice(0, 180)}`,
           success_url: `${caseUrl}?fee=paid`,
           cancel_url: `${caseUrl}?fee=cancelled`,
@@ -782,7 +783,7 @@ export default async function handler(req, res) {
           party_id: null,
           channel: 'common',
           sender: 'system',
-          content: 'Agreement reached. The accepted terms are being drafted into a settlement agreement for review with a Contextspaces panel attorney.',
+          content: 'Agreement reached. The accepted terms are being drafted into a settlement agreement for review with an Equazia.ai panel attorney.',
         });
         return json(res, 200, { ok: true, accepted: true });
       }
@@ -849,7 +850,7 @@ export default async function handler(req, res) {
           party_id: null,
           channel: 'common',
           sender: 'system',
-          content: 'The draft settlement agreement has been sent to the Contextspaces attorney panel for review and final documentation. A panel attorney will be in touch with both parties.',
+          content: 'The draft settlement agreement has been sent to the Equazia.ai attorney panel for review and final documentation. A panel attorney will be in touch with both parties.',
         });
         return json(res, 200, { ok: true });
       }

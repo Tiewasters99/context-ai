@@ -171,7 +171,7 @@ export default async function handler(req, res) {
         ? '"All my matters" for an agent is not switched on yet. Nothing was granted; tick the matters instead.'
         : approval.undeployed
         ? 'Connecting as an agent is not switched on yet. Nothing was granted.'
-        : 'Contextspaces could not record the agent connection, so nothing was granted. Try again.',
+        : 'Equazia.ai could not record the agent connection, so nothing was granted. Try again.',
     });
   }
 

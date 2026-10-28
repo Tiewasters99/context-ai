@@ -65,6 +65,8 @@ import {
   exceptionsCsv, exceptionReason, duplicatesCsv, reconcile, reconciliationText,
 } from '../lib/discovery/manifest.mjs';
 import { packageDocument } from '../lib/discovery/package-docs.mjs';
+import { packageVolumes, openZipArchive } from '../lib/discovery/volumes.mjs';
+import { duplicatesToSetAside, duplicateColumns, setAsideLines } from '../lib/discovery/families.mjs';
 
 let PGlite;
 try {
@@ -118,6 +120,7 @@ const getObject = (p) => {
   if (!o) throw new Error(`storage download ${p}: Object not found`);
   return o.buf;
 };
+const objectExists = (p) => storage.has(p);
 
 // ---------------------------------------------------------------------------
 // 1. Schema + the real migration chain
@@ -402,19 +405,22 @@ async function intakeOneEntry(productionId, matterId, { buf, originalPath, sortO
       [...idVals, ...vals]);
   };
 
-  // Every zero-byte file shares one sha256; they are not each other's
-  // duplicates, and collapsing a blank .pdf into a blank .txt would be a
-  // production error, not a saving.
-  const firstCopy = buf.length === 0 ? null
-    : twins.find((t) => t.id !== resumeId && t.status !== 'error' && !t.duplicate_of_item_id) ?? null;
-  if (firstCopy) {
+  // Since 2026-10-13 intake never collapses identical files: a copy is its
+  // own normal, stampable item that shares its twin's stored objects, and
+  // "Remove duplicates" at stamping decides whether it is produced. Every
+  // zero-byte file shares one sha256; it has no twin (a blank .txt is not a
+  // copy of a blank .pdf).
+  const twin = buf.length === 0 ? null
+    : twins.find((t) => t.id !== resumeId && t.status === 'ready' && t.native_storage_path) ?? null;
+  if (twin) {
+    const datRec = datLookup.get(filename.toLowerCase());
     await writeItem(
       ['kind', 'page_count', 'native_storage_path', 'display_storage_path', 'duplicate_of_item_id',
         'source_metadata', 'status', 'error'],
-      [firstCopy.kind, firstCopy.page_count, firstCopy.native_storage_path, firstCopy.display_storage_path,
-        firstCopy.id, JSON.stringify({ duplicate_of: firstCopy.original_filename }), 'ready', null],
+      [twin.kind, twin.page_count, twin.native_storage_path, twin.display_storage_path,
+        null, JSON.stringify({ ...(datRec ?? {}), twin_of_item_id: twin.id }), 'ready', null],
     );
-    return 'duplicate';
+    return 'twin';
   }
 
   let norm;
@@ -527,20 +533,19 @@ check(byName['009_Empty_Notes.txt'].status === 'ready' && byName['009_Empty_Note
   'a zero-byte .txt is a perfectly valid native item (it will get a Bates number)');
 check(byName['007_Supply_Agreement_COPY.pdf'].sha256 === byName['001_Supply_Agreement.pdf'].sha256,
   'the duplicate has the same sha256 as its original');
-// F6, was: "intake does not dedupe on sha256 — both copies become produced
-// items with two Bates ranges (the idx_production_items_sha index at 030:122
-// is never queried)".
-check(byName['007_Supply_Agreement_COPY.pdf'].duplicate_of_item_id === byName['001_Supply_Agreement.pdf'].id,
-  'F6: the exact duplicate is recorded as a duplicate of the FIRST instance, through idx_production_items_sha');
+// F6 used to collapse it here, always. Since 2026-10-13 that is the "Remove
+// duplicates" choice at stamping: a copy carries its own custodian and place.
+check(byName['007_Supply_Agreement_COPY.pdf'].duplicate_of_item_id === null
+  && byName['007_Supply_Agreement_COPY.pdf'].source_metadata?.twin_of_item_id === byName['001_Supply_Agreement.pdf'].id,
+  'intake keeps the exact copy as its own item, and records its twin (found through idx_production_items_sha)');
 check(byName['007_Supply_Agreement_COPY.pdf'].status === 'ready'
   && byName['007_Supply_Agreement_COPY.pdf'].display_storage_path === byName['001_Supply_Agreement.pdf'].display_storage_path,
-  'F6: the duplicate keeps its row and points at the first instance\'s stored bytes — '
-  + 'the production really did contain it twice, and that fact stays in the record');
-check(byName['001_Supply_Agreement.pdf'].duplicate_of_item_id === null,
-  'F6: the first instance is nobody\'s duplicate');
+  'the copy is ready to stamp and shares its twin\'s stored bytes (no second conversion)');
+check(byName['001_Supply_Agreement.pdf'].source_metadata?.twin_of_item_id === undefined,
+  'the first instance is nobody\'s copy');
 check(byName['009_Empty_Notes.txt'].sha256 === byName['008_Corrupt_Empty.pdf'].sha256
-  && byName['009_Empty_Notes.txt'].duplicate_of_item_id === null,
-'F6: two zero-byte files share one sha256 and are NOT called duplicates of each other — '
+  && byName['009_Empty_Notes.txt'].source_metadata?.twin_of_item_id === undefined,
+'two zero-byte files share one sha256 and are NOT called copies of each other — '
   + 'a blank .txt is not a copy of a blank .pdf');
 const prodAfterIntake = await one(`select status from public.productions where id = $1`, [prod.id]);
 check(prodAfterIntake.status === 'review', "production status reached 'review'", prodAfterIntake.status);
@@ -633,15 +638,21 @@ async function partitionItems(productionId, matterId) {
 
 const part = await partitionItems(prod.id, matter.id);
 check(part.excluded.length === 2, 'both Privileged items are withheld from the produced set', `${part.excluded.length}`);
-check(part.included.length === 6, 'six items remain to be produced (the duplicate is produced once)', `${part.included.length}`);
+check(part.included.length === 7, 'seven items would be produced with "Remove duplicates" off (the copy too)', `${part.included.length}`);
 // F7, was: "the failed item is dropped from the produced set silently —
 // partitionItems filters status='ready' and nothing ever lists what was left
 // out".
 check(part.exceptions.length === 1 && part.exceptions[0].original_filename === '008_Corrupt_Empty.pdf',
   'F7: the item that failed normalization is an EXCEPTION with a reason, not an absence',
   part.exceptions.map((e) => `${e.original_filename}: ${exceptionReason(e)}`).join('; '));
-check(part.duplicates.length === 1 && part.duplicates[0].original_filename === '007_Supply_Agreement_COPY.pdf',
-  'F6: the duplicate is its own bucket — neither produced nor silently dropped');
+check(part.duplicates.length === 0,
+  'before stamping nothing is a duplicate: that is decided by the switch at stamping');
+{
+  const would = duplicatesToSetAside(part.included);
+  check(would.length === 1 && would[0].item.original_filename === '007_Supply_Agreement_COPY.pdf'
+    && would[0].of.original_filename === '001_Supply_Agreement.pdf',
+  'with "Remove duplicates" on, the copy would be set aside for the first instance');
+}
 check(part.included.length + part.excluded.length + part.duplicates.length + part.exceptions.length === part.items.length,
   'every intaken item lands in exactly one of produced / withheld / duplicate / exception',
   `${part.included.length}+${part.excluded.length}+${part.duplicates.length}+${part.exceptions.length} = ${part.items.length}`);
@@ -697,8 +708,30 @@ async function preflightStamp(p, included, endorsementsByItem) {
 // `crashAfterAllocation` and `crashAfter` stand in for the worker being
 // SIGKILLed (an OOM, a Fly restart, the watchdog): the process stops, the job
 // stays claimed, and 044's reaper hands it back five minutes later.
+// setAsideDuplicates() — transcribed from worker/discovery-worker.mjs. Every
+// earlier mark is cleared on an unstamped production (old automatic intake
+// duplicates included), then the switch decides afresh.
+async function setAsideDuplicates(productionId, matterId, on) {
+  const { items: rows } = await partitionItems(productionId, matterId);
+  for (const it of rows) {
+    if (!it.duplicate_of_item_id) continue;
+    const sm = { ...(it.source_metadata ?? {}) };
+    if (!sm.set_aside_duplicate) sm.twin_of_item_id = it.duplicate_of_item_id;
+    delete sm.set_aside_duplicate;
+    await q(`update public.production_items set duplicate_of_item_id=null, source_metadata=$1 where id=$2`,
+      [JSON.stringify(sm), it.id]);
+  }
+  if (!on) return;
+  const { included } = await partitionItems(productionId, matterId);
+  for (const { item, of } of duplicatesToSetAside(included)) {
+    await q(`update public.production_items set duplicate_of_item_id=$1, source_metadata=$2 where id=$3`,
+      [of.id, JSON.stringify({ ...(item.source_metadata ?? {}), set_aside_duplicate: true }), item.id]);
+  }
+}
+
 async function stampProduction(productionId, {
   prefix, pad, start, position = 'lower_right', crashAfterAllocation = false, crashAfter = Infinity,
+  removeDuplicates = false,
 } = {}) {
   // What ProducePanel's BatesStep writes before it enqueues stamp_production.
   await q(`update public.productions
@@ -710,6 +743,7 @@ async function stampProduction(productionId, {
     throw new Error(`Production already ${p.status}; create a supplemental production instead`);
   }
   const locked = p.status === 'stamped';
+  if (!locked) await setAsideDuplicates(productionId, p.matterspace_id, removeDuplicates);
 
   const { included, excluded, duplicates, exceptions, endorsementsByItem } =
     await partitionItems(productionId, p.matterspace_id);
@@ -788,7 +822,9 @@ async function stampProduction(productionId, {
   };
 }
 
-const STAMP_ARGS = { prefix: 'ACME_', pad: 7, start: 1 };
+// The main production is stamped with "Remove duplicates" ticked; section 7b
+// stamps the same documents with it off.
+const STAMP_ARGS = { prefix: 'ACME_', pad: 7, start: 1, removeDuplicates: true };
 const regCount = async (productionId) => Number((await one(
   `select count(*)::int c from public.bates_registry where production_id=$1`, [productionId])).c);
 const itemNumbers = async (productionId) => q(
@@ -858,7 +894,7 @@ const registry = await q(
   `select bates_number, bates_seq, page_number, production_item_id from public.bates_registry
     where production_id = $1 order by bates_seq`, [prod.id],
 );
-check(registry.length === 9, 'one registry row per produced page (3+2+1+1+1+1; the duplicate is not stamped again)', `${registry.length}`);
+check(registry.length === 9, 'one registry row per produced page (3+2+1+1+1+1; with "Remove duplicates" on, the copy is not stamped again)', `${registry.length}`);
 const seqs = registry.map((r) => Number(r.bates_seq));
 check(seqs.every((s, i) => i === 0 || s === seqs[i - 1] + 1), 'the numbering is gapless across documents',
   `${seqs[0]}..${seqs[seqs.length - 1]}`);
@@ -879,7 +915,7 @@ check(stampedBy['005_Damages_Model.docx'].bates_first === stampedBy['005_Damages
   'a native gets exactly one Bates number (its slip sheet)');
 check(stampedBy[CYRILLIC_NAME].bates_first !== null, 'the non-Latin-filename native got its slip sheet and number');
 check(stampedBy['007_Supply_Agreement_COPY.pdf'].bates_first === null,
-  'F6: the duplicate was NOT given a second Bates range — the same document is produced once');
+  'switch on: the copy was NOT given a second Bates range — the same document is produced once');
 check(stampedBy['008_Corrupt_Empty.pdf'].bates_first === null
   && /normalize:/.test(stampedBy['008_Corrupt_Empty.pdf'].error ?? ''),
 'F7: the exception carries its reason on the row and was never numbered');
@@ -1000,9 +1036,13 @@ for (const it of items) {
       [def2.id, copy.id, matter2.id]);
   }
 }
+// The replay's copy is written as the OLD intake left it (duplicate_of_item_id,
+// no set_aside_duplicate): an unstamped production from before 2026-10-13.
+// Stamped with the switch on, it must come out exactly as the original.
 for (const it of items) {
-  if (!it.duplicate_of_item_id) continue;
-  const firstCopyId = idMap.get(it.duplicate_of_item_id);
+  const oldStyleOf = it.duplicate_of_item_id ?? it.source_metadata?.twin_of_item_id;
+  if (!oldStyleOf) continue;
+  const firstCopyId = idMap.get(oldStyleOf);
   const firstCopy = await one(
     `select display_storage_path, native_storage_path from public.production_items where id=$1`, [firstCopyId]);
   await q(`update public.production_items
@@ -1011,7 +1051,7 @@ for (const it of items) {
   [firstCopyId, firstCopy.display_storage_path, firstCopy.native_storage_path, idMap.get(it.id)]);
 }
 await q(`update public.productions set status='review' where id=$1`, [prod2.id]);
-await stampProduction(prod2.id, { prefix: 'ACME_', pad: 7, start: 1 });
+await stampProduction(prod2.id, { prefix: 'ACME_', pad: 7, start: 1, removeDuplicates: true });
 const replay = await q(
   `select i.original_filename, i.bates_first, i.bates_last from public.production_items i
     where i.production_id=$1 order by i.sort_order, i.id`, [prod2.id],
@@ -1145,7 +1185,7 @@ check(/Bates collision/.test(pltfClash?.message ?? ''),
 // ---------------------------------------------------------------------------
 section('packaging (real emitDat/emitOpt/letter/privilege log + archiver)');
 
-async function packageProduction(productionId, { includePrivilegeLog = true } = {}) {
+async function packageProduction(productionId, { includePrivilegeLog = true, volumePages = null, concurrency = 4 } = {}) {
   const p = await one(`select * from public.productions where id=$1`, [productionId]);
   if (p.status !== 'stamped' && p.status !== 'packaged') {
     throw new Error(`package_production: production must be stamped first (status: ${p.status})`);
@@ -1175,84 +1215,96 @@ async function packageProduction(productionId, { includePrivilegeLog = true } = 
 
   const matterName = (await one(`select name from public.matterspaces where id=$1`, [p.matterspace_id]))?.name ?? '';
   const volumeName = sanitizeStorageName(p.name.replace(/\s+/g, '_')) || 'PRODUCTION';
-  const archiver = (await import('archiver')).default;
-  const tmpZip = path.join(tmp, `pkg-${crypto.randomUUID().slice(0, 8)}.zip`);
-  const out = fs.createWriteStream(tmpZip);
-  const archive = archiver('zip', { zlib: { level: 6 } });
-  const done = new Promise((res, rej) => { out.on('close', res); archive.on('error', rej); });
-  archive.pipe(out);
-
-  // The per-document part is the worker's own code (lib/discovery/
-  // package-docs.mjs), not a transcription: IMAGES/, NATIVES/, TEXT/ and the
-  // DAT row come out of the same function in both places.
-  const datRows = [];
-  const textless = [];
+  // The packaging loop is the worker's own (lib/discovery/volumes.mjs
+  // packageVolumes), not a transcription, and so is the per-document part
+  // (lib/discovery/package-docs.mjs): IMAGES/, NATIVES/, TEXT/, the DAT rows,
+  // the volumes and their order come out of the same functions in both places.
+  const setAside = duplicates.filter((d) => byId.get(d.duplicate_of_item_id))
+    .map((d) => ({ item: d, of: byId.get(d.duplicate_of_item_id) }));
+  const dupColumns = duplicateColumns(setAside);
   const textSources = new Map();
-  let totalPages = 0;
-  for (const item of produced) {
-    const base = `${p.matterspace_id}/${p.id}/${item.id}`;
-    const doc = await packageDocument({
-      item, volumeName,
-      confidential: confidentialIds.has(item.id),
-      stampedPath: `${base}/stamped.pdf`,
-      read: async (sp) => getObject(sp),
-      append: (buf, name) => archive.append(buf, { name }),
-      corpusPages: null,
-    });
-    totalPages += doc.pages;
-    if (!doc.textChars) textless.push(item.bates_first);
-    textSources.set(item.original_filename, doc.textSource);
-    datRows.push(doc.datRow);
-  }
-  if (totalPages !== producedPages) {
-    throw new Error(`The package holds ${totalPages} page(s) but the production reconciled at ${producedPages}`);
-  }
-  archive.append(emitDat(datRows), { name: `${volumeName}/DATA/loadfile.dat` });
-  archive.append(emitOpt(datRows, volumeName), { name: `${volumeName}/DATA/loadfile.opt` });
-  archive.append(exceptionsCsv(exceptions), { name: `${volumeName}/DATA/EXCEPTIONS.csv` });
-  archive.append(duplicatesCsv(duplicates.map((d) => {
-    const f = byId.get(d.duplicate_of_item_id);
-    return {
-      original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
-      firstFilename: f?.original_filename ?? '',
-      firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
-    };
-  })), { name: `${volumeName}/DATA/DUPLICATES.csv` });
-  archive.append(reconciliationText(counts, {
-    matterName, productionName: p.name,
-    batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
-    batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
-    dateStr: new Date().toISOString().slice(0, 10),
-    textless,
-  }), { name: `${volumeName}/DATA/RECONCILIATION.txt` });
-
-  if (includePrivilegeLog) {
-    const entries = await q(`select * from public.privilege_log_entries where production_id=$1 order by doc_date nulls last`, [productionId]);
-    if (entries.length) {
-      archive.append(await makePrivilegeLogPdf({ matterName, productionName: p.name, entries }),
-        { name: `${volumeName}/PrivilegeLog.pdf` });
-    }
-  }
-  archive.append(await makeProductionLetter({
-    productionName: p.name, matterName, receivingParty: p.receiving_party,
-    batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
-    batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
-    docCount: produced.length, pageCount: totalPages,
-    nativeCount: produced.filter((i) => i.kind === 'native').length,
-    confidentialCount: confidentialIds.size, requestRefs: p.request_refs,
-    dateStr: new Date().toISOString().slice(0, 10),
-  }), { name: `${volumeName}/ProductionLetter.pdf` });
-
-  await archive.finalize();
-  await done;
-
-  const bytes = await fsp.readFile(tmpZip);
-  const pkgSha = crypto.createHash('sha256').update(bytes).digest('hex');
-  const pkgPath = putObject(`${p.matterspace_id}/${p.id}/package/${volumeName}.zip`, bytes, 'application/zip');
+  const pkgDir = `${p.matterspace_id}/${p.id}/package`;
+  const result = await packageVolumes({
+    produced,
+    imageFormat: 'pdf',
+    baseName: volumeName,
+    maxPages: volumePages,
+    includePrivilegeLog,
+    concurrency,
+    packageOne: async (item) => {
+      const files = [];
+      const base = `${p.matterspace_id}/${p.id}/${item.id}`;
+      const doc = await packageDocument({
+        item, volumeName: '',
+        confidential: confidentialIds.has(item.id),
+        stampedPath: `${base}/stamped.pdf`,
+        read: async (sp) => getObject(sp),
+        append: (buf, name) => files.push({ buf, name }),
+        corpusPages: null,
+      });
+      textSources.set(item.original_filename, doc.textSource);
+      return { files, datRow: doc.datRow, pages: doc.pages, textChars: doc.textChars, textSource: doc.textSource };
+    },
+    rowFor: (item, row) => ({ ...row, ...(dupColumns.get(item.id) ?? {}) }),
+    productionFiles: async ({ append, volumes, textless: tl, totalPages: tp }) => {
+      if (tp !== producedPages) {
+        throw new Error(`The package holds ${tp} page(s) but the production reconciled at ${producedPages}`);
+      }
+      append(exceptionsCsv(exceptions), 'DATA/EXCEPTIONS.csv');
+      append(duplicatesCsv(duplicates.map((d) => {
+        const f = byId.get(d.duplicate_of_item_id);
+        return {
+          original_path: d.original_path, original_filename: d.original_filename, sha256: d.sha256,
+          firstFilename: f?.original_filename ?? '',
+          firstBatesFirst: f?.bates_first ?? '', firstBatesLast: f?.bates_last ?? '',
+        };
+      })), 'DATA/DUPLICATES.csv');
+      append(reconciliationText(counts, {
+        matterName, productionName: p.name,
+        batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
+        batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
+        dateStr: new Date().toISOString().slice(0, 10),
+        textless: tl,
+        setAside: setAsideLines(setAside, byId),
+        volumes,
+      }), 'DATA/RECONCILIATION.txt');
+      if (includePrivilegeLog) {
+        const entries = await q(`select * from public.privilege_log_entries where production_id=$1 order by doc_date nulls last`, [productionId]);
+        if (entries.length) append(await makePrivilegeLogPdf({ matterName, productionName: p.name, entries }), 'PrivilegeLog.pdf');
+      }
+      append(await makeProductionLetter({
+        productionName: p.name, matterName, receivingParty: p.receiving_party,
+        batesFirst: formatBates(p.bates_prefix, p.bates_pad, p.bates_start),
+        batesLast: formatBates(p.bates_prefix, p.bates_pad, p.bates_end),
+        docCount: produced.length, pageCount: tp,
+        nativeCount: produced.filter((i) => i.kind === 'native').length,
+        confidentialCount: confidentialIds.size, requestRefs: p.request_refs,
+        dateStr: new Date().toISOString().slice(0, 10),
+      }), 'ProductionLetter.pdf');
+    },
+    storeVolume: async ({ name, file }) => {
+      const bytes = await fsp.readFile(file);
+      return {
+        storage_path: putObject(`${pkgDir}/${name}.zip`, bytes, 'application/zip'),
+        sha256: crypto.createHash('sha256').update(bytes).digest('hex'),
+      };
+    },
+    exists: async (sp) => objectExists(sp),
+    checkpoint: {
+      load: async () => (objectExists(`${pkgDir}/volumes.json`) ? JSON.parse(getObject(`${pkgDir}/volumes.json`).toString('utf8')) : null),
+      save: async (m) => { putObject(`${pkgDir}/volumes.json`, Buffer.from(JSON.stringify(m, null, 2)), 'application/json'); },
+    },
+    openArchive: () => openZipArchive({ dir: tmp }),
+  });
+  const single = !result.split && result.volumes.length === 1;
+  const pkgPath = single ? result.volumes[0].storage_path : `${pkgDir}/volumes.json`;
+  const pkgSha = single ? result.volumes[0].sha256
+    : crypto.createHash('sha256').update(getObject(pkgPath)).digest('hex');
   await q(`update public.productions set package_storage_path=$1, package_sha256=$2, status='packaged' where id=$3`,
     [pkgPath, pkgSha, p.id]);
-  await fsp.unlink(tmpZip).catch(() => {});
-  return { pkgPath, pkgSha, produced, totalPages, counts, exceptions, duplicates, textless, textSources };
+  const totalPages = result.totalPages;
+  const textless = result.textless;
+  return { pkgPath, pkgSha, produced, totalPages, counts, exceptions, duplicates, textless, textSources, result };
 }
 
 const pkg = await packageProduction(prod.id, { includePrivilegeLog: true });
@@ -1284,8 +1336,11 @@ check(new Set(datNames).size === datNames.length, 'no document is listed twice i
 // F6, was: "the duplicate is produced and manifested as a separate document
 // with its own Bates range".
 check(datNames.includes('001_Supply_Agreement.pdf') && !datNames.includes('007_Supply_Agreement_COPY.pdf'),
-  'F6: the duplicate is not a second produced document — the receiving party is not asked to review '
+  'switch on: the copy is not a second produced document — the receiving party is not asked to review '
   + 'the same bytes twice under two Bates numbers');
+check(datOut.find((r) => r.filename === '001_Supply_Agreement.pdf')?.duplicatepaths === '007_Supply_Agreement_COPY.pdf'
+  && datOut.filter((r) => r.duplicatepaths).length === 1,
+'switch on: the produced copy\'s DAT row names where the copy set aside was found (DUPLICATEPATHS)');
 const confRec = datOut.map(canonicalizeDatRecord).find((r) => r.filename === '002_Board_Minutes.pdf');
 check(confRec?.dat?.confidentiality === 'CONFIDENTIAL', 'the CONFIDENTIAL designation reached the DAT');
 // ---- The four parts: IMAGES, NATIVES, TEXT, DATA.
@@ -1342,7 +1397,7 @@ check(!/Counsel_Memo|Privileged_Email/.test(excCsv),
 const dupCsv = (await azip.entryData(names.find((n) => n.endsWith('DATA/DUPLICATES.csv')))).toString('utf8');
 check(dupCsv.includes('007_Supply_Agreement_COPY.pdf') && dupCsv.includes('001_Supply_Agreement.pdf')
   && dupCsv.includes(stampedBy['001_Supply_Agreement.pdf'].bates_first),
-'F6: the duplicate IS listed in the package, under the Bates number it was produced at',
+'switch on: the copy set aside IS listed in the package, under the Bates number it was produced at',
 dupCsv.trim().split(/\r?\n/).pop()?.slice(0, 110));
 
 const reconTxt = (await azip.entryData(names.find((n) => n.endsWith('DATA/RECONCILIATION.txt')))).toString('utf8');
@@ -1389,6 +1444,91 @@ check(part.excluded.every((i) => loggedItems.includes(i.id)),
 // ---------------------------------------------------------------------------
 // 8. Delivery record
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 7b. "Remove duplicates" OFF (the default): every copy is produced
+// ---------------------------------------------------------------------------
+section('"Remove duplicates" off: every copy produced under its own number');
+{
+  // The same documents, in a fresh matter, as they stood after intake. The
+  // copy is written as the OLD intake left it (duplicate_of_item_id): an
+  // unstamped production from before 2026-10-13, which must now be produced.
+  const matterO = await one(
+    `insert into public.matterspaces (serverspace_id, name, short_code) values ($1,'Acme v. Webster (all copies)','acme-off') returning id`, [ss.id],
+  );
+  const prodO = await one(
+    `insert into public.productions (matterspace_id, direction, name, bates_position, created_by)
+     values ($1,'outgoing','All Copies','lower_right',$2) returning *`, [matterO.id, prof.id],
+  );
+  const oMap = new Map();
+  for (const it of items) {
+    const copy = await one(
+      `insert into public.production_items
+         (production_id, matterspace_id, sort_order, original_filename, original_path, sha256, file_size_bytes,
+          kind, page_count, source_metadata, status, error)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id`,
+      [prodO.id, matterO.id, it.sort_order, it.original_filename, it.original_path, it.sha256, it.file_size_bytes,
+        it.kind, it.page_count, JSON.stringify(it.source_metadata), it.status, it.error],
+    );
+    oMap.set(it.id, copy.id);
+    const base = `${matterO.id}/${prodO.id}/${copy.id}`;
+    if (it.native_storage_path) {
+      const dest = putObject(`${base}/native/${sanitizeStorageName(it.original_filename)}`, getObject(it.native_storage_path),
+        mimeFor(extOf(it.original_filename)));
+      await q(`update public.production_items set native_storage_path=$1 where id=$2`, [dest, copy.id]);
+    }
+    if (it.display_storage_path) {
+      const dest = putObject(`${base}/display.pdf`, getObject(it.display_storage_path), 'application/pdf');
+      await q(`update public.production_items set display_storage_path=$1 where id=$2`, [dest, copy.id]);
+    }
+    const tagRows = await q(`select tag_def_id from public.document_tags where production_item_id=$1`, [it.id]);
+    for (const t of tagRows) {
+      const def2 = await one(
+        `insert into public.document_tag_defs (matterspace_id,name,color,is_endorsement,endorsement_text,is_preset,behavior)
+         select $1, name, color, is_endorsement, endorsement_text, is_preset, behavior from public.document_tag_defs where id=$2
+         on conflict (matterspace_id, name) do update set color = excluded.color returning id`, [matterO.id, t.tag_def_id],
+      );
+      await q(`insert into public.document_tags (tag_def_id, production_item_id, matterspace_id) values ($1,$2,$3)`,
+        [def2.id, copy.id, matterO.id]);
+    }
+  }
+  const copyId = oMap.get(byName['007_Supply_Agreement_COPY.pdf'].id);
+  await q(`update public.production_items set duplicate_of_item_id=$1, source_metadata=$2 where id=$3`,
+    [oMap.get(byName['001_Supply_Agreement.pdf'].id), JSON.stringify({ duplicate_of: '001_Supply_Agreement.pdf' }), copyId]);
+  await q(`update public.productions set status='review' where id=$1`, [prodO.id]);
+
+  await stampProduction(prodO.id, { prefix: 'ALL_', pad: 7, start: 1 });
+  const oItems = Object.fromEntries((await q(
+    `select original_filename, bates_first, bates_last, duplicate_of_item_id, source_metadata
+       from public.production_items where production_id=$1`, [prodO.id])).map((i) => [i.original_filename, i]));
+  check(await regCount(prodO.id) === 12,
+    'switch off: one registry row per page of every copy (3+2+1+1+1+1, plus the copy\'s 3)', `${await regCount(prodO.id)}`);
+  check(oItems['007_Supply_Agreement_COPY.pdf'].bates_first !== null
+    && oItems['007_Supply_Agreement_COPY.pdf'].bates_first !== oItems['001_Supply_Agreement.pdf'].bates_first
+    && oItems['007_Supply_Agreement_COPY.pdf'].duplicate_of_item_id === null
+    && oItems['007_Supply_Agreement_COPY.pdf'].source_metadata?.twin_of_item_id === oMap.get(byName['001_Supply_Agreement.pdf'].id),
+  'switch off: an old-style intake duplicate in an unstamped production is produced under its own Bates number, '
+    + 'its twin recorded', oItems['007_Supply_Agreement_COPY.pdf'].bates_first);
+
+  const pkgO = await packageProduction(prodO.id, { includePrivilegeLog: false });
+  check(pkgO.counts.produced === 7 && pkgO.counts.duplicates === 0,
+    'switch off: seven documents produced, none counted as a duplicate',
+    `produced ${pkgO.counts.produced}, duplicates ${pkgO.counts.duplicates}`);
+  const oZipPath = path.join(tmp, 'all-copies.zip');
+  await fsp.writeFile(oZipPath, getObject(pkgO.pkgPath));
+  const ozip = new StreamZip.async({ file: oZipPath });
+  const oNames = Object.keys(await ozip.entries());
+  const oDup = (await ozip.entryData(oNames.find((n) => n.endsWith('DATA/DUPLICATES.csv')))).toString('utf8').trim().split(/\r?\n/);
+  const oRec = (await ozip.entryData(oNames.find((n) => n.endsWith('DATA/RECONCILIATION.txt')))).toString('utf8');
+  const { records: oDat } = parseDat(await ozip.entryData(oNames.find((n) => n.endsWith('loadfile.dat'))));
+  await ozip.close();
+  check(oDup.length === 1, 'switch off: DUPLICATES.csv has its header and no rows', `${oDup.length - 1} row(s)`);
+  check(/exact duplicates, produced once \.+ 0/.test(oRec) && /These figures reconcile\./.test(oRec),
+    'switch off: RECONCILIATION.txt shows 0 duplicates, and reconciles');
+  check(oDat.length === 7 && oDat.some((r) => r.filename === '007_Supply_Agreement_COPY.pdf')
+    && oDat.every((r) => r.allcustodians === '' && r.duplicatepaths === ''),
+  'switch off: both copies are on the DAT; ALLCUSTODIANS and DUPLICATEPATHS stay empty');
+}
+
 section('delivery record');
 const delivery = await one(
   `insert into public.deliveries (matterspace_id, production_id, recipient_name, recipient_email, method,
@@ -1683,9 +1823,12 @@ check(!/from\('bates_registry'\)\.insert\(/.test(workerSrc),
 check(/preflightStamp\(prod, included, endorsementsByItem/.test(stampBlock)
   && workerSrc.indexOf('preflightStamp(prod') < workerSrc.indexOf("rpc('allocate_production_bates'"),
 'the pre-flight still runs BEFORE allocation — that ordering is the whole zero-cost guarantee');
-check(/duplicate_of_item_id: first\.id/.test(workerSrc)
-  && /\.eq\('sha256', hash\)/.test(workerSrc),
-'intakeOneFile still de-duplicates on sha256 through idx_production_items_sha (F6)');
+check(!/duplicate_of_item_id: first\.id/.test(workerSrc)
+  && /\.eq\('sha256', hash\)/.test(workerSrc) && /twin_of_item_id: twin\.id/.test(workerSrc),
+'intakeOneFile finds a copy\'s twin on sha256 through idx_production_items_sha, and never marks it a duplicate');
+check(/if \(!locked\) await setAsideDuplicates\(prod, job\.payload\?\.remove_duplicates === true\);[\s\S]*?= await partitionItems\(prod\);/
+  .test(workerSrc.slice(workerSrc.indexOf('async function stampProduction'), workerSrc.indexOf('async function preflightStamp'))),
+'the stamp job applies "Remove duplicates" before it partitions and numbers, as section 5 transcribes');
 check(/status: HELD_STATUS, status_reason:/.test(workerSrc),
   'holdJob still writes a status AND a reason to the production (F5)');
 check(/requires_worker: WORKER_ID/.test(workerSrc),
@@ -1694,12 +1837,26 @@ check(/EXCEPTIONS\.csv/.test(workerSrc) && /reconcile\(counts\)/.test(workerSrc)
   'packaging still builds the exceptions report and refuses to finalize unless the counts reconcile (F7)');
 {
   const pkgBlock = workerSrc.slice(
-    workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('const archiver = (await import'));
+    workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('await packageVolumes('));
   check(/imageFormat === 'tiff' && !rasterizerAvailable\(\)/.test(pkgBlock) && /throw new Error\('TIFF images were requested/.test(pkgBlock),
     'a TIFF package on a machine that cannot render pages is refused before the ZIP is started, never swapped for PDF');
   check(/packageDocument\(\{[\s\S]*?imageFormat,[\s\S]*?\}\)/.test(workerSrc),
     'the worker passes the chosen image format to the shared packageDocument');
+  // 2026-10-13 (Discovery at volume): the loop section 7 drives is the
+  // worker's own, and the worker no longer writes or uploads a ZIP itself.
+  const pkgFn = workerSrc.slice(workerSrc.indexOf('async function packageProduction'), workerSrc.indexOf('async function storeFile'));
+  check(/await packageVolumes\(\{/.test(pkgFn) && !/archiver/.test(pkgFn) && !/fs\.readFile\(tmpZip\)/.test(workerSrc),
+    'the worker packages through the shared packageVolumes (the loop this harness drives), never a ZIP of its own');
+  check(/maxPages: volumePages/.test(pkgFn) && /payload\?\.volume_pages/.test(pkgFn),
+    'the volume size the panel asks for reaches packageVolumes');
+  check(/bytes <= LARGE_UPLOAD_BYTES/.test(workerSrc) && /uploadFileResumable\(\{/.test(workerSrc),
+    'a large volume is streamed to storage in chunks, never read whole into memory');
 }
+check(/await mapLimit\(plan, DISCOVERY_CONCURRENCY/.test(stampBlock)
+  && stampBlock.indexOf("rpc('allocate_production_bates'") < stampBlock.indexOf('await mapLimit(plan'),
+'documents stamp several at a time, but only AFTER the whole range is allocated');
+check(/idle >= JOB_TIMEOUT_MS/.test(workerSrc) && /lastProgressAt\.set\(job\.id, now\)/.test(workerSrc),
+  'the watchdog stops a job that has stopped reporting progress, not one that is still working');
 
 // The 2026-09-20 KNOWN GAP (F2's heartbeat half). Kept as a real check now
 // that it is closed — a WARN was right while it was someone's open defect.

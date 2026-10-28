@@ -25,9 +25,11 @@ import ReaderSidebar, { type OutlineNode, type SidebarTabId } from '@/components
 import AnimationLayer from '@/components/reader/AnimationLayer';
 import { MediaUrlProvider, useMediaUrl, type MediaUrlResolver } from '@/lib/media-url';
 import type { WorkshopPanelProps } from '@/components/reader/WorkshopPanel';
-import type { DocumentAnimation, Turn } from '@/lib/document-animations';
+import { clipUrl, type DocumentAnimation, type Turn } from '@/lib/document-animations';
 import { nextTurn, unionRect, type WorkshopItem } from '@/lib/document-workshop';
 import { downloadBlob } from '@/lib/export-page';
+import MerchSheet, { type MerchSheetOpen } from '@/components/reader/MerchSheet';
+import { readMerchReturn, stripMerchReturn } from '@/lib/merch-sheet';
 import { renderPageCanvas, cropCanvas, rotateCanvas, canvasToBlob } from '@/lib/pdf-page-image';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import {
@@ -38,6 +40,7 @@ import {
 } from '@/lib/document-annotations';
 import { interceptStyledCopy } from '@/lib/reader-copy';
 import { phraseRegex } from '@/lib/reader-find';
+import { reliedRanges } from '@/lib/reader-relied';
 import { ANNOTATION_DOT, ANNOTATION_FILL, printCss, scrollbarCss, type ReaderTheme } from '@/lib/reader-style';
 import {
   FindBox,
@@ -109,7 +112,20 @@ export type BenchStore = {
 export type PageLink = { page: number; key: string };
 
 /** Imperative navigation from a host (the Brief Desk's authority pane): a page, and the words to light there. */
-export type PdfBookGoto = { page?: number | null; phrase?: string | null; nonce: number };
+export type PdfBookGoto = {
+  page?: number | null;
+  phrase?: string | null;
+  /**
+   * The words a brief relies on, by page (src/lib/brief/relied-passage.ts):
+   * lit on their own layer, which the find box does not clear, and scrolled
+   * to once. Each page's phrases are found in order.
+   */
+  relied?: { page: number; phrases: string[] }[] | null;
+  nonce: number;
+};
+
+/** How the relied-on words fared on screen: lit, or the page has no words to light (a scan). */
+export type PdfBookReliedPaint = { nonce: number; lit: number; wanted: number; noTextLayer: boolean };
 
 /** What the reader sees — reported to the host as it changes. */
 export type PdfBookView = {
@@ -167,6 +183,8 @@ export type PdfBookProps = {
   pageMemoryKey?: string | null;
   pageLink?: PageLink | null;
   goto?: PdfBookGoto | null;
+  /** Reported once per goto, when the first page holding relied-on words has painted. */
+  onReliedPaint?: (r: PdfBookReliedPaint) => void;
   onClose?: () => void;
   /** Above the toolbar, once the book is open (the cover). */
   header?: React.ReactNode;
@@ -187,6 +205,8 @@ export type PdfBookProps = {
   pageSides?: PageSides | null;
   /** Offered in the sidebar as "add a clip"; absent = not offered. */
   renderAttach?: ((a: AttachArgs) => React.ReactNode) | null;
+  /** Offers a tee, a tote, a print on the bench's pictures: the product sheet beside the page (Phase 2b), sold through api/merch. Only for a Library or public-domain book, or the reader's own edition; absent = not offered. */
+  merch?: boolean;
   /** The selection menu's Ask; absent = no Ask button. */
   onAsk?: (text: string, page: number) => void;
   /** The selection menu's Note; absent = no Note button. */
@@ -214,6 +234,7 @@ export default function PdfBook({
   pageMemoryKey = null,
   pageLink = null,
   goto = null,
+  onReliedPaint,
   onClose,
   header,
   title,
@@ -225,6 +246,7 @@ export default function PdfBook({
   paneChildren,
   pageSides = null,
   renderAttach = null,
+  merch = false,
   onAsk,
   onNote,
   onCopySelection,
@@ -417,6 +439,7 @@ export default function PdfBook({
     textLayerRefs.current = [];
     restoredRef.current = false;
     anchorReadyRef.current = false;
+    heldGotoRef.current = null;
 
     const src = sourceRef.current;
     if (!src) return;
@@ -502,6 +525,12 @@ export default function PdfBook({
   }, [pageDims, renderedScale]);
   const slotTopsRef = useRef<number[] | null>(null);
   useEffect(() => { slotTopsRef.current = slotTops; }, [slotTops]);
+  // The host's goto page, held until the reader scrolls by hand: the dims
+  // sweep replaces the page-1 stand-in sizes after the jump, and in a long
+  // record volume the old offset lands pages early. The re-anchor below goes
+  // back to the held page. (The find hit used to pull the view back; the
+  // relied-on words paint only once their page is drawn.)
+  const heldGotoRef = useRef<number | null>(null);
   useEffect(() => { pageStateRef.current = page; }, [page]);
 
   // The page the slots are painted around. Scrolling a page at a time paints
@@ -606,7 +635,12 @@ export default function PdfBook({
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
+    // The reader's own hand on the page releases a held goto (see heldGotoRef).
+    const release = () => { heldGotoRef.current = null; };
+    const hands = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const;
+    for (const h of hands) el.addEventListener(h, release, { passive: true });
     return () => {
+      for (const h of hands) el.removeEventListener(h, release);
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
@@ -646,7 +680,11 @@ export default function PdfBook({
     if (!restoredRef.current) return;
     if (!anchorReadyRef.current) { anchorReadyRef.current = true; return; }
     const el = contentRef.current;
-    if (el) el.scrollTo({ top: Math.max(0, slotTops[pageStateRef.current - 1] - 8) });
+    const p = heldGotoRef.current ?? pageStateRef.current;
+    if (!el) return;
+    el.scrollTo({ top: Math.max(0, slotTops[p - 1] - 8) });
+    // Words already lit on the held page stay in view.
+    if (heldGotoRef.current) el.querySelector('.relied-hit')?.scrollIntoView({ block: 'center' });
   }, [slotTops, loadState]);
 
   // Remember where the reader stands, for next time this document opens.
@@ -702,7 +740,8 @@ export default function PdfBook({
     const layer = textLayerRefs.current[p - 1];
     const hits = hitLayerRefs.current[p - 1];
     if (!layer || !hits) return null;
-    hits.replaceChildren();
+    // Only the find box's own boxes: the relied-on words share this layer.
+    hits.querySelectorAll('.search-hit').forEach((el) => el.remove());
     const q = searchQueryRef.current.trim().toLowerCase();
     if (!q) return null;
     const re = phraseRegex(q);
@@ -739,6 +778,47 @@ export default function PdfBook({
       }
     }
     return currentEl;
+  }, []);
+  // The relied-on words (see PdfBookGoto.relied): boxes like the find box's,
+  // from one Range per phrase that may run across many spans of the text
+  // layer, so a sentence that wraps is lit whole. Repainted with the page
+  // (after a render, after zoom); scrolled to and reported once per goto.
+  const reliedRef = useRef<{ nonce: number; byPage: Map<number, string[]>; scrolled: boolean; reported: boolean } | null>(null);
+  const onReliedPaintRef = useRef(onReliedPaint);
+  useEffect(() => { onReliedPaintRef.current = onReliedPaint; }, [onReliedPaint]);
+  const paintRelied = useCallback((p: number) => {
+    const layer = textLayerRefs.current[p - 1];
+    const hits = hitLayerRefs.current[p - 1];
+    if (!layer || !hits) return;
+    hits.querySelectorAll('.relied-hit').forEach((el) => el.remove());
+    const rel = reliedRef.current;
+    const phrases = rel?.byPage.get(p);
+    if (!rel || !phrases?.length) return;
+    const box = layer.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    const ranges = reliedRanges(layer, phrases);
+    let first: HTMLElement | null = null;
+    for (const range of ranges) {
+      for (const r of Array.from(range.getClientRects())) {
+        if (!r.width || !r.height) continue;
+        const el = document.createElement('div');
+        el.className = 'relied-hit';
+        el.style.left = `${((r.left - box.left) / box.width) * 100}%`;
+        el.style.top = `${((r.top - box.top) / box.height) * 100}%`;
+        el.style.width = `${(r.width / box.width) * 100}%`;
+        el.style.height = `${(r.height / box.height) * 100}%`;
+        hits.appendChild(el);
+        first = first ?? el;
+      }
+    }
+    if (first && !rel.scrolled) {
+      rel.scrolled = true;
+      first.scrollIntoView({ block: 'center' });
+    }
+    if (!rel.reported) {
+      rel.reported = true;
+      onReliedPaintRef.current?.({ nonce: rel.nonce, lit: ranges.length, wanted: phrases.length, noTextLayer: !(layer.textContent ?? '').trim() });
+    }
   }, []);
   const revealIfCurrent = useCallback((el: HTMLElement | null) => {
     if (!el || scrollToMatchRef.current < 0 || scrollToMatchRef.current !== matchIdxRef.current) return;
@@ -840,6 +920,7 @@ export default function PdfBook({
         renderTasksRef.current.delete(p);
         renderedKeyRef.current.set(p, key);
         revealIfCurrent(paintHits(p));
+        paintRelied(p);
       } catch {
         // Cancellation or a render race; a later pass repaints the slot.
         renderTasksRef.current.delete(p);
@@ -854,7 +935,7 @@ export default function PdfBook({
     }
 
     return () => { cancelled = true; };
-  }, [paintPage, totalPages, renderedScale, loadState, sourceKey, pageDims, searchQuery, matches, paintHits, revealIfCurrent]);
+  }, [paintPage, totalPages, renderedScale, loadState, sourceKey, pageDims, searchQuery, matches, paintHits, revealIfCurrent, paintRelied]);
 
   // On unmount, stop whatever pdfjs still has in flight.
   useEffect(() => () => {
@@ -1066,6 +1147,63 @@ export default function PdfBook({
     }
   }, [workshopFail]);
 
+  // A picture from the bench on a tee, a tote, a print: the product sheet
+  // opens beside the page at once with the bench's own preview, and draws
+  // the picture at print size only when the sheet asks for the upload — a
+  // snip at the bench's largest size, upright per its turn; a still as it is.
+  // The bench here is a document's (migration 106), so the rights question
+  // names the document; the standalone Reader's edition bench (#413) will
+  // pass kind 'edition' with the edition's id.
+  const [merchSheet, setMerchSheet] = useState<MerchSheetOpen | null>(null);
+  const makeMerch = useCallback(async (item: WorkshopItem) => {
+    if (!currentUserId) { setWorkshopNotice('Sign in to make a tee, a tote or a print.'); return; }
+    const getBlob = async (): Promise<Blob> => {
+      if (item.kind === 'snip') {
+        const pdf = pdfDocRef.current as PDFDocumentProxy | null;
+        if (!pdf || !item.rect) throw new Error('The snip has no rectangle.');
+        const canvas = await renderPageCanvas(pdf, item.page, { width: 3600, maxEdge: 4800 });
+        // A scanned plate has no transparency to lose; JPEG keeps the upload
+        // to a few MB where the PNG would be twenty.
+        return canvasToBlob(rotateCanvas(cropCanvas(canvas, item.rect), item.turn), 'image/jpeg', 0.92);
+      }
+      const path = item.media?.storage_path;
+      if (!path) throw new Error('The still has no file.');
+      const url = await clipUrl(path);
+      if (!url) throw new Error('The still could not be reached.');
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`The still could not be read (${res.status}).`);
+      return res.blob();
+    };
+    let preview: string | null = null;
+    try {
+      preview = item.kind === 'snip' && item.rect
+        ? await makeAnimationPreview(item.page, item.rect, item.turn)
+        : item.media?.storage_path ? await clipUrl(item.media.storage_path) : null;
+    } catch { preview = null; }
+    setMerchSheet({
+      kind: 'product',
+      itemId: item.id,
+      itemUpdatedAt: item.updated_at ?? null,
+      source: { kind: 'document', id: item.document_id, bench_item_id: item.id },
+      preview,
+      getBlob,
+      bookTitle: meta?.title ?? null,
+    });
+  }, [currentUserId, meta?.title, makeAnimationPreview]);
+
+  // Back from Stripe: ?merch=paid&order=<id> opens the orders view on that
+  // order; ?merch=cancel says so. The two parameters are taken off the URL
+  // so a reload does not repeat the message.
+  useEffect(() => {
+    if (!merch) return;
+    const back = readMerchReturn(window.location.search);
+    if (!back) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${stripMerchReturn(window.location.search)}${window.location.hash}`);
+    setMerchSheet(back.kind === 'paid'
+      ? { kind: 'orders', orderId: back.orderId }
+      : { kind: 'orders', orderId: null, notice: 'Checkout was cancelled. Nothing was charged.' });
+  }, [merch]);
+
   // A clip or a still brought back: kept by the store (filed in the matter,
   // or in the editions bucket), and set on the bench under its source.
   const bringIn = useCallback(async (parent: WorkshopItem | null, file: File) => {
@@ -1112,6 +1250,8 @@ export default function PdfBook({
     makePreview: makeAnimationPreview,
     onDownload: downloadSnip,
     onCopy: copySnip,
+    onMerch: merch ? makeMerch : null,
+    onMerchOrders: merch ? () => setMerchSheet({ kind: 'orders' }) : null,
     onTurn: async (item: WorkshopItem) => {
       try {
         const updated = await bench.update(item.id, { turn: nextTurn(item.turn) });
@@ -1607,7 +1747,17 @@ export default function PdfBook({
     appliedGotoRef.current = goto.nonce;
     const target = goto.page ?? null;
     const phrase = goto.phrase ?? null;
+    // The relied-on words: kept by page, painted on the pages already drawn
+    // now and on the others as they render.
+    const prevPages = reliedRef.current ? Array.from(reliedRef.current.byPage.keys()) : [];
+    reliedRef.current = goto.relied?.length
+      ? { nonce: goto.nonce, byPage: new Map(goto.relied.map((r) => [r.page, r.phrases])), scrolled: false, reported: false }
+      : null;
+    heldGotoRef.current = target;
     if (target) gotoPage(target);
+    for (const p of new Set([...prevPages, ...(goto.relied ?? []).map((r) => r.page)])) {
+      if (renderedKeyRef.current.has(p)) paintRelied(p);
+    }
     // The passage's opening words, lit through the find path. The page is
     // the promise; the boxes are a bonus — a PDF's text layer is split by
     // line, and the paint finds a phrase only within one line.
@@ -1617,7 +1767,7 @@ export default function PdfBook({
       setMatches([{ page: target, index: 0 }]);
       setMatchIdx(0);
     }
-  }, [goto, loadState, slotTops, totalPages, gotoPage]);
+  }, [goto, loadState, slotTops, totalPages, gotoPage, paintRelied]);
 
   // What the reader sees, for the host (its companion, its title bar).
   useEffect(() => {
@@ -2024,6 +2174,15 @@ export default function PdfBook({
         />
       )}
       {children}
+      {merch && merchSheet && currentUserId && (
+        <MerchSheet
+          key={merchSheet.kind === 'product' ? merchSheet.itemId : 'orders'}
+          open={merchSheet}
+          userId={currentUserId}
+          returnPath={`${window.location.pathname}${window.location.search}`}
+          onClose={() => setMerchSheet(null)}
+        />
+      )}
     </div>
     </MediaUrlProvider>
   );
@@ -2527,6 +2686,12 @@ function PdfBookStyle({ theme }: { theme: ReaderTheme }) {
       .search-hit {
         position: absolute;
         background: rgba(255, 214, 0, 0.6);
+        border-radius: 2px;
+        mix-blend-mode: multiply;
+      }
+      .relied-hit {
+        position: absolute;
+        background: rgba(255, 226, 64, 0.55);
         border-radius: 2px;
         mix-blend-mode: multiply;
       }

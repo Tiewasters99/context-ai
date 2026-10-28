@@ -14,6 +14,7 @@ import ListView from '@/pages/ListView';
 import TableView from '@/pages/TableView';
 import CalendarView from '@/pages/CalendarView';
 import NotFound from '@/pages/NotFound';
+import SharedProduction from '@/pages/SharedProduction';
 import Vault from '@/pages/Vault';
 import DocumentBuilder from '@/pages/DocumentBuilder';
 import ProductivitySuite from '@/pages/ProductivitySuite';
@@ -44,6 +45,7 @@ import DiscoveryHome from '@/pages/discovery/DiscoveryHome';
 import ReviewRoom from '@/pages/discovery/ReviewRoom';
 import DiscoveryLayout from '@/components/layout/DiscoveryLayout';
 import DiscoveryDashboard from '@/pages/discovery/DiscoveryDashboard';
+import VideoRoom from '@/pages/discovery/VideoRoom';
 import MediationCenter from '@/pages/mediation/MediationCenter';
 import MediationRegister from '@/pages/mediation/MediationRegister';
 import MediationJoin from '@/pages/mediation/MediationJoin';
@@ -54,6 +56,7 @@ import ResetPassword from '@/pages/ResetPassword';
 import OAuthAuthorize from '@/pages/OAuthAuthorize';
 import GptConnect from '@/pages/GptConnect';
 import Privacy from '@/pages/Privacy';
+import Terms from '@/pages/Terms';
 import BriefDesk from '@/pages/brief/BriefDesk';
 import BriefDeskHome from '@/pages/brief/BriefDeskHome';
 import { canOpenPath } from '@/lib/plan';
@@ -164,6 +167,9 @@ export default function App() {
             {/* Public: a client on a phone, and the privacy page the GPT builder requires. */}
             <Route path="/gpt-connect" element={<GptConnect />} />
             <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
+            {/* Public: a production sent by link (migration 115); the link is the key. */}
+            <Route path="/p/:token" element={<SharedProduction />} />
             <Route
               path="/app"
               element={
@@ -190,6 +196,8 @@ export default function App() {
               <Route path="editor" element={<EditorRoom />} />
               <Route path="discovery" element={<DiscoveryHome />} />
               <Route path="discovery/production/:id" element={<ReviewRoom />} />
+              {/* The Video Room: one stored recording, its analysed timeline, questions about the footage (119) */}
+              <Route path="discovery/video/:documentId" element={<VideoRoom />} />
               <Route path="settings" element={<Settings />} />
               <Route path="bucketizer" element={<BucketizerHome />} />
               <Route path="agents" element={<AgentsHome />} />
@@ -235,6 +243,8 @@ export default function App() {
               <Route path="case" element={<DiscoveryHome />} />
               {/* Production review room — reused */}
               <Route path="production/:id" element={<ReviewRoom />} />
+              {/* The Video Room — reused */}
+              <Route path="video/:documentId" element={<VideoRoom />} />
             </Route>
             <Route
               path="/connect"

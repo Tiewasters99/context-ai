@@ -18,7 +18,7 @@ import {
   extractPages, pagesNeedingOcr, planPdfOcr, processDocument, fitToPageCount, ingestOutcome, compactPages,
 } from '../lib/ingest-core.mjs';
 import { isStampOnlyText, isStampLine, contentChars, stampedPageCount } from '../lib/court-stamps.mjs';
-import { reprocessInPlace } from '../lib/reprocess.mjs';
+import { reprocessInPlace, holdIngestJob } from '../lib/reprocess.mjs';
 import { handleIngestDocument } from '../lib/mcp-core.mjs';
 import { buildPdf, proseLines, stampedScanPdf, ecfStamp } from './_fixtures-ingest.mjs';
 import { fakeSupabase, stubEmbeddings } from './_fake-supabase.mjs';
@@ -254,6 +254,32 @@ const ocrReads = (words) => async () => words.map((w, i) => ({ pageNumber: i + 1
   await assert.rejects(reprocessInPlace(db2, DOC, async () => { throw new Error('embed 429: simulated'); }), /simulated/);
   assert(passagesOf(db2).some((p) => p.text === 'Original indexed text.'), 'failure keeps the originals');
   ok('forced run reclaimed after a crash: success replaces originals and partials; failure keeps the originals');
+}
+
+// --- a script re-run holds a job row so the stranded sweep leaves it alone ------------
+{
+  const jobsOf = (db) => db.tables.processing_jobs.filter((j) => j.payload?.document_id === DOC);
+  const db = seed({ processing_status: 'ready', page_count: 1 });
+  let seen;
+  const out = await holdIngestJob(db, { documentId: DOC, matterspaceId: MATTER, claimedBy: 'test' }, async () => {
+    seen = structuredClone(jobsOf(db)[0]); // a snapshot: the fake hands back the live row
+    return 'ran';
+  });
+  assert.strictEqual(out, 'ran');
+  assert.deepStrictEqual({ s: seen.status, by: seen.claimed_by, t: seen.job_type, m: seen.matterspace_id }, { s: 'running', by: 'test', t: 'ingest_document', m: MATTER }, 'a running ingest job is open while the re-run runs');
+  assert(seen.heartbeat_at && seen.claimed_at, 'the hold has a claim time and a heartbeat');
+  const after = jobsOf(db)[0];
+  assert.deepStrictEqual({ s: after.status, p: after.progress, f: !!after.finished_at }, { s: 'done', p: 100, f: true }, 'the job row is closed as done');
+
+  await assert.rejects(holdIngestJob(db, { documentId: DOC, matterspaceId: MATTER }, async () => { throw new Error('ocr 503: simulated'); }), /simulated/);
+  const failed = jobsOf(db).find((j) => j.status === 'error');
+  assert(failed && /simulated/.test(failed.error) && failed.finished_at, 'a failed re-run closes its job row as error with the reason');
+
+  db.tables.processing_jobs.push({ id: 'live', job_type: 'ingest_document', status: 'running', payload: { document_id: DOC }, matterspace_id: MATTER });
+  let ran = false;
+  await assert.rejects(holdIngestJob(db, { documentId: DOC, matterspaceId: MATTER }, async () => { ran = true; }), /already running/);
+  assert.strictEqual(ran, false, 'nothing runs beside a live job');
+  ok('script re-run holds a running ingest job for its duration (done / error on exit) and refuses to start beside a live job');
 }
 
 // --- ingest_document force -----------------------------------------------------------

@@ -27,6 +27,10 @@ export default function MainLayout() {
   // The Vault renders its own full-screen overlay with its own ambient
   // controls, so skip the shared cluster there.
   const onVault = location.pathname.endsWith('/vault');
+  // Pages drawn as a fixed overlay over the whole shell (sidebar, header and
+  // the phone's tab bar included): the Orchestrator button is the only door
+  // left on them.
+  const shellCovered = onVault || /^\/app\/brief\/[^/]+/.test(location.pathname);
 
   // A command dispatched from any surface (docket highlight-to-Run, etc.)
   // slides the Orchestrator open; Assistant itself executes the prompt.
@@ -93,7 +97,7 @@ export default function MainLayout() {
 
           {isMobile && (
             <span className="text-[14px] font-semibold text-white tracking-tight truncate px-2">
-              Context<span className="text-[#d4a054]">spaces</span>
+              <span className="inline-flex items-baseline leading-none" style={{ fontFamily: '"Playfair Display Variable", serif' }}><span>Equazia</span><span className="text-[#d4a054]">.ai</span></span>
             </span>
           )}
 
@@ -128,11 +132,18 @@ export default function MainLayout() {
             open (the panel takes that corner), and on a phone the tab bar's
             Assistant entry already holds the same door. Inside
             IntoFullscreen for the Assistant's own reason: the Reader takes
-            the browser full screen, and nothing outside that element shows. */}
-        {!isMobile && !assistantOpen && (
+            the browser full screen, and nothing outside that element shows.
+            2026-10-26: the Vault and the Brief Desk are fixed overlays at
+            z-50 that covered this button (z-45) and the sidebar's entry with
+            it, so those two pages had no way in at all. It now stands above
+            them, and shows on a phone there too, where the tab bar is hidden
+            or covered. On the Vault it sits above the Vault's own
+            bottom-right cluster. */}
+        {!assistantOpen && (!isMobile || shellCovered) && (
           <button
             onClick={() => setAssistantOpen(true)}
-            className="fixed bottom-5 right-5 z-[45] h-12 w-12 rounded-full flex items-center justify-center text-[#e8b84a] border border-[rgba(232,184,74,0.35)] shadow-[0_6px_24px_rgba(0,0,0,0.45)] backdrop-blur-[20px] transition-all hover:scale-105 hover:border-[rgba(232,184,74,0.7)] hover:shadow-[0_8px_28px_rgba(232,184,74,0.18)]"
+            data-testid="orchestrator-button"
+            className={`fixed ${onVault ? 'bottom-20' : 'bottom-5'} right-5 z-[60] h-12 w-12 rounded-full flex items-center justify-center text-[#e8b84a] border border-[rgba(232,184,74,0.35)] shadow-[0_6px_24px_rgba(0,0,0,0.45)] backdrop-blur-[20px] transition-all hover:scale-105 hover:border-[rgba(232,184,74,0.7)] hover:shadow-[0_8px_28px_rgba(232,184,74,0.18)]`}
             style={{ backgroundColor: 'rgba(14, 14, 22, 0.88)' }}
             title={`Ask ${ASSISTANT_THE}`}
             aria-label={`Ask ${ASSISTANT_THE}`}
@@ -204,7 +215,7 @@ function MobileTabBar({
       </NavLink>
       <button onClick={onToggleAssistant} className={`${tab} ${assistantOpen ? active : idle}`}>
         <Bot size={19} strokeWidth={1.75} />
-        <span>Assistant</span>
+        <span>Orchestrator</span>
       </button>
     </nav>
   );

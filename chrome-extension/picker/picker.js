@@ -24,7 +24,7 @@ async function start() {
     return;
   }
   if (!matters || matters.length === 0) {
-    showError('You have no matters yet. Create one in Contextspaces first.');
+    showError('You have no matters yet. Create one in Equazia.ai first.');
     return;
   }
 

@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "serial": "90562533",
+  "expect": 1,
+  "why": "EQUASITE, Equasite Inc., Class 42, registered; a stable record that must always return exactly one row. If it does not, the query syntax or the search system has changed, and every \"no results\" run in the clearance is suspect."
+}

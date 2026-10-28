@@ -51,16 +51,18 @@ const read = (p) => readFileSync(join(ROOT, p), 'utf8');
 const code = (p) => read(p).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
 // The model ids the server actually emits — PENS, lib/assistant-core.mjs.
-const SEALED_MODEL = 'moonshotai.kimi-k2.5';
+const SEALED_MODEL = 'us.anthropic.claude-opus-4-6-v1'; // the default since 2026-10-20
+const KIMI_MODEL = 'moonshotai.kimi-k2.5';        // the default before it, still selectable
 const TIER_A_MODEL = 'claude-opus-5-5';
 
 // ── 1. The pen's name ─────────────────────────────────────────────────────
 
-test('the sealed pen is Kimi K2.5, never Kimi K3', () => {
-  assert.equal(penLabel(SEALED_MODEL), 'Kimi K2.5');
+test('the sealed pen is Opus 4.6; Kimi is still Kimi K2.5, never Kimi K3', () => {
+  assert.equal(penLabel(SEALED_MODEL), 'Opus 4.6');
+  assert.equal(penLabel(KIMI_MODEL), 'Kimi K2.5');
   // The bug this replaces: `model.includes('kimi') → 'Kimi K3'` labelled every
   // sealed answer with a model that PR #159 deleted.
-  assert.notEqual(penLabel(SEALED_MODEL), 'Kimi K3');
+  assert.notEqual(penLabel(KIMI_MODEL), 'Kimi K3');
 });
 
 test('an id the map does not know is shown verbatim, never guessed at', () => {
@@ -81,11 +83,11 @@ test('the strip and the header agree with penLabel about the sealed pen', () => 
   const d = describeScope({ name: 'Teman', tier: 'B' });
   assert.equal(d.penChip, SEALED_PEN_DEFAULT_LABEL);
   assert.equal(SEALED_PEN_DEFAULT_LABEL, penLabel(SEALED_MODEL));
-  assert.ok(d.penNote.includes('Kimi K2.5'));
+  assert.ok(d.penNote.includes('Opus 4.6'));
   assert.ok(!d.penNote.includes('K3'));
-  // Never "Claude": AWS gates that generation for this account (audit
-  // 2026-09-19, external blockers).
-  assert.ok(!/claude/i.test(d.penNote));
+  // Never a Claude 5 model: AWS still gates that generation for this account
+  // (audit 2026-09-19, external blockers; re-probed 2026-10-21).
+  assert.ok(!/opus 5|sonnet 5|fable/i.test(d.penNote));
 });
 
 // ── 2. The scope strip, before a single message ───────────────────────────
@@ -113,7 +115,7 @@ test('the sealed sentence says the three things that may be claimed', () => {
 test('the word-search note is the one tip, and it is true of a sealed matter', () => {
   assert.equal(
     SEALED_SEARCH_NOTE,
-    'Inside a sealed matter the assistant finds passages by their words, not by meaning — use the document’s own terms.',
+    'Inside a sealed matter the Orchestrator finds passages by their words, not by meaning — use the document’s own terms.',
   );
   // Only sealed scopes get it.
   assert.equal(describeScope({ name: 'Open matter', tier: 'A' }).searchNote, '');
@@ -198,7 +200,7 @@ test('the strip corrects itself the other way too — unsealed page, sealed answ
   });
   assert.equal(d.corrected, true);
   assert.equal(d.sealed, true);
-  assert.equal(d.penNote, sealedPenSentence('Kimi K2.5'));
+  assert.equal(d.penNote, sealedPenSentence('Opus 4.6'));
 });
 
 test('a server answer that MATCHES the prediction is not a correction', () => {
@@ -209,7 +211,7 @@ test('a server answer that MATCHES the prediction is not a correction', () => {
   });
   assert.equal(d.corrected, false);
   assert.equal(d.sealed, true);
-  assert.equal(d.penNote, sealedPenSentence('Kimi K2.5'));
+  assert.equal(d.penNote, sealedPenSentence('Opus 4.6'));
 });
 
 test('a reply on a matter whose tier was UNREADABLE is news, not a correction', () => {
@@ -223,7 +225,7 @@ test('a reply on a matter whose tier was UNREADABLE is news, not a correction', 
   assert.equal(d.corrected, false, 'nothing was claimed, so nothing was wrong');
   assert.equal(d.named, true);
   assert.equal(d.sealed, true);
-  assert.equal(d.penNote, sealedPenSentence('Kimi K2.5'));
+  assert.equal(d.penNote, sealedPenSentence('Opus 4.6'));
 });
 
 test('where a prediction WAS made, the reply is a correction and not merely news', () => {
@@ -303,8 +305,8 @@ test('the other two starters send as they read', () => {
 // ── 6. The door on the matter page ────────────────────────────────────────
 
 test('the door is labelled for what it is', () => {
-  assert.equal(askAssistantLabel(true), 'Ask the sealed assistant');
-  assert.equal(askAssistantLabel(false), 'Ask the assistant');
+  assert.equal(askAssistantLabel(true), 'Ask the sealed Orchestrator');
+  assert.equal(askAssistantLabel(false), 'Ask the Orchestrator');
 });
 
 test('B and C are both sealed to the user; A is not', () => {
@@ -486,12 +488,13 @@ test('the charter editor names the same sealed pen as the Assistant', () => {
   assert.match(src, new RegExp(SEALED_PEN_DEFAULT_LABEL), 'it names the pen that actually answers');
   assert.match(src, /Bedrock/, 'and says where it runs');
   assert.match(src, /own AWS account/, 'in whose account');
-  // The audit's line: zero retention is OUR account setting, and the sealed
-  // pen is never called Claude.
+  // The audit's line: zero retention is OUR account setting. Since
+  // 2026-10-20 the sealed pen IS Claude (Opus 4.6) — but never the gated
+  // Claude 5 generation, which only a recorded escalation reaches.
   assert.match(src, /zero data retention/i);
   const tierB = src.slice(src.indexOf('B: {'), src.indexOf('C: {'));
-  assert.doesNotMatch(tierB.split('detail:')[0], /Claude/,
-    'the Tier B pen is never labelled Claude');
+  assert.doesNotMatch(tierB.split('detail:')[0], /Opus 5|Sonnet 5|Fable/,
+    'the Tier B pen is never labelled as a Claude 5 model');
 });
 
 test('no substring model-name guessing is left in the assistant lane', () => {

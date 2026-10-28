@@ -29,7 +29,7 @@ export default function GptConnect() {
     <div className="min-h-screen bg-black text-[#e8e4de]">
       <div className="max-w-2xl mx-auto px-5 sm:px-8 py-10">
         <Link to="/" className="inline-flex items-center gap-1.5 text-[13px] text-[#8a8694] hover:text-[#e8e4de] transition-colors mb-10">
-          <ArrowLeft size={14} /> Contextspaces
+          <ArrowLeft size={14} /> Equazia.ai
         </Link>
 
         <header className="mb-10">
@@ -37,12 +37,12 @@ export default function GptConnect() {
             <Smartphone size={14} /> On your phone
           </div>
           <h1 className="text-[34px] sm:text-[42px] leading-[1.05] font-semibold tracking-tight text-white" style={serif}>
-            Contextspaces in ChatGPT
+            Equazia.ai in ChatGPT
           </h1>
           <p className="mt-4 text-[16px] leading-relaxed text-[#b8b4be]">
-            Ask about your matter from the ChatGPT app. The Contextspaces GPT reads the documents your
+            Ask about your matter from the ChatGPT app. The Equazia.ai GPT reads the documents your
             lawyer has filed for you and answers from them, citing the document and page every time.
-            Nothing to install and nothing to enable: open the GPT, sign in to Contextspaces once, and ask.
+            Nothing to install and nothing to enable: open the GPT, sign in to Equazia.ai once, and ask.
           </p>
         </header>
 
@@ -52,14 +52,14 @@ export default function GptConnect() {
             <li className="flex gap-3">
               <span className="text-[#d4a054] font-mono shrink-0">1.</span>
               <span>
-                <strong className="text-white">Have a Contextspaces account.</strong> Your lawyer creates it and sends you
+                <strong className="text-white">Have an Equazia.ai account.</strong> Your lawyer creates it and sends you
                 an invitation. You will set a password the first time. There is no public sign-up.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-[#d4a054] font-mono shrink-0">2.</span>
               <span>
-                <strong className="text-white">Open the Contextspaces GPT in ChatGPT.</strong>{' '}
+                <strong className="text-white">Open the Equazia.ai GPT in ChatGPT.</strong>{' '}
                 {GPT_LINK ? (
                   <>Tap <a href={GPT_LINK} className="text-[#e8b84a] underline underline-offset-2">this link</a> on your phone; it opens in the ChatGPT app.</>
                 ) : (
@@ -71,7 +71,7 @@ export default function GptConnect() {
               <span className="text-[#d4a054] font-mono shrink-0">3.</span>
               <span>
                 <strong className="text-white">Ask something.</strong> The first time, ChatGPT will say the GPT wants to
-                sign in to Contextspaces. Tap <em>Sign in</em>, enter your Contextspaces email and password, and choose
+                sign in to Equazia.ai. Tap <em>Sign in</em>, enter your Equazia.ai email and password, and choose
                 what the GPT may see: everything you can open, or only the matters you tick. Tap <em>Approve</em> and you
                 are back in ChatGPT.
               </span>
@@ -102,7 +102,7 @@ export default function GptConnect() {
           <div className="rounded-xl border border-white/[0.1] p-5">
             <div className="flex items-center gap-2 text-white mb-2"><Lock size={16} className="text-[#d4a054]" /><h3 className="font-semibold">What it will not do</h3></div>
             <ul className="text-[14px] leading-relaxed text-[#b8b4be] space-y-1.5 list-disc pl-4">
-              <li>Show anything you could not open yourself in Contextspaces.</li>
+              <li>Show anything you could not open yourself in Equazia.ai.</li>
               <li>Answer about a sealed matter (a SecureSpace); it tells you it is sealed.</li>
               <li>Download or send your files anywhere; it reads text and cites it.</li>
               <li>Move, delete or rewrite documents.</li>
@@ -115,18 +115,18 @@ export default function GptConnect() {
           <div className="flex items-center gap-2 text-white mb-2"><ShieldCheck size={16} className="text-[#d4a054]" /><h3 className="font-semibold">How your information is handled</h3></div>
           <p className="text-[14px] leading-relaxed text-[#b8b4be]">
             Every question runs as you, inside the matters you approved, under the same access rules as the
-            Contextspaces website. ChatGPT holds a sign-in credential for Contextspaces, not your password, and
+            Equazia.ai website. ChatGPT holds a sign-in credential for Equazia.ai, not your password, and
             receives only the passages needed to answer. What you ask ChatGPT and what it shows you are also handled by
-            OpenAI under its own terms. Details: <Link to="/privacy" className="text-[#e8b84a] underline underline-offset-2">Contextspaces privacy</Link>.
+            OpenAI under its own terms. Details: <Link to="/privacy" className="text-[#e8b84a] underline underline-offset-2">Equazia.ai privacy</Link>.
           </p>
         </section>
 
         <section className="mb-12 rounded-xl border border-white/[0.1] p-6">
           <div className="flex items-center gap-2 text-white mb-2"><Power size={16} className="text-[#d4a054]" /><h3 className="font-semibold">Switching it off</h3></div>
           <p className="text-[14px] leading-relaxed text-[#b8b4be]">
-            Sign in to Contextspaces on any device, open <strong className="text-white">Connections</strong>, and disconnect the
+            Sign in to Equazia.ai on any device, open <strong className="text-white">Connections</strong>, and disconnect the
             GPT. It loses access at once; nothing you filed is affected. Deleting the GPT from ChatGPT alone does not
-            revoke it — do it from Contextspaces.
+            revoke it — do it from Equazia.ai.
           </p>
         </section>
 
@@ -138,7 +138,7 @@ export default function GptConnect() {
             <Link to="/app/connections/gpt-client" className="text-[#b8b4be] underline underline-offset-2">Connections › mint a GPT client</Link>, authorize URL <code className="text-[#b8b4be]">/oauth/authorize</code>,
             token URL <code className="text-[#b8b4be]">/api/oauth-token</code>, scope <code className="text-[#b8b4be]">contextspaces</code>) and the instructions in{' '}
             <code className="text-[#b8b4be]">docs/specs/gpt-instructions.md</code>. Share it “anyone with the link”; each person signs in with their own
-            Contextspaces account, so what they see is theirs. The full recipe is <code className="text-[#b8b4be]">docs/specs/GPT-ACTIONS-2026-09-29.md</code>.
+            Equazia.ai account, so what they see is theirs. The full recipe is <code className="text-[#b8b4be]">docs/specs/GPT-ACTIONS-2026-09-29.md</code>.
             Colleagues on a computer can use the ChatGPT connector instead: <Link to="/app/connections/chatgpt" className="text-[#b8b4be] underline underline-offset-2">Connections › ChatGPT</Link>.
           </p>
         </section>

@@ -8,7 +8,7 @@ import assert from 'node:assert';
 import crypto from 'node:crypto';
 import {
   ROUTES, TIER_ROUTES, OCR_TIER_A_DEFAULT, resolveOcrRoutes, tierRouteIds, makeOcrProvider,
-  ocrRouteRecord, describeOcrRoute, isOcrProvider,
+  ocrRouteRecord, describeOcrRoute, isOcrProvider, ocrLanes,
 } from '../lib/ocr-routes.mjs';
 import { textractRequest, textFromBlocks, ocrPdfTextract, TEXTRACT_USD_PER_PAGE } from '../lib/ocr-textract.mjs';
 import { ocrPdfAnthropic, estimateAnthropicUsd, textOf } from '../lib/ocr-anthropic.mjs';
@@ -81,19 +81,41 @@ const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
     textract: async () => { calls.push('t'); return { pages, model: 'textract-detect-document-text', usage: { pages: 2 }, estimated_usd: 0.003 }; },
   }) });
   assert(isOcrProvider(p));
+  // Tier A with every key: Textract first (2026-10-26), the models behind it.
+  assert.deepStrictEqual(resolveOcrRoutes('A', env, { routes: stubs({}) }).routes.map((r) => r.id), ['aws-textract', 'gemini-flash', 'anthropic-vision']);
+  const outT = await p.run(Buffer.from('pdf'), { tier: 'A' });
+  assert.deepStrictEqual(calls, ['t']);
+  assert.strictEqual(outT.route.id, 'aws-textract');
+  assert.strictEqual(outT.route.estimated_usd, 0.003);
+  ok('Tier A with the Textract trio: Textract reads the pages first; the models are not called');
+
+  // Textract down: the model routes in their old order.
+  calls.length = 0;
   const msgs = [];
-  const out = await p.run(Buffer.from('pdf'), { tier: 'A', onProgress: (m) => msgs.push(m.message) });
-  assert.deepStrictEqual(calls, ['g', 'a']);
+  const p2 = makeOcrProvider(env, { routes: stubs({
+    textract: async () => { calls.push('t'); throw new Error('textract 403 AccessDeniedException'); },
+    gemini: async () => { calls.push('g'); throw new Error('gemini 403: Lightning dunning decision is deny'); },
+    anthropic: async () => { calls.push('a'); return { pages, model: 'claude-opus-5', usage: { input_tokens: 4000, output_tokens: 800 }, estimated_usd: 0.04 }; },
+  }) });
+  const out = await p2.run(Buffer.from('pdf'), { tier: 'A', onProgress: (m) => msgs.push(m.message) });
+  assert.deepStrictEqual(calls, ['t', 'g', 'a']);
   assert.deepStrictEqual(out.pages, pages);
   assert.strictEqual(out.route.id, 'anthropic-vision');
   assert.strictEqual(out.route.model, 'claude-opus-5');
   assert.strictEqual(out.route.pages, 2);
   assert.strictEqual(out.route.estimated_usd, 0.04);
   assert.strictEqual(out.route.sealed, false);
-  assert.deepStrictEqual(out.route.fallback_from.map((f) => f.id), ['gemini-flash']);
-  assert(/Lightning dunning/.test(out.route.fallback_from[0].error));
+  assert.deepStrictEqual(out.route.fallback_from.map((f) => f.id), ['aws-textract', 'gemini-flash']);
+  assert(/Lightning dunning/.test(out.route.fallback_from[1].error));
   assert(msgs.some((m) => /Gemini failed .* trying Anthropic vision/.test(m)), msgs.join('|'));
-  ok('Tier A: Gemini throws → Anthropic reads the pages; the record names the route, model, pages, cost and the failed route');
+  ok('Tier A: Textract and Gemini throw → Anthropic reads the pages; the record names the route, model, pages, cost and the failed routes');
+
+  assert.strictEqual(ocrLanes({}, 'TEXTRACT', 16), 16);
+  assert.strictEqual(ocrLanes({ OCR_TEXTRACT_LANES: '24' }, 'TEXTRACT', 16), 24);
+  assert.strictEqual(ocrLanes({ OCR_GEMINI_LANES: 'lots' }, 'GEMINI', 4), 4);
+  assert.strictEqual(ocrLanes({ OCR_GEMINI_LANES: '0' }, 'GEMINI', 4), 4);
+  assert.strictEqual(ocrLanes({ OCR_ANTHROPIC_LANES: '999' }, 'ANTHROPIC', 3), 64);
+  ok('ocrLanes: pages in flight per route come from OCR_<ROUTE>_LANES, defaulting and capped sanely');
 
   calls.length = 0;
   const outB = await p.run(Buffer.from('pdf'), { tier: 'B' });
@@ -105,9 +127,9 @@ const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
   const dead = makeOcrProvider(env, { routes: stubs({
     gemini: async () => { throw new Error('gemini 503'); },
     anthropic: async () => { throw new Error('anthropic 529 overloaded'); },
-    textract: async () => { throw new Error('unused'); },
+    textract: async () => { throw new Error('textract 500 InternalServerError'); },
   }) });
-  await assert.rejects(() => dead.run(Buffer.from('pdf'), { tier: 'A' }), (err) => /every configured route/.test(err.message) && /gemini-flash: gemini 503/.test(err.message) && /anthropic-vision: anthropic 529/.test(err.message));
+  await assert.rejects(() => dead.run(Buffer.from('pdf'), { tier: 'A' }), (err) => /every configured route/.test(err.message) && /aws-textract: textract 500/.test(err.message) && /gemini-flash: gemini 503/.test(err.message) && /anthropic-vision: anthropic 529/.test(err.message));
   ok('every route down: one error naming each route and its failure (what ocr_pending records)');
 
   await assert.rejects(() => makeOcrProvider({}, { routes: stubs({}) }).run(Buffer.from('pdf'), { tier: 'A' }), /OCR is not configured/);
@@ -187,9 +209,16 @@ const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
   assert.strictEqual(out.usage.pages, 5);
   ok('ocrPdfTextract: one single-page request per page in the chosen region, a ThrottlingException is retried, every page filled, cost = pages × rate');
 
-  await assert.rejects(() => ocrPdfTextract(pdf, { env, fetchImpl: async () => new Response(JSON.stringify({ __type: 'UnsupportedDocumentException' }), { status: 400 }) }), /UnsupportedDocumentException/);
+  // A fault with the PAGE (an encoding Textract does not read) is that page's
+  // alone (2026-10-26): it comes back `failed` so the next route reads it,
+  // and the other pages are not thrown away with it.
+  const faulty = await ocrPdfTextract(pdf, { env, fetchImpl: async () => new Response(JSON.stringify({ __type: 'UnsupportedDocumentException' }), { status: 400 }) });
+  assert.strictEqual(faulty.pages.length, 5);
+  assert(faulty.pages.every((p) => p.failed === 'unsupported' && /UnsupportedDocumentException/.test(p.reason)), JSON.stringify(faulty.pages[0]));
+  // A fault with the ACCOUNT still fails the run, so the route policy moves on.
+  await assert.rejects(() => ocrPdfTextract(pdf, { env, fetchImpl: async () => new Response(JSON.stringify({ __type: 'AccessDeniedException' }), { status: 400 }) }), /AccessDeniedException/);
   await assert.rejects(() => ocrPdfTextract(pdf, { env: {} }), /TEXTRACT_AWS_ACCESS_KEY_ID/);
-  ok('ocrPdfTextract: a non-retryable Textract error surfaces by name; missing credentials refuse before any request');
+  ok('ocrPdfTextract: a page Textract cannot read comes back failed (for the next route); an account error fails the run by name; missing credentials refuse before any request');
 }
 
 // --- Anthropic ----------------------------------------------------------------------
@@ -230,12 +259,20 @@ const ok = (msg) => { n++; console.log(`  ok  ${msg}`); };
   assert.strictEqual(out.estimated_usd, (5000 * 5 + 500 * 25) / 1e6);
   ok('ocrPdfAnthropic: base64 PDF document per window, low effort, server-side fallbacks on, pages mapped by marker, usage summed into an estimate');
 
+  // 2026-10-22: a refusal no longer fails the whole document. The window is
+  // retried one page at a time, and a page still declined comes back
+  // `failed` with the reason — recorded as awaiting OCR, never as blank.
   const refusing = { beta: { messages: { stream: () => ({ finalMessage: async () => ({ stop_reason: 'refusal', stop_details: { category: 'graphic' }, content: [], usage: { input_tokens: 1, output_tokens: 0 } }) }) } } };
-  await assert.rejects(() => ocrPdfAnthropic(pdf, { client: refusing }), /declined to transcribe page\(s\) 1, 2, 3, 4, 5 \(graphic\)/);
+  const refused = await ocrPdfAnthropic(pdf, { client: refusing });
+  assert.strictEqual(refused.pages.length, 5);
+  assert(refused.pages.every((p) => p.failed === 'refusal' && p.text === ''), 'every page declined singly is failed:refusal');
+  assert.match(refused.pages[0].reason, /declined to transcribe page\(s\) 1 \(graphic\)/);
+  assert.strictEqual(refused.usage.requests, 1 + 5, 'one window of five, then five single pages');
   const truncating = { beta: { messages: { stream: () => ({ finalMessage: async () => ({ stop_reason: 'max_tokens', content: [{ type: 'text', text: '<<<PAGE 1>>>\nhalf' }], usage: {} }) }) } } };
-  await assert.rejects(() => ocrPdfAnthropic(pdf, { client: truncating }), /truncated/);
+  const cut = await ocrPdfAnthropic(pdf, { client: truncating });
+  assert(cut.pages.every((p) => p.failed === 'truncated'), 'a window cut by max_tokens is retried singly; a page still cut is failed:truncated');
   assert.strictEqual(textOf({ content: [{ type: 'thinking', thinking: 'x' }, { type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }), 'ab');
-  ok('a refusal or a truncated window fails the window (the route falls back or records the pages) — never silent empty pages');
+  ok('a refusal or a truncated window is retried page by page; a page still declined is `failed` with its reason — never a silent empty page');
 }
 
 // --- long recordings --------------------------------------------------------------

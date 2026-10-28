@@ -28,14 +28,17 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { TOOLS, callTool } from '../lib/mcp-core.mjs';
+import { SITE_ORIGIN, SITE_NAME, siteUrl } from '../lib/site.mjs';
 import { runMeteredToolCall } from '../lib/connector-meter.mjs';
 import { userJwtConfigured } from '../lib/supabase-user-jwt.mjs';
+import { TM_TOOL_NAMES } from '../lib/trademark/connector.mjs';
+import { trademarkToolOptsFor } from '../lib/trademark/connector-opts.mjs';
 // The bearer check, the Supabase clients and the callTool options live in
 // lib/oauth-bearer.mjs since 2026-09-29, shared with the GPT Actions facade
 // (api/gpt/[op].mjs). Re-exported here so the harnesses that import them from
 // this file keep working.
 import {
-  AuthError, adminClient, authenticate, callToolOptsFor, userScopedClient,
+  AuthError, adminClient, authenticate, callToolOptsFor, userScopedClient, withToolAuthMeta,
   SUPABASE_URL, SUPABASE_ANON_KEY, SERVICE_KEY,
 } from '../lib/oauth-bearer.mjs';
 export { AuthError, authenticate, callToolOptsFor };
@@ -46,6 +49,17 @@ export { AuthError, authenticate, callToolOptsFor };
 // -----------------------------------------------------------------------------
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+
+// What every connection reads first. Hosts may cut server instructions short,
+// so the four rules a connected assistant must not miss come first.
+export const SERVER_INSTRUCTIONS_LEAD =
+  'Call list_matters first to see the matters in this workspace, then work in ' +
+  'one. Cite every statement from a document by its title ' +
+  'and page (page:line where given); never quote what you have not retrieved. ' +
+  'Sealed matters do not answer here: they are not listed and a call naming one ' +
+  'is refused; say so, never guess at them. Writes ask first: before any tool ' +
+  'that files, moves, copies, creates or updates anything, tell the user what ' +
+  'will change and wait for a yes (an agent acts within a task it has claimed). ';
 
 const AGENT_INSTRUCTIONS =
   ' THIS IS AN AGENT CONNECTION. It sees only the matters it has been granted ' +
@@ -59,7 +73,7 @@ const AGENT_INSTRUCTIONS =
 // 089: a chat assistant (Claude, ChatGPT, Gemini, Grok …) can be handed tasks
 // too. It never polls; it acts when its user asks.
 export const ASSISTANT_TASKS_INSTRUCTIONS =
-  ' TASKS: when the user asks you to check their Contextspaces tasks, call ' +
+  ' TASKS: when the user asks you to check their Equazia.ai tasks, call ' +
   'my_tasks, claim_task the one to do, do the work with the normal tools inside ' +
   'that task\'s matter, call ask_human if you are blocked, and finish with post_result.';
 
@@ -126,24 +140,29 @@ export default async function handler(req, res) {
       // stays as it was: clients may key saved connections on it.
       {
         name: 'contextspaces-retrieval',
-        title: 'Contextspaces',
+        title: SITE_NAME,
         version: '0.6.0',
-        websiteUrl: 'https://www.contextspaces.ai',
+        websiteUrl: SITE_ORIGIN,
         icons: [
-          { src: 'https://www.contextspaces.ai/contextspaces-mark.svg', mimeType: 'image/svg+xml', sizes: ['any'] },
-          { src: 'https://www.contextspaces.ai/icon-192.png', mimeType: 'image/png', sizes: ['192x192'] },
-          { src: 'https://www.contextspaces.ai/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] },
+          { src: siteUrl('/contextspaces-mark.svg'), mimeType: 'image/svg+xml', sizes: ['any'] },
+          { src: siteUrl('/icon-192.png'), mimeType: 'image/png', sizes: ['192x192'] },
+          { src: siteUrl('/icon-512.png'), mimeType: 'image/png', sizes: ['512x512'] },
         ],
       },
       {
         capabilities: { tools: {} },
+        // The first 512 characters carry the weight (PLUGIN-DIRECTORY §2.5):
+        // list_matters first, cite document and page, sealed matters do not
+        // answer, writes ask first. SERVER_INSTRUCTIONS_LEAD is checked by
+        // scripts/_verify-mcp-plugin-ready.mjs.
         instructions:
-          'Contextspaces stores both searchable text (passages with page:line ' +
+          SERVER_INSTRUCTIONS_LEAD +
+          'This workspace stores both searchable text (passages with page:line ' +
           'citations) and the original files behind every document. Media ' +
           'originals — video, audio, images, as-filed PDFs — are accessible: ' +
           'call get_media with a document UUID to receive a short-lived ' +
           'streaming URL (supports HTTP Range). When a user asks you to watch ' +
-          'or analyze a video stored in Contextspaces, use get_media and fetch ' +
+          'or analyze a video stored here, use get_media and fetch ' +
           'the URL yourself before asking for a local file path. If your ' +
           'environment blocks the fetch (sandboxed agents may get 403 ' +
           'host_not_allowed from an egress proxy), the URL is still valid: ' +
@@ -168,7 +187,18 @@ export default async function handler(req, res) {
           'new copy; create_deck builds a filed .pptx (you author the ' +
           'slides — bullets, tables, native charts, notes); create_chart ' +
           'renders an SVG chart from data you extracted. search works ' +
-          'matter-scoped or, with matter omitted, across every matter at once.' +
+          'matter-scoped or, with matter omitted, across every matter at once. ' +
+          'TRADEMARK CLEARANCE (knockout search): tm_start_batch opens one ' +
+          'clearance per mark from the names and one sentence (tm_start_clearance ' +
+          'for one), with the model proposals saved PROPOSED; tm_confirm ' +
+          '(step "proposals") once the person accepts them; tm_record_results ' +
+          'for each query the person runs on tmsearch; tm_triage; tm_deep_check ' +
+          '(official TSDR status); tm_report; then tm_application_questions / ' +
+          'tm_application_answer / tm_application_draft for a use-based or ' +
+          'intent-to-use application DRAFT. tm_get_clearance says the next step. ' +
+          'The USPTO search is run by the person: hand them the query lines and ' +
+          'record what they report. Nothing is signed or filed with the USPTO by ' +
+          'you: the reviewer signs in Equazia.ai; never call a mark clear.' +
           agentNote,
       }
     );
@@ -181,21 +211,38 @@ export default async function handler(req, res) {
       // every call, a charge through usage_consume on the costed ones, and a
       // plain-sentence refusal. The result and error shapes are unchanged —
       // runMeteredToolCall returns exactly what this handler used to.
+      //
+      // A call refused for AUTHENTICATION inside the tool (an AuthError) also
+      // carries the sign-in challenge in _meta (lib/oauth-bearer.mjs
+      // withToolAuthMeta). Seal, pause and agent-scope refusals are untouched.
+      let authRefusal = null;
+      const toolOpts = callToolOptsFor(identity, {
+        openaiApiKey: OPENAI_API_KEY,
+        googleApiKey: process.env.GOOGLE_API_KEY,
+      });
       return runMeteredToolCall({
         identity,
         name,
         args,
         sb,
         invoke: () => callTool(sb, name, args, {
-          ...callToolOptsFor(identity, {
-            openaiApiKey: OPENAI_API_KEY,
-            googleApiKey: process.env.GOOGLE_API_KEY,
-          }),
+          ...toolOpts,
           // Used by move_document only, to carry a moved document's queued
           // ingest job along (097 round 4); nothing else reads it.
           ...(name === 'move_document' ? { jobClient: adminClient() } : {}),
+          // Trademark Clearance (2026-10-20): the connector's actor on every
+          // Record row the call causes, and the model door (serverLlmCall on
+          // the user's month). /api/trademark still refuses connector tokens;
+          // these tools are the connector's own, narrower door — see
+          // lib/trademark/connector.mjs.
+          ...(TM_TOOL_NAMES.has(name)
+            ? trademarkToolOptsFor(identity, sb, toolOpts, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY })
+            : {}),
+        }).catch((err) => {
+          if (err instanceof AuthError) authRefusal = err;
+          throw err;
         }),
-      });
+      }).then((result) => (authRefusal ? withToolAuthMeta(result, req, authRefusal) : result));
     });
 
     // Stateless: one transport per request. For Phase 1 this is simpler

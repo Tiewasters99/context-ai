@@ -172,7 +172,7 @@ export default async function handler(req, res) {
     : (doc.title || filename);
   const textBody = (typeof body.body === 'string' && body.body)
     ? body.body
-    : `Attached: ${filename}\n\n(Exported from Contextspaces.)`;
+    : `Attached: ${filename}\n\n(Exported from Equazia.ai.)`;
 
   // Build the raw RFC822 message: a text part + the document as a base64
   // attachment. No To: header — the user fills in the recipient in Gmail.

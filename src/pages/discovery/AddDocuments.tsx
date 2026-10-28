@@ -287,7 +287,7 @@ export function AddDocumentsStep({
         )}
 
         <p className="text-[10.5px] text-white/40 leading-relaxed">
-          For files that are not in Contextspaces yet.
+          For files that are not in Equazia.ai yet.
           {singleZip ? ' The ZIP will be unpacked automatically.' : ''} Each document will be
           prepared for review and also filed in the matter.
         </p>

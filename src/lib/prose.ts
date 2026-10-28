@@ -4,7 +4,7 @@
 // purpose: no HTML is ever produced from the text, so nothing in an answer can
 // inject markup (src/components/ai/Prose.tsx renders these as React elements).
 
-export type Run = { text: string; bold?: boolean; italic?: boolean; code?: boolean };
+export type Run = { text: string; bold?: boolean; italic?: boolean; code?: boolean; href?: string };
 export type Block =
   | { kind: 'p'; runs: Run[] }
   | { kind: 'h'; level: 1 | 2 | 3; runs: Run[] }
@@ -12,17 +12,19 @@ export type Block =
   | { kind: 'ol'; items: Run[][]; start: number }
   | { kind: 'quote'; runs: Run[] };
 
-/** Inline Markdown → runs: `code`, **bold**, *italic* / _italic_. Unclosed markers stay literal. */
+/** Inline Markdown → runs: `code`, **bold**, *italic* / _italic_, [label](https://…). Unclosed markers stay literal;
+ *  only an https target becomes a link (the renderer decides which hosts are clickable). */
 export function runsOf(text: string): Run[] {
   const out: Run[] = [];
-  const re = /`([^`]+)`|\*\*([^*]+?)\*\*|__([^_]+?)__|\*([^*\s][^*]*?)\*|(?<![A-Za-z0-9])_([^_\s][^_]*?)_(?![A-Za-z0-9])/g;
+  const re = /\[([^\]\n]+)\]\((https:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+?)\*\*|__([^_]+?)__|\*([^*\s][^*]*?)\*|(?<![A-Za-z0-9])_([^_\s][^_]*?)_(?![A-Za-z0-9])/g;
   let at = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > at) out.push({ text: text.slice(at, m.index) });
-    if (m[1] !== undefined) out.push({ text: m[1], code: true });
-    else if (m[2] !== undefined || m[3] !== undefined) out.push({ text: (m[2] ?? m[3])!, bold: true });
-    else out.push({ text: (m[4] ?? m[5])!, italic: true });
+    if (m[1] !== undefined) out.push({ text: m[1], href: m[2] });
+    else if (m[3] !== undefined) out.push({ text: m[3], code: true });
+    else if (m[4] !== undefined || m[5] !== undefined) out.push({ text: (m[4] ?? m[5])!, bold: true });
+    else out.push({ text: (m[6] ?? m[7])!, italic: true });
     at = m.index + m[0].length;
   }
   if (at < text.length) out.push({ text: text.slice(at) });

@@ -11,8 +11,9 @@
 // these twelve passages, which three are the evidence, and where does the
 // quotable sentence start and stop.
 //
-// THE CONTRACT IS STRICT ON PURPOSE. A sealed matter is served by Kimi K2.5
-// rather than the Opus these prompts were tuned on (PR #163), and a less
+// THE CONTRACT IS STRICT ON PURPOSE. A sealed matter was served by Kimi K2.5
+// rather than the Opus these prompts were tuned on (PR #163; Opus 4.6 since
+// 2026-10-20, still not the model they were tuned on), and a less
 // capable model's failure mode on a forced tool is a plausible-looking object
 // with the wrong shape. An unvalidated evidence item is a quotation attributed
 // to a witness — the single worst thing this product could emit — so the pair

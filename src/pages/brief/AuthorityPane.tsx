@@ -6,14 +6,19 @@
 // this copy — showing page 1"). A cite with two copies in the matter offers
 // both; a cite not in the corpus says so and offers the matter's search, and
 // nothing else (B4).
+//
+// The Reader lights the language the brief relies on at the pincite (10-16),
+// and the line under the caveat says what that light is: the brief's quote
+// found exactly, the closest sentence (never presented as a quote), a
+// deposition's lines, or nothing — so a guess is never read as a match.
 
 import { useState } from 'react';
-import { ArrowLeft, BookOpen, Search, X, Check, AlertTriangle } from 'lucide-react';
-import DocumentReader, { type ReaderGoto } from '@/pages/DocumentReader';
+import { ArrowLeft, BookOpen, Search, X } from 'lucide-react';
+import DocumentReader, { type ReaderGoto, type ReaderReliedResult } from '@/pages/DocumentReader';
 import type { DeskEntry } from '@/lib/brief/anchor';
 import { caseNameOf } from '@/lib/brief/resolve';
 import { findQueryFor } from '@/lib/brief/find-query';
-import type { CiteConfirmation, ConfirmationStatus } from '@/lib/brief/confirmations';
+import type { CiteConfirmation } from '@/lib/brief/confirmations';
 
 export interface PaneState {
   /** Which table row opened it (rowKey), for the highlight in the table. */
@@ -32,7 +37,21 @@ export interface PaneState {
   cite?: { raw: string; context: string; from: number | null } | null;
 }
 
-export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, openProblem, initials, onInitials, onConfirm }: {
+/**
+ * With a Problem: also mark the quotation the cite stands behind red (Eden,
+ * 10-21: a manufactured quotation behind a real cite; the cite checks out, the
+ * quotation is what is wrong). Ticked by default; the words are shown.
+ */
+export function QuoteToggle({ quote, checked, onChange }: { quote: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="w-full mt-1.5 flex items-start gap-1.5 text-[11px] text-white/65 cursor-pointer" data-testid="problem-quote">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="mt-0.5 accent-red-400" />
+      <span>Also mark the quotation red: <span className="text-red-200/90">“{quote.length > 160 ? `${quote.slice(0, 157)}…` : quote}”</span></span>
+    </label>
+  );
+}
+
+export default function AuthorityPane({ state, onClose, back, onPickCopy, onSearch, onChangeAppendix, confirmation, initials, onInitials }: {
   state: PaneState | null;
   onClose?: () => void;
   /** Full screen (phone, narrow window): a back arrow instead of a close. */
@@ -43,30 +62,11 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
   onChangeAppendix?: () => void;
   /** The latest human reading of this cite (migration 103), if any. */
   confirmation?: CiteConfirmation | null;
-  /** A problem logged on these cite words that no later confirmation answered — confirming asks how it was resolved. */
-  openProblem?: CiteConfirmation | null;
   /** The initials the log signs with, editable here. */
   initials?: string;
   onInitials?: (v: string) => void;
-  /** Confirm / Problem: one append-only row. */
-  onConfirm?: (status: ConfirmationStatus, note: string) => Promise<void>;
 }) {
-  // The note box: 'problem' asks what is wrong; 'resolved' asks what was found
-  // and how it was fixed, when a red cite is being confirmed (the note sits in
-  // the log beside the problem — Eden, 09-28).
-  const [problemOpen, setProblemOpen] = useState<false | 'problem' | 'resolved' | 'note'>(false);
-  const [problemNote, setProblemNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const press = async (status: ConfirmationStatus, note = '') => {
-    if (!onConfirm || busy) return;
-    setBusy(true);
-    try { await onConfirm(status, note); setProblemOpen(false); setProblemNote(''); } finally { setBusy(false); }
-  };
-  const confirmPress = () => {
-    if (openProblem || confirmation?.status === 'problem') { setProblemNote(''); setProblemOpen('resolved'); return; }
-    if (confirmation?.status === 'confirmed') { setProblemNote(''); setProblemOpen('note'); return; }   // a note on a green cite
-    void press('confirmed');
-  };
+  const [relied, setRelied] = useState<ReaderReliedResult | null>(null);
   if (!state) {
     return (
       <Frame>
@@ -93,57 +93,33 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.docTitle && <div className="text-[11px] text-white/45 truncate">{state.docTitle}</div>}
         {state.stale && <div className="text-[11px] text-[#e8b84a] mt-0.5">Changed since the check — Confirm to re-check it.</div>}
         {state.caveat && state.docId && <div className="text-[11px] text-orange-200/80 mt-0.5">{state.caveat}</div>}
-        {/* The human check (103): with a cite open at its page, one press logs it with initials. */}
-        {state.cite && state.docId && onConfirm && (
+        {state.docId && state.goto?.relied && relied && relied.nonce === state.goto.nonce && (
+          <div className={`text-[11px] mt-0.5 ${relied.lit && relied.basis !== 'closest' ? 'text-[#f5dc6a]/90' : 'text-orange-200/80'}`} data-testid="pane-relied">
+            {reliedLine(relied, !!state.goto.relied.depo, !state.goto.relied.claim.trim() && !state.goto.relied.quotes.length)}
+          </div>
+        )}
+        {/* The cite's reading, and the initials the log signs with. Confirm, Problem and Note
+            are on the bar over the cite in the brief — one set of buttons (Eden, 10-21). */}
+        {state.cite && state.docId && onInitials && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5" data-testid="pane-confirm">
-            {confirmation && (
+            {confirmation ? (
               <span className={`text-[11px] ${confirmation.status === 'confirmed' ? 'text-emerald-300/90' : 'text-red-300/90'}`}>
                 {confirmation.status === 'confirmed' ? 'Confirmed' : 'Problem noted'} · {confirmation.initials} · {new Date(confirmation.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                 {confirmation.status === 'problem' && confirmation.note ? ` — ${confirmation.note}` : ''}
               </span>
+            ) : (
+              <span className="text-[11px] text-white/45">Not yet read. Confirm, Problem or Note: on the bar over the cite in the brief.</span>
             )}
-            <button
-              onClick={confirmPress}
-              disabled={busy || !(initials ?? '').trim()}
-              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-emerald-400/40 bg-emerald-400/10 text-[12px] text-emerald-200 hover:bg-emerald-400/20 disabled:opacity-50"
-              title="I read this page: the cite is right. One row in the log, with my initials and the time."
-            >
-              <Check size={13} /> {confirmation ? 'Confirm again' : 'Confirm'}
-            </button>
-            <button
-              onClick={() => { setProblemNote(''); setProblemOpen((v) => (v === 'problem' ? false : 'problem')); }}
-              disabled={busy}
-              className="h-7 px-2.5 inline-flex items-center gap-1 rounded border border-red-400/40 bg-red-400/10 text-[12px] text-red-200 hover:bg-red-400/20"
-              title="Something is wrong with this cite: say what, and it goes in the log"
-            >
-              <AlertTriangle size={13} /> Problem
-            </button>
             <label className="inline-flex items-center gap-1.5 text-[11px] text-white/55" title="Click and type your initials; they are kept on this computer and go on every row you log">
               Your initials
               <input
                 value={initials ?? ''}
-                onChange={(e) => onInitials?.(e.target.value.toUpperCase().slice(0, 6))}
+                onChange={(e) => onInitials(e.target.value.toUpperCase().slice(0, 6))}
                 className="w-14 h-7 bg-white/[0.06] border border-[#e8b84a]/40 rounded px-1.5 text-[12px] text-white/90 font-medium outline-none focus:border-[#e8b84a] text-center"
                 aria-label="Your initials"
                 placeholder="type"
               />
             </label>
-            {problemOpen && (
-              <div className="w-full flex items-center gap-1.5 mt-1">
-                <input
-                  autoFocus
-                  value={problemNote}
-                  onChange={(e) => setProblemNote(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && problemNote.trim()) void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote); if (e.key === 'Escape') setProblemOpen(false); }}
-                  placeholder={problemOpen === 'problem' ? 'What is wrong (pin, quotation, proposition…)?' : problemOpen === 'resolved' ? `Resolved how? What was found${openProblem?.note ? ` (flag: “${openProblem.note}”)` : ''}?` : 'A note on this confirmed cite (what was checked or fixed)'}
-                  className={`flex-1 min-w-0 h-7 bg-white/[0.04] border border-white/[0.1] rounded px-2 text-[12px] text-white/85 outline-none ${problemOpen === 'problem' ? 'focus:border-red-300/50' : 'focus:border-emerald-300/50'}`}
-                  aria-label={problemOpen === 'problem' ? 'What is wrong with this cite' : 'What was found and how it was resolved'}
-                />
-                <button onClick={() => void press(problemOpen === 'problem' ? 'problem' : 'confirmed', problemNote)} disabled={busy || !problemNote.trim()} className={`h-7 px-2 rounded border text-[12px] disabled:opacity-50 ${problemOpen === 'problem' ? 'border-red-400/40 text-red-200' : 'border-emerald-400/40 text-emerald-200'}`}>
-                  {problemOpen === 'problem' ? 'Log it' : problemOpen === 'resolved' ? 'Confirm, resolved' : 'Log the note'}
-                </button>
-              </div>
-            )}
           </div>
         )}
         {state.appendix && state.docId && (
@@ -170,7 +146,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         <div className="flex-1 min-h-0">
           {/* The Reader's own ✕ closes the pane: embedded without onClose it
               did nothing (Eden, 10-02: "the x button is not working"). */}
-          <DocumentReader key={state.docId} id={state.docId} embedded chrome="pane" goto={state.goto ?? undefined} onClose={onClose} />
+          <DocumentReader key={state.docId} id={state.docId} embedded chrome="pane" goto={state.goto ?? undefined} onClose={onClose} onRelied={setRelied} />
         </div>
       </Frame>
     );
@@ -236,4 +212,22 @@ function Frame({ children }: { children: React.ReactNode }) {
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="p-4 text-[13px] text-white/60 leading-relaxed">{children}</p>;
+}
+
+/** The line under the caveat: what the yellow on the page is, in words. */
+function reliedLine(r: ReaderReliedResult, depo: boolean, noWords: boolean): string {
+  if (r.basis === 'none') {
+    if (noWords && !depo) return 'The desk has no words of the brief for this cite (it was not placed in the text), so nothing is lit. Read the page.';
+    return depo
+      ? 'The cited lines are not in this page’s text — nothing is lit. Read the page.'
+      : 'Nothing on this page matches the brief’s words closely enough to light. Read the page.';
+  }
+  if (!r.lit) {
+    return r.noTextLayer
+      ? 'This page is a scan with no text layer, so nothing can be lit. Read the page.'
+      : 'The words were found in the index but not on the page as shown — nothing is lit. Read the page.';
+  }
+  if (r.basis === 'quote') return 'Lit: the words the brief quotes, found exactly.';
+  if (r.basis === 'lines') return `Lit: transcript lines ${r.detail ?? ''}.`.replace(' .', '.');
+  return `Lit: the closest sentence to the brief’s (${r.detail ?? 'some words'} shared) — not a quote. Read around it.`;
 }

@@ -238,7 +238,14 @@ console.log('\n--- D. the worker, held to its source ---------------------------
     'each stored path is held to its own matter before it is read');
   check(at('MAX_VAULT_PICK_BYTES') > -1 && at('MAX_VAULT_PICK_BYTES') < at('downloadFromBucket('),
     'an oversized file is refused with a reason before it is read into memory');
-  check(/documentId: id,\s*\}\);/.test(fn), 'each document is produced through intakeOneFile, linked to its own document row');
+  check(/documentId: id,[^}]*\}\);/.test(fn), 'each document is produced through intakeOneFile, linked to its own document row');
+  // 2026-10-13: a PDF filed under a Word or email name (a production's
+  // rendition) is never handed to LibreOffice as that kind of file.
+  check(at('vaultSourcePlan(doc, buf)') > at("downloadFromBucket('vault-documents', doc.storage_path)")
+      && at('vaultSourcePlan(doc, buf)') < at('intakeOneFile(prod, job'),
+    'the stored bytes, not the name, decide how a Vault document is produced (renditions are recognised)');
+  check(/asName = `\$\{filename\}\.pdf`/.test(fn) && /asName,\s*\}\);/.test(fn),
+    'a rendition with no original on record is produced as the PDF it is, under its own name');
   check(/job\.payload\?\.ingest !== false && !documentId\) \{/.test(w),
     'a Vault document is never ingested a second time (no duplicate documents row, no second upload)');
   check(/\.\.\.\(documentId \? \{ document_id: documentId \} : \{\}\),/.test(w),
@@ -252,9 +259,11 @@ console.log('\n--- E. adding documents later (Review Room → Add documents) ---
   const body = (name, next) => w.slice(w.indexOf(`async function ${name}(job)`), w.indexOf(next));
   check(/let fileIndex = await nextSortBase\(prod\.id\);/.test(body('intakeZip', 'async function intakeFiles(job)')),
     'a ZIP added to a production that already has documents is numbered after them');
-  check(/const base = await nextSortBase\(prod\.id\);[\s\S]*sortOrder: base \+ i \+ 1/.test(body('intakeFiles', 'async function nextSortBase(')),
+  // A running counter, advanced by the positions each file used (an email's
+  // attachments follow it, lib/discovery/families.mjs).
+  check(/let next = await nextSortBase\(prod\.id\);[\s\S]*next \+= await intakeOneFile\([\s\S]*sortOrder: next \+ 1/.test(body('intakeFiles', 'async function nextSortBase(')),
     'uploaded files added later are numbered after the existing documents');
-  check(/const base = await nextSortBase\(prod\.id\);[\s\S]*sortOrder: base \+ i \+ 1/.test(body('intakeDocuments', 'function vaultFilename(')),
+  check(/let next = await nextSortBase\(prod\.id\);[\s\S]*next \+= await intakeOneFile\([\s\S]*sortOrder: next \+ 1/.test(body('intakeDocuments', 'function vaultFilename(')),
     'documents added later from the matter are numbered after the existing documents');
   const fn = w.slice(w.indexOf('async function nextSortBase('), w.indexOf('async function intakeDocuments(job)'));
   check(/\.order\('sort_order', \{ ascending: false \}\)\.limit\(1\)/.test(fn) && /if \(error\) throw/.test(fn),

@@ -9,7 +9,7 @@ import charter from '../../../docs/editor/CONSTITUTION.md?raw';
 
 export const CONSTITUTION = charter;
 
-const SHARED_PREAMBLE = `You are the Contextspaces Editor. Your founding charter follows — it is your identity, your principles, and your procedures. Work from it.
+const SHARED_PREAMBLE = `You are the Equazia.ai Editor. Your founding charter follows — it is your identity, your principles, and your procedures. Work from it.
 
 ${charter}
 

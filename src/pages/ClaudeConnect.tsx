@@ -136,7 +136,7 @@ export default function ClaudeConnect() {
             Connect to Claude
           </h1>
           <p className="mt-3 text-[var(--color-text-secondary)] max-w-2xl leading-relaxed">
-            Connect Contextspaces to{' '}
+            Connect Equazia.ai to{' '}
             <strong className="text-[var(--color-text-bright)]">Claude</strong>{' '}
             — on the web, in the desktop app, or in Claude Code — and the
             matters you've already loaded become part of any Claude
@@ -148,21 +148,21 @@ export default function ClaudeConnect() {
               <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
               <span>
                 <strong className="text-[var(--color-text-bright)]">Chat about anything</strong>,
-                just as you would with Claude outside of Contextspaces.
+                just as you would with Claude outside of Equazia.ai.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
               <span>
                 <strong className="text-[var(--color-text-bright)]">Analyze cases</strong>{' '}
-                in any matter your Contextspaces account can open.
+                in any matter your Equazia.ai account can open.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="mt-2 w-1 h-1 rounded-full bg-[var(--color-primary)] flex-shrink-0" />
               <span>
                 <strong className="text-[var(--color-text-bright)]">Get pincites</strong>{' '}
-                for cases sitting in your Contextspaces Vault, ready to drop
+                for cases sitting in your Equazia.ai Vault, ready to drop
                 into a draft.
               </span>
             </li>
@@ -201,10 +201,10 @@ export default function ClaudeConnect() {
             <p>
               <strong className="text-[var(--color-text-bright)]">What Claude can reach.</strong>{' '}
               A full connection carries your own access — no more, and no
-              less. Claude sees the matters your Contextspaces account can
+              less. Claude sees the matters your Equazia.ai account can
               open, reading the database as you do: if you can open it, so can
               a connected Claude. To limit Claude to certain matters, connect
-              it as an agent instead: on the Contextspaces sign-in page choose{' '}
+              it as an agent instead: on the Equazia.ai sign-in page choose{' '}
               <strong className="text-[var(--color-text-bright)]">An agent</strong>{' '}
               and tick the matters, or add one under{' '}
               <Link to="/app/connections#agents" className="text-[var(--color-primary)] hover:underline">Connections › Agents</Link>. An agent sees only
@@ -246,7 +246,7 @@ export default function ClaudeConnect() {
             Claude on the web — nothing to paste
           </h2>
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-4">
-            claude.ai connects over OAuth. Claude sends you to Contextspaces to
+            claude.ai connects over OAuth. Claude sends you to Equazia.ai to
             sign in, you approve once, and Claude holds the credential itself —
             there is no token to copy and none to keep safe. This is the
             shortest path, and the one to prefer.
@@ -273,7 +273,7 @@ export default function ClaudeConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
               <span>
-                Claude opens a Contextspaces page in your browser. Sign in if
+                Claude opens an Equazia.ai page in your browser. Sign in if
                 you aren't already — email and password, or the Google or
                 Apple account you signed up with.
               </span>
@@ -307,7 +307,7 @@ export default function ClaudeConnect() {
           </h2>
           <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
             Claude Code is Claude in a terminal window — PowerShell on
-            Windows, Terminal on a Mac. You register Contextspaces once by
+            Windows, Terminal on a Mac. You register Equazia.ai once by
             typing a command, and it is there in every session afterwards.
             There are two ways in. Signing in is the shorter one, because
             nothing is left for you to keep safe; a token is there for the
@@ -349,7 +349,7 @@ export default function ClaudeConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span className="min-w-0 flex-1">
-                Your browser opens the Contextspaces sign-in, and then the same
+                Your browser opens the Equazia.ai sign-in, and then the same
                 consent screen described above. Approve it, and back in the
                 terminal the server's status changes to connected.
               </span>
@@ -403,7 +403,7 @@ export default function ClaudeConnect() {
                 <code className="font-mono text-xs text-[var(--color-text-bright)]">
                   claude mcp list
                 </code>{' '}
-                — Contextspaces should be there, shown as connected.
+                — Equazia.ai should be there, shown as connected.
               </span>
             </li>
             <li className="flex gap-3">
@@ -513,7 +513,7 @@ export default function ClaudeConnect() {
             <li className="flex gap-3">
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">2.</span>
               <span>
-                Generate a token below. You'll see a Contextspaces URL and a
+                Generate a token below. You'll see an Equazia.ai URL and a
                 bearer token — copy them both.
               </span>
             </li>
@@ -521,7 +521,7 @@ export default function ClaudeConnect() {
               <span className="text-[var(--color-primary)] font-mono flex-shrink-0">3.</span>
               <span>
                 In Claude Desktop's settings, add a custom connector, paste
-                the URL and the token, name it <em>Contextspaces</em>, and
+                the URL and the token, name it <em>Equazia.ai</em>, and
                 save.
               </span>
             </li>
@@ -771,7 +771,7 @@ function NewTokenModal({
       {/* What to do */}
       <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed mb-5">
         In Claude Desktop's settings, add a custom connector, paste the two
-        values below, name it <em>Contextspaces</em>, and save. For Claude
+        values below, name it <em>Equazia.ai</em>, and save. For Claude
         Code, skip past them to the command — it already has this token in
         it.
       </p>
@@ -810,7 +810,7 @@ function NewTokenModal({
         <p className="text-xs text-[var(--color-text-muted)] mb-1 leading-relaxed">
           Paste it into a terminal: PowerShell on Windows, Terminal on a
           Mac. Then <code data-card-inert="" className="font-mono">claude mcp list</code> should
-          show Contextspaces as connected. To undo it,{' '}
+          show Equazia.ai as connected. To undo it,{' '}
           <code data-card-inert="" className="font-mono">claude mcp remove contextspaces</code>.
         </p>
         <span className="block mt-3 text-xs uppercase tracking-wider text-[var(--color-text-muted)]">

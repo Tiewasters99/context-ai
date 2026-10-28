@@ -107,6 +107,78 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_test-production-designations.mjs
 
+      - name: Discovery — email families (BEGATTACH/ENDATTACH, withheld with the email) and MD5 on the load file
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-families.mjs
+
+      - name: Discovery at volume — several documents at once (same package), volumes, resume, streamed upload, small-PDF text
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-production-volume.mjs
+
+      - name: Discovery — review tags on matter documents (migration 113, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-review-tags.mjs
+
+      - name: Discovery — sets, and tags that follow a document into a production (migration 114, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-discovery-sets.mjs
+
+      - name: Discovery — the matter's privilege log, one entry per document (migration 116, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-privilege-entries.mjs
+
+      # Migration 120 — the Model Comparator. Real roles and RLS: the key (who
+      # made each candidate) cannot be read before the reveal, the reveal needs
+      # a grade card on every candidate, everything freezes after it, and the
+      # Record's vocabulary is EVENT_KINDS exactly. Here, with the PGlite steps:
+      # the jsdom installs below prune PGlite.
+      - name: Model Comparator — blind key, grade cards, reveal (migration 120, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-comparator-120.mjs
+
+      # Migration 121 — Trademark Clearance. Real roles and RLS: a member of the
+      # matter reads and writes, a non-member reads nothing; stage rows seeded
+      # 1-10; a sign-off needs initials and its prerequisite (8 needs 5); runs
+      # are append-only with captured count and gap computed by the database;
+      # a bin is a signed decision stamped with auth.uid(); every tm.* kind is
+      # admitted. Here, with the PGlite steps (before any jsdom install).
+      - name: Trademark Clearance — stages, runs, decisions (migration 121, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-121.mjs
+
+      # Migration 122 — Trademark Clearance, slice 2: re-runnable, INVOKER
+      # only, the kind list is EVENT_KINDS exactly, and the sign-off rules: a
+      # connector JWT (cs_via) can neither sign a stage nor decide a bin; 6
+      # needs 5; 9 needs 8, 6 done or skipped, and its reviewed document.
+      - name: Trademark Clearance slice 2 — sign-off rules (migration 122, PGlite + real RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-122.mjs
+
+      # The tm_* MCP tools (a bring-your-own bot runs the recipe), against the
+      # real 121 in PGlite through callTool with a csp_ token's user-scoped
+      # client: the flow in the user's own matter, another user's clearance
+      # not found, sealed and paused matters refused (the model never called),
+      # an agent held to its grant, every Record row the connector's, and no
+      # tool or argument that decides a bin, signs a stage or files the report.
+      - name: Trademark Clearance over the connector — tm_* tools (PGlite + real 121 RLS)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-trademark-connector.mjs
+
+      # The same, end to end over Streamable HTTP: an MCP client with a csp_
+      # bearer against the real api/mcp.mjs on 127.0.0.1 — authenticate, the
+      # meter, serverLlmCall to a stub provider — for quallet, quiddit, quirld.
+      - name: Trademark Clearance over the connector — end to end over Streamable HTTP
+        if: ${{ !cancelled() }}
+        run: node scripts/_e2e-trademark-mcp.mjs
+
+      - name: Discovery — production links, the table and its rules (migration 115, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-share-links-115.mjs
+
+      - name: Discovery — production links, making and opening them (api/production-share)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-share-links.mjs
+
       - name: SecureSpace — a sealed CHILD inside an open parent is not searched
         if: ${{ !cancelled() }}
         run: node scripts/_verify-sealed-descendants.mjs
@@ -122,6 +194,9 @@ jobs:
       - name: Covers — banner position saved in the cover URL
         if: ${{ !cancelled() }}
         run: node scripts/_test-cover-position.mjs
+      - name: Illustration player zoom arithmetic (picture-zoom)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-picture-zoom.mjs
 
       - name: Meetings — Start mic never hangs on "Starting…"
         if: ${{ !cancelled() }}
@@ -415,12 +490,50 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs scripts/_verify-reader-copy.mjs
 
+      # Star pages (*146, **523) in bold on a rendered case: tags untouched, words unchanged.
+      - name: Reader — star pages in bold
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-reader-star-pages.mjs
+
+      # A document cite to the names a document carries: captions, docket numbers, slip op. (Del Biaggio, 10-21).
+      - name: Brief Desk — document cites by name
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-doc-abbrev.mjs
+
       # Highlights and margin notes on a rendered document (docx, text,
       # markdown, screenplay) anchor to the text, not a page: offsets plus
       # the quoted words. Pure functions in src/lib/text-anchor.ts; no DOM.
       - name: Reader — text anchors for marks on documents without pages
         if: ${{ !cancelled() }}
         run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-text-anchor.mjs
+
+      # The Comparison notes are a pure function (grades + margin notes in,
+      # Markdown out), and add_comparison_candidate files a candidate blind.
+      # Both offline: the action runs against a stub Supabase client.
+      - name: Model Comparator — the Comparison notes template and the add-candidate action (node --test)
+        if: ${{ !cancelled() }}
+        run: node --import ./scripts/_node-src-loader.mjs --test scripts/_test-comparator.mjs
+
+      # Trademark Clearance (spec docs/specs/TRADEMARK-CLEARANCE-2026-10-18.md
+      # §7): the EQUAZIA golden query set, well-formedness, EQUASITE caught by
+      # Q5 and nothing earlier, multi-word quoting, caps, the Q8 exclusion
+      # check; then runs, dedup, the dead drop, gaps, the knockout report, the
+      # forbidden-phrase lint, the export mapper and the model actions against
+      # a stub (the model is never called here).
+      - name: Trademark Clearance — query generation (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-queries.mjs
+
+      - name: Trademark Clearance — triage, the report and the lint (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-triage.mjs
+
+      # Slice 2: the application draft (basis both ways, the advisory specimen
+      # check, the entity and assignment cautions, fees, TEAS order, the lint)
+      # and the TSDR mapping and client (no key, the header) — no network.
+      - name: Trademark Clearance — the application draft and the TSDR mapping (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-trademark-application.mjs
 
       # Migration 067 executed against PGlite on top of the REAL 062 and 063,
       # then the real billing handlers driven against that database with Stripe
@@ -683,6 +796,17 @@ jobs:
         run: |
           npm i --no-save jsdom@30.1.0
           node --import ./scripts/_node-src-loader.mjs --test scripts/_test-reader-workshop-button.mjs
+      # Grapheon Reader merch (Phase 2b, migration 117): api/merch.mjs and
+      # api/grapheon-webhook.mjs driven with no network — the rights gate
+      # (Library only, own stills, no in-copyright plates, own prints folder),
+      # D9 pricing, Checkout's shipping and metadata, the webhook's one-time
+      # Printify order and released claim on failure.
+      - name: Grapheon Reader — a picture from the bench on a tee (api/merch + the Grapheon webhook)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-merch-api.mjs
+      - name: Grapheon Reader — the product sheet's arithmetic (merch-sheet)
+        if: ${{ !cancelled() }}
+        run: node scripts/_test-merch-sheet.mjs
       # What the Assistant panel SAYS on a sealed matter before the first
       # message: the scope strip, the pen named in advance (and corrected when
       # the server names another), the word-search note, the pause, the
@@ -811,6 +935,17 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-agent-scope-all.mjs
 
+      # Migration 118: 'meta' joins the agent providers (a label only). Runs
+      # the chain to 088, then 118 twice: the column rule takes 'meta', the
+      # consent write stores it, oauth_grant_approve keeps its signature and
+      # grants after the in-place patch, and 118 refuses to patch a function
+      # whose provider list is not where it expects.
+      - name: Migration 118 — Meta as an agent provider (PGlite)
+        if: ${{ !cancelled() }}
+        run: |
+          npm i --no-save @electric-sql/pglite@0.5.8
+          node scripts/_verify-agent-provider-meta.mjs
+
       # Migration 089: a task can go to ANY connected AI — an agent token, a
       # full-access user token, or a full-assistant OAuth sign-in. Executes
       # 001…022 + 062 + 063 + 065 + 083 + 085 + 086 + 087 + 089 (twice) in
@@ -870,6 +1005,9 @@ jobs:
       - name: Upload estimate — the quote, the threshold, and the server's re-check
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-ingest-estimate.mjs
+
+      - name: Ingest progress — the bar reads the worker's note (node --test)
+        run: node --test scripts/_test-ingest-progress.mjs
       # A refresh, a closed tab or a navigation must not cost a lawyer typed
       # work. Three parts: the saver and the keyed draft store driven with
       # injected timers and a fake storage (debounce, one serial writer, an
@@ -1055,6 +1193,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-orchestrator-scope.mjs
 
+      # The Orchestrator's document tasks (10-17): proposed by the model, run
+      # by the browser through /api/sandbox on the press; sealed runs offer
+      # no copy out and none of the tasks the bucket refuses. No database.
+      - name: Orchestrator — Sandbox and document tasks, confirm-gated
+        if: ${{ !cancelled() }}
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-orchestrator-sandbox.mjs
+
       # Versions as documents (10-02): "Save as v19" names the next version
       # (the last v-number moves on; "Art78" is not one), and Compare is a
       # paragraph-then-word redline that rebuilds both versions exactly,
@@ -1063,7 +1208,7 @@ jobs:
       # No database.
       - name: Brief Desk — versions, the redline, and the confirmation log
         if: ${{ !cancelled() }}
-        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-versions.mjs scripts/_test-brief-carry.mjs scripts/_test-brief-note-pin.mjs scripts/_test-brief-edit-lease.mjs
+        run: node --test --import ./scripts/_node-src-loader.mjs scripts/_test-brief-versions.mjs scripts/_test-brief-carry.mjs scripts/_test-brief-note-pin.mjs scripts/_test-brief-edit-lease.mjs scripts/_test-brief-provision.mjs
 
       # Migration 105: one person edits a brief at a time. The hold through
       # its INVOKER functions as `authenticated`, over the real 016 access
@@ -1091,3 +1236,27 @@ jobs:
       - name: Orchestrator — the map tells the truth about the plan
         if: ${{ !cancelled() }}
         run: node --test scripts/_test-orchestrator-map.mjs
+      # read_pages (2026-10-27): the Orchestrator reads a stored PDF's pages
+      # directly as a document block — page specs, the per-pen byte/page
+      # budget, the pdf-lib excerpt and its trimming, the result's page
+      # mapping, and which pens the menu offers it to.
+      - name: Orchestrator — read_pages hands the pen the pages themselves
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-read-pages.mjs
+      # The Video Room (migration 119): the provider-neutral core — window
+      # planning, the event-graph normaliser and merger, interrogation clamping
+      # — the adapter's pure helpers, the video meter's arithmetic, and the
+      # metadata-only Record row the worker writes when a recording leaves.
+      - name: Video Room — core, adapter helpers, meter and Record payload (node --test)
+        if: ${{ !cancelled() }}
+        run: node --test tests/video-discovery.test.mjs
+      # The Video Room's contract with the seal and the meter: the REAL
+      # api/video-discovery.mjs handler against a stubbed, witnessed world
+      # (Auth, PostgREST, the RPCs, the Gemini Files + generateContent
+      # endpoints). A sealed matter is refused with zero provider requests and
+      # one truthful Record row; the meter is asked before anything is queued
+      # or asked and refunded when nothing was sent; a question's Record rows
+      # bracket the provider call in order; the request names the window.
+      - name: Video Room — the seal and the meter refuse before any byte moves
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-video-room-refusals.mjs

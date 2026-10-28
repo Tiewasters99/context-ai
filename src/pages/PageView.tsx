@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Lock, Unlock, X, Download } from 'lucide-react';
-import { pageToDocxBlob, downloadBlob, safeFilename } from '@/lib/export-page';
+import { Lock, Unlock, X } from 'lucide-react';
 import CoverImage from '@/components/layout/CoverImage';
+import PageExportMenu, { type PageExportBanner } from '@/components/content/PageExportMenu';
 import FullscreenToggle from '@/components/ui/FullscreenToggle';
 import CanvasPinToggle from '@/components/canvas/CanvasPinToggle';
 import PinToggle from '@/components/ui/PinToggle';
@@ -76,6 +76,10 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
         content: { body: value.body },
       });
       invalidate.invalidateItem(id);
+      // The space's page list too: a list shows the pages under its points
+      // by their CURRENT titles, read from that list, and a rename here
+      // should reach it on the next look rather than after a stale window.
+      if (item) invalidate.invalidateList({ spaceId: item.space_id, spaceType: item.space_type }, 'page');
     },
   });
   const { change, adopt, flush } = autosave;
@@ -165,19 +169,14 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
     void persist({ is_locked: !item.is_locked });
   };
 
-  const [exportingKind, setExportingKind] = useState<'docx' | null>(null);
-  const exportDocx = async () => {
-    if (!item || exportingKind) return;
-    setExportingKind('docx');
-    try {
-      const blob = await pageToDocxBlob(item.content?.body, item.title);
-      downloadBlob(blob, safeFilename(item.title, '.docx'));
-    } catch (e) {
-      console.error('export to .docx failed', e);
-    } finally {
-      setExportingKind(null);
-    }
+  // The Word menu (download, file a copy in the matter, send to a drive)
+  // reads the page as it is on screen: the autosave is flushed first, so the
+  // copy that leaves is the copy that was saved, not the server's last one.
+  const getPageForExport = async () => {
+    await flush();
+    return { title: draftRef.current.title, body: draftRef.current.body };
   };
+  const [exportBanner, setExportBanner] = useState<PageExportBanner | null>(null);
 
   const isLocked = item?.is_locked ?? false;
 
@@ -318,14 +317,12 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
           </button>
           <div className={`w-10 h-1 rounded-full bg-white/20 hover:bg-white/40 transition-colors ${isMobile ? 'invisible' : ''}`} title="Drag to move" />
           <div className="flex items-center gap-1">
-            <button
-              onClick={exportDocx}
-              disabled={!item || exportingKind === 'docx'}
-              className="p-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-white/60 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              title={exportingKind === 'docx' ? 'Exporting…' : 'Download as Word (.docx)'}
-            >
-              <Download size={14} strokeWidth={2} />
-            </button>
+            <PageExportMenu
+              matterId={item?.space_type === 'matterspace' ? item.space_id : null}
+              getPage={getPageForExport}
+              setBanner={setExportBanner}
+              disabled={!item}
+            />
             <DelegateButton
               variant="ribbon"
               matterId={item?.space_type === 'matterspace' ? item.space_id : null}
@@ -341,6 +338,48 @@ export default function PageView({ id: propId, embedded = false, onClose }: Embe
             <FullscreenToggle onToggle={toggleFullscreen} />
           </div>
         </div>
+
+        {/* What the Word menu did, in the connector's own words (the seal
+            note included), with the one link worth offering: the filed copy
+            in the Reader, or the file where the drive put it. */}
+        {exportBanner && (
+          <div
+            className={`flex items-center gap-2 -mt-2 mb-4 px-3 py-2 rounded-md text-xs ${
+              exportBanner.kind === 'ok'
+                ? 'bg-[#4ade80]/10 text-[#4ade80]'
+                : 'bg-[#f87171]/10 text-[#f87171]'
+            }`}
+          >
+            <span className="flex-1">{exportBanner.text}</span>
+            {exportBanner.kind === 'ok' && exportBanner.link && (
+              exportBanner.internal ? (
+                <button
+                  onClick={() => navigate(exportBanner.link!)}
+                  className="underline hover:no-underline"
+                >
+                  {exportBanner.linkLabel ?? 'Open'}
+                </button>
+              ) : (
+                <a
+                  href={exportBanner.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:no-underline"
+                >
+                  {exportBanner.linkLabel ?? 'Open'}
+                </a>
+              )
+            )}
+            <button
+              onClick={() => setExportBanner(null)}
+              className="p-0.5 rounded hover:bg-white/10 opacity-70 hover:opacity-100"
+              title="Dismiss"
+              aria-label="Dismiss"
+            >
+              <X size={12} strokeWidth={2} />
+            </button>
+          </div>
+        )}
 
         {body}
       </div>

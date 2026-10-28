@@ -44,7 +44,7 @@ export default function MediationRegister() {
   if (done) {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
-        <PageHead kicker="Contextspaces Mediation" title="The matter is registered" />
+        <PageHead kicker="Equazia.ai Mediation" title="The matter is registered" />
         <p className="text-[14px] text-white/70 leading-relaxed max-w-xl">
           Send the other side this invite code — the mediation begins the moment they appear:
         </p>
@@ -61,7 +61,7 @@ export default function MediationRegister() {
         </div>
         <p className="text-[12.5px] text-white/45 mt-4">
           They join from the Mediation Center — <span className="text-white/70">Join with an invite code</span> — after
-          signing in to their own Contextspaces account.
+          signing in to their own Equazia.ai account.
         </p>
         <div className="mt-8">
           <Link to={`/app/mediation/case/${done.id}`}>
@@ -75,7 +75,7 @@ export default function MediationRegister() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 sm:px-8 sm:py-12">
       <PageHead
-        kicker="Contextspaces Mediation"
+        kicker="Equazia.ai Mediation"
         title="Register a mediation"
         lede="Open the matter, choose your mediator, and receive an invite code for the other side."
       />

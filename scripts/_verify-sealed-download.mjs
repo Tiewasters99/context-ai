@@ -297,12 +297,17 @@ const bearerOf = (init) => {
   return a.toLowerCase().startsWith('bearer ') ? a.slice(7).trim() : null;
 };
 
-// PostgREST filters this witness understands: eq. and in.(…), on plain columns.
+// PostgREST filters this witness understands: eq. and in.(…), on plain
+// columns or a JSON path (`metadata->copied_from->>document_id`).
+const JSON_PATH = /^([a-z_][a-z0-9_]*)((?:->[a-z_][a-z0-9_]*)*)->>([a-z_][a-z0-9_]*)$/;
 function filtersOf(u, params) {
   const where = [];
-  for (const [k, v] of u.searchParams) {
-    if (['select', 'limit', 'order', 'offset', 'columns'].includes(k)) continue;
-    if (!IDENT.test(k)) return null;
+  for (const [key, v] of u.searchParams) {
+    if (['select', 'limit', 'order', 'offset', 'columns'].includes(key)) continue;
+    let k = key;
+    const jp = JSON_PATH.exec(key);
+    if (jp) k = `${jp[1]}${jp[2].split('->').filter(Boolean).map((s) => `->'${s}'`).join('')}->>'${jp[3]}'`;
+    else if (!IDENT.test(k)) return null;
     if (v.startsWith('eq.')) {
       params.push(v.slice(3));
       where.push(`${k} = $${params.length}`);

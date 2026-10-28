@@ -200,6 +200,9 @@ export function NoteCard({
   onDelete,
   onSaveEdit,
   onOpenLink,
+  tag = null,
+  tagOptions,
+  onTagChange,
 }: {
   note: Annotation;
   anchor: { x: number; y: number };
@@ -209,6 +212,11 @@ export function NoteCard({
   onDelete: () => void;
   onSaveEdit: (body: string, visibility: AnnotationVisibility) => void;
   onOpenLink: (link: AnnotationLink) => void;
+  /** Model Comparator: the note's rubric dimension (null = general). */
+  tag?: string | null;
+  /** Model Comparator: the comparison's rubric, when this document is a candidate. */
+  tagOptions?: TagOption[];
+  onTagChange?: (tag: string | null) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [editing, setEditing] = useState(false);
@@ -284,6 +292,18 @@ export function NoteCard({
         <p className="px-3.5 pb-2.5 text-[13px] leading-relaxed text-white/90 whitespace-pre-wrap max-h-52 overflow-y-auto">
           {note.note}
         </p>
+      )}
+
+      {tagOptions && tagOptions.length > 0 && !editing && (
+        <div className="px-3.5 pb-2.5">
+          {isAuthor && onTagChange ? (
+            <TagPicker value={tag} options={tagOptions} onChange={onTagChange} />
+          ) : (
+            <span className="inline-block text-[10px] uppercase tracking-[0.08em] px-1.5 py-0.5 rounded bg-white/5 text-white/55">
+              {tagOptions.find((o) => o.key === tag)?.label ?? 'General'}
+            </span>
+          )}
+        </div>
       )}
 
       {note.links.length > 0 && !editing && (
@@ -654,12 +674,18 @@ export function NoteComposer({
   isMobile,
   onSave,
   onCancel,
+  tagOptions,
 }: {
   anchor: { x: number; y: number };
   quote: string;
   matterId: string | null;
   currentDocumentId: string;
   isMobile: boolean;
+  /**
+   * Model Comparator: when this document is a candidate, the comparison's
+   * rubric — the note can be tagged with one dimension (or left general).
+   */
+  tagOptions?: TagOption[];
   /**
    * Saves the note and its links. Resolves to the titles of links that could
    * not be saved (the note itself is kept); the composer then says so instead
@@ -669,11 +695,13 @@ export function NoteComposer({
     body: string;
     visibility: AnnotationVisibility;
     links: ComposerLink[];
+    tag?: string | null;
   }) => Promise<string[] | void> | void;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [body, setBody] = useState('');
+  const [tag, setTag] = useState<string | null>(null);
   const [visibility, setVisibility] = useState<AnnotationVisibility>('matter');
   const [links, setLinks] = useState<ComposerLink[]>([]);
   const [linking, setLinking] = useState(false);
@@ -686,7 +714,7 @@ export function NoteComposer({
   const save = async () => {
     if (!canSave) return;
     setSaving(true);
-    const out = await onSave({ body: body.trim(), visibility, links });
+    const out = await onSave({ body: body.trim(), visibility, links, tag });
     if (out && out.length > 0) {
       setFailed(out);
       setSaving(false);
@@ -719,6 +747,10 @@ export function NoteComposer({
           placeholder="Seems contradictory with…"
           className="w-full resize-none rounded-md bg-white/5 border border-white/10 px-2.5 py-2 text-[13px] text-white/90 placeholder:text-white/25 outline-none focus:border-[rgba(212,160,84,0.5)] disabled:opacity-60"
         />
+
+        {tagOptions && tagOptions.length > 0 && !failed && (
+          <TagPicker value={tag} options={tagOptions} onChange={setTag} />
+        )}
 
         {links.length > 0 && (
           <div className="flex flex-col gap-1">
@@ -812,5 +844,31 @@ export function NoteComposer({
         )}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model Comparator: one select of the comparison's rubric dimensions (+ General)
+// ---------------------------------------------------------------------------
+export type TagOption = { key: string; label: string };
+
+function TagPicker({ value, options, onChange }: {
+  value: string | null;
+  options: TagOption[];
+  onChange: (tag: string | null) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-[11px] text-white/45">
+      <span className="uppercase tracking-[0.08em] text-[10px]">Dimension</span>
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="flex-1 min-w-0 rounded-md bg-[#181820] border border-white/10 px-2 py-1 text-[12px] text-white/85 outline-none focus:border-[rgba(212,160,84,0.5)]"
+        title="Which rubric dimension this note speaks to — it lands under that heading in the Comparison notes"
+      >
+        <option value="">General</option>
+        {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+      </select>
+    </label>
   );
 }

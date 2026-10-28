@@ -721,7 +721,7 @@ export default function MeetingView() {
               <p className="text-[var(--color-text-bright)] text-base mt-2">
                 {sealed === false
                   ? <>Ask anything, or let {ASSISTANT_THE} flag what to watch. The transcript is sent automatically.</>
-                  : "You can keep notes and ask the meeting assistant a question. Automatic flagging is off."}
+                  : `You can keep notes and ask ${ASSISTANT_THE} a question. Automatic flagging is off.`}
               </p>
             )}
             {chatRows.map((row, i) => {
@@ -894,7 +894,7 @@ function renderTranscriptMarkdown(args: {
   out.push(`- Matter: ${matterName}`);
   out.push(`- Started: ${fmt(startedAt)}`);
   if (endedAt) out.push(`- Ended: ${fmt(endedAt)}`);
-  out.push(`- Live transcription by Contextspaces Meetings. Speakers are numbered as the transcriber heard them, not named.`);
+  out.push(`- Live transcription by Equazia.ai Meetings. Speakers are numbered as the transcriber heard them, not named.`);
   out.push("", "## Transcript", "");
   for (const line of lines) {
     if (isNote(line.text)) {

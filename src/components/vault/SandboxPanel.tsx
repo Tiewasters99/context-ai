@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { FlaskConical, FileText, Plus, Trash2, Download, Loader2, Check, X, FolderInput, AlertCircle, Combine, Scissors, Presentation, Scale, PenLine } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { fetchPaged } from '@/lib/paged';
 import { useServerspaces, useServerspacesRefresh, type Serverspace } from '@/hooks/useServerspaces';
-import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument } from '@/lib/vault-persist';
+import { resolveMatter, persistVaultFile, triggerIngest, deleteVaultDocument, watchDocumentStatuses } from '@/lib/vault-persist';
+import type { IngestJobSnapshot } from '@/lib/vault-types';
+import IngestProgress from './IngestProgress';
 import { sandboxApi } from '@/lib/sandbox-api';
 import PdfPageEditor from './PdfPageEditor';
 import DeckComposerModal from './DeckComposerModal';
+import ComparatorDialog from './ComparatorDialog';
 import CardDialog from '@/components/ui/CardDialog';
 
 // The Sandbox: the AI Workbench's scratch workspace. One serverspace named
@@ -24,6 +28,10 @@ interface SandboxDoc {
   file_size_bytes: number | null;
   processing_status: string;
   storage_path: string | null;
+  doc_type: string | null;
+  // Set on a brief the desk made from a filed copy (draft-store.ts
+  // importBriefFromDocument): the copy it was made from, in this same box.
+  source_document_id: string | null;
 }
 
 interface PickerDoc {
@@ -35,7 +43,41 @@ interface PickerDoc {
 const isPdf = (d: SandboxDoc) =>
   (d.source_filename ?? '').toLowerCase().endsWith('.pdf');
 
-export default function SandboxPanel() {
+// Still being read, OCR'd or indexed: the rows that get a bar, and that the
+// panel keeps asking about until they settle.
+const TERMINAL_STATUS = new Set(['ready', 'error', 'held']);
+const inFlight = (d: SandboxDoc) => !TERMINAL_STATUS.has(d.processing_status);
+
+// What the Brief Desk can take in — the Reader's own test for its
+// "Open in the Brief Desk" button.
+const isDeskable = (d: SandboxDoc) =>
+  d.doc_type === 'brief' || /\.(docx|md|markdown|txt)$/i.test(d.source_filename ?? '');
+
+// The desk's working copy of another row in the box. It carries the same
+// title as its source (Eden, 10-22: two identical titles and nothing to tell
+// them apart), so the list tags it and names what it was made from.
+const isDeskCopy = (d: SandboxDoc) => d.doc_type === 'brief' && !!d.source_document_id;
+
+// A copy is opened where it sits (Eden, 10-22: "so we can actually open
+// documents and work on them in the Sandbox"): its name opens the Reader;
+// a brief also opens on the desk, whose working copy is filed in this same
+// box, so the readings and notes made there stay off the original's log.
+export default function SandboxPanel({ onOpenDocument }: { onOpenDocument?: (id: string) => void } = {}) {
+  const navigate = useNavigate();
+  const openInReader = (id: string) => (onOpenDocument ? onOpenDocument(id) : navigate(`/app/document/${id}`));
+  // The desk brings a filed copy in as a new brief each time it is opened, so
+  // a copy already brought in (its brief names it as the source) opens instead.
+  const openOnDesk = async (d: SandboxDoc) => {
+    const { data } = await supabase
+      .from('documents')
+      .select('id')
+      .eq('matterspace_id', selectedBox?.id ?? '')
+      .eq('doc_type', 'brief')
+      .eq('metadata->>source_document_id', d.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    navigate(`/app/brief/${data?.[0]?.id ?? d.id}`);
+  };
   const { data: serverspaces = [], isLoading } = useServerspaces();
   const refreshServerspaces = useServerspacesRefresh();
 
@@ -61,6 +103,7 @@ export default function SandboxPanel() {
   const [dropHover, setDropHover] = useState(false);
   const [editingDoc, setEditingDoc] = useState<SandboxDoc | null>(null);
   const [showDeckComposer, setShowDeckComposer] = useState(false);
+  const [showComparator, setShowComparator] = useState(false);
 
   const loadDocs = useCallback(async (boxId: string) => {
     setDocsLoading(true);
@@ -73,7 +116,7 @@ export default function SandboxPanel() {
       const { rows } = await fetchPaged<SandboxDoc>(
         (from, to) => supabase
           .from('documents')
-          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path')
+          .select('id, title, source_filename, file_size_bytes, processing_status, storage_path, doc_type, source_document_id:metadata->>source_document_id')
           .eq('matterspace_id', boxId)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -93,6 +136,37 @@ export default function SandboxPanel() {
     if (selectedBox) loadDocs(selectedBox.id);
     else setDocs([]);
   }, [selectedBox?.id, loadDocs]);
+
+  // A copy that is still being read gets the same bar as a Vault row, from
+  // the same batched watcher (one request per tick for the whole box, not one
+  // per document). The key is the set of in-flight ids, so a stage change
+  // does not re-subscribe; a copy that settles leaves the set and the
+  // traffic falls away with it. Until 2026-10-28 the row printed the raw
+  // status word and the panel never asked again.
+  const [jobs, setJobs] = useState<Record<string, { job?: IngestJobSnapshot; pageCount?: number }>>({});
+  const inFlightKey = useMemo(() => docs.filter(inFlight).map((d) => d.id).sort().join(','), [docs]);
+  useEffect(() => {
+    if (!inFlightKey) return;
+    return watchDocumentStatuses(inFlightKey.split(','), (rows) => {
+      const byId = new Map(rows.map((r) => [r.documentId, r.update] as const));
+      setDocs((prev) => prev.map((d) => {
+        const u = byId.get(d.id);
+        if (!u) return d;
+        const processing_status = u.status === 'indexed' ? 'ready'
+          : u.status === 'error' ? (u.held ? 'held' : 'error')
+          : (u.stage ?? d.processing_status);
+        return processing_status === d.processing_status ? d : { ...d, processing_status };
+      }));
+      setJobs((prev) => {
+        const next = { ...prev };
+        for (const [id, u] of byId) {
+          if (u.status === 'indexed' || u.status === 'error') delete next[id];
+          else next[id] = { job: u.job, pageCount: u.pageCount };
+        }
+        return next;
+      });
+    });
+  }, [inFlightKey]);
 
   const toggleSelect = (id: string) =>
     setSelection((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -299,6 +373,14 @@ export default function SandboxPanel() {
               ) : (
                 <>
                   <button
+                    onClick={() => setShowComparator(true)}
+                    disabled={busy !== null}
+                    title="Model Comparator — grade several drafts of one assignment blind, on one rubric"
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[rgba(255,255,255,0.07)] hover:bg-[rgba(255,255,255,0.12)] text-white/85 text-[12px] font-semibold transition-colors disabled:opacity-35"
+                  >
+                    <Scale size={14} /> Compare
+                  </button>
+                  <button
                     onClick={() => setShowDeckComposer(true)}
                     disabled={docs.length === 0 || busy !== null}
                     title="Draft a PowerPoint deck from documents in this box"
@@ -356,6 +438,8 @@ export default function SandboxPanel() {
             <div className="space-y-1 max-w-3xl">
               {docs.map((d) => {
                 const orderIdx = selection.indexOf(d.id);
+                const deskCopy = isDeskCopy(d);
+                const sourceTitle = deskCopy ? docs.find((x) => x.id === d.source_document_id)?.title : undefined;
                 return (
                   <div
                     key={d.id}
@@ -373,14 +457,45 @@ export default function SandboxPanel() {
                       {orderIdx >= 0 ? orderIdx + 1 : ''}
                     </button>
                     <FileText size={14} className={`shrink-0 ${isPdf(d) ? 'text-[#e8b84a]/80' : 'text-white/40'}`} />
-                    <div className="min-w-0 flex-1">
-                      <span className="text-[12px] text-white/90 truncate block">{d.title}</span>
+                    <button
+                      onClick={() => openInReader(d.id)}
+                      title="Open this working copy in the Reader"
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="text-[12px] text-white/90 truncate hover:text-[#e8b84a] hover:underline">{d.title}</span>
+                        {deskCopy && (
+                          <span
+                            title={sourceTitle ? `The Brief Desk's working copy of "${sourceTitle}". Its readings and notes stay here, off the original's log.` : 'The Brief Desk’s working copy. Its readings and notes stay here, off the original’s log.'}
+                            className="shrink-0 inline-flex items-center gap-1 px-1.5 py-[1px] rounded border border-[rgba(232,184,74,0.35)] bg-[rgba(232,184,74,0.1)] text-[#e8b84a] text-[9px] font-semibold uppercase tracking-wide"
+                          >
+                            <PenLine size={9} /> Desk copy
+                          </span>
+                        )}
+                      </span>
                       <span className="text-[10px] text-white/40">
                         {d.source_filename ?? 'text'}
                         {d.file_size_bytes ? ` · ${(d.file_size_bytes / 1024).toFixed(0)} KB` : ''}
-                        {d.processing_status !== 'ready' ? ` · ${d.processing_status}` : ''}
+                        {d.processing_status !== 'ready' && !(inFlight(d) && d.storage_path) ? ` · ${d.processing_status}` : ''}
                       </span>
-                    </div>
+                      {/* Still being read: how far, and why it takes time. A
+                          PDF opens now from the button above — the Reader
+                          draws it from the bucket, passages or not. */}
+                      {inFlight(d) && d.storage_path && (
+                        <IngestProgress stage={d.processing_status} job={jobs[d.id]?.job} pageCount={jobs[d.id]?.pageCount} openNow={isPdf(d)} />
+                      )}
+                    </button>
+                    {isDeskable(d) && (
+                      <button
+                        onClick={() => void openOnDesk(d)}
+                        title={deskCopy
+                          ? 'Open this working copy on the Brief Desk.'
+                          : 'Open it in the Brief Desk to edit it and check its cites. Its desk copy is filed in this box; the original in its matter is never touched.'}
+                        className="h-7 px-2 inline-flex items-center gap-1.5 rounded-md hover:bg-[rgba(255,255,255,0.08)] text-[11px] text-white/60 hover:text-[#e8b84a] transition-colors shrink-0"
+                      >
+                        <PenLine size={13} /> <span className="hidden md:inline">Brief Desk</span>
+                      </button>
+                    )}
                     {isPdf(d) && (
                       <button
                         onClick={() => setEditingDoc(d)}
@@ -422,6 +537,15 @@ export default function SandboxPanel() {
             setResult({ text: `Saved edited copy "${filename}" in this box.`, url: downloadUrl });
             if (selectedBox) await loadDocs(selectedBox.id);
           }}
+        />
+      )}
+
+      {showComparator && selectedBox && (
+        <ComparatorDialog
+          box={{ id: selectedBox.id, name: selectedBox.name }}
+          docs={docs.map((d) => ({ id: d.id, title: d.title }))}
+          onClose={() => setShowComparator(false)}
+          onFiled={() => { if (selectedBox) void loadDocs(selectedBox.id); }}
         />
       )}
 

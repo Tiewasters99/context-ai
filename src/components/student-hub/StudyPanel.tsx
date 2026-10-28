@@ -58,7 +58,7 @@ const INVITE_NOTE: Record<InviteNote, string> = {
   sending: 'sending the invitation…',
   sent: 'invitation sent',
   email_not_configured:
-    'Email sending isn’t set up yet — ask them to create a Contextspaces account with this address and their seat will be waiting.',
+    'Email sending isn’t set up yet — ask them to create an Equazia.ai account with this address and their seat will be waiting.',
   error: 'the invitation didn’t go out — the seat is still theirs',
 };
 
@@ -766,7 +766,7 @@ export function StudyPanel({ session, seed, onSeedConsumed, askSeed, onAskSeedCo
                       </div>
                       <p style={{ fontFamily: T.sans, fontSize: 11, color: T.faint, lineHeight: 1.45, margin: '6px 0 0' }}>
                         {seatsOpen === 1 ? 'One seat is open.' : `${seatsOpen} seats are open.`} An
-                        invitation goes to the address you give; they create a Contextspaces account
+                        invitation goes to the address you give; they create an Equazia.ai account
                         with that same address and the seat is theirs.
                       </p>
                     </div>
