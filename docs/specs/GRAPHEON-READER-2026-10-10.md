@@ -189,7 +189,8 @@ _reader_is_member(p_user uuid) returns boolean   security invoker, plpgsql
   or status = 'past_due' and current_period_end + interval '7 days' > now()      -- D16 grace
 
 _edition_can_read(p_edition)   new clause, before the purchases check:
-  if access = 'library' and status in ('published', 'withdrawn') then return _reader_is_member(auth.uid());
+  if access = 'library' then return status = 'published' and _reader_is_member(auth.uid());
+  -- a withdrawn Library book leaves the Library for members too (the Terms say so); purchases are the only thing that survive withdrawal
   the price_cents = 0 clause applies only when access = 'free'.
 ```
 
@@ -227,7 +228,7 @@ Eden's additions arrive in bursts (15 on 10-27, 69 on 10-21, 71 on 10-16). A dai
 - **After launch**: new mirrored editions enter the queue; the `release` job publishes up to **3 a day** (D17) in `created_at` order, oldest first, skipping none; a batch of 69 feeds 23 days. Eden may set `release_on` by hand to hold or hurry a book. A volume set releases together.
 - **"New this week"**: a shelf at the top of the Store (editions with `published_at` in the last 7 days), and the digest email.
 
-**Jobs** — the repo's first Vercel crons (`vercel.json` has none today): `api/reader-cron.mjs?job=…`, called by Vercel with `Authorization: Bearer ${CRON_SECRET}`, refusing anything else.
+**Jobs** — the repo's first Vercel crons (`vercel.json` has none today; three daily-or-better schedules need the team's Pro plan — Hobby allows two crons, once a day): `api/reader-cron.mjs?job=…`, called by Vercel with `Authorization: Bearer ${CRON_SECRET}`, refusing anything else.
 
 | job | when | does |
 |---|---|---|
