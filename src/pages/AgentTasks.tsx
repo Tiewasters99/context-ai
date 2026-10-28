@@ -2,10 +2,13 @@
 // door for tasks. Eden (2026-09-25): "I like the tasks idea and the delegate
 // function. I just want to get there via a general agents tab first."
 //
-//   * At the top, every connected AI, grouped "Agents" and "Assistants you
-//     chat with": name, provider, how it is connected, last used, open tasks;
-//     Edit matters / Revoke for an agent, Connections for the others.
-//     Choosing one filters the tasks to it.
+//   * Three classes of agent (Eden, 2026-10-28): Equazia Agents (the ones we
+//     build; a live one opens to its Procedures), Custom Agents (create your
+//     own; Coming), and My Connected Agents (outside agents you trust, each
+//     limited to the matters you choose: name, provider, last used, open
+//     tasks, Edit matters / Revoke). Choosing one filters the tasks to it.
+//     Assistants you chat with are not agents and are not listed here; their
+//     tasks still show below.
 //   * Below, All tasks across every matter: waiting for you, open, recently
 //     done. Each line opens to the question and Answer box, the result and
 //     the log (the same pieces as a matter's Tasks tab).
@@ -40,21 +43,22 @@ import {
 } from '@/lib/agentTokens';
 import {
   CHAT_ASSISTANT_NOTE,
-  GROUP_LABEL,
   recipientLabel,
   recipientsForMatter,
-  type RecipientGroup,
   type TaskRecipient,
 } from '@/lib/task-recipients';
 import { ALL_TASKS_KEY, taskKey } from '@/lib/task-ui';
 import DelegateCard from '@/components/agents/DelegateCard';
 import { AddAgentCard, EditMattersCard, ALL_MATTERS_LABEL } from '@/components/agents/AgentsSection';
 import { TaskDetail, TaskLine } from '@/components/agents/MatterTasks';
-import RecipeCard from '@/components/trademark/RecipeCard';
+import EquaziaAgents from '@/components/agents/EquaziaAgents';
 
 export const AGENTS_PAGE_INTRO =
-  'Every AI connected to your Equazia.ai, and every task you have handed one. An agent checks '
-  + 'for its tasks on its own. An assistant you chat with picks a task up when you ask it to check its tasks.';
+  'The agents Equazia builds, the agents you create, and the outside agents you connect, with every task '
+  + 'you have handed one. No agent works in a SecureSpace.';
+
+/** The outside agent families a firm can connect (Eden, 2026-10-28). */
+const CONNECTABLE_FAMILIES = ['Grok Bots', 'GPT Dots', 'Meta Muse', 'Gemini Spark', 'Instinct (when available)'];
 
 const RECENT_DAYS = 30;
 const RECENT_MAX = 25;
@@ -284,7 +288,7 @@ export default function AgentTasks() {
     </div>
   );
 
-  const groups: RecipientGroup[] = ['agents', 'assistants'];
+  const connectedAgents = live.filter((r) => r.group === 'agents');
 
   return (
     <div className="min-h-screen text-[var(--color-text)]">
@@ -326,58 +330,66 @@ export default function AgentTasks() {
         {recipientsError && <p className="mb-3 text-[13px] text-[#f87171]">{recipientsError}</p>}
         {actionError && <p className="mb-3 text-[13px] text-[#f87171]">{actionError}</p>}
 
-        {/* Recipes: matter-scoped procedures the reviewer runs stage by stage.
-            Not gated on the task board (085): a recipe needs only its own tables. */}
-        <section aria-labelledby="recipes" className="mb-10">
-          <h2 id="recipes" className="text-[15px] font-medium text-[var(--color-text-bright)]">Recipes</h2>
-          <div className="mt-3"><RecipeCard /></div>
+        {/* Equazia Agents: the agents we build. A live one opens to its
+            Procedures. Not gated on the task board (085): a procedure needs
+            only its own tables. */}
+        <section aria-labelledby="equazia-agents" className="mb-10">
+          <h2 id="equazia-agents" className="text-[15px] font-medium text-[var(--color-text-bright)]">Equazia Agents</h2>
+          <p className="mt-1 mb-3 text-[12.5px] text-[var(--color-text-muted)]">
+            Built by Equazia and added as they are ready. Each works inside one matter, and you decide and sign off.
+          </p>
+          <EquaziaAgents />
+        </section>
+
+        <section aria-labelledby="custom-agents" className="mb-10">
+          <h2 id="custom-agents" className="text-[15px] font-medium text-[var(--color-text-bright)]">Custom Agents</h2>
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3.5 opacity-80">
+            <span className="flex-1 text-[13px] text-[var(--color-text-secondary)]">Create your own legal agents.</span>
+            <span className="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] border border-[var(--color-border)] rounded px-1.5 py-px">
+              Coming
+            </span>
+          </div>
         </section>
 
         {!notReady && (
-          <section aria-labelledby="connected-ai">
+          <section aria-labelledby="connected-agents">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 id="connected-ai" className="text-[15px] font-medium text-[var(--color-text-bright)]">Connected AI</h2>
-              <span className="flex items-center gap-3 text-[12.5px]">
-                <button onClick={() => setAdding(true)} className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)]">
-                  Add an agent
-                </button>
-                <Link to="/app/connections" className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)]">
-                  Connect an assistant
-                </Link>
-              </span>
+              <h2 id="connected-agents" className="text-[15px] font-medium text-[var(--color-text-bright)]">My Connected Agents</h2>
+              <button onClick={() => setAdding(true)} className="text-[12.5px] text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)]">
+                Connect an agent
+              </button>
             </div>
+            <p className="mt-1 text-[12.5px] text-[var(--color-text-muted)] leading-relaxed">
+              Outside agents you trust, each limited to the matters you choose: {CONNECTABLE_FAMILIES.join(', ')}.
+              A connected agent never reaches a SecureSpace.
+            </p>
             {loading && <p className="mt-3 text-[12.5px] text-[var(--color-text-muted)] italic">Reading your connections…</p>}
-            {!loading && live.length === 0 && (
+            {!loading && connectedAgents.length === 0 && (
               <p className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-[13px] text-[var(--color-text-secondary)] leading-relaxed">
-                No AI is connected yet. Connect Claude, ChatGPT, Gemini or Grok under Connections, or add an agent.
+                No agent is connected yet.
               </p>
             )}
-            {groups.map((g) => {
-              const rows = live.filter((r) => r.group === g);
-              if (rows.length === 0) return null;
-              return (
-                <div key={g} className="mt-4">
-                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2">
-                    {GROUP_LABEL[g]}
-                  </h3>
-                  <div className="flex flex-col gap-2">
-                    {rows.map((r) => (
-                      <RecipientRow
-                        key={r.key}
-                        r={r}
-                        open={openCount.get(r.key) ?? 0}
-                        selected={r.key === selectedKey}
-                        scopeLine={scopeLine(r)}
-                        onSelect={() => select(r.key)}
-                        onEdit={() => void agentRow(r.id).then((a) => a && setEditing(a))}
-                        onRevoke={() => void revoke(r)}
-                        busy={busyId === r.id}
-                      />
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+            {connectedAgents.length > 0 && (
+              <div className="mt-3 flex flex-col gap-2">
+                {connectedAgents.map((r) => (
+                  <RecipientRow
+                    key={r.key}
+                    r={r}
+                    open={openCount.get(r.key) ?? 0}
+                    selected={r.key === selectedKey}
+                    scopeLine={scopeLine(r)}
+                    onSelect={() => select(r.key)}
+                    onEdit={() => void agentRow(r.id).then((a) => a && setEditing(a))}
+                    onRevoke={() => void revoke(r)}
+                    busy={busyId === r.id}
+                  />
+                ))}
+              </div>
+            )}
+            <p className="mt-3 text-[12px] text-[var(--color-text-muted)]">
+              Assistants you chat with (Claude, ChatGPT, Gemini, Grok) are not agents: connect them under{' '}
+              <Link to="/app/connections" className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-bright)] underline">Connections</Link>.
+            </p>
           </section>
         )}
 
