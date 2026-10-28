@@ -115,7 +115,7 @@ test('the sealed sentence says the three things that may be claimed', () => {
 test('the word-search note is the one tip, and it is true of a sealed matter', () => {
   assert.equal(
     SEALED_SEARCH_NOTE,
-    'Inside a sealed matter the assistant finds passages by their words, not by meaning — use the document’s own terms.',
+    'Inside a sealed matter the Orchestrator finds passages by their words, not by meaning — use the document’s own terms.',
   );
   // Only sealed scopes get it.
   assert.equal(describeScope({ name: 'Open matter', tier: 'A' }).searchNote, '');
@@ -305,8 +305,8 @@ test('the other two starters send as they read', () => {
 // ── 6. The door on the matter page ────────────────────────────────────────
 
 test('the door is labelled for what it is', () => {
-  assert.equal(askAssistantLabel(true), 'Ask the sealed assistant');
-  assert.equal(askAssistantLabel(false), 'Ask the assistant');
+  assert.equal(askAssistantLabel(true), 'Ask the sealed Orchestrator');
+  assert.equal(askAssistantLabel(false), 'Ask the Orchestrator');
 });
 
 test('B and C are both sealed to the user; A is not', () => {

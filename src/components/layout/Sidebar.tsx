@@ -497,7 +497,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
             this rail entirely — and why it is mounted even when collapsed. */}
         <SiteSearchMount collapsed={collapsed} />
 
-        {/* The Assistant — the one door to everything else: it explains how
+        {/* The Orchestrator — the one door to everything else: it explains how
             the place works and, on request, does the work. It sits up here
             with the rooms rather than down with the account plumbing. */}
         <button
@@ -509,7 +509,7 @@ export default function Sidebar({ onToggleAssistant, assistantOpen = false, isMo
           }`}
         >
           <Bot size={15} className="shrink-0" strokeWidth={1.75} />
-          {!collapsed && <span>Assistant</span>}
+          {!collapsed && <span>Orchestrator</span>}
         </button>
 
         {/* Agents (2026-09-25): every connected AI and every task handed to

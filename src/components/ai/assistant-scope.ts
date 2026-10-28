@@ -97,7 +97,7 @@ export const SILO_SENTENCE =
  * meaning. Saying so is the difference between a useful answer and a shrug.
  */
 export const SEALED_SEARCH_NOTE =
-  'Inside a sealed matter the assistant finds passages by their words, not by meaning — use the document’s own terms.';
+  'Inside a sealed matter the Orchestrator finds passages by their words, not by meaning — use the document’s own terms.';
 
 /** The strip after "clear" on a scope the page put there. */
 export function unscopedStripText(name?: string): string {
@@ -295,7 +295,7 @@ export function describeScope(facts: ScopeFacts): ScopeDescription {
 
 /** What the matter header's button reads. */
 export function askAssistantLabel(sealed: boolean): string {
-  return sealed ? 'Ask the sealed assistant' : 'Ask the assistant';
+  return sealed ? 'Ask the sealed Orchestrator' : 'Ask the Orchestrator';
 }
 
 /**

@@ -722,7 +722,7 @@ export default function Assistant({ isOpen, onClose }: AssistantProps) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      if (!token) throw new Error('You need to be signed in to use the assistant.');
+      if (!token) throw new Error('You need to be signed in to use the Orchestrator.');
 
       // A command's matter first; else the page's — resolved through the very
       // same function the strip renders from, and read now rather than at

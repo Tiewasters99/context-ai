@@ -721,7 +721,7 @@ export default function MeetingView() {
               <p className="text-[var(--color-text-bright)] text-base mt-2">
                 {sealed === false
                   ? <>Ask anything, or let {ASSISTANT_THE} flag what to watch. The transcript is sent automatically.</>
-                  : "You can keep notes and ask the meeting assistant a question. Automatic flagging is off."}
+                  : `You can keep notes and ask ${ASSISTANT_THE} a question. Automatic flagging is off.`}
               </p>
             )}
             {chatRows.map((row, i) => {

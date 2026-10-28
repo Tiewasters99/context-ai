@@ -215,7 +215,7 @@ function MobileTabBar({
       </NavLink>
       <button onClick={onToggleAssistant} className={`${tab} ${assistantOpen ? active : idle}`}>
         <Bot size={19} strokeWidth={1.75} />
-        <span>Assistant</span>
+        <span>Orchestrator</span>
       </button>
     </nav>
   );

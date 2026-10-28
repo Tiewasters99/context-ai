@@ -1264,7 +1264,7 @@ function DeskEditor(p: DeskProps) {
     const root = recordRootRef.current ?? meta.matterspace_id;
     const ids = subtreeIds(allMatters, root);
     const scope = ids.length ? ids : [root];
-    p.setBusy(`Asking the assistant which document in ${recordRootName ?? 'the record'} this is…`);
+    p.setBusy(`Asking the Orchestrator which document in ${recordRootName ?? 'the record'} this is…`);
     try {
       const page = await fetchMatterDocumentRows(supabase as unknown as DocumentsSource, scope, { order: 'name', ceiling: 400 });
       const candidates = page.rows
@@ -1279,12 +1279,12 @@ function DeskEditor(p: DeskProps) {
         page: 1,
         heading: label,
         title: doc.title,
-        caveat: `The assistant's pick from the file's names (${m.confidence} confidence): ${m.why} Read the caption before you confirm.`,
+        caveat: `The Orchestrator's pick from the file's names (${m.confidence} confidence): ${m.why} Read the caption before you confirm.`,
       });
       return true;
     } catch (e) {
       p.setBusy(null);
-      missNote.current = `${missNote.current ? missNote.current + ' ' : ''}(The assistant could not be asked: ${(e as Error).message})`;
+      missNote.current = `${missNote.current ? missNote.current + ' ' : ''}(The Orchestrator could not be asked: ${(e as Error).message})`;
       return false;
     }
   };

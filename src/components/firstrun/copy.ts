@@ -15,7 +15,7 @@
 //      transcribed from the code that enforces them (lib/ingest-formats.mjs
 //      SUPPORTED_TYPES_SUMMARY; SealMatterModal.tsx), not written fresh.
 //   2. **No invented vocabulary.** "Serverspace", "matter", "Vault",
-//      "Assistant", "Connections", "Record" are the product's own words and
+//      "Orchestrator", "Connections", "Record" are the product's own words and
 //      the labels on its own screens, so a line that names one can be
 //      followed by eye.
 
@@ -101,9 +101,9 @@ export const FIRST_RUN_COPY = {
     ask: {
       title: 'Ask about them',
       detail:
-        'The Assistant, scoped to that matter. It reads what is filed there and nothing from ' +
+        'The Orchestrator, scoped to that matter. It reads what is filed there and nothing from ' +
         'another matter.',
-      action: 'Open the Assistant',
+      action: 'Open the Orchestrator',
       actionBusy: '',
       alternate: '',
       blocked: 'Open a matter first.',

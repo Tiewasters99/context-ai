@@ -2377,7 +2377,7 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         <button
           onClick={() => askAbout()}
           className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-white/5 text-[#e8b84a]/80 hover:text-[#e8b84a]"
-          title="Ask about this document — the Assistant, with this page in front of it"
+          title="Ask about this document — the Orchestrator, with this page in front of it"
           aria-label="Ask about this document"
         >
           <MessageCircle size={15} />
