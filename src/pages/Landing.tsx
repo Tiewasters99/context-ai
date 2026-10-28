@@ -1,5 +1,6 @@
+import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Maximize2, MoveHorizontal, Minimize2 } from 'lucide-react';
 
 const coreFeatures = [
   {
@@ -109,6 +110,72 @@ const teasers = [
   },
 ];
 
+// Safari on the iPhone has no requestFullscreen on a <video>; it has its own.
+interface IOSVideo extends HTMLVideoElement {
+  webkitEnterFullscreen?: () => void;
+}
+
+// The film with two controls of its own under it. The browser's control bar
+// already has a full-screen button, but it is small, bottom right, and shown
+// only on hover or after a tap — four people in a row could not find it. So:
+// a labelled "Watch full screen" that calls the full-screen API (the iPhone's
+// own method as the fallback), and on a laptop a "Wide view" that lets the
+// player span the viewport instead of the 900px column, for anyone who does
+// not want the whole monitor. The native controls stay underneath.
+function TeaserPlayer({ teaser }: { teaser: (typeof teasers)[number] }) {
+  const video = useRef<HTMLVideoElement>(null);
+  const [wide, setWide] = useState(false);
+
+  const fullScreen = () => {
+    const el = video.current as IOSVideo | null;
+    if (!el) return;
+    if (el.requestFullscreen) void el.requestFullscreen().catch(() => el.webkitEnterFullscreen?.());
+    else el.webkitEnterFullscreen?.();
+  };
+
+  return (
+    <div
+      className={
+        wide
+          ? 'relative left-1/2 w-[calc(100vw-2rem)] -translate-x-1/2 transition-[width] duration-300'
+          : 'relative transition-[width] duration-300'
+      }
+    >
+      <div className="rounded-xl overflow-hidden bg-black ring-1 ring-[#d4a054]/30 shadow-[0_30px_80px_rgba(0,0,0,0.7)]">
+        <video
+          ref={video}
+          controls
+          playsInline
+          preload="metadata"
+          poster={teaser.poster}
+          src={teaser.src}
+          className="w-full aspect-video block"
+          aria-label={`${teaser.title}: ${teaser.tagline}`}
+        />
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-5 text-[12px] font-semibold uppercase tracking-[0.12em]">
+        <button
+          type="button"
+          onClick={() => setWide((w) => !w)}
+          className="hidden sm:inline-flex items-center gap-1.5 text-[#d4a054]/80 hover:text-[#d4a054] transition-colors"
+          aria-pressed={wide}
+        >
+          {wide ? <Minimize2 size={14} /> : <MoveHorizontal size={14} />}
+          {wide ? 'Normal view' : 'Wide view'}
+        </button>
+        <button
+          type="button"
+          onClick={fullScreen}
+          className="inline-flex items-center gap-1.5 text-[#d4a054] hover:text-[#f5f2ed] transition-colors"
+        >
+          <Maximize2 size={14} />
+          Watch full screen
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Landing() {
   return (
     <div className="min-h-screen">
@@ -185,17 +252,7 @@ export default function Landing() {
           </p>
           {teasers.map((t) => (
             <figure key={t.src} className="mb-14">
-              <div className="rounded-xl overflow-hidden bg-black ring-1 ring-[#d4a054]/30 shadow-[0_30px_80px_rgba(0,0,0,0.7)]">
-                <video
-                  controls
-                  playsInline
-                  preload="metadata"
-                  poster={t.poster}
-                  src={t.src}
-                  className="w-full aspect-video block"
-                  aria-label={`${t.title}: ${t.tagline}`}
-                />
-              </div>
+              <TeaserPlayer teaser={t} />
               <figcaption className="mt-6 text-center">
                 <div className="text-[26px] font-semibold text-[#f5f2ed]" style={{ fontFamily: '"Playfair Display Variable", serif' }}>{t.title}</div>
                 <div className="text-[17px] text-[#d4a054] mt-1">{t.tagline}</div>
