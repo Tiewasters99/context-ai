@@ -1,7 +1,7 @@
 // The shared fixture for the Trademark Clearance connector harnesses
 // (scripts/_verify-trademark-connector.mjs, scripts/_e2e-trademark-mcp.mjs).
 //
-// A real Postgres (PGlite) running the REAL migrations 121 and 122 — their tables,
+// A real Postgres (PGlite) running the REAL migrations 121, 122 and 124 — their tables,
 // triggers and RLS — on a small stub of what 121 needs (matterspaces with a
 // membership table behind can_access_matter / can_write_matter, documents,
 // matterspace_descendants, the events vocabulary, ledger_append), and a stub
@@ -217,6 +217,7 @@ export async function makeDb() {
   await db.exec(STUBS);
   await db.exec(mig('121_trademark_clearance.sql'));
   await db.exec(mig('122_trademark_slice2.sql'));
+  await db.exec(mig('124_trademark_run_rows.sql'));
   await db.exec(`
     grant all on all tables in schema public to service_role;
     insert into public.profiles values ('${ADA}'), ('${BOB}');

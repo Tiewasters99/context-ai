@@ -16,7 +16,7 @@ import {
   generateQueries, planRegeneration, nextManualSeq, type Decomposition, type GeneratedQuery, type KnownMark,
 } from '../../../lib/trademark/queries.mjs';
 import { procedureHash } from '../../../lib/trademark/procedure.mjs';
-import { collectHits, summarizeRun } from '../../../lib/trademark/triage.mjs';
+import { collectHits, summarizeRun, MAX_RUN_ROWS } from '../../../lib/trademark/triage.mjs';
 import type { ParsedRow } from '../../../lib/trademark/parse.mjs';
 import { reportFilename, reportHash } from '../../../lib/trademark/report.mjs';
 import { selectAll } from '../../../lib/trademark/rows.mjs';
@@ -450,13 +450,15 @@ export interface RunInput {
  * cannot erase one; the database merges query_seqs).
  */
 export async function recordRun(b: ClearanceBundle, query: TmQuery, input: RunInput): Promise<void> {
-  const rows = input.source === 'failed' ? [] : input.rows.slice(0, 500);
+  const over = input.source === 'failed' ? 0 : Math.max(0, input.rows.length - MAX_RUN_ROWS);
+  const rows = input.source === 'failed' ? [] : input.rows.slice(0, MAX_RUN_ROWS);
   const s = summarizeRun({ source: input.source, reported_count: input.reported, rows });
+  const cut = over ? `${over} record${over === 1 ? '' : 's'} past the ${MAX_RUN_ROWS}-record limit not captured` : '';
   const run_by = await userId();
   const runId = crypto.randomUUID();
   const { error } = await supabase.from('tm_query_runs').insert({
     id: runId, query_id: query.id, source: input.source, reported_count: input.reported, raw: rows,
-    gap_note: [s.gapNote, input.gapNote].filter(Boolean).join('; ') || null,
+    gap_note: [s.gapNote, cut, input.gapNote].filter(Boolean).join('; ').slice(0, 2000) || null,
     export_document_id: input.exportDocumentId ?? null, run_by,
   });
   if (error) fail(error, 'Could not record the run.');

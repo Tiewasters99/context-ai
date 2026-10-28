@@ -2,6 +2,7 @@
 import type { ParsedRow } from './parse.mjs';
 import type { Procedure } from './procedure.mjs';
 
+export declare const MAX_RUN_ROWS: number;
 export interface RunLike {
   id?: string; query_id: string; run_at: string; source: 'manual' | 'export' | 'failed';
   reported_count: number | null; captured_count: number; gap?: boolean; gap_note?: string | null; raw?: ParsedRow[];
