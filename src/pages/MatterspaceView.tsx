@@ -17,7 +17,6 @@ import MatterCalendar from '@/components/matter/MatterCalendar';
 import MatterTasks from '@/components/agents/MatterTasks';
 import TrademarkTab from '@/components/trademark/TrademarkTab';
 import { countClearances } from '@/lib/trademark/data';
-import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import MatterThread from '@/components/matter/MatterThread';
 import MeetingsSurface from '@/components/matter/MeetingsSurface';
 import AiPauseControl from '@/components/matter/AiPauseControl';
@@ -40,9 +39,9 @@ import {
   type ContentType,
 } from '@/hooks/useContentItems';
 
-const tabs = ['Updates', 'Record', 'Calendar', 'Tasks', 'Trademark', 'Pages', 'Lists', 'Tables', 'Cite-Check', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
+const tabs = ['Updates', 'Record', 'Calendar', 'Tasks', 'Trademark', 'Pages', 'Lists', 'Tables', 'Thread', 'Meetings', 'Bucketizer', 'Discovery', 'Vault'] as const;
 type Tab = typeof tabs[number];
-type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Cite-Check' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar' | 'Tasks' | 'Trademark'>;
+type ContentTab = Exclude<Tab, 'Vault' | 'Discovery' | 'Bucketizer' | 'Thread' | 'Meetings' | 'Updates' | 'Record' | 'Calendar' | 'Tasks' | 'Trademark'>;
 
 const TAB_STORAGE_KEY = (matterId: string) => `cs.matterspace.tab:${matterId}`;
 
@@ -536,16 +535,13 @@ export default function MatterspaceView() {
         {activeTab === 'Trademark' && matter && (
           <TrademarkTab matterId={matter.id} matterName={matter.name} />
         )}
-        {activeTab === 'Cite-Check' && matter && (
-          <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
-        )}
         {activeTab === 'Thread' && matter && (
           <MatterThread matterId={matter.id} />
         )}
         {activeTab === 'Meetings' && matter && (
           <MeetingsSurface matterId={matter.id} />
         )}
-        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Cite-Check' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && activeTab !== 'Trademark' && activeTab !== 'Tasks' && matter && (
+        {activeTab !== 'Vault' && activeTab !== 'Discovery' && activeTab !== 'Bucketizer' && activeTab !== 'Thread' && activeTab !== 'Meetings' && activeTab !== 'Updates' && activeTab !== 'Record' && activeTab !== 'Calendar' && activeTab !== 'Trademark' && activeTab !== 'Tasks' && matter && (
           <ContentSurface tab={activeTab} matterId={matter.id} />
         )}
       </div>

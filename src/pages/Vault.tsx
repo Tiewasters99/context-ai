@@ -14,7 +14,6 @@ import DocumentReader from '@/pages/DocumentReader';
 import MusicLibrary from '@/components/layout/MusicLibrary';
 import { type MusicTrack, youtubeEmbedUrl } from '@/lib/musicTracks';
 import ShareModal from '@/components/serverspace/ShareModal';
-import CiteCheckSurface from '@/components/matter/CiteCheckSurface';
 import NewMatterModal, { type NewMatterContext } from '@/components/matter/NewMatterModal';
 import DeleteMatterModal, { type DeleteMatterTarget, collectDescendantIds } from '@/components/matter/DeleteMatterModal';
 import type { VaultFile } from '@/lib/vault-types';
@@ -55,14 +54,13 @@ import { getVaultClip, pasteVaultClip, VAULT_CHANGED_EVENT } from '@/lib/vault-c
 // 'byok' | 'storage' | 'settings' were menu entries with no renderContent()
 // case — they highlighted, then silently showed Home. They return to the menu
 // when the views actually exist.
-type VaultView = 'home' | 'import' | 'workbench' | 'sandbox' | 'citecheck' | 'files' | 'generated';
+type VaultView = 'home' | 'import' | 'workbench' | 'sandbox' | 'files' | 'generated';
 
 const menuItems: { icon: typeof Upload; label: string; description: string; view: VaultView }[] = [
   { icon: Upload, label: 'Import/Display Documents', description: 'OneDrive, Google Drive, Dropbox, or local files', view: 'import' },
   { icon: FolderOpen, label: 'File Browser', description: 'Browse and manage your imported documents', view: 'files' },
   { icon: Bot, label: 'AI Workbench', description: 'Give instructions to your AI agent', view: 'workbench' },
   { icon: FlaskConical, label: 'Sandbox', description: 'Stage working copies, combine exhibits into one PDF', view: 'sandbox' },
-  { icon: FileText, label: 'Cite-Check', description: 'Verify every citation in a brief — TOA + per-cite report', view: 'citecheck' },
   { icon: FileText, label: 'Generated Documents', description: 'View and edit AI-generated output', view: 'generated' },
 ];
 
@@ -910,21 +908,6 @@ export default function Vault() {
         return <AIWorkbench vaultFiles={vaultFiles} matterId={matter?.id} onSaveToVault={addGeneratedDoc} />;
       case 'sandbox':
         return <SandboxPanel onOpenDocument={setReaderDocId} />;
-      case 'citecheck':
-        return (
-          <div className="flex-1 overflow-y-auto px-8 py-8">
-            <div className="max-w-3xl mx-auto">
-              <p className="text-[13px] font-semibold text-[#8a8693] uppercase tracking-wider mb-4">Cite-Check</p>
-              {matter ? (
-                <CiteCheckSurface matterId={matter.id} matterName={matter.name} />
-              ) : (
-                <p className="text-[13px] text-white/50">
-                  Pick a matter from the rail first — cite-check runs are stored on the matter, so the Vault needs to be in matter mode.
-                </p>
-              )}
-            </div>
-          </div>
-        );
       case 'generated':
         return <GeneratedDocsPanel docs={generatedDocs} onOpen={setOpenFile} onRemove={removeGeneratedDoc} />;
       case 'home':
