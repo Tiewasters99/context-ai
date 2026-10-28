@@ -95,7 +95,7 @@ export default function AuthorityPane({ state, onClose, back, onPickCopy, onSear
         {state.caveat && state.docId && <div className="text-[11px] text-orange-200/80 mt-0.5">{state.caveat}</div>}
         {state.docId && state.goto?.relied && relied && relied.nonce === state.goto.nonce && (
           <div className={`text-[11px] mt-0.5 ${relied.lit && relied.basis !== 'closest' ? 'text-[#f5dc6a]/90' : 'text-orange-200/80'}`} data-testid="pane-relied">
-            {reliedLine(relied, !!state.goto.relied.depo, !state.goto.relied.claim.trim() && !state.goto.relied.quotes.length)}
+            {reliedLine(relied, !!state.goto.relied.depo, !state.goto.relied.claim.trim() && !state.goto.relied.quotes.length, !!state.goto.relied.anywhere)}
           </div>
         )}
         {/* The cite's reading, and the initials the log signs with. Confirm, Problem and Note
@@ -215,8 +215,9 @@ function Note({ children }: { children: React.ReactNode }) {
 }
 
 /** The line under the caveat: what the yellow on the page is, in words. */
-function reliedLine(r: ReaderReliedResult, depo: boolean, noWords: boolean): string {
+function reliedLine(r: ReaderReliedResult, depo: boolean, noWords: boolean, anywhere = false): string {
   if (r.basis === 'none') {
+    if (anywhere) return 'The brief’s quotation was not found in this document’s text — nothing is lit. Read the provision; the quote may be inexact.';
     if (noWords && !depo) return 'The desk has no words of the brief for this cite (it was not placed in the text), so nothing is lit. Read the page.';
     return depo
       ? 'The cited lines are not in this page’s text — nothing is lit. Read the page.'

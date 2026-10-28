@@ -32,6 +32,13 @@ export interface ReliedAsk {
   quotes: string[];
   /** A deposition cite's lines (page:line to page:line). */
   depo?: { page: number; line: number | null; endPage: number | null; endLine: number | null } | null;
+  /**
+   * The document IS the authority (a rule or statute filed under its own
+   * name, opened at its first page): look for the brief's quotes through the
+   * whole document, not a pinned page. Quotes only — a "closest sentence"
+   * anywhere in a document would be a guess, so `claim` is sent empty.
+   */
+  anywhere?: boolean;
 }
 
 export interface ReliedPassage {
