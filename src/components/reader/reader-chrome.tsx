@@ -268,7 +268,7 @@ export function SelectionMenu({
         <button
           onClick={onAsk}
           className="h-5 px-1 inline-flex items-center gap-1 rounded text-[#e8b84a]/85 hover:text-[#e8b84a] transition text-[11px] font-medium"
-          title="Ask the Assistant about this passage"
+          title="Ask the Orchestrator about this passage"
         >
           <MessageCircle size={14} />
           Ask

@@ -243,7 +243,7 @@ function channelFor(event: LedgerEvent): string {
     case 'system':
       return 'Equazia.ai worker';
     default:
-      return 'Equazia.ai in-app assistant';
+      return 'Equazia.ai Orchestrator (in-app)';
   }
 }
 

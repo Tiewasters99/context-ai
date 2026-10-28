@@ -408,7 +408,7 @@ function describeCompletion(event: LedgerEvent, people: People): string {
       ? ` for ${actorName(event, people)}`
       : '';
   const failed = str(event.payload?.error) ? ' — the exchange ended in an error' : '';
-  return `The assistant answered${asked} — ${model} on ${provider}${route}${failed}`;
+  return `The Orchestrator answered${asked} — ${model} on ${provider}${route}${failed}`;
 }
 
 /** "a member", "an admin" — the role word is the row's, the article is ours. */

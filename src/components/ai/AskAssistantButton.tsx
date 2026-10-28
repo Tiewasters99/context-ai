@@ -76,8 +76,8 @@ export default function AskAssistantButton({ matterId, matterName }: Props) {
         }
         title={
           sealed
-            ? 'Open the assistant inside this sealed matter — answered by the sealed model in the firm’s own AWS account'
-            : 'Open the assistant scoped to this matter'
+            ? 'Open the Orchestrator inside this sealed matter — answered by the sealed model in the firm’s own AWS account'
+            : 'Open the Orchestrator scoped to this matter'
         }
       >
         {sealed
