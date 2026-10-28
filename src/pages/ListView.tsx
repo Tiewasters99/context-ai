@@ -8,7 +8,9 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
+  type DragStartEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -50,6 +52,7 @@ import {
   indentItem,
   outdentItem,
   ancestorIds,
+  subtreeIds,
   type TreeNode,
 } from '@/lib/list-tree';
 
@@ -398,8 +401,9 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   // Scroll the linked item into view and flash it, once the list is up. A
   // subpoint under a folded branch is unfolded first, or there would be
   // nothing to scroll to.
+  const flashedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusItemId || items.length === 0) return;
+    if (!focusItemId || items.length === 0 || flashedFor.current === focusItemId) return;
     const folded = ancestorIds(items, focusItemId).map((a) => `${a}:sub`).filter((k) => collapsed.has(k));
     if (folded.length) {
       setCollapsed((prev) => {
@@ -413,6 +417,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     const el = document.querySelector<HTMLElement>(`[data-item-id="${focusItemId}"]`);
     if (!el) return;
     el.scrollIntoView({ block: 'center' });
+    flashedFor.current = focusItemId;
     setFlashItemId(focusItemId);
     const t = setTimeout(() => setFlashItemId(null), 4000);
     return () => clearTimeout(t);
@@ -498,16 +503,19 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   // Tab / Shift+Tab on an item: one level in (under the point above it) or
   // one level out. Focus stays on the item — it is the same input, re-keyed
   // by id, so the browser keeps it.
-  const indent = (itemId: string) => {
+  const indent = (itemId: string): boolean => {
     const next = indentItem(itemsRef.current, itemId);
-    if (next === itemsRef.current) return;
+    if (next === itemsRef.current) return false;
     const parent = next.find((i) => i.id === itemId)?.parent_id;
     if (parent) setExpanded(`${parent}:sub`, true);
     applyItems(next);
+    return true;
   };
-  const outdent = (itemId: string) => {
+  const outdent = (itemId: string): boolean => {
     const next = outdentItem(itemsRef.current, itemId);
-    if (next !== itemsRef.current) applyItems(next);
+    if (next === itemsRef.current) return false;
+    applyItems(next);
+    return true;
   };
 
   const updateItem = (itemId: string, patch: Partial<ChecklistItem>) => {
@@ -623,7 +631,27 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // While a point is dragged its subpoints are hidden: they ride along in
+  // the data, and on screen they would otherwise sit inside the dragged
+  // block and be the nearest drop target — a drop onto its own subtree,
+  // which is refused, so the drag would do nothing.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const handleDragStart = (event: DragStartEvent) => setDraggingId(String(event.active.id));
+  const handleDragCancel = () => setDraggingId(null);
+  // Belt and braces: the dragged point's own descendants are never candidates.
+  const collisionDetection: CollisionDetection = (args) => {
+    const activeId = String(args.active.id);
+    const own = subtreeIds(itemsRef.current, activeId);
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (c) => String(c.id) === activeId || !own.has(String(c.id)),
+      ),
+    });
+  };
+
   const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingId(null);
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     // The dragged point takes the target's slot — its level and its place
@@ -652,6 +680,9 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
   const outline: OutlineActions = {
     today,
     flashItemId,
+    draggingId,
+    // No hover on a phone: the row's controls stay visible there.
+    alwaysShowControls: isMobile,
     sortable: sortMode === 'manual',
     nested: sortMode === 'manual',
     pageTitles,
@@ -748,7 +779,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
               />
             </div>
 
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <DndContext sensors={sensors} collisionDetection={collisionDetection} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
               {/* One sortable context over the whole outline, in pre-order:
                   rows at every depth stack vertically in exactly that order,
                   so dnd-kit's vertical strategy measures them as one column. */}
@@ -869,6 +900,10 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
 interface OutlineActions {
   today: string;
   flashItemId: string | null;
+  /** The point being dragged right now; its subpoints are hidden meanwhile. */
+  draggingId: string | null;
+  /** Touch screens have no hover: show the row controls outright. */
+  alwaysShowControls: boolean;
   /** Rows can be dragged (manual order). */
   sortable: boolean;
   /** Rows nest (manual order). Sorted by due date, every point sits at one level. */
@@ -889,8 +924,9 @@ interface OutlineActions {
   clearNote: (id: string) => void;
   remove: (id: string) => void;
   enter: (id: string, currentText: string) => string;
-  indent: (id: string) => void;
-  outdent: (id: string) => void;
+  /** True when the point actually moved; false leaves the key to the browser. */
+  indent: (id: string) => boolean;
+  outdent: (id: string) => boolean;
   addSubpoint: (id: string) => string;
   addPage: (id: string) => void;
   openPage: (pageId: string) => void;
@@ -939,15 +975,20 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
 
   const subCount = outline.nested ? node.children.length : 0;
   const pages = item.linked_page_ids;
-  const subOpen = outline.isExpanded(`${item.id}:sub`);
+  const subOpen = outline.isExpanded(`${item.id}:sub`) && outline.draggingId !== item.id;
+  // Hover-revealed on a pointer screen, always there on a touch screen.
+  const reveal = outline.alwaysShowControls ? 'opacity-100' : 'opacity-0 group-hover:opacity-100';
   const pagesOpen = outline.isExpanded(`${item.id}:pages`);
   // The branch line shows whenever there is something under the point. With
   // nothing under it, the row's own + and its menu are the way in.
   const hasBranches = subCount > 0 || pages.length > 0;
 
-  const focusItem = (id: string) => {
+  const focusItem = (id: string, caretAtEnd = false) => {
     requestAnimationFrame(() => {
-      document.querySelector<HTMLInputElement>(`[data-item-id="${id}"]`)?.focus();
+      const el = document.querySelector<HTMLInputElement>(`[data-item-id="${id}"]`);
+      if (!el) return;
+      el.focus();
+      if (caretAtEnd) { const n = el.value.length; el.setSelectionRange(n, n); }
     });
   };
 
@@ -966,7 +1007,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
         <button
           {...attributes}
           {...listeners}
-          className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-white/30 hover:text-white/70 transition-all shrink-0 cursor-grab active:cursor-grabbing"
+          className={`${reveal} p-0.5 rounded text-white/30 hover:text-white/70 transition-all shrink-0 cursor-grab active:cursor-grabbing`}
           title="Drag to reorder — drop on another point to sit beside it"
         >
           <GripVertical size={13} />
@@ -995,10 +1036,14 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
           } else if (e.key === 'Tab' && outline.nested) {
             // Tab nests this point under the one above it; Shift+Tab steps
             // it back out. The outliner's keyboard, so a branch can be
-            // typed without reaching for the mouse.
-            e.preventDefault();
-            if (e.shiftKey) outline.outdent(item.id); else outline.indent(item.id);
-            focusItem(item.id);
+            // typed without reaching for the mouse. When there is nowhere
+            // to go, the key is left to the browser so focus can leave.
+            const moved = e.shiftKey ? outline.outdent(item.id) : outline.indent(item.id);
+            if (moved) {
+              e.preventDefault();
+              // The input remounts under its new parent; put the caret back at the end.
+              focusItem(item.id, true);
+            }
           }
         }}
         data-item-id={item.id}
@@ -1043,7 +1088,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
       {outline.nested && (
         <button
           onClick={() => outline.addSubpoint(item.id)}
-          className="opacity-0 group-hover:opacity-100 p-1 rounded text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-all shrink-0"
+          className={`${reveal} p-1 rounded text-white/40 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-all shrink-0`}
           title="Add subpoint"
         >
           <Plus size={13} />
@@ -1052,6 +1097,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
       <ItemActionsMenu
         item={item}
         nested={outline.nested}
+        alwaysVisible={outline.alwaysShowControls}
         onAddSubpoint={() => outline.addSubpoint(item.id)}
         onAddPage={() => outline.addPage(item.id)}
         onSubMatter={() => outline.subMatter(item.id)}
@@ -1059,7 +1105,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
       />
       <button
         onClick={() => outline.remove(item.id)}
-        className="opacity-0 group-hover:opacity-100 p-1 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0"
+        className={`${reveal} p-1 rounded text-white/40 hover:text-red-300 hover:bg-red-300/10 transition-all shrink-0`}
         title={subCount > 0 ? 'Delete this point (its subpoints move up a level)' : 'Delete'}
       >
         <Trash2 size={13} />
@@ -1135,7 +1181,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
               </button>
               <button
                 onClick={() => outline.unlinkPage(item.id, pid)}
-                className="opacity-0 group-hover/page:opacity-100 p-1 rounded text-white/35 hover:text-red-300 transition-all shrink-0"
+                className={`${outline.alwaysShowControls ? 'opacity-100' : 'opacity-0 group-hover/page:opacity-100'} p-1 rounded text-white/35 hover:text-red-300 transition-all shrink-0`}
                 title="Take this page off the point (the page stays in the matter)"
               >
                 <X size={11} />
@@ -1160,6 +1206,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
 interface ItemActionsMenuProps {
   item: ChecklistItem;
   nested: boolean;
+  alwaysVisible: boolean;
   onAddSubpoint: () => void;
   onAddPage: () => void;
   onSubMatter: () => void;
@@ -1169,7 +1216,7 @@ interface ItemActionsMenuProps {
 // The quiet per-item menu. It stays out of the way until the row is hovered,
 // and it is portalled to <body> with fixed coordinates so a resized (and
 // therefore scrolling) list card can't clip it.
-function ItemActionsMenu({ item, nested, onAddSubpoint, onAddPage, onSubMatter, subMatterDisabledReason }: ItemActionsMenuProps) {
+function ItemActionsMenu({ item, nested, alwaysVisible, onAddSubpoint, onAddPage, onSubMatter, subMatterDisabledReason }: ItemActionsMenuProps) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null);
 
@@ -1214,7 +1261,7 @@ function ItemActionsMenu({ item, nested, onAddSubpoint, onAddPage, onSubMatter, 
         ref={buttonRef}
         onClick={() => (anchor ? setAnchor(null) : open())}
         className={`p-1 rounded transition-all shrink-0 text-white/40 hover:text-white hover:bg-[rgba(255,255,255,0.06)] ${
-          anchor ? 'opacity-100 text-white' : 'opacity-0 group-hover:opacity-100'
+          anchor ? 'opacity-100 text-white' : alwaysVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         }`}
         title="More"
       >
