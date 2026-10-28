@@ -134,6 +134,146 @@ Sessions: 3–4, after Phase 2's checkout exists (it shares the Stripe account, 
 
 **Decisions (2b) — taken 2026-10-13.** **D8** Products: tee, tote, print to start. **D9** Margin: Printify base cost + a flat 40%, rounded to .99; shipping shown as its own flat line (US first). **D10** Shop: keep "Reading Wizard" (25109380). **D11** Publisher illustrations: off by default; on only with the publisher's switch *and* an executed merch agreement with Grapheon.ai LLC that fixes the publisher's share — rights protection is built into enabling, so no publisher's plate is ever sold with Grapheon taking the whole margin (Eden: "They'll never want to put their work up for use with Grapheon taking the margin"). **D12** One store: the Reader's sheet. The Contextspaces Library reader's bridge button is removed when 2b ships.
 
+## The Library membership (Phase 2S) — the Reader and the Library, $9.99 a month
+
+*Added 2026-10-28. Eden: "I'd like to offer a bundled package of Grapheon Reader and my Library, updated daily with cleaned, curated daily additions." Price $9.99 a month, cancel any time; browse for free; the membership is needed to read a whole book, to keep books on the device, and to read everything in the Library.*
+
+**Why now.** This spec excluded subscriptions "until there are enough editions to make a subscription worth more than a book." The Library serverspace in Contextspaces held 376 cleaned public-domain PDFs on 2026-10-28 (History 91, Law 88, Literature 100, Science 97; 301 with a chosen cover), and Eden adds to it in batches of 15–70 every few days. That is the trigger. Phase 2S puts the Library in the Store behind one recurring price. Phase 2's per-edition **Buy** survives for editions other people publish (Phase 4); it is no longer needed to sell the Library.
+
+**What is sold.** One membership, "Grapheon Reader + Library": every Library edition, read in full, in the Reader, on any signed-in device, with offline copies once Phase 3 ships; new books as they are released; the Workshop on any Library book for the member's own copy (as D5 already allows). Editions published by other people are not in the membership (D15). Merchandise (2b) is unchanged: anyone, member or not, may order a print of a public-domain plate.
+
+### Browsing for free — the sample wall
+
+Kindle's rule: anyone can read into a book, then the book stops. The same here, with the page as the unit.
+
+- **The sample is a PDF, not a set of pictures.** At publish (and at every *Publish update*), the server cuts the first N pages of the book into a second PDF with `pdf-lib` (already a dependency) and stores it as `edition_assets.kind = 'sample'` in a **public** bucket `edition-samples/<edition id>/<version>.pdf`, cacheable at the edge. Nothing else about an edition becomes public. The three-page server-rendered images in Phase 2 are replaced by this; the Store card still shows the cover and description.
+- **N** = 10% of the book's pages, floor 8, ceiling 30 (D13). A 220-page novel samples 22 pages; a 60-page pamphlet samples 8.
+- **The Reader opens the sample as it opens any book** — `PdfBook` with a `PdfSource` pointed at the sample file, no marks store, no bench. "One copy. One Reader." When the reader reaches the last sample page, a card stands where the next page would be: the book's title, the page count, *Continue with a Grapheon Reader + Library membership — $9.99 a month, cancel any time*, **Join**, and *Already a member? Sign in*. Find, zoom and the illustrations laid within the sampled pages all work; a clip laid beyond page N is not in the sample.
+- **No sign-in to browse.** The Store, an edition's page and its sample are open to anyone, as Kindle's *Look Inside* is (D13). Sign-in happens at **Join**.
+
+### What the membership gates
+
+Three things, stated plainly because a web app cannot gate its own installation:
+
+1. **Reading past the sample** of any Library edition. `api/editions.mjs` `book` and `sign` answer for a Library edition only when `_edition_can_read` says yes, and for a Library edition that now means *member* (below).
+2. **Download** (Phase 3): keeping a book on the device for offline reading. Members only. The downloaded manifest carries `current_period_end`; opening a downloaded book offline is allowed until that date plus three days of grace (D16), after which the Reader asks for a connection to confirm the membership. Marks made offline sync up as before.
+3. **The whole Library**, including each day's release. Non-members see every book in the Store and may sample every one.
+
+The Reader app itself (the PWA at read.grapheon.ai, installed to a phone's home screen or not) is open to everyone — it has to be, for the sample to work. "Download the Reader" in the pitch means: install it, join, and the books come with you.
+
+### Entitlement — the one thing that must be right
+
+Today `_edition_can_read` returns true for any signed-in user when `status = 'published' and price_cents = 0`. Library editions must **not** be created at price 0 and called gated; they would be free. The migration adds an explicit access mode and routes it through a membership check:
+
+```
+editions
+  + access      text not null default 'paid'  check (access in ('free', 'paid', 'library'))
+                existing rows: 'free' where price_cents = 0, else 'paid'
+  + collection_key text, volume smallint        -- "Leaves of Grass" vol 2 of 2 (metadata, below)
+  + release_on  date                             -- the release queue (below)
+
+reader_subscriptions          one row per member
+  user_id                     pk → auth.users
+  stripe_customer_id          text not null
+  stripe_subscription_id      text not null unique
+  status                      text not null      -- Stripe's own: incomplete | trialing | active | past_due | canceled | unpaid
+  current_period_end          timestamptz not null
+  cancel_at_period_end        boolean not null default false
+  price_id                    text not null      -- the price consented to
+  consent_session_id          text               -- Stripe Checkout Session id = the proof of consent
+  consented_at                timestamptz
+  created_at, updated_at
+
+_reader_is_member(p_user uuid) returns boolean   security invoker, plpgsql
+  status in ('active', 'trialing') and current_period_end > now()
+  or status = 'past_due' and current_period_end + interval '7 days' > now()      -- D16 grace
+
+_edition_can_read(p_edition)   new clause, before the purchases check:
+  if access = 'library' and status in ('published', 'withdrawn') then return _reader_is_member(auth.uid());
+  the price_cents = 0 clause applies only when access = 'free'.
+```
+
+RLS: `reader_subscriptions` readable by its owner (so the app can show *Member until 24 Nov*), written only by the Stripe webhook (service role). Invoker wrappers as always. `api/editions.mjs` keeps answering AS THE USER, so the gate is one function in one place.
+
+**Lapse** (D16): when a membership ends — cancelled at period end, or a failed renewal past the grace — `_reader_is_member` turns false and the Reader stops serving Library books and refuses new downloads. `edition_marks` and `edition_progress` are kept, untouched; a member who returns finds every highlight where it was. Nothing is deleted on lapse.
+
+### Paying — Grapheon's Stripe account (D3), recurring
+
+- **One product, one price**: *Grapheon Reader + Library*, $9.99 a month, recurring, in Grapheon.ai LLC's Stripe account (the merch account). Env `READER_PRICE_ID`. No annual price in 2S (D14).
+- **Join** → `api/reader-subscribe.mjs` (bearer → the user's email → Stripe Checkout Session `mode = 'subscription'`, `line_items = [{ price: READER_PRICE_ID, quantity: 1 }]`, `customer_email` or the existing `stripe_customer_id`, `metadata.kind = 'reader_subscription'` on the Session **and** `subscription_data.metadata.kind = 'reader_subscription'` so every later subscription event carries it, `consent_collection.terms_of_service = 'required'` (needs the Terms URL in the Stripe account's public details — T12), `automatic_tax` on when D20 says so, `success_url = /library?joined=1`, `cancel_url` = the edition page the reader came from).
+- **Manage membership** in the Reader's account menu → `api/reader-portal.mjs` → a Stripe Customer Portal session (a portal configuration in Grapheon's account: cancel **at period end**, update the card, see invoices; no plan switching). This is the online cancellation NY GBL § 527-a requires of an offer accepted online, and the "click to quit" California's law requires; it costs no code beyond the session call.
+- **The webhook** `api/grapheon-webhook.mjs` grows a second kind. Today it dispatches `kind = 'merch'` on `checkout.session.completed`, `checkout.session.expired` and `charge.refunded`. It adds, for `kind = 'reader_subscription'`: `checkout.session.completed` (write `consent_session_id`, `consented_at`, then fetch the subscription and upsert), `customer.subscription.created | updated | deleted` (upsert `status`, `current_period_end`, `cancel_at_period_end`, `price_id` from the object — order-independent, the object is the truth, as `billing-webhook.mjs` does), `invoice.payment_failed` (status comes through the subscription object; the event is logged and triggers the failed-renewal email). The endpoint's event list in the Stripe dashboard must be widened to match. Unknown kinds remain a 200.
+- **Refunds**: none for a membership month except where law requires or the price-increase rule applies (Terms T13); through the Stripe dashboard when they happen. A refund does not change entitlement; cancellation does.
+- **Receipts** come from Stripe (enable customer emails for successful payments in the account). The Reader sends its own mail (below) for what Stripe does not say.
+
+### The Library in the Store — mirroring 376 books
+
+`scripts/library-to-editions.mjs` (service role, run from the clean clone, idempotent, keyed by `editions.source_document_id`), and then the same code as the nightly `release` job's first step, so a book Eden files into the Library appears in the queue the next morning without a click:
+
+1. **Read** every `ready` PDF document in the Library serverspace `c7117b5e-…` not yet mirrored.
+2. **Parse the filename** — the grammar Eden already uses is the contract (D18): `Title - Cleaned.pdf`, `Title - Cleaned, Vol II.pdf`, `Title Vol I - Cleaned, Part 2.pdf`. Strip ` - Cleaned`; `Vol`/`Part` tokens become `collection_key` (the title without them) and `volume` (roman or arabic, in order; a Vol with Parts counts Parts within the Vol). The Store shows a collection as **one card** — "Leaves of Grass · 2 volumes" — opening to its volumes in order.
+3. **Author** (D18): from the PDF's own metadata when it names one; otherwise from `library-authors.csv` in the repo, which the script writes once with every title and an empty author column for Eden to fill — 2 of 376 documents carry an author today, and a store browses by author.
+4. **Create the edition**: `publisher_user_id` = Eden's account (D19), `access = 'library'`, `rights = 'public_domain'`, `rights_note` = the source and the cleaning, `price_cents = 0` (unused under `library`), `status = 'draft'`, `cover_path` from the document's `cover_url` (copied into the `editions` bucket as a `cover` asset; a book with no chosen cover — 75 today — gets `captureJacket`'s page one, and shows a chosen cover the day Eden picks one in Contextspaces and the nightly mirror notices the change).
+5. **Copy the book** server-side (`copy_book`'s storage `/object/copy` path, nothing through a browser), **cut the sample**, record both assets.
+6. **Queue** it: `release_on` = the next free day (below).
+
+Storage: the Library's PDFs are copied, not linked — the Reader never reads from a matter. Expect the `editions` bucket to roughly equal the Library's size (the `documents` table has no size column; measure the bucket after the first run).
+
+### The release queue — "updated daily" as a promise the system keeps
+
+Eden's additions arrive in bursts (15 on 10-27, 69 on 10-21, 71 on 10-16). A daily cadence should not depend on him uploading daily.
+
+- **Launch**: the first 376 are published together (one `publish_edition` each) the day the Store opens — a store with eight books is not a library.
+- **After launch**: new mirrored editions enter the queue; the `release` job publishes up to **3 a day** (D17) in `created_at` order, oldest first, skipping none; a batch of 69 feeds 23 days. Eden may set `release_on` by hand to hold or hurry a book. A volume set releases together.
+- **"New this week"**: a shelf at the top of the Store (editions with `published_at` in the last 7 days), and the digest email.
+
+**Jobs** — the repo's first Vercel crons (`vercel.json` has none today): `api/reader-cron.mjs?job=…`, called by Vercel with `Authorization: Bearer ${CRON_SECRET}`, refusing anything else.
+
+| job | when | does |
+|---|---|---|
+| `release` | daily 06:00 ET | mirror new Library books into the queue; publish up to 3 whose `release_on` ≤ today |
+| `digest` | Mondays 08:00 ET | "New this week" email to members (and to non-members who asked for it) |
+| `reminders` | daily | the yearly membership reminder (price, frequency, how to cancel) to each member on their anniversary — California's law; sent to everyone, since one rule is cheaper than fifty |
+
+### Mail — Resend, from read@grapheon.ai (T9)
+
+Service mail, each with the member's membership facts and an unsubscribe for anything that is not about their account: **welcome** (what the membership is, renews monthly, how to cancel — the acknowledgment NY § 527-a wants the consumer to be able to keep), **renewal failed** (we will retry; access pauses after 7 days), **cancelled** (reads until the period end, marks kept), **price change** (30 days ahead; see Terms), **yearly reminder**, **weekly digest**. Templates in `lib/reader-mail.mjs`; the domain grapheon.ai is already verified with Resend (Quorium).
+
+### Metadata, covers and the Office
+
+- **Titles** are shown cleaned; the filename stays in `rights_note` for provenance.
+- **The Reading Room** (`/read/<item>`, text-only, fed by `api/office?book=`) today serves the whole text of any book on an Office shelf, free. With a paid Library that is a free copy of the same book. D7 is revised: the Reading Room serves the **same first N pages** as the sample, ending in the same card, with a link to the edition at read.grapheon.ai. `api/office.mjs` learns a `limit` from the mirrored edition's sample length (two items on the shelves today; no migration pain).
+- **Contextspaces' Library** is untouched: it stays Eden's private serverspace, the Vault list and The Office keep their cover thumbnails (#473), and filing a book to the Office keeps working.
+
+### What 2S does not do
+
+- No annual plan, no family plan, no trial (D14; a trial is a free-to-pay conversion with its own disclosure rules — later, if ever).
+- No bundling of third-party editions (D15).
+- No DRM beyond the signed URL and the entitlement check, as before.
+- No in-app purchase on iOS or Android (Phase 5 wrappers read only; the membership is bought on the web — Apple rule 3.1.3(b)).
+
+### Build order and sessions
+
+1. Land #413 (or re-cut it on current main) — the Reader has to exist. Eden: `publisher_accounts` row, D1 DNS.
+2. Migration: `access`, `collection_key`, `volume`, `release_on`, `reader_subscriptions`, `_reader_is_member`, the new `_edition_can_read` clause; PGlite harness (the `_verify-editions-migration.mjs` pattern). **Eden applies.**
+3. `scripts/library-to-editions.mjs` + the sample cutter + `library-authors.csv`; dry run, then the real run into drafts (nothing published yet).
+4. `api/reader-subscribe.mjs`, `api/reader-portal.mjs`, the webhook branch, harness; Eden creates the product/price and the portal configuration in Grapheon's Stripe account and pastes `READER_PRICE_ID`.
+5. The Store: grid by shelf, collections, "New this week", edition page, the sample in the Reader with the wall card, Join, Manage membership, *Member until* in the account menu.
+6. `api/reader-cron.mjs` + `vercel.json` crons + `lib/reader-mail.mjs`; Reading Room limit.
+7. Terms and Privacy pages with the membership section (T13–T18) published before Join is enabled; `consent_collection` on.
+8. Launch day: publish the 376; Eden joins with a real card as the first member; cancel-at-period-end checked end to end.
+
+Four to five sessions after #413 lands. Nothing here touches Contextspaces' billing, tables or Stripe account.
+
+### Compliance notes for the build (verified 2026-10-28, scope stated)
+
+- **ROSCA** (federal) is in force: clear disclosure of the material terms before the charge, express informed consent, a simple cancellation mechanism. The checkout page states the price and renewal; the consent checkbox and the portal satisfy the rest.
+- **The FTC's 2024 "click-to-cancel" amendments were vacated** by the Eighth Circuit on 2025-07-08 (*Custom Communications v. FTC*, procedural grounds); the FTC issued an Advance Notice of Proposed Rulemaking on 2026-03-11 to start over. Build to the vacated rule's shape anyway (cancel as easily as you joined); it costs nothing and it is where the agency is heading.
+- **New York GBL § 527-a**: online acceptance → online cancellation; acknowledgment the consumer can keep; a price increase needs fresh consent, or a 14-day cancel after the charge with a pro-rata refund. Pending bills would let a website link satisfy the cancellation mechanism; not confirmed enacted.
+- **California Bus. & Prof. Code § 17600 et seq.** as amended by AB 2863 (effective 2025-07-01): express affirmative consent; proof of consent kept three years or one year after termination, whichever is longer (hence `consent_session_id`); a yearly reminder naming the product, the charge and how to cancel; cancellation in the channel used to join. Law-firm summaries, not the statute, were read; check the codified text before launch.
+- **New Jersey**: the 2023 law is narrow (service contracts for property, one-year terms); S2062 (introduced 2026-01-13) would add a general auto-renewal law with a same-medium cancellation rule; status not confirmed.
+- **Sales tax** (D20, Terms T6): a subscription to digital books is taxable in some states, including possibly New Jersey. Stripe Tax decides per address once the account is registered where it must be; the recommendation is on from the first charge.
+
 ## Creator publishing (Phase 4)
 
 Anyone with an account can publish. The bench is already in the app from Phase 1, so the work is policy and payouts:
@@ -151,6 +291,7 @@ Anyone with an account can publish. The bench is already in the app from Phase 1
 | **1** | `PdfBook` extracted and used by `DocumentReader` (no visible change — its own PR first); the `editions` tables and bucket (migration); `edition.html` at read.grapheon.ai with sign-in, My Library, **New edition** (library pick or upload), the Reader with the bench on a draft, **Publish** to version 1. Eden uploads *Innocents Abroad*, benches it in the Reader, lays the Flow clip, reads it back at read.grapheon.ai. | 5–7 |
 | **2** | The Store, edition pages with samples, Stripe Checkout in Grapheon's account, `edition_purchases`, the webhook, Read-after-buy, **Publish update**. A second account buys *Innocents Abroad*. | 3–4 |
 | **2b** | Merchandise: the product sheet, `api/merch.mjs` with the ported Printify client, `merch_*` tables, Stripe Checkout with shipping and tax, the webhook that places and submits the Printify order, My orders. A real tote arrives. | 3–4 |
+| **2S** | The Library membership: `access` + `reader_subscriptions` migration, the Library mirrored into editions (376 at launch) with cleaned titles, authors and volume sets, the sample PDF and its wall card, Join (Stripe Checkout, subscription, Grapheon's account) and Manage membership (Customer Portal), the webhook's subscription kind, the release queue and crons, the mails, the Reading Room limit, the membership Terms. Eden joins with a real card; a cancellation runs to period end. **After #413 lands.** | 4–5 |
 | **3** | PWA: installable, offline downloads, progress and marks sync. Read on the phone in airplane mode. | 2–3 |
 | **4** | Creator publishing opened: rights attestation enforced, takedown, Stripe Connect payouts, publisher invitations. | 3–4 |
 | **5** | App Store / Play wrappers (reader-only); the bridge from a Contextspaces matter, if wanted. | 2 + review time |
@@ -165,7 +306,18 @@ Phase 1 can start now, in parallel with the launch. It touches `DocumentReader.t
 - **D4 Terms and Privacy** for the Reader, separate from Contextspaces' (the `/terms` work in hand for the launch can be the template). Needed before Phase 2 takes money.
 - **D5 Who makes editions in Phases 1–3.** Everyone can bench a book for themselves from Phase 1 (a reader illustrating their own copy is the product); **publishing to the Store** is Eden's account only until Phase 4 opens it. The Contextspaces bridge button, if built, shows only in the Library serverspace.
 - **D6 Grapheon's cut** on third-party sales (Phase 4). Kindle Direct is 30% or 70% depending on price band; Gumroad 10% + fees. A flat 20% is a reasonable opening position.
-- **D7 Reading Room.** Does the Office's free Reading Room keep showing text-only copies of books that now have paid editions, or does a shelf book link to its edition in the store? Recommended: both — the Reading Room is the sample.
+- **D7 Reading Room.** Does the Office's free Reading Room keep showing text-only copies of books that now have paid editions, or does a shelf book link to its edition in the store? Recommended: both — the Reading Room is the sample. **Revised 2026-10-28 (Phase 2S):** the Reading Room serves the same first N pages as the edition's sample and ends in the same card; a full free text would undercut the membership.
+
+**Phase 2S decisions (2026-10-28).** Decided by Eden already: $9.99 a month, cancel any time, browse free, the membership gates full reading, downloads and the whole Library.
+
+- **D13 The sample.** 10% of the book's pages, floor 8, ceiling 30; open to anyone without sign-in (Kindle's *Look Inside*). Alternative: a fixed 10 pages for every book; or sign-in required to sample (costs browsers, gains emails).
+- **D14 One price.** Monthly only in 2S. An annual price (say $79.99) and a free trial are each a later decision with their own disclosure rules; neither is needed to open.
+- **D15 Third-party editions** stay one-time purchases outside the membership until Phase 4's publisher agreement says how a pool would be shared (never the whole margin on someone else's work).
+- **D16 Grace.** A failed renewal keeps access 7 days while Stripe retries; a downloaded book opens offline until `current_period_end` + 3 days. Marks and progress are never deleted on lapse.
+- **D17 Release cadence.** 3 a day from the queue, oldest first; volume sets together; the digest on Mondays. Alternative: 1 a day (a 69-book batch then lasts ten weeks).
+- **D18 Metadata.** The filename grammar (`Title - Cleaned, Vol II.pdf`) is the parser's contract; authors from PDF metadata, else `library-authors.csv` that Eden fills once (2 of 376 have an author today). Alternative: I propose authors for the 376 in the CSV and Eden checks them.
+- **D19 Publisher of record** for Library editions: Eden's own account, shown in the Store as "Grapheon Library".
+- **D20 Sales tax** on the membership: Stripe Tax on from the first charge (ties to Terms T6). Alternative: off until the first registration threshold is reached, accepting the exposure.
 
 ## Not in this spec
 
@@ -173,4 +325,4 @@ Phase 1 can start now, in parallel with the launch. It touches `DocumentReader.t
 - In-app generation (Workshop Phase D).
 - DRM beyond signed URLs and account-bound downloads. A determined buyer can keep the PDF; Kindle's DRM is broken daily and the Grapheon library's texts are public domain — the value is the edition, not the lock.
 - Social features, reviews, ratings.
-- Subscriptions ("all you can read"). One-time purchases only, until there are enough editions to make a subscription worth more than a book.
+- ~~Subscriptions ("all you can read")~~ — **superseded 2026-10-28** by *The Library membership (Phase 2S)*: the Library passed the "enough editions" bar at 376. Third-party editions remain one-time purchases (D15).
