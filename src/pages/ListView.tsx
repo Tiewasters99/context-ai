@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ChevronDown, ArrowUpDown, FileText, Folder, MoreHorizontal, CornerDownRight } from 'lucide-react';
+import { Plus, Circle, CheckCircle2, Trash2, X, GripVertical, Calendar, CalendarDays, ChevronLeft, ChevronRight, ChevronDown, ChevronsDownUp, ChevronsUpDown, ArrowUpDown, FileText, Folder, MoreHorizontal, CornerDownRight } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -276,6 +276,18 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
       if (open ? !prev.has(key) : prev.has(key)) return prev;
       const next = new Set(prev);
       if (open) next.delete(key); else next.add(key);
+      writeCollapsed(id, next);
+      return next;
+    });
+  };
+  /** Fold or unfold everything under one point — its subpoints AND its
+   *  pages — the way the chevron beside a matter folds its whole branch. */
+  const setFoldedAll = (itemId: string, open: boolean) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      for (const key of [`${itemId}:sub`, `${itemId}:pages`]) {
+        if (open) next.delete(key); else next.add(key);
+      }
       writeCollapsed(id, next);
       return next;
     });
@@ -677,6 +689,28 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     return sorted.map((it) => ({ item: it, depth: 0, children: [] }));
   }, [items, sortMode]);
 
+  // Every fold the list has: both keys of each point that carries subpoints
+  // or pages. "Collapse all" adds them all; "Expand all" clears them.
+  const branchKeys = useMemo(() => {
+    const withChildren = new Set(items.map((i) => i.parent_id).filter((p): p is string => !!p));
+    const keys: string[] = [];
+    for (const i of items) {
+      if (withChildren.has(i.id)) keys.push(`${i.id}:sub`);
+      if (i.linked_page_ids.length > 0) keys.push(`${i.id}:pages`);
+    }
+    return keys;
+  }, [items]);
+  const anyBranchOpen = branchKeys.some((k) => !collapsed.has(k));
+  const collapseAll = () => {
+    const next = new Set(branchKeys);
+    writeCollapsed(id, next);
+    setCollapsed(next);
+  };
+  const expandAll = () => {
+    writeCollapsed(id, new Set());
+    setCollapsed(new Set());
+  };
+
   const outline: OutlineActions = {
     today,
     flashItemId,
@@ -689,6 +723,7 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
     subMatterDisabledReason: parentMatter ? null : NO_MATTER_REASON,
     isExpanded,
     toggleExpanded: (key) => setExpanded(key, !isExpanded(key)),
+    setFoldedAll,
     toggle: (id) => { const it = itemsRef.current.find((i) => i.id === id); if (it) updateItem(id, { done: !it.done }); },
     changeText: (id, text) => updateItem(id, { text }),
     typeText: (id, text) => {
@@ -753,6 +788,16 @@ export default function ListView({ id: propId, embedded = false, onClose }: Embe
                     ?? `${doneCount} of ${items.length} complete · ${progress}%`}
               </p>
               <div className="flex items-center gap-1">
+                {branchKeys.length > 0 && sortMode === 'manual' && (
+                  <button
+                    onClick={() => (anyBranchOpen ? collapseAll() : expandAll())}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
+                    title={anyBranchOpen ? 'Fold every subpoint and page in this list' : 'Unfold every subpoint and page in this list'}
+                  >
+                    {anyBranchOpen ? <ChevronsDownUp size={11} /> : <ChevronsUpDown size={11} />}
+                    {anyBranchOpen ? 'Collapse all' : 'Expand all'}
+                  </button>
+                )}
                 <button
                   onClick={() => setShowCalendar(true)}
                   className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-white/50 hover:text-white hover:bg-[rgba(255,255,255,0.04)] transition-colors"
@@ -915,6 +960,8 @@ interface OutlineActions {
   subMatterDisabledReason: string | null;
   isExpanded: (key: string) => boolean;
   toggleExpanded: (key: string) => void;
+  /** Fold (false) or unfold (true) both branches of one point at once. */
+  setFoldedAll: (id: string, open: boolean) => void;
   toggle: (id: string) => void;
   changeText: (id: string, text: string) => void;
   /** Every keystroke. The list debounces it, so a refresh mid-word costs
@@ -1003,6 +1050,23 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
       }`}
     >
     <div className="flex items-center gap-2 px-2 py-2">
+      {/* The fold, beside the heading, as beside a matter in the sidebar: one
+          click folds everything under this point — subpoints and pages —
+          and one click brings it all back. A point with nothing under it
+          keeps the gutter so the headings line up. */}
+      {outline.nested && (
+        hasBranches ? (
+          <button
+            onClick={() => outline.setFoldedAll(item.id, !(subOpen || pagesOpen))}
+            className="shrink-0 p-0.5 rounded text-white/55 hover:text-white hover:bg-[rgba(255,255,255,0.06)] transition-colors"
+            title={subOpen || pagesOpen ? 'Collapse everything under this point' : 'Expand everything under this point'}
+          >
+            {subOpen || pagesOpen ? <ChevronDown size={13} strokeWidth={2.5} /> : <ChevronRight size={13} strokeWidth={2.5} />}
+          </button>
+        ) : (
+          <span className="w-[18px] shrink-0" aria-hidden />
+        )
+      )}
       {outline.sortable && (
         <button
           {...attributes}
@@ -1115,7 +1179,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
     {/* The branch line, right under the point: subpoints fold on the left,
         pages fold on the right, each on its own. */}
     {hasBranches && (
-      <div className="flex items-center justify-between gap-3 pl-[38px] pr-3 pb-1.5 -mt-1 text-[11.5px]">
+      <div className="flex items-center justify-between gap-3 pl-[64px] pr-3 pb-1.5 -mt-1 text-[11.5px]">
         <div className="flex items-center gap-1 min-w-0">
           {subCount > 0 ? (
             <>
@@ -1167,7 +1231,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
         page is titled now. Click opens; the x takes the page off this point
         and leaves it in the matter. */}
     {pages.length > 0 && pagesOpen && (
-      <div className="flex justify-end pl-[38px] pr-3 pb-2">
+      <div className="flex justify-end pl-[64px] pr-3 pb-2">
         <div className="w-full sm:w-[62%] space-y-0.5">
           {pages.map((pid) => (
             <div key={pid} className="group/page flex items-center gap-2 rounded-md border border-[rgba(232,184,74,0.18)] bg-[rgba(232,184,74,0.05)] pl-2.5 pr-1 py-1 text-[13px] text-[#e8b84a]/90 hover:text-[#e8b84a] hover:bg-[rgba(232,184,74,0.1)] transition-colors">
@@ -1194,7 +1258,7 @@ function SortableItem({ node, outline }: { node: TreeNode<ChecklistItem>; outlin
 
     {/* The subpoints, indented under their point, each able to branch again. */}
     {subCount > 0 && subOpen && (
-      <div className="ml-[26px] mr-1 mb-1.5 pl-2 border-l border-[rgba(255,255,255,0.08)]">
+      <div className="ml-[34px] mr-1 mb-1.5 pl-2 border-l border-[rgba(255,255,255,0.08)]">
         <OutlineLevel nodes={node.children} outline={outline} />
       </div>
     )}
