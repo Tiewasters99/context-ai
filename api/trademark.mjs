@@ -42,6 +42,7 @@ import { runTrademarkAction, TrademarkActionError, ACTIONS } from '../lib/tradem
 import { TrademarkModelError, TRADEMARK_MODEL } from '../lib/trademark/model.mjs';
 import { runDeepCheck } from '../lib/trademark/deepcheck.mjs';
 import { makeTsdrClient, TSDR_KEY_ENV } from '../lib/trademark/tsdr.mjs';
+import { selectAll } from '../lib/trademark/rows.mjs';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
@@ -124,7 +125,7 @@ async function deepCheckFor({ sb, userId, args }) {
   const { data: canWrite } = await sb.rpc('can_write_matter', { p_matter_id: clearance.matterspace_id });
   if (canWrite !== true) throw new TrademarkActionError('You can read this matter but not work in it.', 403, 'read_only');
   const [hs, st] = await Promise.all([
-    sb.from('tm_hits').select('*').eq('clearance_id', id).order('serial'),
+    selectAll(() => sb.from('tm_hits').select('*').eq('clearance_id', id).order('serial')),
     sb.from('tm_stages').select('*').eq('clearance_id', id).order('stage'),
   ]);
   if (hs.error) throw new TrademarkActionError(hs.error.message, 500, 'read_failed');
