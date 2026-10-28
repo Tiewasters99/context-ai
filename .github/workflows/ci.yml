@@ -154,6 +154,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/_verify-trademark-122.mjs
 
+      # No agent work in a sealed matter (migration 125): a task or a
+      # Trademark clearance in a sealed matter, or under a sealed parent, is
+      # refused by the database; an open matter is unaffected; re-runnable.
+      - name: Sealed matters refuse agent tasks and clearances (migration 125, PGlite)
+        if: ${{ !cancelled() }}
+        run: node scripts/_verify-sealed-125.mjs
+
       # The tm_* MCP tools (a bring-your-own bot runs the recipe), against the
       # real 121 in PGlite through callTool with a csp_ token's user-scoped
       # client: the flow in the user's own matter, another user's clearance

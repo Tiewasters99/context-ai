@@ -124,12 +124,13 @@ console.log('\n2. The pen table — only the sealed pen declares a preamble');
   check(choosePen({ tier: 'B', anthropicKey: 'ak', bedrockCreds: creds }).preamble === SEALED_PEN_PREAMBLE,
     'choosePen on Tier B returns the sealed pen, preamble attached');
 
-  // THE BOUNDARY. A recorded escalation is a Tier-B turn served by first-party
-  // Claude — deliberately OUTSIDE the seal. It must look exactly like Tier A.
+  // THE BOUNDARY. There is no way out of the seal (escalate removed
+  // 2026-10-28): a Tier-B turn that asks to escalate is still the sealed pen,
+  // preamble and all.
   const escalated = choosePen({ tier: 'B', anthropicKey: 'ak', bedrockCreds: creds, escalate: true });
-  check(escalated.escalation === true && escalated.provider === 'anthropic', 'a Tier-B escalation runs on first-party Claude', escalated.provider);
-  check(escalated.preamble === undefined,
-    'and carries NO preamble — it is not the sealed pen, and telling it it is would be false');
+  check(escalated.escalation === false && escalated.provider === 'aws-bedrock', 'a Tier-B turn that asks to escalate stays on the sealed pen', escalated.provider);
+  check(escalated.preamble === SEALED_PEN_PREAMBLE,
+    'and carries the sealed-pen preamble, because it IS the sealed pen');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -273,9 +274,9 @@ console.log('\n3. The Assistant loop — one preamble on a sealed turn, none on 
   }
 
   const escalated = await run({ tier: 'B', escalate: true });
-  check(escalated.host === 'api.anthropic.com', 'a recorded escalation leaves the seal, as it is meant to', escalated.host);
-  check(!hasPenPreamble(escalated.system),
-    'and carries NO sealed-pen preamble — it is not the sealed pen');
+  check(escalated.host !== 'api.anthropic.com', 'a turn that asks to escalate never leaves the seal', escalated.host);
+  check(hasPenPreamble(escalated.system),
+    'and carries the sealed-pen preamble — it is the sealed pen');
 
   // ── the Record ────────────────────────────────────────────────────────
   const msgRow = (api) => api.rows.find((r) => r.table === 'ai_messages' && r.row?.role === 'assistant')?.row;
@@ -291,8 +292,8 @@ console.log('\n3. The Assistant loop — one preamble on a sealed turn, none on 
   check(msgRow(plain.supabase)?.content?.pen_preamble === undefined
      && ledgerRow(plain.supabase)?.p_payload?.pen_preamble === undefined,
     'Tier A: nothing is recorded, because no pen preamble was in force');
-  check(msgRow(escalated.supabase)?.content?.pen_preamble === undefined,
-    'an escalation records none either — it is recorded as an escalation instead');
+  eq('a turn that asked to escalate records the sealed instructions like any sealed turn',
+    msgRow(escalated.supabase)?.content?.pen_preamble, SEALED_PEN_PREAMBLE_VERSION);
   check(!JSON.stringify(ledgerRow(sealed.supabase) ?? {}).includes('You are working inside'),
     'the Record carries the VERSION, never the prose — it stays metadata-only');
 }

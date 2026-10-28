@@ -12,7 +12,7 @@
 // Request body:
 //   { messages: {role:'user'|'assistant', content:string}[], matterId?: string,
 //     context?: { route?: string, tab?: string, matterName?: string },
-//     sessionId?: string, escalate?: boolean, charterId?: string }
+//     sessionId?: string, charterId?: string }
 //
 // Response:
 //   { text: string, usedTools: string[] }     on success
@@ -80,11 +80,9 @@ export default async function handler(req, res) {
   const messages = body?.messages;
   const matterId = body?.matterId || undefined;
   const context = sanitizeContext(body?.context);
-  // SecureSpace: continue a recorded session; ask for the frontier pen on a
-  // sealed matter (recorded as an escalation — the server decides, the
-  // client only asks).
+  // SecureSpace: continue a recorded session. (A body's `escalate` is
+  // ignored: a sealed turn never leaves the seal, 2026-10-28.)
   const sessionId = typeof body?.sessionId === 'string' && body.sessionId ? body.sessionId : undefined;
-  const escalate = body?.escalate === true;
   // Agents: run under a charter. Only the ID travels — the charter's prose
   // and its toolset are loaded server-side (lib/agent-charter.mjs) through
   // the same user-scoped client, so RLS decides whether this user may run
@@ -157,7 +155,6 @@ export default async function handler(req, res) {
       context,
       emit,
       sessionId,
-      escalate,
       charterId,
     });
     emit({ type: 'done', ...result });

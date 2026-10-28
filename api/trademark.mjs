@@ -38,7 +38,7 @@ import { jwtClaims, readJsonBody } from '../lib/account-security.mjs';
 import { serverLlmCall } from '../lib/llm-server-call.mjs';
 import { LlmCallError } from '../lib/llm-call-error.mjs';
 import { record } from '../lib/ledger.mjs';
-import { runTrademarkAction, TrademarkActionError, ACTIONS } from '../lib/trademark/actions.mjs';
+import { runTrademarkAction, TrademarkActionError, ACTIONS, refuseIfSealed } from '../lib/trademark/actions.mjs';
 import { TrademarkModelError, TRADEMARK_MODEL } from '../lib/trademark/model.mjs';
 import { runDeepCheck } from '../lib/trademark/deepcheck.mjs';
 import { makeTsdrClient, TSDR_KEY_ENV } from '../lib/trademark/tsdr.mjs';
@@ -124,6 +124,7 @@ async function deepCheckFor({ sb, userId, args }) {
   if (!clearance) throw new TrademarkActionError('That clearance could not be found, or you do not have access to its matter.', 404, 'not_found');
   const { data: canWrite } = await sb.rpc('can_write_matter', { p_matter_id: clearance.matterspace_id });
   if (canWrite !== true) throw new TrademarkActionError('You can read this matter but not work in it.', 403, 'read_only');
+  await refuseIfSealed(sb, clearance.matterspace_id);
   const [hs, st] = await Promise.all([
     selectAll(() => sb.from('tm_hits').select('*').eq('clearance_id', id).order('serial')),
     sb.from('tm_stages').select('*').eq('clearance_id', id).order('stage'),

@@ -21,8 +21,8 @@
 //      contacted is that one Bedrock endpoint.
 //   3. Tier B, sealed pen errors       → refusal, ONE request, still only
 //      Bedrock. No second provider is tried.
-//   4. Tier B + explicit escalate      → first-party Claude, recorded as an
-//      escalation; and refused outright when the record cannot be opened.
+//   4. Tier B + escalate:true          → ignored (removed 2026-10-28): still
+//      the Bedrock pen, and nothing but Bedrock is contacted.
 //   5. Tier A                          → unchanged (first-party Claude).
 //   6. Tier C                          → unchanged (refused, zero requests).
 //   7. The /api/llm gate offline       → Tier B admits only aws-bedrock;
@@ -212,42 +212,27 @@ try {
   else fail('fell back to another provider', nonBedrock());
 } finally { restore(); }
 
-// ── 4. the one way out: an explicit, recorded escalation ────────────────
-console.log('\nTier B + escalate:true (the only permitted exit from the seal)');
+// ── 4. there is no way out: a stray escalate is ignored ─────────────────
+// Eden, 2026-10-28: "Remove escalate." A sealed turn never leaves the seal,
+// whatever the request body says.
+console.log('\nTier B + escalate:true (ignored: there is no exit from the seal)');
 {
-  const pen = choosePen({ tier: 'B', anthropicKey: 'ak', bedrockCreds: CREDS, escalate: true, env: PROD });
-  if (pen.provider === 'anthropic' && pen.escalation === true) pass('explicit escalate → first-party Claude, flagged escalation:true');
-  else fail('escalation pen', pen);
-  const implicit = choosePen({ tier: 'B', anthropicKey: 'ak', bedrockCreds: CREDS, escalate: 'yes', env: PROD });
-  if (implicit.provider === 'aws-bedrock') pass('a truthy-but-not-true escalate does NOT leave the seal');
-  else fail('escalate must be literally true', implicit);
-  const opus = choosePen({ tier: 'B', anthropicKey: 'ak', bedrockCreds: { ...CREDS, model: 'anthropic.claude-opus-5' }, escalate: true, env: PROD });
-  if (opus.provider === 'aws-bedrock' && opus.escalation === false) pass('escalate is moot when the sealed pen is already frontier Claude');
-  else fail('escalation should stay inside the seal', opus);
+  for (const model of [CREDS.model, 'anthropic.claude-opus-5']) {
+    const pen = choosePen({ tier: 'B', anthropicKey: 'ak', bedrockCreds: { ...CREDS, model }, escalate: true, env: PROD });
+    if (pen.provider === 'aws-bedrock' && pen.escalation === false) pass(`escalate:true with ${model} → still the Bedrock pen`);
+    else fail('escalate must be ignored', pen);
+  }
 }
-witness(async (u) => { throw new Error(`a provider was contacted: ${u}`); });
-try {
-  const { ev } = await run({ tier: 'B', bedrockCreds: CREDS, escalate: true, supabase: stubSupabase({ tier: 'B', ledgerOk: false }) });
-  const e = ev('error');
-  if (e?.code === 'escalation_unrecorded') pass('an escalation that cannot be recorded is refused, not performed');
-  else fail('expected escalation_unrecorded', e);
-  if (requests.length === 0) pass('egress witness: ZERO requests — the unrecordable escalation never left');
-  else fail('the escalation went ahead', hosts());
-} finally { restore(); }
-
-// A failure on the ESCALATION pen must NOT wear the sealed refusal's words:
-// that turn is deliberately outside the seal, so "the sealed pen could not
-// answer" and "no other model was asked" would both be false of it.
 witness(async () => new Response('{"type":"error","error":{"message":"bad request"}}', {
   status: 400, headers: { 'content-type': 'application/json' },
 }));
 try {
   const { ev } = await run({ tier: 'B', bedrockCreds: CREDS, escalate: true });
   const e = ev('error');
-  if (e && e.code !== 'sealed_pen_error') pass('a failure on the escalation pen is NOT dressed up as a sealed-pen refusal');
-  else fail('escalation failure mislabelled', e);
-  if (!/never handed to a provider outside the seal/.test(e?.message ?? '')) pass('and does not claim the turn stayed inside the seal');
-  else fail('escalation failure copy is untrue', e?.message);
+  if (e?.code === 'sealed_pen_error') pass('a failed turn that asked to escalate is a sealed-pen refusal');
+  else fail('expected sealed_pen_error', e);
+  if (nonBedrock().length === 0) pass('egress witness: only Bedrock was contacted');
+  else fail('left the seal', nonBedrock());
 } finally { restore(); }
 
 // ── 5/6. the other tiers are untouched ──────────────────────────────────
