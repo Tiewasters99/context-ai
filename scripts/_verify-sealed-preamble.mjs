@@ -262,7 +262,14 @@ console.log('\n3. The Assistant loop — one preamble on a sealed turn, none on 
     const orchestrator = buildOrchestratorSystem({
       matterId: 'm-1', today: new Date().toISOString().slice(0, 10), route: '/app/m/m-1', tab: 'Chat',
     });
-    eq('Tier A: the system prompt is exactly the Orchestrator, byte for byte', plain.system, orchestrator);
+    // Byte-identical in front; the only thing allowed behind it is the menu's
+    // own paragraph for read_pages (lib/read-pages.mjs — first-party Anthropic
+    // takes a document block, so the tool is on the Tier-A menu).
+    check(typeof plain.system === 'string' && plain.system.startsWith(orchestrator),
+      'Tier A: the system prompt is exactly the Orchestrator, byte for byte, in front', plain.system?.slice(0, 80));
+    const behind = String(plain.system).slice(orchestrator.length);
+    check(behind === '' || behind.startsWith('\n\nREADING PAGES DIRECTLY:'),
+      'Tier A: nothing follows the Orchestrator but the read_pages paragraph', behind.slice(0, 80));
   }
 
   const escalated = await run({ tier: 'B', escalate: true });
