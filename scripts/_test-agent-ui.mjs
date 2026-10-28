@@ -502,13 +502,20 @@ test('the browser writes the right recipient column, and survives a database wit
   assert.match(hook, /from\('oauth_grants'\)\s*\.select\('\*'\)/, 'grants with * so a database without 087 still reads');
 });
 
-test('the Agents page is the front door: every connection, all tasks, New task', () => {
+test('the Agents page is the front door: three classes of agent, all tasks, New task', () => {
   assert.equal(AGENTS_PAGE_PATH, '/app/agent-tasks');
   const p = src('src/pages/AgentTasks.tsx');
   assert.match(p, /const \{ all, byKey, loading, notReady, error: recipientsError \} = useTaskRecipients\(\);/,
-    'it lists every connection (agents, tokens, grants)');
-  assert.match(p, /const groups: RecipientGroup\[\] = \['agents', 'assistants'\];/);
-  assert.match(p, /\{GROUP_LABEL\[g\]\}/);
+    'it reads every connection (agents, tokens, grants), so every task resolves');
+  // Equazia Agents → Custom Agents → My Connected Agents, in that order (Eden, 10-28).
+  const order = ['>Equazia Agents<', '>Custom Agents<', '>My Connected Agents<', "'All tasks'"].map((s) => p.indexOf(s));
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), `sections in order: ${order}`);
+  assert.match(p, /const connectedAgents = live\.filter\(\(r\) => r\.group === 'agents'\);/, 'chat assistants are not listed as agents');
+  assert.doesNotMatch(p, /Recipe/, '"Procedures", not "Recipes"');
+  const ea = src('src/components/agents/EquaziaAgents.tsx');
+  assert.match(ea, /name: 'Trademark Agent'[\s\S]{0,300}procedures: \(\) => <ProcedureCard \/>/, 'Trademark Agent opens to its procedure');
+  for (const n of ['Discovery Agent', 'Brief Writing Agent', 'Incorporation Agent']) assert.match(ea, new RegExp(`name: '${n}'`));
+  assert.match(ea, /aria-expanded=\{isOpen\}/, 'a chevron opens the procedures');
   assert.match(p, /listTasks\(\{ all: true \}, \{ limit: 500 \}\)/, 'all tasks, across every matter');
   assert.match(p, /section\('Waiting for you', waiting,/);
   assert.match(p, /section\('Open', open,/);

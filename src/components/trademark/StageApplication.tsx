@@ -213,7 +213,7 @@ export default function StageApplication({ b, initials, setInitials, onChanged }
     <Panel id="tm-stage-9" title="9. Application draft (use-based or intent-to-use)" aside={s9 ? <StageChip status={s9.status} /> : null}>
       <Note>
         For each filing class: is {c.mark} in use now? If yes, the dates and a specimen (Section 1(a)); if not, the dated
-        evidence of intent (Section 1(b)). The recipe recommends a basis; you choose. Nothing here is filed with the USPTO.
+        evidence of intent (Section 1(b)). The procedure recommends a basis; you choose. Nothing here is filed with the USPTO.
       </Note>
       <h4 className="mt-3 mb-2 text-[12px] font-semibold text-white/80">Applicant</h4>
       <div className="grid gap-2 sm:grid-cols-3">

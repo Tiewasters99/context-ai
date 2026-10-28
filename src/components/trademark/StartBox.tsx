@@ -41,7 +41,7 @@ export default function StartBox({ matterId, onStarted, compact = false, disable
       {!compact && <h3 className="text-[14px] font-medium text-[var(--color-text-bright)] mb-1">Start a clearance</h3>}
       {!compact && (
         <Note>
-          Type the marks and one sentence on what they are for. The recipe proposes the classes and the search terms for
+          Type the marks and one sentence on what they are for. The procedure proposes the classes and the search terms for
           each mark and stops for you to confirm them. You then run the searches on the USPTO site and decide every hit.
         </Note>
       )}
