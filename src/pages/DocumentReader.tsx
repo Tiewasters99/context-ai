@@ -251,10 +251,23 @@ async function pickReliedFor(documentId: string, ask: ReliedAsk, pin: { seq: num
     q = q.or(`and(page_start.gte.${p},page_start.lte.${p + 1}),metadata->>pdf_page.in.(${p},${p + 1})`);
   } else if (ask.anywhere) {
     // A rule or statute opened by its name: the quote may sit on any page
-    // (Rule 26(g) is deep in Rule 26). Bounded: a rule's text is short, and
-    // the quote is the only thing looked for.
+    // (Rule 26(g) is deep in Rule 26), so the whole document is read, paged
+    // past PostgREST's 1,000-row cap with the unique tiebreaker, and capped
+    // at a ceiling a rule never reaches (the quote is all that is looked for).
     if (!ask.quotes.length) return none;
-    q = q.limit(600);
+    const { rows: all } = await fetchPaged<ReliedRow>(
+      (from, to) => supabase
+        .from('passages')
+        .select('id, page_start, line_start, line_end, text, metadata')
+        .eq('document_id', documentId)
+        .eq('summary_level', 0)
+        .order('sequence_number', { ascending: true })
+        .order('id')
+        .range(from, to),
+      { label: 'relied passages', ceiling: 3000 },
+    );
+    const got = all.filter((r) => r.text);
+    return pickRelied(ask, got.map((r) => ({ id: r.id, text: r.text!, page: physicalPage(r), page_start: r.page_start, line_start: r.line_start, line_end: r.line_end })));
   } else if (pin.seq !== null) {
     q = q.gte('sequence_number', pin.seq).lte('sequence_number', pin.seq + 2);
   } else if (pin.page !== null) {

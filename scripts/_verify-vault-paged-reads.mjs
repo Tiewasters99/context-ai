@@ -337,8 +337,11 @@ section('8. And the Reader actually uses it, at both sites');
   // become two.
   check('exactly one deliberate passage limit remains, the search\'s own',
     (code.match(/\.limit\(\d+\)/g) ?? []).length === 1, JSON.stringify(code.match(/\.limit\(\d+\)/g)));
+  // Three paged passage reads since PR #488: the two whole-document text
+  // reads, and the relied-passage read of a rule opened by its name (the
+  // brief's quotation looked for through the whole provision).
   check('each carries the unique tiebreaker, without which .range() drops rows',
-    (src.match(/\.order\('id'\)/g) ?? []).length === 2);
+    (src.match(/\.order\('id'\)/g) ?? []).length === 3);
   check('fetchPaged is imported from the one helper, not re-implemented here',
     /import \{ fetchPaged \} from '@\/lib\/paged'/.test(src));
 }

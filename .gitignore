@@ -11,20 +11,16 @@ node_modules
 dist
 dist-ssr
 *.local
-.env
-.env.local
 # Any other .env variant - notably the dated pre-revocation backups
 # (.env.bak-2026-07-31). These hold live-format API keys and were NOT
 # matched by the two lines above, so `git add -A` would have committed
 # them straight into history.
-.env.*
 !.env.example
 
 # Vercel project link (created by `vercel` CLI on first deploy)
 .vercel
 
 # Editor directories and files
-.vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
@@ -56,3 +52,4 @@ books/
 .claude/settings.local.json
 .claude/worktrees/
 *.traineddata
+config.bat
