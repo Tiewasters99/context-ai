@@ -268,6 +268,18 @@ check(!!still, 'nor delete it');
 await asService();
 check((await q(`select public._reader_is_member($1) as ok`, [member.id]))[0].ok === true, 'the service role (webhook, crons) can ask about anyone');
 
+console.log('--- the sample');
+await asService();
+const sample = await attempt(`insert into public.edition_assets (edition_id, kind, storage_path, mime) values ($1::uuid, 'sample', $1::text || '/1.pdf', 'application/pdf')`, [lib.id]);
+check(!sample, "a 'sample' asset row is accepted", sample?.message);
+check(!!(await attempt(`insert into public.edition_assets (edition_id, kind, storage_path, mime) values ($1::uuid, 'sample', $1::text || '/2.pdf', 'application/pdf')`, [lib.id])), 'one sample per edition');
+check(!!(await attempt(`insert into public.edition_assets (edition_id, kind, storage_path) values ($1::uuid, 'poster', $1::text || '/p.png')`, [lib.id])), 'an unknown kind is still refused');
+const [sb] = await q(`select public from storage.buckets where id = 'edition-samples'`);
+check(sb && sb.public === true, 'the edition-samples bucket exists and is public');
+await asUser(stranger.id);
+check(!!(await attempt(`insert into storage.objects (bucket_id, name) values ('edition-samples', $1::text || '/1.pdf')`, [lib.id])), 'a signed-in user cannot write into the samples bucket');
+check((await q(`select id from public.edition_assets where edition_id = $1 and kind = 'sample'`, [lib.id])).length === 0, 'the sample row itself is not readable by a stranger (the file is public; the table is not)');
+
 console.log('--- columns for the mirror and the queue');
 await asOwner();
 const cols = await q(`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'editions' and column_name in ('access','collection_key','volume','release_on') order by 1`);
