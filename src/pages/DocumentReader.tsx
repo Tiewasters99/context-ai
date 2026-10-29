@@ -249,6 +249,25 @@ async function pickReliedFor(documentId: string, ask: ReliedAsk, pin: { seq: num
     // under the transcript page and keeps the sheet in metadata.pdf_page.
     const p = pin.page;
     q = q.or(`and(page_start.gte.${p},page_start.lte.${p + 1}),metadata->>pdf_page.in.(${p},${p + 1})`);
+  } else if (ask.anywhere) {
+    // A rule or statute opened by its name: the quote may sit on any page
+    // (Rule 26(g) is deep in Rule 26), so the whole document is read, paged
+    // past PostgREST's 1,000-row cap with the unique tiebreaker, and capped
+    // at a ceiling a rule never reaches (the quote is all that is looked for).
+    if (!ask.quotes.length) return none;
+    const { rows: all } = await fetchPaged<ReliedRow>(
+      (from, to) => supabase
+        .from('passages')
+        .select('id, page_start, line_start, line_end, text, metadata')
+        .eq('document_id', documentId)
+        .eq('summary_level', 0)
+        .order('sequence_number', { ascending: true })
+        .order('id')
+        .range(from, to),
+      { label: 'relied passages', ceiling: 3000 },
+    );
+    const got = all.filter((r) => r.text);
+    return pickRelied(ask, got.map((r) => ({ id: r.id, text: r.text!, page: physicalPage(r), page_start: r.page_start, line_start: r.line_start, line_end: r.line_end })));
   } else if (pin.seq !== null) {
     q = q.gte('sequence_number', pin.seq).lte('sequence_number', pin.seq + 2);
   } else if (pin.page !== null) {
@@ -2205,8 +2224,10 @@ export default function DocumentReader({ id: propId, embedded = false, onClose, 
         }
         relied = Array.from(byPage, ([page, phrases]) => ({ page, phrases }));
         // A quote may sit on the page after the pin passage's first page: go
-        // to the first page with lit words (a page the host named stays).
-        if (relied.length && !goto.page) target = relied[0].page;
+        // to the first page with lit words (a page the host named stays —
+        // unless the quote was looked for through the whole document, where
+        // "page 1" only meant "the start": then the quote's page is the page).
+        if (relied.length && (!goto.page || goto.relied.anywhere)) target = relied[0].page;
         reliedPickRef.current = { nonce, pick };
         if (!relied.length) onReliedRef.current?.({ nonce, basis: pick.basis, detail: pick.detail, lit: false, noTextLayer: false });
       }
@@ -3365,8 +3386,10 @@ function RenderedDocStyle({ theme }: { theme: ReaderTheme }) {
   return (
     <style>{`
       /* A Word file's notes, labelled (src/lib/reader-notes.ts). */
-      /* A reporter's page break in a case (src/lib/reader-star-pages.ts): bold, and a touch of the find's gold. */
-      .star-page { font-weight: 700; color: #b8860b; }
+      /* A reporter's page break in a case (src/lib/reader-star-pages.ts): bold
+         dark gold on a highlighter stripe, so "*1149" is found at a glance
+         (Eden, 10-28: gold alone was still easy to miss). */
+      .star-page { font-weight: 700; color: #6b4f00; background-color: rgba(255, 226, 64, 0.6); padding: 0 3px; border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
       .reader-notes-heading { margin-top: 2.5em; padding-top: 0.8em; border-top: 1px solid currentColor; font-size: 0.95em; opacity: 0.85; }
       /* The find's two colors for a rendered document (docx, text, slides,
          screenplay), painted by the Custom Highlight API over the words. */

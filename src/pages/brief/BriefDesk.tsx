@@ -38,7 +38,7 @@ import {
   ArrowLeft, Bold, Italic, Underline, Highlighter, Superscript, Flag, Undo2, Redo2,
   Camera, History, Download, ChevronDown, ChevronUp, X, Loader2, AlertTriangle, FileText, Check,
   ListChecks, Square, Search, Info, CornerUpLeft, MessageSquareQuote, FilePlus2, ChevronLeft, ChevronRight,
-  ClipboardCheck, GitCompare, CopyPlus, Tag, StickyNote,
+  ClipboardCheck, GitCompare, CopyPlus, Tag, StickyNote, GripVertical,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useIsMobile } from '@/hooks/useIsMobile';
@@ -864,7 +864,20 @@ function DeskEditor(p: DeskProps) {
     const ask = claimFor(context, raw);
     return { relied: ask };
   };
-  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null; pinned?: boolean; depo?: DepoCite | null } = {}) => {
+  /**
+   * A rule or statute filed under its own name (Rule 26, § 2203) opens at its
+   * first page, which is no pin; but the document IS the authority, so the
+   * brief's quotation is looked for through the whole of it and lit where it
+   * is found (Eden, 10-28: "quoted text was meant to show up highlighted in
+   * yellow" — it did on a star page, never on a rule). Quotes only: a closest
+   * sentence anywhere in a document would be a guess. No quote, no ask.
+   */
+  const quotesAnywhereFor = (raw: string, context: string): { relied?: ReliedAsk } => {
+    if (!context.trim() || !raw.trim()) return {};
+    const quotes = claimFor(context, raw).quotes;
+    return quotes.length ? { relied: { claim: '', quotes, anywhere: true } } : {};
+  };
+  const openDocument = (documentId: string, o: { page?: number; passageId?: string; heading?: string; title?: string | null; caveat?: string | null; appendix?: { name: string } | null; pinned?: boolean; depo?: DepoCite | null; namedForIt?: boolean } = {}) => {
     markPlace();
     gotoNonce.current += 1;
     const cite = citeRef.current; citeRef.current = null;      // consumed by the first document opened for it
@@ -874,7 +887,9 @@ function DeskEditor(p: DeskProps) {
       goto: {
         ...(o.passageId ? { passageId: o.passageId } : { page: o.page ?? 1 }),
         ...withNote(o.heading ?? cite?.raw),
-        ...reliedFor(!!o.pinned || !!o.depo, cite?.raw ?? o.heading ?? '', cite?.context ?? '', o.depo),
+        ...(o.pinned || o.depo
+          ? reliedFor(true, cite?.raw ?? o.heading ?? '', cite?.context ?? '', o.depo)
+          : o.namedForIt ? quotesAnywhereFor(cite?.raw ?? o.heading ?? '', cite?.context ?? '') : {}),
         nonce: gotoNonce.current,
       },
       caveat: o.caveat === undefined ? 'Opened from a search, not matched to a checked cite.' : o.caveat,
@@ -1409,6 +1424,7 @@ function DeskEditor(p: DeskProps) {
         page: first?.passage_id ? undefined : (first?.page ?? 1),
         heading: label,
         title: h.title,
+        namedForIt: h.namedForIt,
         caveat: h.namedForIt
           ? (q.from === 'brief' ? `§ ${q.number}: the number the brief pairs with “${label.trim()}”.` : null)
           : `Found inside this document's text${first?.page ? ` (page ${first.page})` : ''}, not by its name${q.from === 'brief' ? ` — § ${q.number}, the number the brief pairs with “${label.trim()}”` : ''}.`,
@@ -1708,6 +1724,18 @@ function DeskEditor(p: DeskProps) {
   // toolbar of buttons that wait for a highlight. Shown while the brief has a
   // selection, wherever the focus went (the pane, the bar itself).
   const [bubble, setBubble] = useState<{ top: number; left: number } | null>(null);
+  // Where the lawyer dragged the bar to, relative to where it would sit over
+  // the words (Eden, 10-28: "draggable so that it can be moved if it is in
+  // the way"). Kept per browser like the column widths; the grip's
+  // double-click puts it back.
+  const BUBBLE_OFFSET_KEY = 'cs.brief.bubble.offset';
+  const bubbleOffset = useRef<{ dx: number; dy: number }>((() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(BUBBLE_OFFSET_KEY) ?? 'null') as { dx?: number; dy?: number } | null;
+      return { dx: Number(v?.dx) || 0, dy: Number(v?.dy) || 0 };
+    } catch { return { dx: 0, dy: 0 }; }
+  })());
+  const bubbleDrag = useRef<{ x: number; y: number; start: { dx: number; dy: number } } | null>(null);
   const placeBubble = useCallback(() => {
     const ed = editorRef.current;
     if (!ed || ed.state.selection.empty || !highlighted.current) { setBubble(null); return; }
@@ -1717,10 +1745,17 @@ function DeskEditor(p: DeskProps) {
       const b = ed.view.coordsAtPos(to);
       const box = briefScrollRef.current?.getBoundingClientRect();
       if (box && (b.bottom < box.top || a.top > box.bottom)) { setBubble(null); return; }   // scrolled away
-      const top = narrow ? b.bottom + 10 : a.top - 46;
-      setBubble({ top: Math.max(56, top), left: Math.max(8, Math.min(window.innerWidth - 420, a.left - 8)) });
+      const top = (narrow ? b.bottom + 10 : a.top - 46) + bubbleOffset.current.dy;
+      const left = a.left - 8 + bubbleOffset.current.dx;
+      // Never off the screen, wherever it was dragged to.
+      setBubble({ top: Math.max(56, Math.min(window.innerHeight - 48, top)), left: Math.max(8, Math.min(window.innerWidth - 420, left)) });
     } catch { setBubble(null); }
   }, [narrow]);
+  const setBubbleOffset = (o: { dx: number; dy: number }) => {
+    bubbleOffset.current = o;
+    try { localStorage.setItem(BUBBLE_OFFSET_KEY, JSON.stringify(o)); } catch { /* private window */ }
+    placeBubble();
+  };
   useEffect(() => {
     if (!editor) return;
     const on = () => placeBubble();
@@ -1982,6 +2017,32 @@ function DeskEditor(p: DeskProps) {
           style={{ top: bubble.top, left: bubble.left }}
           data-testid="selection-bubble"
         >
+          {/* The grip: drag the bar out of the way; double-click puts it back
+              over the words. mousedown is swallowed like the buttons', so the
+              brief's selection (and with it the bar) survives the drag. */}
+          <div
+            role="separator"
+            aria-label="Drag the bar"
+            title="Drag to move the bar out of the way. Double-click to put it back over the words."
+            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              bubbleDrag.current = { x: e.clientX, y: e.clientY, start: bubbleOffset.current };
+            }}
+            onPointerMove={(e) => {
+              const d = bubbleDrag.current;
+              if (!d) return;
+              setBubbleOffset({ dx: Math.round(d.start.dx + e.clientX - d.x), dy: Math.round(d.start.dy + e.clientY - d.y) });
+            }}
+            onPointerUp={() => { bubbleDrag.current = null; }}
+            onPointerCancel={() => { bubbleDrag.current = null; }}
+            onDoubleClick={() => setBubbleOffset({ dx: 0, dy: 0 })}
+            className="h-7 w-4 -ml-0.5 inline-flex items-center justify-center rounded-md text-white/35 hover:text-white/70 hover:bg-white/[0.08] cursor-grab active:cursor-grabbing select-none touch-none"
+            data-testid="bubble-grip"
+          >
+            <GripVertical size={13} />
+          </div>
           <button
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => void findHighlighted()}
@@ -2628,6 +2689,7 @@ function DeskEditor(p: DeskProps) {
                   setContentHits(null);
                   openDocument(h.document_id, {
                     passageId: first?.passage_id || undefined, page: first?.passage_id ? undefined : (first?.page ?? 1), heading: contentHits.label, title: h.title,
+                    namedForIt: h.namedForIt,
                     caveat: h.namedForIt ? null : `Found inside this document's text${first?.page ? ` (page ${first.page})` : ''}, not by its name.`,
                   });
                 }}
