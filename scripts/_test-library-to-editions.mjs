@@ -4,7 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseLibraryName, displayTitle, assignVolumes, sampleLength, slugFor, queueDays,
-  parseAuthorsCsv, renderAuthorsCsv, romanToInt,
+  parseAuthorsCsv, renderAuthorsCsv, romanToInt, applyTitleOverride, dropRawDuplicates,
 } from '../lib/library-mirror.mjs';
 
 test('roman numerals', () => {
@@ -97,6 +97,21 @@ test('a raw archive name is flagged for a title', () => {
   assert.equal(parseLibraryName('The Tempest.pdf', 'The Tempest').needsTitle, false);
 });
 
+test('a CSV title reaches the collection key, so a corrected set still groups', () => {
+  const a = applyTitleOverride(parseLibraryName('Russias Message Vol I - Cleaned.pdf', 'Russias Message Vol I - Cleaned'), "Russia's Message");
+  const b = applyTitleOverride(parseLibraryName('Russias Message Vol II - Cleaned.pdf', 'Russias Message Vol II - Cleaned'), "Russia's Message");
+  assert.equal(a.collectionKey, "Russia's Message");
+  assert.equal(displayTitle(b), "Russia's Message, Vol. II");
+  const items = [{ parsed: a }, { parsed: b }];
+  assignVolumes(items);
+  assert.deepEqual(items.map((i) => i.volume), [1, 2]);
+  const single = applyTitleOverride(parseLibraryName('treasureisland00steviala.pdf', 'treasureisland00steviala'), 'Treasure Island');
+  assert.equal(single.cleanTitle, 'Treasure Island');
+  assert.equal(single.collectionKey, null);
+  assert.equal(single.needsTitle, false);
+  assert.equal(applyTitleOverride(parseLibraryName('Ants - Cleaned, Vol I.pdf', null), '  ').cleanTitle, 'Ants');
+});
+
 test('volumes are numbered in reading order within a collection; singles stay null', () => {
   const items = [
     'Farthest North Vol II - Cleaned, Part 1.pdf',
@@ -124,6 +139,32 @@ test('a lone volume is still volume 1 (its sibling may come later)', () => {
   const items = [{ parsed: parseLibraryName('Ants - Cleaned, Vol II.pdf', null) }];
   assignVolumes(items);
   assert.equal(items[0].volume, 1);
+});
+
+test('a raw scan filed beside its cleaned copy is skipped; two cleaned copies are both kept', () => {
+  const items = [
+    'Law and Public Opinion.pdf',
+    'Law and Public Opinion - Cleaned.pdf',
+    'The Tempest.pdf',
+    'Moby Dick - Cleaned, Vol I.pdf',
+    'Moby Dick - Cleaned, Vol II.pdf',
+    'Ants - Cleaned.pdf',
+    'Ants - Cleaned.pdf',
+    'Bees - Cleaned.pdf',
+    'Bees (second scan) - Cleaned.pdf',
+  ].map((f, i) => ({ parsed: parseLibraryName(f, null), filedAt: `2026-10-${String(10 + i).padStart(2, '0')}` }));
+  items[7].parsed.cleanTitle = 'Bees'; // two different cleaned files of one title
+  assignVolumes(items);
+  dropRawDuplicates(items);
+  assert.match(items[0].skip, /raw duplicate of Law and Public Opinion - Cleaned\.pdf/);
+  assert.equal(items[1].skip, undefined);
+  assert.equal(items[2].skip, undefined);
+  assert.equal(items[3].skip, undefined);
+  assert.equal(items[4].skip, undefined);
+  assert.equal(items[5].skip, undefined, 'the first filing of a double upload is kept');
+  assert.match(items[6].skip, /the same file filed again \(first filed 2026-10-15\)/);
+  assert.equal(items[7].skip, undefined, 'two different cleaned files of one title are both kept (reported by the script)');
+  assert.equal(items[8].skip, undefined);
 });
 
 test('D13: the sample is 10%, floor 8, ceiling 30, never more than the book', () => {

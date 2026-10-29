@@ -29,7 +29,8 @@
 //   2. copy the PDF server-side, vault-documents → editions/<edition>/book/…,
 //      and record the book asset (bytes, sha256);
 //   3. download the PDF once; cut the first N pages (D13) with pdf-lib into
-//      edition-samples/<edition>/0.pdf (public) and record the sample asset;
+//      edition-samples/<edition>/<sha256 prefix>.pdf (public, cached a year —
+//      named by content, so a re-cut is a new URL) and record the sample asset;
 //   4. the cover: the document's chosen cover (cover_url) copied into the
 //      editions bucket as <edition>/cover.<ext>; with no chosen cover, page
 //      one rendered to a JPEG (pdfjs + @napi-rs/canvas) — the jacket the
@@ -37,6 +38,11 @@
 // A failure in 2–4 leaves the edition in place and is listed at the end;
 // --repair on a later run fills what is missing. A document in a sealed
 // matter is never copied (the Library's shelves are open; checked anyway).
+//
+// A raw scan filed beside its " - Cleaned" copy is skipped (the cleaned copy
+// is the edition), and so is the same file filed twice (the first filing is
+// the edition); two different cleaned files of one title are both mirrored
+// and reported, the second with a -2 slug.
 //
 // The CSV (D18): scripts/library-authors.csv, one row per document, columns
 // document_id, filename, title, author. Written on every run (new rows
@@ -52,7 +58,7 @@ import { createClient } from '@supabase/supabase-js';
 import { PDFDocument } from 'pdf-lib';
 import {
   parseLibraryName, displayTitle, assignVolumes, sampleLength, slugFor, queueDays,
-  parseAuthorsCsv, renderAuthorsCsv,
+  parseAuthorsCsv, renderAuthorsCsv, applyTitleOverride, dropRawDuplicates,
 } from '../lib/library-mirror.mjs';
 
 const LIBRARY_SERVERSPACE = 'c7117b5e-ae55-48dc-a444-c01f30df27ca';
@@ -148,16 +154,16 @@ const items = pdfs
   .filter((d) => !ONLY || String(d.source_filename || '').toLowerCase().includes(ONLY))
   .map((d) => {
     const csv = csvRows.get(d.id);
-    const parsed = parseLibraryName(d.source_filename || path.basename(d.storage_path || ''), d.title);
-    if (csv?.title) parsed.cleanTitle = csv.title;
-    return { doc: d, parsed, csv, shelf: shelfById.get(d.matterspace_id)?.name ?? '?', existing: mirroredByDoc.get(d.id) ?? null };
+    const parsed = applyTitleOverride(parseLibraryName(d.source_filename || path.basename(d.storage_path || ''), d.title), csv?.title);
+    return { doc: d, parsed, csv, filedAt: d.created_at, shelf: shelfById.get(d.matterspace_id)?.name ?? '?', existing: mirroredByDoc.get(d.id) ?? null };
   });
 assignVolumes(items);
+dropRawDuplicates(items);
 // Volumes are numbered within the WHOLE collection (filtered items only see
 // their own; with --only the numbering may differ — say so).
 if (ONLY) log('! --only in effect: volume numbers are relative to the filtered set');
 
-const releaseDays = QUEUE ? queueDays(items.filter((i) => !i.existing), RELEASE_FROM, 3) : new Map();
+const releaseDays = QUEUE ? queueDays(items.filter((i) => !i.existing && !i.skip), RELEASE_FROM, 3) : new Map();
 
 for (const it of items) {
   it.title = displayTitle(it.parsed);
@@ -179,25 +185,35 @@ const csvOut = items
 fs.mkdirSync(path.dirname(CSV_PATH), { recursive: true });
 fs.writeFileSync(CSV_PATH, renderAuthorsCsv(csvOut), 'utf8');
 
-const fresh = items.filter((i) => !i.existing);
+const fresh = items.filter((i) => !i.existing && !i.skip);
+const skipped = items.filter((i) => i.skip);
 const needTitle = items.filter((i) => i.parsed.needsTitle && !i.csv?.title);
 const noPages = items.filter((i) => !i.doc.page_count);
 const collections = new Set(items.filter((i) => i.parsed.collectionKey).map((i) => i.parsed.collectionKey.toLowerCase()));
 
 log(`Library: ${shelves.length} shelves, ${docs.length} ready documents, ${pdfs.length} PDFs (${skippedNonPdf} non-PDF skipped)`);
-log(`Plan: ${fresh.length} new editions, ${items.length - fresh.length} already mirrored; ${collections.size} volume sets; ` +
+log(`Plan: ${fresh.length} new editions, ${items.filter((i) => i.existing).length} already mirrored, ${skipped.length} skipped; ${collections.size} volume sets; ` +
     `${items.filter((i) => i.doc.cover_url).length} with a chosen cover, ${items.filter((i) => !i.doc.cover_url).length} get page one; ` +
     `${items.filter((i) => i.author).length} with an author`);
 log(`Publisher of record: ${PUBLISHER}${uploaders.length === 1 && !opt('publisher') ? ' (the Library\'s uploader)' : ''}`);
 log(`CSV: ${path.relative(process.cwd(), CSV_PATH)} (${csvOut.length} rows; ${csvOut.filter((r) => r.author).length} authors filled)`);
 if (needTitle.length) log(`! ${needTitle.length} filename(s) look raw — give them a title in the CSV: ${needTitle.map((i) => i.doc.source_filename).join(' · ')}`);
+for (const it of skipped) log(`- skipped: ${it.doc.source_filename} (${it.shelf}) — ${it.skip}`);
+// The same title twice in another way (two cleaned copies, or on two shelves)
+// would get a -2 slug and two editions; say so.
+const seenTitle = new Map();
+for (const it of items.filter((i) => !i.skip)) {
+  const k = `${it.parsed.cleanTitle.toLowerCase()}|${it.volume ?? ''}`;
+  if (seenTitle.has(k)) log(`! duplicate title: "${it.title}" on ${seenTitle.get(k)} and ${it.shelf} (${it.doc.source_filename}) — both would become editions`);
+  else seenTitle.set(k, it.shelf);
+}
 if (noPages.length) log(`! ${noPages.length} document(s) have no page_count; the sample length is taken from the PDF itself: ${noPages.map((i) => i.doc.source_filename).join(' · ')}`);
 
 const pad = (s, n) => String(s ?? '').slice(0, n).padEnd(n);
 log('\n' + pad('shelf', 10) + pad('title', 62) + pad('vol', 4) + pad('pages', 6) + pad('smp', 4) + pad('cover', 6) + pad('author', 24) + 'state');
 for (const it of items.slice().sort((a, b) => a.shelf.localeCompare(b.shelf) || a.parsed.cleanTitle.localeCompare(b.parsed.cleanTitle) || (a.volume ?? 0) - (b.volume ?? 0))) {
   log(pad(it.shelf, 10) + pad(it.title, 62) + pad(it.volume ?? '', 4) + pad(it.doc.page_count ?? '?', 6) + pad(it.sampleN || '?', 4) +
-      pad(it.doc.cover_url ? 'yes' : 'p.1', 6) + pad(it.author ?? '', 24) + (it.existing ? `mirrored (${it.existing.status})` : it.releaseOn ? `new → ${it.releaseOn}` : 'new'));
+      pad(it.doc.cover_url ? 'yes' : 'p.1', 6) + pad(it.author ?? '', 24) + (it.skip ? 'skipped' : it.existing ? `mirrored (${it.existing.status})` : it.releaseOn ? `new → ${it.releaseOn}` : 'new'));
 }
 
 if (!WRITE) {
@@ -285,6 +301,7 @@ const report = { made: 0, repaired: 0, books: 0, samples: 0, covers: 0, failures
 let made = 0;
 
 for (const it of items) {
+  if (it.skip) continue;
   if (it.existing && !REPAIR) continue;
   if (!it.existing && LIMIT && made >= LIMIT) break;
   const d = it.doc;
@@ -331,7 +348,7 @@ for (const it of items) {
     const needSample = DO_SAMPLES && !haveKind.has('sample');
     const needCover = DO_COVERS && (!haveKind.has('cover') || !edition.cover_path);
     let pdfBuf = null;
-    if (needSample || (needCover && !d.cover_url) || !haveKind.has('book') || !it.author) {
+    if (needSample || (needCover && !d.cover_url) || !haveKind.has('book')) {
       pdfBuf = await download(VAULT_BUCKET, d.storage_path);
     }
     if (!haveKind.has('book') && it.bookKey) {
@@ -340,9 +357,10 @@ for (const it of items) {
 
     if (needSample && pdfBuf) {
       const cut = await cutSample(pdfBuf, it.sampleN);
-      const key = `${edition.id}/0.pdf`;
+      const hash = sha256(cut.buf);
+      const key = `${edition.id}/${hash.slice(0, 12)}.pdf`;
       await upload(SAMPLES_BUCKET, key, cut.buf, 'application/pdf');
-      await assetRow(edition.id, 'sample', key, cut.buf.length, 'application/pdf', sha256(cut.buf));
+      await assetRow(edition.id, 'sample', key, cut.buf.length, 'application/pdf', hash);
       report.samples += 1;
       log(`  sample: ${cut.pages} of ${cut.total} pages, ${(cut.buf.length / 1024).toFixed(0)} KB`);
       if (!it.author && cut.author && !/unknown|^\W*$/i.test(cut.author) && cut.author.length < 120) {
