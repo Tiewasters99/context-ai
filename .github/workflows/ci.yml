@@ -903,6 +903,15 @@ jobs:
           npm i --no-save @electric-sql/pglite@0.5.8
           node scripts/_verify-editions-migration.mjs
 
+      # api/editions.mjs: the one door to an edition's files. Offline: a fake
+      # Supabase answers Auth, PostgREST and Storage. The bearer is checked
+      # first; 112's _edition_can_read is asked AS THE USER and a false is a
+      # 403 before any asset is read or URL signed; a reader's illustrations
+      # carry version_from=lte.<version>, the publisher's do not.
+      - name: Grapheon Reader — the editions door (api/editions.mjs)
+        if: ${{ !cancelled() }}
+        run: node --test scripts/_test-editions-api.mjs
+
       # Migration 087: an OAuth sign-in can connect AS AN AGENT (Grok is
       # OAuth-only). Executes 001…022 + 065 + 085 + 087 (twice) in PGlite with
       # real RLS and drives the real consent POST, token endpoint and

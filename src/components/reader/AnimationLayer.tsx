@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { IMAGE_FILE_RE } from '@/lib/document-workshop';
 import { ArrowLeft, Play, X, Loader2, GripHorizontal, Maximize2, Minimize2, Expand, ZoomIn, ZoomOut } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useIsMobile';
-import { clipUrl, type DocumentAnimation } from '@/lib/document-animations';
+import type { DocumentAnimation } from '@/lib/document-animations';
+import { useMediaUrl } from '@/lib/media-url';
 import type { FractionalRect } from '@/lib/document-annotations';
 import {
   FIT, ZOOM_STEP, ZOOM_MAX, DOUBLE_TAP_ZOOM, type ZoomView, type Size,
@@ -227,6 +228,7 @@ function Player({ animation, boxRef, onClose }: {
   // A phone has no Esc, no double-click and a thumb too wide for the ribbon's
   // X, so the panel carries its own way back.
   const isMobile = useIsMobile();
+  const mediaUrl = useMediaUrl();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [shown, setShown] = useState(false);
@@ -381,13 +383,13 @@ function Player({ animation, boxRef, onClose }: {
   useEffect(() => {
     if (!path) return;
     let live = true;
-    clipUrl(path).then((u) => {
+    mediaUrl(path).then((u) => {
       if (!live) return;
       if (u) setUrl(u);
       else setFailed('That clip could not be opened.');
     });
     return () => { live = false; };
-  }, [path]);
+  }, [path, mediaUrl]);
 
   // One frame late, so the arrival has something to animate from.
   useEffect(() => {

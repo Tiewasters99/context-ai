@@ -27,17 +27,34 @@ function readingRoomRoute(): Plugin {
   }
 }
 
+// The Grapheon Reader answers under /reader (and at read.grapheon.ai in
+// production, a host rewrite in vercel.json). Under vite dev the same
+// prefix serves edition.html, so /reader, /reader/new and /reader/read/<id>
+// all open the app and it reads the route from the address.
+function editionRoute(): Plugin {
+  return {
+    name: 'edition-route',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url && /^\/reader(\/|\?|$)/.test(req.url)) req.url = '/edition.html'
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   // Load .env so ANTHROPIC_API_KEY is available to the proxy plugin
   const env = loadEnv(mode, process.cwd(), '');
   Object.assign(process.env, env);
 
   return {
-    plugins: [react(), tailwindcss(), llmProxy(), pdfjsAssets(), readingRoomRoute(), appVersion(BUILD_ID)],
+    plugins: [react(), tailwindcss(), llmProxy(), pdfjsAssets(), readingRoomRoute(), editionRoute(), appVersion(BUILD_ID)],
     build: {
       rolldownOptions: {
-        // Two doors: the workspace, and the Reader standing on its own.
-        input: { main: 'index.html', reader: 'reader.html' },
+        // Three doors: the workspace, the Reading Room standing on its own,
+        // and the Grapheon Reader (editions).
+        input: { main: 'index.html', reader: 'reader.html', edition: 'edition.html' },
       },
     },
     resolve: {
